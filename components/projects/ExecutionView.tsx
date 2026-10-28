@@ -494,7 +494,7 @@ export default function ExecutionView({
     const what = nextStatus === "completed" || nextPct === 100 ? "done" : nextStatus === "in_progress" || (nextPct != null && nextPct > 0) ? "started" : "changed";
     return appConfirm({
       title: `Record it ${what} ${days} day${days === 1 ? "" : "s"} early?`,
-      message: `“${prev.name}” is planned for ${fmtInTz(ps, tz, { weekday: "short", month: "short", day: "numeric" })}. It will stay on that day in the plan and show on today as ahead of plan. If you clicked the wrong row, cancel.`,
+      message: `“${prev.name}” is planned for ${fmtInTz(ps, tz, { weekday: "short", month: "short", day: "numeric" })}. The plan keeps that day; the calendar shows it on the day it was done, marked ahead. If you clicked the wrong row, cancel.`,
       confirmLabel: `Yes, it is ${what}`,
     });
   }, [tz, scheduleStartMs]);
@@ -602,7 +602,8 @@ export default function ExecutionView({
   const addNote = useCallback(async (id: string, body: string, happenedAt?: number, statusAt?: MilestoneStatus) => {
     const m = byId.get(id);
     await addMilestoneNote({ orgId, milestoneId: id, kind: "note", statusAt: statusAt ?? m?.status ?? null, body, createdBy: userId, createdByName: userName,
-      ...(happenedAt != null && Math.abs(happenedAt - Date.now()) > 120_000 ? { happenedAt: new Date(happenedAt).toISOString() } : {}) });
+      // The time put in for it, always — it decides which shift's report it's on.
+      ...(happenedAt != null ? { happenedAt: new Date(happenedAt).toISOString() } : {}) });
   }, [byId, orgId, userId, userName]);
   const progressWithNote = useCallback(async (id: string, pct: number, note: string, forShift?: ShiftCredit): Promise<boolean> => {
     const ok = await setProgress(id, pct, forShift);
@@ -633,7 +634,7 @@ export default function ExecutionView({
     // What got done goes on the report (a hold's reason already did).
     if (u.status !== "on_hold" && u.status !== "blocked") await addNote(id, noteFor(u.note, u.at < shiftAt(Date.now(), tz, shiftTimes).start ? w : undefined), u.at, u.status);
     if (u.why) {
-      try { await addMilestoneNote({ orgId, milestoneId: id, kind: "behind", statusAt: m.status, body: u.why, createdBy: userId, createdByName: userName }); }
+      try { await addMilestoneNote({ orgId, milestoneId: id, kind: "behind", statusAt: u.status, body: u.why, createdBy: userId, createdByName: userName, happenedAt: new Date(u.at).toISOString() }); }
       catch (e) { notify((e as Error).message, "warning"); }
     }
     return true;
@@ -1099,7 +1100,7 @@ export default function ExecutionView({
       {layout === "report" ? (
         <ExecutionReportView milestones={items} shiftTimes={shiftTimes} critical={critical} criticalSource={criticalSourceLabel} />
       ) : layout === "shift" ? (
-        <ShiftReportView milestones={items} cancelled={cancelled} userId={userId} userName={userName ?? userEmail} canEdit={canEdit} progress={progressIndex} criticalIds={critical.ids} projectId={projectId} projectName={projectName} />
+        <ShiftReportView milestones={items} cancelled={cancelled} userId={userId} userName={userName ?? userEmail} canEdit={canEdit} progress={progressIndex} criticalIds={critical.ids} projectId={projectId} projectName={projectName} onUpdateStep={updateStep} />
       ) : layout === "calendar" ? (
         <ScheduleCalendarTileView
           planNow={planNowAll}

@@ -30,17 +30,17 @@ import { createPortal } from "react-dom";
 import {
   Printer, ChevronLeft, ChevronRight, ChevronDown, Sun, Moon, CheckCircle2, Flag, FastForward,
   TrendingUp, TrendingDown, Minus, Zap, Presentation, X, Settings2, Rocket, ArrowLeftRight, Trophy,
-  Mail, FileText, Hourglass, Clock,
+  Mail, FileText, Hourglass, Clock, Pencil,
 } from "lucide-react";
-import type { Milestone } from "@/types/schema";
+import type { Milestone, MilestoneNote } from "@/types/schema";
 import { buildProgressIndex, leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { withWorkOrderCrews } from "@/lib/workOrderCrew";
-import { turnoverPlan, nextOf, standing, askedLine, doneOf, crewsOf, doneByTask, shareOf, watchLines, SEVERE_BEHIND_H } from "@/lib/turnoverPlan";
+import { turnoverPlan, nextOf, standing, askedLine, doneOf, crewsOf, doneByTask, shareOf, watchLines, SEVERE_BEHIND_H, type TableOrder } from "@/lib/turnoverPlan";
 import {
   buildShiftReport, shiftWindow, shiftAt, nextShift, previousShift, defaultReviewShift, nextShiftWithWork, expectedByParent, paceOf, expectedFraction, workShiftOf, staffedDueMs, meetingLeadMin, type Pace, type WorkShift,
   DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftRow, type ShiftWindow, type ShiftReport, type PullCrew,
-  crewsOnReport, filterShiftReport, whoOf,
+  crewsOnReport, filterShiftReport, whoOf, notesForShift,
 } from "@/lib/shiftReport";
 import { buildKickoff, buildCloseout, defaultMeeting, type MeetingKind, type PlanRow } from "@/lib/meetingPlan";
 import { clockLabel, fmtInTz, tzAbbrev } from "@/lib/scheduleTz";
@@ -48,9 +48,11 @@ import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { toPlainText, toEmailHtml, type ExportBlock, type ExportDoc, type ExportStepRow } from "@/lib/reportExport";
 import { turnoverUpdate, withoutEmpty, noteLine, hazardJobsOf, crewLine } from "@/lib/managementUpdate";
 import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
-import { latestNotes, notesFor } from "@/lib/milestones";
+import { notesFor } from "@/lib/milestones";
 import { useShiftRecords, saveShiftRecord, lastSameKind, openFollowUps, newId, type CrewCount, type Incident, type ShiftNote, type ShiftRecord } from "@/lib/shiftRecord";
 import { CrewCountEditor, IncidentsLine, ShiftNotesBox, AddCompany, TimeLogButton } from "@/components/projects/ShiftRecordParts";
+import { useSortRows, Grip } from "@/components/projects/SortRows";
+import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
 import { buildTimeLog, downloadTimeLog } from "@/lib/timeLog";
 import { loadProgressLog, scheduleAt, type ProgressLogRow } from "@/lib/progressHistory";
 import { effectiveSpans } from "@/lib/scheduleTime";
@@ -84,6 +86,8 @@ interface Props {
   userId?: string;
   userName?: string;
   canEdit?: boolean;
+  /** Update a step from its row — the same save as the calendar's quick view. */
+  onUpdateStep?: (id: string, u: StepUpdate) => Promise<boolean>;
 }
 
 const NONE_CANCELLED: CancelledJob[] = [];
@@ -94,7 +98,7 @@ const MEETINGS: Array<{ id: MeetingKind; label: string; Icon: typeof Rocket }> =
   { id: "closeout", label: "Close-out", Icon: Trophy },
 ];
 
-export default function ShiftReportView({ milestones: rawLive, progress: liveProgress, criticalIds, projectId, projectName, cancelled = NONE_CANCELLED, userId, userName, canEdit = false }: Props) {
+export default function ShiftReportView({ milestones: rawLive, progress: liveProgress, criticalIds, projectId, projectName, cancelled = NONE_CANCELLED, userId, userName, canEdit = false, onUpdateStep }: Props) {
   const tz = useScheduleTz();
   // The project's shift-change times — the same on every device.
   const times = useShiftTimes(projectId);
@@ -257,27 +261,15 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     pull: pullShown, pullSet: pullForReport, key: hoKey, openPicker: canShip && !shippedAt ? () => setPickerOpen(true) : undefined,
   }), [report, decisions, shippedAt, canShip, setDecision, allCrews, asked, pullShown, pullForReport, hoKey]);
 
-  // The latest comment on each step ("sent out for calibration") — shown
-  // as a quiet line under the step, here and in the copied update.
-  const [notes, setNotes] = useState<Map<string, { body: string; at: string | null; by: string | null }>>(new Map());
+  // Each step's comment for THIS shift ("sent out for calibration") — shown
+  // as a quiet line under the step, here and in the copied update. Only a
+  // comment written for the shift counts (the time it happened, else when
+  // it was typed): an older one doesn't trail onto later reports.
   const stepIds = useMemo(() => {
     const parents = new Set(milestones.map((m) => m.parentId).filter(Boolean));
     return milestones.filter((m) => m.id && !parents.has(m.id)).map((m) => m.id!).sort().join(",");
   }, [milestones]);
-  useEffect(() => {
-    let live = true;
-    if (!stepIds) return;
-    latestNotes(stepIds.split(",")).then((n) => { if (live) setNotes(n); }).catch(() => { /* comments are extra */ });
-    return () => { live = false; };
-  }, [stepIds]);
-  // A comment written after an earlier shift isn't part of that shift's story.
-  const noteThen = useCallback((id: string) => {
-    const n = notes.get(id);
-    if (n && pastShift && n.at && Date.parse(n.at) > recordedBy) return undefined;
-    return n;
-  }, [notes, pastShift, recordedBy]);
-  // Why a step is behind, as said in the quick view — beside its hours.
-  const [whys, setWhys] = useState<Map<string, { body: string; at: string | null }>>(new Map());
+  const [allNotes, setAllNotes] = useState<MilestoneNote[]>([]);
   const [notesTick, setNotesTick] = useState(0);
   useEffect(() => {
     const on = () => setNotesTick((t) => t + 1);
@@ -287,15 +279,21 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   useEffect(() => {
     let live = true;
     if (!stepIds) return;
-    latestNotes(stepIds.split(","), "behind").then((n) => { if (live) setWhys(n); }).catch(() => { /* before the database update */ });
-    if (notesTick) latestNotes(stepIds.split(",")).then((n) => { if (live) setNotes(n); }).catch(() => { /* comments are extra */ });
+    notesFor(stepIds.split(",")).then((n) => { if (live) setAllNotes(n); }).catch(() => { /* comments are extra */ });
     return () => { live = false; };
   }, [stepIds, notesTick]);
-  const whyOf = useCallback((id: string) => {
-    const n = whys.get(id);
-    if (!n || (pastShift && n.at && Date.parse(n.at) > recordedBy)) return undefined;
-    return n.body;
-  }, [whys, pastShift, recordedBy]);
+  // Which shift a comment is for: one with the time it happened is that
+  // shift's; one typed without a time counts for the turnover it was
+  // written at — the hour after a shift ends is still its meeting (the
+  // same cut-off as the progress). Each comment lands on one report.
+  const grace = recordedBy - shift.end;
+  const shiftNotes = useMemo(() => notesForShift(allNotes, shift, grace), [allNotes, shift, grace]);
+  const noteThen = useCallback((id: string) => {
+    const n = shiftNotes.note.get(id);
+    return n ? { body: n.body, at: new Date(n.at).toISOString(), by: n.by } : undefined;
+  }, [shiftNotes]);
+  // Why a step is behind, as said for this shift — beside its hours.
+  const whyOf = useCallback((id: string) => shiftNotes.why.get(id)?.body, [shiftNotes]);
   // The time each step was done on the shift (its finish), or moved last —
   // shown in Done only when "Times" is on; always in the time log.
   const [stamps, setStampsState] = useState(false);
@@ -331,6 +329,10 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     try { await saveShiftRecord({ orgId, projectId, shiftKey: key, userId, change }); setRecMsg(null); }
     catch (e) { setRecMsg((e as Error).message); }
   }, [orgId, projectId, userId]);
+  // The tables' order as dragged at the meeting — shown at once, kept on
+  // the shift's record (the email follows it too).
+  const [orderLocal, setOrderLocal] = useState<{ key: string; order: TableOrder } | null>(null);
+  const tableOrder = orderLocal?.key === thisKey ? orderLocal.order : records.get(thisKey)?.order;
   const sheet = useMemo<SheetCtx>(() => {
     const recThis = records.get(thisKey), recNext = records.get(nextKey);
     const labelOf = (key: string) => { const [d, k] = key.split(":"); const w = shiftWindow(d, k as "day" | "night", tz, times); return `${ctx.D(w.start)} ${k}`; };
@@ -351,8 +353,13 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       removeNote: (n) => void saveRec(n.shiftKey, (r) => ({ ...r, notes: (r.notes ?? []).filter((y) => y.id !== n.id) })),
       error: recMsg ?? (recErr && canEdit ? recErr : null),
       tz,
+      order: tableOrder,
+      setOrder: (table, ids) => {
+        setOrderLocal({ key: thisKey, order: { ...(tableOrder ?? {}), [table]: ids ?? undefined } });
+        void saveRec(thisKey, (r) => ({ ...r, order: { ...(r.order ?? {}), [table]: ids ?? undefined } }));
+      },
     };
-  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, saveRec, recMsg, recErr]);
+  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, saveRec, recMsg, recErr, tableOrder, setOrderLocal]);
   const shiftTitle = `${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`;
   // The time log: every step's times, for the project file — its own
   // export, not part of the update.
@@ -388,12 +395,14 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const nextStart = report.next.start;
   const recentRisks = useMemo(() => riskHistory(live, shiftAt(nextStart, tz, times), tz, times), [live, nextStart, tz, times]);
   const safety = useMemo(() => ({ project: safetyProject, recent: recentRisks }), [safetyProject, recentRisks]);
+  // The step being updated from its row.
+  const [editing, setEditing] = useState<string | null>(null);
   const sections = useMemo(() => meeting === "kickoff"
     ? kickoffSections(kickoff, ctx)
     : meeting === "closeout"
       ? closeoutSections(closeout, report, ctx, cancelled)
-      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet }),
-  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet]);
+      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet, onEdit: canEdit && onUpdateStep ? setEditing : undefined }),
+  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep]);
 
   // A step's card: asked about mid-meeting, answered from the schedule.
   const qlIndex = useMemo(() => quickLookIndex(milestones), [milestones]);
@@ -493,6 +502,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           crewsThis: sheet.crewsThis, crewsNext: sheet.crewsNext,
           incidents: sheet.incidents && (sheet.incidents.none || sheet.incidents.items?.length) ? { none: !!sheet.incidents.none, items: sheet.incidents.items ?? [] } : undefined,
           shiftNotes: sheet.notes.map((n) => ({ at: n.at, text: n.text, followUp: n.followUp, from: n.from })),
+          order: sheet.order,
         })
         : withoutEmpty(sections.filter((x) => x.data).map((x) => ({ id: x.id, title: x.title, sub: x.sub, flag: x.flag ?? null, blocks: x.data!() }))),
     };
@@ -765,8 +775,47 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         </div>,
         document.body,
       )}
+      {/* A row's step, updated right here: the calendar's quick view. */}
+      {mounted && editing && onUpdateStep && createPortal(
+        <RowEditor id={editing} milestones={live} progress={liveProgress} planNow={planByTask} tz={tz} times={times} shift={shift}
+          canEdit={canEdit} onUpdate={onUpdateStep} onClose={() => setEditing(null)} />,
+        document.body,
+      )}
     </div>
     </ReportCrew.Provider>
+  );
+}
+
+/** One step from the report, in the quick view: status, %, the time it
+ *  happened, its comment (revised in place too), why it's behind. */
+function RowEditor({ id, milestones, progress, planNow, tz, times, shift, canEdit, onUpdate, onClose }: {
+  id: string; milestones: Milestone[]; progress?: Map<string, ProgressInfo>; planNow?: Map<string, number>;
+  tz: string; times: ShiftTimes; shift: ShiftWindow; canEdit: boolean;
+  onUpdate: (id: string, u: StepUpdate) => Promise<boolean>; onClose: () => void;
+}) {
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [onClose]);
+  const step = milestones.find((m) => m.id === id);
+  if (!step) return null;
+  const parent = step.parentId ? milestones.find((m) => m.id === step.parentId) : undefined;
+  const parents = new Set(milestones.map((m) => m.parentId).filter(Boolean));
+  const others = parent ? milestones.filter((m) => m.parentId === parent.id && m.id !== id && m.id && !parents.has(m.id)) : [];
+  const label = `${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`;
+  return (
+    <div className="fixed inset-0 z-[180] bg-black/30 print:hidden" onClick={onClose}>
+      <div role="dialog" aria-label={`Update ${step.name}`} onClick={(e) => e.stopPropagation()}
+        className="absolute left-1/2 top-16 -translate-x-1/2 w-[440px] max-w-[94vw] max-h-[82dvh] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-xl max-sm:left-0 max-sm:right-0 max-sm:top-auto max-sm:bottom-0 max-sm:translate-x-0 max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none max-sm:max-h-[88dvh]">
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] pl-3 pr-1.5 py-1">
+          <span className="text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Update from the report</span>
+          <button type="button" onClick={onClose} aria-label="Close" className="w-7 h-7 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+        </div>
+        <CalendarQuickView key={id} task={parent ?? step} onDay={[step]} others={others} dayKey={shift.dayKey} band={shift.kind} dayLabel={label}
+          tz={tz} times={times} progress={progress} planNow={planNow} canEdit={canEdit} onUpdate={onUpdate} />
+      </div>
+    </div>
   );
 }
 
@@ -1069,6 +1118,9 @@ interface SheetCtx {
   removeNote: (n: ShiftNote & { shiftKey: string }) => void;
   error: string | null;
   tz: string;
+  /** The tables' order as dragged; null puts a table back the usual way. */
+  order?: TableOrder;
+  setOrder: (table: keyof TableOrder, ids: string[] | null) => void;
 }
 
 function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void; jumpTarget: ShiftWindow | null; noteOf?: (id: string) => { body: string; at?: string | null } | undefined; times: ShiftTimes;
@@ -1081,7 +1133,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
    *  could try, which crew; and what the last turnover asked of this one. */
   handover?: HandoverCtx;
   /** The project around the work, and the risk cards of the shifts before. */
-  safety?: { project: ProjectBase; recent?: HazardKind[][] } }): Sec[] {
+  safety?: { project: ProjectBase; recent?: HazardKind[][] };
+  /** Update a step from its row. */
+  onEdit?: (id: string) => void }): Sec[] {
   const { overall, review, goals, shift, next } = report;
   // A step's latest comment, as one quiet line under it (each step shows once).
   const comment = (r: ShiftRow) => {
@@ -1102,7 +1156,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   const tryOf = (r: ShiftRow) => (r.leaf.id && ho?.decisions[r.leaf.id]?.tryIt ? ho.decisions[r.leaf.id] : undefined);
   // Where every step goes — decided once (lib/turnoverPlan), the same as
   // the email: each step appears once, where it says what happens to it.
-  const plan = turnoverPlan(report, (id) => !!ho?.decisions[id]?.tryIt);
+  const plan = turnoverPlan(report, (id) => !!ho?.decisions[id]?.tryIt, o.sheet?.order);
   const { items, tried: tryList, pulled: pulledRows } = plan;
   const planList = items.filter((x) => x.kind === "next").map((x) => x.r);
   const planHrs = planList.reduce((a, r) => a + (r.hoursNext ?? 0), 0);
@@ -1242,6 +1296,14 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     { which: "next" as const, title: `${shiftName(next)} ${c.D(next.start)} — who's coming`, rows: withExtra(cr.coming, sh?.crewsNext), counts: sh?.crewsNext ?? {}, hint: sh?.hintNext },
   ];
   const onSite = (counts: Record<string, CrewCount>) => Object.values(counts).reduce((a, x) => a + (x.headcount ?? 0), 0);
+  // Each table's rows drag into the order the meeting wants; the email follows.
+  const sortOf = (print: boolean, table: keyof TableOrder) => (!print && sh?.edit ? { onReorder: (ids: string[]) => sh.setOrder(table, ids), runs: !!sh.order?.[table]?.length } : undefined);
+  const putBack = (print: boolean, table: keyof TableOrder) => (!print && sh?.edit && sh.order?.[table]?.length ? (
+    <div className="flex justify-end -mb-1 print:hidden">
+      <button type="button" onClick={() => sh.setOrder(table, null)} className="text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">Put back in the usual order</button>
+    </div>
+  ) : null);
+  const editRow = o.onEdit;
   return [
     {
       id: "stand", title: "Where we stand", short: "Status",
@@ -1325,8 +1387,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       body: (print) => (
         <div className="space-y-2">
           {askedText && <div className="text-[11.5px] font-semibold text-slate-700 dark:text-slate-200">{askedText}</div>}
+          {doneRows.length > 0 && putBack(print, "done")}
           {doneRows.length > 0 ? (
-            <DoneTasks rows={doneTasks} print={print} stamps={!!sh?.stamps} T={c.T} />
+            <DoneTasks rows={doneTasks} print={print} stamps={!!sh?.stamps} T={c.T} sort={sortOf(print, "done")} onEdit={print ? undefined : editRow} />
           ) : (
             <Empty>
               Nothing was {nothingLast ? "planned" : "completed"}{forCrew} on this shift.
@@ -1355,8 +1418,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
             </div>
           )}
           <WatchBox lines={watch} label={`Watch ${next.kind === "night" ? "tonight" : "today"}`} print={print} />
+          {planList.length + tryList.length > 0 && putBack(print, "next")}
           {planList.length + tryList.length === 0 ? <Empty>Nothing is scheduled for the next shift.</Empty> : (
-            <StepTable print={print} box whenHead="When" rightHead="Done → goal" rows={nextRows(print, true)} />
+            <StepTable print={print} box whenHead="When" rightHead="Done → goal" rows={nextRows(print, true)} sort={sortOf(print, "next")} onEdit={print ? undefined : editRow} />
           )}
           {tryLine && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{tryLine}</div>}
           {goals.pulledHeld.length > 0 && (
@@ -1378,7 +1442,12 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       id: "carries", title: `Carries over to ${otherKind} shift — ${c.D(next.end)}`, short: `To ${otherKind} shift`,
       sub: laterSub, count: laterCount,
       flag: plan.held.some((r) => r.status === "blocked") ? "rose" : null,
-      body: (print: boolean) => <StepTable print={print} whenHead="Why" rightHead="Done" rows={nextRows(print, false)} />,
+      body: (print: boolean) => (
+        <div className="space-y-2">
+          {putBack(print, "later")}
+          <StepTable print={print} whenHead="Why" rightHead="Done" rows={nextRows(print, false)} sort={sortOf(print, "later")} onEdit={print ? undefined : editRow} />
+        </div>
+      ),
       data: () => [stepsBlock(nextRows(true, false), "Done", "Why")],
     } as Sec] : []),
     closeSection("Close", ["Outgoing supervisor", "Incoming supervisor", "Crew lead"], undefined, sh ? (print) => (
@@ -1881,22 +1950,32 @@ function Progress({ right, print }: { right: string; print?: boolean }) {
 /** One line per step, grouped under its equipment: the task to read first,
  *  then what's going on with it (quiet unless it matters), when, who, WO,
  *  how far along. The same reading order in every list. */
-function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerLine, flat }: {
+function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerLine, flat, sort, onEdit }: {
   rows: TRow[]; print: boolean; box?: boolean; rightHead?: string; whenHead?: string;
+  /** Rows dragged into order at the meeting; `runs` once an order is set —
+   *  the rows keep it, and a task is named again where it comes back. */
+  sort?: { onReorder: (ids: string[]) => void; runs: boolean };
+  /** Update a step right from its row (status, %, time, comment). */
+  onEdit?: (id: string) => void;
   /** One list in the given order, the equipment named on each line (a
    *  sequence — the critical chain — reads in order, not by equipment). */
   flat?: boolean;
   /** Adds a blank "owner / decision" line under each row (decisions). */
   ownerLine?: boolean;
 }) {
-  // Group consecutive-by-first-appearance, keeping each group's rows in order.
-  const groups: Array<{ g: TGroup; rows: TRow[] }> = [];
+  // Group consecutive-by-first-appearance, keeping each group's rows in
+  // order — or, in a dragged order, by runs.
+  const groups: Array<{ g: TGroup; rows: TRow[]; key: string }> = [];
   const at = new Map<string, number>();
   for (const r of rows) {
-    const k = r.group.title && !flat ? r.group.key : "__solo";
-    if (!at.has(k)) { at.set(k, groups.length); groups.push({ g: r.group.title && !flat ? r.group : { key: "__solo", title: "", crumbs: "", meta: "" }, rows: [] }); }
+    const base = r.group.title && !flat ? r.group.key : "__solo";
+    const last = groups[groups.length - 1];
+    const k = sort?.runs ? (last && last.g.key === base ? last.key : `${base}#${groups.length}`) : base;
+    if (!at.has(k)) { at.set(k, groups.length); groups.push({ g: r.group.title && !flat ? r.group : { key: "__solo", title: "", crumbs: "", meta: "" }, rows: [], key: k }); }
     groups[at.get(k)!].rows.push(r);
   }
+  const { box: sortBox, grip, indicator: sortLine, moving } = useSortRows(print ? undefined : sort?.onReorder);
+  const edit = (r: TRow) => (!print && onEdit ? <EditBtn label={r.name} onClick={() => onEdit(r.id)} /> : null);
   const crew = React.useContext(ReportCrew);
   const open = useQuickLookOpen();
   const hasN = rows.some((r) => r.n);
@@ -1915,28 +1994,31 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
   const cell = print ? "px-1 py-[3px]" : "px-2 py-2";
   const taskCls = `font-semibold text-slate-900 dark:text-slate-50 ${print ? "text-[9pt]" : "text-[13.5px]"}`;
   return (
-    <>
+    <div ref={sortBox} className="relative">
+    {sortLine}
     {/* On a phone: a full-width line per step — the task, what's going on
         with it, who · when · WO, and how far along. */}
     {!print && (
       <div className="sm:hidden">
-        {groups.map(({ g, rows: list }) => (
-          <div key={g.key} className="mt-3 first:mt-0">
+        {groups.map(({ g, rows: list, key }) => (
+          <div key={key} className="mt-3 first:mt-0">
             {g.title && (
-              <div className="pb-1 border-b border-slate-300 dark:border-slate-600 text-[12px] font-semibold text-slate-700 dark:text-slate-300">
+              <div className="group/sort pb-1 border-b border-slate-300 dark:border-slate-600 text-[12px] font-semibold text-slate-700 dark:text-slate-300">
+                <Grip props={grip(list.map((x) => x.id), g.title)} />
                 <GroupTitle title={g.title} />
                 {g.meta && <div className="text-[11px] font-normal text-slate-500 dark:text-slate-400">{g.meta}</div>}
               </div>
             )}
             {list.map((r) => (
-              <div key={r.id} className="py-2.5 border-b border-slate-100 dark:border-slate-800">
+              <div key={r.id} data-sort-id={r.id} className={`group/sort py-2.5 border-b border-slate-100 dark:border-slate-800 ${moving(r.id) ? "opacity-40" : ""}`}>
                 <div className="flex items-start gap-2">
+                  <Grip props={grip([r.id], r.name)} className="mt-0.5 ml-0" />
                   {box && <span className="pt-1"><Box /></span>}
                   {r.n && <span className="pt-0.5"><Num n={r.n.num} /></span>}
                   <div className="flex-1 min-w-0">
                     <div className="text-[14.5px] leading-snug">
                       {flat && r.group.title && <span className="text-slate-500 dark:text-slate-400">{r.group.title} › </span>}
-                      {nameOf(r, "font-semibold text-slate-900 dark:text-slate-50")}{critical(r) && <CriticalTag />}
+                      {nameOf(r, "font-semibold text-slate-900 dark:text-slate-50")}{critical(r) && <CriticalTag />}{edit(r)}
                     </div>
                     <StatusLine tags={statusOf(r)} />
                     <div className="mt-1 text-[12px] text-slate-600 dark:text-slate-300">
@@ -1969,11 +2051,12 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
           </tr>
         </thead>
         <tbody>
-          {groups.map(({ g, rows: list }) => (
-            <React.Fragment key={g.key}>
+          {groups.map(({ g, rows: list, key }) => (
+            <React.Fragment key={key}>
               {g.title && (
-                <tr className="border-b border-slate-300 dark:border-slate-600">
+                <tr className="group/sort border-b border-slate-300 dark:border-slate-600">
                   <td colSpan={cols} className={`${print ? "px-1 pt-[7px] pb-[2px] text-[8pt]" : "px-2 pt-3.5 pb-1 text-[12px]"} font-semibold text-slate-700 dark:text-slate-300`}>
+                    <Grip props={grip(list.map((x) => x.id), g.title)} />
                     <GroupTitle title={g.title} />
                     {g.meta && <span className={`float-right font-normal text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-[11px]"}`}>{g.meta}</span>}
                   </td>
@@ -1981,13 +2064,14 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
               )}
               {list.map((r) => (
                 <React.Fragment key={r.id}>
-                  <tr className="border-b border-slate-100 dark:border-slate-800 align-top">
+                  <tr data-sort-id={r.id} className={`group/sort border-b border-slate-100 dark:border-slate-800 align-top ${moving(r.id) ? "opacity-40" : ""}`}>
                     {box && <td className={cell}><Box /></td>}
                     {hasN && <td className={`${cell} text-right`}>{r.n ? <Num n={r.n.num} /> : null}</td>}
                     <td className={cell}>
                       <div className="leading-snug">
                         {flat && r.group.title && <span className="text-slate-500 dark:text-slate-400">{r.group.title} › </span>}
-                        {nameOf(r, taskCls)}{critical(r) && <CriticalTag print={print} />}
+                        <Grip props={grip([r.id], r.name)} />
+                        {nameOf(r, taskCls)}{critical(r) && <CriticalTag print={print} />}{edit(r)}
                         {!print && r.inline && <span className="ml-2 align-middle">{r.inline}</span>}
                       </div>
                       <StatusLine tags={statusOf(r)} print={print} />
@@ -2011,7 +2095,17 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
         </tbody>
       </table>
     </div>
-    </>
+    </div>
+  );
+}
+
+/** A quiet pencil on a row: update the step right here. */
+function EditBtn({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} aria-label={`Update ${label}`} title="Update this step — status, %, time, comment"
+      className="ml-1 inline-flex items-center justify-center w-5 h-5 align-middle rounded text-slate-400 opacity-50 group-hover/sort:opacity-100 pointer-coarse:opacity-100 hover:bg-slate-200/70 hover:text-slate-700 dark:hover:bg-slate-700/60 dark:hover:text-slate-200 focus:opacity-100 print:hidden">
+      <Pencil className="w-3 h-3" />
+    </button>
   );
 }
 
@@ -2021,7 +2115,7 @@ type DoneTask = ReturnType<typeof doneByTask>[number];
 
 /** The steps a task did this shift — one per line: its WO when the task
  *  has several, its time when times are on, its comment under it. */
-function DoneLines({ x, stamps, T, print }: { x: DoneTask; stamps: boolean; T: (ms: number) => string; print: boolean }) {
+function DoneLines({ x, stamps, T, print, onEdit }: { x: DoneTask; stamps: boolean; T: (ms: number) => string; print: boolean; onEdit?: (id: string) => void }) {
   return (
     <div>
       <div>{x.head}:</div>
@@ -2031,6 +2125,7 @@ function DoneLines({ x, stamps, T, print }: { x: DoneTask; stamps: boolean; T: (
           <div key={l.id} className="mt-0.5">
             {lead && <span className={`font-mono text-slate-600 dark:text-slate-300 mr-1.5 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>{lead}</span>}
             <span>{l.name}</span>
+            {!print && onEdit && <EditBtn label={l.name} onClick={() => onEdit(l.id)} />}
             {l.note && <div className={`italic text-slate-500 dark:text-slate-400 ${lead ? "ml-3" : ""} ${print ? "text-[7.5pt]" : "text-[11px]"}`}>“{l.note}”</div>}
           </div>
         );
@@ -2039,7 +2134,12 @@ function DoneLines({ x, stamps, T, print }: { x: DoneTask; stamps: boolean; T: (
   );
 }
 
-function DoneTasks({ rows, print, stamps = false, T }: { rows: DoneTask[]; print: boolean; stamps?: boolean; T: (ms: number) => string }) {
+function DoneTasks({ rows, print, stamps = false, T, sort, onEdit }: { rows: DoneTask[]; print: boolean; stamps?: boolean; T: (ms: number) => string;
+  /** Tasks dragged into order at the meeting. */
+  sort?: { onReorder: (keys: string[]) => void };
+  onEdit?: (id: string) => void;
+}) {
+  const { box: sortBox, grip, indicator: sortLine, moving } = useSortRows(print ? undefined : sort?.onReorder);
   const hasWo = rows.some((x) => x.wo);
   const resultCls = (t: string) => (t === "amber" ? "text-amber-700 dark:text-amber-300" : "text-emerald-700 dark:text-emerald-400");
   const vsCls = (t?: string) => (t === "rose" ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400");
@@ -2047,17 +2147,18 @@ function DoneTasks({ rows, print, stamps = false, T }: { rows: DoneTask[]; print
   const pctLine = (x: DoneTask) => (x.taskPct ? `task ${x.taskPct.pct}% done${x.taskPct.plan != null ? ` · plan ${x.taskPct.plan}%` : ""}` : null);
   const whyLine = (x: DoneTask) => x.why && <div className={`mt-0.5 italic font-medium text-amber-800 dark:text-amber-300 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>Why behind: {x.why}</div>;
   return (
-    <>
+    <div ref={sortBox} className="relative">
+      {sortLine}
       {!print && (
         <div className="sm:hidden rounded-md border border-slate-300 dark:border-slate-700 divide-y divide-slate-200 dark:divide-slate-700/60">
           {rows.map((x) => (
-            <div key={x.ids.join(",")} className="px-3 py-2 text-[12.5px] space-y-0.5">
+            <div key={x.ids.join(",")} data-sort-id={x.key} className={`group/sort px-3 py-2 text-[12.5px] space-y-0.5 ${moving(x.key) ? "opacity-40" : ""}`}>
               <div className="flex items-start justify-between gap-2">
-                <b className="text-[var(--color-text)] break-words">{x.task}{x.wo && <span className="ml-1.5 font-mono font-semibold text-[11px] text-[var(--color-text-muted)]">WO {x.wo}</span>}</b>
+                <b className="text-[var(--color-text)] break-words"><Grip props={grip([x.key], x.task)} />{x.task}{x.wo && <span className="ml-1.5 font-mono font-semibold text-[11px] text-[var(--color-text-muted)]">WO {x.wo}</span>}</b>
                 {x.vs.text && <b className={`shrink-0 font-mono text-[12px] ${vsCls(x.vs.tone)}`}>{x.vs.text}</b>}
               </div>
               {pctLine(x) && <div className="text-[11px] text-[var(--color-text-muted)]">{pctLine(x)}</div>}
-              <div className="text-[var(--color-text)] break-words"><DoneLines x={x} stamps={stamps} T={T} print={false} /></div>
+              <div className="text-[var(--color-text)] break-words"><DoneLines x={x} stamps={stamps} T={T} print={false} onEdit={onEdit} /></div>
               <div className={`font-bold break-words ${resultCls(x.result.tone)}`}>{x.result.text}</div>
               {whyLine(x)}
               {x.who && <div className="text-[11.5px] text-[var(--color-text-muted)] break-words">{x.who}</div>}
@@ -2075,10 +2176,10 @@ function DoneTasks({ rows, print, stamps = false, T }: { rows: DoneTask[]; print
           </thead>
           <tbody>
             {rows.map((x) => (
-              <tr key={x.ids.join(",")} className="border-b border-slate-100 dark:border-slate-800 align-top">
-                <td className={`${cell} font-semibold break-words`}>{x.task}{pctLine(x) && <div className={`font-normal text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-[11px]"}`}>{pctLine(x)}</div>}</td>
+              <tr key={x.ids.join(",")} data-sort-id={x.key} className={`group/sort border-b border-slate-100 dark:border-slate-800 align-top ${moving(x.key) ? "opacity-40" : ""}`}>
+                <td className={`${cell} font-semibold break-words`}><Grip props={grip([x.key], x.task)} />{x.task}{pctLine(x) && <div className={`font-normal text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-[11px]"}`}>{pctLine(x)}</div>}</td>
                 {hasWo && <td className={`${cell} font-mono text-[11px] break-words`}>{x.wo.split(/,\s*/).map((w, i) => <span key={i} className="block">{w}</span>)}</td>}
-                <td className={`${cell} break-words`}><DoneLines x={x} stamps={stamps} T={T} print={print} /></td>
+                <td className={`${cell} break-words`}><DoneLines x={x} stamps={stamps} T={T} print={print} onEdit={onEdit} /></td>
                 <td className={`${cell} text-[11.5px] text-[var(--color-text-muted)] break-words`}>{x.who}</td>
                 <td className={`${cell} font-bold break-words ${resultCls(x.result.tone)}`}>{x.result.text}{whyLine(x)}</td>
                 <td className={`${cell} text-right font-mono font-bold whitespace-nowrap ${vsCls(x.vs.tone)}`}>{x.vs.text}</td>
@@ -2087,7 +2188,7 @@ function DoneTasks({ rows, print, stamps = false, T }: { rows: DoneTask[]; print
           </tbody>
         </table>
       </div>
-    </>
+    </div>
   );
 }
 

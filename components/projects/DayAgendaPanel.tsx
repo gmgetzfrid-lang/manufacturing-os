@@ -25,13 +25,15 @@ import ProgressControl, { PICK_PCTS } from "@/components/projects/ProgressContro
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { clockLabel, dayKey, dayKeyToMs, fmtInTz, addDays, tzAbbrev } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
-import { overdueOpenWork, startedEarlyWork } from "@/lib/openWork";
+import { overdueOpenWork } from "@/lib/openWork";
 import { DEFAULT_SHIFT_TIMES, expectedByParent, expectedFraction, shiftAt, shiftWindow, workShiftOf, type ShiftTimes, type ShiftCredit, type ShiftWindow } from "@/lib/shiftReport";
 import type { StepUpdate } from "@/components/projects/CalendarQuickView";
 import { clockOnShift, typeClock } from "@/components/projects/ShiftRecordParts";
 import { latestNotes, updateMilestoneNote } from "@/lib/milestones";
 import ShiftMark from "@/components/projects/ShiftMark";
-import { stepBandDays, type BandDays } from "@/lib/shiftBands";
+import { type BandDays } from "@/lib/shiftBands";
+import { asBuilt } from "@/lib/asBuilt";
+import { whenChoices } from "@/components/projects/ProgressControl";
 import { inheritedWorkOrders } from "@/lib/workOrderCrew";
 
 interface Props {
@@ -82,7 +84,9 @@ interface Row {
   startMs: number;
   finishMs: number;
   /** Why this row is on today although its plan slot is elsewhere. */
-  live?: "overdue" | "started-early";
+  live?: "overdue" | "started-early" | "done-ahead";
+  /** Its planned start — when it's shown ahead of it. */
+  plannedStart?: number;
 }
 
 interface EquipmentGroup {
@@ -112,9 +116,12 @@ export default function DayAgendaPanel({
   // overdue open steps (carry-over) and steps started ahead of plan.
   const isToday = dayKey(Date.now(), tz) === day;
   const live = useMemo(() => {
-    if (!isToday) return { overdue: [] as ReturnType<typeof overdueOpenWork>, early: [] as ReturnType<typeof startedEarlyWork> };
-    return { overdue: overdueOpenWork(milestones, dayMs), early: startedEarlyWork(milestones, addDays(dayMs, 1, tz)) };
-  }, [isToday, milestones, dayMs, tz]);
+    if (!isToday) return { overdue: [] as ReturnType<typeof overdueOpenWork> };
+    return { overdue: overdueOpenWork(milestones, dayMs) };
+  }, [isToday, milestones, dayMs]);
+  // As built: a step done or started ahead of plan is on the day it was
+  // worked (lib/asBuilt) — still due when it's planned.
+  const built = useMemo(() => asBuilt(milestones, childrenByParent, tz, shiftTimes), [milestones, childrenByParent, tz, shiftTimes]);
 
   const groups = useMemo(() => {
     const isLeaf = (m: Milestone) => !m.id || (childrenByParent.get(m.id) ?? []).length === 0;
@@ -124,16 +131,19 @@ export default function DayAgendaPanel({
     const prev = dayKey(addDays(dayMs, -1, tz), tz), next = dayKey(addDays(dayMs, 1, tz), tz);
     for (const m of milestones) {
       if (!isLeaf(m) || !m.plannedAt) continue;
-      const s = startMsOf(m), f = finishMsOf(m);
+      const shown = built.row(m);
+      const s = startMsOf(shown), f = finishMsOf(shown);
       if (!Number.isFinite(s) || !Number.isFinite(f)) continue;
       const sKey = dayKey(s, tz), fKey = dayKey(f, tz);
       if (sKey > next || fKey < prev) continue;
-      const bands = stepBandDays(m, tz, shiftTimes);
+      const bands = built.bands(m);
       if (!bands.day.has(day) && !bands.night.has(day)) continue;
-      rows.push({ leaf: m, bands, startsToday: sKey === day, endsToday: fKey === day, startMs: s, finishMs: f });
+      const b = built.span(m);
+      const ahead = b?.ahead ? (b.kind === "done" ? "done-ahead" as const : "started-early" as const) : undefined;
+      rows.push({ leaf: m, bands, startsToday: sKey === day, endsToday: fKey === day, startMs: s, finishMs: f, live: ahead, plannedStart: startMsOf(m) });
     }
-    for (const w of live.overdue) rows.push({ leaf: w.leaf, startsToday: false, endsToday: false, startMs: w.start, finishMs: w.finish, live: "overdue" });
-    for (const w of live.early) rows.push({ leaf: w.leaf, startsToday: false, endsToday: false, startMs: w.start, finishMs: w.finish, live: "started-early" });
+    const listed = new Set(rows.map((r) => r.leaf.id));
+    for (const w of live.overdue) if (!listed.has(w.leaf.id)) rows.push({ leaf: w.leaf, startsToday: false, endsToday: false, startMs: w.start, finishMs: w.finish, live: "overdue" });
     // Group by immediate parent; order groups by their first step's time.
     const byParent = new Map<string, EquipmentGroup>();
     for (const r of rows) {
@@ -160,8 +170,9 @@ export default function DayAgendaPanel({
     out.sort((a, b) => cmpRow(a.rows[0], b.rows[0]));
     // Equipment in the order its work starts; its steps in time order inside.
     return out;
-  }, [milestones, childrenByParent, ancestorsOf, day, tz, live, dayMs, shiftTimes]);
+  }, [milestones, childrenByParent, ancestorsOf, day, tz, live, dayMs, built]);
 
+  const aheadCount = useMemo(() => groups.reduce((a, g) => a + g.rows.filter((r) => r.live === "started-early" || r.live === "done-ahead").length, 0), [groups]);
   // Narrow to an equipment tag, WO number, step name or crew — the way a
   // contractor's report names the work.
   const shownGroups = useMemo(() => {
@@ -243,12 +254,6 @@ export default function DayAgendaPanel({
   const goalAt = isToday ? shiftAt(nowMs, tz, shiftTimes).end : shiftWindow(day, "night", tz, shiftTimes).end;
   const goalLabel = isToday ? clockLabel(goalAt, tz) : fmtInTz(goalAt, tz, { weekday: "short" }) + " " + clockLabel(goalAt, tz);
   const goalOf = (m: Milestone) => Math.round(expectedFraction(m, goalAt, tz, shiftTimes) * 100);
-  // A time typed for a step is on this day: its day shift through the
-  // night shift's small hours.
-  const dayWin: ShiftWindow = useMemo(() => {
-    const d = shiftWindow(day, "day", tz, shiftTimes), n = shiftWindow(day, "night", tz, shiftTimes);
-    return { kind: "day", dayKey: day, start: d.start, end: n.end };
-  }, [day, tz, shiftTimes]);
   // What a step waits on, by name: predecessors not done yet.
   const byIdAll = useMemo(() => new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m])), [milestones]);
   const waitsOn = (m: Milestone) => (m.dependsOn ?? []).map((id) => byIdAll.get(id))
@@ -279,6 +284,8 @@ export default function DayAgendaPanel({
   const windowOf = (r: Row) => {
     if (r.live === "overdue") return "OVERDUE";
     if (r.live === "started-early") return "early";
+    // Done: when, if it was this day — not a span across days.
+    if (r.live === "done-ahead" || (r.leaf.status === "completed" && r.leaf.actualAt && r.endsToday)) return `done ${clockLabel(r.finishMs, tz) || "0:00"}`;
     // Under a day long: its clock, across midnight too ("18:00–3:00").
     if (r.finishMs > r.startMs && r.finishMs - r.startMs < 86_400_000 && (clockLabel(r.startMs, tz) || clockLabel(r.finishMs, tz))) return `${clockLabel(r.startMs, tz) || "0:00"}–${clockLabel(r.finishMs, tz) || "24:00"}`;
     const a = r.startsToday ? (clockLabel(r.startMs, tz) || "0:00") : "…";
@@ -287,9 +294,11 @@ export default function DayAgendaPanel({
     return `${a}–${b}`;
   };
   const spanNote = (r: Row) => {
+    const planned = r.plannedStart != null && Number.isFinite(r.plannedStart) ? `planned ${fmtInTz(r.plannedStart, tz, { weekday: "short", month: "short", day: "numeric" })} ${clockLabel(r.plannedStart, tz)}` : "planned later";
+    if (r.live === "done-ahead") return `${planned} — done ahead of plan`;
     if (r.leaf.status === "completed") return null;
     if (r.live === "overdue") return `was due ${fmtInTz(r.finishMs, tz, { month: "short", day: "numeric" })} ${clockLabel(r.finishMs, tz)} — carry-over, finish or re-plan it`;
-    if (r.live === "started-early") return `planned ${fmtInTz(r.startMs, tz, { month: "short", day: "numeric" })} ${clockLabel(r.startMs, tz)} — started ahead of plan`;
+    if (r.live === "started-early") return `${planned} — started ahead of plan`;
     if (r.startsToday && r.endsToday) return null;
     const parts: string[] = [];
     if (!r.startsToday) parts.push(`started ${fmtInTz(r.startMs, tz, { month: "short", day: "numeric" })}`);
@@ -319,7 +328,7 @@ export default function DayAgendaPanel({
               <div className="text-[11px] text-[var(--color-text-muted)]">
                 {totals.n === 0 ? "Nothing scheduled this day." : <>{totals.n} step{totals.n === 1 ? "" : "s"} · {totals.done} done · {totals.avg}% complete</>}
                 {isToday && live.overdue.length > 0 && <span className="ml-2 font-bold text-rose-700 dark:text-rose-300">{live.overdue.length} carried over</span>}
-                {isToday && live.early.length > 0 && <span className="ml-2 font-bold text-blue-700 dark:text-blue-300">{live.early.length} started early</span>}
+                {aheadCount > 0 && <span className="ml-2 font-bold text-blue-700 dark:text-blue-300">{aheadCount} worked ahead of plan</span>}
               </div>
             </div>
             <button onClick={() => onChangeDay(dayKey(addDays(dayMs, 1, tz), tz))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Next day"><ChevronRight className="w-4 h-4" /></button>
@@ -412,7 +421,7 @@ export default function DayAgendaPanel({
                       <div className={`px-4 py-2 flex items-center gap-3 ${openId === r.leaf.id ? "" : r.live === "overdue" ? "bg-rose-50 dark:bg-rose-950/40" : r.live === "started-early" ? "bg-blue-50/60 dark:bg-blue-950/30" : ""}`}>
                         {/* Day-only or night-only work is marked; round the clock is the norm. */}
                         {(() => { const w = workShiftOf(r.leaf, tz, shiftTimes); return w === "both" ? <span className="w-4 shrink-0" aria-hidden /> : <ShiftMark work={w} />; })()}
-                        <span className={`w-[80px] shrink-0 text-[11px] font-mono tabular-nums ${r.live === "overdue" ? "font-black text-rose-700 dark:text-rose-300" : r.live === "started-early" ? "font-bold text-blue-700 dark:text-blue-300" : "text-[var(--color-text-muted)]"}`}>{windowOf(r)}</span>
+                        <span className={`w-[80px] shrink-0 text-[11px] font-mono tabular-nums ${r.live === "overdue" ? "font-black text-rose-700 dark:text-rose-300" : r.live === "started-early" ? "font-bold text-blue-700 dark:text-blue-300" : r.live === "done-ahead" ? "font-bold text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text-muted)]"}`}>{windowOf(r)}</span>
                         <span className="shrink-0">
                           <StatusControl
                             status={r.leaf.status} size="sm" variant="dot" disabled={!canEdit || !onSetStatus || !r.leaf.id}
@@ -471,7 +480,8 @@ export default function DayAgendaPanel({
                         <QuickEdit key={r.leaf.id} leaf={r.leaf} pct={pct} canEdit={canEdit}
                           latest={latestByStep.get(r.leaf.id)} userId={userId} onNotesChanged={() => setNotesTick((t) => t + 1)}
                           onSetStatus={onSetStatus} onSetProgress={onSetProgress} onAddNote={onAddNote}
-                          onUpdateStep={onUpdateStep} win={dayWin} tz={tz}
+                          onUpdateStep={onUpdateStep} tz={tz} times={shiftTimes}
+                          shift={{ w: shiftWindow(day, sec.shift, tz, shiftTimes), label: `${fmtInTz(dayMs, tz, { weekday: "short" })} ${sec.shift}` }}
                           onOpenDetail={() => onOpenDetail(r.leaf)}
                           next={nextOf(r.leaf.id)} onNext={(id) => { setOpenId(id); openGroupOf(id); }} onClose={() => setOpenId(null)} />
                       )}
@@ -536,12 +546,13 @@ const PCTS = PICK_PCTS;
  *  it, a note. Each change saves on its own; Next opens the step below. */
 type LatestNote = { id: string; body: string; at: string | null; by: string | null; byId: string | null };
 
-function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, onUpdateStep, win, tz, onOpenDetail, next, onNext, onClose, latest, userId, onNotesChanged }: {
+function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, onUpdateStep, shift, tz, times, onOpenDetail, next, onNext, onClose, latest, userId, onNotesChanged }: {
   leaf: Milestone; pct: number; canEdit: boolean;
   /** Saves a status / % with its time and comment; without it, changes save as before. */
   onUpdateStep?: (id: string, u: StepUpdate) => Promise<boolean>;
-  /** The day being looked at — the time typed is on it. */
-  win: ShiftWindow; tz: string;
+  /** The shift of the day being looked at that this step is under — when
+   *  it happened, unless that's still ahead (then this shift or before). */
+  shift: { w: ShiftWindow; label: string }; tz: string; times: ShiftTimes;
   /** The step's latest comment — shown here; its author edits it in place. */
   latest?: LatestNote; userId?: string; onNotesChanged?: () => void;
   onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number, forShift?: ShiftCredit) => unknown;
@@ -594,6 +605,9 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
   const noteRef = useRef<HTMLInputElement>(null);
   const clockRef = useRef<HTMLInputElement>(null);
   const [clock, setClock] = useState("");
+  const [choice] = useState(() => whenChoices(shift, { tz, times }, Date.now()));
+  const [wi, setWi] = useState(choice.idx);
+  const win = (choice.choices[wi] ?? choice.choices[0]).w;
   const when = clock ? clockOnShift(win, clock, tz) : null;
   const whenAt = when && "at" in when ? when.at : null;
   // A change made here is said fresh — not typed over your last comment.
@@ -769,19 +783,29 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
         </div>
       )}
       {timed && (progressPending() || (holdTouched && !!hold)) && (
-        <div className="flex items-center gap-1.5">
-          {/* The time it happened — on this day; you're often typing it in later. */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {/* When it happened: the shift (this one, or a card further on
+              done ahead of plan: now or before) and the time. */}
           <span className={`w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] ${whenAt == null ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
-            Time<span className="block normal-case tracking-normal">{whenAt == null ? "required" : "24-hour"}</span>
+            When<span className="block normal-case tracking-normal">{whenAt == null ? "required" : "24-hour"}</span>
+          </span>
+          <span className="inline-flex flex-wrap gap-1" role="group" aria-label="Which shift">
+            {choice.choices.map((c, i) => (
+              <button key={c.w.start} type="button" disabled={ro} aria-pressed={i === wi} onClick={() => { setWi(i); setNeedMsg(null); }}
+                className={`h-7 px-2 rounded-md border font-bold pointer-coarse:h-9 ${i === wi ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>{c.label}</button>
+            ))}
           </span>
           <input ref={clockRef} value={clock} disabled={ro} inputMode="numeric" placeholder="hh:mm" aria-label="Time it happened, 24-hour"
             onChange={(e) => { setClock(typeClock(e.target.value)); setNeedMsg(null); }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (progressPending()) void commit(); else void saveHold(); } }}
             className={`h-7 w-[64px] px-1.5 rounded-md font-mono font-bold pointer-coarse:h-9 focus:outline-none focus:border-[var(--color-accent-ring)] ${whenAt == null ? "border-2 border-amber-400 bg-amber-50/60 dark:bg-amber-950/30" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)]"}`} />
-          <button type="button" disabled={ro} onClick={() => { setClock(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz })); setNeedMsg(null); }}
+          <button type="button" disabled={ro} onClick={() => { setWi(0); setClock(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz })); setNeedMsg(null); }}
             className="h-7 px-2 rounded-md border border-[var(--color-border-strong)] font-bold hover:bg-[var(--color-surface-2)] pointer-coarse:h-9">Now</button>
           <span className="text-[var(--color-text-muted)]">{when && "error" in when ? <span className="font-semibold text-rose-700 dark:text-rose-400">{when.error}</span> : whenAt != null ? fmtInTz(whenAt, tz, { weekday: "short", month: "short", day: "numeric" }) : fmtInTz(win.start, tz, { weekday: "short", month: "short", day: "numeric" })}</span>
         </div>
+      )}
+      {timed && choice.ahead && (progressPending() || (holdTouched && !!hold)) && (
+        <div className="ml-[70px] text-emerald-800 dark:text-emerald-300">Planned later than now — put in when it was really done; it shows on that day as worked ahead.</div>
       )}
       {onAddNote && latest && noteMode === "new" && (
         <div className="flex items-start gap-1.5">

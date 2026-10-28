@@ -25,7 +25,8 @@ import { splitPlacements, compareDayPlacements, wbsCompare, crewOf, startMsOf, f
 import { addDays as addDaysTz, addMonths as addMonthsTz, clockLabel, dayDiff as dayDiffTz, dayKey, dayKeyToMs, dayOfWeek, fmtInTz, hasTimeOfDay, tzAbbrev, startOfDay as startOfDayTz, startOfMonth as startOfMonthTz, wallClock } from "@/lib/scheduleTz";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { DEFAULT_SHIFT_TIMES, crewWindows, workShiftOf, workSpan, shiftWindow, shiftAt, type ShiftTimes, type ShiftCredit } from "@/lib/shiftReport";
-import { bandIndex, stepBandDays, type Band } from "@/lib/shiftBands";
+import { type Band } from "@/lib/shiftBands";
+import { asBuilt } from "@/lib/asBuilt";
 import ShiftMark from "@/components/projects/ShiftMark";
 import DayAgendaPanel from "@/components/projects/DayAgendaPanel";
 import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
@@ -78,7 +79,7 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /** A card in one shift of one day: the day shift, or that evening's night
  *  shift running into the next morning. */
-type Placed = DayPlacement<Milestone> & { band: Band; bandStart: number; bandEnd: number };
+type Placed = DayPlacement<Milestone> & { band: Band; bandStart: number; bandEnd: number; ahead?: boolean };
 
 export default function ScheduleCalendarTileView({ planNow, userId, milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail, detailOpen, onAddNote, onSetProgressNote, onStartNote, shiftTimes = DEFAULT_SHIFT_TIMES, onUpdateStep }: Props) {
   const tz = useScheduleTz();
@@ -103,11 +104,18 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   useLayoutEffect(() => {
     const el = subRef.current;
     if (!subPopover || !el) return;
-    const h = el.offsetHeight, vh = window.innerHeight;
-    let top = subPopover.top;
-    if (top + h > vh - 8) top = subPopover.anchorTop != null && subPopover.anchorTop - h - 4 >= 8 ? subPopover.anchorTop - h - 4 : Math.max(8, vh - h - 8);
-    el.style.top = `${top}px`;
-  });
+    // Again whenever it grows — a step's editor opening inside it.
+    const fit = () => {
+      const h = el.offsetHeight, vh = window.innerHeight;
+      let top = subPopover.top;
+      if (top + h > vh - 8) top = subPopover.anchorTop != null && subPopover.anchorTop - h - 4 >= 8 ? subPopover.anchorTop - h - 4 : Math.max(8, vh - h - 8);
+      el.style.top = `${top}px`;
+    };
+    fit();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fit) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, [subPopover]);
 
   // The day agenda: click a day number to get that day's full work list
   // (every step due, grouped by equipment, with progress entry).
@@ -260,8 +268,10 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
 
   // Each step's shifts by date: the day shift, or that evening's night
   // shift running into the next morning (lib/shiftBands).
-  const leafBands = useMemo(() => bandIndex(milestones.filter((m) => isLeaf(m)), tz, shiftTimes), [milestones, isLeaf, tz, shiftTimes]);
-  const bandsOf = useCallback((m: Milestone) => (m.id ? leafBands.get(m.id) : undefined) ?? stepBandDays(m, tz, shiftTimes), [leafBands, tz, shiftTimes]);
+  // As built: work done or started ahead of plan shows where it happened
+  // (lib/asBuilt) — the plan itself is untouched.
+  const built = useMemo(() => asBuilt(milestones, childrenByParent, tz, shiftTimes), [milestones, childrenByParent, tz, shiftTimes]);
+  const bandsOf = useCallback((m: Milestone) => built.bands(m), [built]);
 
   // Every task onto the shifts it's worked: each date's day shift and its
   // night shift (into the next morning). A work order sits in each shift
@@ -272,9 +282,12 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
     for (const ms of mains) {
       const steps = ms.id ? leafDescendants(ms) : [];
       const units = steps.length ? steps : [ms];
-      const s0 = startMs(ms), f0 = finishMs(ms);
+      const shown = built.row(ms);
+      const s0 = startMs(shown), f0 = finishMs(shown);
       if (!Number.isFinite(s0) || !Number.isFinite(f0)) continue;
       const start = startOfDayUTC(new Date(s0), tz);
+      // Days before its planned start: worked ahead of plan.
+      const plannedDay = Number.isFinite(startMs(ms)) ? ymd(new Date(startMs(ms)), tz) : null;
       const total = Math.max(1, dayDiff(start, startOfDayUTC(new Date(f0), tz), tz) + 1);
       const span = new Set(Array.from({ length: total }, (_, i) => ymd(addDaysUTC(start, i, tz), tz)));
       const keys = new Set(span);
@@ -283,8 +296,8 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         const dayIndex = Math.max(0, dayDiff(start, ymdToDate(key, tz), tz));
         const put = (band: Band, idle = false) => {
           const w = shiftWindow(key, band, tz, shiftTimes);
-          const win = idle ? { start: w.start, end: w.end } : windowIn(units.filter((st) => bandsOf(st)[band].has(key)), w.start, w.end, tz, shiftTimes);
-          slot(key)[band].push({ ms, dayIndex, spanDays: total, todayStart: win.start, todayEnd: win.end, idleToday: idle, crew: band, band, bandStart: w.start, bandEnd: w.end });
+          const win = idle ? { start: w.start, end: w.end } : windowIn(units.filter((st) => bandsOf(st)[band].has(key)).map(built.row), w.start, w.end, tz, shiftTimes);
+          slot(key)[band].push({ ms, dayIndex, spanDays: total, todayStart: win.start, todayEnd: win.end, idleToday: idle, crew: band, band, bandStart: w.start, bandEnd: w.end, ahead: !!plannedDay && key < plannedDay });
         };
         const d = units.some((st) => bandsOf(st).day.has(key)), n = units.some((st) => bandsOf(st).night.has(key));
         if (d && crewFilter !== "night") put("day");
@@ -294,7 +307,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
     }
     for (const v of m.values()) { v.day.sort(compareDayPlacements); v.night.sort(compareDayPlacements); }
     return m;
-  }, [mains, tz, leafDescendants, shiftTimes, crewFilter, bandsOf]);
+  }, [mains, tz, leafDescendants, shiftTimes, crewFilter, bandsOf, built]);
   const isDonePl = (p: Placed) => (p.ms.id ? progress?.get(p.ms.id)?.percent : undefined) === 100 || p.ms.status === "completed";
   const doneLast = (arr: Placed[]) => [...arr.filter((p) => !isDonePl(p)), ...arr.filter(isDonePl)];
   // A day's cards once each (a work order worked day and night counts once).
@@ -463,9 +476,10 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         key={`${p.ms.id}-${p.dayIndex}`}
         ms={p.ms} dayIndex={p.dayIndex} spanDays={p.spanDays}
         todayStart={p.todayStart} todayEnd={p.todayEnd} idleToday={p.idleToday} crewToday={p.crew} bandStart={p.bandStart} bandEnd={p.bandEnd}
+        aheadOf={p.ahead && Number.isFinite(startMs(p.ms)) ? fmtInTz(startMs(p.ms), tz, { weekday: "short", month: "short", day: "numeric" }) : undefined}
         childrenByParent={childrenByParent}
         ancestors={chain} color={color}
-        draggable={canEdit && !!p.ms.id && p.ms.status !== "completed"}
+        draggable={canEdit && !!p.ms.id && p.ms.status !== "completed" && !p.ahead}
         onDragStart={(e) => { setDragId(p.ms.id ?? null); e.dataTransfer.setData("text/plain", `${p.ms.id}|${key}`); }}
         onTouchDragStart={p.ms.id ? (e) => startTouchDrag(p.ms.id!, key, p.ms.name, e) : undefined}
         // The card opens its quick view — everything to update it, no sidebar.
@@ -853,7 +867,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         // Opened from a shift: that shift's steps; the rest behind a toggle.
         const coversDay = (l: Milestone) => {
           if (band) return bandsOf(l)[band].has(dayKey);
-          const s0 = startMs(l), f0 = finishMs(l);
+          const s0 = startMs(built.row(l)), f0 = finishMs(built.row(l));
           if (!Number.isFinite(s0) || !Number.isFinite(f0)) return false;
           return ymd(new Date(s0), tz) <= dayKey && dayKey <= ymd(new Date(f0), tz);
         };
@@ -962,7 +976,7 @@ function DayScroller({ children, fade }: { children: React.ReactNode; fade: stri
 }
 
 function Chip({
-  ms, dayIndex, spanDays, todayStart, todayEnd, idleToday, crewToday, bandStart, bandEnd, childrenByParent, ancestors, color, draggable, onDragStart, onTouchDragStart, onClick,
+  ms, dayIndex, spanDays, todayStart, todayEnd, idleToday, crewToday, bandStart, bandEnd, aheadOf, childrenByParent, ancestors, color, draggable, onDragStart, onTouchDragStart, onClick,
   progress, canExpand, isExpanded, onToggleExpand, selectable, selected, onToggleSelect, dimmed, shiftTimes,
 }: {
   ms: Milestone; dayIndex: number; spanDays: number;
@@ -972,6 +986,8 @@ function Chip({
   crewToday?: DayCrew;
   /** The shift it's shown in (its clock reads against it). */
   bandStart?: number; bandEnd?: number;
+  /** Shown here ahead of plan: the day it's planned to start. */
+  aheadOf?: string;
   childrenByParent: Map<string, Milestone[]>;
   ancestors?: Milestone[];
   color?: { bar: string; soft: string; text: string; dot: string };
@@ -1019,6 +1035,8 @@ function Chip({
       // Against its shift: "18:00–3:00", "→14:00", "all shift".
       const s = clockLabel(todayStart, tz) || "0:00", e = clockLabel(todayEnd, tz) || "0:00";
       const sIn = todayStart > bandStart + 60_000, eIn = todayEnd < bandEnd - 60_000 || todayStart >= bandEnd;
+      // A moment (work done at a time): just the time.
+      if (todayEnd - todayStart < 60_000 && sIn) return s;
       return sIn && eIn ? `${s}–${e}` : sIn ? `${s}→` : eIn ? `→${e}` : "all shift";
     }
     const dayStartMs = startOfDayTz(todayStart, tz);
@@ -1128,6 +1146,9 @@ function Chip({
                 <span title="Night-shift work" className="shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-[8.5px] font-black leading-[14px] bg-indigo-900 text-white dark:bg-indigo-300 dark:text-indigo-950">
                   <Moon className="w-2.5 h-2.5" />NIGHT
                 </span>
+              )}
+              {aheadOf && (
+                <span title={`Worked ahead of plan — planned to start ${aheadOf}`} className="shrink-0 rounded px-1 text-[8.5px] font-black leading-[14px] uppercase bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200">Ahead</span>
               )}
               {crew === "both" && <ShiftMark work="both" />}
               {crew === "mixed" && (

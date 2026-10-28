@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import type { TableOrder } from "@/lib/turnoverPlan";
 
 export interface CrewCount {
   /** The crew's supervisor at the turnover meeting — doubles as attendance. */
@@ -39,6 +40,8 @@ export interface ShiftRecord {
   crews?: Record<string, CrewCount>;
   incidents?: { none?: { at: number; by?: string | null } | null; items?: Incident[] };
   notes?: ShiftNote[];
+  /** The report's tables as dragged into order at the meeting. */
+  order?: TableOrder;
 }
 
 export const SHIFT_RECORD_MIGRATION = "20261105_shift_record.sql";

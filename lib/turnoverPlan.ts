@@ -16,6 +16,19 @@ import type { ShiftReport, ShiftRow } from "@/lib/shiftReport";
 import { equipmentTag } from "@/lib/safetyMoment";
 
 export type NextKind = "next" | "try" | "carry" | "held";
+
+/** The order the supervisor dragged each table into, kept on the shift's
+ *  record: Done by task, Next and Carries by step. Anything not in it (new
+ *  since) follows, in the usual order. */
+export interface TableOrder { done?: string[]; next?: string[]; later?: string[] }
+
+/** `list` in `order` first, then the rest as they were. */
+export function inOrder<T>(list: T[], keyOf: (x: T) => string, order?: string[]): T[] {
+  if (!order?.length) return list;
+  const at = new Map(order.map((k, i) => [k, i]));
+  const known = list.filter((x) => at.has(keyOf(x))).sort((a, b) => at.get(keyOf(a))! - at.get(keyOf(b))!);
+  return [...known, ...list.filter((x) => !at.has(keyOf(x)))];
+}
 export type NextTone = "rose" | "amber" | "emerald" | "muted";
 
 export interface TurnoverPlan {
@@ -32,11 +45,13 @@ export interface TurnoverPlan {
   pulled: ShiftRow[];
   carries: ShiftRow[];
   held: ShiftRow[];
+  /** The tables' own order, when the supervisor set one. */
+  order?: TableOrder;
 }
 
 const isHeld = (r: ShiftRow) => r.status === "blocked" || r.status === "on_hold";
 
-export function turnoverPlan(report: ShiftReport, isTried: (id: string) => boolean): TurnoverPlan {
+export function turnoverPlan(report: ShiftReport, isTried: (id: string) => boolean, order?: TableOrder): TurnoverPlan {
   const { review, goals, blocked } = report;
   const marked = (r: ShiftRow) => !!r.leaf.id && isTried(r.leaf.id);
   // The other crew's work: unfinished, put in hours its crew isn't on, or
@@ -64,6 +79,14 @@ export function turnoverPlan(report: ShiftReport, isTried: (id: string) => boole
   add(allCarries.filter((r) => !isHeld(r)), "carry");
   const RANK: Record<NextKind, number> = { next: 0, try: 1, carry: 2, held: 3 };
   items.sort((a, b) => RANK[a.kind] - RANK[b.kind]);
+  // The order dragged at the meeting: the next crew's table (its numbers
+  // follow), and the other crew's.
+  if (order?.next?.length || order?.later?.length) {
+    const key = (x: { r: ShiftRow }) => x.r.leaf.id ?? x.r.leaf.name;
+    const tonight = items.filter((x) => x.kind === "next" || x.kind === "try");
+    const later = items.filter((x) => x.kind === "carry" || x.kind === "held");
+    items.splice(0, items.length, ...inOrder(tonight, key, order.next), ...inOrder(later, key, order.later));
+  }
   const kindOf = new Map(items.map((x) => [x.r, x.kind]));
   const done = review.done;
   const doneIds = new Set(done.map((r) => r.leaf.id ?? r.leaf.name));
@@ -72,7 +95,7 @@ export function turnoverPlan(report: ShiftReport, isTried: (id: string) => boole
   const moved = (review.knownStart ? review.progressed : review.ahead)
     .filter((r) => r.percent < 100 && !doneIds.has(r.leaf.id ?? r.leaf.name));
   return {
-    done, moved, items, kindOf, tried, pulled,
+    done, moved, items, kindOf, tried, pulled, order,
     carries: items.filter((x) => x.kind === "carry").map((x) => x.r),
     held: items.filter((x) => x.kind === "held").map((x) => x.r),
   };
@@ -281,13 +304,14 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
   taskPct?: { pct: number; plan?: number };
   /** Why it's behind — the steps behind that have a reason given. */
   why?: string;
+  key: string;
 }> {
   const groups = new Map<string, ShiftRow[]>();
   for (const r of [...plan.done, ...plan.moved]) {
     const k = r.parentId ?? `solo:${r.leaf.id ?? r.leaf.name}`;
     groups.set(k, [...(groups.get(k) ?? []), r]);
   }
-  return [...groups.values()].map((rows) => {
+  return inOrder([...groups.entries()], ([k]) => k, plan.order?.done).map(([key, rows]) => {
     const done = rows.filter((r) => r.percent >= 100);
     const moved = rows.filter((r) => r.percent < 100);
     const early = done.filter((r) => r.plannedLater);
@@ -348,6 +372,8 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
       result: { text: parts.join("; "), tone: late.length || behind.length ? "amber" : "emerald" },
       vs: Math.abs(net) < 0.1 ? { text: "" } : net > 0 ? { text: `+${h}`, tone: "emerald" } : { text: `−${h}`, tone: "rose" },
       ids: rows.map((r) => r.leaf.id ?? r.leaf.name),
+      /** The task's place in the table — what a dragged order keeps. */
+      key,
     };
   });
 }

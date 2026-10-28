@@ -17,10 +17,12 @@ import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { leafPercent } from "@/lib/scheduleProgress";
 import { expectedFraction, shiftWindow, workHours, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
 import { fmtInTz } from "@/lib/scheduleTz";
-import { notesFor } from "@/lib/milestones";
+import { notesFor, updateMilestoneNote } from "@/lib/milestones";
 import { loadProgressLog, type ProgressLogRow } from "@/lib/progressHistory";
 import { describeChange } from "@/lib/timeLog";
 import { clockOnShift, typeClock } from "@/components/projects/ShiftRecordParts";
+import { whenChoices } from "@/components/projects/ProgressControl";
+import { builtSpan } from "@/lib/asBuilt";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 
 /** What the quick view saves for a step. */
@@ -58,7 +60,8 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
   planNow?: Map<string, number>;
   canEdit: boolean;
   onUpdate?: (id: string, u: StepUpdate) => Promise<boolean>;
-  onOpenDetail: (m: Milestone) => void;
+  /** The side bar, for planning changes — not offered where there's none. */
+  onOpenDetail?: (m: Milestone) => void;
   onMoveDays?: (id: string, delta: number) => void;
 }) {
   const [now, setNow] = useState(() => Date.now());
@@ -101,7 +104,16 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
     const d = shiftWindow(dayKey, "day", tz, times), n = shiftWindow(dayKey, "night", tz, times);
     return { kind: "day", dayKey, start: d.start, end: n.end };
   }, [band, dayKey, tz, times]);
-  const fmt = (t: number) => fmtInTz(t, tz, { weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false });
+  // "Tue 14:30" this week; further off, with its date ("Oct 23 16:23").
+  const fmt = (t: number) => fmtInTz(t, tz, Math.abs(t - now) < 6 * 86_400_000
+    ? { weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false }
+    : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+  // When it happened: this card's shift — or, for a card further on in the
+  // calendar (work done ahead of plan), this shift and the ones before.
+  const when = useMemo(() => {
+    const day = fmtInTz(win.start, tz, { weekday: "short" });
+    return whenChoices({ w: win, label: band ? `${day} ${band}` : fmtInTz(win.start, tz, { weekday: "short", month: "short", day: "numeric" }) }, { tz, times }, now);
+  }, [win, band, tz, times, now]);
   const [open, setOpen] = useState<string | null>(onDay.length === 1 ? onDay[0].id ?? null : null);
   const [showOthers, setShowOthers] = useState(false);
 
@@ -151,7 +163,14 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
           <span className="flex-1 min-w-0">
             <span className={`block text-[12.5px] font-semibold break-words ${m.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{m.name}</span>
             <span className="block font-mono text-[10px] text-[var(--color-text-muted)]">
-              {Number.isFinite(s0) && Number.isFinite(f0) ? `${fmt(s0)} → ${fmt(f0)}` : ""}{m.status !== "completed" ? ` · plan ${plan}% by now` : ""}{m.workOrderRef && wos.length > 1 ? ` · WO ${m.workOrderRef}` : ""}
+              {(() => {
+                // Where it actually happened, beside the plan.
+                const b = builtSpan(m);
+                const planned = Number.isFinite(s0) && Number.isFinite(f0) ? `${fmt(s0)} → ${fmt(f0)}` : "";
+                if (b.kind === "done") return `Done ${fmt(b.finish)}${planned ? ` · planned ${planned}` : ""}`;
+                if (b.kind === "started") return `Started ${fmt(b.start)}${planned ? ` · planned ${planned}` : ""}`;
+                return planned;
+              })()}{m.status !== "completed" ? ` · plan ${plan}% by now` : ""}{m.workOrderRef && wos.length > 1 ? ` · WO ${m.workOrderRef}` : ""}
             </span>
             {held && (
               <span className="block text-[11px] font-semibold text-amber-800 dark:text-amber-300">
@@ -167,7 +186,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
           </span>
         </button>
         {isOpen && (
-          <StepEditor key={`${id}:${m.status}:${pct}`} m={m} pct={pct} plan={plan} hours={h} info={info} win={win} tz={tz} fmt={fmt}
+          <StepEditor key={`${id}:${m.status}:${pct}`} m={m} pct={pct} plan={plan} hours={h} info={info} when={when} tz={tz} fmt={fmt}
             canEdit={canEdit && !!onUpdate && !!m.id} onSave={(u) => onUpdate!(m.id!, u)} onMoveDays={onMoveDays} />
         )}
       </li>
@@ -191,16 +210,56 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
       )}
       <div className="px-3 py-1.5 border-t border-[var(--color-border)] flex items-center justify-between gap-2 text-[10.5px] text-[var(--color-text-faint)]">
         <span>Tap a step to update it.</span>
-        <button type="button" onClick={() => onOpenDetail(task)} className="font-semibold text-[var(--color-accent)] hover:underline">Schedule details (move, depends on) ›</button>
+        {onOpenDetail && <button type="button" onClick={() => onOpenDetail(task)} className="font-semibold text-[var(--color-accent)] hover:underline">Schedule details (move, depends on) ›</button>}
       </div>
     </div>
   );
 }
 
-function StepEditor({ m, pct, plan, hours, info, win, tz, fmt, canEdit, onSave, onMoveDays }: {
+/** The last comment, fixed in place — the same comment, the same time;
+ *  what the report shows changes with it. */
+function ReviseComment({ note, fmt }: { note: MilestoneNote; fmt: (t: number) => string }) {
+  const [text, setText] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const save = async () => {
+    if (text == null || !note.id) return;
+    if (!text.trim()) { setMsg("A comment can't be empty."); return; }
+    if (text.trim() === (note.body ?? "").trim()) { setText(null); return; }
+    setBusy(true); setMsg(null);
+    const ok = await updateMilestoneNote(note.id, text).then(() => true, (e: Error) => { setMsg(e.message); return false; });
+    setBusy(false);
+    if (ok) setText(null);
+  };
+  if (text == null) {
+    return (
+      <div className="flex items-baseline gap-1.5 text-[var(--color-text-muted)]">
+        <span className="min-w-0 break-words">Last comment: <i>“{note.body}”</i> — {fmt(ms(note.happenedAt ?? note.createdAt))}</span>
+        <button type="button" onClick={() => { setText(note.body ?? ""); setMsg(null); }} className="shrink-0 font-bold text-[var(--color-accent)] hover:underline">Revise</button>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-1">
+      <div className="font-bold text-[var(--color-text)]">Revise the last comment <span className="font-normal text-[var(--color-text-muted)]">— it keeps its time; the report shows the fix</span></div>
+      <div className="flex items-center gap-1.5">
+        <input value={text} autoFocus onChange={(e) => { setText(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") void save(); if (e.key === "Escape") { e.stopPropagation(); setText(null); } }}
+          aria-label="Revised comment" className="h-8 flex-1 min-w-0 rounded-md border-2 border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px]" />
+        <button type="button" disabled={busy} onClick={() => void save()} className="h-8 px-2.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-bold disabled:opacity-60">{busy ? "Saving…" : "Save"}</button>
+        <button type="button" onClick={() => setText(null)} className="h-8 px-2 rounded-md border border-[var(--color-border-strong)] font-semibold">Cancel</button>
+      </div>
+      {msg && <div className="font-semibold text-rose-700 dark:text-rose-400">{msg}</div>}
+    </div>
+  );
+}
+
+function StepEditor({ m, pct, plan, hours, info, when, tz, fmt, canEdit, onSave, onMoveDays }: {
   m: Milestone; pct: number; plan: number; hours: number;
   info: { comment?: MilestoneNote; why?: MilestoneNote; since: number; rows: ProgressLogRow[]; mine: MilestoneNote[] };
-  win: ShiftWindow; tz: string; fmt: (t: number) => string;
+  /** The shifts it may have happened on, the one picked first, and whether
+   *  this card is still ahead (planned later than now). */
+  when: { choices: Array<{ w: ShiftWindow; label: string }>; idx: number; ahead: boolean };
+  tz: string; fmt: (t: number) => string;
   canEdit: boolean; onSave: (u: StepUpdate) => Promise<boolean>;
   onMoveDays?: (id: string, delta: number) => void;
 }) {
@@ -219,6 +278,8 @@ function StepEditor({ m, pct, plan, hours, info, win, tz, fmt, canEdit, onSave, 
   const goingBack = status === "planned" && cur !== "planned" || (status === "in_progress" && p != null && p < pct);
   const noteLabel = status === "on_hold" ? "Why it's on hold" : status === "blocked" ? "What's blocking it" : status === "planned" ? "Why it's going back" : goingBack ? "Why it's going back" : "What got done";
   const behind = hours < -0.05 && status !== "completed";
+  const [wi, setWi] = useState(when.idx);
+  const win = (when.choices[wi] ?? when.choices[0]).w;
   const dayWord = win.kind === "night" ? `${fmtInTz(win.start, tz, { weekday: "short", month: "short", day: "numeric" })} night` : fmtInTz(win.start, tz, { weekday: "short", month: "short", day: "numeric" });
   const r = clock ? clockOnShift(win, clock, tz) : null;
   const pctNew = status === "in_progress" ? p : null;
@@ -230,7 +291,9 @@ function StepEditor({ m, pct, plan, hours, info, win, tz, fmt, canEdit, onSave, 
     if (status === "in_progress" && pctNew != null && pctNew >= 100) { setMsg("100% is Done — pick Done."); return; }
     setSaving(true); setMsg(null);
     try {
-      const whyChanged = behind && why.trim() && why.trim() !== (info.why?.body ?? "").trim();
+      // Said again for this shift (the report shows only this shift's), or changed.
+      const lastWhyAt = info.why ? ms(info.why.happenedAt ?? info.why.createdAt) : NaN;
+      const whyChanged = behind && why.trim() && (why.trim() !== (info.why?.body ?? "").trim() || !(lastWhyAt >= win.start && lastWhyAt <= win.end));
       const ok = await onSave({ status, pct: pctNew, note: note.trim(), at: (r as { at: number }).at, ...(whyChanged ? { why: why.trim() } : {}) });
       if (ok) { setSaved(`Saved at ${clock}.`); setNote(""); setClock(""); }
       else setMsg("Not saved.");
@@ -251,6 +314,7 @@ function StepEditor({ m, pct, plan, hours, info, win, tz, fmt, canEdit, onSave, 
       <div className="rounded-md bg-[var(--color-surface-2)] px-2 py-1.5 text-[var(--color-text)]">
         Now: <b>{WORD[m.status]}, {pct}%</b>{Number.isFinite(info.since) ? ` · since ${fmt(info.since)}` : ""}{m.status !== "completed" ? ` · plan ${plan}% by now` : ""}
       </div>
+      {canEdit && info.comment?.id && <ReviseComment note={info.comment} fmt={fmt} />}
       {offHold && (
         <div className="rounded-md bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 px-2 py-1.5 text-amber-900 dark:text-amber-200">
           Taking it off {cur === "on_hold" ? "hold" : "block"}. It was: <b>“{m.statusReason || "no reason given"}”</b>{Number.isFinite(info.since) ? ` (since ${fmt(info.since)})` : ""}. Say what changed.
@@ -283,11 +347,20 @@ function StepEditor({ m, pct, plan, hours, info, win, tz, fmt, canEdit, onSave, 
             </div>
           )}
           <div>
-            <div className="font-bold text-[var(--color-text)] mb-1">Time <span className="font-bold text-amber-700 dark:text-amber-400">— required</span></div>
+            <div className="font-bold text-[var(--color-text)] mb-1">When <span className="font-bold text-amber-700 dark:text-amber-400">— required</span></div>
+            {when.ahead && (
+              <div className="mb-1 text-[11px] text-emerald-800 dark:text-emerald-300">Planned later than now — put in when it was really done; it shows on that day as worked ahead.</div>
+            )}
+            <div className="flex flex-wrap gap-1 mb-1.5" role="group" aria-label="Which shift">
+              {when.choices.map((c, i) => (
+                <button key={c.w.start} type="button" aria-pressed={i === wi} onClick={() => { setWi(i); setMsg(null); setSaved(null); }}
+                  className={`${btn} ${i === wi ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>{c.label}</button>
+              ))}
+            </div>
             <div className="flex flex-wrap items-center gap-1.5">
               <input value={clock} onChange={(e) => { setClock(typeClock(e.target.value)); setMsg(null); setSaved(null); }} inputMode="numeric" placeholder="hh:mm" aria-label="Time it happened, 24-hour"
                 className={`h-8 w-[72px] rounded-md border-2 px-1.5 font-mono text-[13px] ${clock ? "border-[var(--color-border-strong)] bg-[var(--color-surface)]" : "border-amber-400 bg-amber-50 dark:bg-amber-950/30"}`} />
-              <button type="button" onClick={() => { setClock(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz })); setMsg(null); }}
+              <button type="button" onClick={() => { setWi(0); setClock(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz })); setMsg(null); }}
                 className={`${btn} border-[var(--color-border-strong)] text-[var(--color-text)]`}>Now</button>
               <span className="text-[var(--color-text-muted)]">on {dayWord}</span>
             </div>

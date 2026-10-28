@@ -13,7 +13,7 @@
 //   4. Anything blocked or on hold, with the reason.
 // Pure functions; the view only formats.
 
-import type { Milestone, MilestoneStatus } from "@/types/schema";
+import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import { effectiveWeight, leafPercent, roundPct, type ProgressInfo } from "@/lib/scheduleProgress";
 import { dayKey, dayKeyToMs, wallClock, wallClockToMs, addDays, dayDiff, hasTimeOfDay } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
@@ -91,6 +91,31 @@ export function parseClock(s: string): { h: number; m: number } | null {
  *  hours fall on the next calendar day. Null when the shift doesn't hold
  *  that time ("19:00" on a 6:00–18:00 day shift). The shift's last minute
  *  counts (a step finished at the change). */
+export interface ShiftComment { id: string; body: string; at: number; by: string | null }
+
+/** Each step's comment and "why it's behind" for one shift — the latest
+ *  said FOR it. A comment with the time it happened belongs to the shift
+ *  that time is on; one typed without a time, to the turnover it was
+ *  written at (the `grace` after a shift ends is still its meeting). So a
+ *  comment lands on one report, and an old one never trails onto later
+ *  ones. Automatic "Progress → 45%" lines aren't comments. */
+export function notesForShift(notes: MilestoneNote[], shift: { start: number; end: number }, grace: number): { note: Map<string, ShiftComment>; why: Map<string, ShiftComment> } {
+  const note = new Map<string, ShiftComment>(), why = new Map<string, ShiftComment>();
+  for (const n of notes) {
+    const body = n.body?.trim();
+    if (!body || (n.kind !== "note" && n.kind !== "behind") || /^Progress → \d+%$/.test(body)) continue;
+    const happened = n.happenedAt ? Date.parse(String(n.happenedAt)) : NaN;
+    const typed = Date.parse(String(n.createdAt ?? ""));
+    const timed = Number.isFinite(happened);
+    const at = timed ? happened : typed;
+    if (!(timed ? happened >= shift.start && happened < shift.end : typed >= shift.start + grace && typed < shift.end + grace)) continue;
+    const into = n.kind === "note" ? note : why;
+    const had = into.get(n.milestoneId);
+    if (!had || at > had.at) into.set(n.milestoneId, { id: n.id ?? "", body, at, by: n.createdByName ?? null });
+  }
+  return { note, why };
+}
+
 export function timeInShift(w: ShiftWindow, clock: string, tz: string): number | null {
   const hm = parseClock(clock);
   if (!hm) return null;

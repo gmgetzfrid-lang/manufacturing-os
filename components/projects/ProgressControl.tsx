@@ -30,6 +30,21 @@ export function shiftChoices(clock: { tz: string; times: ShiftTimes }, now: numb
   return [{ w: cur, label: "This shift" }, { w: p1, label: name(p1) }, { w: p2, label: name(p2) }];
 }
 
+/** The shifts to pick from for when something happened: this shift and
+ *  the two before it, plus the card's own shift when it isn't one of them.
+ *  The card's shift is picked first — unless it hasn't started yet (a card
+ *  further on in the calendar): work done ahead of plan happened now, or
+ *  earlier, so this shift is picked and `ahead` says so. */
+export function whenChoices(own: { w: ShiftWindow; label: string }, clock: { tz: string; times: ShiftTimes }, now: number): { choices: Array<{ w: ShiftWindow; label: string }>; idx: number; ahead: boolean } {
+  const choices = shiftChoices(clock, now);
+  if (own.w.start > now) return { choices, idx: 0, ahead: true };
+  const at = choices.findIndex((c) => c.w.start === own.w.start && c.w.end === own.w.end);
+  if (at >= 0) return { choices, idx: at, ahead: false };
+  // Its place in time order (newest first) — after this shift.
+  const pos = Math.max(1, choices.findIndex((c) => c.w.start < own.w.start) < 0 ? choices.length : choices.findIndex((c) => c.w.start < own.w.start));
+  return { choices: [...choices.slice(0, pos), own, ...choices.slice(pos)], idx: pos, ahead: false };
+}
+
 /** When it happened — the shift and a 24-hour time — or what's wrong. */
 export function resolveWhen(choice: { w: ShiftWindow; label: string }, clock: string, tz: string): { credit: ShiftCredit } | { error: string } {
   if (!clock.trim()) return { error: "Put in the time it happened." };

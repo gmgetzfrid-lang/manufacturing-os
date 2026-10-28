@@ -9,7 +9,7 @@
 // nothing is blocked.
 
 import { capacityOf, askedResult } from "@/lib/shiftHandover";
-import { turnoverPlan, nextOf, askedLine, crewsOf, vsPlan, doneByTask, shareOf } from "@/lib/turnoverPlan";
+import { turnoverPlan, nextOf, askedLine, crewsOf, vsPlan, doneByTask, shareOf, type TableOrder } from "@/lib/turnoverPlan";
 import { type PullCrew, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
 import { rankHazards, type HazardJobInput, type HazardKind } from "@/lib/safetyMoment";
 import { safetyBrief, talkSources, projectFacts, RISKS_RANKED, type ProjectBase } from "@/lib/safetyTalk";
@@ -67,6 +67,8 @@ export interface UpdateLookups {
   incidents?: { none: boolean; items: Array<{ at: number; kind: string; text: string }> };
   /** Notes & actions: the shift's own, and follow-ups left open by earlier
    *  shifts (with where they came from). */
+  /** The tables' order as dragged at the meeting (lib/turnoverPlan). */
+  order?: TableOrder;
   shiftNotes?: Array<{ at: number; text: string; followUp?: boolean; from?: string }>;
 }
 
@@ -113,12 +115,18 @@ const MAX_ROWS = 12;
 
 const shiftName = (w: ShiftWindow) => (w.kind === "day" ? "Day shift" : "Night shift");
 
-/** Rows as a table where the task is named once, its steps under it. */
-function byTask(rows: ShiftRow[], cells: (r: ShiftRow) => ExportCell[], taskSub?: (r: ShiftRow) => string | undefined): ExportCell[][] {
+/** Rows as a table where the task is named once, its steps under it.
+ *  In the order dragged at the meeting (`runs`), the rows keep that order
+ *  and a task is named again where it comes back. */
+function byTask(rows: ShiftRow[], cells: (r: ShiftRow) => ExportCell[], taskSub?: (r: ShiftRow) => string | undefined, runs = false): ExportCell[][] {
   const order: string[] = [];
   const groups = new Map<string, ShiftRow[]>();
   for (const r of rows) {
-    const k = r.parentId ?? `solo:${r.leaf.id ?? r.leaf.name}`;
+    let k = r.parentId ?? `solo:${r.leaf.id ?? r.leaf.name}`;
+    if (runs) {
+      const last = order[order.length - 1];
+      k = last && last.split("#")[0] === k ? last : `${k}#${order.length}`;
+    }
     if (!groups.has(k)) { groups.set(k, []); order.push(k); }
     groups.get(k)!.push(r);
   }
@@ -146,7 +154,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   const note = (id?: string | null) => (id ? noteLine(look.noteOf?.(id), shift.start, f.D) : undefined);
   const who = (r: ShiftRow) => muted(r.leaf.responsibleParty?.trim() ?? "");
   const wo = (r: ShiftRow): ExportCell => r.leaf.workOrderRef?.trim() ?? "";
-  const plan = turnoverPlan(report, (id) => !!look.tryOf?.(id));
+  const plan = turnoverPlan(report, (id) => !!look.tryOf?.(id), look.order);
   const { items, kindOf, tried, carries, held } = plan;
   const nextList = items.filter((x) => x.kind === "next").map((x) => x.r);
   const nextHrs = Math.round(nextList.reduce((a, r) => a + (r.hoursNext ?? 0), 0) * 10) / 10;
@@ -254,7 +262,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
         tonight.length ? {
           k: "table", head: ["Task", "Step", "WO", "Who", "When", "Done", "Goal", "vs plan"], align: ["left", "left", "left", "left", "left", "right", "right", "right"],
           textLabels: ["", "", "WO", "by", "", "done", "goal", "vs plan"], nowrap: [2, 5, 6, 7],
-          rows: [...byTask(shown, (r) => [stepCell(r), wo(r), who(r), planCell(r), `${r.percent}%`, goalCell(r), vsCell(r)], taskSub), ...more(tonight.length - shown.length, 8)],
+          rows: [...byTask(shown, (r) => [stepCell(r), wo(r), who(r), planCell(r), `${r.percent}%`, goalCell(r), vsCell(r)], taskSub, !!look.order?.next?.length), ...more(tonight.length - shown.length, 8)],
         } as ExportBlock : { k: "note", text: `Nothing planned for the ${shiftName(next).toLowerCase()}.` } as ExportBlock,
         ...(tried.length ? [{ k: "note", text: `Could try if there's time: ${tried.length} step${tried.length === 1 ? "" : "s"}, ${f.hrs(capa.used)}${capa.hours > 0 && ps ? ` of ${f.hrs(capa.hours)}${capa.over ? " — over" : ""} (${ps.crew ? `${ps.crew}, ` : ""}${ps.hands} × ${Math.min(ps.hours, shiftHrs)} h)` : ""}.`, tone: "amber" } as ExportBlock] : []),
         ...(finishing.length ? [{ k: "note", text: `Planned to finish on the ${shiftName(next).toLowerCase()}: ${finishing.slice(0, 4).map((x) => `${x.name} (${f.T(x.at)})`).join(", ")}${finishing.length > 4 ? ` + ${finishing.length - 4} more` : ""}.` } as ExportBlock] : []),
@@ -277,7 +285,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       blocks: [{
         k: "table", head: ["Task", "Step", "WO", "Who", "Why it carries", "Done", "vs plan"], align: ["left", "left", "left", "left", "left", "right", "right"],
         textLabels: ["", "", "WO", "by", "", "done", "vs plan"], nowrap: [2, 5, 6],
-        rows: [...byTask(shown, (r) => [stepCell(r), wo(r), who(r), why(r), doneCell(r), vsCell(r)], taskSub), ...more(later.length - shown.length, 7)],
+        rows: [...byTask(shown, (r) => [stepCell(r), wo(r), who(r), why(r), doneCell(r), vsCell(r)], taskSub, !!look.order?.later?.length), ...more(later.length - shown.length, 7)],
       }],
     });
   }

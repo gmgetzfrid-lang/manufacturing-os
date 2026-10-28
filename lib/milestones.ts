@@ -514,7 +514,7 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
   // — what goes on the report (a hold's are its reason, kept above).
   const said = input.statusReason?.trim();
   if (said && !HOLDS.includes(input.status) || (said && input.status === "missed")) {
-    const happened = input.at && Date.parse(input.at) < Date.parse(now) - 120_000 ? input.at : undefined;
+    const happened = input.at || undefined;
     await addMilestoneNote({
       orgId: m.orgId, milestoneId: m.id!, kind: "note", statusAt: input.status, body: said,
       createdBy: input.actorUserId, createdByName: input.actorUserName, ...(happened ? { happenedAt: happened } : {}),
@@ -809,7 +809,8 @@ export async function updateMilestoneNote(id: string, body: string): Promise<voi
   if (!text) throw new Error("A comment can't be empty — delete it instead.");
   const { data, error } = await supabase.from("milestone_notes").update({ body: text }).eq("id", id).select("id");
   if (error) throw new Error(error.message);
-  if (!data || data.length === 0) throw new Error("That comment couldn't be changed.");
+  if (!data || data.length === 0) throw new Error("That comment couldn't be changed — only the person who wrote it can.");
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("milestone-notes:changed"));
 }
 
 /** Remove a comment. */
