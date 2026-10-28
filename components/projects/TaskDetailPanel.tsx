@@ -12,6 +12,7 @@ import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { spanLabel, startOf, finishOf, effectiveSpans } from "@/lib/scheduleTime";
 import { workShiftOf, calendarShift, type ShiftCredit } from "@/lib/shiftReport";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
+import DateTimePicker from "@/components/projects/DateTimePicker";
 import { fmtInTz, fromDateTimeInput, toDateTimeInput, tzAbbrev } from "@/lib/scheduleTz";
 import {
   X as XIcon, Pencil, Trash2, Loader2, Save, Clock, MapPin, Hash,
@@ -218,6 +219,8 @@ export default function TaskDetailPanel({
   const saveActuals = useCallback(async () => {
     if (!m.id || !actualEdit) return;
     setErr(null);
+    // A day without its time isn't a time — don't save it as cleared.
+    if ((actualEdit.start && actualEdit.start.length < 16) || (m.status === "completed" && actualEdit.finish && actualEdit.finish.length < 16)) { setErr("Pick the time as well as the day."); return; }
     try {
       await setActualTimes({
         id: m.id,
@@ -366,12 +369,12 @@ export default function TaskDetailPanel({
                 {isLeaf && (m.actualStartAt || m.actualAt || canEdit) && (
                   <Field icon={<Clock className="w-3.5 h-3.5" />} label="Actual">
                     {actualEdit ? (
-                      <span className="block space-y-1.5">
-                        <label className="flex items-center gap-2 text-[11px]"><span className="w-12 text-[var(--color-text-muted)]">Started</span>
-                          <input type="datetime-local" value={actualEdit.start} onChange={(e) => setActualEdit({ ...actualEdit, start: e.target.value })} className="flex-1 h-7 px-1.5 text-xs border border-[var(--color-border-strong)] rounded bg-[var(--color-surface)]" /></label>
+                      <span className="block space-y-2.5">
+                        <DateTimePicker label="Started" value={actualEdit.start} onChange={(v) => setActualEdit({ ...actualEdit, start: v })} tz={tz} times={shiftTimes}
+                          planned={span.start} shortcuts={[{ label: "Planned", at: span.start }]} />
                         {m.status === "completed" && (
-                          <label className="flex items-center gap-2 text-[11px]"><span className="w-12 text-[var(--color-text-muted)]">Finished</span>
-                            <input type="datetime-local" value={actualEdit.finish} onChange={(e) => setActualEdit({ ...actualEdit, finish: e.target.value })} className="flex-1 h-7 px-1.5 text-xs border border-[var(--color-border-strong)] rounded bg-[var(--color-surface)]" /></label>
+                          <DateTimePicker label="Finished" value={actualEdit.finish} onChange={(v) => setActualEdit({ ...actualEdit, finish: v })} tz={tz} times={shiftTimes}
+                            planned={span.finish} shortcuts={[{ label: "Planned", at: span.finish }]} />
                         )}
                         <span className="flex justify-end gap-2">
                           <button onClick={() => setActualEdit(null)} className="text-[11px] text-[var(--color-text-muted)]">Cancel</button>

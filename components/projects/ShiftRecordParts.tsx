@@ -10,6 +10,7 @@ import { INCIDENT_KINDS, type CrewCount, type Incident, type IncidentKind, type 
 import { crewLine } from "@/lib/managementUpdate";
 import { parseClock, timeInShift, timeOnDay, shiftAt, DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
 import { dayKey } from "@/lib/scheduleTz";
+import { TimeChip } from "@/components/projects/DateTimePicker";
 
 /** A time typed 24-hour on the shift ("14:30", "1430"): the instant, or
  *  why it isn't one. */
@@ -151,7 +152,7 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
       )}
       {open && edit && !print && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-          <input value={clock} onChange={(e) => { setClock(typeClock(e.target.value)); setMsg(null); }} inputMode="numeric" placeholder="hh:mm" aria-label="Time it happened" className={`${inputCls} w-16 font-mono`} />
+          <TimeChip value={clock} onChange={(v) => { setClock(v); setMsg(null); }} tz={tz} label="Time it happened" />
           <button type="button" onClick={() => setClock(nowClock(tz))} className="h-7 px-2 rounded-md border border-[var(--color-border-strong)] text-[11px] font-semibold">Now</button>
           <select value={kind} onChange={(e) => setKind(e.target.value as IncidentKind)} aria-label="Kind" className={`${inputCls} pr-6`}>
             {INCIDENT_KINDS.map((k) => <option key={k}>{k}</option>)}
@@ -210,7 +211,7 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
       )}
       {edit && !print && (
         <div className="flex flex-wrap items-center gap-1.5 pt-1">
-          <input value={clock} onChange={(e) => { setClock(typeClock(e.target.value)); setMsg(null); }} inputMode="numeric" placeholder="hh:mm" aria-label="Time" className={`${inputCls} w-16 font-mono`} />
+          <TimeChip value={clock} onChange={(v) => { setClock(v); setMsg(null); }} tz={tz} />
           <button type="button" onClick={() => setClock(nowClock(tz))} className="h-7 px-2 rounded-md border border-[var(--color-border-strong)] text-[11px] font-semibold">Now</button>
           <input value={text} onChange={(e) => { setText(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="What happened, or what needs doing" aria-label="Note" className={`${inputCls} flex-1 min-w-[160px]`} />
           <label className="inline-flex items-center gap-1 text-[11px]"><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> Follow-up</label>

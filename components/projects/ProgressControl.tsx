@@ -14,7 +14,9 @@
 import React, { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { previousShift, shiftAt, shiftWindow, DEFAULT_SHIFT_TIMES, type ShiftCredit, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
-import { clockForWork, shiftWord, typeClock, DayPick } from "@/components/projects/ShiftRecordParts";
+import { clockForWork } from "@/components/projects/ShiftRecordParts";
+import { dayKey, toDateTimeInput } from "@/lib/scheduleTz";
+import DateTimePicker from "@/components/projects/DateTimePicker";
 
 /** The project's clock. Given, the progress form asks which shift a change
  *  counts for — a fix to what last shift entered goes on last shift's
@@ -60,44 +62,24 @@ export function resolveWhen(choice: { w: ShiftWindow; label: string }, clock: st
   return { credit: { at: r.at, label } };
 }
 
-/** The shift chips and the time box: required wherever the project's
- *  clock is known. */
-export function WhenFields({ choices, idx, setIdx, clock, setClock, tz, disabled, other, setOther, times = DEFAULT_SHIFT_TIMES }: {
-  choices: Array<{ w: ShiftWindow; label: string }>; idx: number; setIdx: (i: number) => void;
+/** When it happened — a date chip and a time chip (calendar, time wheel,
+ *  Now): required wherever the project's clock is known. Picks go in as
+ *  the day (`other`) and the 24-hour time (`clock`). */
+export function WhenFields({ choices, idx, clock, setClock, tz, disabled, other, setOther, times = DEFAULT_SHIFT_TIMES }: {
+  choices: Array<{ w: ShiftWindow; label: string }>; idx: number; setIdx?: (i: number) => void;
   clock: string; setClock: (v: string) => void; tz: string; disabled?: boolean;
-  /** Another day than the chips (filling in older work): a plant day. */
+  /** The day picked (a plant day). */
   other?: string | null; setOther?: (d: string | null) => void;
   times?: ShiftTimes;
 }) {
-  const [picking, setPicking] = useState(false);
-  const showDay = !!setOther && (picking || !!other);
+  // Before a day is picked: this shift is today; an earlier one, its day.
+  const [today] = useState(() => dayKey(Date.now(), tz));
   const pick = pickOf(choices, idx, other, tz, times);
-  const r = clock.trim() ? clockForWork(pick.w, clock, tz, times) : null;
+  const r = clock.trim() ? clockForWork(pick.w, clock, tz, times, Infinity) : null;
+  const value = r && "at" in r ? toDateTimeInput(r.at, tz) : (other ?? (idx === 0 ? today : dayKey(pick.w.start, tz)));
   return (
-    <div className="space-y-1">
-      <div className="flex items-baseline gap-1.5">
-        <span className="font-bold text-[var(--color-text)]">When</span>
-        <span className="font-black text-amber-700 dark:text-amber-400">— required</span>
-      </div>
-      <div className="flex items-center gap-1 flex-wrap" role="group" aria-label="Which shift">
-        {choices.map((c, i) => (
-          <button key={c.w.start} type="button" aria-pressed={i === idx && !other} disabled={disabled} onClick={() => { setIdx(i); setOther?.(null); setPicking(false); }}
-            className={`h-7 px-2 rounded-md border font-semibold pointer-coarse:h-9 disabled:opacity-50 ${i === idx && !other ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
-            {c.label}
-          </button>
-        ))}
-        {setOther && (showDay
-          ? <DayPick value={other ?? null} onChange={(d) => setOther(d)} tz={tz} disabled={disabled} className={other ? "ring-1 ring-[var(--color-accent)] border-[var(--color-accent)]" : ""} />
-          : <button type="button" disabled={disabled} onClick={() => setPicking(true)} className="h-7 px-2 rounded-md border border-dashed border-[var(--color-border-strong)] font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] pointer-coarse:h-9 disabled:opacity-50">Other day…</button>)}
-      </div>
-      <div className="flex items-center gap-1.5">
-        <input value={clock} onChange={(e) => setClock(typeClock(e.target.value))} inputMode="numeric" placeholder="hh:mm" aria-label="Time it happened, 24-hour" disabled={disabled}
-          className={`h-8 w-[70px] px-1.5 rounded-md border-2 font-mono text-[12.5px] pointer-coarse:h-10 ${clock ? "border-[var(--color-border-strong)] bg-[var(--color-surface)]" : "border-amber-400 bg-amber-50/60 dark:bg-amber-950/30"}`} />
-        <button type="button" disabled={disabled} onClick={() => { setIdx(0); setOther?.(null); setPicking(false); setClock(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz })); }}
-          className="h-8 px-2 rounded-md border border-[var(--color-border-strong)] font-semibold pointer-coarse:h-10 disabled:opacity-50">Now</button>
-        {r && "at" in r && <span className="text-[var(--color-text-muted)]">{r.moved ? "→ " : "on "}<b className="text-[var(--color-text)]">{shiftWord(r.shift, tz)}</b></span>}
-      </div>
-    </div>
+    <DateTimePicker label="When" hint="— required" value={value} tz={tz} times={times} disabled={disabled}
+      onChange={(v) => { setOther?.(v.slice(0, 10)); setClock(v.length >= 16 ? v.slice(11, 16) : ""); }} />
   );
 }
 
