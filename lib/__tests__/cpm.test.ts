@@ -98,3 +98,38 @@ describe("the project's critical path — one answer", () => {
     expect(r.cpm?.criticalIds.size).toBe(3);
   });
 });
+
+import { floatsOf } from "@/lib/criticalPath";
+
+describe("hand marks win — the whole job Not critical, one task Critical", () => {
+  // Like the Transmix-1 schedule: the turnaround marked Not critical, V-7
+  // marked Critical. Whatever the setting, only V-7's work is flagged, and
+  // nothing marked off the path is called near or trending to critical.
+  const job = mk({ id: "job", name: "Turnaround", criticalOverride: "no" });
+  const v7 = mk({ id: "v7", name: "V-7", parentId: "job", criticalOverride: "yes" });
+  const e13 = mk({ id: "e13", name: "E-13", parentId: "job" });
+  const ms = [job, v7, e13,
+    mk({ id: "a", parentId: "v7", plannedStartAt: h(0), plannedAt: h(10) }),
+    mk({ id: "b", parentId: "v7", plannedStartAt: h(10), plannedAt: h(20), dependsOn: ["a"] }),
+    mk({ id: "c", parentId: "e13", plannedStartAt: h(0), plannedAt: h(14), dependsOn: [] }),
+    mk({ id: "su", parentId: "job", name: "Start-up", plannedStartAt: h(20), plannedAt: h(24), dependsOn: ["b", "c"] })];
+  it("only V-7, in every setting", () => {
+    for (const mode of ["links", "file", "estimate", "none"] as const) {
+      expect([...resolveCriticalPath(ms, mode, { now: T0, tz: UTC }).ids].sort()).toEqual(["a", "b"]);
+    }
+  });
+  it("no near-critical or float on work marked off the path", () => {
+    const r = resolveCriticalPath(ms, "none", { now: T0, tz: UTC });
+    expect(r.cpm!.steps.get("c")!.floatH).toBe(6);   // the links still know it
+    expect(r.near.has("c")).toBe(false);
+    expect(floatsOf(r.cpm, r.off).has("c")).toBe(false);
+    expect(floatsOf(r.cpm, r.off).has("a")).toBe(true);
+  });
+  it("with the job's mark taken off, V-7 stays Critical and E-13's float shows", () => {
+    const open = ms.map((m) => (m.id === "job" ? { ...m, criticalOverride: null } : m));
+    const r = resolveCriticalPath(open, "none", { now: T0, tz: UTC });
+    expect([...r.ids].sort()).toEqual(["a", "b"]);
+    expect(r.near.has("c")).toBe(true);
+    expect(floatsOf(r.cpm, r.off).get("c")).toBe(6);
+  });
+});

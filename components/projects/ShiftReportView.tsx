@@ -207,17 +207,20 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const criticalIds = crit.ids;
   const path = useMemo<PathInfo>(() => ({
     criticalThen: critThen?.ids, near: crit.near,
-    floatH: crit.cpm ? floatsOf(crit.cpm) : undefined, floatThenH: critThen?.cpm ? floatsOf(critThen.cpm) : undefined,
+    floatH: crit.cpm ? floatsOf(crit.cpm, crit.off) : undefined, floatThenH: critThen?.cpm ? floatsOf(critThen.cpm, critThen.off) : undefined,
   }), [crit, critThen]);
   const forecast = useMemo(() => (crit.cpm && Number.isFinite(crit.cpm.forecastFinish) ? { finish: crit.cpm.forecastFinish, slipH: crit.cpm.slipH } : undefined), [crit]);
   // Discovery work on the schedule (lib/discovery) — as it stood for the shift.
   const discoveryList = useMemo(() => discoveries(milestones), [milestones]);
   // Set to something other than the links while they're there: say what
-  // they'd give, and offer the switch (for everyone on the project).
+  // they'd give, and offer the switch (for everyone on the project) — only
+  // when it would change what's flagged (hand marks win either way).
   const [pathMsg, setPathMsg] = useState<string | null>(null);
   const pathSource = useMemo(() => {
     if (!crit.cpm || crit.mode === "links") return undefined;
-    const calculated = resolveCriticalPath(milestones, "links", { now: pathAt, tz }).ids.size;
+    const links = resolveCriticalPath(milestones, "links", { now: pathAt, tz }).ids;
+    if (links.size === crit.ids.size && [...links].every((id) => crit.ids.has(id))) return undefined;
+    const calculated = links.size;
     return {
       label: CRITICAL_MODES.find((x) => x.value === crit.mode)?.label ?? crit.mode, theirs: crit.ids.size, calculated,
       onUse: canEdit ? () => { setPathMsg(null); saveCriticalMode(projectId, "links").catch((e: Error) => setPathMsg(e.message)); } : undefined,

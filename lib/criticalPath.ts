@@ -139,7 +139,7 @@ export function criticalOverrideOf(m: Milestone, byId: Map<string, Milestone>): 
  *  every screen and printout reads it from here. When the schedule is
  *  linked, `cpm` carries each step's float (whatever the mode), and
  *  `linksCount` how many the calculation alone finds. */
-export function resolveCriticalPath(milestones: Milestone[], mode: CriticalMode | null | undefined, o: { now?: number; tz?: string } = {}): CriticalPathResult & { mode: CriticalMode; marked: number; cpm: Cpm | null; near: Set<string> } {
+export function resolveCriticalPath(milestones: Milestone[], mode: CriticalMode | null | undefined, o: { now?: number; tz?: string } = {}): CriticalPathResult & { mode: CriticalMode; marked: number; cpm: Cpm | null; near: Set<string>; off: Set<string> } {
   const eff = effectiveCriticalMode(milestones, mode);
   const byId = new Map<string, Milestone>();
   const parents = new Set<string>();
@@ -151,10 +151,14 @@ export function resolveCriticalPath(milestones: Milestone[], mode: CriticalMode 
     : eff === "file" ? new Set(leaves.filter((m) => fileFlag(m) === "1" || fileFlag(m) === "true").map((m) => m.id!))
       : new Set<string>();
   const ids = new Set<string>();
+  // Marked Not critical by hand (or under a task that is): off the path,
+  // and nothing said about its float either.
+  const off = new Set<string>();
   let marked = 0;
   for (const m of leaves) {
     const o = criticalOverrideOf(m, byId);
     if (o) marked++;
+    if (o === "no") off.add(m.id!);
     const on = o === "yes" ? true : o === "no" ? false : base.has(m.id!);
     if (on && m.status !== "completed") ids.add(m.id!);
   }
@@ -170,21 +174,23 @@ export function resolveCriticalPath(milestones: Milestone[], mode: CriticalMode 
   const near = new Set<string>();
   for (const id of cpm?.nearIds ?? []) {
     const m = byId.get(id);
-    if (m && !ids.has(id) && criticalOverrideOf(m, byId) !== "no") near.add(id);
+    if (m && !ids.has(id) && !off.has(id)) near.add(id);
   }
-  return { ids, finish: Number.isFinite(finish) ? new Date(finish).toISOString() : null, remainingHours, mode: eff, marked, cpm, near };
+  return { ids, finish: Number.isFinite(finish) ? new Date(finish).toISOString() : null, remainingHours, mode: eff, marked, cpm, near, off };
 }
 
-/** Each unfinished step's float, hours (lib/cpm), for the report rows. */
-export function floatsOf(cpm: Cpm | null | undefined): Map<string, number> {
+/** Each unfinished step's float, hours (lib/cpm), for the report rows —
+ *  but none for steps marked Not critical (`off`): no "near critical" or
+ *  "trending to critical" on work taken off the path by hand. */
+export function floatsOf(cpm: Cpm | null | undefined, off?: Set<string>): Map<string, number> {
   const out = new Map<string, number>();
-  for (const s of cpm?.steps.values() ?? []) if (!s.done) out.set(s.id, s.floatH);
+  for (const s of cpm?.steps.values() ?? []) if (!s.done && !off?.has(s.id)) out.set(s.id, s.floatH);
   return out;
 }
 
 /** What a screen needs to mark a step against the critical path — the
  *  calendar, its quick view and the day list take it from the one answer. */
 export interface PathMarks { ids: Set<string>; near: Set<string>; floatH: Map<string, number> }
-export function pathMarks(r: { ids: Set<string>; near: Set<string>; cpm: Cpm | null }): PathMarks {
-  return { ids: r.ids, near: r.near, floatH: floatsOf(r.cpm) };
+export function pathMarks(r: { ids: Set<string>; near: Set<string>; cpm: Cpm | null; off?: Set<string> }): PathMarks {
+  return { ids: r.ids, near: r.near, floatH: floatsOf(r.cpm, r.off) };
 }
