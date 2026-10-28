@@ -11,7 +11,7 @@ import React, { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Play, Check } from "lucide-react";
 import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import { shiftAt, workHours, type ShiftTimes } from "@/lib/shiftReport";
-import { fmtInTz, toDateTimeInput, fromDateTimeInput } from "@/lib/scheduleTz";
+import { fmtInTz, toDateTimeInput, fromDateTimeInput, dayKey, dayKeyToMs, addDays } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { updateMilestoneNote } from "@/lib/milestones";
 import type { ProgressLogRow } from "@/lib/progressHistory";
@@ -257,11 +257,11 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
             </div>
           )}
           {(action === "edit" || (action === "finish" && !started)) && (
-            <WhenPicker label="Started" value={startV} onChange={setStartV} tz={tz} times={times} now={now}
+            <WhenPicker label="Started" value={startV} onChange={setStartV} tz={tz} times={times} now={now} planned={ps}
               shortcuts={Number.isFinite(ps) ? [{ label: "Planned", at: ps }] : []} />
           )}
           {(action !== "edit" || done) && (
-            <WhenPicker label={pickLabel} value={atV} onChange={setAtV} tz={tz} times={times} now={now}
+            <WhenPicker label={pickLabel} value={atV} onChange={setAtV} tz={tz} times={times} now={now} planned={action === "finish" || action === "edit" ? pf : ps}
               shortcuts={[
                 ...((action === "start" || action === "resume") && Number.isFinite(ps) ? [{ label: "Planned", at: ps }] : []),
                 ...((action === "finish" || action === "edit") && Number.isFinite(pf) ? [{ label: "Planned", at: pf }] : []),
@@ -315,24 +315,103 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   );
 }
 
-/** The browser's own date-and-time picker (AM/PM where that's how you read
- *  time), plant time, with shortcuts; the shift it lands on, quietly. */
-function WhenPicker({ label, value, onChange, tz, times, now, shortcuts }: {
+/** When — all taps: the shift's day (the last week, the planned one
+ *  marked), the hour in that day's shift rows (Day shift 6a…5p, Night
+ *  shift 6p…5a — 3a on Sat night is Sunday 3 AM, the way crews say it),
+ *  the minutes (:00 unless picked), or Planned / Now. Read back in words.
+ *  Plant time; the value is "YYYY-MM-DDTHH:MM" (empty until day and hour). */
+function WhenPicker({ label, value, onChange, tz, times, now, shortcuts, planned }: {
   label: string; value: string; onChange: (v: string) => void; tz: string; times: ShiftTimes; now: number;
   shortcuts: Array<{ label: string; at: number }>;
+  /** The planned time — its day is marked. */
+  planned?: number;
 }) {
+  const startHour = (hm: string, d: number) => { const x = /^(\d{1,2})/.exec(hm ?? ""); return x ? Math.min(23, Number(x[1])) : d; };
+  const dayH = startHour(times.dayStart, 6), nightH = startHour(times.nightStart, 18);
+  // The two shifts' hours, in order from each shift's start.
+  const dayRow = Array.from({ length: (nightH - dayH + 24) % 24 || 12 }, (_, k) => (dayH + k) % 24);
+  const nightRow = Array.from({ length: (dayH - nightH + 24) % 24 || 12 }, (_, k) => (nightH + k) % 24);
+  const nextDay = (d: string) => dayKey(addDays(dayKeyToMs(d, tz) + 12 * H, 1, tz), tz);
+  // What the value says, as picks: the shift's day, the hour, the minutes.
+  const fromValue = (v: string) => {
+    if (!v) return { day: "", hour: null as number | null, min: 0, night: false };
+    const iso = fromDateTimeInput(v, tz); const t = iso ? Date.parse(iso) : NaN;
+    if (!Number.isFinite(t)) return { day: "", hour: null, min: 0, night: false };
+    const sh = shiftAt(t, tz, times);
+    return { day: sh.dayKey, hour: Number(v.slice(11, 13)), min: Number(v.slice(14, 16)), night: sh.kind === "night" };
+  };
+  const init = fromValue(value);
+  const [day, setDay] = useState(init.day);
+  const [hour, setHour] = useState<{ h: number; night: boolean } | null>(init.hour != null ? { h: init.hour, night: init.night } : null);
+  const [min, setMin] = useState(init.min);
+  const [earlier, setEarlier] = useState(false);
+  const days = useMemo(() => Array.from({ length: 7 }, (_, i) => dayKey(addDays(now, -i, tz), tz)), [now, tz]);
+  const plannedDay = planned != null && Number.isFinite(planned) ? shiftAt(planned, tz, times).dayKey : null;
+  const label12 = (h: number) => `${h % 12 || 12}${h < 12 ? "a" : "p"}`;
+  const emit = (d: string, hr: { h: number; night: boolean } | null, mi: number) => {
+    if (!d || !hr) { onChange(""); return; }
+    // Night-shift hours after midnight are the next morning.
+    const date = hr.night && hr.h < nightH ? nextDay(d) : d;
+    onChange(`${date}T${String(hr.h).padStart(2, "0")}:${String(mi).padStart(2, "0")}`);
+  };
+  const pickDay = (d: string) => { setDay(d); emit(d, hour, min); };
+  const pickHour = (h: number, night: boolean) => { const hr = { h, night }; setHour(hr); emit(day, hr, min); };
+  const pickMin = (mi: number) => { setMin(mi); emit(day, hour, mi); };
+  const take = (at: number) => {
+    const v = toDateTimeInput(at, tz); const x = fromValue(v);
+    setDay(x.day); setHour(x.hour != null ? { h: x.hour, night: x.night } : null); setMin(x.min); setEarlier(false);
+    onChange(v);
+  };
   const iso = value ? fromDateTimeInput(value, tz) : null;
   const t = iso ? Date.parse(iso) : NaN;
+  const sh = Number.isFinite(t) ? shiftAt(t, tz, times) : null;
+  const pill = (on: boolean) => `h-8 rounded-full border text-[12px] font-semibold whitespace-nowrap ${on ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+  const older = !!day && !days.includes(day);
+  const dayName = (k: string, i: number) => (i === 0 ? "Today" : i === 1 ? "Yesterday" : `${fmtInTz(dayKeyToMs(k, tz) + 12 * H, tz, { weekday: "short" })} ${Number(k.slice(8, 10))}`);
+  const hourRow = (title: string, hs: number[], night: boolean) => (
+    <div className="flex items-start gap-1.5">
+      <span className={`w-12 shrink-0 pt-1.5 text-[10.5px] font-bold uppercase tracking-wide ${night ? "text-violet-700 dark:text-violet-300" : "text-sky-700 dark:text-sky-300"}`}>{title}</span>
+      <div className="grid grid-cols-6 sm:grid-cols-12 gap-1 flex-1">
+        {hs.map((h) => {
+          const on = hour?.h === h && hour.night === night;
+          return <button key={h} type="button" aria-pressed={on} onClick={() => pickHour(h, night)} className={`${pill(on)} px-0`}>{label12(h)}</button>;
+        })}
+      </div>
+    </div>
+  );
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <span className="w-16 font-semibold">{label}</span>
-      <input type="datetime-local" value={value} max={toDateTimeInput(now, tz)} onChange={(e) => onChange(e.target.value)} aria-label={label}
-        className={`h-9 rounded-md border px-2 text-[13px] bg-[var(--color-surface)] text-[var(--color-text)] ${value ? "border-[var(--color-border-strong)]" : "border-amber-400 ring-1 ring-amber-300"}`} />
-      {shortcuts.map((s) => (
-        <button key={s.label} type="button" onClick={() => onChange(toDateTimeInput(s.at, tz))}
-          className="h-8 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold hover:bg-[var(--color-surface-2)]">{s.label}</button>
-      ))}
-      {Number.isFinite(t) && <span className={`text-[11.5px] ${t > now + 60_000 ? "font-semibold text-rose-700 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>{t > now + 60_000 ? "in the future" : `${shiftAt(t, tz, times).kind} shift`}</span>}
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-semibold">{label}</span>
+        <span className="flex gap-1">{shortcuts.map((x) => <button key={x.label} type="button" onClick={() => take(x.at)} className="h-7 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-semibold hover:bg-[var(--color-surface-2)]">{x.label}</button>)}</span>
+      </div>
+      <div className="flex flex-wrap gap-1" role="group" aria-label={`${label} — day`}>
+        {days.map((k, i) => (
+          <button key={k} type="button" aria-pressed={day === k} onClick={() => pickDay(k)} className={`${pill(day === k)} px-2.5 relative`}>
+            {dayName(k, i)}
+            {plannedDay === k && <span title="Planned" className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full ${day === k ? "bg-white" : "bg-[var(--color-accent)]"}`} />}
+          </button>
+        ))}
+        {earlier
+          ? <input type="date" value={day} max={days[0]} onChange={(e) => { if (e.target.value) pickDay(e.target.value); }} aria-label={`${label} — earlier day`}
+            className="h-8 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12px]" />
+          : <button type="button" aria-pressed={older} onClick={() => setEarlier(true)} className={`${pill(older)} px-2.5 ${older ? "" : "border-dashed text-[var(--color-text-muted)]"}`}>
+            {older ? fmtInTz(dayKeyToMs(day, tz) + 12 * H, tz, { month: "short", day: "numeric" }) : "Earlier…"}
+          </button>}
+      </div>
+      {hourRow("Day", dayRow, false)}
+      {hourRow("Night", nightRow, true)}
+      <div className="flex items-center gap-1.5">
+        <span className="w-12 shrink-0 text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">Min</span>
+        {[0, 15, 30, 45, ...(min % 15 ? [min] : [])].map((mi) => <button key={mi} type="button" aria-pressed={min === mi} onClick={() => pickMin(mi)} className={`${pill(min === mi)} w-12`}>:{String(mi).padStart(2, "0")}</button>)}
+      </div>
+      <div className="text-[12.5px] min-h-[18px]">
+        {Number.isFinite(t) && sh
+          ? (t > now + 60_000
+            ? <span className="font-semibold text-rose-700 dark:text-rose-400">{fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })} — that&apos;s in the future</span>
+            : <span className="text-[var(--color-text-muted)]">→ <b className="text-[var(--color-text)]">{fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}</b> · {fmtInTz(sh.start, tz, { weekday: "short" })} {sh.kind} shift</span>)
+          : <span className="text-[var(--color-text-muted)]">{!day && !hour ? "Tap the day and the hour." : !day ? "Tap the day." : "Tap the hour."}</span>}
+      </div>
     </div>
   );
 }
