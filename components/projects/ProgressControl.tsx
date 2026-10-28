@@ -17,6 +17,7 @@ import { previousShift, shiftAt, shiftWindow, DEFAULT_SHIFT_TIMES, type ShiftCre
 import { clockForWork } from "@/components/projects/ShiftRecordParts";
 import { dayKey, toDateTimeInput } from "@/lib/scheduleTz";
 import DateTimePicker from "@/components/projects/DateTimePicker";
+import PctSlider from "@/components/projects/PctSlider";
 
 /** The project's clock. Given, the progress form asks which shift a change
  *  counts for — a fix to what last shift entered goes on last shift's
@@ -173,15 +174,15 @@ export function ProgressSlider({ percent, onPick, disabled, busy, commitSame, co
 
 // ── % with a comment ──────────────────────────────────────────────
 // Work in progress always says what got done — that line is what the next
-// crew and the shift report read. One tap picks the %, the comment box is
-// ready to type in, Enter saves both. Done and 0 % don't need a comment.
+// crew and the shift report read. Slide to the %, say what got done, Enter
+// saves both.
 
 export const PICK_PCTS = [0, 10, 25, 50, 75, 90, 100];
 
 /** Does saving this % need a comment? Anything under way does. */
 export const needsComment = (pct: number | null) => pct != null && pct > 0 && pct < 100;
 
-export function ProgressNoteForm({ percent, start, onSave, onCancel, busy, autoFocus = true }: {
+export function ProgressNoteForm({ percent, start, onSave, onCancel, busy }: {
   percent: number;
   /** Starting work ("In progress"): a pick is required, even the current %. */
   start?: boolean;
@@ -200,16 +201,10 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy, autoF
   const [otherDay, setOtherDay] = useState<string | null>(null);
   const cur = clamp(percent);
   const [pick, setPick] = useState<number | null>(start ? (cur > 0 && cur < 100 ? cur : null) : null);
-  const [typed, setTyped] = useState("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const noteRef = useRef<HTMLInputElement>(null);
-  const pctRef = useRef<HTMLInputElement>(null);
-  // A mouse gets the % box ready to type in; a finger taps the buttons
-  // (focusing would pop the keyboard over half the form).
-  useEffect(() => { if (autoFocus && window.matchMedia?.("(pointer: fine)").matches) pctRef.current?.focus(); }, [autoFocus]);
-  const choose = (v: number) => { setPick(clamp(v)); setTyped(""); setMsg(null); setTimeout(() => noteRef.current?.focus(), 0); };
   const value = pick ?? (start ? null : cur);
   // A new %, or the same % with a fresh comment ("still 25 — waiting on
   // the crane") — both worth saving.
@@ -222,7 +217,7 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy, autoF
   // what's needed instead of doing nothing.
   const ready = changed && !saving && !busy;
   const save = async () => {
-    if (!changed) { setMsg("Pick a %."); return; }
+    if (!changed) { setMsg("Slide it to the new %."); return; }
     if (missing) { setMsg("Add a few words first — what got done, or why it's corrected. It goes on the shift report."); noteRef.current?.focus(); return; }
     let forShift: ShiftCredit | undefined;
     if (clockCtx && choices.length) {
@@ -239,21 +234,7 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy, autoF
   };
   return (
     <div className="w-full space-y-2 text-[11px]">
-      <div className="flex items-center gap-1 flex-wrap">
-        {PICK_PCTS.map((v) => (
-          <button key={v} type="button" disabled={busy || saving} onClick={() => choose(v)}
-            className={`h-8 min-w-[36px] px-1.5 rounded-md border font-bold tabular-nums pointer-coarse:h-10 ${value === v ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-[var(--color-accent)]" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"} disabled:opacity-50`}>
-            {v === 100 ? "Done" : v}
-          </button>
-        ))}
-        <span className="inline-flex items-center gap-0.5">
-          <input ref={pctRef} value={typed} inputMode="numeric" placeholder={String(value ?? cur)} aria-label="Percent done"
-            onChange={(e) => { const t = e.target.value.replace(/[^0-9]/g, "").slice(0, 3); setTyped(t); if (t !== "") { setPick(clamp(Number(t))); setMsg(null); } }}
-            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (typed !== "") choose(Number(typed)); } }}
-            className="h-8 w-11 px-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-right font-bold tabular-nums pointer-coarse:h-10 focus:outline-none focus:border-[var(--color-accent-ring)]" />
-          <span className="font-bold text-[var(--color-text-muted)]">%</span>
-        </span>
-      </div>
+      <PctSlider value={value ?? cur} was={cur} disabled={busy || saving} onChange={(v) => { setPick(v); setMsg(null); }} />
       {/* Work in progress needs a comment — said up front, not found out
           by a Save that does nothing. */}
       <div className="space-y-0.5">

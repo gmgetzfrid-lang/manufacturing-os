@@ -13,6 +13,7 @@ import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import { workHours, type ShiftTimes } from "@/lib/shiftReport";
 import { fmtInTz, toDateTimeInput, fromDateTimeInput } from "@/lib/scheduleTz";
 import DateTimePicker from "@/components/projects/DateTimePicker";
+import PctSlider from "@/components/projects/PctSlider";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { updateMilestoneNote } from "@/lib/milestones";
 import type { ProgressLogRow } from "@/lib/progressHistory";
@@ -151,12 +152,18 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         ok = await run({ status: "in_progress", pct: null, note: note.trim(), at: t, ...extra });
         said = `Started ${when(t)}`;
       } else if (action === "progress") {
-        if (p == null) { setMsg("Pick a %."); return; }
-        if (p >= 100) { setMsg("100% is finished — use Finish."); return; }
+        if (p == null || p === Math.round(pct)) { setMsg("Slide it to the new %."); return; }
         const t = need(atV, "when");
         if (typeof t === "string") { setMsg(t); return; }
-        ok = await run({ status: "in_progress", pct: p, note: note.trim(), at: t, ...extra });
-        said = `${p}% at ${when(t)}`;
+        // 100% is finished.
+        if (p >= 100) {
+          if (Number.isFinite(as) && t < as) { setMsg(`It started ${when(as)} — it can't finish before that.`); return; }
+          ok = await run({ status: "completed", pct: null, note: note.trim(), at: t, ...extra });
+          said = `Finished ${when(t)}`;
+        } else {
+          ok = await run({ status: "in_progress", pct: p, note: note.trim(), at: t, ...extra });
+          said = `${p}% at ${when(t)}`;
+        }
       } else if (action === "finish") {
         const f = need(atV, "when it finished");
         if (typeof f === "string") { setMsg(f); return; }
@@ -242,14 +249,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
 
       {action && (
         <div className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-2.5 space-y-2">
-          {action === "progress" && (
-            <div className="flex flex-wrap items-center gap-1">
-              {[10, 25, 50, 75, 90].map((v) => (
-                <button key={v} type="button" aria-pressed={p === v} onClick={() => { setP(v); setMsg(null); }}
-                  className={`h-8 w-11 rounded-md border text-[12px] font-bold ${p === v ? "bg-slate-900 border-slate-900 text-white dark:bg-slate-100 dark:text-slate-900" : "border-[var(--color-border-strong)] bg-[var(--color-surface)]"}`}>{v}%</button>
-              ))}
-            </div>
-          )}
+          {action === "progress" && <PctSlider value={p ?? Math.round(pct)} was={Math.round(pct)} onChange={(v) => { setP(v); setMsg(null); }} />}
           {action === "hold" && (
             <div className="flex gap-1">
               {([["on_hold", "On hold"], ["blocked", "Blocked"]] as const).map(([k, l]) => (
@@ -282,7 +282,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
           {msg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{msg}</div>}
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => void save()} disabled={busy}
-              className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-60">{busy ? "Saving…" : "Save"}</button>
+              className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-60">{busy ? "Saving…" : action === "progress" && p === 100 ? "Save as finished" : "Save"}</button>
             <button type="button" onClick={() => setAction(null)} className="h-9 px-3 rounded-lg text-[var(--color-text-muted)] font-semibold hover:text-[var(--color-text)]">Cancel</button>
           </div>
         </div>
