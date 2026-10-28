@@ -280,14 +280,19 @@ function StepEditor({ m, pct, plan, hours, info, when, tz, times, fmt, canEdit, 
   const [typed, setTyped] = useState("");
   const [clock, setClock] = useState("");
   const [note, setNote] = useState("");
-  const [why, setWhy] = useState(info.why?.body ?? "");
+  // Why it's behind: optional, said fresh — the last reason is offered,
+  // not filled in.
+  const [why, setWhy] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
   const held = cur === "on_hold" || cur === "blocked";
   const offHold = held && status !== cur;
   const goingBack = status === "planned" && cur !== "planned" || (status === "in_progress" && p != null && p < pct);
-  const noteLabel = status === "on_hold" ? "Why it's on hold" : status === "blocked" ? "What's blocking it" : status === "planned" ? "Why it's going back" : goingBack ? "Why it's going back" : "What got done";
+  // Starting it (no % yet): the start, said as one.
+  const starting = status === "in_progress" && cur !== "in_progress" && (p == null || p === 0) && pct === 0;
+  const noteLabel = status === "on_hold" ? "Why it's on hold" : status === "blocked" ? "What's blocking it" : status === "planned" ? "Why it's going back" : goingBack ? "Why it's going back" : starting ? (offHold ? "What got it going again" : "What started") : "What got done";
+  const whenLabel = status === "completed" ? "When it finished" : starting ? (offHold ? "When it started again" : "When it started") : status === "on_hold" || status === "blocked" ? "When it stopped" : "When";
   const behind = hours < -0.05 && status !== "completed";
   const [wi, setWi] = useState(when.idx);
   // Another day than the chips (filling in older work).
@@ -365,7 +370,7 @@ function StepEditor({ m, pct, plan, hours, info, when, tz, times, fmt, canEdit, 
             </div>
           )}
           <div>
-            <div className="font-bold text-[var(--color-text)] mb-1">When <span className="font-bold text-amber-700 dark:text-amber-400">— required</span></div>
+            <div className="font-bold text-[var(--color-text)] mb-1">{whenLabel} <span className="font-bold text-amber-700 dark:text-amber-400">— required</span></div>
             {when.ahead && (
               <div className="mb-1 text-[11px] text-emerald-800 dark:text-emerald-300">Planned later than now — put in when it was really done; it shows on that day as worked ahead.</div>
             )}
@@ -391,14 +396,17 @@ function StepEditor({ m, pct, plan, hours, info, when, tz, times, fmt, canEdit, 
           <div>
             <div className="font-bold text-[var(--color-text)] mb-1">{noteLabel} <span className="font-bold text-amber-700 dark:text-amber-400">— required, goes on the report</span></div>
             <input value={note} onChange={(e) => { setNote(e.target.value); setMsg(null); setSaved(null); }} onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
-              placeholder={status === "on_hold" ? "e.g. waiting on plugging to be removed" : status === "completed" ? "e.g. bundle pulled and set on the pad" : "e.g. 35 of 57 trays out"} aria-label={noteLabel}
+              placeholder={status === "on_hold" ? "e.g. waiting on plugging to be removed" : status === "completed" ? "e.g. bundle pulled and set on the pad" : starting ? "e.g. crew on site, started pulling feed" : "e.g. 35 of 57 trays out"} aria-label={noteLabel}
               className={`h-9 w-full rounded-md border-2 px-2 text-[12.5px] ${note.trim() ? "border-[var(--color-border-strong)] bg-[var(--color-surface)]" : "border-amber-400 bg-amber-50 dark:bg-amber-950/30"}`} />
           </div>
           {behind && (
             <div>
-              <div className="font-bold text-[var(--color-text)] mb-1">Why it&rsquo;s behind <span className="font-normal text-[var(--color-text-muted)]">— shows on the report next to −{Math.abs(hours)} h</span></div>
-              <input value={why} onChange={(e) => setWhy(e.target.value)} placeholder="e.g. trays heavier fouled than planned" aria-label="Why it's behind"
+              <div className="font-bold text-[var(--color-text)] mb-1">Why it&rsquo;s behind <span className="font-normal text-[var(--color-text-muted)]">— optional · it&rsquo;s {Math.abs(hours)} h behind plan; this shows on the report beside that</span></div>
+              <input value={why} onChange={(e) => setWhy(e.target.value)} placeholder="e.g. waited on ops to release the unit" aria-label="Why it's behind"
                 className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px]" />
+              {info.why?.body?.trim() && why.trim() !== info.why.body.trim() && (
+                <div className="mt-0.5 text-[var(--color-text-muted)]">Said before: “{info.why.body.trim()}” <button type="button" onClick={() => setWhy(info.why!.body!.trim())} className="font-semibold text-[var(--color-accent)] hover:underline">Use it again</button></div>
+              )}
             </div>
           )}
           {msg && <div className="font-semibold text-rose-700 dark:text-rose-400">{msg}</div>}

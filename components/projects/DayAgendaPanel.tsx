@@ -854,7 +854,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
         <div className="flex flex-wrap items-center gap-1.5">
           {/* A % being saved needs its comment — said right on the box. */}
           <span className={`w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] ${needsNote() ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
-            {needsNote() ? <>{timed && stagedPct === 0 && !starting ? "Why" : "What got done"}<span className="block normal-case tracking-normal">required</span></> : noteMode === "edit" ? "Comment" : "Note"}
+            {needsNote() ? <>{timed && stagedPct === 0 && !starting ? "Why" : starting && (stagedPct ?? 0) <= Math.round(pct) ? "What started" : "What got done"}<span className="block normal-case tracking-normal">required</span></> : noteMode === "edit" ? "Comment" : "Note"}
           </span>
           <input ref={noteRef} value={note} disabled={ro} onChange={(e) => { setNote(e.target.value); setNeedMsg(null); }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void commit(); } }}
