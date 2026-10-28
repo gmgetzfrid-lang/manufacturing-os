@@ -49,7 +49,8 @@ import { toPlainText, toEmailHtml, type ExportBlock, type ExportDoc, type Export
 import { turnoverUpdate, withoutEmpty, noteLine, hazardJobsOf, crewLine, forecastText, discoverySub, discoveryBlock } from "@/lib/managementUpdate";
 import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
 import { notesFor } from "@/lib/milestones";
-import { useShiftRecords, saveShiftRecord, lastSameKind, openFollowUps, newId, type CrewCount, type Incident, type ShiftNote, type ShiftRecord } from "@/lib/shiftRecord";
+import { useShiftRecords, saveShiftRecord, lastSameKind, openFollowUps, newId, CLOSEOUT_KEY, type CrewCount, type Incident, type ShiftNote, type ShiftRecord, type Lesson } from "@/lib/shiftRecord";
+import { buildLookBack, CAUSE_LABEL, type LookBack, type StepLook } from "@/lib/lookBack";
 import { CrewCountEditor, IncidentsLine, ShiftNotesBox, AddCompany, TimeLogButton } from "@/components/projects/ShiftRecordParts";
 import { useSortRows, Grip } from "@/components/projects/SortRows";
 import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
@@ -446,15 +447,25 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const safety = useMemo(() => ({ project: safetyProject, recent: recentRisks }), [safetyProject, recentRisks]);
   // The step being updated from its row.
   const [editing, setEditing] = useState<string | null>(null);
+  // The close-out's look back (lib/lookBack) — the job as it stands, its
+  // whole history of comments and holds — and the lessons the team writes.
+  const lookBack = useMemo(() => (meeting === "closeout" ? buildLookBack({ milestones: live, notes: allNotes, discoveries: discoveryList, now: pathAt, tz }) : null), [meeting, live, allNotes, discoveryList, pathAt, tz]);
+  const lessonsRec = records.get(CLOSEOUT_KEY)?.lessons;
+  const lessons = useMemo<LessonsCtx>(() => ({
+    items: lessonsRec ?? [],
+    add: canEdit && userId && orgId ? (kind, text) => void saveRec(CLOSEOUT_KEY, (r) => ({ ...r, lessons: [...(r.lessons ?? []), { id: newId(), kind, text, by: userName ?? null, at: Date.now() }] })) : undefined,
+    remove: canEdit && userId && orgId ? (id) => void saveRec(CLOSEOUT_KEY, (r) => ({ ...r, lessons: (r.lessons ?? []).filter((x) => x.id !== id) })) : undefined,
+    msg: recMsg ?? recErr,
+  }), [lessonsRec, canEdit, userId, orgId, saveRec, userName, recMsg, recErr]);
   const sections = useMemo(() => meeting === "kickoff"
     ? kickoffSections(kickoff, ctx)
     : meeting === "closeout"
-      ? closeoutSections(closeout, report, ctx, cancelled, discoveryList)
+      ? closeoutSections(closeout, report, ctx, cancelled, discoveryList, lookBack, lessons)
       : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet, onEdit: canEdit && onUpdateStep ? setEditing : undefined, forecast, pathSource, discovery: discoveryList,
         onDiscovery: onDiscovery ? () => { const first = view.goals.all[0]?.parentId ?? view.review.done[0]?.parentId; const t = (first ? live.find((m) => m.id === first) : undefined) ?? live.find((m) => live.some((k) => k.parentId === m.id)); if (t) onDiscovery(t); } : undefined,
         // Only while the next shift is still ahead (or on).
         onPlanNext: onPlanNext && report.next.end > now ? () => onPlanNext(report.next) : undefined }),
-  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, onDiscovery, live, onPlanNext, now]);
+  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, onDiscovery, live, onPlanNext, now, lookBack, lessons]);
 
   // A step's card: asked about mid-meeting, answered from the schedule.
   const qlIndex = useMemo(() => quickLookIndex(milestones), [milestones]);
@@ -1734,7 +1745,7 @@ function kickoffSections(k: ReturnType<typeof buildKickoff>, c: Ctx): Sec[] {
   return secs;
 }
 
-function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftReport, c: Ctx, cancelled: CancelledJob[], found: Discovery[] = []): Sec[] {
+function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftReport, c: Ctx, cancelled: CancelledJob[], found: Discovery[] = [], lookBack: LookBack | null = null, lessons?: LessonsCtx): Sec[] {
   const finalStats = [
     { label: "Complete", value: `${co.actualPct}%`, tone: (co.actualPct >= 100 ? "emerald" : "amber") as "emerald" | "amber" },
     { label: "Steps done", value: `${co.done}/${co.steps}`, tone: "slate" as const },
@@ -1795,8 +1806,236 @@ function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftRep
       body: (print: boolean) => <DiscoveryList list={found} c={c} print={print} />,
       data: () => [discoveryBlock(found, c)],
     } as Sec] : []),
+    // The look back: where the time went, what set the finish, what went
+    // well, where to do better.
+    ...(lookBack && lookBack.steps.length ? lookBackSections(lookBack, report, c, lessons) : []),
     closeSection("Sign-off", ["Project / turnaround lead", "Operations", "Safety"]),
   ];
+}
+
+interface LessonsCtx {
+  items: Lesson[];
+  add?: (kind: Lesson["kind"], text: string) => void;
+  remove?: (id: string) => void;
+  msg?: string | null;
+}
+
+/** What a step lost, and why — in words. */
+function whyLost(s: StepLook, c: Ctx): string[] {
+  const out: string[] = [];
+  if (s.lost.hold) {
+    const said = s.holds.filter((h) => h.reason);
+    out.push(said.length ? said.map((h) => `On hold${h.hours > 0 ? ` ${c.hrs(h.hours)}` : " now"} — “${h.reason}”`).join("; ") : `On hold / blocked ${c.hrs(s.lost.hold)}`);
+  }
+  if (s.lost.longer) out.push(`Ran ${c.hrs(s.lost.longer)} longer than planned`);
+  if (s.lost["late-start"]) out.push(`Started ${c.hrs(s.lost["late-start"])} late — no hold or earlier work recorded`);
+  if (s.lost.replanned) out.push(`Re-planned (${c.hrs(s.lost.replanned)})${s.replans[0] ? ` — “${s.replans[0]}”` : ""}`);
+  if (s.discovery) out.push(`Discovery — “${s.discovery}”`);
+  for (const w of s.why.slice(-2)) out.push(`Said: “${w}”`);
+  return out;
+}
+
+function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx, lessons?: LessonsCtx): Sec[] {
+  const signed = (h: number) => `${h > 0 ? "+" : h < 0 ? "−" : ""}${c.hrs(Math.abs(h))}`;
+  const f = lb.finish;
+  const stats = [
+    { label: "Planned finish", value: c.DTs(f.baseline), tone: "slate" as const },
+    { label: f.done ? "Finished" : "Forecast finish", value: c.DTs(f.actual), tone: "slate" as const },
+    { label: f.slipH > 0 ? "Late by" : "Ahead by", value: c.hrs(Math.abs(f.slipH)), tone: (f.slipH >= 1 ? "rose" : f.slipH <= -1 ? "emerald" : "slate") as "rose" | "emerald" | "slate" },
+    { label: "Steps that lost time", value: `${lb.setbacks.length}`, tone: (lb.setbacks.length ? "amber" : "emerald") as "amber" | "emerald" },
+    { label: "Ahead of plan", value: `${lb.ahead.length}`, tone: (lb.ahead.length ? "emerald" : "slate") as "emerald" | "slate" },
+  ];
+  const max = Math.max(1, ...lb.byCause.map((x) => x.hours));
+  const basis = `Against the baseline${report.overall.baselineSetAt ? ` (set ${c.D(Date.parse(report.overall.baselineSetAt))})` : ""} · times as entered${f.done ? "" : " · work still open at its forecast"}`;
+  const setbacks = lb.setbacks.slice(0, 15);
+  // The chain, with runs of steps that only passed the slip on folded.
+  type Row = { kind: "step"; i: number } | { kind: "fold"; n: number };
+  const chainRows: Row[] = [];
+  lb.chain.forEach((l, i) => {
+    const quiet = Math.abs(l.addedH) < 1 && i > 0 && i < lb.chain.length - 1;
+    const last = chainRows[chainRows.length - 1];
+    if (quiet && last?.kind === "fold") last.n++;
+    else if (quiet) chainRows.push({ kind: "fold", n: 1 });
+    else chainRows.push({ kind: "step", i });
+  });
+  const first = lb.chain.find((l) => l.addedH >= 1);
+  const name = (s: StepLook) => `${s.task ? `${s.task} › ` : ""}${s.name}`;
+  const txt = (print: boolean) => (print ? "text-[8.5pt]" : "text-[12.5px]");
+  const bullets = (items: string[], tone: "emerald" | "amber", print: boolean) => (
+    <ul className={`space-y-1 ${txt(print)}`}>
+      {items.map((x) => <li key={x} className="flex gap-2"><span className={`mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full ${tone === "emerald" ? "bg-emerald-500" : "bg-amber-500"}`} /><span className="text-[var(--color-text)]">{x}</span></li>)}
+    </ul>
+  );
+  const teamNotes = (kind: Lesson["kind"], print: boolean) => <LessonNotes kind={kind} ctx={lessons} print={print} c={c} />;
+  const noteData = (kind: Lesson["kind"]): ExportBlock[] => {
+    const xs = (lessons?.items ?? []).filter((l) => l.kind === kind);
+    return xs.length ? [{ k: "label", text: "From the team" }, { k: "list", items: xs.map((l) => ({ text: l.text, ...(l.by ? { note: l.by } : {}) })) }] : [];
+  };
+  return [
+    {
+      id: "lookback", title: "Look back — where the time went", short: "Look back",
+      sub: basis,
+      flag: f.slipH >= 1 ? "amber" : null,
+      body: (print) => (
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 keep">
+            {stats.map((x) => <Stat key={x.label} label={x.label} value={x.value} tone={x.tone} />)}
+          </div>
+          {lb.byCause.length > 0 && (
+            <div className={`keep rounded-md border border-[var(--color-border)] px-2.5 py-2 space-y-1 ${txt(print)}`}>
+              <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Hours lost, by cause</div>
+              {lb.byCause.map((x) => (
+                <div key={x.cause} className="grid grid-cols-[minmax(0,15rem)_1fr_auto] items-center gap-2 max-sm:grid-cols-[1fr_auto]">
+                  <span className="text-[var(--color-text)] break-words max-sm:col-span-2">{CAUSE_LABEL[x.cause]}</span>
+                  <span className="h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden"><span className="block h-full rounded-full bg-amber-500" style={{ width: `${Math.round((x.hours / max) * 100)}%` }} /></span>
+                  <span className="tabular-nums text-[var(--color-text-muted)]"><b className="text-[var(--color-text)]">{c.hrs(x.hours)}</b> · {x.steps} step{x.steps === 1 ? "" : "s"}</span>
+                </div>
+              ))}
+              <div className="text-[11px] text-[var(--color-text-faint)]">Hours each step lost on its own, added up — work runs side by side, so this is more than the finish moved. What moved the finish is under The chain of events.</div>
+            </div>
+          )}
+        </div>
+      ),
+      data: () => [{ k: "stats", items: stats }, ...(lb.byCause.length ? [{ k: "table", head: ["Cause", "Hours lost", "Steps"], align: ["left", "right", "right"], rows: lb.byCause.map((x) => [CAUSE_LABEL[x.cause], c.hrs(x.hours), `${x.steps}`]) } as ExportBlock] : [])],
+    },
+    {
+      id: "setbacks", title: "What set us back", short: "Set back", count: lb.setbacks.length, flag: lb.setbacks.length ? "amber" : null,
+      sub: "Steps that lost the most time on their own — time handed on from the work before isn't counted again",
+      body: (print) => setbacks.length === 0 ? <Empty>No step lost an hour or more on its own.</Empty> : (
+        <div className={`rounded-md border border-[var(--color-border)] divide-y divide-[var(--color-border)] ${txt(print)}`}>
+          {setbacks.map((s) => (
+            <div key={s.id} className={`keep ${print ? "px-1.5 py-1" : "px-2.5 py-1.5"} grid grid-cols-[1fr_auto] gap-x-3`}>
+              <div className="min-w-0">
+                <b className="text-[var(--color-text)] break-words">{s.name}</b>
+                <span className="text-[var(--color-text-muted)]"> · {[s.task, s.wo ? `WO ${s.wo}` : null, s.crew].filter(Boolean).join(" · ")}{s.done ? "" : " · forecast"}</span>
+                <div className="text-[var(--color-text-muted)] break-words">{whyLost(s, c).join(" · ")}</div>
+              </div>
+              <div className="text-right tabular-nums font-bold text-rose-700 dark:text-rose-400 whitespace-nowrap">{signed(s.lostH)}</div>
+            </div>
+          ))}
+          {lb.setbacks.length > setbacks.length && <div className="px-2.5 py-1 text-[var(--color-text-muted)]">+ {lb.setbacks.length - setbacks.length} more, each losing less</div>}
+        </div>
+      ),
+      data: () => [setbacks.length === 0 ? { k: "empty", text: "No step lost an hour or more on its own." } : {
+        k: "table", head: ["Step", "WO", "Who", "Lost", "Why"], align: ["left", "left", "left", "right", "left"], nowrap: [3],
+        rows: setbacks.map((s) => [{ t: s.name, note: s.task || undefined }, s.wo, s.crew, { t: signed(s.lostH), tone: "rose", bold: true }, whyLost(s, c).join(" · ")]),
+      }],
+    },
+    {
+      id: "chain", title: "The chain of events", short: "Chain",
+      sub: lb.chain.length ? `The work that set the finish, first to last — ${first ? `the slip starts at ${name(first.step)}` : "no step on it lost time"}` : undefined,
+      body: (print) => lb.chain.length === 0 ? <Empty>The schedule&apos;s links don&apos;t show a chain into the finish.</Empty> : (
+        <ol className={`relative space-y-0 ${txt(print)}`}>
+          {chainRows.map((r, k) => r.kind === "fold" ? (
+            <li key={`f${k}`} className="pl-5 py-0.5 text-[var(--color-text-faint)] border-l-2 border-dashed border-[var(--color-border-strong)] ml-1.5">
+              … {r.n} step{r.n === 1 ? "" : "s"} passed it on, adding nothing
+            </li>
+          ) : (() => {
+            const l = lb.chain[r.i], s = l.step;
+            const tone = l.addedH >= 1 ? "text-rose-700 dark:text-rose-400" : l.addedH <= -1 ? "text-emerald-700 dark:text-emerald-400" : "text-[var(--color-text-muted)]";
+            return (
+              <li key={s.id} className="keep pl-5 py-1 border-l-2 border-[var(--color-border-strong)] ml-1.5 relative">
+                <span className={`absolute -left-[5px] top-[9px] h-2 w-2 rounded-full ${l.addedH >= 1 ? "bg-rose-500" : l.addedH <= -1 ? "bg-emerald-500" : "bg-slate-400"}`} />
+                <div className="flex flex-wrap items-baseline gap-x-2">
+                  <b className="text-[var(--color-text)] break-words">{name(s)}</b>
+                  <span className={`font-bold tabular-nums ${tone}`}>{l.addedH >= 1 ? `added ${signed(l.addedH)}` : l.addedH <= -1 ? `made up ${c.hrs(-l.addedH)}` : "passed it on"}</span>
+                  <span className="text-[var(--color-text-muted)] tabular-nums">· finish {signed(l.slipH)} after it</span>
+                </div>
+                <div className="text-[var(--color-text-muted)]">
+                  planned {c.DTs(s.bs)}–{c.DTs(s.bf)} · {s.done ? "did" : "forecast"} {c.DTs(s.as)}–{c.DTs(s.af)}{l.addedH >= 1 && whyLost(s, c).length ? ` · ${whyLost(s, c).join(" · ")}` : ""}
+                </div>
+              </li>
+            );
+          })())}
+        </ol>
+      ),
+      data: () => [lb.chain.length === 0 ? { k: "empty", text: "The schedule's links don't show a chain into the finish." } : {
+        k: "table", head: ["Step", "Planned finish", f.done ? "Finished" : "Finish (forecast)", "Added", "Why"], align: ["left", "left", "left", "right", "left"], nowrap: [1, 2, 3],
+        rows: lb.chain.filter((l, i) => Math.abs(l.addedH) >= 1 || i === 0 || i === lb.chain.length - 1).map((l) => [{ t: l.step.name, note: l.step.task || undefined }, c.DTs(l.step.bf), c.DTs(l.step.af),
+          { t: l.addedH >= 1 ? signed(l.addedH) : l.addedH <= -1 ? `made up ${c.hrs(-l.addedH)}` : "—", tone: l.addedH >= 1 ? "rose" : l.addedH <= -1 ? "emerald" : "muted", bold: true }, l.addedH >= 1 ? whyLost(l.step, c).join(" · ") : ""]),
+      }],
+    },
+    {
+      id: "well", title: "What went well", short: "Went well", count: lb.ahead.length || undefined, flag: null,
+      sub: "To keep doing next time",
+      body: (print) => (
+        <div className="space-y-2">
+          {lb.keep.length > 0 && bullets(lb.keep, "emerald", print)}
+          {lb.ahead.length > 0 && (
+            <div className={`keep rounded-md border border-[var(--color-border)] divide-y divide-[var(--color-border)] ${txt(print)}`}>
+              <div className="px-2.5 py-1 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Finished ahead of plan</div>
+              {lb.ahead.slice(0, 8).map((s) => (
+                <div key={s.id} className="px-2.5 py-1 grid grid-cols-[1fr_auto] gap-x-3">
+                  <span className="min-w-0 break-words"><b className="text-[var(--color-text)]">{s.name}</b><span className="text-[var(--color-text-muted)]"> · {[s.task, s.crew].filter(Boolean).join(" · ")}</span></span>
+                  <span className="tabular-nums font-bold text-emerald-700 dark:text-emerald-400 whitespace-nowrap">{c.hrs(-s.finishH)} early</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {lb.absorbed.length > 0 && <div className={`text-[var(--color-text)] ${txt(print)}`}>Discovery that fit in the float: {lb.absorbed.map((d) => `“${d.record.what}” (${c.hrs(d.record.impact.hours)})`).join("; ")}.</div>}
+          {lb.crews.length > 0 && (
+            <div className={`keep rounded-md border border-[var(--color-border)] ${txt(print)}`}>
+              <div className="px-2.5 py-1 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Crews — steps done on plan</div>
+              {lb.crews.map((x) => (
+                <div key={x.crew} className="px-2.5 py-0.5 grid grid-cols-[1fr_auto_auto] gap-x-3 tabular-nums">
+                  <span className="text-[var(--color-text)] truncate">{x.crew}</span>
+                  <span className="text-[var(--color-text-muted)]">{x.onPlan} of {x.done} on plan</span>
+                  <span className={`font-bold ${x.done && x.onPlan === x.done ? "text-emerald-700 dark:text-emerald-400" : "text-[var(--color-text-muted)]"}`}>{Math.round((x.onPlan / x.done) * 100)}%</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {teamNotes("keep", print)}
+        </div>
+      ),
+      data: () => [
+        ...(lb.keep.length ? [{ k: "list", items: lb.keep.map((t) => ({ text: t })) } as ExportBlock] : []),
+        ...(lb.ahead.length ? [{ k: "table", head: ["Finished ahead of plan", "Crew", "Early"], align: ["left", "left", "right"], rows: lb.ahead.slice(0, 8).map((s) => [{ t: s.name, note: s.task || undefined }, s.crew, { t: c.hrs(-s.finishH), tone: "emerald", bold: true }]) } as ExportBlock] : []),
+        ...(lb.crews.length ? [{ k: "table", head: ["Crew", "On plan", ""], align: ["left", "right", "right"], rows: lb.crews.map((x) => [x.crew, `${x.onPlan} of ${x.done}`, `${Math.round((x.onPlan / x.done) * 100)}%`]) } as ExportBlock] : []),
+        ...noteData("keep"),
+      ],
+    },
+    {
+      id: "improve", title: "Where we can improve", short: "Improve", count: lb.improve.length || undefined, flag: lb.improve.length ? "amber" : null,
+      sub: "What the record says to change next time",
+      body: (print) => (
+        <div className="space-y-2">
+          {lb.improve.length ? bullets(lb.improve, "amber", print) : <Empty>Nothing in the record stands out.</Empty>}
+          {teamNotes("improve", print)}
+        </div>
+      ),
+      data: () => [...(lb.improve.length ? [{ k: "list", items: lb.improve.map((t) => ({ text: t })) } as ExportBlock] : [{ k: "empty", text: "Nothing in the record stands out." } as ExportBlock]), ...noteData("improve")],
+    },
+  ];
+}
+
+/** The team's own lessons — kept with the close-out, on the screen, the
+ *  print and the email. */
+function LessonNotes({ kind, ctx, print, c }: { kind: Lesson["kind"]; ctx?: LessonsCtx; print: boolean; c: Ctx }) {
+  const [text, setText] = useState("");
+  const items = (ctx?.items ?? []).filter((l) => l.kind === kind);
+  if (print && !items.length) return null;
+  return (
+    <div className={`keep rounded-md border border-[var(--color-border)] px-2.5 py-1.5 space-y-1 ${print ? "text-[8.5pt]" : "text-[12.5px]"}`}>
+      <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">{kind === "keep" ? "Keep doing — from the team" : "Do better — from the team"}</div>
+      {items.map((l) => (
+        <div key={l.id} className="flex items-start gap-2">
+          <span className="flex-1 min-w-0 break-words text-[var(--color-text)]">{l.text}<span className="text-[11px] text-[var(--color-text-faint)]">{l.by ? ` — ${l.by}` : ""} · {c.D(l.at)}</span></span>
+          {!print && ctx?.remove && <button type="button" onClick={() => ctx.remove!(l.id)} aria-label="Remove" className="text-[var(--color-text-faint)] hover:text-rose-600 print:hidden"><X className="w-3.5 h-3.5" /></button>}
+        </div>
+      ))}
+      {!print && ctx?.add && (
+        <form className="flex items-center gap-1.5 print:hidden" onSubmit={(e) => { e.preventDefault(); if (text.trim()) { ctx.add!(kind, text.trim()); setText(""); } }}>
+          <input value={text} onChange={(e) => setText(e.target.value)} placeholder={kind === "keep" ? "e.g. Staging bundles the night before saved hours" : "e.g. Get hot-work permits signed before the shift starts"}
+            aria-label={kind === "keep" ? "Something to keep doing" : "Something to do better"}
+            className="flex-1 min-w-0 h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]" />
+          <button type="submit" disabled={!text.trim()} className="h-8 px-3 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12px] font-bold disabled:opacity-50">Add</button>
+        </form>
+      )}
+      {!print && ctx?.msg && <div className="text-[11.5px] text-rose-700 dark:text-rose-300">{ctx.msg}</div>}
+      {!print && !items.length && !ctx?.add && <div className="text-[var(--color-text-faint)]">None written yet.</div>}
+    </div>
+  );
 }
 
 /** Jobs taken off this schedule that still get done somewhere else —

@@ -53,9 +53,15 @@ const H = 3_600_000;
 
 const ms = (v: unknown): number => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
 
-export function computeCpm(milestones: Milestone[], o: { now: number; tz: string; nearH?: number }): Cpm {
-  const { now, tz } = o;
-  const nearMs = (o.nearH ?? NEAR_CRITICAL_H) * H;
+/** Each step's predecessors and successors from the schedule's links — a
+ *  link to a whole task is a link to each of its steps, and a task's link
+ *  applies to its steps. The one reading of the links (the critical path,
+ *  the close-out's look back). */
+export function linkGraph(milestones: Milestone[]): {
+  byId: Map<string, Milestone>; leaves: Milestone[];
+  preds: Map<string, Array<{ id: string; link: LinkSpec }>>;
+  succs: Map<string, Array<{ id: string; link: LinkSpec }>>;
+} {
   const byId = new Map<string, Milestone>();
   const kids = new Map<string, string[]>();
   for (const m of milestones) if (m.id) byId.set(m.id, m);
@@ -94,6 +100,13 @@ export function computeCpm(milestones: Milestone[], o: { now: number; tz: string
     for (const p of list) succs.set(p.id, [...(succs.get(p.id) ?? []), { id: m.id!, link: p.link }]);
   }
 
+  return { byId, leaves, preds, succs };
+}
+
+export function computeCpm(milestones: Milestone[], o: { now: number; tz: string; nearH?: number }): Cpm {
+  const { now, tz } = o;
+  const nearMs = (o.nearH ?? NEAR_CRITICAL_H) * H;
+  const { byId, leaves, preds, succs } = linkGraph(milestones);
   // Order: predecessors first (a loop in the links is left as it lies).
   const indeg = new Map(leaves.map((m) => [m.id!, preds.get(m.id!)!.length]));
   const order: string[] = [];

@@ -35,6 +35,12 @@ export interface ShiftNote {
   cleared?: { at: number; by?: string | null } | null;
 }
 
+/** A lesson for next time, written at the close-out. */
+export interface Lesson { id: string; kind: "keep" | "improve"; text: string; by?: string | null; at: number }
+
+/** The close-out's own record (its lessons) — kept beside the shifts'. */
+export const CLOSEOUT_KEY = "closeout";
+
 export interface ShiftRecord {
   /** By crew name, as on the schedule. */
   crews?: Record<string, CrewCount>;
@@ -42,6 +48,8 @@ export interface ShiftRecord {
   notes?: ShiftNote[];
   /** The report's tables as dragged into order at the meeting. */
   order?: TableOrder;
+  /** The close-out's lessons (record CLOSEOUT_KEY). */
+  lessons?: Lesson[];
 }
 
 export const SHIFT_RECORD_MIGRATION = "20261105_shift_record.sql";
