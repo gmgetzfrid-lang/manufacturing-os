@@ -532,8 +532,8 @@ export default function ExecutionView({
     if (Math.abs(w.at - Date.now()) < 120_000) return;
     const res = await creditProgressTo(id, w.at);
     if (res === "ok" || res === "late") return;
-    notify(res === "missing" ? `Saved, but logged at the time you typed it in — putting it at ${w.label} needs the database update (20261105_shift_record.sql) run first.`
-      : res === "changed" ? `Saved, but logged at the time you typed it in — the step was changed again after ${w.label}, so it can't go back there.`
+    notify(res === "missing" ? `Saved, but logged at the time you typed it in — putting it at ${w.label} needs the database update (20261107_progress_times.sql) run first.`
+      : res === "changed" ? `Saved, but logged at the time you typed it in — the step has a later entry than ${w.label}. Fix that entry's time in the step's History first.`
         : `Saved, but logged at the time you typed it in — it couldn't be put at ${w.label}.`, "warning");
   }, [notify]);
   const setStatus = useCallback(async (id: string, next: MilestoneStatus, reason?: string, percent?: number, forShift?: ShiftCredit): Promise<boolean> => {

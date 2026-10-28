@@ -509,6 +509,8 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
     body: input.note?.trim() || input.statusReason?.trim() || null,
     createdBy: input.actorUserId,
     createdByName: input.actorUserName,
+    // When it happened, if that was earlier (a hold's reason reads there).
+    ...(input.at ? { happenedAt: input.at } : {}),
   }).catch(() => { /* note is best-effort; never block the transition */ });
   // Said with Done, Not started or Missed, the words are the step's comment
   // — what goes on the report (a hold's are its reason, kept above).
@@ -781,6 +783,24 @@ export async function creditProgressTo(milestoneId: string, at: number): Promise
   const { data, error } = await supabase.rpc("credit_progress_to", { p_milestone_id: milestoneId, p_at: new Date(at).toISOString() });
   if (error) return error.code === "PGRST202" || error.code === "42883" ? "missing" : "error";
   return (["ok", "changed", "late", "range"] as const).find((x) => x === data) ?? "error";
+}
+
+/** Correct when a logged change happened (a time picked, entered later,
+ *  or picked wrong): its line in the progress log moves to `at`. "start"
+ *  — the log's starting line, not a change; "range" — in the future or
+ *  more than 60 days back; "missing" — the database function isn't
+ *  installed yet (20261107_progress_times.sql). */
+export type ProgressTimeResult = "ok" | "start" | "range" | "missing" | "error";
+export async function setProgressTime(logId: number, at: number): Promise<ProgressTimeResult> {
+  const { data, error } = await supabase.rpc("set_progress_time", { p_log_id: logId, p_at: new Date(at).toISOString() });
+  if (error) return error.code === "PGRST202" || error.code === "42883" ? "missing" : "error";
+  return (["ok", "start", "range"] as const).find((x) => x === data) ?? "error";
+}
+
+/** When a comment's event happened, corrected with it. */
+export async function setNoteTime(noteId: string, at: number): Promise<void> {
+  const { error } = await supabase.from("milestone_notes").update({ happened_at: new Date(at).toISOString() }).eq("id", noteId);
+  if (error) throw new Error(error.message);
 }
 
 /** The latest comment on each step (kind "note" — not status or

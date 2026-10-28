@@ -15,7 +15,7 @@ import { fmtInTz, toDateTimeInput, fromDateTimeInput } from "@/lib/scheduleTz";
 import DateTimePicker from "@/components/projects/DateTimePicker";
 import PctSlider from "@/components/projects/PctSlider";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
-import { updateMilestoneNote } from "@/lib/milestones";
+import { updateMilestoneNote, setProgressTime, setNoteTime } from "@/lib/milestones";
 import type { ProgressLogRow } from "@/lib/progressHistory";
 import { describeChange } from "@/lib/timeLog";
 
@@ -33,6 +33,17 @@ export interface StepUpdate {
 }
 
 type Action = "start" | "progress" | "finish" | "hold" | "resume" | "edit" | "reopen";
+/** Something in the history, and what moves when its time is fixed: its
+ *  log line, the step's actual start / finish, its comments. */
+interface HistoryEvent {
+  key: string; at: number; text: string;
+  said: Array<{ text: string; note: MilestoneNote | null }>;
+  logId?: number; fix?: "start" | "finish"; noteIds: string[];
+}
+/** A logged change in words: "Started", "Progress · 25%", "Blocked". */
+const logWords = (x: ProgressLogRow) => x.new_status === "completed" ? "Finished"
+  : x.new_status === "in_progress" && (x.old_status === "planned" || x.old_status === "missed") ? "Started"
+    : `${describeChange(x.old_status, x.old_percent, x.new_status, x.new_percent)}${x.new_status === "in_progress" ? ` · ${Number(x.new_percent ?? 0)}%` : ""}`;
 const ms = (v: unknown) => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
 const H = 3_600_000;
 
@@ -79,9 +90,9 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   // it was typed in), progress and holds from the log, and each comment on
   // the event it came with.
   const history = useMemo(() => {
-    const ev: Array<{ key: string; at: number; text: string; said: Array<{ text: string; note: MilestoneNote | null }> }> = [];
-    if (Number.isFinite(as)) ev.push({ key: "start", at: as, text: "Started", said: [] });
-    if (done && Number.isFinite(af)) ev.push({ key: "finish", at: af, text: "Finished", said: [] });
+    const ev: HistoryEvent[] = [];
+    if (Number.isFinite(as)) ev.push({ key: "start", at: as, text: "Started", said: [], fix: "start", noteIds: [] });
+    if (done && Number.isFinite(af)) ev.push({ key: "finish", at: af, text: "Finished", said: [], fix: "finish", noteIds: [] });
     // Each saved change, by when it was saved — a comment goes with the
     // change it was saved with.
     const saves: Array<{ at: number; key: string }> = [];
@@ -89,10 +100,12 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       if (x.old_status == null || (x.old_status === x.new_status && Number(x.old_percent ?? 0) === Number(x.new_percent ?? 0))) continue;
       const savedAt = Date.parse(x.entered_at ?? x.at);
       // Starts and finishes are told by the actual times.
-      if (x.new_status === "completed") { if (done) saves.push({ at: savedAt, key: "finish" }); continue; }
-      if (x.new_status === "in_progress" && (x.old_status === "planned" || x.old_status === "missed")) { if (Number.isFinite(as)) saves.push({ at: savedAt, key: "start" }); continue; }
-      const key = `r${x.at}${x.new_status}${x.new_percent}`;
-      ev.push({ key, at: Date.parse(x.at), text: `${describeChange(x.old_status, x.old_percent, x.new_status, x.new_percent)}${x.new_status === "in_progress" ? ` · ${Number(x.new_percent ?? 0)}%` : ""}`, said: [] });
+      // Its log line goes with it when the time is fixed (the latest one).
+      const own = (k: string) => { const e = ev.find((y) => y.key === k); if (e && x.id != null) e.logId = x.id; };
+      if (x.new_status === "completed") { if (done) { saves.push({ at: savedAt, key: "finish" }); own("finish"); } continue; }
+      if (x.new_status === "in_progress" && (x.old_status === "planned" || x.old_status === "missed")) { if (Number.isFinite(as)) { saves.push({ at: savedAt, key: "start" }); own("start"); } continue; }
+      const key = `r${x.id ?? ""}${x.at}${x.new_status}${x.new_percent}`;
+      ev.push({ key, at: Date.parse(x.at), text: logWords(x), said: [], logId: x.id, noteIds: [] });
       saves.push({ at: savedAt, key });
     }
     const near = 10 * 60_000;
@@ -107,11 +120,61 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       const viaSave = saves.filter((x) => Math.abs(x.at - typed) <= near).sort((a, b) => Math.abs(a.at - typed) - Math.abs(b.at - typed))[0];
       const host = (viaSave ? ev.find((e) => e.key === viaSave.key) : undefined)
         ?? ev.filter((e) => Math.abs(e.at - at) <= near).sort((a, b) => Math.abs(a.at - at) - Math.abs(b.at - at))[0];
-      if (host) host.said.push(line); else ev.push({ key: `n${n.id ?? n.createdAt}`, at, text: "", said: [line] });
+      if (host) { host.said.push(line); if (n.id) host.noteIds.push(n.id); }
+      else ev.push({ key: `n${n.id ?? n.createdAt}`, at, text: "", said: [line], noteIds: n.id ? [n.id] : [] });
     }
     return ev.filter((e) => Number.isFinite(e.at)).sort((a, b) => b.at - a.at);
   }, [rows, notes, as, af, done]);
   const [allHistory, setAllHistory] = useState(false);
+  // The step's last logged change: a time put in has to come after it
+  // (the history reads in order; the reports read it by time). The log's
+  // starting line isn't a change.
+  const lastEntry = useMemo(() => {
+    let best: { at: number; text: string } | null = null;
+    for (const x of rows) {
+      const t = Date.parse(x.at);
+      if (x.old_status != null && Number.isFinite(t) && (!best || t > best.at)) best = { at: t, text: logWords(x) };
+    }
+    return best;
+  }, [rows]);
+  const beforeLast = (t: number) => (lastEntry && t < lastEntry.at - 60_000
+    ? `That's before the last entry on this step — “${lastEntry.text}” at ${when(lastEntry.at)}. Pick a later time, or tap that entry's time in History to fix it first.`
+    : null);
+  // Fixing the time of something in the history.
+  const [fixing, setFixing] = useState<string | null>(null);
+  const [fixV, setFixV] = useState("");
+  const [fixMsg, setFixMsg] = useState<string | null>(null);
+  const [fixBusy, setFixBusy] = useState(false);
+  const canFix = (x: HistoryEvent) => canEdit && (x.fix ? !!onFixTimes : x.logId != null || x.noteIds.length > 0);
+  const openFix = (x: HistoryEvent) => { setFixing(fixing === x.key ? null : x.key); setFixV(toDateTimeInput(x.at, tz)); setFixMsg(null); setSaved(null); };
+  const saveFix = async (x: HistoryEvent) => {
+    const t = fixV.length >= 16 ? toMs(fixV) : NaN;
+    if (!Number.isFinite(t)) { setFixMsg("Pick the day and the time."); return; }
+    if (t > Date.now() + 60_000) { setFixMsg("That time is in the future."); return; }
+    if (x.fix === "start" && Number.isFinite(af) && t > af) { setFixMsg(`It finished ${when(af)} — it can't start after that.`); return; }
+    if (x.fix === "finish" && Number.isFinite(as) && t < as) { setFixMsg(`It started ${when(as)} — it can't finish before that.`); return; }
+    // It stays between what came before it and what came after.
+    if (x.logId != null) {
+      const seq = rows.filter((r) => r.old_status != null && r.id != null).sort((a, b) => a.id! - b.id!);
+      const i = seq.findIndex((r) => r.id === x.logId);
+      const prev = i > 0 ? seq[i - 1] : null, next = i >= 0 ? seq[i + 1] : null;
+      if (prev && t < Date.parse(prev.at)) { setFixMsg(`That's before “${logWords(prev)}” at ${when(Date.parse(prev.at))}, which came first. If that one's wrong, fix it first.`); return; }
+      if (next && t > Date.parse(next.at)) { setFixMsg(`That's after “${logWords(next)}” at ${when(Date.parse(next.at))}, which came next. If that one's wrong, fix it first.`); return; }
+    }
+    setFixBusy(true); setFixMsg(null);
+    try {
+      if (x.logId != null) {
+        const r = await setProgressTime(x.logId, t);
+        if (r !== "ok") { setFixMsg(r === "missing" ? "Fixing a time needs the database update run first." : r === "range" ? "That's more than 60 days back." : "Not saved."); return; }
+      }
+      if (x.fix && onFixTimes && !(await onFixTimes(x.fix === "start" ? { start: t } : { finish: t }))) { setFixMsg("Not saved."); return; }
+      // Its comments go with it.
+      for (const id of x.noteIds) await setNoteTime(id, t).catch(() => undefined);
+      window.dispatchEvent(new CustomEvent("milestone-notes:changed"));
+      setFixing(null); setSaved(`Time fixed: ${when(t)}`);
+    } catch (e) { setFixMsg((e as Error).message || "Not saved."); }
+    finally { setFixBusy(false); }
+  };
 
   const [action, setAction] = useState<Action | null>(null);
   const [atV, setAtV] = useState("");
@@ -149,12 +212,14 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       if (action === "start" || action === "resume") {
         const t = need(atV, "when it started");
         if (typeof t === "string") { setMsg(t); return; }
+        const late = beforeLast(t); if (late) { setMsg(late); return; }
         ok = await run({ status: "in_progress", pct: null, note: note.trim(), at: t, ...extra });
         said = `Started ${when(t)}`;
       } else if (action === "progress") {
         if (p == null || p === Math.round(pct)) { setMsg("Slide it to the new %."); return; }
         const t = need(atV, "when");
         if (typeof t === "string") { setMsg(t); return; }
+        const late = beforeLast(t); if (late) { setMsg(late); return; }
         // 100% is finished.
         if (p >= 100) {
           if (Number.isFinite(as) && t < as) { setMsg(`It started ${when(as)} — it can't finish before that.`); return; }
@@ -175,6 +240,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
           s = t;
         }
         if (Number.isFinite(as) && f < as) { setMsg(`It started ${when(as)} — it can't finish before that.`); return; }
+        const late = beforeLast(s ?? f); if (late) { setMsg(late); return; }
         // Not started yet: its start goes in first.
         if (s != null && !(await run({ status: "in_progress", pct: null, note: "", at: s }))) { setMsg("Not saved."); return; }
         ok = await run({ status: "completed", pct: null, note: note.trim(), at: f, ...extra });
@@ -183,12 +249,14 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         if (!note.trim()) { setMsg("Say why."); return; }
         const t = need(atV, "when it stopped");
         if (typeof t === "string") { setMsg(t); return; }
+        const late = beforeLast(t); if (late) { setMsg(late); return; }
         ok = await run({ status: holdKind, pct: null, note: note.trim(), at: t });
         said = `${holdKind === "blocked" ? "Blocked" : "On hold"} ${when(t)}`;
       } else if (action === "reopen") {
         if (!note.trim()) { setMsg("Say why."); return; }
         const t = need(atV, "when");
         if (typeof t === "string") { setMsg(t); return; }
+        const late = beforeLast(t); if (late) { setMsg(late); return; }
         ok = await run({ status: "in_progress", pct: p ?? 90, note: note.trim(), at: t });
         said = "Reopened";
       } else if (action === "edit") {
@@ -294,9 +362,23 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
           <ol className="space-y-0.5">
             {shown.map((x) => (
               <li key={x.key} className="text-[12px] break-words">
-                <span className="text-[var(--color-text-muted)] mr-1.5 whitespace-nowrap">{when(x.at)}</span>
+                {canFix(x)
+                  ? <button type="button" onClick={() => openFix(x)} title="Fix this time" aria-expanded={fixing === x.key}
+                    className="mr-1.5 whitespace-nowrap text-[var(--color-text-muted)] underline decoration-dotted underline-offset-2 hover:text-[var(--color-text)]">{when(x.at)}</button>
+                  : <span className="text-[var(--color-text-muted)] mr-1.5 whitespace-nowrap">{when(x.at)}</span>}
                 {x.text && <b className="text-[var(--color-text)]">{x.text}</b>}
                 {x.said.map((c, i) => <HistoryNote key={i} text={c.text} note={canEdit ? c.note : null} lead={!!x.text || i > 0} />)}
+                {fixing === x.key && (
+                  <div className="mt-1 mb-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-2.5 space-y-2 text-[12.5px]">
+                    <DateTimePicker label="When it happened" value={fixV} onChange={(v) => { setFixV(v); setFixMsg(null); }} tz={tz} times={times} showNow={false} disabled={fixBusy} />
+                    {fixMsg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{fixMsg}</div>}
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => void saveFix(x)} disabled={fixBusy}
+                        className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-60">{fixBusy ? "Saving…" : "Save time"}</button>
+                      <button type="button" onClick={() => setFixing(null)} className="h-9 px-3 rounded-lg text-[var(--color-text-muted)] font-semibold hover:text-[var(--color-text)]">Cancel</button>
+                    </div>
+                  </div>
+                )}
               </li>
             ))}
           </ol>

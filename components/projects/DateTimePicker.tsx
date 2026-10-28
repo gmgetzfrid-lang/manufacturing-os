@@ -136,13 +136,16 @@ function TimeBox({ value, label, open, onOpen, onSet, className, disabled, place
   const ref = useRef<HTMLInputElement>(null);
   const ptr = useRef("");
   const [typing, setTyping] = useState(false);
+  // A finger's first tap: no keyboard (the box takes no typing until the
+  // second). A mouse or the keyboard is never held off.
+  const [held, setHeld] = useState(false);
   const [draft, setDraft] = useState<string | null>(null);
   // What it was before typing — put back if what's typed isn't a time.
   const before = useRef<string | null>(null);
   const pm = value ? Number(value.slice(0, 2)) >= 12 : false;
   const bad = draft != null && draft.trim() !== "" && !parseTypedTime(draft, pm);
   const startTyping = () => {
-    flushSync(() => setTyping(true));
+    flushSync(() => { setTyping(true); setHeld(false); });
     const el = ref.current;
     if (el) { el.blur(); el.focus(); el.select(); }
   };
@@ -150,16 +153,22 @@ function TimeBox({ value, label, open, onOpen, onSet, className, disabled, place
     <label className={`${className} cursor-text ${bad ? "!border-rose-500 !ring-rose-500" : ""}`}>
       <Clock className="w-4 h-4 shrink-0 opacity-70" />
       <input ref={ref} value={draft ?? (value ? time12(value) : "")} placeholder={placeholder} aria-label={label} disabled={disabled}
-        readOnly={!typing} autoComplete="off" spellCheck={false} enterKeyHint="done" size={8}
-        onPointerDown={(e) => { ptr.current = e.pointerType; }}
+        readOnly={held} autoComplete="off" spellCheck={false} enterKeyHint="done" size={8}
+        onPointerDown={(e) => { ptr.current = e.pointerType; if (e.pointerType === "touch" && !typing) setHeld(true); }}
+        // A mouse click: the whole time selected, so typing replaces it
+        // (not a caret dropped in the middle of "2:00 AM").
+        onMouseDown={(e) => {
+          const el = ref.current;
+          if (!el || ptr.current === "touch" || disabled) return;
+          e.preventDefault(); el.focus(); el.select();
+        }}
         // A mouse or the keyboard: ready to type.
         onFocus={() => { if (ptr.current !== "touch") setTyping(true); }}
         onClick={() => {
           if (!open) onOpen();
           if (ptr.current === "touch") { if (open && !typing) startTyping(); return; }
           // After the time it opens on is in.
-          ref.current?.select();
-          requestAnimationFrame(() => { if (before.current == null) ref.current?.select(); });
+          requestAnimationFrame(() => { if (before.current == null && document.activeElement === ref.current) ref.current?.select(); });
         }}
         onChange={(e) => {
           if (draft == null) before.current = value;
@@ -172,7 +181,7 @@ function TimeBox({ value, label, open, onOpen, onSet, className, disabled, place
         onBlur={() => {
           const b = before.current;
           if (bad && b) onSet(Number(b.slice(0, 2)), Number(b.slice(3, 5)));
-          before.current = null; setDraft(null); setTyping(false); ptr.current = "";
+          before.current = null; setDraft(null); setTyping(false); setHeld(false); ptr.current = "";
         }}
         className="w-[70px] min-w-0 bg-transparent font-semibold outline-none placeholder:text-[var(--color-text-muted)] placeholder:font-semibold" />
     </label>

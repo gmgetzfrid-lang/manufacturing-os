@@ -238,6 +238,12 @@ export default function DayAgendaPanel({
   // a later day's story): on its row, and in its box to edit.
   const [stepNotes, setStepNotes] = useState<MilestoneNote[]>([]);
   const [notesTick, setNotesTick] = useState(0);
+  // A comment or a time corrected elsewhere (a step card's history).
+  useEffect(() => {
+    const on = () => setNotesTick((t) => t + 1);
+    window.addEventListener("milestone-notes:changed", on);
+    return () => window.removeEventListener("milestone-notes:changed", on);
+  }, []);
   const dayStepIds = useMemo(() => groups.flatMap((g) => g.rows.map((r) => r.leaf.id).filter((x): x is string => !!x)).sort().join(","), [groups]);
   useEffect(() => {
     if (!dayStepIds) return;

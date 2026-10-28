@@ -10,6 +10,8 @@ import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 
 export interface ProgressLogRow {
+  /** The line's id — to correct its time. */
+  id?: number;
   milestone_id: string;
   at: string;
   old_status: MilestoneStatus | null;
@@ -29,9 +31,9 @@ export async function loadProgressLog(projectId: string): Promise<ProgressLogRow
     .select(cols)
     .eq("project_id", projectId)
     .order("at", { ascending: true }).order("id", { ascending: true }).range(from, to) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>);
-  let { rows, error } = await read("milestone_id, at, old_status, old_percent, new_status, new_percent, entered_at");
+  let { rows, error } = await read("id, milestone_id, at, old_status, old_percent, new_status, new_percent, entered_at");
   // Before the database update there's no entered_at: the log as it was.
-  if (error && /entered_at/.test(error)) ({ rows, error } = await read("milestone_id, at, old_status, old_percent, new_status, new_percent"));
+  if (error && /entered_at/.test(error)) ({ rows, error } = await read("id, milestone_id, at, old_status, old_percent, new_status, new_percent"));
   if (error) return null;
   return rows;
 }
