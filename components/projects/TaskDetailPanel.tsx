@@ -60,16 +60,21 @@ interface Props {
   /** A step's % with what got done (required for work in progress), and
    *  starting one — for the steps listed under a work order. */
   onSetProgressNote?: (id: string, percent: number, note: string, forShift?: ShiftCredit) => Promise<boolean> | boolean;
+  /** The schedule's own status save (the time it happened, "record it
+   *  early?", undo, filing under the right shift) — used when given. */
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number, forShift?: ShiftCredit) => Promise<boolean>;
   onStartNote?: (id: string, percent: number, note: string, forShift?: ShiftCredit) => Promise<boolean> | boolean;
 }
 
 /** Schedule-file values the app reads for itself, shown elsewhere in
  *  plain words (Critical path row), not in the raw list. */
-const HIDDEN_ATTRS = new Set(["ms_critical"]);
+import { discoveryOf, impactLine } from "@/lib/discovery";
+
+const HIDDEN_ATTRS = new Set(["ms_critical", "discovery"]);
 
 export default function TaskDetailPanel({
   milestone, subtasks, allTasks, childCount, ancestors, canEdit, userId, userName, userEmail, userRole,
-  onClose, onChanged, onSelectSubtask, onSelectMilestone, onMoveDays, critical, onSetProgressNote, onStartNote,
+  onClose, onChanged, onSelectSubtask, onSelectMilestone, onMoveDays, critical, onSetProgressNote, onStartNote, onSetStatus,
 }: Props) {
   const tz = useScheduleTz();
   const [editing, setEditing] = useState(false);
@@ -122,17 +127,20 @@ export default function TaskDetailPanel({
     if (!m.id) return;
     setBusyStatus(true); setErr(null);
     try {
-      await setMilestoneStatus({
-        id: m.id, status, statusReason: reason, percentComplete: percent,
-        ...(forShift ? { at: new Date(forShift.at).toISOString() } : {}),
-        actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
-      });
-      // At the time it happened (when that wasn't just now).
-      if (forShift && Math.abs(forShift.at - Date.now()) > 120_000) await creditProgressTo(m.id, forShift.at);
+      if (onSetStatus) await onSetStatus(m.id, status, reason, percent, forShift);
+      else {
+        await setMilestoneStatus({
+          id: m.id, status, statusReason: reason, percentComplete: percent,
+          ...(forShift ? { at: new Date(forShift.at).toISOString() } : {}),
+          actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
+        });
+        // At the time it happened (when that wasn't just now).
+        if (forShift && Math.abs(forShift.at - Date.now()) > 120_000) await creditProgressTo(m.id, forShift.at);
+      }
       loadNotes();
     } catch (e) { failed(e); }
     finally { setBusyStatus(false); onChanged(); }
-  }, [m.id, userId, userName, userEmail, userRole, onChanged, loadNotes]);
+  }, [m.id, userId, userName, userEmail, userRole, onChanged, loadNotes, onSetStatus]);
 
   const applyProgress = useCallback(async (percent: number) => {
     if (!m.id) return;
@@ -423,6 +431,22 @@ export default function TaskDetailPanel({
                 )}
               </div>
 
+              {/* Discovery work: what was found, and what it did to the schedule. */}
+              {(() => {
+                const d = discoveryOf(m);
+                if (!d) return null;
+                return (
+                  <div className="px-4 py-3 border-b border-[var(--color-border)] bg-violet-50/60 dark:bg-violet-950/20">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-violet-700 dark:text-violet-300 mb-1">Discovery work{d.of > 1 ? ` · step ${d.seq} of ${d.of}` : ""}</div>
+                    <div className="text-xs text-[var(--color-text)] break-words">{d.what}</div>
+                    <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+                      Found {new Date(d.foundAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })}{d.foundBy ? ` by ${d.foundBy}` : ""}{d.approvedBy ? ` · approved by ${d.approvedBy}` : ""}
+                    </div>
+                    <div className={`text-[11px] mt-0.5 ${d.impact.critical ? "font-bold text-rose-700 dark:text-rose-400" : "text-[var(--color-text)]"}`}>When added: {impactLine(d.impact, (h) => `${h} h`)}</div>
+                  </div>
+                );
+              })()}
+
               {/* Source attributes (the labeled columns from the schedule) */}
               {m.attributes && Object.keys(m.attributes).some((k) => !HIDDEN_ATTRS.has(k)) && (
                 <div className="px-4 py-3 border-b border-[var(--color-border)]">
@@ -481,11 +505,11 @@ export default function TaskDetailPanel({
                               variant="dot"
                               disabled={!canEdit}
                               percent={sInfo?.percent ?? (s.status === "completed" ? 100 : Math.round(s.percentComplete ?? 0))}
-                              onPick={(st, reason, p, w) => s.id && void setMilestoneStatus({
+                              onPick={(st, reason, p, w) => s.id && void (onSetStatus ? onSetStatus(s.id, st, reason, p, w) : setMilestoneStatus({
                                 id: s.id, status: st, statusReason: reason, percentComplete: p,
                                 ...(w ? { at: new Date(w.at).toISOString() } : {}),
                                 actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
-                              }).then(() => (w && Math.abs(w.at - Date.now()) > 120_000 ? creditProgressTo(s.id!, w.at) : undefined)).catch(failed).finally(onChanged)}
+                              }).then(() => (w && Math.abs(w.at - Date.now()) > 120_000 ? creditProgressTo(s.id!, w.at) : undefined))).catch(failed).finally(onChanged)}
                               onStartWithNote={onStartNote && s.id ? async (p, n, w) => { const ok = await onStartNote(s.id!, p, n, w); onChanged(); return ok; } : undefined}
                             />
                           )}

@@ -6,8 +6,9 @@
 
 import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import type { ProgressLogRow } from "@/lib/progressHistory";
-import { shiftAt, type ShiftTimes } from "@/lib/shiftReport";
+import { shiftAt, TURNOVER_GRACE_MS, type ShiftTimes } from "@/lib/shiftReport";
 import type { ShiftRecord } from "@/lib/shiftRecord";
+import { discoveries, impactLine } from "@/lib/discovery";
 
 export interface TimeLogRow {
   at: number;
@@ -113,17 +114,32 @@ export function buildTimeLog(input: {
       enteredAt: Number.isFinite(entered) && entered - at > 5 * 60_000 ? entered : null,
     });
   }
-  // Comments and "why it's behind" said on their own.
+  // Comments and "why it's behind" said on their own — under the shift the
+  // report puts them on (lib/shiftReport notesForShift): one with a time,
+  // that time's; one typed without, the turnover it was written at.
   for (const n of input.notes) {
     if (used.has(n) || (n.kind !== "note" && n.kind !== "behind") || !n.body?.trim()) continue;
     const at = ms(n.happenedAt ?? n.createdAt);
-    if (!inRange(at)) continue;
+    const forShift = n.happenedAt ? at : at - TURNOVER_GRACE_MS;
+    if (!inRange(forShift)) continue;
     const written = ms(n.createdAt);
     out.push({
-      at, shift: shiftOf(at), ...base(n.milestoneId),
+      at, shift: shiftOf(forShift), ...base(n.milestoneId),
       what: n.kind === "behind" ? "Why it's behind" : "Comment", pct: "",
       comment: n.body.trim(), enteredBy: n.createdByName ?? "",
       enteredAt: written - at > 5 * 60_000 ? written : null,
+    });
+  }
+  // Discovery work: when it was found, the work it added, what it did.
+  for (const d of discoveries(input.milestones)) {
+    const at = d.record.foundAt;
+    if (!inRange(at)) continue;
+    out.push({
+      at, shift: shiftOf(at), task: d.task?.name ?? "", step: d.steps.map((s) => s.name).join("; "),
+      wo: d.task?.workOrderRef?.trim() || d.steps[0]?.workOrderRef?.trim() || "", crew: [...new Set(d.steps.map((s) => s.responsibleParty?.trim()).filter(Boolean))].join(", "),
+      what: "Discovery found", pct: "",
+      comment: `${d.record.what} — ${impactLine(d.record.impact, (h) => `${h} h`)}${d.record.approvedBy ? ` · approved by ${d.record.approvedBy}` : ""}`,
+      enteredBy: d.record.addedBy ?? d.record.foundBy ?? "", enteredAt: d.record.addedAt - at > 5 * 60_000 ? d.record.addedAt : null,
     });
   }
   // The shifts' own record: incidents, notes & actions.

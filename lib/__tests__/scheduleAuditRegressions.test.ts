@@ -171,8 +171,9 @@ describe("the management email judges a crew on its own work", () => {
     // each on its own row, each said once.
     expect(text).toMatch(/Day step · was due .* · done 90%/);
     expect(text).not.toMatch(/Day step · .*Blocked/);
-    expect(text).toMatch(/Night step · Blocked — permit/);
-    expect(text.match(/Night step ·/g)?.length).toBe(1);
+    // (What it waits on, under its name — as the screen says it.)
+    expect(text).toMatch(/Night step \(Starts after Day step\) · Blocked — permit/);
+    expect(text.match(/Night step \(Starts after Day step\) ·/g)?.length).toBe(1);
   });
   it("comments fold line breaks and carry their date when older than the shift", () => {
     const D = (x: number) => new Date(x).toISOString().slice(5, 10);

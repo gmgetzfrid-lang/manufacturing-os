@@ -34,9 +34,12 @@ import {
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import type { CancelledJob } from "@/lib/cancelledJobs";
-import { groupTasksUnderParent, setTaskDuration, addMilestoneNote, stateOf, deleteMilestones, restoreDeletedMilestones, applyBulkFieldChange, creditProgressTo, type MilestoneState } from "@/lib/milestones";
+import { groupTasksUnderParent, setTaskDuration, addMilestoneNote, stateOf, deleteMilestones, restoreDeletedMilestones, applyBulkFieldChange, creditProgressTo, createMilestone, updateMilestone, deleteMilestone, type MilestoneState } from "@/lib/milestones";
+import { planDiscovery, discoveryAttr, impactLine, type DiscoveryDraft, type DiscoveryRecord } from "@/lib/discovery";
+import DiscoveryForm from "@/components/projects/DiscoveryForm";
+import MarkSheet from "@/components/projects/MarkSheet";
 import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, cascadeDependents, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
-import { resolveCriticalPath, CRITICAL_MODES, type CriticalMode, type CriticalOverride } from "@/lib/criticalPath";
+import { resolveCriticalPath, pathMarks, CRITICAL_MODES, type CriticalMode, type CriticalOverride } from "@/lib/criticalPath";
 import { useCriticalMode, saveCriticalMode } from "@/lib/criticalModeStore";
 import { resolveVisibleDepIndex } from "@/lib/scheduleDeps";
 import { buildProgressIndex } from "@/lib/scheduleProgress";
@@ -299,10 +302,14 @@ export default function ExecutionView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, visibleIds]);
 
-  // The critical path as the project has it: its source (the file's flags,
-  // the app's estimate, or none) with every hand mark on top.
+  // The critical path as the project has it: its source (calculated from
+  // the links, the file's flags, the app's estimate, or none) with every
+  // hand mark on top — lib/criticalPath, the one answer every view reads.
+  // Recalculated as work moves, and every few minutes as time passes.
   const criticalMode = useCriticalMode(projectId);
-  const critical = useMemo(() => resolveCriticalPath(items, criticalMode), [items, criticalMode]);
+  const [cpClock, setCpClock] = useState(() => Date.now());
+  useEffect(() => { const t = setInterval(() => setCpClock(Date.now()), 5 * 60_000); return () => clearInterval(t); }, []);
+  const critical = useMemo(() => resolveCriticalPath(items, criticalMode, { now: cpClock, tz }), [items, criticalMode, cpClock, tz]);
   // A task with any critical step under it reads as critical too.
   const criticalAny = useMemo(() => {
     const out = new Set<string>();
@@ -312,6 +319,8 @@ export default function ExecutionView({
     return out;
   }, [critical, byId]);
   const criticalSourceLabel = CRITICAL_MODES.find((x) => x.value === critical.mode)?.label ?? "";
+  // The same answer, as the calendar, its quick view and the day list mark it.
+  const marks = useMemo(() => pathMarks(critical), [critical]);
   // Mark a task critical or not — an overall task takes every step under it
   // along (their own marks are cleared). Undo puts every mark back.
   const markCritical = useCallback(async (ms: Milestone, v: CriticalOverride | null) => {
@@ -639,6 +648,62 @@ export default function ExecutionView({
     }
     return true;
   }, [byId, tz, shiftTimes, setProgress, setStatus, addNote, orgId, userId, userName, notify]);
+  // Discovery work: found work into the schedule (lib/discovery). Its steps
+  // go under the task, linked after the step they follow; what they hold up
+  // waits on them; linked work downstream is pushed (the same cascade as a
+  // move); each step keeps the record and the impact. Undo takes it all out.
+  const [discoveryFor, setDiscoveryFor] = useState<Milestone | null>(null);
+  const crewNames = useMemo(() => [...new Set(items.map((m) => m.responsibleParty?.trim()).filter((x): x is string => !!x))].sort(), [items]);
+  const saveDiscovery = useCallback(async (draft: DiscoveryDraft, at: number): Promise<boolean> => {
+    if (!canEdit) return false;
+    // The moment its preview was worked out: the record says what it said.
+    const now = at;
+    const plan = planDiscovery(items, draft, { now, tz, mode: criticalMode });
+    if (!plan.steps.length) return false;
+    const task = byId.get(draft.taskId);
+    const after = draft.afterId ? byId.get(draft.afterId) : undefined;
+    // Its steps work like their neighbours: the same crew hours and shift.
+    const sib = after ?? items.find((m) => m.parentId === draft.taskId && !childrenOf.get(m.id ?? "")?.length);
+    const groupId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${now}-${Math.random().toString(36).slice(2)}`;
+    const made: string[] = [];
+    const who = { updatedBy: userId, updatedByName: userName, updatedByEmail: userEmail, updatedByRole: userRole };
+    const real = (id: string) => (id.startsWith("new:") ? made[Number(id.slice(4))] : id);
+    const linksBefore = plan.links.map((l) => ({ id: l.id, dependsOn: byId.get(l.id)?.dependsOn ?? [] }));
+    const datesBefore: DateChange[] = plan.moves.map((c) => { const m = byId.get(c.id); return { id: c.id, plannedStartAt: (m?.plannedStartAt as string | undefined) ?? (m?.plannedAt as string), plannedAt: m?.plannedAt as string }; });
+    try {
+      for (const [i, st] of plan.steps.entries()) {
+        const created = await createMilestone({ orgId, projectId, name: st.name, plannedStartAt: st.plannedStartAt, plannedAt: st.plannedAt, durationHours: st.hours, parentId: draft.taskId,
+          createdBy: userId, createdByName: userName, createdByEmail: userEmail, createdByRole: userRole });
+        made.push(created.id!);
+        const rec: DiscoveryRecord = { id: groupId, what: draft.what, foundAt: draft.foundAt, foundBy: userName, approvedBy: draft.approvedBy, addedAt: now, addedBy: userName,
+          seq: i + 1, of: plan.steps.length, afterId: draft.afterId ?? null, holdsIds: draft.holdsIds, impact: plan.impact };
+        const sibAttrs = (sib?.attributes ?? {}) as Record<string, string | number | boolean | null>;
+        await updateMilestone({ id: created.id!, ...who, patch: {
+          dependsOn: st.dependsOn.map(real),
+          responsibleParty: st.crew ?? sib?.responsibleParty ?? null,
+          workOrderRef: task?.workOrderRef?.trim() || sib?.workOrderRef?.trim() || null,
+          ...(sib?.shift ? { shift: sib.shift } : {}),
+          attributes: { ...(sibAttrs.work_hours != null ? { work_hours: sibAttrs.work_hours } : {}), ...(sibAttrs.work_calendar != null ? { work_calendar: sibAttrs.work_calendar } : {}), discovery: discoveryAttr(rec) },
+        } });
+      }
+      for (const l of plan.links) await updateMilestone({ id: l.id, ...who, patch: { dependsOn: l.dependsOn.map(real) } });
+      if (plan.moves.length && onMoveMany) await onMoveMany(plan.moves);
+      // Said where the work is: a comment on the step it follows.
+      if (after?.id) await addMilestoneNote({ orgId, milestoneId: after.id, kind: "note", statusAt: after.status, body: `Discovery: ${draft.what}`, createdBy: userId, createdByName: userName, happenedAt: new Date(draft.foundAt).toISOString() }).catch(() => undefined);
+      onRefresh();
+      announce(`Discovery on ${truncate(task?.name ?? "the task", 24)}: ${impactLine(plan.impact, (h) => `${h} h`)}`, async () => {
+        for (const id of made) await deleteMilestone(id, userId).catch(() => undefined);
+        for (const l of linksBefore) await updateMilestone({ id: l.id, ...who, patch: { dependsOn: l.dependsOn } }).catch(() => undefined);
+        if (datesBefore.length && onMoveMany) await onMoveMany(datesBefore);
+        onRefresh();
+      }, plan.impact.critical ? "default" : "success");
+      return true;
+    } catch (e) {
+      notify(`Discovery not fully saved: ${(e as Error).message}${made.length ? ` (${made.length} step${made.length === 1 ? "" : "s"} were added)` : ""}`, "warning");
+      onRefresh();
+      return false;
+    }
+  }, [canEdit, items, tz, criticalMode, byId, childrenOf, orgId, projectId, userId, userName, userEmail, userRole, onMoveMany, onRefresh, announce, notify]);
   const startWithNote = useCallback(async (id: string, pct: number, note: string, forShift?: ShiftCredit): Promise<boolean> => {
     const ok = pct >= 100 ? await setStatus(id, "completed", undefined, undefined, forShift) : await setStatus(id, "in_progress", undefined, pct, forShift);
     // Said for an earlier shift only when it was; the time it happened is kept.
@@ -678,8 +743,18 @@ export default function ExecutionView({
   // task's prior status).
   // Bulk status for an explicit id set (used by both the timeline
   // selection and the calendar selection), with one undo.
+  // Marking several at once asks what marking one does — when it happened
+  // and a comment (MarkSheet) — then saves each at that time, files it
+  // under that shift, and puts the comment on each.
+  const [pendingMark, setPendingMark] = useState<{ ids: string[]; next: MilestoneStatus } | null>(null);
   const bulkStatusIds = useCallback(async (ids: string[], next: MilestoneStatus) => {
     if (!canEdit || !onSetStatus || ids.length === 0) return;
+    setPendingMark({ ids, next });
+  }, [canEdit, onSetStatus]);
+  const runBulkStatus = useCallback(async (ids: string[], next: MilestoneStatus, when: ShiftCredit, note: string): Promise<boolean> => {
+    if (!canEdit || !onSetStatus || ids.length === 0) return false;
+    const reason = next === "on_hold" || next === "blocked" ? note : undefined;
+    const atIso = new Date(when.at).toISOString();
     const prev = new Map<string, MilestoneStatus>();
     const before = new Map<string, MilestoneState>();
     for (const id of ids) { const m = byId.get(id); if (m) { prev.set(id, m.status); before.set(id, stateOf(m)); } }
@@ -690,7 +765,7 @@ export default function ExecutionView({
       // as success (the old Promise.all announced "Undo N" even if some writes
       // failed, and never rolled back the optimistic state for the failures).
       const results = await Promise.all(ids.map(async (id) => {
-        try { return { id, ok: await onSetStatus(id, next) }; }
+        try { return { id, ok: await onSetStatus(id, next, reason, undefined, atIso) }; }
         catch { return { id, ok: false }; }
       }));
       const succeeded = results.filter((r) => r.ok).map((r) => r.id);
@@ -707,16 +782,23 @@ export default function ExecutionView({
       }
 
       if (succeeded.length > 0) {
+        // At the time it happened, with its comment — like marking one.
+        const earlier = when.at < shiftAt(Date.now(), tz, shiftTimes).start;
+        for (const id of succeeded) {
+          if (prev.get(id) !== next) await fileUnder(id, when);
+          await addNote(id, noteFor(note, earlier ? when : undefined), when.at, next);
+        }
         // Only offer to undo what actually changed.
-        announce(`${succeeded.length} task${succeeded.length === 1 ? "" : "s"} → ${statusWord(next)}`,
-          () => restore(succeeded.map((id) => before.get(id)).filter((x): x is MilestoneState => !!x)),
+        announce(`${succeeded.length} task${succeeded.length === 1 ? "" : "s"} → ${statusWord(next)} · ${when.label}`,
+          async () => { await restore(succeeded.map((id) => before.get(id)).filter((x): x is MilestoneState => !!x)); for (const id of succeeded) await creditProgressTo(id, when.at + 1000); },
           next === "completed" ? "success" : "default");
       }
       setSelectedIds(new Set());
+      return succeeded.length > 0;
     } finally {
       setBusy((s) => { const n = new Set(s); for (const id of ids) n.delete(id); return n; });
     }
-  }, [canEdit, onSetStatus, byId, announce, notify, restore]);
+  }, [canEdit, onSetStatus, byId, announce, notify, restore, fileUnder, addNote, tz, shiftTimes]);
 
   // Bulk move for an explicit id set → open the confirmation sheet.
   const bulkMoveIds = useCallback((ids: string[], deltaDays: number) => {
@@ -1100,9 +1182,12 @@ export default function ExecutionView({
       {layout === "report" ? (
         <ExecutionReportView milestones={items} shiftTimes={shiftTimes} critical={critical} criticalSource={criticalSourceLabel} />
       ) : layout === "shift" ? (
-        <ShiftReportView milestones={items} cancelled={cancelled} userId={userId} userName={userName ?? userEmail} canEdit={canEdit} progress={progressIndex} criticalIds={critical.ids} projectId={projectId} projectName={projectName} onUpdateStep={updateStep} />
+        <ShiftReportView milestones={items} cancelled={cancelled} userId={userId} userName={userName ?? userEmail} canEdit={canEdit} progress={progressIndex} projectId={projectId} projectName={projectName} onUpdateStep={updateStep} onDiscovery={canEdit ? setDiscoveryFor : undefined} pathNow={cpClock} />
       ) : layout === "calendar" ? (
         <ScheduleCalendarTileView
+          onDiscovery={canEdit ? setDiscoveryFor : undefined}
+          pathMarks={marks}
+          now={cpClock}
           planNow={planNowAll}
           userId={userId}
           milestones={visibleItems}
@@ -1286,7 +1371,20 @@ export default function ExecutionView({
           critical={{ ids: critical.ids, sourceLabel: criticalSourceLabel }}
           onSetProgressNote={progressWithNote}
           onStartNote={startWithNote}
+          onSetStatus={setStatus}
         />
+      )}
+
+      {pendingMark && (
+        <MarkSheet names={pendingMark.ids.map((id) => byId.get(id)?.name ?? "Step")} status={pendingMark.next} tz={tz} times={shiftTimes}
+          ahead={Date.now() < scheduleStartMs ? 0 : pendingMark.ids.filter((id) => { const m = byId.get(id); return !!m && needsFutureConfirm(plannedStartMsOf(m), Date.now(), pendingMark.next, null); }).length}
+          onSave={(when, note) => runBulkStatus(pendingMark.ids, pendingMark.next, when, note)}
+          onClose={() => setPendingMark(null)} />
+      )}
+
+      {discoveryFor && (
+        <DiscoveryForm milestones={items} task={discoveryFor} tz={tz} times={shiftTimes} crews={crewNames} now={cpClock} mode={criticalMode}
+          onSave={saveDiscovery} onClose={() => setDiscoveryFor(null)} />
       )}
 
       {bulkMode && (

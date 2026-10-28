@@ -15,6 +15,8 @@
 // pure + tested.
 
 import type { Milestone } from "@/types/schema";
+import { computeCpm, isLinked, type Cpm } from "@/lib/cpm";
+import { DEFAULT_SCHEDULE_TZ } from "@/lib/scheduleTz";
 
 export interface CriticalPathResult {
   /** Leaf milestone ids on the driving chain (what gates the finish). */
@@ -89,13 +91,15 @@ export function computeCriticalPathLite(
 
 // ─── Which steps are critical, under the project's control ───────────
 
-/** Where the critical path comes from: the schedule file's own flags (MS
- *  Project's Critical), the app's estimate above, or nothing but what
- *  people mark by hand. */
-export type CriticalMode = "file" | "estimate" | "none";
+/** Where the critical path comes from: calculated from the schedule's own
+ *  links (lib/cpm — float, recalculated as work moves), the schedule file's
+ *  flags (MS Project's Critical, as of the import), the app's estimate
+ *  above, or nothing but what people mark by hand. */
+export type CriticalMode = "links" | "file" | "estimate" | "none";
 export type CriticalOverride = "yes" | "no";
 
 export const CRITICAL_MODES: Array<{ value: CriticalMode; label: string; hint: string }> = [
+  { value: "links", label: "Calculated from the links", hint: "The chain of linked work that sets the finish — recalculated as work moves, plus your changes" },
   { value: "file", label: "From the schedule file", hint: "What MS Project marked critical, plus your changes" },
   { value: "estimate", label: "App's estimate", hint: "The unfinished work ending nearest the finish date, plus your changes" },
   { value: "none", label: "Only what I mark", hint: "Nothing is critical unless you mark it" },
@@ -111,11 +115,12 @@ export function fileHasCritical(milestones: Milestone[]): boolean {
   return milestones.some((m) => fileFlag(m) !== undefined);
 }
 
-/** The mode in force: the project's choice, else the file's flags when
- *  the import carried them, else the estimate. */
+/** The mode in force: the project's choice, else calculated when the
+ *  schedule is linked, else the file's flags when the import carried
+ *  them, else the estimate. */
 export function effectiveCriticalMode(milestones: Milestone[], mode: CriticalMode | null | undefined): CriticalMode {
   if (mode) return mode;
-  return fileHasCritical(milestones) ? "file" : "estimate";
+  return isLinked(milestones) ? "links" : fileHasCritical(milestones) ? "file" : "estimate";
 }
 
 /** A task's own mark, else the nearest one above it — marking E-17 marks
@@ -130,14 +135,19 @@ export function criticalOverrideOf(m: Milestone, byId: Map<string, Milestone>): 
 }
 
 /** The unfinished steps on the critical path, as the project has it: the
- *  mode's set, then every Yes / No mark applied on top. */
-export function resolveCriticalPath(milestones: Milestone[], mode: CriticalMode | null | undefined): CriticalPathResult & { mode: CriticalMode; marked: number } {
+ *  mode's set, then every Yes / No mark applied on top. THE one answer —
+ *  every screen and printout reads it from here. When the schedule is
+ *  linked, `cpm` carries each step's float (whatever the mode), and
+ *  `linksCount` how many the calculation alone finds. */
+export function resolveCriticalPath(milestones: Milestone[], mode: CriticalMode | null | undefined, o: { now?: number; tz?: string } = {}): CriticalPathResult & { mode: CriticalMode; marked: number; cpm: Cpm | null; near: Set<string> } {
   const eff = effectiveCriticalMode(milestones, mode);
   const byId = new Map<string, Milestone>();
   const parents = new Set<string>();
   for (const m of milestones) { if (m.id) byId.set(m.id, m); if (m.parentId) parents.add(m.parentId); }
   const leaves = milestones.filter((m) => m.id && !parents.has(m.id));
-  const base = eff === "estimate" ? computeCriticalPathLite(milestones).ids
+  const cpm = isLinked(milestones) ? computeCpm(milestones, { now: o.now ?? Date.now(), tz: o.tz ?? DEFAULT_SCHEDULE_TZ }) : null;
+  const base = eff === "links" ? new Set(cpm?.criticalIds ?? [])
+    : eff === "estimate" ? computeCriticalPathLite(milestones).ids
     : eff === "file" ? new Set(leaves.filter((m) => fileFlag(m) === "1" || fileFlag(m) === "true").map((m) => m.id!))
       : new Set<string>();
   const ids = new Set<string>();
@@ -155,5 +165,26 @@ export function resolveCriticalPath(milestones: Milestone[], mode: CriticalMode 
     const f = finishMs(m);
     if (Number.isFinite(f) && f > finish) finish = f;
   }
-  return { ids, finish: Number.isFinite(finish) ? new Date(finish).toISOString() : null, remainingHours, mode: eff, marked };
+  // Near critical: within a shift of it by the links — not on the path,
+  // and not marked off it by hand.
+  const near = new Set<string>();
+  for (const id of cpm?.nearIds ?? []) {
+    const m = byId.get(id);
+    if (m && !ids.has(id) && criticalOverrideOf(m, byId) !== "no") near.add(id);
+  }
+  return { ids, finish: Number.isFinite(finish) ? new Date(finish).toISOString() : null, remainingHours, mode: eff, marked, cpm, near };
+}
+
+/** Each unfinished step's float, hours (lib/cpm), for the report rows. */
+export function floatsOf(cpm: Cpm | null | undefined): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const s of cpm?.steps.values() ?? []) if (!s.done) out.set(s.id, s.floatH);
+  return out;
+}
+
+/** What a screen needs to mark a step against the critical path — the
+ *  calendar, its quick view and the day list take it from the one answer. */
+export interface PathMarks { ids: Set<string>; near: Set<string>; floatH: Map<string, number> }
+export function pathMarks(r: { ids: Set<string>; near: Set<string>; cpm: Cpm | null }): PathMarks {
+  return { ids: r.ids, near: r.near, floatH: floatsOf(r.cpm) };
 }

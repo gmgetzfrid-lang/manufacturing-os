@@ -19,20 +19,22 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, X as XIcon, CalendarDays, Layers, ExternalLink, Search, ArrowDown, Check, Sun, Moon } from "lucide-react";
-import type { Milestone, MilestoneStatus } from "@/types/schema";
+import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl, { PICK_PCTS } from "@/components/projects/ProgressControl";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { clockLabel, dayKey, dayKeyToMs, fmtInTz, addDays, tzAbbrev } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
-import { overdueOpenWork } from "@/lib/openWork";
-import { DEFAULT_SHIFT_TIMES, expectedByParent, expectedFraction, shiftAt, shiftWindow, workShiftOf, type ShiftTimes, type ShiftCredit, type ShiftWindow } from "@/lib/shiftReport";
+import { carriedOpenWork } from "@/lib/openWork";
+import { DEFAULT_SHIFT_TIMES, expectedByParent, expectedFraction, shiftAt, shiftWindow, workShiftOf, TURNOVER_GRACE_MS, type ShiftTimes, type ShiftCredit, type ShiftWindow } from "@/lib/shiftReport";
 import type { StepUpdate } from "@/components/projects/CalendarQuickView";
 import { clockOnShift, typeClock } from "@/components/projects/ShiftRecordParts";
-import { latestNotes, updateMilestoneNote } from "@/lib/milestones";
+import { notesFor, updateMilestoneNote } from "@/lib/milestones";
 import ShiftMark from "@/components/projects/ShiftMark";
 import { type BandDays } from "@/lib/shiftBands";
 import { asBuilt } from "@/lib/asBuilt";
+import type { PathMarks } from "@/lib/criticalPath";
+import PathTag from "@/components/projects/PathTag";
 import { whenChoices } from "@/components/projects/ProgressControl";
 import { inheritedWorkOrders } from "@/lib/workOrderCrew";
 
@@ -66,6 +68,10 @@ interface Props {
   /** A step's status / % with the time it happened and what got done —
    *  the same save as the calendar's quick view. */
   onUpdateStep?: (id: string, u: StepUpdate) => Promise<boolean>;
+  /** The critical path, as the project has it (lib/criticalPath). */
+  pathMarks?: PathMarks;
+  /** The schedule's clock — the one the shift report reads. */
+  now?: number;
   /** The project's shift-change times — which crew does each step. */
   shiftTimes?: ShiftTimes;
   onOpenDetail: (m: Milestone) => void;
@@ -100,7 +106,7 @@ interface EquipmentGroup {
 
 export default function DayAgendaPanel({
   day, tz, milestones, childrenByParent, ancestorsOf, progress, canEdit, focus,
-  onSetStatus, onSetProgress, onAddNote, onOpenDetail, onChangeDay, onClose, colorOf, shiftTimes = DEFAULT_SHIFT_TIMES, hidden, planNow: planNowAll, userId, onSetProgressNote, onStartNote, onUpdateStep, inline,
+  onSetStatus, onSetProgress, onAddNote, onOpenDetail, onChangeDay, onClose, colorOf, shiftTimes = DEFAULT_SHIFT_TIMES, hidden, planNow: planNowAll, userId, onSetProgressNote, onStartNote, onUpdateStep, pathMarks, inline, now: clockNow,
 }: Props) {
   const [query, setQuery] = useState("");
   // A step's WO number: its own, else its work order's (or the file's WO column).
@@ -114,11 +120,14 @@ export default function DayAgendaPanel({
   const label = fmtInTz(dayMs, tz, { weekday: "long", month: "long", day: "numeric" });
   // Today (plant time) also carries LIVE work whatever the plan says:
   // overdue open steps (carry-over) and steps started ahead of plan.
-  const isToday = dayKey(Date.now(), tz) === day;
+  // Carried over as the shift report counts it (lib/openWork).
+  const [mountedAt] = useState(() => Date.now());
+  const clock = clockNow ?? mountedAt;
+  const isToday = dayKey(clock, tz) === day;
   const live = useMemo(() => {
-    if (!isToday) return { overdue: [] as ReturnType<typeof overdueOpenWork> };
-    return { overdue: overdueOpenWork(milestones, dayMs) };
-  }, [isToday, milestones, dayMs]);
+    if (!isToday) return { overdue: [] as ReturnType<typeof carriedOpenWork> };
+    return { overdue: carriedOpenWork(milestones, clock, tz, shiftTimes, pathMarks?.ids) };
+  }, [isToday, milestones, clock, tz, shiftTimes, pathMarks]);
   // As built: a step done or started ahead of plan is on the day it was
   // worked (lib/asBuilt) — still due when it's planned.
   const built = useMemo(() => asBuilt(milestones, childrenByParent, tz, shiftTimes), [milestones, childrenByParent, tz, shiftTimes]);
@@ -142,8 +151,13 @@ export default function DayAgendaPanel({
       const ahead = b?.ahead ? (b.kind === "done" ? "done-ahead" as const : "started-early" as const) : undefined;
       rows.push({ leaf: m, bands, startsToday: sKey === day, endsToday: fKey === day, startMs: s, finishMs: f, live: ahead, plannedStart: startMsOf(m) });
     }
-    const listed = new Set(rows.map((r) => r.leaf.id));
-    for (const w of live.overdue) if (!listed.has(w.leaf.id)) rows.push({ leaf: w.leaf, startsToday: false, endsToday: false, startMs: w.start, finishMs: w.finish, live: "overdue" });
+    const listed = new Map(rows.map((r) => [r.leaf.id, r]));
+    for (const w of live.overdue) {
+      const r = listed.get(w.leaf.id);
+      // Today's own step, past due: it says so too.
+      if (r) { r.live = "overdue"; r.finishMs = w.finish; }
+      else rows.push({ leaf: w.leaf, startsToday: false, endsToday: false, startMs: w.start, finishMs: w.finish, live: "overdue" });
+    }
     // Group by immediate parent; order groups by their first step's time.
     const byParent = new Map<string, EquipmentGroup>();
     for (const r of rows) {
@@ -216,16 +230,31 @@ export default function DayAgendaPanel({
     return () => cancelAnimationFrame(id);
   }, [focus, day, sections.length]);
 
-  // Each step's latest comment: on its row, and in its box to edit.
-  const [latestByStep, setLatestByStep] = useState<Map<string, LatestNote>>(new Map());
+  // Each step's latest comment as of this day (one written later belongs to
+  // a later day's story): on its row, and in its box to edit.
+  const [stepNotes, setStepNotes] = useState<MilestoneNote[]>([]);
   const [notesTick, setNotesTick] = useState(0);
   const dayStepIds = useMemo(() => groups.flatMap((g) => g.rows.map((r) => r.leaf.id).filter((x): x is string => !!x)).sort().join(","), [groups]);
   useEffect(() => {
     if (!dayStepIds) return;
     let alive = true;
-    latestNotes(dayStepIds.split(",")).then((m) => { if (alive) setLatestByStep(m); }).catch(() => undefined);
+    notesFor(dayStepIds.split(",")).then((n) => { if (alive) setStepNotes(n); }).catch(() => undefined);
     return () => { alive = false; };
   }, [dayStepIds, notesTick]);
+  const dayEndsAt = shiftWindow(day, "night", tz, shiftTimes).end + TURNOVER_GRACE_MS;
+  const dayStartsAt = shiftWindow(day, "day", tz, shiftTimes).start;
+  const latestByStep = useMemo(() => {
+    const out = new Map<string, LatestNote & { t: number }>();
+    for (const n of stepNotes) {
+      const body = n.body?.trim();
+      if (n.kind !== "note" || !body || !n.id || /^Progress → \d+%$/.test(body)) continue;
+      const t = Date.parse(String(n.happenedAt ?? n.createdAt ?? ""));
+      if (!(t <= dayEndsAt)) continue;
+      const had = out.get(n.milestoneId);
+      if (!had || t > had.t) out.set(n.milestoneId, { id: n.id, body, at: String(n.happenedAt ?? n.createdAt ?? ""), by: n.createdByName ?? null, byId: n.createdBy ?? null, t });
+    }
+    return out;
+  }, [stepNotes, dayEndsAt]);
   const keyOf = (g: EquipmentGroup) => g.parent?.id ?? `top-${g.rows[0].leaf.id}`;
   const isOpen = (g: EquipmentGroup) => {
     if (query.trim()) return true;
@@ -433,12 +462,12 @@ export default function DayAgendaPanel({
                         </span>
                         <button onClick={() => setOpenId(openId === r.leaf.id ? null : r.leaf.id ?? null)} className="flex-1 min-w-0 text-left" aria-expanded={openId === r.leaf.id}
                           title={canEdit ? "Update this step here — % done, status, what's blocking it, a note" : "Show this step"}>
-                          <span className={`block text-[12px] leading-snug break-words font-semibold ${r.leaf.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{r.leaf.name}</span>
+                          <span className={`block text-[12px] leading-snug break-words font-semibold ${r.leaf.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{r.leaf.name} <PathTag id={r.leaf.id} marks={pathMarks} /></span>
                           <span className="block text-[9.5px] text-[var(--color-text-faint)] truncate">
                             {[note, r.leaf.responsibleParty, woOf(r.leaf) ? `WO ${woOf(r.leaf)}` : null].filter(Boolean).join(" · ")}
                           </span>
                           {r.leaf.id && latestByStep.get(r.leaf.id) && (
-                            <span className="block text-[10px] italic text-[var(--color-text-muted)] break-words">&ldquo;{latestByStep.get(r.leaf.id)!.body}&rdquo;</span>
+                            <span className="block text-[10px] italic text-[var(--color-text-muted)] break-words">&ldquo;{latestByStep.get(r.leaf.id)!.body}&rdquo;{latestByStep.get(r.leaf.id)!.t < dayStartsAt ? ` · ${fmtInTz(latestByStep.get(r.leaf.id)!.t, tz, { weekday: "short", month: "short", day: "numeric" })}` : ""}</span>
                           )}
                           {r.leaf.status !== "completed" && waitsOn(r.leaf).length > 0 && (
                             <span className="block text-[10px] font-semibold text-amber-700 dark:text-amber-400 break-words">

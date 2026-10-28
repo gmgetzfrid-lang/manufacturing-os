@@ -15,6 +15,7 @@
 import { earliestStart, linkOf, type LinkSpec } from "@/lib/scheduleLinks";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
+import { carryCutoff, crewDueMs, shiftAt, type ShiftTimes } from "@/lib/shiftReport";
 
 export type OpenWorkKind = "overdue" | "started-early";
 
@@ -46,6 +47,21 @@ export function overdueOpenWork(milestones: Milestone[], dayStartMs: number, cri
     const f = finishMsOf(m), s = startMsOf(m);
     if (!Number.isFinite(f) || f >= dayStartMs || isDone(m)) continue;
     out.push({ leaf: m, kind: "overdue", start: s, finish: f, percent: pctOf(m) });
+  }
+  const crit = (w: OpenWork) => (criticalIds && w.leaf.id ? Number(criticalIds.has(w.leaf.id)) : 0);
+  return out.sort((a, b) => crit(b) - crit(a) || a.finish - b.finish || a.leaf.name.localeCompare(b.leaf.name));
+}
+
+/** Carried over right now — the shift report's rule: open steps due (on
+ *  their crew's hours) by the carry cutoff (lib/shiftReport carryCutoff).
+ *  `finish` is when it was due. Critical first, then oldest due first. */
+export function carriedOpenWork(milestones: Milestone[], now: number, tz: string, times: ShiftTimes, criticalIds?: Set<string>): OpenWork[] {
+  const cut = carryCutoff(shiftAt(now, tz, times), now, times);
+  const out: OpenWork[] = [];
+  for (const m of leavesOf(milestones)) {
+    const due = crewDueMs(m, tz, times);
+    if (!Number.isFinite(due) || due > cut || isDone(m)) continue;
+    out.push({ leaf: m, kind: "overdue", start: startMsOf(m), finish: due, percent: pctOf(m) });
   }
   const crit = (w: OpenWork) => (criticalIds && w.leaf.id ? Number(criticalIds.has(w.leaf.id)) : 0);
   return out.sort((a, b) => crit(b) - crit(a) || a.finish - b.finish || a.leaf.name.localeCompare(b.leaf.name));

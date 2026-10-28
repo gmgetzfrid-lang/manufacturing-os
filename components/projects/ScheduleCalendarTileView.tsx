@@ -27,11 +27,12 @@ import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { DEFAULT_SHIFT_TIMES, crewWindows, workShiftOf, workSpan, shiftWindow, shiftAt, type ShiftTimes, type ShiftCredit } from "@/lib/shiftReport";
 import { type Band } from "@/lib/shiftBands";
 import { asBuilt } from "@/lib/asBuilt";
+import type { PathMarks } from "@/lib/criticalPath";
 import ShiftMark from "@/components/projects/ShiftMark";
 import DayAgendaPanel from "@/components/projects/DayAgendaPanel";
 import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
 import { OPEN_SETUP_EVENT } from "@/lib/scheduleSetup";
-import { overdueOpenWork } from "@/lib/openWork";
+import { carriedOpenWork } from "@/lib/openWork";
 
 // Use the shared palette so a group is the SAME hue here and on the
 // timeline. `.rail` is the solid accent (was `.bar` locally).
@@ -73,15 +74,21 @@ interface Props {
   /** Update a step from the quick view: status, %, the time it happened,
    *  the comment, why it's behind. */
   onUpdateStep?: (id: string, u: StepUpdate) => Promise<boolean>;
+  /** The critical path, as the project has it (lib/criticalPath). */
+  pathMarks?: PathMarks;
+  /** The schedule's clock — the one the shift report reads. */
+  now?: number;
+  /** Found work on a task: into the schedule (DiscoveryForm). */
+  onDiscovery?: (task: Milestone) => void;
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /** A card in one shift of one day: the day shift, or that evening's night
  *  shift running into the next morning. */
-type Placed = DayPlacement<Milestone> & { band: Band; bandStart: number; bandEnd: number; ahead?: boolean };
+type Placed = DayPlacement<Milestone> & { band: Band; bandStart: number; bandEnd: number; ahead?: boolean; crit?: boolean };
 
-export default function ScheduleCalendarTileView({ planNow, userId, milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail, detailOpen, onAddNote, onSetProgressNote, onStartNote, shiftTimes = DEFAULT_SHIFT_TIMES, onUpdateStep }: Props) {
+export default function ScheduleCalendarTileView({ planNow, userId, milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail, detailOpen, onAddNote, onSetProgressNote, onStartNote, shiftTimes = DEFAULT_SHIFT_TIMES, onUpdateStep, pathMarks, onDiscovery, now: clockNow }: Props) {
   const tz = useScheduleTz();
   // Multi-select for bulk actions on the calendar (mirrors the timeline).
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -121,9 +128,6 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   // (every step due, grouped by equipment, with progress entry).
   const [agendaDay, setAgendaDay] = useState<string | null>(null);
   const today = useMemo(() => startOfDayUTC(new Date(), tz), [tz]);
-  // Overdue open work as of today (plant time): it sits at the top of
-  // today's tile in red until it is finished or re-planned.
-  const overdueToday = useMemo(() => overdueOpenWork(milestones, today.getTime()), [milestones, today]);
 
   const byId = useMemo(() => {
     const m = new Map<string, Milestone>();
@@ -297,7 +301,9 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         const put = (band: Band, idle = false) => {
           const w = shiftWindow(key, band, tz, shiftTimes);
           const win = idle ? { start: w.start, end: w.end } : windowIn(units.filter((st) => bandsOf(st)[band].has(key)).map(built.row), w.start, w.end, tz, shiftTimes);
-          slot(key)[band].push({ ms, dayIndex, spanDays: total, todayStart: win.start, todayEnd: win.end, idleToday: idle, crew: band, band, bandStart: w.start, bandEnd: w.end, ahead: !!plannedDay && key < plannedDay });
+          // Critical work on this shift (a step on the path worked here).
+          const crit = !idle && !!pathMarks && units.some((st) => !!st.id && pathMarks.ids.has(st.id) && bandsOf(st)[band].has(key));
+          slot(key)[band].push({ ms, dayIndex, spanDays: total, todayStart: win.start, todayEnd: win.end, idleToday: idle, crew: band, band, bandStart: w.start, bandEnd: w.end, ahead: !!plannedDay && key < plannedDay, crit });
         };
         const d = units.some((st) => bandsOf(st).day.has(key)), n = units.some((st) => bandsOf(st).night.has(key));
         if (d && crewFilter !== "night") put("day");
@@ -307,7 +313,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
     }
     for (const v of m.values()) { v.day.sort(compareDayPlacements); v.night.sort(compareDayPlacements); }
     return m;
-  }, [mains, tz, leafDescendants, shiftTimes, crewFilter, bandsOf, built]);
+  }, [mains, tz, leafDescendants, shiftTimes, crewFilter, bandsOf, built, pathMarks]);
   const isDonePl = (p: Placed) => (p.ms.id ? progress?.get(p.ms.id)?.percent : undefined) === 100 || p.ms.status === "completed";
   const doneLast = (arr: Placed[]) => [...arr.filter((p) => !isDonePl(p)), ...arr.filter(isDonePl)];
   // A day's cards once each (a work order worked day and night counts once).
@@ -320,6 +326,11 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   // The shift on now, and the one just ended — the one being written up.
   const [clock, setClock] = useState(() => Date.now());
   React.useEffect(() => { const t = setInterval(() => setClock(Date.now()), 5 * 60_000); return () => clearInterval(t); }, []);
+  // Overdue open work — carried over as the shift report counts it
+  // (lib/openWork), on the report's clock when given: it sits at the top
+  // of today's tile in red until it is finished or re-planned.
+  const carryAt = clockNow ?? clock;
+  const overdueToday = useMemo(() => carriedOpenWork(milestones, carryAt, tz, shiftTimes, pathMarks?.ids), [milestones, carryAt, tz, shiftTimes, pathMarks]);
   const shiftTags = useMemo(() => {
     const now = shiftAt(clock, tz, shiftTimes);
     const last = now.kind === "night" ? { kind: "day", dayKey: now.dayKey } : { kind: "night", dayKey: dayKey(addDaysTz(dayKeyToMs(now.dayKey, tz), -1, tz), tz) };
@@ -476,6 +487,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         key={`${p.ms.id}-${p.dayIndex}`}
         ms={p.ms} dayIndex={p.dayIndex} spanDays={p.spanDays}
         todayStart={p.todayStart} todayEnd={p.todayEnd} idleToday={p.idleToday} crewToday={p.crew} bandStart={p.bandStart} bandEnd={p.bandEnd}
+        critical={p.crit}
         aheadOf={p.ahead && Number.isFinite(startMs(p.ms)) ? fmtInTz(startMs(p.ms), tz, { weekday: "short", month: "short", day: "numeric" }) : undefined}
         childrenByParent={childrenByParent}
         ancestors={chain} color={color}
@@ -638,6 +650,8 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           onAddNote={onAddNote}
           onSetProgressNote={onSetProgressNote}
           onUpdateStep={onUpdateStep}
+          pathMarks={pathMarks}
+          now={clockNow}
           onStartNote={onStartNote}
           shiftTimes={shiftTimes}
           onOpenDetail={(m) => { onOpenDetail(m); }}
@@ -884,7 +898,8 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
             >
               <CalendarQuickView
                 key={`${subPopover.ms.id}:${dayKey}:${band ?? ""}`}
-                task={subPopover.ms} onDay={onDay} others={others} dayKey={dayKey} band={band ?? null} dayLabel={dayLabel}
+                task={subPopover.ms} onDay={onDay} others={others} dayKey={dayKey} band={band ?? null} dayLabel={dayLabel} marks={pathMarks}
+                onDiscovery={onDiscovery ? (t) => { setSubPopover(null); onDiscovery(t); } : undefined}
                 tz={tz} times={shiftTimes} progress={progress} planNow={planNow} canEdit={canEdit}
                 onUpdate={onUpdateStep}
                 onOpenDetail={(m) => { onOpenDetail(m); setSubPopover(null); }}
@@ -916,6 +931,8 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           onAddNote={onAddNote}
           onSetProgressNote={onSetProgressNote}
           onUpdateStep={onUpdateStep}
+          pathMarks={pathMarks}
+          now={clockNow}
           onStartNote={onStartNote}
           shiftTimes={shiftTimes}
           onOpenDetail={(m) => { onOpenDetail(m); }}
@@ -976,7 +993,7 @@ function DayScroller({ children, fade }: { children: React.ReactNode; fade: stri
 }
 
 function Chip({
-  ms, dayIndex, spanDays, todayStart, todayEnd, idleToday, crewToday, bandStart, bandEnd, aheadOf, childrenByParent, ancestors, color, draggable, onDragStart, onTouchDragStart, onClick,
+  ms, dayIndex, spanDays, todayStart, todayEnd, idleToday, crewToday, bandStart, bandEnd, aheadOf, critical, childrenByParent, ancestors, color, draggable, onDragStart, onTouchDragStart, onClick,
   progress, canExpand, isExpanded, onToggleExpand, selectable, selected, onToggleSelect, dimmed, shiftTimes,
 }: {
   ms: Milestone; dayIndex: number; spanDays: number;
@@ -988,6 +1005,8 @@ function Chip({
   bandStart?: number; bandEnd?: number;
   /** Shown here ahead of plan: the day it's planned to start. */
   aheadOf?: string;
+  /** Critical-path work on this shift. */
+  critical?: boolean;
   childrenByParent: Map<string, Milestone[]>;
   ancestors?: Milestone[];
   color?: { bar: string; soft: string; text: string; dot: string };
@@ -1146,6 +1165,9 @@ function Chip({
                 <span title="Night-shift work" className="shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-[8.5px] font-black leading-[14px] bg-indigo-900 text-white dark:bg-indigo-300 dark:text-indigo-950">
                   <Moon className="w-2.5 h-2.5" />NIGHT
                 </span>
+              )}
+              {critical && (
+                <span title="Critical-path work on this shift — it sets the finish date" className="shrink-0 rounded px-1 text-[8.5px] font-black leading-[14px] uppercase bg-rose-700 text-white">Crit</span>
               )}
               {aheadOf && (
                 <span title={`Worked ahead of plan — planned to start ${aheadOf}`} className="shrink-0 rounded px-1 text-[8.5px] font-black leading-[14px] uppercase bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200">Ahead</span>

@@ -21,6 +21,7 @@ import { effectiveWeight, leafPercent, roundPct } from "@/lib/scheduleProgress";
 import { dayDiff } from "@/lib/scheduleTz";
 import { startOf, finishOf } from "@/lib/scheduleTime";
 import { expectedFraction, isOverdue, workSpan, BEHIND_POINTS, DEFAULT_SHIFT_TIMES, type ShiftTimes } from "@/lib/shiftReport";
+import { computeCpm, isLinked } from "@/lib/cpm";
 
 export interface GroupRollup {
   id: string;
@@ -233,6 +234,12 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
       // a hair earlier so the end of a day reads as that day, not the next.
       forecastFinish = at <= workFinish ? finish : new Date(at - 1).toISOString();
     }
+  }
+  // A linked schedule forecasts from its links (lib/cpm) — the same finish
+  // the turnover, its email and the discovery preview give.
+  if (isLinked(milestones)) {
+    const fc = computeCpm(milestones, { now, tz: opts?.tz ?? "UTC" }).forecastFinish;
+    if (Number.isFinite(fc)) forecastFinish = new Date(fc).toISOString();
   }
 
   // ── Per-group rollups ────────────────────────────────────────

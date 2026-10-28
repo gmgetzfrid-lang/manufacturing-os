@@ -15,7 +15,7 @@ import { ChevronLeft, ChevronRight, Layers } from "lucide-react";
 import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { leafPercent } from "@/lib/scheduleProgress";
-import { expectedFraction, shiftWindow, workHours, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
+import { expectedFraction, shiftWindow, workHours, notesForShift, TURNOVER_GRACE_MS, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
 import { fmtInTz } from "@/lib/scheduleTz";
 import { notesFor, updateMilestoneNote } from "@/lib/milestones";
 import { loadProgressLog, type ProgressLogRow } from "@/lib/progressHistory";
@@ -23,6 +23,8 @@ import { describeChange } from "@/lib/timeLog";
 import { clockOnShift, typeClock } from "@/components/projects/ShiftRecordParts";
 import { whenChoices } from "@/components/projects/ProgressControl";
 import { builtSpan } from "@/lib/asBuilt";
+import type { PathMarks } from "@/lib/criticalPath";
+import PathTag from "@/components/projects/PathTag";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 
 /** What the quick view saves for a step. */
@@ -49,7 +51,7 @@ const DOT: Record<string, string> = { planned: "bg-slate-300", in_progress: "bg-
 const WORD: Record<string, string> = { planned: "Not started", in_progress: "In progress", on_hold: "On hold", blocked: "Blocked", missed: "Missed", completed: "Done" };
 const ms = (v: unknown) => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
 
-export default function CalendarQuickView({ task, onDay, others, dayKey, band, dayLabel, tz, times, progress, planNow, canEdit, onUpdate, onOpenDetail, onMoveDays }: {
+export default function CalendarQuickView({ task, onDay, others, dayKey, band, dayLabel, tz, times, progress, planNow, canEdit, onUpdate, onOpenDetail, onMoveDays, marks, onDiscovery }: {
   task: Milestone;
   /** Steps on the shift (or day) tapped; the rest behind a toggle. */
   onDay: Milestone[]; others: Milestone[];
@@ -63,6 +65,10 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
   /** The side bar, for planning changes — not offered where there's none. */
   onOpenDetail?: (m: Milestone) => void;
   onMoveDays?: (id: string, delta: number) => void;
+  /** The critical path (lib/criticalPath) — each step marked against it. */
+  marks?: PathMarks;
+  /** Found work on this task: into the schedule. */
+  onDiscovery?: (task: Milestone) => void;
 }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(t); }, []);
@@ -122,7 +128,10 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
     const latest = (k: MilestoneNote["kind"]) => mine.filter((n) => n.kind === k && n.body?.trim()).sort((a, b) => ms(b.createdAt) - ms(a.createdAt))[0];
     const rows = log.filter((r) => r.milestone_id === m.id);
     const since = [...rows].reverse().find((r) => r.new_status === m.status)?.at;
-    return { comment: latest("note"), why: latest("behind"), since: since ? Date.parse(since) : NaN, rows, mine };
+    // The comment this shift's report shows for it (lib/shiftReport) — the
+    // one Revise changes; the latest overall is context.
+    const forShift = notesForShift(mine, win, TURNOVER_GRACE_MS).note.get(m.id ?? "");
+    return { comment: latest("note"), shiftComment: forShift, why: latest("behind"), since: since ? Date.parse(since) : NaN, rows, mine };
   };
 
   const header = (
@@ -161,7 +170,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
           className={`w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] ${isOpen ? "bg-[var(--color-surface-2)]" : ""}`}>
           <span className={`mt-1 w-2.5 h-2.5 rounded-full shrink-0 ${DOT[m.status] ?? DOT.planned}`} aria-label={WORD[m.status]} />
           <span className="flex-1 min-w-0">
-            <span className={`block text-[12.5px] font-semibold break-words ${m.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{m.name}</span>
+            <span className={`block text-[12.5px] font-semibold break-words ${m.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{m.name} <PathTag id={m.id} marks={marks} /></span>
             <span className="block font-mono text-[10px] text-[var(--color-text-muted)]">
               {(() => {
                 // Where it actually happened, beside the plan.
@@ -209,16 +218,18 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
         </div>
       )}
       <div className="px-3 py-1.5 border-t border-[var(--color-border)] flex items-center justify-between gap-2 text-[10.5px] text-[var(--color-text-faint)]">
-        <span>Tap a step to update it.</span>
+        {onDiscovery ? (
+          <button type="button" onClick={() => onDiscovery(task)} className="font-bold text-violet-700 dark:text-violet-300 hover:underline">+ Discovery work found</button>
+        ) : <span>Tap a step to update it.</span>}
         {onOpenDetail && <button type="button" onClick={() => onOpenDetail(task)} className="font-semibold text-[var(--color-accent)] hover:underline">Schedule details (move, depends on) ›</button>}
       </div>
     </div>
   );
 }
 
-/** The last comment, fixed in place — the same comment, the same time;
+/** This shift's comment, fixed in place — the same comment, the same time;
  *  what the report shows changes with it. */
-function ReviseComment({ note, fmt }: { note: MilestoneNote; fmt: (t: number) => string }) {
+function ReviseComment({ note, fmt }: { note: { id: string; body: string; at: number }; fmt: (t: number) => string }) {
   const [text, setText] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -234,14 +245,14 @@ function ReviseComment({ note, fmt }: { note: MilestoneNote; fmt: (t: number) =>
   if (text == null) {
     return (
       <div className="flex items-baseline gap-1.5 text-[var(--color-text-muted)]">
-        <span className="min-w-0 break-words">Last comment: <i>“{note.body}”</i> — {fmt(ms(note.happenedAt ?? note.createdAt))}</span>
+        <span className="min-w-0 break-words">This shift&apos;s comment: <i>“{note.body}”</i> — {fmt(note.at)}</span>
         <button type="button" onClick={() => { setText(note.body ?? ""); setMsg(null); }} className="shrink-0 font-bold text-[var(--color-accent)] hover:underline">Revise</button>
       </div>
     );
   }
   return (
     <div className="space-y-1">
-      <div className="font-bold text-[var(--color-text)]">Revise the last comment <span className="font-normal text-[var(--color-text-muted)]">— it keeps its time; the report shows the fix</span></div>
+      <div className="font-bold text-[var(--color-text)]">Revise this shift&apos;s comment <span className="font-normal text-[var(--color-text-muted)]">— it keeps its time; the report shows the fix</span></div>
       <div className="flex items-center gap-1.5">
         <input value={text} autoFocus onChange={(e) => { setText(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") void save(); if (e.key === "Escape") { e.stopPropagation(); setText(null); } }}
           aria-label="Revised comment" className="h-8 flex-1 min-w-0 rounded-md border-2 border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px]" />
@@ -255,7 +266,7 @@ function ReviseComment({ note, fmt }: { note: MilestoneNote; fmt: (t: number) =>
 
 function StepEditor({ m, pct, plan, hours, info, when, tz, fmt, canEdit, onSave, onMoveDays }: {
   m: Milestone; pct: number; plan: number; hours: number;
-  info: { comment?: MilestoneNote; why?: MilestoneNote; since: number; rows: ProgressLogRow[]; mine: MilestoneNote[] };
+  info: { comment?: MilestoneNote; shiftComment?: { id: string; body: string; at: number }; why?: MilestoneNote; since: number; rows: ProgressLogRow[]; mine: MilestoneNote[] };
   /** The shifts it may have happened on, the one picked first, and whether
    *  this card is still ahead (planned later than now). */
   when: { choices: Array<{ w: ShiftWindow; label: string }>; idx: number; ahead: boolean };
@@ -314,7 +325,8 @@ function StepEditor({ m, pct, plan, hours, info, when, tz, fmt, canEdit, onSave,
       <div className="rounded-md bg-[var(--color-surface-2)] px-2 py-1.5 text-[var(--color-text)]">
         Now: <b>{WORD[m.status]}, {pct}%</b>{Number.isFinite(info.since) ? ` · since ${fmt(info.since)}` : ""}{m.status !== "completed" ? ` · plan ${plan}% by now` : ""}
       </div>
-      {canEdit && info.comment?.id && <ReviseComment note={info.comment} fmt={fmt} />}
+      {canEdit && info.shiftComment?.id ? <ReviseComment note={info.shiftComment} fmt={fmt} />
+        : info.comment ? <div className="text-[var(--color-text-muted)] break-words">No comment for this shift yet. Last one: <i>“{info.comment.body}”</i> — {fmt(ms(info.comment.happenedAt ?? info.comment.createdAt))}</div> : null}
       {offHold && (
         <div className="rounded-md bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 px-2 py-1.5 text-amber-900 dark:text-amber-200">
           Taking it off {cur === "on_hold" ? "hold" : "block"}. It was: <b>“{m.statusReason || "no reason given"}”</b>{Number.isFinite(info.since) ? ` (since ${fmt(info.since)})` : ""}. Say what changed.

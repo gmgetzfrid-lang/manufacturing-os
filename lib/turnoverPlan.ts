@@ -12,7 +12,7 @@
 // Progress made this shift rides on the step's own row ("+25 this shift"),
 // never in a second list.
 
-import type { ShiftReport, ShiftRow } from "@/lib/shiftReport";
+import { whoOf, type ShiftReport, type ShiftRow } from "@/lib/shiftReport";
 import { equipmentTag } from "@/lib/safetyMoment";
 
 export type NextKind = "next" | "try" | "carry" | "held";
@@ -288,7 +288,45 @@ export function crewsOf(report: ShiftReport, plan: TurnoverPlan, hrs: (h: number
  *  hours it's worth — not a line per sub-step. */
 /** One step done or moved on the shift, on its own line: when (the time
  *  punched for it), its WO when the task has more than one, its comment. */
-export interface DoneLine { id: string; name: string; time?: number; wo?: string; note?: string }
+export interface DoneLine { id: string; name: string; time?: number; wo?: string; note?: string;
+  /** Was on the critical path when the shift began. */
+  critical?: boolean;
+  /** Discovery work (lib/discovery). */
+  discovery?: boolean }
+
+// ── The critical path on the report's rows — the screen and the email read
+// these, so they say the same. ────────────────────────────────────────────
+
+/** A step's place against the critical path, in a few words: near it (a
+ *  shift or less of float), or trending to it — lost 4 h or more of float
+ *  this shift with two shifts or less left. Critical itself is its own red
+ *  tag. */
+export function pathNote(r: ShiftRow, hrs: (h: number) => string): string | null {
+  if (r.critical || r.floatH == null) return null;
+  const lost = r.floatThenH != null && r.floatThenH - r.floatH >= 4 && r.floatH <= 24;
+  const drop = lost ? `float ${hrs(r.floatThenH!)} → ${hrs(r.floatH)} this shift` : null;
+  if (r.near) return `near critical — ${drop ?? `${hrs(r.floatH)} of float`}`;
+  return drop ? `trending to critical — ${drop}` : null;
+}
+
+/** On the next crew's list: work that needs the same crew at the same time
+ *  as critical work — the crew can't do both; the critical goes first. */
+export function competition(report: ShiftReport, rows: ShiftRow[]): Map<string, { crew: string; critical: ShiftRow[] }> {
+  const out = new Map<string, { crew: string; critical: ShiftRow[] }>();
+  const next = report.next;
+  if (!next || !rows.some((r) => r.critical)) return out;
+  const win = (r: ShiftRow) => [Math.max(r.reflowed ? r.crewStart : r.start, next.start), Math.min(r.reflowed ? r.crewFinish : r.finish, next.end)] as const;
+  const crit = rows.filter((r) => r.critical && !isHeld(r));
+  for (const r of rows) {
+    if (r.critical || isHeld(r) || !r.leaf.id) continue;
+    const crew = whoOf(r);
+    const [a, b] = win(r);
+    // Carried-over work runs from the start of the shift.
+    const hits = crit.filter((c) => whoOf(c) === crew && (() => { const [x, y] = win(c); return Math.max(a, x) < Math.min(b, y) || (r.carryOver && c.carryOver); })());
+    if (hits.length) out.set(r.leaf.id, { crew, critical: hits });
+  }
+  return out;
+}
 
 export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, noteOf?: (id: string) => string | undefined, o: {
   /** When the step was done, or moved last, on the shift. */
@@ -305,13 +343,19 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
   /** Why it's behind — the steps behind that have a reason given. */
   why?: string;
   key: string;
+  /** Some of its work this shift was on the critical path. */
+  critical: boolean;
 }> {
   const groups = new Map<string, ShiftRow[]>();
   for (const r of [...plan.done, ...plan.moved]) {
     const k = r.parentId ?? `solo:${r.leaf.id ?? r.leaf.name}`;
     groups.set(k, [...(groups.get(k) ?? []), r]);
   }
-  return inOrder([...groups.entries()], ([k]) => k, plan.order?.done).map(([key, rows]) => {
+  // Critical work leads (it was on the path when the shift began); a
+  // dragged order still wins.
+  const onPath = (rows: ShiftRow[]) => rows.some((r) => r.wasCritical || r.critical);
+  const usual = [...groups.entries()].sort((a, b) => Number(onPath(b[1])) - Number(onPath(a[1])));
+  return inOrder(usual, ([k]) => k, plan.order?.done).map(([key, rows]) => {
     const done = rows.filter((r) => r.percent >= 100);
     const moved = rows.filter((r) => r.percent < 100);
     const early = done.filter((r) => r.plannedLater);
@@ -354,6 +398,8 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
         // Its WO in front only when the task has several.
         wo: wos.length > 1 ? r.leaf.workOrderRef?.trim() || undefined : undefined,
         note: r.leaf.id ? noteOf?.(r.leaf.id) : undefined,
+        critical: r.wasCritical || r.critical || undefined,
+        discovery: !!(r.leaf.attributes as Record<string, unknown> | null | undefined)?.discovery || undefined,
       };
     });
     // Why it's behind: the steps behind plan that have a reason given.
@@ -363,6 +409,7 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
     const parentId = rows[0].parentId;
     return {
       head, lines, why: why || undefined,
+      critical: onPath(rows),
       taskPct: parentId ? o.taskPct?.(parentId) : undefined,
       task: rows[0].parentName ?? rows[0].leaf.name,
       // The work order number(s) — one for most work orders.
@@ -411,6 +458,26 @@ export function watchLines(rows: ShiftRow[], report: ShiftReport, t: { hrs: (h: 
   if (crit.length) {
     const nums = crit.map((r) => numOf(r.leaf.id)).filter((n): n is number => n != null);
     out.push({ tone: "slate", strong: `${crit.length} of ${rows.length} step${rows.length === 1 ? "" : "s"} ${crit.length === 1 ? "is" : "are"} critical`, rest: nums.length ? ` — #${nums.join(", #")}.` : "." });
+  }
+  // Near the path, or losing float fast.
+  const near = rows.filter((r) => pathNote(r, h));
+  if (near.length) {
+    out.push({ tone: "amber", strong: `${near.length} near the critical path`, rest: ` — ${and(near.slice(0, 3).map((r) => `${numOf(r.leaf.id) ? `#${numOf(r.leaf.id)} ` : ""}${label(r)} (${r.floatH != null ? `${h(r.floatH)} float` : "?"})`))}${near.length > 3 ? ` + ${near.length - 3} more` : ""}.` });
+  }
+  // The same crew wanted on critical work and on other work at once.
+  const comp = competition(report, rows);
+  const byCrew = new Map<string, { crit: Set<ShiftRow>; other: ShiftRow[] }>();
+  for (const r of rows) {
+    const c = r.leaf.id ? comp.get(r.leaf.id) : undefined;
+    if (!c) continue;
+    const e = byCrew.get(c.crew) ?? { crit: new Set<ShiftRow>(), other: [] };
+    c.critical.forEach((x) => e.crit.add(x)); e.other.push(r);
+    byCrew.set(c.crew, e);
+  }
+  for (const [crew, e] of byCrew) {
+    const cr = [...e.crit].map((r) => `${numOf(r.leaf.id) ? `#${numOf(r.leaf.id)} ` : ""}${r.leaf.name}`);
+    out.push({ tone: "amber", strong: `${crew} is on critical work and ${e.other.length} other step${e.other.length === 1 ? "" : "s"}`,
+      rest: ` — ${and(cr.slice(0, 2))} first; ${and(e.other.slice(0, 3).map((r) => `${numOf(r.leaf.id) ? `#${numOf(r.leaf.id)} ` : ""}${r.leaf.name}`))} after${e.other.length > 3 ? ` (+${e.other.length - 3} more)` : ""}.` });
   }
   return out;
 }

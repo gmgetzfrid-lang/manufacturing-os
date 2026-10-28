@@ -575,6 +575,7 @@ function fromEntries(entries: string[]): Map<string, { all: boolean; jobs: Set<s
 
 function CriticalStep({ projectId, milestones, canManage, critical, onSaved }: Props & { critical: CriticalMode | null; onSaved: () => void }) {
   const inForce = effectiveCriticalMode(milestones, critical);
+  const tz = useScheduleTz();
   // Not until the saved choice has been read — never preselect over it.
   const loaded = useCriticalModeLoaded(projectId);
   const [picked, setPick] = useState<CriticalMode | null>(null);
@@ -584,8 +585,8 @@ function CriticalStep({ projectId, milestones, canManage, critical, onSaved }: P
   const counts = useMemo(() => {
     const leaves = new Set(milestones.map((m) => m.parentId).filter(Boolean));
     const steps = milestones.filter((m) => m.id && !leaves.has(m.id) && m.status !== "completed").length;
-    return { steps, of: Object.fromEntries(CRITICAL_MODES.map((o) => [o.value, resolveCriticalPath(milestones, o.value).ids.size])) as Record<CriticalMode, number> };
-  }, [milestones]);
+    return { steps, of: Object.fromEntries(CRITICAL_MODES.map((o) => [o.value, resolveCriticalPath(milestones, o.value, { tz }).ids.size])) as Record<CriticalMode, number> };
+  }, [milestones, tz]);
   const save = async () => {
     setBusy(true); setErr(null);
     try { await saveCriticalMode(projectId, pick); onSaved(); }

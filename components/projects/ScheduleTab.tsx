@@ -24,8 +24,10 @@ import { createPortal } from "react-dom";
 import { Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown, Upload, ArrowRight, Eye, EyeOff, Layers, Clock, Trash2, RotateCcw } from "lucide-react";
 import {
   listMilestones, createMilestone, setMilestoneStatus, setMilestoneProgress, restoreMilestoneStates, deleteMilestone, clearProjectSchedule, resetProjectProgress,
-  applyMilestoneMoves, computeScheduleMetrics, setBaseline,
+  applyMilestoneMoves, computeScheduleMetrics, setBaseline, addMilestoneNote, creditProgressTo,
 } from "@/lib/milestones";
+import MarkSheet from "@/components/projects/MarkSheet";
+import type { ShiftCredit } from "@/lib/shiftReport";
 import { supabase } from "@/lib/supabase";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -198,16 +200,24 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   // phase shows a rolled-up status/% and can't be marked done directly.
   const planProgress = useMemo(() => buildProgressIndex(ghostFiltered, tz), [ghostFiltered, tz]);
 
-  const onSetStatus = async (id: string, status: MilestoneStatus) => {
+  // A status from the list asks what it does on the board — when it
+  // happened and a comment — so it lands on the right shift's report.
+  const [marking, setMarking] = useState<{ id: string; status: MilestoneStatus } | null>(null);
+  const onSetStatus = (id: string, status: MilestoneStatus) => setMarking({ id, status });
+  const saveMark = async (id: string, status: MilestoneStatus, when: ShiftCredit, note: string): Promise<boolean> => {
     setBusy(true);
     try {
       await setMilestoneStatus({
-        id, status,
+        id, status, at: new Date(when.at).toISOString(),
+        ...(status === "on_hold" || status === "blocked" ? { statusReason: note } : {}),
         actorUserId: userId,
         actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
       });
+      if (Math.abs(when.at - Date.now()) > 120_000) await creditProgressTo(id, when.at);
+      await addMilestoneNote({ orgId, milestoneId: id, kind: "note", statusAt: status, body: note, createdBy: userId, createdByName: userName, happenedAt: new Date(when.at).toISOString() });
       await refresh();
-    } catch (e) { setError((e as Error).message); }
+      return true;
+    } catch (e) { setError((e as Error).message); return false; }
     finally { setBusy(false); }
   };
 
@@ -543,6 +553,10 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
             </div>
           ) : (
             <div className="divide-y divide-[var(--color-border)]">
+              {marking && (
+                <MarkSheet names={[allMilestones.find((x) => x.id === marking.id)?.name ?? "Step"]} status={marking.status} tz={tz} times={shiftTimes}
+                  onSave={(when, note) => saveMark(marking.id, marking.status, when, note)} onClose={() => setMarking(null)} />
+              )}
               {planningRows.map(({ m, depth }) => (
                 <MilestoneRow
                   key={m.id}

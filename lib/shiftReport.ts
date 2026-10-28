@@ -91,6 +91,11 @@ export function parseClock(s: string): { h: number; m: number } | null {
  *  hours fall on the next calendar day. Null when the shift doesn't hold
  *  that time ("19:00" on a 6:00–18:00 day shift). The shift's last minute
  *  counts (a step finished at the change). */
+/** The hour after a shift ends is still its turnover meeting: progress
+ *  and comments recorded then count for it (the report, the email and the
+ *  time log alike). */
+export const TURNOVER_GRACE_MS = 3_600_000;
+
 export interface ShiftComment { id: string; body: string; at: number; by: string | null }
 
 /** Each step's comment and "why it's behind" for one shift — the latest
@@ -314,6 +319,14 @@ export function crewDueMs(m: Milestone, tz: string, times: ShiftTimes = DEFAULT_
   return reflowed ? end : Math.min(due, end);
 }
 
+/** Work due by this moment and not done carries over: mid-shift, now;
+ *  from the turnover meeting on, the shift's end. One rule for the report,
+ *  the calendar and the day list (lib/openWork carriedOpenWork). */
+export function carryCutoff(shift: ShiftWindow, now: number, times: ShiftTimes): number {
+  const meetingAt = shift.end - meetingLeadMin(times) * 60_000;
+  return now >= meetingAt ? Math.max(now, shift.end) : now;
+}
+
 /** When a step is past due: its finish — or, for work moved onto its
  *  crew's next hours (see crewWindows), the end of those hours. */
 export function staffedDueMs(m: Milestone, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): number {
@@ -470,6 +483,13 @@ export interface ShiftRow {
   carryOver: boolean;
   /** On the finish-driving chain. */
   critical: boolean;
+  /** On it when the shift began (a step done since is off it now). */
+  wasCritical: boolean;
+  /** Within a shift of critical. */
+  near: boolean;
+  /** Hours it can slip before the finish moves — now, and at the shift's start. */
+  floatH?: number;
+  floatThenH?: number;
   /** Finishes inside the shift being looked at. */
   dueInShift: boolean;
   /** Starts inside the shift being looked at. */
@@ -645,10 +665,24 @@ export interface ShiftReport {
   blocked: ShiftRow[];
 }
 
+/** The critical path around each step (lib/criticalPath, lib/cpm) — so
+ *  the report, the email and the screen say the same. */
+export interface PathInfo {
+  /** On the path when the shift began — what Done credits as critical work. */
+  criticalThen?: Set<string>;
+  /** Within a shift of critical, not on it (and not marked off it). */
+  near?: Set<string>;
+  /** Hours each unfinished step can slip before the finish moves: now, and
+   *  when the shift began. */
+  floatH?: Map<string, number>;
+  floatThenH?: Map<string, number>;
+}
+
 export interface BuildShiftReportInput {
   milestones: Milestone[];
   progress?: Map<string, ProgressInfo>;
   criticalIds?: Set<string>;
+  path?: PathInfo;
   tz: string;
   times?: ShiftTimes;
   /** The shift under review. */
@@ -747,6 +781,10 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       status: m.status,
       carryOver: false,
       critical: !!m.id && criticalIds.has(m.id),
+      wasCritical: !!m.id && (input.path?.criticalThen ? input.path.criticalThen.has(m.id) : criticalIds.has(m.id)),
+      near: !!m.id && !!input.path?.near?.has(m.id),
+      floatH: m.id ? input.path?.floatH?.get(m.id) : undefined,
+      floatThenH: m.id ? input.path?.floatThenH?.get(m.id) : undefined,
       dueInShift: due > win.start && due <= win.end,
       startsInShift: s >= win.start && s < win.end,
       offSchedule: cw.windows.length ? !cw.windows.some(([a, b]) => a < win.end && b > win.start) : !(s < win.end && f > win.start),
@@ -836,8 +874,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   // isn't carried over at 10:00 — it's still this shift's. From the
   // turnover meeting on, the shift is handed over: anything due by its end
   // and not done carries over.
-  const meetingAt = shift.end - meetingLeadMin(times) * 60_000;
-  const dueBy = now >= meetingAt ? Math.max(now, shift.end) : now;
+  const dueBy = carryCutoff(shift, now, times);
   for (const r of scheduled) r.carryOver = !DONE(r) && crewDueMs(r.leaf, tz, times) <= dueBy;
   const seenDone = new Set<string>();
   const done: ShiftRow[] = [];
@@ -896,7 +933,9 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     .sort((a, b) => Number(b.critical) - Number(a.critical) || cmp(a, b));
   const goalsCarry = carriedAll.filter(forNext);
   const otherShift = carriedAll.filter((r) => !forNext(r));
-  const all = [...goalsCarry, ...planned];
+  // The critical path leads the next crew's list; then carried-over work,
+  // then the rest (each in time order).
+  const all = [...goalsCarry, ...planned].sort((a, b) => Number(b.critical) - Number(a.critical));
   const movedOff = leaves
     .filter((m) => !held(m) && !DONE({ status: m.status, percent: pctOf(m) }) && !otherShift.some((r) => r.leaf.id === m.id))
     .map((m) => rowFor(m, next))
