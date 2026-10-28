@@ -21,7 +21,7 @@ import { createPortal } from "react-dom";
 import { Circle, Loader2, CircleCheck, PauseCircle, AlertTriangle, XCircle } from "lucide-react";
 import type { MilestoneStatus } from "@/types/schema";
 import type { ShiftCredit } from "@/lib/shiftReport";
-import { ProgressSlider, ProgressNoteForm, ShiftClockContext, WhenFields, resolveWhen, shiftChoices } from "@/components/projects/ProgressControl";
+import { ProgressSlider, ProgressNoteForm, ShiftClockContext, WhenFields, resolveWhen, shiftChoices, pickOf } from "@/components/projects/ProgressControl";
 
 export const STATUS_ORDER: MilestoneStatus[] = ["planned", "in_progress", "completed", "on_hold", "blocked", "missed"];
 
@@ -85,6 +85,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
   const [choices, setChoices] = useState<ReturnType<typeof shiftChoices>>([]);
   const [whenIdx, setWhenIdx] = useState(0);
   const [when, setWhen] = useState("");
+  const [otherDay, setOtherDay] = useState<string | null>(null);
   const [whyMsg, setWhyMsg] = useState<string | null>(null);
   const [pctStep, setPctStep] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -113,7 +114,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
     setReasonFor(null);
     setReason("");
     setPctStep(false);
-    setWhen(""); setWhenIdx(0); setWhyMsg(null);
+    setWhen(""); setWhenIdx(0); setOtherDay(null); setWhyMsg(null);
     setChoices(clockCtx ? shiftChoices(clockCtx, Date.now()) : []);
     setOpen((v) => !v);
   };
@@ -136,7 +137,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
     if (!reason.trim()) { setWhyMsg("Add a few words — it goes on the report."); return; }
     let forShift: ShiftCredit | undefined;
     if (clockCtx && choices.length) {
-      const r = resolveWhen(choices[whenIdx], when, clockCtx.tz);
+      const r = resolveWhen(pickOf(choices, whenIdx, otherDay, clockCtx.tz, clockCtx.times), when, clockCtx.tz, clockCtx.times);
       if ("error" in r) { setWhyMsg(r.error); return; }
       forShift = r.credit;
     }
@@ -240,7 +241,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                     className="w-full text-xs px-2 py-1.5 border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30"
                   />
                 </div>
-                {choices.length > 0 && clockCtx && <WhenFields choices={choices} idx={whenIdx} setIdx={(i) => { setWhenIdx(i); setWhyMsg(null); }} clock={when} setClock={(v) => { setWhen(v); setWhyMsg(null); }} tz={clockCtx.tz} />}
+                {choices.length > 0 && clockCtx && <WhenFields choices={choices} idx={whenIdx} setIdx={(i) => { setWhenIdx(i); setWhyMsg(null); }} clock={when} setClock={(v) => { setWhen(v); setWhyMsg(null); }} tz={clockCtx.tz} times={clockCtx.times} other={otherDay} setOther={(d) => { setOtherDay(d); setWhyMsg(null); }} />}
                 {whyMsg && <div className="font-semibold text-rose-700 dark:text-rose-400">{whyMsg}</div>}
                 <div className="flex items-center justify-end gap-1.5">
                   <button onClick={() => setReasonFor(null)} className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 transition-colors">Back</button>

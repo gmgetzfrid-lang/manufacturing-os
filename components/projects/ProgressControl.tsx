@@ -13,8 +13,8 @@
 
 import React, { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { previousShift, shiftAt, type ShiftCredit, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
-import { clockOnShift, typeClock } from "@/components/projects/ShiftRecordParts";
+import { previousShift, shiftAt, shiftWindow, DEFAULT_SHIFT_TIMES, type ShiftCredit, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
+import { clockForWork, shiftWord, typeClock, DayPick } from "@/components/projects/ShiftRecordParts";
 
 /** The project's clock. Given, the progress form asks which shift a change
  *  counts for — a fix to what last shift entered goes on last shift's
@@ -45,10 +45,16 @@ export function whenChoices(own: { w: ShiftWindow; label: string }, clock: { tz:
   return { choices: [...choices.slice(0, pos), own, ...choices.slice(pos)], idx: pos, ahead: false };
 }
 
-/** When it happened — the shift and a 24-hour time — or what's wrong. */
-export function resolveWhen(choice: { w: ShiftWindow; label: string }, clock: string, tz: string): { credit: ShiftCredit } | { error: string } {
+/** The shift picked: a chip, or another day typed in (`other`, a plant day). */
+export function pickOf(choices: Array<{ w: ShiftWindow; label: string }>, idx: number, other: string | null | undefined, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): { w: ShiftWindow; label: string } {
+  return other ? { w: shiftWindow(other, "day", tz, times), label: other } : choices[idx] ?? choices[0];
+}
+
+/** When it happened — the shift and a 24-hour time — or what's wrong. A
+ *  time that isn't on the shift picked lands on the shift it is on that day. */
+export function resolveWhen(choice: { w: ShiftWindow; label: string }, clock: string, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): { credit: ShiftCredit } | { error: string } {
   if (!clock.trim()) return { error: "Put in the time it happened." };
-  const r = clockOnShift(choice.w, clock, tz);
+  const r = clockForWork(choice.w, clock, tz, times);
   if ("error" in r) return r;
   const label = new Date(r.at).toLocaleString("en-US", { weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tz });
   return { credit: { at: r.at, label } };
@@ -56,10 +62,17 @@ export function resolveWhen(choice: { w: ShiftWindow; label: string }, clock: st
 
 /** The shift chips and the time box: required wherever the project's
  *  clock is known. */
-export function WhenFields({ choices, idx, setIdx, clock, setClock, tz, disabled }: {
+export function WhenFields({ choices, idx, setIdx, clock, setClock, tz, disabled, other, setOther, times = DEFAULT_SHIFT_TIMES }: {
   choices: Array<{ w: ShiftWindow; label: string }>; idx: number; setIdx: (i: number) => void;
   clock: string; setClock: (v: string) => void; tz: string; disabled?: boolean;
+  /** Another day than the chips (filling in older work): a plant day. */
+  other?: string | null; setOther?: (d: string | null) => void;
+  times?: ShiftTimes;
 }) {
+  const [picking, setPicking] = useState(false);
+  const showDay = !!setOther && (picking || !!other);
+  const pick = pickOf(choices, idx, other, tz, times);
+  const r = clock.trim() ? clockForWork(pick.w, clock, tz, times) : null;
   return (
     <div className="space-y-1">
       <div className="flex items-baseline gap-1.5">
@@ -68,17 +81,21 @@ export function WhenFields({ choices, idx, setIdx, clock, setClock, tz, disabled
       </div>
       <div className="flex items-center gap-1 flex-wrap" role="group" aria-label="Which shift">
         {choices.map((c, i) => (
-          <button key={c.w.start} type="button" aria-pressed={i === idx} disabled={disabled} onClick={() => setIdx(i)}
-            className={`h-7 px-2 rounded-md border font-semibold pointer-coarse:h-9 disabled:opacity-50 ${i === idx ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
+          <button key={c.w.start} type="button" aria-pressed={i === idx && !other} disabled={disabled} onClick={() => { setIdx(i); setOther?.(null); setPicking(false); }}
+            className={`h-7 px-2 rounded-md border font-semibold pointer-coarse:h-9 disabled:opacity-50 ${i === idx && !other ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
             {c.label}
           </button>
         ))}
+        {setOther && (showDay
+          ? <DayPick value={other ?? null} onChange={(d) => setOther(d)} tz={tz} disabled={disabled} className={other ? "ring-1 ring-[var(--color-accent)] border-[var(--color-accent)]" : ""} />
+          : <button type="button" disabled={disabled} onClick={() => setPicking(true)} className="h-7 px-2 rounded-md border border-dashed border-[var(--color-border-strong)] font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] pointer-coarse:h-9 disabled:opacity-50">Other day…</button>)}
       </div>
       <div className="flex items-center gap-1.5">
         <input value={clock} onChange={(e) => setClock(typeClock(e.target.value))} inputMode="numeric" placeholder="hh:mm" aria-label="Time it happened, 24-hour" disabled={disabled}
           className={`h-8 w-[70px] px-1.5 rounded-md border-2 font-mono text-[12.5px] pointer-coarse:h-10 ${clock ? "border-[var(--color-border-strong)] bg-[var(--color-surface)]" : "border-amber-400 bg-amber-50/60 dark:bg-amber-950/30"}`} />
-        <button type="button" disabled={disabled} onClick={() => { setIdx(0); setClock(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz })); }}
+        <button type="button" disabled={disabled} onClick={() => { setIdx(0); setOther?.(null); setPicking(false); setClock(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz })); }}
           className="h-8 px-2 rounded-md border border-[var(--color-border-strong)] font-semibold pointer-coarse:h-10 disabled:opacity-50">Now</button>
+        {r && "at" in r && <span className="text-[var(--color-text-muted)]">{r.moved ? "→ " : "on "}<b className="text-[var(--color-text)]">{shiftWord(r.shift, tz)}</b></span>}
       </div>
     </div>
   );
@@ -198,6 +215,7 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy, autoF
   const [choices] = useState(() => (clockCtx ? shiftChoices(clockCtx, Date.now()) : []));
   const [whenIdx, setWhenIdx] = useState(0);
   const [when, setWhen] = useState("");
+  const [otherDay, setOtherDay] = useState<string | null>(null);
   const cur = clamp(percent);
   const [pick, setPick] = useState<number | null>(start ? (cur > 0 && cur < 100 ? cur : null) : null);
   const [typed, setTyped] = useState("");
@@ -226,7 +244,7 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy, autoF
     if (missing) { setMsg("Add a few words first — what got done, or why it's corrected. It goes on the shift report."); noteRef.current?.focus(); return; }
     let forShift: ShiftCredit | undefined;
     if (clockCtx && choices.length) {
-      const r = resolveWhen(choices[whenIdx], when, clockCtx.tz);
+      const r = resolveWhen(pickOf(choices, whenIdx, otherDay, clockCtx.tz, clockCtx.times), when, clockCtx.tz, clockCtx.times);
       if ("error" in r) { setMsg(r.error); return; }
       forShift = r.credit;
     }
@@ -271,7 +289,7 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy, autoF
       </div>
       {/* When it happened: the shift and the time — it goes on that
           shift's report at that time. */}
-      {choices.length > 0 && <WhenFields choices={choices} idx={whenIdx} setIdx={(i) => { setWhenIdx(i); setMsg(null); }} clock={when} setClock={(v) => { setWhen(v); setMsg(null); }} tz={clockCtx!.tz} disabled={busy || saving} />}
+      {choices.length > 0 && <WhenFields choices={choices} idx={whenIdx} setIdx={(i) => { setWhenIdx(i); setMsg(null); }} clock={when} setClock={(v) => { setWhen(v); setMsg(null); }} tz={clockCtx!.tz} times={clockCtx!.times} other={otherDay} setOther={(d) => { setOtherDay(d); setMsg(null); }} disabled={busy || saving} />}
       {msg && <div className="text-rose-700 dark:text-rose-400 font-semibold">{msg}</div>}
       <div className="flex items-center gap-2">
         {onCancel && <button type="button" onClick={onCancel} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>}

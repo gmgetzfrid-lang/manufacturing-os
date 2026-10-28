@@ -20,7 +20,7 @@ import { fmtInTz } from "@/lib/scheduleTz";
 import { notesFor, updateMilestoneNote } from "@/lib/milestones";
 import { loadProgressLog, type ProgressLogRow } from "@/lib/progressHistory";
 import { describeChange } from "@/lib/timeLog";
-import { clockOnShift, typeClock } from "@/components/projects/ShiftRecordParts";
+import { clockForWork, shiftWord, typeClock, DayPick } from "@/components/projects/ShiftRecordParts";
 import { whenChoices } from "@/components/projects/ProgressControl";
 import { builtSpan } from "@/lib/asBuilt";
 import type { PathMarks } from "@/lib/criticalPath";
@@ -195,7 +195,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
           </span>
         </button>
         {isOpen && (
-          <StepEditor key={`${id}:${m.status}:${pct}`} m={m} pct={pct} plan={plan} hours={h} info={info} when={when} tz={tz} fmt={fmt}
+          <StepEditor key={`${id}:${m.status}:${pct}`} m={m} pct={pct} plan={plan} hours={h} info={info} when={when} tz={tz} times={times} fmt={fmt}
             canEdit={canEdit && !!onUpdate && !!m.id} onSave={(u) => onUpdate!(m.id!, u)} onMoveDays={onMoveDays} />
         )}
       </li>
@@ -264,13 +264,13 @@ function ReviseComment({ note, fmt }: { note: { id: string; body: string; at: nu
   );
 }
 
-function StepEditor({ m, pct, plan, hours, info, when, tz, fmt, canEdit, onSave, onMoveDays }: {
+function StepEditor({ m, pct, plan, hours, info, when, tz, times, fmt, canEdit, onSave, onMoveDays }: {
   m: Milestone; pct: number; plan: number; hours: number;
   info: { comment?: MilestoneNote; shiftComment?: { id: string; body: string; at: number }; why?: MilestoneNote; since: number; rows: ProgressLogRow[]; mine: MilestoneNote[] };
   /** The shifts it may have happened on, the one picked first, and whether
    *  this card is still ahead (planned later than now). */
   when: { choices: Array<{ w: ShiftWindow; label: string }>; idx: number; ahead: boolean };
-  tz: string; fmt: (t: number) => string;
+  tz: string; times: ShiftTimes; fmt: (t: number) => string;
   canEdit: boolean; onSave: (u: StepUpdate) => Promise<boolean>;
   onMoveDays?: (id: string, delta: number) => void;
 }) {
@@ -290,9 +290,15 @@ function StepEditor({ m, pct, plan, hours, info, when, tz, fmt, canEdit, onSave,
   const noteLabel = status === "on_hold" ? "Why it's on hold" : status === "blocked" ? "What's blocking it" : status === "planned" ? "Why it's going back" : goingBack ? "Why it's going back" : "What got done";
   const behind = hours < -0.05 && status !== "completed";
   const [wi, setWi] = useState(when.idx);
-  const win = (when.choices[wi] ?? when.choices[0]).w;
-  const dayWord = win.kind === "night" ? `${fmtInTz(win.start, tz, { weekday: "short", month: "short", day: "numeric" })} night` : fmtInTz(win.start, tz, { weekday: "short", month: "short", day: "numeric" });
-  const r = clock ? clockOnShift(win, clock, tz) : null;
+  // Another day than the chips (filling in older work).
+  const [otherDay, setOtherDay] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
+  const picked = otherDay ? shiftWindow(otherDay, "day", tz, times) : (when.choices[wi] ?? when.choices[0]).w;
+  const dayWord = otherDay ? fmtInTz(picked.start, tz, { weekday: "short", month: "short", day: "numeric" }) : picked.kind === "night" ? `${fmtInTz(picked.start, tz, { weekday: "short", month: "short", day: "numeric" })} night` : fmtInTz(picked.start, tz, { weekday: "short", month: "short", day: "numeric" });
+  // A time that isn't on the shift picked lands on the shift it's on that
+  // day ("Sat day" + 22:00 → Sat night) — said beside the time.
+  const r = clock ? clockForWork(picked, clock, tz, times) : null;
+  const win = r && "at" in r ? r.shift : picked;
   const pctNew = status === "in_progress" ? p : null;
   const ready = !!r && "at" in r && !!note.trim() && !saving;
   const save = async () => {
@@ -365,16 +371,21 @@ function StepEditor({ m, pct, plan, hours, info, when, tz, fmt, canEdit, onSave,
             )}
             <div className="flex flex-wrap gap-1 mb-1.5" role="group" aria-label="Which shift">
               {when.choices.map((c, i) => (
-                <button key={c.w.start} type="button" aria-pressed={i === wi} onClick={() => { setWi(i); setMsg(null); setSaved(null); }}
-                  className={`${btn} ${i === wi ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>{c.label}</button>
+                <button key={c.w.start} type="button" aria-pressed={i === wi && !otherDay} onClick={() => { setWi(i); setOtherDay(null); setPicking(false); setMsg(null); setSaved(null); }}
+                  className={`${btn} ${i === wi && !otherDay ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>{c.label}</button>
               ))}
+              {picking || otherDay
+                ? <DayPick value={otherDay} onChange={(d) => { setOtherDay(d); setMsg(null); setSaved(null); }} tz={tz} className={otherDay ? "ring-1 ring-[var(--color-accent)] border-[var(--color-accent)]" : ""} />
+                : <button type="button" onClick={() => setPicking(true)} className={`${btn} border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]`}>Other day…</button>}
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
               <input value={clock} onChange={(e) => { setClock(typeClock(e.target.value)); setMsg(null); setSaved(null); }} inputMode="numeric" placeholder="hh:mm" aria-label="Time it happened, 24-hour"
                 className={`h-8 w-[72px] rounded-md border-2 px-1.5 font-mono text-[13px] ${clock ? "border-[var(--color-border-strong)] bg-[var(--color-surface)]" : "border-amber-400 bg-amber-50 dark:bg-amber-950/30"}`} />
-              <button type="button" onClick={() => { setWi(0); setClock(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz })); setMsg(null); }}
+              <button type="button" onClick={() => { setWi(0); setOtherDay(null); setPicking(false); setClock(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz })); setMsg(null); }}
                 className={`${btn} border-[var(--color-border-strong)] text-[var(--color-text)]`}>Now</button>
-              <span className="text-[var(--color-text-muted)]">on {dayWord}</span>
+              {r && "at" in r
+                ? <span className="text-[var(--color-text-muted)]">{r.moved ? "→ " : "on "}<b className="text-[var(--color-text)]">{shiftWord(r.shift, tz)}</b></span>
+                : <span className="text-[var(--color-text-muted)]">on {dayWord}</span>}
             </div>
           </div>
           <div>

@@ -13,7 +13,7 @@ import type { ShiftTimes } from "@/lib/shiftReport";
 import { fmtInTz } from "@/lib/scheduleTz";
 import { planDiscovery, defaultAfter, defaultHolds, impactLine, type DiscoveryDraft } from "@/lib/discovery";
 import type { CriticalMode } from "@/lib/criticalPath";
-import { shiftChoices, resolveWhen, WhenFields } from "@/components/projects/ProgressControl";
+import { shiftChoices, resolveWhen, WhenFields, pickOf } from "@/components/projects/ProgressControl";
 
 const ms = (v: unknown) => (v == null ? NaN : Date.parse(String(v)));
 
@@ -59,11 +59,12 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
   const [approvedBy, setApprovedBy] = useState("");
   const choices = useMemo(() => shiftChoices({ tz, times }, now), [tz, times, now]);
   const [wi, setWi] = useState(0);
+  const [otherDay, setOtherDay] = useState<string | null>(null);
   const [clock, setClock] = useState(() => new Date(now).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz }));
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const when = clock ? resolveWhen(choices[wi] ?? choices[0], clock, tz) : null;
+  const when = clock ? resolveWhen(pickOf(choices, wi, otherDay, tz, times), clock, tz, times) : null;
   const filled = rows.map((r) => ({ name: r.name.trim(), crew: r.crew.trim(), hours: Number(r.hours) })).filter((r) => r.name && Number.isFinite(r.hours) && r.hours > 0);
   const draft: DiscoveryDraft | null = taskId && filled.length && when && "credit" in when
     ? { taskId, what: what.trim(), foundAt: when.credit.at, approvedBy: approvedBy.trim() || undefined, steps: filled, afterId, holdsIds: holds }
@@ -112,7 +113,7 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
               className={`${inp} w-full h-auto py-1.5`} />
           </label>
           <div>
-            <WhenFields choices={choices} idx={wi} setIdx={setWi} clock={clock} setClock={setClock} tz={tz} />
+            <WhenFields choices={choices} idx={wi} setIdx={setWi} clock={clock} setClock={setClock} tz={tz} times={times} other={otherDay} setOther={setOtherDay} />
           </div>
           <div>
             <span className={lbl}>Work it adds</span>

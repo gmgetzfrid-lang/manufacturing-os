@@ -121,6 +121,12 @@ export function notesForShift(notes: MilestoneNote[], shift: { start: number; en
   return { note, why };
 }
 
+/** A 24-hour time on a plant day ("2026-10-24", "22:00"). */
+export function timeOnDay(day: string, clock: string, tz: string): number | null {
+  const hm = parseClock(clock);
+  return hm && /^\d{4}-\d{2}-\d{2}$/.test(day) ? atTime(day, hm, tz) : null;
+}
+
 export function timeInShift(w: ShiftWindow, clock: string, tz: string): number | null {
   const hm = parseClock(clock);
   if (!hm) return null;

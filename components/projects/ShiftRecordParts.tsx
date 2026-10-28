@@ -8,7 +8,8 @@ import React, { useRef, useState } from "react";
 import { FileSpreadsheet } from "lucide-react";
 import { INCIDENT_KINDS, type CrewCount, type Incident, type IncidentKind, type ShiftNote } from "@/lib/shiftRecord";
 import { crewLine } from "@/lib/managementUpdate";
-import { parseClock, timeInShift, type ShiftWindow } from "@/lib/shiftReport";
+import { parseClock, timeInShift, timeOnDay, shiftAt, DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
+import { dayKey } from "@/lib/scheduleTz";
 
 /** A time typed 24-hour on the shift ("14:30", "1430"): the instant, or
  *  why it isn't one. */
@@ -18,6 +19,36 @@ export function clockOnShift(w: ShiftWindow, clock: string, tz: string, now = Da
   if (at == null) return { error: `${clock.trim()} isn't on this shift.` };
   if (at > now + 60_000) return { error: "That time hasn't come yet." };
   return { at };
+}
+
+/** When work happened: on the shift picked — or, a time that isn't on it,
+ *  on the shift that time is on that day ("Sat day" + 22:00 → Sat night).
+ *  Never later than now. A shift's own record (incidents, notes) keeps to
+ *  its shift (clockOnShift). */
+export function clockForWork(w: ShiftWindow, clock: string, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES, now = Date.now()): { at: number; shift: ShiftWindow; moved: boolean } | { error: string } {
+  if (!parseClock(clock)) return { error: "Type the time as 24-hour, like 14:30." };
+  const at = timeInShift(w, clock, tz) ?? timeOnDay(w.dayKey, clock, tz);
+  if (at == null) return { error: "Type the time as 24-hour, like 14:30." };
+  if (at > now + 60_000) return { error: "That time hasn't come yet." };
+  const shift = shiftAt(at, tz, times);
+  return { at, shift, moved: shift.start !== w.start };
+}
+
+/** "Sat night, Oct 24" — the shift a time landed on. */
+export function shiftWord(w: ShiftWindow, tz: string): string {
+  const d = new Date(w.start);
+  const wd = d.toLocaleDateString("en-US", { weekday: "short", timeZone: tz }), md = d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: tz });
+  return `${wd} ${w.kind}, ${md}`;
+}
+
+/** Another day than the chips offer — for filling in older work. */
+export function DayPick({ value, onChange, tz, disabled, className = "" }: { value: string | null; onChange: (d: string | null) => void; tz: string; disabled?: boolean; className?: string }) {
+  // Not after today.
+  const [max] = useState(() => dayKey(Date.now(), tz));
+  return (
+    <input type="date" value={value ?? ""} max={max} disabled={disabled} onChange={(e) => onChange(e.target.value || null)} aria-label="The day it happened"
+      className={`h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12.5px] text-[var(--color-text)] ${className}`} />
+  );
 }
 
 /** "1430" → "14:30" as it's typed. */

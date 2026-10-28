@@ -28,7 +28,7 @@ import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
 import { carriedOpenWork } from "@/lib/openWork";
 import { DEFAULT_SHIFT_TIMES, expectedByParent, expectedFraction, shiftAt, shiftWindow, workShiftOf, TURNOVER_GRACE_MS, type ShiftTimes, type ShiftCredit, type ShiftWindow } from "@/lib/shiftReport";
 import type { StepUpdate } from "@/components/projects/CalendarQuickView";
-import { clockOnShift, typeClock } from "@/components/projects/ShiftRecordParts";
+import { clockForWork, shiftWord, typeClock, DayPick } from "@/components/projects/ShiftRecordParts";
 import { notesFor, updateMilestoneNote } from "@/lib/milestones";
 import ShiftMark from "@/components/projects/ShiftMark";
 import { type BandDays } from "@/lib/shiftBands";
@@ -636,8 +636,13 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
   const [clock, setClock] = useState("");
   const [choice] = useState(() => whenChoices(shift, { tz, times }, Date.now()));
   const [wi, setWi] = useState(choice.idx);
-  const win = (choice.choices[wi] ?? choice.choices[0]).w;
-  const when = clock ? clockOnShift(win, clock, tz) : null;
+  // Another day than the chips (filling in older work).
+  const [otherDay, setOtherDay] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
+  const win = otherDay ? shiftWindow(otherDay, "day", tz, times) : (choice.choices[wi] ?? choice.choices[0]).w;
+  // A time that isn't on the shift picked lands on the shift it's on that
+  // day ("Sat day" + 22:00 → Sat night).
+  const when = clock ? clockForWork(win, clock, tz, times) : null;
   const whenAt = when && "at" in when ? when.at : null;
   // A change made here is said fresh — not typed over your last comment.
   const freshNote = () => { if (noteMode === "edit") { setNoteMode("new"); setNote(""); sentNote.current = null; } };
@@ -820,17 +825,20 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
           </span>
           <span className="inline-flex flex-wrap gap-1" role="group" aria-label="Which shift">
             {choice.choices.map((c, i) => (
-              <button key={c.w.start} type="button" disabled={ro} aria-pressed={i === wi} onClick={() => { setWi(i); setNeedMsg(null); }}
-                className={`h-7 px-2 rounded-md border font-bold pointer-coarse:h-9 ${i === wi ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>{c.label}</button>
+              <button key={c.w.start} type="button" disabled={ro} aria-pressed={i === wi && !otherDay} onClick={() => { setWi(i); setOtherDay(null); setPicking(false); setNeedMsg(null); }}
+                className={`h-7 px-2 rounded-md border font-bold pointer-coarse:h-9 ${i === wi && !otherDay ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>{c.label}</button>
             ))}
+            {picking || otherDay
+              ? <DayPick value={otherDay} onChange={(d) => { setOtherDay(d); setNeedMsg(null); }} tz={tz} disabled={ro} className={`h-7 pointer-coarse:h-9 ${otherDay ? "ring-1 ring-[var(--color-accent)] border-[var(--color-accent)]" : ""}`} />
+              : <button type="button" disabled={ro} onClick={() => setPicking(true)} className="h-7 px-2 rounded-md border border-dashed border-[var(--color-border-strong)] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] pointer-coarse:h-9">Other day…</button>}
           </span>
           <input ref={clockRef} value={clock} disabled={ro} inputMode="numeric" placeholder="hh:mm" aria-label="Time it happened, 24-hour"
             onChange={(e) => { setClock(typeClock(e.target.value)); setNeedMsg(null); }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (progressPending()) void commit(); else void saveHold(); } }}
             className={`h-7 w-[64px] px-1.5 rounded-md font-mono font-bold pointer-coarse:h-9 focus:outline-none focus:border-[var(--color-accent-ring)] ${whenAt == null ? "border-2 border-amber-400 bg-amber-50/60 dark:bg-amber-950/30" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)]"}`} />
-          <button type="button" disabled={ro} onClick={() => { setWi(0); setClock(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz })); setNeedMsg(null); }}
+          <button type="button" disabled={ro} onClick={() => { setWi(0); setOtherDay(null); setPicking(false); setClock(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz })); setNeedMsg(null); }}
             className="h-7 px-2 rounded-md border border-[var(--color-border-strong)] font-bold hover:bg-[var(--color-surface-2)] pointer-coarse:h-9">Now</button>
-          <span className="text-[var(--color-text-muted)]">{when && "error" in when ? <span className="font-semibold text-rose-700 dark:text-rose-400">{when.error}</span> : whenAt != null ? fmtInTz(whenAt, tz, { weekday: "short", month: "short", day: "numeric" }) : fmtInTz(win.start, tz, { weekday: "short", month: "short", day: "numeric" })}</span>
+          <span className="text-[var(--color-text-muted)]">{when && "error" in when ? <span className="font-semibold text-rose-700 dark:text-rose-400">{when.error}</span> : when && "at" in when ? <>{when.moved ? "→ " : "on "}<b className="text-[var(--color-text)]">{shiftWord(when.shift, tz)}</b></> : fmtInTz(win.start, tz, { weekday: "short", month: "short", day: "numeric" })}</span>
         </div>
       )}
       {timed && choice.ahead && (progressPending() || (holdTouched && !!hold)) && (

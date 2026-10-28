@@ -10,7 +10,7 @@ import React, { useMemo, useState } from "react";
 import { X } from "lucide-react";
 import type { MilestoneStatus } from "@/types/schema";
 import type { ShiftCredit, ShiftTimes } from "@/lib/shiftReport";
-import { shiftChoices, resolveWhen, WhenFields } from "@/components/projects/ProgressControl";
+import { shiftChoices, resolveWhen, WhenFields, pickOf } from "@/components/projects/ProgressControl";
 
 const WORD: Record<string, string> = { completed: "Done", in_progress: "Started", on_hold: "On hold", blocked: "Blocked", planned: "Not started", missed: "Missed" };
 
@@ -28,6 +28,7 @@ export default function MarkSheet({ names, status, tz, times, now: clockNow, ahe
   const [now] = useState(() => clockNow ?? Date.now());
   const choices = useMemo(() => shiftChoices({ tz, times }, now), [tz, times, now]);
   const [wi, setWi] = useState(0);
+  const [otherDay, setOtherDay] = useState<string | null>(null);
   const [clock, setClock] = useState(() => new Date(now).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz }));
   const [note, setNote] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
@@ -36,7 +37,7 @@ export default function MarkSheet({ names, status, tz, times, now: clockNow, ahe
   const n = names.length;
 
   const save = async () => {
-    const when = resolveWhen(choices[wi] ?? choices[0], clock, tz);
+    const when = resolveWhen(pickOf(choices, wi, otherDay, tz, times), clock, tz, times);
     if ("error" in when) { setMsg(when.error); return; }
     if (!note.trim()) { setMsg(status === "on_hold" || status === "blocked" ? "Put in the reason." : "Put in a comment — it's the line the report reads."); return; }
     setBusy(true);
@@ -62,7 +63,7 @@ export default function MarkSheet({ names, status, tz, times, now: clockNow, ahe
               {ahead === n ? (n === 1 ? "It's" : "They're") : `${ahead} of these ${ahead === 1 ? "is" : "are"}`} planned for a later day. The plan keeps that day; the calendar shows {ahead === 1 ? "it" : "them"} on the day {ahead === 1 ? "it was" : "they were"} worked, marked ahead.
             </div>
           )}
-          <WhenFields choices={choices} idx={wi} setIdx={(i) => { setWi(i); setMsg(null); }} clock={clock} setClock={(v) => { setClock(v); setMsg(null); }} tz={tz} disabled={busy} />
+          <WhenFields choices={choices} idx={wi} setIdx={(i) => { setWi(i); setMsg(null); }} clock={clock} setClock={(v) => { setClock(v); setMsg(null); }} tz={tz} times={times} other={otherDay} setOther={(d) => { setOtherDay(d); setMsg(null); }} disabled={busy} />
           <label className="block">
             <span className="block font-bold mb-1">{status === "on_hold" || status === "blocked" ? "Reason" : "Comment"} <span className="font-black text-amber-700 dark:text-amber-400">— required</span>{n > 1 && <span className="font-normal text-[var(--color-text-muted)]"> · goes on each step</span>}</span>
             <textarea value={note} onChange={(e) => { setNote(e.target.value); setMsg(null); }} rows={2} disabled={busy}
