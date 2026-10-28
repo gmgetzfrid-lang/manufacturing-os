@@ -16,16 +16,22 @@ export interface ProgressLogRow {
   old_percent: number | null;
   new_status: MilestoneStatus;
   new_percent: number | null;
+  /** When it was really typed in, when it was filed at the time the work
+   *  was done (20261105). */
+  entered_at?: string | null;
 }
 
 /** Every logged change on a project, oldest first. Null when the log isn't
  *  there (migration not run) — the caller then says progress is current. */
 export async function loadProgressLog(projectId: string): Promise<ProgressLogRow[] | null> {
-  const { rows, error } = await fetchAllRows<ProgressLogRow>((from, to) => supabase
+  const read = (cols: string) => fetchAllRows<ProgressLogRow>((from, to) => supabase
     .from("milestone_progress_log")
-    .select("milestone_id, at, old_status, old_percent, new_status, new_percent")
+    .select(cols)
     .eq("project_id", projectId)
-    .order("at", { ascending: true }).order("id", { ascending: true }).range(from, to));
+    .order("at", { ascending: true }).order("id", { ascending: true }).range(from, to) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>);
+  let { rows, error } = await read("milestone_id, at, old_status, old_percent, new_status, new_percent, entered_at");
+  // Before the database update there's no entered_at: the log as it was.
+  if (error && /entered_at/.test(error)) ({ rows, error } = await read("milestone_id, at, old_status, old_percent, new_status, new_percent"));
   if (error) return null;
   return rows;
 }

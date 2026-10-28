@@ -13,12 +13,61 @@
 
 import React, { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { creditShifts, type ShiftCredit, type ShiftTimes } from "@/lib/shiftReport";
+import { previousShift, shiftAt, type ShiftCredit, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
+import { clockOnShift, typeClock } from "@/components/projects/ShiftRecordParts";
 
 /** The project's clock. Given, the progress form asks which shift a change
  *  counts for — a fix to what last shift entered goes on last shift's
  *  report, and this shift's progress counts from the fixed number. */
 export const ShiftClockContext = createContext<{ tz: string; times: ShiftTimes } | null>(null);
+
+/** The shifts a change can be put at: the one running now and the two
+ *  before it ("Mon night", "Mon day"). */
+export function shiftChoices(clock: { tz: string; times: ShiftTimes }, now: number): Array<{ w: ShiftWindow; label: string }> {
+  const cur = shiftAt(now, clock.tz, clock.times);
+  const p1 = previousShift(cur, clock.tz, clock.times), p2 = previousShift(p1, clock.tz, clock.times);
+  const name = (w: ShiftWindow) => `${new Date(w.start).toLocaleDateString("en-US", { weekday: "short", timeZone: clock.tz })} ${w.kind}`;
+  return [{ w: cur, label: "This shift" }, { w: p1, label: name(p1) }, { w: p2, label: name(p2) }];
+}
+
+/** When it happened — the shift and a 24-hour time — or what's wrong. */
+export function resolveWhen(choice: { w: ShiftWindow; label: string }, clock: string, tz: string): { credit: ShiftCredit } | { error: string } {
+  if (!clock.trim()) return { error: "Put in the time it happened." };
+  const r = clockOnShift(choice.w, clock, tz);
+  if ("error" in r) return r;
+  const label = new Date(r.at).toLocaleString("en-US", { weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tz });
+  return { credit: { at: r.at, label } };
+}
+
+/** The shift chips and the time box: required wherever the project's
+ *  clock is known. */
+export function WhenFields({ choices, idx, setIdx, clock, setClock, tz, disabled }: {
+  choices: Array<{ w: ShiftWindow; label: string }>; idx: number; setIdx: (i: number) => void;
+  clock: string; setClock: (v: string) => void; tz: string; disabled?: boolean;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="flex items-baseline gap-1.5">
+        <span className="font-bold text-[var(--color-text)]">When</span>
+        <span className="font-black text-amber-700 dark:text-amber-400">— required</span>
+      </div>
+      <div className="flex items-center gap-1 flex-wrap" role="group" aria-label="Which shift">
+        {choices.map((c, i) => (
+          <button key={c.w.start} type="button" aria-pressed={i === idx} disabled={disabled} onClick={() => setIdx(i)}
+            className={`h-7 px-2 rounded-md border font-semibold pointer-coarse:h-9 disabled:opacity-50 ${i === idx ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
+            {c.label}
+          </button>
+        ))}
+      </div>
+      <div className="flex items-center gap-1.5">
+        <input value={clock} onChange={(e) => setClock(typeClock(e.target.value))} inputMode="numeric" placeholder="hh:mm" aria-label="Time it happened, 24-hour" disabled={disabled}
+          className={`h-8 w-[70px] px-1.5 rounded-md border-2 font-mono text-[12.5px] pointer-coarse:h-10 ${clock ? "border-[var(--color-border-strong)] bg-[var(--color-surface)]" : "border-amber-400 bg-amber-50/60 dark:bg-amber-950/30"}`} />
+        <button type="button" disabled={disabled} onClick={() => { setIdx(0); setClock(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz })); }}
+          className="h-8 px-2 rounded-md border border-[var(--color-border-strong)] font-semibold pointer-coarse:h-10 disabled:opacity-50">Now</button>
+      </div>
+    </div>
+  );
+}
 
 function clamp(p: number): number {
   return Math.max(0, Math.min(100, Math.round(p || 0)));
@@ -129,10 +178,11 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy, autoF
   busy?: boolean;
   autoFocus?: boolean;
 }) {
-  const clock = useContext(ShiftClockContext);
-  // The shifts before the one running now, as of when the form opened.
-  const [earlier] = useState(() => (clock ? creditShifts(Date.now(), clock.tz, clock.times) : []));
-  const [forShift, setForShift] = useState<ShiftCredit | null>(null);
+  const clockCtx = useContext(ShiftClockContext);
+  // This shift and the two before it, as of when the form opened.
+  const [choices] = useState(() => (clockCtx ? shiftChoices(clockCtx, Date.now()) : []));
+  const [whenIdx, setWhenIdx] = useState(0);
+  const [when, setWhen] = useState("");
   const cur = clamp(percent);
   const [pick, setPick] = useState<number | null>(start ? (cur > 0 && cur < 100 ? cur : null) : null);
   const [typed, setTyped] = useState("");
@@ -149,8 +199,9 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy, autoF
   // A new %, or the same % with a fresh comment ("still 25 — waiting on
   // the crane") — both worth saving.
   const changed = pick != null && (start || pick !== cur || !!note.trim());
-  // Starting work needs a word even at 0 % ("rigging set, waiting on crane").
-  const wantsNote = start ? pick != null && pick < 100 : needsComment(pick);
+  // Every change says what happened — it goes on the report: work done,
+  // done, or why it went back.
+  const wantsNote = pick != null;
   const missing = wantsNote && !note.trim();
   // Save stays tappable when only the comment is missing: tapping it says
   // what's needed instead of doing nothing.
@@ -158,9 +209,15 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy, autoF
   const save = async () => {
     if (!changed) { setMsg("Pick a %."); return; }
     if (missing) { setMsg("Add a few words first — what got done, or why it's corrected. It goes on the shift report."); noteRef.current?.focus(); return; }
+    let forShift: ShiftCredit | undefined;
+    if (clockCtx && choices.length) {
+      const r = resolveWhen(choices[whenIdx], when, clockCtx.tz);
+      if ("error" in r) { setMsg(r.error); return; }
+      forShift = r.credit;
+    }
     setSaving(true);
     try {
-      const ok = await onSave(pick!, note.trim(), forShift ?? undefined);
+      const ok = await onSave(pick!, note.trim(), forShift);
       if (ok === false) setMsg("Not saved.");
     } catch (e) { setMsg((e as Error).message || "Not saved."); }
     finally { setSaving(false); }
@@ -197,35 +254,15 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy, autoF
           aria-required={wantsNote}
           className={`w-full h-8 px-2 rounded-md border bg-[var(--color-surface)] pointer-coarse:h-10 focus:outline-none focus:border-[var(--color-accent-ring)] ${missing ? (msg ? "border-2 border-rose-500" : "border-2 border-amber-400 bg-amber-50/60 dark:bg-amber-950/30") : "border-[var(--color-border-strong)]"}`} />
       </div>
-      {/* Which shift it counts for: fixing what an earlier shift entered
-          shouldn't read as this shift's progress (or its loss). */}
-      {earlier.length > 0 && (
-        <div className="space-y-1">
-          <div className="flex items-center gap-1 flex-wrap" role="group" aria-label="Counts for">
-            <span className="font-bold text-[var(--color-text)] mr-0.5">Counts for</span>
-            {[null, ...earlier].map((c) => {
-              const on = (forShift?.at ?? null) === (c?.at ?? null);
-              return (
-                <button key={c?.at ?? "now"} type="button" aria-pressed={on} disabled={busy || saving} onClick={() => { setForShift(c); setMsg(null); }}
-                  className={`h-7 px-2 rounded-md border font-semibold pointer-coarse:h-9 disabled:opacity-50 ${on ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
-                  {c ? c.label : "This shift"}
-                </button>
-              );
-            })}
-          </div>
-          {forShift && (
-            <div className="text-[var(--color-text-muted)] leading-snug">
-              A fix to what {forShift.label} shift entered: it shows on that shift&rsquo;s report, and this shift&rsquo;s progress counts from it.
-            </div>
-          )}
-        </div>
-      )}
+      {/* When it happened: the shift and the time — it goes on that
+          shift's report at that time. */}
+      {choices.length > 0 && <WhenFields choices={choices} idx={whenIdx} setIdx={(i) => { setWhenIdx(i); setMsg(null); }} clock={when} setClock={(v) => { setWhen(v); setMsg(null); }} tz={clockCtx!.tz} disabled={busy || saving} />}
       {msg && <div className="text-rose-700 dark:text-rose-400 font-semibold">{msg}</div>}
       <div className="flex items-center gap-2">
         {onCancel && <button type="button" onClick={onCancel} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>}
         <button type="button" disabled={!ready} onClick={() => void save()}
           className={`ml-auto h-8 px-3 rounded-md font-black bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 pointer-coarse:h-10 ${missing ? "opacity-70" : ""}`}>
-          {saving ? "Saving…" : missing ? "Add a comment to save" : `${pick === 100 ? "Mark done" : pick != null ? `Save ${pick}%` : "Save"}${forShift && pick != null ? ` for ${forShift.label}` : ""}`}
+          {saving ? "Saving…" : missing ? "Add a comment to save" : `${pick === 100 ? "Mark done" : pick != null ? `Save ${pick}%` : "Save"}${when && pick != null ? ` at ${when}` : ""}`}
         </button>
       </div>
     </div>

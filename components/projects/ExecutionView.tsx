@@ -51,7 +51,8 @@ import { addDays as addDaysTz, dayDiff as dayDiffTz, dayKey, dayOfWeek, fmtInTz,
 import { needsFutureConfirm } from "@/lib/scheduleRules";
 import { startMsOf as plannedStartMsOf } from "@/lib/calendarPlacement";
 import { effectiveSpans, byStart, spanLabel, barGeometry, xAt, hourStep, startOf as timedStart, finishOf as timedFinish } from "@/lib/scheduleTime";
-import { expectedByParent, isOverdue, standingOf, workShiftOf, type ShiftCredit, type ShiftTimes, type WorkShift } from "@/lib/shiftReport";
+import { expectedByParent, isOverdue, shiftAt, standingOf, workShiftOf, type ShiftCredit, type ShiftTimes, type WorkShift } from "@/lib/shiftReport";
+import type { StepUpdate } from "@/components/projects/CalendarQuickView";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
 import { linkOf } from "@/lib/scheduleLinks";
 import ShiftMark from "@/components/projects/ShiftMark";
@@ -513,12 +514,16 @@ export default function ExecutionView({
 
   // A change filed under an earlier shift: the save is done; now its line
   // in the progress log moves to that shift. Said plainly when it can't.
+  // Saved at the time it happened (a time you put in): its line in the
+  // progress log moves to that time. Within a couple of minutes of now
+  // there's nothing to move.
   const fileUnder = useCallback(async (id: string, w: ShiftCredit) => {
+    if (Math.abs(w.at - Date.now()) < 120_000) return;
     const res = await creditProgressTo(id, w.at);
     if (res === "ok" || res === "late") return;
-    notify(res === "missing" ? `Saved as this shift's — counting it for ${w.label} needs migration 20261104_progress_for_shift.sql run first.`
-      : res === "changed" ? `Saved as this shift's — it was changed again after ${w.label}, so it can't go back there.`
-        : `Saved as this shift's — it couldn't be filed under ${w.label}.`, "warning");
+    notify(res === "missing" ? `Saved, but logged at the time you typed it in — putting it at ${w.label} needs the database update (20261105_shift_record.sql) run first.`
+      : res === "changed" ? `Saved, but logged at the time you typed it in — the step was changed again after ${w.label}, so it can't go back there.`
+        : `Saved, but logged at the time you typed it in — it couldn't be put at ${w.label}.`, "warning");
   }, [notify]);
   const setStatus = useCallback(async (id: string, next: MilestoneStatus, reason?: string, percent?: number, forShift?: ShiftCredit): Promise<boolean> => {
     if (!canEdit || !onSetStatus) return false;
@@ -594,20 +599,51 @@ export default function ExecutionView({
   // Progress always comes with what got done (the line the next crew and
   // the shift report read): the % (or "started") saves first, then the
   // comment — nothing is written if the % was cancelled.
-  const addNote = useCallback(async (id: string, body: string) => {
+  const addNote = useCallback(async (id: string, body: string, happenedAt?: number, statusAt?: MilestoneStatus) => {
     const m = byId.get(id);
-    await addMilestoneNote({ orgId, milestoneId: id, kind: "note", statusAt: m?.status ?? null, body, createdBy: userId, createdByName: userName });
+    await addMilestoneNote({ orgId, milestoneId: id, kind: "note", statusAt: statusAt ?? m?.status ?? null, body, createdBy: userId, createdByName: userName,
+      ...(happenedAt != null && Math.abs(happenedAt - Date.now()) > 120_000 ? { happenedAt: new Date(happenedAt).toISOString() } : {}) });
   }, [byId, orgId, userId, userName]);
   const progressWithNote = useCallback(async (id: string, pct: number, note: string, forShift?: ShiftCredit): Promise<boolean> => {
     const ok = await setProgress(id, pct, forShift);
-    if (ok && note) await addNote(id, noteFor(note, forShift));
+    if (ok && note) await addNote(id, noteFor(note, forShift && forShift.at < shiftAt(Date.now(), tz, shiftTimes).start ? forShift : undefined), forShift?.at, pct >= 100 ? "completed" : undefined);
     return ok;
-  }, [setProgress, addNote]);
+  }, [setProgress, addNote, tz, shiftTimes]);
+  // The calendar quick view's one Save: the status or % (stamped and filed
+  // at the time it happened), the comment that goes on the report, and why
+  // it's behind.
+  const updateStep = useCallback(async (id: string, u: StepUpdate): Promise<boolean> => {
+    const m = byId.get(id);
+    if (!m) return false;
+    const label = fmtInTz(u.at, tz, { weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false });
+    const w: ShiftCredit = { at: u.at, label };
+    const cur = m.status;
+    const curPct = m.percentComplete != null ? Math.round(m.percentComplete) : (cur === "completed" ? 100 : 0);
+    let ok = true;
+    if (u.status === "in_progress") {
+      if (cur === "in_progress") { if (u.pct != null && u.pct !== curPct) ok = await setProgress(id, u.pct, w); }
+      else ok = await setStatus(id, "in_progress", undefined, u.pct ?? (curPct > 0 && curPct < 100 ? curPct : 0), w);
+    } else if (u.status === "completed") {
+      if (cur !== "completed") ok = await setStatus(id, "completed", undefined, undefined, w);
+    } else if (u.status === "on_hold" || u.status === "blocked") {
+      // The reason is the comment.
+      if (cur !== u.status || u.note !== (m.statusReason ?? "")) ok = await setStatus(id, u.status, u.note, undefined, w);
+    } else if (cur !== u.status) ok = await setStatus(id, u.status, undefined, undefined, w);
+    if (!ok) return false;
+    // What got done goes on the report (a hold's reason already did).
+    if (u.status !== "on_hold" && u.status !== "blocked") await addNote(id, noteFor(u.note, u.at < shiftAt(Date.now(), tz, shiftTimes).start ? w : undefined), u.at, u.status);
+    if (u.why) {
+      try { await addMilestoneNote({ orgId, milestoneId: id, kind: "behind", statusAt: m.status, body: u.why, createdBy: userId, createdByName: userName }); }
+      catch (e) { notify((e as Error).message, "warning"); }
+    }
+    return true;
+  }, [byId, tz, shiftTimes, setProgress, setStatus, addNote, orgId, userId, userName, notify]);
   const startWithNote = useCallback(async (id: string, pct: number, note: string, forShift?: ShiftCredit): Promise<boolean> => {
     const ok = pct >= 100 ? await setStatus(id, "completed", undefined, undefined, forShift) : await setStatus(id, "in_progress", undefined, pct, forShift);
-    if (ok && note) await addNote(id, noteFor(note, forShift));
+    // Said for an earlier shift only when it was; the time it happened is kept.
+    if (ok && note) await addNote(id, noteFor(note, forShift && forShift.at < shiftAt(Date.now(), tz, shiftTimes).start ? forShift : undefined), forShift?.at, pct >= 100 ? "completed" : "in_progress");
     return ok;
-  }, [setStatus, addNote]);
+  }, [setStatus, addNote, tz, shiftTimes]);
 
   // Delete the selection — with everything under a selected phase when the
   // person says so — and offer Undo, which brings back the tasks, their
@@ -1075,7 +1111,7 @@ export default function ExecutionView({
             const target = byId.get(id);
             if (target) void moveByDays(target, days);
           }}
-          onSetStatus={(id, s, reason, p) => setStatus(id, s, reason, p)}
+          onSetStatus={(id, s, reason, p, w) => setStatus(id, s, reason, p, w)}
           onSetProgress={(id, p) => setProgress(id, p)}
           progress={progressIndex}
           onBulkStatus={(ids, s) => void bulkStatusIds(ids, s)}
@@ -1086,6 +1122,7 @@ export default function ExecutionView({
           onAddNote={addNote}
           onSetProgressNote={progressWithNote}
           onStartNote={startWithNote}
+          onUpdateStep={updateStep}
         />
       ) : (
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden flex flex-col">
@@ -1147,7 +1184,7 @@ export default function ExecutionView({
                   busy={!!r.ms.id && busy.has(r.ms.id)}
                   onToggleCollapse={() => r.ms.id && toggleCollapse(r.ms.id)}
                   onToggleSelected={() => r.ms.id && toggleSelected(r.ms.id)}
-                  onSetStatus={(s, reason, p) => { if (r.ms.id) void setStatus(r.ms.id, s, reason, p); }}
+                  onSetStatus={(s, reason, p, w) => { if (r.ms.id) void setStatus(r.ms.id, s, reason, p, w); }}
                   onSetProgress={(p) => { if (r.ms.id) void setProgress(r.ms.id, p); }}
                   onSetProgressNote={(p, n, w) => (r.ms.id ? progressWithNote(r.ms.id, p, n, w) : false)}
                   onStartNote={(p, n, w) => (r.ms.id ? startWithNote(r.ms.id, p, n, w) : false)}
@@ -1463,7 +1500,7 @@ function OutlineRow({
 }: {
   row: FlatRow; span: { start: number; finish: number }; work: WorkShift | null; color: GroupColor; collapsed: boolean; selected: boolean; focused?: boolean; canEdit: boolean; busy: boolean;
   onToggleCollapse: () => void; onToggleSelected: () => void;
-  onSetStatus: (s: MilestoneStatus, reason?: string, percent?: number) => void; onSetProgress: (percent: number) => void;
+  onSetStatus: (s: MilestoneStatus, reason?: string, percent?: number, forShift?: ShiftCredit) => void; onSetProgress: (percent: number) => void;
   onSetProgressNote: (percent: number, note: string, forShift?: ShiftCredit) => Promise<boolean> | boolean;
   onStartNote: (percent: number, note: string, forShift?: ShiftCredit) => Promise<boolean> | boolean;
   onSetDuration: () => void; onOpenDetail: () => void;

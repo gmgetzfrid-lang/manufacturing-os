@@ -24,7 +24,7 @@ import { wouldCreateCycle, cascadeDependents, type ReflowNode } from "@/lib/sche
 import { LINK_LABEL, linkOf, linkShort, type LinkMap, type LinkType } from "@/lib/scheduleLinks";
 import { listMembers } from "@/lib/projects";
 import {
-  updateMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestones, setActualTimes,
+  updateMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestones, setActualTimes, creditProgressTo,
   listMilestoneNotes, addMilestoneNote, updateMilestoneNote, deleteMilestoneNote, applyMilestoneMoves, applyBulkFieldChange, type MilestonePatch,
 } from "@/lib/milestones";
 import { buildProgressIndex } from "@/lib/scheduleProgress";
@@ -118,14 +118,17 @@ export default function TaskDetailPanel({
   }, [m.id]);
   useEffect(() => { loadNotes(); }, [loadNotes]);
 
-  const applyStatus = useCallback(async (status: MilestoneStatus, reason?: string, percent?: number) => {
+  const applyStatus = useCallback(async (status: MilestoneStatus, reason?: string, percent?: number, forShift?: ShiftCredit) => {
     if (!m.id) return;
     setBusyStatus(true); setErr(null);
     try {
       await setMilestoneStatus({
         id: m.id, status, statusReason: reason, percentComplete: percent,
+        ...(forShift ? { at: new Date(forShift.at).toISOString() } : {}),
         actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
       });
+      // At the time it happened (when that wasn't just now).
+      if (forShift && Math.abs(forShift.at - Date.now()) > 120_000) await creditProgressTo(m.id, forShift.at);
       loadNotes();
     } catch (e) { failed(e); }
     finally { setBusyStatus(false); onChanged(); }
@@ -291,7 +294,7 @@ export default function TaskDetailPanel({
                       busy={busyStatus}
                       variant="pill"
                       disabled={!canEdit}
-                      onPick={(s, reason, p) => void applyStatus(s, reason, p)}
+                      onPick={(s, reason, p, w) => void applyStatus(s, reason, p, w)}
                       // "In progress" asks for the % (and what got done) — never a bare status.
                       percent={effPct}
                       onSetProgress={(p) => void applyProgress(p)}
@@ -478,10 +481,11 @@ export default function TaskDetailPanel({
                               variant="dot"
                               disabled={!canEdit}
                               percent={sInfo?.percent ?? (s.status === "completed" ? 100 : Math.round(s.percentComplete ?? 0))}
-                              onPick={(st, reason, p) => s.id && void setMilestoneStatus({
+                              onPick={(st, reason, p, w) => s.id && void setMilestoneStatus({
                                 id: s.id, status: st, statusReason: reason, percentComplete: p,
+                                ...(w ? { at: new Date(w.at).toISOString() } : {}),
                                 actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
-                              }).catch(failed).finally(onChanged)}
+                              }).then(() => (w && Math.abs(w.at - Date.now()) > 120_000 ? creditProgressTo(s.id!, w.at) : undefined)).catch(failed).finally(onChanged)}
                               onStartWithNote={onStartNote && s.id ? async (p, n, w) => { const ok = await onStartNote(s.id!, p, n, w); onChanged(); return ok; } : undefined}
                             />
                           )}

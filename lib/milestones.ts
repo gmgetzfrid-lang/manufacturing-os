@@ -510,6 +510,16 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
     createdBy: input.actorUserId,
     createdByName: input.actorUserName,
   }).catch(() => { /* note is best-effort; never block the transition */ });
+  // Said with Done, Not started or Missed, the words are the step's comment
+  // — what goes on the report (a hold's are its reason, kept above).
+  const said = input.statusReason?.trim();
+  if (said && !HOLDS.includes(input.status) || (said && input.status === "missed")) {
+    const happened = input.at && Date.parse(input.at) < Date.parse(now) - 120_000 ? input.at : undefined;
+    await addMilestoneNote({
+      orgId: m.orgId, milestoneId: m.id!, kind: "note", statusAt: input.status, body: said,
+      createdBy: input.actorUserId, createdByName: input.actorUserName, ...(happened ? { happenedAt: happened } : {}),
+    }).catch(() => { /* the status is saved; the comment is best-effort */ });
+  }
 
   const res = pickResource(m);
   const auditType =
@@ -715,6 +725,7 @@ interface MilestoneNoteRow {
   id: string; org_id: string; milestone_id: string;
   kind: MilestoneNote["kind"]; status_at: MilestoneStatus | null;
   body: string | null; created_at: string; created_by: string; created_by_name: string | null;
+  happened_at?: string | null;
 }
 
 function noteRowTo(r: MilestoneNoteRow): MilestoneNote {
@@ -722,21 +733,39 @@ function noteRowTo(r: MilestoneNoteRow): MilestoneNote {
     id: r.id, orgId: r.org_id, milestoneId: r.milestone_id,
     kind: r.kind, statusAt: r.status_at, body: r.body,
     createdAt: r.created_at, createdBy: r.created_by, createdByName: r.created_by_name,
+    happenedAt: r.happened_at ?? null,
   };
 }
+
+/** Saving a "why it's behind" note, or a comment's punched time, needs
+ *  the database update — said plainly when it's missing. */
+export const SHIFT_NOTES_MIGRATION = "20261105_shift_record.sql";
 
 export async function addMilestoneNote(input: {
   orgId: string; milestoneId: string;
   kind: MilestoneNote["kind"]; statusAt?: MilestoneStatus | null;
   body?: string | null; createdBy: string; createdByName?: string;
+  /** When it happened (ISO), if that was earlier than now. */
+  happenedAt?: string;
 }): Promise<MilestoneNote> {
-  const { data, error } = await supabase.from("milestone_notes").insert({
+  const row: Record<string, unknown> = {
     org_id: input.orgId, milestone_id: input.milestoneId,
     kind: input.kind, status_at: input.statusAt ?? null,
     body: input.body?.trim() || null,
     created_by: input.createdBy, created_by_name: input.createdByName ?? null,
-  }).select("*").single();
+  };
+  if (input.happenedAt) row.happened_at = input.happenedAt;
+  let { data, error } = await supabase.from("milestone_notes").insert(row).select("*").single();
+  // Before the database update: the comment still saves, at the time it
+  // was written.
+  if (error && input.happenedAt && /happened_at/.test(error.message)) {
+    delete row.happened_at;
+    ({ data, error } = await supabase.from("milestone_notes").insert(row).select("*").single());
+  }
+  if (error && input.kind === "behind" && /kind|check/i.test(error.message)) throw new Error(`Saving why it's behind needs the database update (${SHIFT_NOTES_MIGRATION}) run first.`);
   if (error || !data) throw new Error(error?.message ?? "Failed to add note");
+  // Open reports pick up the new comment (or why it's behind).
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("milestone-notes:changed"));
   return noteRowTo(data as MilestoneNoteRow);
 }
 
@@ -757,13 +786,13 @@ export async function creditProgressTo(milestoneId: string, at: number): Promise
 /** The latest comment on each step (kind "note" — not status or
  *  reschedule breadcrumbs), for the shift report: "sent out for
  *  calibration" says why a step reads the way it does. */
-export async function latestNotes(milestoneIds: string[]): Promise<Map<string, { id: string; body: string; at: string | null; by: string | null; byId: string | null }>> {
+export async function latestNotes(milestoneIds: string[], kind: "note" | "behind" = "note"): Promise<Map<string, { id: string; body: string; at: string | null; by: string | null; byId: string | null }>> {
   const out = new Map<string, { id: string; body: string; at: string | null; by: string | null; byId: string | null }>();
   for (let i = 0; i < milestoneIds.length; i += 200) {
     const chunk = milestoneIds.slice(i, i + 200);
     const { rows: data, error } = await fetchAllRows<unknown>((from, to) => supabase.from("milestone_notes")
       .select("id, milestone_id, body, created_at, created_by, created_by_name")
-      .in("milestone_id", chunk).eq("kind", "note")
+      .in("milestone_id", chunk).eq("kind", kind)
       .order("created_at", { ascending: false }).order("id").range(from, to));
     if (error) continue;
     for (const r of (data ?? []) as Array<{ id: string; milestone_id: string; body: string | null; created_at: string | null; created_by: string | null; created_by_name: string | null }>) {
@@ -788,6 +817,21 @@ export async function deleteMilestoneNote(id: string): Promise<void> {
   const { data, error } = await supabase.from("milestone_notes").delete().eq("id", id).select("id");
   if (error) throw new Error(error.message);
   if (!data || data.length === 0) throw new Error("That comment couldn't be deleted.");
+}
+
+/** Every note on these steps, newest first — their history in the quick
+ *  view and the time log. */
+export async function notesFor(milestoneIds: string[]): Promise<MilestoneNote[]> {
+  const out: MilestoneNote[] = [];
+  for (let i = 0; i < milestoneIds.length; i += 200) {
+    const chunk = milestoneIds.slice(i, i + 200);
+    const { rows, error } = await fetchAllRows<MilestoneNoteRow>((from, to) => supabase.from("milestone_notes")
+      .select("*").in("milestone_id", chunk)
+      .order("created_at", { ascending: false }).order("id").range(from, to));
+    if (error) throw new Error(error);
+    out.push(...rows.map(noteRowTo));
+  }
+  return out;
 }
 
 export async function listMilestoneNotes(milestoneId: string): Promise<MilestoneNote[]> {

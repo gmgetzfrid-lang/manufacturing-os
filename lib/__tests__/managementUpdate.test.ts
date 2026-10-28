@@ -45,16 +45,17 @@ describe("the update says what happened, in as few words as it takes", () => {
   it("leaves out what's empty: nothing unfinished, nothing blocked, nothing next", () => {
     // Everything planned today got done; Retube starts tomorrow — nothing
     // to hand over but what got done.
-    expect(sections.map((s) => s.id)).toEqual(["stand", "who", "done"]); // header, progress, crews, done
+    // …and the safety incidents box, always there to fill in (not recorded yet here).
+    expect(sections.map((s) => s.id)).toEqual(["stand", "who", "done", "incidents"]); // header, progress, crews, done
   });
 
   it("what got done: each step once, by its task, with no finish time claimed", () => {
     const done = sections.find((s) => s.id === "done")!.blocks.find((b) => b.k === "table")!;
     if (done.k !== "table") throw new Error();
-    const lines = done.rows.map((r) => r.map((c) => (typeof c === "string" ? c : c.t)).join(" | "));
-    // One row per task, its steps in one cell — not a line per sub-step.
-    expect(lines.join("\n")).toMatch(/^T-605 Tower \|  \| 1 done: Open manways \| .* \| done, on plan \| $/m); // on plan: nothing in "vs plan"
-    expect(lines.join("\n")).toMatch(/^E-606 Exchanger \|  \| 2 done: Pull bundle, Hydroblast \| .* \| done, on plan \| $/m);
+    const lines = done.rows.map((r) => r.map((c) => (typeof c === "string" ? c : [c.t, ...(c.lines ?? []).map((l) => `${l.lead ? `${l.lead} ` : ""}${l.t}`)].join(" / "))).join(" | "));
+    // One row per task, its steps in one cell, each on its own line.
+    expect(lines.join("\n")).toMatch(/^T-605 Tower \|  \| 1 done: \/ Open manways \| .* \| done, on plan \| $/m); // on plan: nothing in "vs plan"
+    expect(lines.join("\n")).toMatch(/^E-606 Exchanger \|  \| 2 done: \/ Pull bundle \/ Hydroblast \| .* \| done, on plan \| $/m);
     expect(done.rows).toHaveLength(2);
     // When it was marked done isn't when it finished — no time is claimed.
     // The WO column (empty here: these steps have no WO number) is left out of the email.

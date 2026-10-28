@@ -16,12 +16,12 @@
 // reason. The popover renders in a portal so it's never clipped by a
 // card's overflow.
 
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Circle, Loader2, CircleCheck, PauseCircle, AlertTriangle, XCircle } from "lucide-react";
 import type { MilestoneStatus } from "@/types/schema";
 import type { ShiftCredit } from "@/lib/shiftReport";
-import { ProgressSlider, ProgressNoteForm } from "@/components/projects/ProgressControl";
+import { ProgressSlider, ProgressNoteForm, ShiftClockContext, WhenFields, resolveWhen, shiftChoices } from "@/components/projects/ProgressControl";
 
 export const STATUS_ORDER: MilestoneStatus[] = ["planned", "in_progress", "completed", "on_hold", "blocked", "missed"];
 
@@ -39,8 +39,10 @@ export function statusLabel(s: MilestoneStatus): string { return STATUS_META[s].
 
 interface Props {
   status: MilestoneStatus;
-  /** `percent` comes with "in progress" picked from the how-far step. */
-  onPick: (status: MilestoneStatus, reason?: string, percent?: number) => void;
+  /** `percent` comes with "in progress" picked from the how-far step.
+   *  `reason` is the comment said with it (a hold's reason, or what got
+   *  done); `forShift` when it happened. */
+  onPick: (status: MilestoneStatus, reason?: string, percent?: number, forShift?: ShiftCredit) => void;
   disabled?: boolean;
   /** Called when a disabled control is clicked — lets callers explain WHY
    *  it's read-only (e.g. "you're not a project member") instead of the tap
@@ -78,6 +80,12 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
   }, [open]);
   const [reasonFor, setReasonFor] = useState<MilestoneStatus | null>(null);
   const [reason, setReason] = useState("");
+  // When it happened — required wherever the project's clock is known.
+  const clockCtx = useContext(ShiftClockContext);
+  const [choices, setChoices] = useState<ReturnType<typeof shiftChoices>>([]);
+  const [whenIdx, setWhenIdx] = useState(0);
+  const [when, setWhen] = useState("");
+  const [whyMsg, setWhyMsg] = useState<string | null>(null);
   const [pctStep, setPctStep] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -105,6 +113,8 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
     setReasonFor(null);
     setReason("");
     setPctStep(false);
+    setWhen(""); setWhenIdx(0); setWhyMsg(null);
+    setChoices(clockCtx ? shiftChoices(clockCtx, Date.now()) : []);
     setOpen((v) => !v);
   };
 
@@ -115,14 +125,25 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
       setPctStep(true);
       return;
     }
-    if (STATUS_META[s].needsReason) {
-      setReasonFor(s);      // ask for an optional reason before committing
-      setReason("");
-      return;
+    if (s === status) { setOpen(false); return; }
+    // Every change says why or what got done, and when — it goes on the report.
+    setReasonFor(s);
+    setReason("");
+    setWhyMsg(null);
+  };
+  const commit = () => {
+    if (!reasonFor) return;
+    if (!reason.trim()) { setWhyMsg("Add a few words — it goes on the report."); return; }
+    let forShift: ShiftCredit | undefined;
+    if (clockCtx && choices.length) {
+      const r = resolveWhen(choices[whenIdx], when, clockCtx.tz);
+      if ("error" in r) { setWhyMsg(r.error); return; }
+      forShift = r.credit;
     }
-    onPick(s);
+    onPick(reasonFor, reason.trim(), undefined, forShift);
     setOpen(false);
   };
+  const askFor = (s: MilestoneStatus) => (s === "completed" ? "What got done" : s === "on_hold" ? "Why it's on hold" : s === "blocked" ? "What's blocking it" : s === "missed" ? "Why it was missed" : "Why it's going back");
 
   // Seed the in-progress % picker: keep a real mid-progress value, but never
   // 0 (that's "planned") or 100 (that's "done") — default to 50 so a tap or
@@ -178,7 +199,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
           <div className="fixed inset-0 z-[300]" onClick={() => setOpen(false)} />
           <div
             ref={menuRef}
-            className={`fixed z-[310] ${pctStep && onStartWithNote ? "w-[300px] max-w-[calc(100vw-16px)]" : "w-[180px]"} bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg py-1 animate-in fade-in zoom-in-95 duration-150`}
+            className={`fixed z-[310] ${(pctStep && onStartWithNote) || reasonFor ? "w-[300px] max-w-[calc(100vw-16px)]" : "w-[180px]"} bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg py-1 animate-in fade-in zoom-in-95 duration-150`}
             style={{ top: pos.top, left: pos.left }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -204,25 +225,30 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                 />}
               </div>
             ) : reasonFor ? (
-              <div className="p-2">
-                <div className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-text-faint)] mb-1">
-                  {STATUS_META[reasonFor].label} — why? (optional)
+              <div className="p-2.5 space-y-2 text-[11px]">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-text-faint)]">
+                  {STATUS_META[reasonFor].label}
                 </div>
-                <input
-                  autoFocus
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") { onPick(reasonFor, reason.trim() || undefined); setOpen(false); } }}
-                  placeholder={reasonFor === "on_hold" ? "waiting on parts…" : "what's blocking it…"}
-                  className="w-full text-xs px-2 py-1.5 border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30"
-                />
-                <div className="flex items-center justify-end gap-1.5 mt-2">
+                <div>
+                  <div className="font-bold text-[var(--color-text)] mb-1">{askFor(reasonFor)} <span className="font-black text-amber-700 dark:text-amber-400">— required</span></div>
+                  <input
+                    autoFocus
+                    value={reason}
+                    onChange={(e) => { setReason(e.target.value); setWhyMsg(null); }}
+                    onKeyDown={(e) => { if (e.key === "Enter") commit(); }}
+                    placeholder={reasonFor === "on_hold" ? "waiting on parts…" : reasonFor === "blocked" ? "what's blocking it…" : reasonFor === "completed" ? "what got done…" : "why…"}
+                    className="w-full text-xs px-2 py-1.5 border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30"
+                  />
+                </div>
+                {choices.length > 0 && clockCtx && <WhenFields choices={choices} idx={whenIdx} setIdx={(i) => { setWhenIdx(i); setWhyMsg(null); }} clock={when} setClock={(v) => { setWhen(v); setWhyMsg(null); }} tz={clockCtx.tz} />}
+                {whyMsg && <div className="font-semibold text-rose-700 dark:text-rose-400">{whyMsg}</div>}
+                <div className="flex items-center justify-end gap-1.5">
                   <button onClick={() => setReasonFor(null)} className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 transition-colors">Back</button>
                   <button
-                    onClick={() => { onPick(reasonFor, reason.trim() || undefined); setOpen(false); }}
+                    onClick={commit}
                     className="text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-2.5 py-1 rounded-md transition-colors"
                   >
-                    Set {STATUS_META[reasonFor].label}
+                    {reasonFor === "completed" ? "Mark done" : `Set ${STATUS_META[reasonFor].label}`}{when ? ` at ${when}` : ""}
                   </button>
                 </div>
               </div>

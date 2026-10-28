@@ -30,7 +30,7 @@ import { createPortal } from "react-dom";
 import {
   Printer, ChevronLeft, ChevronRight, ChevronDown, Sun, Moon, CheckCircle2, Flag, FastForward,
   TrendingUp, TrendingDown, Minus, Zap, Presentation, X, Settings2, Rocket, ArrowLeftRight, Trophy,
-  Mail, FileText, Hourglass,
+  Mail, FileText, Hourglass, Clock,
 } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { buildProgressIndex, leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
@@ -46,9 +46,12 @@ import { buildKickoff, buildCloseout, defaultMeeting, type MeetingKind, type Pla
 import { clockLabel, fmtInTz, tzAbbrev } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { toPlainText, toEmailHtml, type ExportBlock, type ExportDoc, type ExportStepRow } from "@/lib/reportExport";
-import { turnoverUpdate, withoutEmpty, noteLine, hazardJobsOf } from "@/lib/managementUpdate";
+import { turnoverUpdate, withoutEmpty, noteLine, hazardJobsOf, crewLine } from "@/lib/managementUpdate";
 import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
-import { latestNotes } from "@/lib/milestones";
+import { latestNotes, notesFor } from "@/lib/milestones";
+import { useShiftRecords, saveShiftRecord, lastSameKind, openFollowUps, newId, type CrewCount, type Incident, type ShiftNote, type ShiftRecord } from "@/lib/shiftRecord";
+import { CrewCountEditor, IncidentsLine, ShiftNotesBox, AddCompany, TimeLogButton } from "@/components/projects/ShiftRecordParts";
+import { buildTimeLog, downloadTimeLog } from "@/lib/timeLog";
 import { loadProgressLog, scheduleAt, type ProgressLogRow } from "@/lib/progressHistory";
 import { effectiveSpans } from "@/lib/scheduleTime";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
@@ -273,6 +276,103 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     if (n && pastShift && n.at && Date.parse(n.at) > recordedBy) return undefined;
     return n;
   }, [notes, pastShift, recordedBy]);
+  // Why a step is behind, as said in the quick view — beside its hours.
+  const [whys, setWhys] = useState<Map<string, { body: string; at: string | null }>>(new Map());
+  const [notesTick, setNotesTick] = useState(0);
+  useEffect(() => {
+    const on = () => setNotesTick((t) => t + 1);
+    window.addEventListener("milestone-notes:changed", on);
+    return () => window.removeEventListener("milestone-notes:changed", on);
+  }, []);
+  useEffect(() => {
+    let live = true;
+    if (!stepIds) return;
+    latestNotes(stepIds.split(","), "behind").then((n) => { if (live) setWhys(n); }).catch(() => { /* before the database update */ });
+    if (notesTick) latestNotes(stepIds.split(",")).then((n) => { if (live) setNotes(n); }).catch(() => { /* comments are extra */ });
+    return () => { live = false; };
+  }, [stepIds, notesTick]);
+  const whyOf = useCallback((id: string) => {
+    const n = whys.get(id);
+    if (!n || (pastShift && n.at && Date.parse(n.at) > recordedBy)) return undefined;
+    return n.body;
+  }, [whys, pastShift, recordedBy]);
+  // The time each step was done on the shift (its finish), or moved last —
+  // shown in Done only when "Times" is on; always in the time log.
+  const [stamps, setStampsState] = useState(false);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the viewer's own choice, read once after mount
+    try { setStampsState(localStorage.getItem("shiftReport:stamps") === "1"); } catch { /* private mode */ }
+  }, []);
+  const setStamps = useCallback((v: boolean) => { setStampsState(v); try { localStorage.setItem("shiftReport:stamps", v ? "1" : "0"); } catch { /* private mode */ } }, []);
+  const movedAt = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of log ?? []) {
+      const t = Date.parse(r.at);
+      if (r.old_status != null && t >= shift.start && t <= shift.end) m.set(r.milestone_id, t);
+    }
+    return m;
+  }, [log, shift.start, shift.end]);
+  const timeOf = useCallback((id: string) => {
+    const m = byId.get(id);
+    const a = m?.status === "completed" && m.actualAt ? new Date(m.actualAt).getTime() : NaN;
+    return Number.isFinite(a) && a >= shift.start && a <= shift.end ? a : movedAt.get(id);
+  }, [byId, movedAt, shift.start, shift.end]);
+  // Where a whole task stands: its % done and % planned by now.
+  const taskPct = useCallback((id: string) => {
+    const p = progress?.get(id)?.percent;
+    return p == null ? undefined : { pct: p, plan: planByTask.get(id) };
+  }, [progress, planByTask]);
+  // The shift's own record: crews on site, incidents, notes & actions.
+  const { records, error: recErr } = useShiftRecords(projectId);
+  const thisKey = handoverKey(shift), nextKey = handoverKey(report.next);
+  const [recMsg, setRecMsg] = useState<string | null>(null);
+  const saveRec = useCallback(async (key: string, change: (r: ShiftRecord) => ShiftRecord) => {
+    if (!userId || !orgId) return;
+    try { await saveShiftRecord({ orgId, projectId, shiftKey: key, userId, change }); setRecMsg(null); }
+    catch (e) { setRecMsg((e as Error).message); }
+  }, [orgId, projectId, userId]);
+  const sheet = useMemo<SheetCtx>(() => {
+    const recThis = records.get(thisKey), recNext = records.get(nextKey);
+    const labelOf = (key: string) => { const [d, k] = key.split(":"); const w = shiftWindow(d, k as "day" | "night", tz, times); return `${ctx.D(w.start)} ${k}`; };
+    const by = userName ?? null;
+    return {
+      stamps, timeOf, whyOf, taskPct,
+      edit: canEdit && !!userId && !!orgId,
+      crewsThis: recThis?.crews ?? {}, crewsNext: recNext?.crews ?? {},
+      hintThis: lastSameKind(records, thisKey)?.crews, hintNext: lastSameKind(records, nextKey)?.crews,
+      setCrew: (which, crew, v) => void saveRec(which === "this" ? thisKey : nextKey, (r) => ({ ...r, crews: { ...(r.crews ?? {}), [crew]: { ...(r.crews?.[crew] ?? {}), ...v } } })),
+      incidents: recThis?.incidents,
+      setNone: (none) => void saveRec(thisKey, (r) => ({ ...r, incidents: { ...(r.incidents ?? {}), none: none ? { at: Date.now(), by } : null } })),
+      addIncident: (x) => void saveRec(thisKey, (r) => ({ ...r, incidents: { none: null, items: [...(r.incidents?.items ?? []), { id: newId(), ...x, by }] } })),
+      removeIncident: (id) => void saveRec(thisKey, (r) => ({ ...r, incidents: { ...(r.incidents ?? {}), items: (r.incidents?.items ?? []).filter((x) => x.id !== id) } })),
+      notes: [...(recThis?.notes ?? []).map((n) => ({ ...n, shiftKey: thisKey })), ...openFollowUps(records, thisKey).map((n) => ({ ...n, from: labelOf(n.shiftKey) }))],
+      addNote: (x) => void saveRec(thisKey, (r) => ({ ...r, notes: [...(r.notes ?? []), { id: newId(), ...x, by }] })),
+      clearNote: (n) => void saveRec(n.shiftKey, (r) => ({ ...r, notes: (r.notes ?? []).map((y) => (y.id === n.id ? { ...y, cleared: { at: Date.now(), by } } : y)) })),
+      removeNote: (n) => void saveRec(n.shiftKey, (r) => ({ ...r, notes: (r.notes ?? []).filter((y) => y.id !== n.id) })),
+      error: recMsg ?? (recErr && canEdit ? recErr : null),
+      tz,
+    };
+  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, saveRec, recMsg, recErr]);
+  const shiftTitle = `${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`;
+  // The time log: every step's times, for the project file — its own
+  // export, not part of the update.
+  const [logBusy, setLogBusy] = useState(false);
+  const [logMsg, setLogMsg] = useState<string | null>(null);
+  const exportTimeLog = async (scope: "shift" | "job") => {
+    setLogBusy(true); setLogMsg(null);
+    try {
+      const [rows, allNotes] = await Promise.all([loadProgressLog(projectId), notesFor(stepIds ? stepIds.split(",") : [])]);
+      const out = buildTimeLog({ milestones: live, log: rows ?? [], notes: allNotes, records, tz, times, ...(scope === "shift" ? { from: shift.start, to: shift.end } : {}) });
+      const name = (projectName ?? "Schedule").replace(/[\\/:*?"<>|]/g, "").trim() || "Schedule";
+      await downloadTimeLog(out, {
+        project: projectName ?? "Schedule", tz,
+        title: scope === "shift" ? `Time log — ${shiftName(shift)} ${ctx.D(shift.start)}` : "Time log — whole job to date",
+        fileName: `${name} - time log${scope === "shift" ? ` ${shift.dayKey} ${shift.kind}` : ""}.xlsx`,
+      });
+      setLogMsg(`${out.length} entr${out.length === 1 ? "y" : "ies"} exported.`);
+    } catch (e) { setLogMsg(`Not exported: ${(e as Error).message}`); }
+    setLogBusy(false);
+  };
   // The project around the work: its name and the schedule's groups (a
   // turnaround?), the job's dates, and whether the whole job is behind.
   const safetyProject = useMemo<ProjectBase>(() => {
@@ -292,8 +392,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     ? kickoffSections(kickoff, ctx)
     : meeting === "closeout"
       ? closeoutSections(closeout, report, ctx, cancelled)
-      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety }),
-  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety]);
+      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet }),
+  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet]);
 
   // A step's card: asked about mid-meeting, answered from the schedule.
   const qlIndex = useMemo(() => quickLookIndex(milestones), [milestones]);
@@ -389,6 +489,10 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           pull: pullForReport,
           safetyProject: safety.project,
           safetyRecent: safety.recent,
+          showTimes: stamps, timeOf, taskPct, whyOf,
+          crewsThis: sheet.crewsThis, crewsNext: sheet.crewsNext,
+          incidents: sheet.incidents && (sheet.incidents.none || sheet.incidents.items?.length) ? { none: !!sheet.incidents.none, items: sheet.incidents.items ?? [] } : undefined,
+          shiftNotes: sheet.notes.map((n) => ({ at: n.at, text: n.text, followUp: n.followUp, from: n.from })),
         })
         : withoutEmpty(sections.filter((x) => x.data).map((x) => ({ id: x.id, title: x.title, sub: x.sub, flag: x.flag ?? null, blocks: x.data!() }))),
     };
@@ -490,7 +594,17 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             title="Run the meeting one agenda item at a time (← → keys, Esc to leave)">
             {presenting != null ? <><X className="w-3.5 h-3.5" /> Leave present</> : <><Presentation className="w-3.5 h-3.5" /> Present</>}
           </button>
-          <CopyUpdate doc={exportDoc} meeting={meeting} lh={lh} />
+          {meeting === "turnover" && (
+            <>
+              <button type="button" onClick={() => setStamps(!stamps)} aria-pressed={stamps}
+                title="Show the time each step was done in Done — off keeps the update short (the times are always in the time log)"
+                className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border ${stamps ? "bg-slate-900 text-white border-slate-900" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                <Clock className="w-3.5 h-3.5" /> Times {stamps ? "on" : "off"}
+              </button>
+              <TimeLogButton busy={logBusy} msg={logMsg} onExport={(sc) => void exportTimeLog(sc)} shiftLabel={shiftTitle} />
+            </>
+          )}
+          <CopyUpdate doc={exportDoc} meeting={meeting} lh={lh} stamps={meeting === "turnover" ? { on: stamps, set: setStamps } : undefined} />
           <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-3 py-1.5 rounded-lg shadow-sm">
             <Printer className="w-3.5 h-3.5" /> Print
           </button>
@@ -697,11 +811,16 @@ async function copyText(text: string): Promise<boolean> {
 /** Copy — the update as it will be sent, with a box per section to leave
  *  one out today (remembered for next time), then copy it for an email
  *  (tables and colors kept in Outlook, Gmail…) or as plain text. */
-function CopyUpdate({ doc, meeting, lh }: { doc: () => ExportDoc; meeting: MeetingKind; lh?: Letterhead | null }) {
+function CopyUpdate({ doc, meeting, lh, stamps }: { doc: () => ExportDoc; meeting: MeetingKind; lh?: Letterhead | null;
+  /** Times on Done steps — the report's switch, mirrored in the box. */
+  stamps?: { on: boolean; set: (v: boolean) => void } }) {
   const key = `shiftReport.copyOff.${meeting}`;
   // Sections left out unless ticked (the safety focus): the ones ticked.
   const onKey = `shiftReport.copyOn.${meeting}`;
-  const [d, setD] = useState<ExportDoc | null>(null);
+  // While the box is open the update is rebuilt from the report as it
+  // stands — a change made with the box open (times on / off) shows at once.
+  const [isOpen, setIsOpen] = useState(false);
+  const d = useMemo(() => (isOpen ? doc() : null), [isOpen, doc]);
   const [off, setOff] = useState<Set<string>>(new Set());
   const [done, setDone] = useState<{ what: "email" | "text"; ok: boolean } | null>(null);
   const open = () => {
@@ -716,7 +835,7 @@ function CopyUpdate({ doc, meeting, lh }: { doc: () => ExportDoc; meeting: Meeti
     let on: string[] = [];
     try { on = JSON.parse(localStorage.getItem(onKey) ?? "[]") as string[]; } catch { /* private mode */ }
     const quiet = fresh.sections.filter((x) => x.offByDefault && !on.includes(x.id ?? x.title)).map((x) => x.id ?? x.title);
-    setOff(new Set([...saved.filter((id) => !flagged.has(id)), ...quiet])); setDone(null); setD(fresh);
+    setOff(new Set([...saved.filter((id) => !flagged.has(id)), ...quiet])); setDone(null); setIsOpen(true);
   };
   const toggle = (id: string) => setOff((cur) => {
     const n = new Set(cur);
@@ -764,8 +883,8 @@ function CopyUpdate({ doc, meeting, lh }: { doc: () => ExportDoc; meeting: Meeti
         <Mail className="w-3.5 h-3.5" /> Email / Print
       </button>
       {d && picked && (
-        <Modal onClose={() => setD(null)} size="xl">
-          <ModalHeader icon={Mail} title="Email or print the update" subtitle="What you'll send or print — leave out any section for today." onClose={() => setD(null)} />
+        <Modal onClose={() => setIsOpen(false)} size="xl">
+          <ModalHeader icon={Mail} title="Email or print the update" subtitle="What you'll send or print — leave out any section for today." onClose={() => setIsOpen(false)} />
           <ModalBody className="space-y-3">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px]">
               <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Include</span>
@@ -775,6 +894,12 @@ function CopyUpdate({ doc, meeting, lh }: { doc: () => ExportDoc; meeting: Meeti
                   <span className="font-semibold text-[var(--color-text)]">{s.title.split(" — ")[0]}</span>
                 </label>
               ))}
+              {stamps && (
+                <label className="inline-flex items-center gap-1.5 cursor-pointer select-none border-l border-[var(--color-border)] pl-3" title="The time each step was done, in Done — the time log has them all">
+                  <input type="checkbox" className="accent-[var(--color-accent)]" checked={stamps.on} onChange={() => stamps.set(!stamps.on)} />
+                  <span className="font-semibold text-[var(--color-text)]">Times in Done</span>
+                </label>
+              )}
             </div>
             <div className="rounded-lg border border-[var(--color-border)] bg-white p-4 max-h-[58vh] overflow-y-auto">
               {/* The email body itself — escaped text in inline-styled tables. */}
@@ -900,14 +1025,14 @@ const stepsBlock = (rows: TRow[], rightHead: string, whenHead = "When", flat?: b
 
 const shiftName = (w: ShiftWindow) => (w.kind === "day" ? "Day shift" : "Night shift");
 
-function rowFromShift(r: ShiftRow, c: Ctx, o: { when: string; n?: { num: number; tone: NumTone }; box?: boolean; right: string; done?: boolean; extraTags?: Array<TagT | null>; note?: string }): TRow {
+function rowFromShift(r: ShiftRow, c: Ctx, o: { when: string; n?: { num: number; tone: NumTone }; box?: boolean; right: string; done?: boolean; extraTags?: Array<TagT | null>; note?: string; why?: string }): TRow {
   return {
     id: r.leaf.id ?? r.leaf.name,
     group: c.group(r.parentId, r.parentName, r.path.slice(0, -1), r.leaf.name),
     n: o.n, box: o.box, when: o.when, name: r.leaf.name, done: o.done,
     tags: [r.critical ? { t: "critical", tone: "rose" } : null, ...(o.extraTags ?? [])],
     who: r.leaf.responsibleParty ?? undefined, wo: r.leaf.workOrderRef ?? undefined,
-    right: o.right, note: o.note,
+    right: o.right, note: o.note, why: o.why,
   };
 }
 
@@ -922,7 +1047,33 @@ function rowFromPlan(r: PlanRow, c: Ctx, o: { when?: string; right?: string; n?:
   };
 }
 
+/** The shift's notes for the report: times on Done steps, where whole tasks
+ *  stand, why steps are behind, and the shift's own record (crews on site,
+ *  incidents, notes & actions) with how to change it. */
+interface SheetCtx {
+  stamps: boolean;
+  timeOf: (id: string) => number | undefined;
+  whyOf: (id: string) => string | undefined;
+  taskPct: (id: string) => { pct: number; plan?: number } | undefined;
+  edit: boolean;
+  crewsThis: Record<string, CrewCount>; crewsNext: Record<string, CrewCount>;
+  hintThis?: Record<string, CrewCount>; hintNext?: Record<string, CrewCount>;
+  setCrew: (which: "this" | "next", crew: string, v: Partial<CrewCount>) => void;
+  incidents?: ShiftRecord["incidents"];
+  setNone: (none: boolean) => void;
+  addIncident: (x: Omit<Incident, "id" | "by">) => void;
+  removeIncident: (id: string) => void;
+  notes: Array<ShiftNote & { from?: string; shiftKey: string }>;
+  addNote: (x: { at: number; text: string; followUp: boolean }) => void;
+  clearNote: (n: ShiftNote & { shiftKey: string }) => void;
+  removeNote: (n: ShiftNote & { shiftKey: string }) => void;
+  error: string | null;
+  tz: string;
+}
+
 function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void; jumpTarget: ShiftWindow | null; noteOf?: (id: string) => { body: string; at?: string | null } | undefined; times: ShiftTimes;
+  /** The shift's notes and record (above). */
+  sheet?: SheetCtx;
   /** Narrowed to one crew: its name, and the whole job's report (the
    *  standing up top stays the whole job's). */
   crew?: string | null; whole?: ShiftReport;
@@ -976,7 +1127,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   // ── Done: finished, and moved forward but on no list below.
   const doneIds = new Set(plan.done.map((r) => r.leaf.id ?? r.leaf.name));
   // One row per task: its steps done or moved this shift, in one cell.
-  const doneTasks = doneByTask(report, plan, c, (id) => noteLine(o.noteOf?.(id), shift.start, c.D));
+  const doneTasks = doneByTask(report, plan, c, (id) => noteLine(o.noteOf?.(id), shift.start, c.D), { timeOf: o.sheet?.timeOf, taskPct: o.sheet?.taskPct, whyOf: o.sheet?.whyOf });
+  // Why a step is behind, under it — said in the quick view.
+  const whyFor = (r: ShiftRow) => (r.leaf.id && shareOf(report, r.leaf.id)?.side === "behind" ? o.sheet?.whyOf(r.leaf.id) : undefined);
   const creditedIds = new Set([...plan.done, ...plan.moved].map((r) => r.leaf.id));
   const doneRows = [...plan.done, ...plan.moved].map((r) => {
     const fin = doneIds.has(r.leaf.id ?? r.leaf.name);
@@ -1009,6 +1162,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         right: standing(r, kind),
         // The step's comment shows once: with its credit under Done, if it moved.
         note: [kind === "try" && d?.note ? `“${d.note}”` : null, creditedIds.has(r.leaf.id) ? null : comment(r)].filter(Boolean).join(" ") || undefined,
+        why: whyFor(r),
         extraTags: (() => {
           const vs = vsTag(r);
           // "Behind plan" says nothing the hours behind don't; late work is
@@ -1076,10 +1230,18 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
 
   // Who was here, and who's coming — right after where we stand.
   const cr = crewsOf(report, plan, c.hrs);
+  const sh = o.sheet;
+  // Each crew: its supervisor at the meeting and head count on site (the
+  // attendance) — and any company added at the meeting with no steps.
+  const withExtra = (rows: Array<{ crew: string; note?: string }>, counts?: Record<string, CrewCount>): Array<{ crew: string; note?: string }> => {
+    const named = new Set(rows.map((x) => x.crew));
+    return [...rows, ...Object.keys(counts ?? {}).filter((k) => !named.has(k)).map((k) => ({ crew: k }))];
+  };
   const crewCols = [
-    { title: `${shiftName(shift)} ${c.D(shift.start)} — who was here`, rows: cr.worked },
-    { title: `${shiftName(next)} ${c.D(next.start)} — who's coming`, rows: cr.coming },
+    { which: "this" as const, title: `${shiftName(shift)} ${c.D(shift.start)} — who was here`, rows: withExtra(cr.worked, sh?.crewsThis), counts: sh?.crewsThis ?? {}, hint: sh?.hintThis },
+    { which: "next" as const, title: `${shiftName(next)} ${c.D(next.start)} — who's coming`, rows: withExtra(cr.coming, sh?.crewsNext), counts: sh?.crewsNext ?? {}, hint: sh?.hintNext },
   ];
+  const onSite = (counts: Record<string, CrewCount>) => Object.values(counts).reduce((a, x) => a + (x.headcount ?? 0), 0);
   return [
     {
       id: "stand", title: "Where we stand", short: "Status",
@@ -1098,27 +1260,33 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     },
     {
       id: "who", title: "Crews", short: "Crews",
-      sub: `${cr.worked.length} on the ${shift.kind} shift · ${cr.coming.length} on the ${next.kind} shift`,
-      body: () => (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 keep">
-          {crewCols.map((col) => (
-            <div key={col.title} className="rounded-md border border-[var(--color-border)] px-3 py-2">
-              <div className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1">{col.title}</div>
-              {col.rows.length === 0 ? <div className="text-[12px] italic text-[var(--color-text-muted)]">No work planned</div> : (
-                <ul className="space-y-0.5">
-                  {col.rows.map((x) => (
-                    <li key={x.crew} className="flex items-baseline justify-between gap-3 text-[13px]">
-                      <span className="min-w-0"><b className="text-[var(--color-text)] break-words">{x.crew}</b>{x.note && <span className="block text-[11px] text-[var(--color-text-muted)] break-words">{x.note}</span>}</span>
-                      <span className="shrink-0 font-mono text-[12px] text-[var(--color-text-muted)]">{x.text}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          ))}
+      sub: [`${cr.worked.length} on the ${shift.kind} shift · ${cr.coming.length} on the ${next.kind} shift`,
+        onSite(crewCols[0].counts) ? `${onSite(crewCols[0].counts)} on site` : null, onSite(crewCols[1].counts) ? `${onSite(crewCols[1].counts)} coming on` : null].filter(Boolean).join(" · "),
+      body: (print) => (
+        <div className="space-y-1.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 keep">
+            {crewCols.map((col) => (
+              <div key={col.title} className="rounded-md border border-[var(--color-border)] px-3 py-2">
+                <div className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1">{col.title}</div>
+                {col.rows.length === 0 ? <div className="text-[12px] italic text-[var(--color-text-muted)]">No work planned</div> : (
+                  <ul className="space-y-0.5">
+                    {col.rows.map((x) => (
+                      <li key={x.crew} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[13px]">
+                        <span className="min-w-0"><b className="text-[var(--color-text)] break-words">{x.crew}</b>{x.note && <span className="block text-[11px] text-[var(--color-text-muted)] break-words">{x.note}</span>}</span>
+                        <CrewCountEditor key={`${col.which}:${x.crew}`}
+                          crew={x.crew} value={col.counts[x.crew]} hint={col.hint?.[x.crew]} edit={!!sh?.edit} print={print} onSave={(v) => sh?.setCrew(col.which, x.crew, v)} />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {!print && sh?.edit && <AddCompany onAdd={(name) => sh.setCrew(col.which, name, {})} />}
+              </div>
+            ))}
+          </div>
+          {!print && sh?.error && <div role="alert" className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">{sh.error}</div>}
         </div>
       ),
-      data: () => [{ k: "columns", cols: crewCols.map((col) => ({ title: col.title, rows: col.rows.length ? col.rows.map((x) => ({ title: x.crew, value: x.text, note: x.note })) : [{ title: "No work planned", value: "" }] })) }],
+      data: () => [{ k: "columns", cols: crewCols.map((col) => ({ title: col.title, rows: col.rows.length ? col.rows.map((x) => ({ title: x.crew, value: crewLine(col.counts[x.crew]), note: x.note })) : [{ title: "No work planned", value: "" }] })) }],
     },
     {
       id: "safety", title: "Safety & people", short: "Safety",
@@ -1126,11 +1294,19 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       body: (print) => (
         <div className="space-y-2">
           <SafetyMomentBox jobs={hazardJobs} shift={next} T={c.T} print={print} project={o.safety?.project} recent={o.safety?.recent} label={`${shiftName(next)} ${c.D(next.start)}`} />
-          <Prompts print={print} cols={3} items={[
-            "Incidents, near misses, first aid since last turnover",
-            "Permits and lock-outs open across the change",
-            "Manpower and equipment — short, down, arriving",
-          ]} />
+          {sh ? (
+            // The incidents line takes the place of its tick-box.
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-1 keep">
+              <IncidentsLine incidents={sh.incidents} edit={sh.edit} print={print} shift={shift} tz={sh.tz} T={c.T} onNone={sh.setNone} onAdd={sh.addIncident} onRemove={sh.removeIncident} />
+              <div className="sm:col-span-2"><Prompts print={print} items={["Permits and lock-outs open across the change", "Manpower and equipment — short, down, arriving"]} /></div>
+            </div>
+          ) : (
+            <Prompts print={print} cols={3} items={[
+              "Incidents, near misses, first aid since last turnover",
+              "Permits and lock-outs open across the change",
+              "Manpower and equipment — short, down, arriving",
+            ]} />
+          )}
         </div>
       ),
     },
@@ -1150,7 +1326,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         <div className="space-y-2">
           {askedText && <div className="text-[11.5px] font-semibold text-slate-700 dark:text-slate-200">{askedText}</div>}
           {doneRows.length > 0 ? (
-            <DoneTasks rows={doneTasks} print={print} />
+            <DoneTasks rows={doneTasks} print={print} stamps={!!sh?.stamps} T={c.T} />
           ) : (
             <Empty>
               Nothing was {nothingLast ? "planned" : "completed"}{forCrew} on this shift.
@@ -1205,7 +1381,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       body: (print: boolean) => <StepTable print={print} whenHead="Why" rightHead="Done" rows={nextRows(print, false)} />,
       data: () => [stepsBlock(nextRows(true, false), "Done", "Why")],
     } as Sec] : []),
-    closeSection("Close", ["Outgoing supervisor", "Incoming supervisor", "Crew lead"]),
+    closeSection("Close", ["Outgoing supervisor", "Incoming supervisor", "Crew lead"], undefined, sh ? (print) => (
+      <ShiftNotesBox notes={sh.notes} edit={sh.edit} print={print} shift={shift} tz={sh.tz} T={c.T} D={c.D} onAdd={sh.addNote} onClear={sh.clearNote} onRemove={sh.removeNote} />
+    ) : undefined),
   ];
 }
 
@@ -1405,14 +1583,14 @@ function cancelledSection(jobs: CancelledJob[], c: Ctx): Sec {
   };
 }
 
-function closeSection(title: string, signers: string[], sub = "Notes, actions and sign-off"): Sec {
+function closeSection(title: string, signers: string[], sub = "Notes, actions and sign-off", notes?: (print: boolean) => React.ReactNode): Sec {
   return {
     id: "close", title, short: title, sub,
     body: (print) => (
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 keep">
         <div className="rounded-md border border-[var(--color-border)] px-2.5 py-1.5">
           <div className="text-[12px] font-semibold text-slate-600 dark:text-slate-300">Notes &amp; actions</div>
-          {Array.from({ length: print ? 4 : 3 }).map((_, i) => <div key={i} className="h-5 border-b border-dotted border-[var(--color-border-strong)]" />)}
+          {notes ? notes(print) : Array.from({ length: print ? 4 : 3 }).map((_, i) => <div key={i} className="h-5 border-b border-dotted border-[var(--color-border-strong)]" />)}
         </div>
         <div className="rounded-md border border-[var(--color-border)] px-2.5 py-1.5 space-y-2">
           <div className="text-[12px] font-semibold text-slate-600 dark:text-slate-300">Sign-off</div>
@@ -1666,6 +1844,8 @@ interface TRow {
   right: string;
   /** A second line under the step (a reason). */
   note?: string;
+  /** Why it's behind plan, as said for the report. */
+  why?: string;
   /** On screen only: a control under the step (the meeting's decision). */
   control?: React.ReactNode;
   /** A small action beside the step's name (never printed). */
@@ -1763,6 +1943,7 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
                       {[!crew && r.who ? r.who : null, r.when, r.wo ? `WO ${r.wo}` : null].filter(Boolean).join(" · ")}
                     </div>
                     {r.note && <div className="text-[11.5px] italic text-slate-600 dark:text-slate-300 mt-0.5">{r.note}</div>}
+                    {r.why && <div className="text-[11.5px] italic font-medium text-amber-800 dark:text-amber-300 mt-0.5">Why behind: {r.why}</div>}
                     {r.inline && <div className="mt-1.5">{r.inline}</div>}
                   </div>
                   <div className="shrink-0 pt-0.5"><Progress right={r.right} /></div>
@@ -1811,6 +1992,7 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
                       </div>
                       <StatusLine tags={statusOf(r)} print={print} />
                       {r.note && <div className={`italic text-slate-600 dark:text-slate-300 mt-0.5 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>{r.note}</div>}
+                      {r.why && <div className={`italic font-medium text-amber-800 dark:text-amber-300 mt-0.5 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>Why behind: {r.why}</div>}
                       {ownerLine && <div className="text-[10px] text-slate-500 mt-0.5">Owner / decision: <span className="inline-block w-44 border-b border-dotted border-slate-400 align-baseline">&nbsp;</span></div>}
                     </td>
                     {hasWhen && <td className={`${cell} text-slate-700 dark:text-slate-300 break-words`}>{r.when}</td>}
@@ -1835,11 +2017,35 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
 
 /** What got done, one row per work order: a table where there's room;
  *  on a phone, a short card each — nothing to scroll sideways for. */
-function DoneTasks({ rows, print }: { rows: Array<{ task: string; wo: string; steps: string; who: string; result: { text: string; tone: string }; vs: { text: string; tone?: string }; ids: string[] }>; print: boolean }) {
+type DoneTask = ReturnType<typeof doneByTask>[number];
+
+/** The steps a task did this shift — one per line: its WO when the task
+ *  has several, its time when times are on, its comment under it. */
+function DoneLines({ x, stamps, T, print }: { x: DoneTask; stamps: boolean; T: (ms: number) => string; print: boolean }) {
+  return (
+    <div>
+      <div>{x.head}:</div>
+      {x.lines.map((l) => {
+        const lead = [l.wo ? `WO ${l.wo}` : "", stamps && l.time != null ? T(l.time) : ""].filter(Boolean).join(" ");
+        return (
+          <div key={l.id} className="mt-0.5">
+            {lead && <span className={`font-mono text-slate-600 dark:text-slate-300 mr-1.5 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>{lead}</span>}
+            <span>{l.name}</span>
+            {l.note && <div className={`italic text-slate-500 dark:text-slate-400 ${lead ? "ml-3" : ""} ${print ? "text-[7.5pt]" : "text-[11px]"}`}>“{l.note}”</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DoneTasks({ rows, print, stamps = false, T }: { rows: DoneTask[]; print: boolean; stamps?: boolean; T: (ms: number) => string }) {
   const hasWo = rows.some((x) => x.wo);
   const resultCls = (t: string) => (t === "amber" ? "text-amber-700 dark:text-amber-300" : "text-emerald-700 dark:text-emerald-400");
   const vsCls = (t?: string) => (t === "rose" ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400");
   const cell = print ? "px-1 py-[1px]" : "px-2 py-1.5";
+  const pctLine = (x: DoneTask) => (x.taskPct ? `task ${x.taskPct.pct}% done${x.taskPct.plan != null ? ` · plan ${x.taskPct.plan}%` : ""}` : null);
+  const whyLine = (x: DoneTask) => x.why && <div className={`mt-0.5 italic font-medium text-amber-800 dark:text-amber-300 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>Why behind: {x.why}</div>;
   return (
     <>
       {!print && (
@@ -1850,8 +2056,10 @@ function DoneTasks({ rows, print }: { rows: Array<{ task: string; wo: string; st
                 <b className="text-[var(--color-text)] break-words">{x.task}{x.wo && <span className="ml-1.5 font-mono font-semibold text-[11px] text-[var(--color-text-muted)]">WO {x.wo}</span>}</b>
                 {x.vs.text && <b className={`shrink-0 font-mono text-[12px] ${vsCls(x.vs.tone)}`}>{x.vs.text}</b>}
               </div>
-              <div className="text-[var(--color-text)] break-words">{x.steps}</div>
+              {pctLine(x) && <div className="text-[11px] text-[var(--color-text-muted)]">{pctLine(x)}</div>}
+              <div className="text-[var(--color-text)] break-words"><DoneLines x={x} stamps={stamps} T={T} print={false} /></div>
               <div className={`font-bold break-words ${resultCls(x.result.tone)}`}>{x.result.text}</div>
+              {whyLine(x)}
               {x.who && <div className="text-[11.5px] text-[var(--color-text-muted)] break-words">{x.who}</div>}
             </div>
           ))}
@@ -1868,11 +2076,11 @@ function DoneTasks({ rows, print }: { rows: Array<{ task: string; wo: string; st
           <tbody>
             {rows.map((x) => (
               <tr key={x.ids.join(",")} className="border-b border-slate-100 dark:border-slate-800 align-top">
-                <td className={`${cell} font-semibold break-words`}>{x.task}</td>
+                <td className={`${cell} font-semibold break-words`}>{x.task}{pctLine(x) && <div className={`font-normal text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-[11px]"}`}>{pctLine(x)}</div>}</td>
                 {hasWo && <td className={`${cell} font-mono text-[11px] break-words`}>{x.wo.split(/,\s*/).map((w, i) => <span key={i} className="block">{w}</span>)}</td>}
-                <td className={`${cell} break-words`}>{x.steps}</td>
+                <td className={`${cell} break-words`}><DoneLines x={x} stamps={stamps} T={T} print={print} /></td>
                 <td className={`${cell} text-[11.5px] text-[var(--color-text-muted)] break-words`}>{x.who}</td>
-                <td className={`${cell} font-bold break-words ${resultCls(x.result.tone)}`}>{x.result.text}</td>
+                <td className={`${cell} font-bold break-words ${resultCls(x.result.tone)}`}>{x.result.text}{whyLine(x)}</td>
                 <td className={`${cell} text-right font-mono font-bold whitespace-nowrap ${vsCls(x.vs.tone)}`}>{x.vs.text}</td>
               </tr>
             ))}

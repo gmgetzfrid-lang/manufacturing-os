@@ -26,7 +26,9 @@ import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { clockLabel, dayKey, dayKeyToMs, fmtInTz, addDays, tzAbbrev } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
 import { overdueOpenWork, startedEarlyWork } from "@/lib/openWork";
-import { DEFAULT_SHIFT_TIMES, expectedByParent, expectedFraction, shiftAt, shiftWindow, workShiftOf, type ShiftTimes, type ShiftCredit } from "@/lib/shiftReport";
+import { DEFAULT_SHIFT_TIMES, expectedByParent, expectedFraction, shiftAt, shiftWindow, workShiftOf, type ShiftTimes, type ShiftCredit, type ShiftWindow } from "@/lib/shiftReport";
+import type { StepUpdate } from "@/components/projects/CalendarQuickView";
+import { clockOnShift, typeClock } from "@/components/projects/ShiftRecordParts";
 import { latestNotes, updateMilestoneNote } from "@/lib/milestones";
 import ShiftMark from "@/components/projects/ShiftMark";
 import { stepBandDays, type BandDays } from "@/lib/shiftBands";
@@ -49,7 +51,7 @@ interface Props {
   ancestorsOf: (m: Milestone) => Milestone[];
   progress?: Map<string, ProgressInfo>;
   canEdit: boolean;
-  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => unknown;
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number, forShift?: ShiftCredit) => unknown;
   onSetProgress?: (id: string, percent: number) => unknown;
   /** Add a note to the step's log. */
   onAddNote?: (id: string, body: string) => Promise<void> | void;
@@ -59,6 +61,9 @@ interface Props {
   onSetProgressNote?: (id: string, percent: number, note: string, forShift?: ShiftCredit) => Promise<boolean> | boolean;
   /** Start a step with what got done. */
   onStartNote?: (id: string, percent: number, note: string, forShift?: ShiftCredit) => Promise<boolean> | boolean;
+  /** A step's status / % with the time it happened and what got done —
+   *  the same save as the calendar's quick view. */
+  onUpdateStep?: (id: string, u: StepUpdate) => Promise<boolean>;
   /** The project's shift-change times — which crew does each step. */
   shiftTimes?: ShiftTimes;
   onOpenDetail: (m: Milestone) => void;
@@ -91,7 +96,7 @@ interface EquipmentGroup {
 
 export default function DayAgendaPanel({
   day, tz, milestones, childrenByParent, ancestorsOf, progress, canEdit, focus,
-  onSetStatus, onSetProgress, onAddNote, onOpenDetail, onChangeDay, onClose, colorOf, shiftTimes = DEFAULT_SHIFT_TIMES, hidden, planNow: planNowAll, userId, onSetProgressNote, onStartNote, inline,
+  onSetStatus, onSetProgress, onAddNote, onOpenDetail, onChangeDay, onClose, colorOf, shiftTimes = DEFAULT_SHIFT_TIMES, hidden, planNow: planNowAll, userId, onSetProgressNote, onStartNote, onUpdateStep, inline,
 }: Props) {
   const [query, setQuery] = useState("");
   // A step's WO number: its own, else its work order's (or the file's WO column).
@@ -238,6 +243,12 @@ export default function DayAgendaPanel({
   const goalAt = isToday ? shiftAt(nowMs, tz, shiftTimes).end : shiftWindow(day, "night", tz, shiftTimes).end;
   const goalLabel = isToday ? clockLabel(goalAt, tz) : fmtInTz(goalAt, tz, { weekday: "short" }) + " " + clockLabel(goalAt, tz);
   const goalOf = (m: Milestone) => Math.round(expectedFraction(m, goalAt, tz, shiftTimes) * 100);
+  // A time typed for a step is on this day: its day shift through the
+  // night shift's small hours.
+  const dayWin: ShiftWindow = useMemo(() => {
+    const d = shiftWindow(day, "day", tz, shiftTimes), n = shiftWindow(day, "night", tz, shiftTimes);
+    return { kind: "day", dayKey: day, start: d.start, end: n.end };
+  }, [day, tz, shiftTimes]);
   // What a step waits on, by name: predecessors not done yet.
   const byIdAll = useMemo(() => new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m])), [milestones]);
   const waitsOn = (m: Milestone) => (m.dependsOn ?? []).map((id) => byIdAll.get(id))
@@ -405,7 +416,7 @@ export default function DayAgendaPanel({
                         <span className="shrink-0">
                           <StatusControl
                             status={r.leaf.status} size="sm" variant="dot" disabled={!canEdit || !onSetStatus || !r.leaf.id}
-                            onPick={(st, reason, p) => { if (r.leaf.id && onSetStatus) onSetStatus(r.leaf.id, st, reason, p); }}
+                            onPick={(st, reason, p, w) => { if (r.leaf.id && onSetStatus) onSetStatus(r.leaf.id, st, reason, p, w); }}
                             percent={pct}
                             onSetProgress={onSetProgress ? (v) => { if (r.leaf.id) onSetProgress(r.leaf.id, v); } : undefined}
                             onStartWithNote={onStartNote && r.leaf.id ? async (v, n, w) => { const ok = await onStartNote(r.leaf.id!, v, n, w); setNotesTick((t) => t + 1); return ok; } : undefined}
@@ -460,6 +471,7 @@ export default function DayAgendaPanel({
                         <QuickEdit key={r.leaf.id} leaf={r.leaf} pct={pct} canEdit={canEdit}
                           latest={latestByStep.get(r.leaf.id)} userId={userId} onNotesChanged={() => setNotesTick((t) => t + 1)}
                           onSetStatus={onSetStatus} onSetProgress={onSetProgress} onAddNote={onAddNote}
+                          onUpdateStep={onUpdateStep} win={dayWin} tz={tz}
                           onOpenDetail={() => onOpenDetail(r.leaf)}
                           next={nextOf(r.leaf.id)} onNext={(id) => { setOpenId(id); openGroupOf(id); }} onClose={() => setOpenId(null)} />
                       )}
@@ -524,11 +536,15 @@ const PCTS = PICK_PCTS;
  *  it, a note. Each change saves on its own; Next opens the step below. */
 type LatestNote = { id: string; body: string; at: string | null; by: string | null; byId: string | null };
 
-function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, onOpenDetail, next, onNext, onClose, latest, userId, onNotesChanged }: {
+function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, onUpdateStep, win, tz, onOpenDetail, next, onNext, onClose, latest, userId, onNotesChanged }: {
   leaf: Milestone; pct: number; canEdit: boolean;
+  /** Saves a status / % with its time and comment; without it, changes save as before. */
+  onUpdateStep?: (id: string, u: StepUpdate) => Promise<boolean>;
+  /** The day being looked at — the time typed is on it. */
+  win: ShiftWindow; tz: string;
   /** The step's latest comment — shown here; its author edits it in place. */
   latest?: LatestNote; userId?: string; onNotesChanged?: () => void;
-  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => unknown;
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number, forShift?: ShiftCredit) => unknown;
   onSetProgress?: (id: string, percent: number) => unknown;
   onAddNote?: (id: string, body: string) => Promise<void> | void;
   onOpenDetail: () => void;
@@ -568,23 +584,34 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
     try { const ok = await onSetProgress(id, c); report(ok, `${c}% saved`); return ok !== false; }
     finally { inFlight.current = null; }
   };
-  // A % picked here waits for its comment: work in progress always says
-  // what got done. Done (100) and 0 save at once. "Working" picked here
-  // also waits for the comment.
+  // A % or status picked here waits for the time it happened and a
+  // comment — it goes on the shift report. (Without the timed save, Done
+  // and 0 save at once, as before.)
+  const timed = !!onUpdateStep;
   const [stage, setStage] = useState<number | null>(null);
   const [starting, setStarting] = useState(false);
-  const [needMsg, setNeedMsg] = useState(false);
+  const [needMsg, setNeedMsg] = useState<string | null>(null);
   const noteRef = useRef<HTMLInputElement>(null);
+  const clockRef = useRef<HTMLInputElement>(null);
+  const [clock, setClock] = useState("");
+  const when = clock ? clockOnShift(win, clock, tz) : null;
+  const whenAt = when && "at" in when ? when.at : null;
+  // A change made here is said fresh — not typed over your last comment.
+  const freshNote = () => { if (noteMode === "edit") { setNoteMode("new"); setNote(""); sentNote.current = null; } };
   const pickPct = (v: number) => {
     const c = Math.max(0, Math.min(100, Math.round(v)));
-    setPctDraft(String(c)); setNeedMsg(false);
-    if (!onAddNote || (!starting && (c === 0 || c >= 100))) { setStage(null); void setPct(c); return; }
-    setStage(c === Math.round(pct) && !starting ? null : c);
+    setPctDraft(String(c)); setNeedMsg(null);
+    if (!onAddNote || (!timed && !starting && (c === 0 || c >= 100))) { setStage(null); void setPct(c); return; }
+    const same = c === Math.round(pct) && !starting;
+    setStage(same ? null : c);
+    if (!same && timed) { freshNote(); setHold(null); setHoldTouched(false); }
     setTimeout(() => noteRef.current?.focus(), 0);
   };
   const setStatus = async (st: MilestoneStatus) => {
     if (ro || !onSetStatus) return;
-    if (st === "in_progress" && onAddNote) { setStarting(true); setHold(null); setHoldTouched(false); setTimeout(() => noteRef.current?.focus(), 0); return; }
+    setNeedMsg(null);
+    if (st === "in_progress" && onAddNote) { if (timed) freshNote(); setStarting(true); setStage(null); setHold(null); setHoldTouched(false); setTimeout(() => noteRef.current?.focus(), 0); return; }
+    if (st === "completed" && timed) { freshNote(); setStarting(false); setStage(100); setPctDraft("100"); setHold(null); setHoldTouched(false); setTimeout(() => noteRef.current?.focus(), 0); return; }
     setStarting(false); setStage(null);
     if (st === "on_hold" || st === "blocked") { setHold(st); setHoldTouched(true); return; } // needs a reason first
     setHold(null); setHoldTouched(false);
@@ -597,10 +624,21 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
   // not merely because the live status has since changed.
   const [holdTouched, setHoldTouched] = useState(false);
   const holdPending = () => holdTouched && !!hold && savedHold.current !== `${hold}|${reason.trim()}` && (hold !== leaf.status || reason.trim() !== (leaf.statusReason ?? ""));
-  const saveHold = async () => {
-    if (ro || !onSetStatus || !hold) return;
+  const saveHold = async (): Promise<boolean> => {
+    if (ro || !onSetStatus || !hold) return false;
+    if (timed) {
+      if (!reason.trim()) { setNeedMsg(hold === "blocked" ? "Say what's blocking it — it goes on the report." : "Say why it's on hold — it goes on the report."); return false; }
+      if (whenAt == null) { setNeedMsg(when && "error" in when ? when.error : "Put in the time it happened."); clockRef.current?.focus(); return false; }
+      savedHold.current = `${hold}|${reason.trim()}`;
+      const ok = await onUpdateStep!(id, { status: hold, pct: null, note: reason.trim(), at: whenAt });
+      if (!ok) savedHold.current = null;
+      else { setHoldTouched(false); setClock(""); setNeedMsg(null); }
+      report(ok, `${hold === "blocked" ? "Blocked" : "On hold"} at ${clock}`);
+      return ok;
+    }
     savedHold.current = `${hold}|${reason.trim()}`;
     report(await onSetStatus(id, hold, reason.trim() || undefined), hold === "blocked" ? "Blocked — reason saved" : "On hold — reason saved");
+    return true;
   };
   const sentNote = useRef<string | null>(own ? latest!.body.trim() : null);
   // Edit mode: only a changed comment is written; new mode: added.
@@ -613,12 +651,26 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
   // A staged % / start, and whether it still needs its comment.
   const stagedPct = stage ?? (starting ? Math.round(pct) : null);
   const progressPending = () => stage != null || starting;
-  const needsNote = () => progressPending() && (stagedPct ?? 0) < 100 && !notePending();
+  const needsNote = () => progressPending() && (timed || (stagedPct ?? 0) < 100) && !notePending();
+  const needsTime = () => timed && (progressPending() || (holdTouched && !!hold)) && whenAt == null;
   // Save the staged % (or start) and the comment together.
   const commit = async (): Promise<boolean> => {
     if (ro) return false;
     if (!progressPending()) { await saveNote(); return true; }
-    if (needsNote()) { setNeedMsg(true); noteRef.current?.focus(); return false; }
+    if (needsNote()) { setNeedMsg(`Say what got done to save ${stagedPct ?? 0}% — it goes on the shift report.`); noteRef.current?.focus(); return false; }
+    if (timed) {
+      if (whenAt == null) { setNeedMsg(when && "error" in when ? when.error : "Put in the time it happened."); clockRef.current?.focus(); return false; }
+      const v = stagedPct ?? 0;
+      const status: MilestoneStatus = v >= 100 ? "completed" : v <= 0 && !starting ? "planned" : "in_progress";
+      const text = note.trim();
+      sentNote.current = text;
+      const ok = await onUpdateStep!(id, { status, pct: status === "in_progress" ? v : null, note: text, at: whenAt });
+      if (!ok) { sentNote.current = null; report(false, ""); return false; }
+      report(true, `${status === "completed" ? "Done" : status === "planned" ? "Not started" : `${v}%`} at ${clock}`);
+      setStage(null); setStarting(false); setNeedMsg(null); setNote(""); setClock("");
+      onNotesChanged?.();
+      return true;
+    }
     let ok = true;
     if (starting && onSetStatus) {
       const v = stagedPct ?? 0;
@@ -626,7 +678,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
       report(ok, v >= 100 ? "Marked done" : `Working — ${v}% saved`);
     } else if (stage != null) ok = await setPct(stage);
     if (!ok) return false;
-    setStage(null); setStarting(false); setNeedMsg(false);
+    setStage(null); setStarting(false); setNeedMsg(null);
     if (notePending()) await saveNote();
     return true;
   };
@@ -644,7 +696,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
     if (progressPending()) { if (!(await commit())) return; }
     else if (notePending()) await saveNote();
     // On hold / blocked picked but not saved yet: Next saves it.
-    if (holdPending()) await saveHold();
+    if (holdPending() && !(await saveHold())) return;
     if (next) onNext(next); else onClose();
   };
   // Closing the row — Esc, the X, another row — keeps what was typed or
@@ -656,9 +708,13 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
       if (ro) return;
       // A staged % with its comment is saved; one without a comment isn't
       // (work in progress always says what got done).
-      if (progressPending() && !needsNote()) void commit();
-      else if (notePending()) void writeNote(note.trim()).catch(() => undefined);
-      if (holdPending() && hold && onSetStatus) onSetStatus(id, hold, reason.trim() || undefined);
+      // A timed change is saved only once it has its time.
+      if (progressPending() && !needsNote() && !needsTime()) void commit();
+      else if (!progressPending() && notePending()) void writeNote(note.trim()).catch(() => undefined);
+      if (holdPending() && hold && onSetStatus) {
+        if (!timed) onSetStatus(id, hold, reason.trim() || undefined);
+        else if (reason.trim() && whenAt != null) void saveHold();
+      }
     };
   });
   useEffect(() => () => flush.current(), []);
@@ -688,21 +744,43 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
         <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] text-[var(--color-text-muted)]">Status</span>
         {STATUS_BTNS.map((b) => (
           <button key={b.s} disabled={ro} onClick={() => void setStatus(b.s)}
-            className={`h-7 px-2.5 rounded-md border font-bold pointer-coarse:h-9 ${(starting ? "in_progress" : active) === b.s ? b.on : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"} disabled:opacity-40`}>
+            className={`h-7 px-2.5 rounded-md border font-bold pointer-coarse:h-9 ${(starting ? "in_progress" : stage != null && stage >= 100 ? "completed" : stage != null && stage > 0 ? "in_progress" : active) === b.s ? b.on : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"} disabled:opacity-40`}>
             {b.label}
           </button>
         ))}
       </div>
       {hold && (
         <div className="flex items-center gap-1.5">
-          <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] text-[var(--color-text-muted)]">Blocking it</span>
-          <input value={reason} disabled={ro} autoFocus onChange={(e) => { setReason(e.target.value); setHoldTouched(true); }}
+          <span className={`w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] ${timed && holdTouched && !reason.trim() ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
+            Blocking it{timed && holdTouched && <span className="block normal-case tracking-normal">required</span>}
+          </span>
+          <input value={reason} disabled={ro} autoFocus onChange={(e) => { setReason(e.target.value); setHoldTouched(true); setNeedMsg(null); }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void saveHold(); } }}
             placeholder="What's stopping it — permit, scaffold, ops release, parts…"
             className="flex-1 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] focus:outline-none focus:border-[var(--color-accent-ring)]" />
           <button disabled={ro} onClick={() => void saveHold()} className={`h-7 px-2.5 rounded-md font-bold text-white ${hold === "blocked" ? "bg-rose-600 hover:bg-rose-700" : "bg-amber-500 hover:bg-amber-600"} disabled:opacity-40`}>
-            Save {hold === "blocked" ? "blocked" : "on hold"}
+            Save {hold === "blocked" ? "blocked" : "on hold"}{timed && holdTouched && whenAt != null ? ` at ${clock}` : ""}
           </button>
+        </div>
+      )}
+      {timed && starting && (leaf.status === "on_hold" || leaf.status === "blocked") && (
+        <div className="ml-[70px] rounded-md bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 px-2 py-1 text-amber-900 dark:text-amber-200">
+          Taking it off {leaf.status === "on_hold" ? "hold" : "block"}. It was: <b>&ldquo;{leaf.statusReason || "no reason given"}&rdquo;</b>. Say what changed.
+        </div>
+      )}
+      {timed && (progressPending() || (holdTouched && !!hold)) && (
+        <div className="flex items-center gap-1.5">
+          {/* The time it happened — on this day; you're often typing it in later. */}
+          <span className={`w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] ${whenAt == null ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
+            Time<span className="block normal-case tracking-normal">{whenAt == null ? "required" : "24-hour"}</span>
+          </span>
+          <input ref={clockRef} value={clock} disabled={ro} inputMode="numeric" placeholder="hh:mm" aria-label="Time it happened, 24-hour"
+            onChange={(e) => { setClock(typeClock(e.target.value)); setNeedMsg(null); }}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (progressPending()) void commit(); else void saveHold(); } }}
+            className={`h-7 w-[64px] px-1.5 rounded-md font-mono font-bold pointer-coarse:h-9 focus:outline-none focus:border-[var(--color-accent-ring)] ${whenAt == null ? "border-2 border-amber-400 bg-amber-50/60 dark:bg-amber-950/30" : "border border-[var(--color-border-strong)] bg-[var(--color-surface)]"}`} />
+          <button type="button" disabled={ro} onClick={() => { setClock(new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz })); setNeedMsg(null); }}
+            className="h-7 px-2 rounded-md border border-[var(--color-border-strong)] font-bold hover:bg-[var(--color-surface-2)] pointer-coarse:h-9">Now</button>
+          <span className="text-[var(--color-text-muted)]">{when && "error" in when ? <span className="font-semibold text-rose-700 dark:text-rose-400">{when.error}</span> : whenAt != null ? fmtInTz(whenAt, tz, { weekday: "short", month: "short", day: "numeric" }) : fmtInTz(win.start, tz, { weekday: "short", month: "short", day: "numeric" })}</span>
         </div>
       )}
       {onAddNote && latest && noteMode === "new" && (
@@ -712,20 +790,21 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
         </div>
       )}
       {onAddNote && (
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           {/* A % being saved needs its comment — said right on the box. */}
           <span className={`w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] ${needsNote() ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
-            {needsNote() ? <>What got done<span className="block normal-case tracking-normal">required</span></> : noteMode === "edit" ? "Comment" : "Note"}
+            {needsNote() ? <>{timed && stagedPct === 0 && !starting ? "Why" : "What got done"}<span className="block normal-case tracking-normal">required</span></> : noteMode === "edit" ? "Comment" : "Note"}
           </span>
-          <input ref={noteRef} value={note} disabled={ro} onChange={(e) => { setNote(e.target.value); setNeedMsg(false); }}
+          <input ref={noteRef} value={note} disabled={ro} onChange={(e) => { setNote(e.target.value); setNeedMsg(null); }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void commit(); } }}
             placeholder={progressPending() ? "e.g. bundle half out · or why it's corrected" : "Comment — shows on the shift report (e.g. sent out for calibration)"}
             aria-required={needsNote()}
-            className={`flex-1 h-7 px-2 rounded-md bg-[var(--color-surface)] pointer-coarse:h-9 focus:outline-none focus:border-[var(--color-accent-ring)] ${needMsg ? "border-2 border-rose-500" : needsNote() ? "border-2 border-amber-400 bg-amber-50/60 dark:bg-amber-950/30" : "border border-[var(--color-border-strong)]"}`} />
+            className={`flex-1 min-w-[180px] h-7 px-2 rounded-md bg-[var(--color-surface)] pointer-coarse:h-9 focus:outline-none focus:border-[var(--color-accent-ring)] ${needMsg && needsNote() ? "border-2 border-rose-500" : needsNote() ? "border-2 border-amber-400 bg-amber-50/60 dark:bg-amber-950/30" : "border border-[var(--color-border-strong)]"}`} />
           {progressPending() && (
             <button disabled={ro} onClick={() => void commit()}
-              className={`shrink-0 h-7 px-2.5 rounded-md font-black bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 pointer-coarse:h-9 ${needsNote() ? "opacity-70" : ""}`}>
-              {needsNote() ? "Add a comment to save" : `Save ${stagedPct ?? 0}%`}
+              className={`shrink-0 h-7 px-2.5 rounded-md font-black bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 pointer-coarse:h-9 ${needsNote() || needsTime() ? "opacity-70" : ""}`}>
+              {needsNote() ? "Add a comment to save" : needsTime() ? "Put in the time" : !timed ? `Save ${stagedPct ?? 0}%`
+                : `${(stagedPct ?? 0) >= 100 ? "Mark done" : stagedPct === 0 && !starting ? "Set to not started" : `Save ${stagedPct ?? 0}%`} at ${clock}`}
             </button>
           )}
           {own && (
@@ -736,7 +815,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
           )}
         </div>
       )}
-      {needMsg && <div className="pl-[70px] font-semibold text-rose-700 dark:text-rose-400">Say what got done to save {stagedPct ?? 0}% — it goes on the shift report.</div>}
+      {needMsg && <div className="pl-[70px] font-semibold text-rose-700 dark:text-rose-400">{needMsg}</div>}
       <div className="flex items-center gap-2">
         {saved && <span className="inline-flex items-center gap-1 font-bold text-emerald-700 dark:text-emerald-400"><Check className="w-3.5 h-3.5" /> {saved}</span>}
         <button onClick={onOpenDetail} className="ml-auto inline-flex items-center gap-1 font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">

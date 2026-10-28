@@ -441,11 +441,15 @@ export interface MilestoneNote {
   id?: string;
   orgId: string;
   milestoneId: string;
-  kind: "status" | "reschedule" | "note" | "field";
+  /** "behind" — why a step is behind plan, said for the report. */
+  kind: "status" | "reschedule" | "note" | "field" | "behind";
   /** Status the milestone was in at the time of the note. */
   statusAt?: MilestoneStatus | null;
   body?: string | null;
   createdAt?: Timestamp;
+  /** When what it describes happened, when that was entered later (the
+   *  time punched for the work). Null = when it was written. */
+  happenedAt?: Timestamp | null;
   createdBy: string;
   createdByName?: string | null;
 }

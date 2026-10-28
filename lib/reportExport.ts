@@ -31,6 +31,12 @@ export type ExportCell = string | {
   /** A short comment shown under the value — quiet, one line ("sent out
    *  for calibration"). */
   note?: string;
+  /** One entry per line under the value (the steps done this shift), each
+   *  with what leads it (its time, its WO) and its own comment. */
+  lines?: Array<{ lead?: string; t: string; note?: string }>;
+  /** Short lines under it all (where the whole task stands, why it's
+   *  behind). */
+  sub?: Array<{ t: string; tone?: Tone; italic?: boolean }>;
 };
 const cellText = (c: ExportCell) => (typeof c === "string" ? c : c.t);
 
@@ -187,7 +193,9 @@ export function toPlainText(d: ExportDoc): string {
               if (!v) return "";
               const label = b.textLabels ? b.textLabels[j + 1] ?? "" : (b.head[j + 1] ?? "").toLowerCase();
               const note = typeof c !== "string" && c.note ? ` ("${c.note}")` : "";
-              return (label && (typeof c === "string" || (!c.tone && !c.bold)) ? `${label} ${v}` : v) + note;
+              const lines = typeof c !== "string" && c.lines?.length ? ` ${c.lines.map((x) => `${x.lead ? `${x.lead} ` : ""}${x.t}${x.note ? ` ("${x.note}")` : ""}`).join("; ")}` : "";
+              const sub = typeof c !== "string" && c.sub?.length ? ` (${c.sub.map((x) => x.t).join("; ")})` : "";
+              return (label && (typeof c === "string" || (!c.tone && !c.bold)) ? `${label} ${v}` : v) + lines + note + sub;
             }).filter(Boolean).join(" · ");
             if (first) out.push(`   • ${first}${tail ? ` — ${tail}` : ""}`);
             else if (tail) out.push(`       ${tail}`);
@@ -291,8 +299,14 @@ function blockHtml(b: ExportBlock): string {
             const o = typeof c === "string" ? { t: c } : c;
             const color = o.tone ? (o.tone === "muted" ? MUTED : TONE[o.tone].fg) : INK;
             const note = "note" in o && o.note ? `<div style="${FONT}font-size:11px;font-style:italic;font-weight:normal;color:${MUTED};margin-top:1px;">“${esc(o.note)}”</div>` : "";
+            // One step per line, its time / WO first, its comment under it.
+            const lines = "lines" in o && o.lines?.length ? o.lines.map((x) =>
+              `<div style="${FONT}font-size:13px;font-weight:normal;color:${INK};margin-top:2px;">${x.lead ? `<span style="font-family:Consolas,Menlo,monospace;font-size:12px;color:#334155;">${esc(x.lead)}</span>&nbsp; ` : ""}${esc(x.t)}</div>` +
+              (x.note ? `<div style="${FONT}font-size:11px;font-style:italic;font-weight:normal;color:${MUTED};margin:1px 0 0 ${x.lead ? 12 : 0}px;">“${esc(x.note)}”</div>` : "")).join("") : "";
+            const sub = "sub" in o && o.sub?.length ? o.sub.map((x) =>
+              `<div style="${FONT}font-size:11px;font-weight:normal;${x.italic ? "font-style:italic;" : ""}color:${x.tone ? (x.tone === "muted" ? MUTED : TONE[x.tone].fg) : MUTED};margin-top:2px;">${esc(x.t)}</div>`).join("") : "";
             const nw = b.nowrap?.includes(j) ? "white-space:nowrap;" : "";
-            return td(`font-size:13px;color:${color};padding:5px 8px;${cont ? "" : "border-top:1px solid #e2e8f0;"}text-align:${al(j)};vertical-align:top;${nw}${o.bold ? "font-weight:bold;" : ""}`, esc(o.t) + note);
+            return td(`font-size:13px;color:${color};padding:5px 8px;${cont ? "" : "border-top:1px solid #e2e8f0;"}text-align:${al(j)};vertical-align:top;${nw}${o.bold ? "font-weight:bold;" : ""}`, esc(o.t) + lines + note + sub);
           }).join("")}</tr>`;
         }).join("") +
         `</table>`;

@@ -77,6 +77,28 @@ export function shiftWindow(day: string, kind: ShiftKind, tz: string, times: Shi
   return { kind, dayKey: day, start: atTime(day, ns, tz), end: atTime(nextDay, ds, tz) };
 }
 
+/** A clock time typed as "14:30", "1430" or "930" — 24-hour. Null when
+ *  it isn't one. */
+export function parseClock(s: string): { h: number; m: number } | null {
+  const t = (s || "").trim();
+  const m = /^(\d{1,2}):?(\d{2})$/.exec(t);
+  if (!m) return null;
+  const h = Number(m[1]), mi = Number(m[2]);
+  return h <= 23 && mi <= 59 ? { h, m: mi } : null;
+}
+
+/** The instant a clock time names inside a shift — a night shift's small
+ *  hours fall on the next calendar day. Null when the shift doesn't hold
+ *  that time ("19:00" on a 6:00–18:00 day shift). The shift's last minute
+ *  counts (a step finished at the change). */
+export function timeInShift(w: ShiftWindow, clock: string, tz: string): number | null {
+  const hm = parseClock(clock);
+  if (!hm) return null;
+  let at = atTime(w.dayKey, hm, tz);
+  if (at < w.start) at = atTime(dayKey(addDays(dayKeyToMs(w.dayKey, tz), 1, tz), tz), hm, tz);
+  return at >= w.start && at <= w.end ? at : null;
+}
+
 /** The shift that contains an instant. */
 export function shiftAt(ms: number, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): ShiftWindow {
   const k = dayKey(ms, tz);

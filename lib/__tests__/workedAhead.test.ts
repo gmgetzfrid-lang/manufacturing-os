@@ -51,7 +51,7 @@ describe("work done early and progress made show on the turnover", () => {
     const doneSec = text.slice(text.search(/^DONE — /m), text.search(/^NEXT — |^CARRIES /m));
     // Still going: where it stands against the plan, and the task's hours
     // with it (+5.8 early, −4.8 behind on the bundle pull).
-    expect(doneSec).toMatch(/E-17 Exchanger — 1 done, 2 in progress: Remove components, Pull bundle \(40%\), Hydroblast \(30%\) · .*1 done early \(planned 10-27T13:00\); 1 started early \(planned 10-28T11:00\); in progress — behind, plan had 100% by now · \+1 h/);
+    expect(doneSec).toMatch(/E-17 Exchanger — 1 done, 2 in progress: Remove components; Pull bundle \(40%\); Hydroblast \(30%\) · .*1 done early \(planned 10-27T13:00\); 1 started early \(planned 10-28T11:00\); in progress — behind, plan had 100% by now · \+1 h/);
     // Unfinished and due: it carries — where it stands, and its own hours on its own row.
     expect(text).toMatch(/Pull bundle · Schultz · was due 10-26T21:00 · done 40% · −4.8 h/);
     // Why it's ahead: both early steps, with the hours each is worth.

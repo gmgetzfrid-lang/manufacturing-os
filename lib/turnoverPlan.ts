@@ -263,8 +263,24 @@ export function crewsOf(report: ShiftReport, plan: TurnoverPlan, hrs: (h: number
 /** What got done, one row per task (equipment): its steps finished or
  *  moved this shift in one cell, what that meant for the plan, and the
  *  hours it's worth — not a line per sub-step. */
-export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, noteOf?: (id: string) => string | undefined): Array<{
+/** One step done or moved on the shift, on its own line: when (the time
+ *  punched for it), its WO when the task has more than one, its comment. */
+export interface DoneLine { id: string; name: string; time?: number; wo?: string; note?: string }
+
+export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, noteOf?: (id: string) => string | undefined, o: {
+  /** When the step was done, or moved last, on the shift. */
+  timeOf?: (id: string) => number | undefined;
+  /** Where the whole task stands: % done, and % planned by now. */
+  taskPct?: (taskId: string) => { pct: number; plan?: number } | undefined;
+  /** Why a step is behind, as said for the report. */
+  whyOf?: (id: string) => string | undefined;
+} = {}): Array<{
   task: string; wo: string; steps: string; who: string; result: { text: string; tone: NextTone }; vs: { text: string; tone?: "emerald" | "rose" }; ids: string[];
+  /** "3 done", "2 done, 1 in progress" — then a line per step. */
+  head: string; lines: DoneLine[];
+  taskPct?: { pct: number; plan?: number };
+  /** Why it's behind — the steps behind that have a reason given. */
+  why?: string;
 }> {
   const groups = new Map<string, ShiftRow[]>();
   for (const r of [...plan.done, ...plan.moved]) {
@@ -304,7 +320,26 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
     for (const r of rows) { const sh = shareOf(report, r.leaf.id); if (sh) net += sh.side === "ahead" ? sh.hours : -sh.hours; }
     const h = t.hrs(Math.round(Math.abs(net) * 10) / 10);
     const who = [...new Set(rows.map((r) => r.leaf.responsibleParty?.trim()).filter(Boolean))].join(", ");
+    const wos = [...new Set(rows.map((r) => r.leaf.workOrderRef?.trim()).filter(Boolean))];
+    const head = `${done.length ? `${done.length} done` : ""}${done.length && moved.length ? ", " : ""}${moved.length ? `${moved.length} in progress` : ""}`;
+    const lines: DoneLine[] = [...done, ...moved].map((r) => {
+      const id = r.leaf.id ?? r.leaf.name;
+      return {
+        id, name: r.percent < 100 ? `${r.leaf.name} (${r.percent}%)` : r.leaf.name,
+        time: r.leaf.id ? o.timeOf?.(r.leaf.id) : undefined,
+        // Its WO in front only when the task has several.
+        wo: wos.length > 1 ? r.leaf.workOrderRef?.trim() || undefined : undefined,
+        note: r.leaf.id ? noteOf?.(r.leaf.id) : undefined,
+      };
+    });
+    // Why it's behind: the steps behind plan that have a reason given.
+    const whys = rows.filter((r) => r.leaf.id && shareOf(report, r.leaf.id)?.side === "behind")
+      .map((r) => ({ r, w: o.whyOf?.(r.leaf.id!)?.trim() })).filter((x) => x.w);
+    const why = whys.length === 1 ? whys[0].w : whys.length ? whys.map((x) => `${x.r.leaf.name}: ${x.w}`).join("; ") : undefined;
+    const parentId = rows[0].parentId;
     return {
+      head, lines, why: why || undefined,
+      taskPct: parentId ? o.taskPct?.(parentId) : undefined,
       task: rows[0].parentName ?? rows[0].leaf.name,
       // The work order number(s) — one for most work orders.
       wo: [...new Set(rows.map((r) => r.leaf.workOrderRef?.trim()).filter(Boolean))].join(", "),

@@ -16,10 +16,9 @@
 // surfaces a group chip's subtask accordion.
 
 import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, ChevronDown, Crosshair, Layers, Info, GripVertical, CheckSquare, X as XIcon, ListChecks, Moon, Sun } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, Crosshair, Info, GripVertical, CheckSquare, X as XIcon, ListChecks, Moon, Sun } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import StatusControl from "@/components/projects/StatusControl";
-import ProgressControl from "@/components/projects/ProgressControl";
 import { assignGroupColors } from "@/lib/scheduleColors";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { splitPlacements, compareDayPlacements, wbsCompare, crewOf, startMsOf, finishMsOf, type DayPlacement, type DayCrew } from "@/lib/calendarPlacement";
@@ -29,6 +28,7 @@ import { DEFAULT_SHIFT_TIMES, crewWindows, workShiftOf, workSpan, shiftWindow, s
 import { bandIndex, stepBandDays, type Band } from "@/lib/shiftBands";
 import ShiftMark from "@/components/projects/ShiftMark";
 import DayAgendaPanel from "@/components/projects/DayAgendaPanel";
+import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
 import { OPEN_SETUP_EVENT } from "@/lib/scheduleSetup";
 import { overdueOpenWork } from "@/lib/openWork";
 
@@ -43,7 +43,7 @@ interface Props {
    *  ancestors) by a day delta. */
   onMoveDays?: (id: string, deltaDays: number) => void;
   /** One-click status change straight from a chip. */
-  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => unknown;
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number, forShift?: ShiftCredit) => unknown;
   /** Planned % by now per task, over the whole schedule (for the day list). */
   planNow?: Map<string, number>;
   /** Who is signed in (edits their own comments in the day list). */
@@ -69,6 +69,9 @@ interface Props {
   onStartNote?: (id: string, percent: number, note: string, forShift?: ShiftCredit) => Promise<boolean> | boolean;
   /** The project's shift-change times — which crew does each step. */
   shiftTimes?: ShiftTimes;
+  /** Update a step from the quick view: status, %, the time it happened,
+   *  the comment, why it's behind. */
+  onUpdateStep?: (id: string, u: StepUpdate) => Promise<boolean>;
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -77,7 +80,7 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
  *  shift running into the next morning. */
 type Placed = DayPlacement<Milestone> & { band: Band; bandStart: number; bandEnd: number };
 
-export default function ScheduleCalendarTileView({ planNow, userId, milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail, detailOpen, onAddNote, onSetProgressNote, onStartNote, shiftTimes = DEFAULT_SHIFT_TIMES }: Props) {
+export default function ScheduleCalendarTileView({ planNow, userId, milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail, detailOpen, onAddNote, onSetProgressNote, onStartNote, shiftTimes = DEFAULT_SHIFT_TIMES, onUpdateStep }: Props) {
   const tz = useScheduleTz();
   // Multi-select for bulk actions on the calendar (mirrors the timeline).
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -105,7 +108,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
     if (top + h > vh - 8) top = subPopover.anchorTop != null && subPopover.anchorTop - h - 4 >= 8 ? subPopover.anchorTop - h - 4 : Math.max(8, vh - h - 8);
     el.style.top = `${top}px`;
   });
-  const [popoverShowOthers, setPopoverShowOthers] = useState(false);
+
   // The day agenda: click a day number to get that day's full work list
   // (every step due, grouped by equipment, with progress entry).
   const [agendaDay, setAgendaDay] = useState<string | null>(null);
@@ -451,6 +454,10 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
     // Offer expand on any day the parent bar shows, so
     // the arrow is reachable wherever you're looking.
     const canExpand = !isLeaf(p.ms) && !showSubtasks;
+    const openQuick = (e: React.MouseEvent) => {
+      const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      setSubPopover((cur) => cur && cur.ms.id === p.ms.id && cur.dayKey === key && cur.band === p.band ? null : { ms: p.ms, top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 428)), dayKey: key, band: p.band, anchorTop: r.top });
+    };
     return (
       <Chip
         key={`${p.ms.id}-${p.dayIndex}`}
@@ -458,23 +465,15 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         todayStart={p.todayStart} todayEnd={p.todayEnd} idleToday={p.idleToday} crewToday={p.crew} bandStart={p.bandStart} bandEnd={p.bandEnd}
         childrenByParent={childrenByParent}
         ancestors={chain} color={color}
-        canEdit={canEdit}
         draggable={canEdit && !!p.ms.id && p.ms.status !== "completed"}
         onDragStart={(e) => { setDragId(p.ms.id ?? null); e.dataTransfer.setData("text/plain", `${p.ms.id}|${key}`); }}
         onTouchDragStart={p.ms.id ? (e) => startTouchDrag(p.ms.id!, key, p.ms.name, e) : undefined}
-        onClick={() => { if (selected.size > 0 && p.ms.id) toggleSelected(p.ms.id); else onOpenDetail(p.ms); }}
-        onSetStatus={onSetStatus}
-        onSetProgress={onSetProgress}
-        onSetProgressNote={onSetProgressNote}
-        onStartNote={onStartNote}
+        // The card opens its quick view — everything to update it, no sidebar.
+        onClick={(e) => { if (selected.size > 0 && p.ms.id) toggleSelected(p.ms.id); else if (p.ms.id && e) openQuick(e); else onOpenDetail(p.ms); }}
         progress={progress}
         canExpand={canExpand}
         isExpanded={!!subPopover && subPopover.ms.id === p.ms.id && subPopover.dayKey === key && subPopover.band === p.band}
-        onToggleExpand={canExpand && p.ms.id ? (e) => {
-          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-          setPopoverShowOthers(false);
-          setSubPopover((cur) => cur && cur.ms.id === p.ms.id && cur.dayKey === key && cur.band === p.band ? null : { ms: p.ms, top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 348)), dayKey: key, band: p.band, anchorTop: r.top });
-        } : undefined}
+        onToggleExpand={p.ms.id ? openQuick : undefined}
         selectable={canEdit && p.dayIndex === 0}
         selected={!!p.ms.id && selected.has(p.ms.id)}
         onToggleSelect={() => p.ms.id && toggleSelected(p.ms.id)}
@@ -624,6 +623,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           onSetProgress={onSetProgress}
           onAddNote={onAddNote}
           onSetProgressNote={onSetProgressNote}
+          onUpdateStep={onUpdateStep}
           onStartNote={onStartNote}
           shiftTimes={shiftTimes}
           onOpenDetail={(m) => { onOpenDetail(m); }}
@@ -846,7 +846,9 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
       {subPopover && (() => {
         const dayKey = subPopover.dayKey;
         // By start, then the one that finishes first, then the file's order.
-        const all = leafDescendants(subPopover.ms).slice().sort((a, b) => startMs(a) - startMs(b) || finishMs(a) - finishMs(b) || wbsCompare(a.wbs, b.wbs));
+        // A card that is a single step is its own list.
+        const kids = leafDescendants(subPopover.ms);
+        const all = (kids.length ? kids : [subPopover.ms]).slice().sort((a, b) => startMs(a) - startMs(b) || finishMs(a) - finishMs(b) || wbsCompare(a.wbs, b.wbs));
         const band = subPopover.band;
         // Opened from a shift: that shift's steps; the rest behind a toggle.
         const coversDay = (l: Milestone) => {
@@ -858,98 +860,22 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         const onDay = all.filter(coversDay);
         const others = all.filter((l) => !coversDay(l));
         const dayLabel = `${band === "day" ? "Day shift " : band === "night" ? "Night shift " : ""}${fmtInTz(ymdToDate(dayKey, tz), tz, { weekday: "short", month: "short", day: "numeric" })}`;
-        const timeOf = (l: Milestone) => {
-          const s0 = startMs(l), f0 = finishMs(l);
-          // Under a day long and timed: its clock, across midnight too.
-          if (f0 > s0 && f0 - s0 < 86_400_000 && (hasTimeOfDay(s0, tz) || hasTimeOfDay(f0, tz))) return `${clockLabel(s0, tz) || "0:00"}–${clockLabel(f0, tz) || "24:00"}`;
-          const sameDayStart = ymd(new Date(s0), tz) === dayKey, sameDayEnd = ymd(new Date(f0), tz) === dayKey;
-          const a = sameDayStart ? (clockLabel(s0, tz) || "0:00") : "…";
-          const b = sameDayEnd ? (clockLabel(f0, tz) || "24:00") : "…";
-          return a === "…" && b === "…" ? "all day" : `${a}–${b}`;
-        };
-        const pctOf = (l: Milestone) => (l.id ? progress?.get(l.id)?.percent : undefined) ?? (l.percentComplete != null ? Math.round(l.percentComplete) : (l.status === "completed" ? 100 : 0));
-        // A plain function, not a component made here: a component made in
-        // render is a new type every render, so React would throw each row
-        // away on any redraw (a refresh, a resize, a phone's keyboard
-        // opening) — and the progress or status box open in it with it.
-        const stepRow = (leaf: Milestone, muted?: boolean) => (
-          <li key={leaf.id ?? leaf.name} className={`px-3 py-2 flex items-center gap-2 ${muted ? "opacity-60" : ""}`}>
-            <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
-              <StatusControl
-                status={leaf.status} size="sm" variant="dot" disabled={!canEdit || !onSetStatus || !leaf.id}
-                onPick={(st, reason, p) => { if (leaf.id && onSetStatus) void onSetStatus(leaf.id, st, reason, p); }}
-                percent={pctOf(leaf)}
-                onSetProgress={onSetProgress ? (v) => { if (leaf.id) onSetProgress(leaf.id, v); } : undefined}
-                onStartWithNote={onStartNote && leaf.id ? (v, n, w) => onStartNote(leaf.id!, v, n, w) : undefined}
-              />
-            </span>
-            <button onClick={() => { onOpenDetail(leaf); setSubPopover(null); }} className="flex-1 min-w-0 text-left">
-              <span className={`block text-[12px] truncate ${leaf.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{leaf.name}</span>
-              <span className="block text-[9px] text-[var(--color-text-faint)] font-mono">
-                {muted ? fmtInTz(startMs(leaf), tz, { month: "short", day: "numeric" }) : timeOf(leaf)}
-              </span>
-            </button>
-            <span className="shrink-0 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-              <ProgressControl
-                percent={pctOf(leaf)}
-                onPick={(v) => { if (leaf.id && onSetProgress) onSetProgress(leaf.id, v); }}
-                onSaveWithNote={onSetProgressNote && leaf.id ? (v, n, w) => onSetProgressNote(leaf.id!, v, n, w) : undefined}
-                disabled={!canEdit || !onSetProgress || !leaf.id}
-                size="sm"
-              />
-              {canEdit && onMoveDays && leaf.id && (
-                <>
-                  <button onClick={() => onMoveDays(leaf.id!, -1)} title="1 day earlier" className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] transition-colors"><ChevronLeft className="w-3.5 h-3.5" /></button>
-                  <button onClick={() => onMoveDays(leaf.id!, 1)} title="1 day later" className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] transition-colors"><ChevronRight className="w-3.5 h-3.5" /></button>
-                </>
-              )}
-            </span>
-          </li>
-        );
         return (
           <div className="fixed inset-0 z-[160]" onClick={() => setSubPopover(null)}>
             <div
               ref={subRef}
-              className="absolute w-[340px] max-w-[92vw] max-h-[70dvh] overflow-y-auto bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg animate-in fade-in zoom-in-95 duration-150"
+              className="absolute w-[420px] max-w-[94vw] max-h-[80dvh] overflow-y-auto bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg animate-in fade-in zoom-in-95 duration-150 max-sm:!left-0 max-sm:!right-0 max-sm:!top-auto max-sm:bottom-0 max-sm:!w-full max-sm:!max-w-none max-sm:rounded-b-none max-sm:max-h-[88dvh]"
               style={{ top: subPopover.top, left: subPopover.left }}
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="px-3 py-2 border-b border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)]">
-                <div className="flex items-center gap-2">
-                  <Layers className="w-3.5 h-3.5 text-[var(--color-accent)] shrink-0" />
-                  <span className="text-[12px] font-bold text-[var(--color-text)] truncate flex-1">{subPopover.ms.name}</span>
-                  <button onClick={() => { onOpenDetail(subPopover.ms); setSubPopover(null); }} className="text-[10px] font-bold text-[var(--color-accent)] hover:underline shrink-0">Open</button>
-                </div>
-                <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
-                  <b className="text-[var(--color-text)]">{dayLabel}</b> · {onDay.length} of {all.length} step{all.length === 1 ? "" : "s"} {band ? "this shift" : "scheduled this day"}
-                </div>
-              </div>
-              {onDay.length === 0 ? (
-                <div className="px-3 py-3 text-[11px] text-[var(--color-text-faint)]">Nothing under this task is scheduled on {dayLabel}.</div>
-              ) : (
-                <ul className="divide-y divide-[var(--color-border)]">
-                  {onDay.map((leaf) => stepRow(leaf))}
-                </ul>
-              )}
-              {others.length > 0 && (
-                <div className="border-t border-[var(--color-border)]">
-                  <button
-                    onClick={() => setPopoverShowOthers((v) => !v)}
-                    className="w-full px-3 py-1.5 text-left text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-1"
-                  >
-                    <ChevronRight className={`w-3 h-3 transition-transform ${popoverShowOthers ? "rotate-90" : ""}`} />
-                    {others.length} step{others.length === 1 ? "" : "s"} on other {band ? "shifts" : "days"}
-                  </button>
-                  {popoverShowOthers && (
-                    <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
-                      {others.map((leaf) => stepRow(leaf, true))}
-                    </ul>
-                  )}
-                </div>
-              )}
-              <div className="px-3 py-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-faint)]">
-                Dot = status · % = progress · ◀ ▶ = move this step a day (others stay put; the parent span follows).
-              </div>
+              <CalendarQuickView
+                key={`${subPopover.ms.id}:${dayKey}:${band ?? ""}`}
+                task={subPopover.ms} onDay={onDay} others={others} dayKey={dayKey} band={band ?? null} dayLabel={dayLabel}
+                tz={tz} times={shiftTimes} progress={progress} planNow={planNow} canEdit={canEdit}
+                onUpdate={onUpdateStep}
+                onOpenDetail={(m) => { onOpenDetail(m); setSubPopover(null); }}
+                onMoveDays={canEdit ? onMoveDays : undefined}
+              />
             </div>
           </div>
         );
@@ -975,6 +901,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           onSetProgress={onSetProgress}
           onAddNote={onAddNote}
           onSetProgressNote={onSetProgressNote}
+          onUpdateStep={onUpdateStep}
           onStartNote={onStartNote}
           shiftTimes={shiftTimes}
           onOpenDetail={(m) => { onOpenDetail(m); }}
@@ -1035,8 +962,8 @@ function DayScroller({ children, fade }: { children: React.ReactNode; fade: stri
 }
 
 function Chip({
-  ms, dayIndex, spanDays, todayStart, todayEnd, idleToday, crewToday, bandStart, bandEnd, childrenByParent, ancestors, color, canEdit, draggable, onDragStart, onTouchDragStart, onClick,
-  onSetStatus, onSetProgress, onSetProgressNote, onStartNote, progress, canExpand, isExpanded, onToggleExpand, selectable, selected, onToggleSelect, dimmed, shiftTimes,
+  ms, dayIndex, spanDays, todayStart, todayEnd, idleToday, crewToday, bandStart, bandEnd, childrenByParent, ancestors, color, draggable, onDragStart, onTouchDragStart, onClick,
+  progress, canExpand, isExpanded, onToggleExpand, selectable, selected, onToggleSelect, dimmed, shiftTimes,
 }: {
   ms: Milestone; dayIndex: number; spanDays: number;
   /** This day's active window (see DayPlacement). */
@@ -1052,8 +979,8 @@ function Chip({
   draggable: boolean;
   onDragStart?: (e: React.DragEvent) => void;
   onTouchDragStart?: (e: React.PointerEvent) => void;
-  onClick: () => void;
-  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => unknown;
+  onClick: (e?: React.MouseEvent) => void;
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number, forShift?: ShiftCredit) => unknown;
   onSetProgress?: (id: string, percent: number) => unknown;
   onSetProgressNote?: (id: string, percent: number, note: string, forShift?: ShiftCredit) => Promise<boolean> | boolean;
   onStartNote?: (id: string, percent: number, note: string, forShift?: ShiftCredit) => Promise<boolean> | boolean;
@@ -1181,27 +1108,13 @@ function Chip({
       )}
 
       <div className="flex items-start gap-1.5">
-        {/* Status dot — same picker as everywhere. */}
+        {/* Status dot: opens the quick view — status, %, time and comment
+            for each step on this shift, in one place. */}
         <span className="shrink-0 mt-[3px]" onClick={(e) => e.stopPropagation()}>
-          {isLeaf ? (
-            <StatusControl
-              status={ms.status}
-              size="sm"
-              variant="dot"
-              disabled={!canEdit || !onSetStatus || !ms.id}
-              onPick={(st, reason, p) => { if (ms.id && onSetStatus) onSetStatus(ms.id, st, reason, p); }}
-              percent={pct}
-              onSetProgress={onSetProgress ? (p) => { if (ms.id) onSetProgress(ms.id, p); } : undefined}
-              onStartWithNote={onStartNote && ms.id ? (p, n, w) => onStartNote(ms.id!, p, n, w) : undefined}
-            />
-          ) : (
-            // A work order's status rolls up from its steps: tapping it opens
-            // the steps for this shift, each with its own % and comment.
-            <button type="button" onClick={(e) => { e.stopPropagation(); if (onToggleExpand) onToggleExpand(e); else onClick(); }}
-              title="Update its steps for this shift" className="relative inline-flex after:absolute after:-inset-1.5 pointer-coarse:after:-inset-3 after:content-['']">
-              <StatusControl status={effStatus} size="sm" variant="dot" readOnly title="Update its steps for this shift" onPick={() => {}} />
-            </button>
-          )}
+          <button type="button" onClick={(e) => { e.stopPropagation(); if (onToggleExpand) onToggleExpand(e); else onClick(e); }}
+            title={isLeaf ? "Update this step" : "Update its steps for this shift"} className="relative inline-flex after:absolute after:-inset-1.5 pointer-coarse:after:-inset-3 after:content-['']">
+            <StatusControl status={effStatus} size="sm" variant="dot" readOnly title={isLeaf ? "Update this step" : "Update its steps for this shift"} onPick={() => {}} />
+          </button>
         </span>
         <div className="min-w-0 flex-1">
           <div className={`text-[11px] font-semibold leading-snug line-clamp-2 break-words ${effStatus === "completed" ? "line-through opacity-70" : ""}`}>{ms.name}</div>
@@ -1225,17 +1138,9 @@ function Chip({
               <span className="truncate">{meta}</span>
             </span>
             <span className="shrink-0 flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
-              {isLeaf ? (
-                <ProgressControl
-                  percent={pct}
-                  onPick={(p) => { if (ms.id && onSetProgress) onSetProgress(ms.id, p); }}
-                  onSaveWithNote={onSetProgressNote && ms.id ? (p, n, w) => onSetProgressNote(ms.id!, p, n, w) : undefined}
-                  disabled={!canEdit || !onSetProgress || !ms.id}
-                  size="sm"
-                />
-              ) : (
-                <button type="button" onClick={(e) => { e.stopPropagation(); if (onToggleExpand) onToggleExpand(e); else onClick(); }}
-                  title={`${pct}% complete · ${done}/${leafTotal} steps done — tap to update its steps`}
+              {(
+                <button type="button" onClick={(e) => { e.stopPropagation(); if (onToggleExpand) onToggleExpand(e); else onClick(e); }}
+                  title={isLeaf ? `${pct}% complete — tap to update` : `${pct}% complete · ${done}/${leafTotal} steps done — tap to update its steps`}
                   className={`relative inline-flex items-center justify-center rounded-md border px-1 py-0 text-[9px] font-bold tabular-nums after:absolute after:-inset-1 pointer-coarse:after:-inset-2.5 after:content-[''] hover:brightness-95 ${pct >= 100 ? "text-emerald-700 bg-emerald-50 border-emerald-200" : pct > 0 ? "text-blue-700 bg-blue-50 border-blue-200" : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]"}`}>
                   {pct}%
                 </button>

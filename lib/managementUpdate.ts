@@ -9,7 +9,7 @@
 // nothing is blocked.
 
 import { capacityOf, askedResult } from "@/lib/shiftHandover";
-import { turnoverPlan, nextOf, askedLine, crewsOf, vsPlan, doneByTask } from "@/lib/turnoverPlan";
+import { turnoverPlan, nextOf, askedLine, crewsOf, vsPlan, doneByTask, shareOf } from "@/lib/turnoverPlan";
 import { type PullCrew, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
 import { rankHazards, type HazardJobInput, type HazardKind } from "@/lib/safetyMoment";
 import { safetyBrief, talkSources, projectFacts, RISKS_RANKED, type ProjectBase } from "@/lib/safetyTalk";
@@ -49,6 +49,30 @@ export interface UpdateLookups {
   safetyProject?: ProjectBase;
   /** The risk cards of the shifts before the next one (riskHistory). */
   safetyRecent?: HazardKind[][];
+  /** Show the time each step was done in Done (off keeps the update short;
+   *  the times are in the time log). */
+  showTimes?: boolean;
+  /** When a step was done, or moved last, on the shift. */
+  timeOf?: (stepId: string) => number | undefined;
+  /** Where a whole task stands: % done, % planned by now. */
+  taskPct?: (taskId: string) => { pct: number; plan?: number } | undefined;
+  /** Why a step is behind, as said for the report. */
+  whyOf?: (stepId: string) => string | undefined;
+  /** Each crew's supervisor at the meeting and head count — this shift's
+   *  and the next's. */
+  crewsThis?: Record<string, { supervisor?: string; headcount?: number | null }>;
+  crewsNext?: Record<string, { supervisor?: string; headcount?: number | null }>;
+  /** The shift's safety incidents: none (said so), or each one. Undefined =
+   *  not recorded. */
+  incidents?: { none: boolean; items: Array<{ at: number; kind: string; text: string }> };
+  /** Notes & actions: the shift's own, and follow-ups left open by earlier
+   *  shifts (with where they came from). */
+  shiftNotes?: Array<{ at: number; text: string; followUp?: boolean; from?: string }>;
+}
+
+/** "Mike Leonard · 14 on site" — what was entered, "—" when nothing was. */
+export function crewLine(c?: { supervisor?: string; headcount?: number | null }): string {
+  return [c?.supervisor?.trim() || null, c?.headcount != null ? `${c.headcount} on site` : null].filter(Boolean).join(" · ") || "—";
 }
 
 /** The next shift's steps as the safety moment ranks them: their hours
@@ -90,7 +114,7 @@ const MAX_ROWS = 12;
 const shiftName = (w: ShiftWindow) => (w.kind === "day" ? "Day shift" : "Night shift");
 
 /** Rows as a table where the task is named once, its steps under it. */
-function byTask(rows: ShiftRow[], cells: (r: ShiftRow) => ExportCell[]): ExportCell[][] {
+function byTask(rows: ShiftRow[], cells: (r: ShiftRow) => ExportCell[], taskSub?: (r: ShiftRow) => string | undefined): ExportCell[][] {
   const order: string[] = [];
   const groups = new Map<string, ShiftRow[]>();
   for (const r of rows) {
@@ -100,7 +124,10 @@ function byTask(rows: ShiftRow[], cells: (r: ShiftRow) => ExportCell[]): ExportC
   }
   const out: ExportCell[][] = [];
   for (const k of order) {
-    groups.get(k)!.forEach((r, i) => out.push([i === 0 ? { t: r.parentName ?? r.leaf.name, bold: true } : "", ...cells(r)]));
+    groups.get(k)!.forEach((r, i) => {
+      const sub = i === 0 ? taskSub?.(r) : undefined;
+      out.push([i === 0 ? { t: r.parentName ?? r.leaf.name, bold: true, ...(sub ? { sub: [{ t: sub }] } : {}) } : "", ...cells(r)]);
+    });
   }
   return out;
 }
@@ -156,7 +183,9 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
 
   // ── 2. Done this shift — and what each one meant for the plan.
   const doneRows = [...plan.done, ...plan.moved];
-  const byTaskDone = doneByTask(report, plan, t, (id) => note(id));
+  const byTaskDone = doneByTask(report, plan, t, (id) => note(id), { timeOf: look.timeOf, taskPct: look.taskPct, whyOf: look.whyOf });
+  const pctText = (p?: { pct: number; plan?: number }) => (p ? `task ${p.pct}% done${p.plan != null ? ` · plan ${p.plan}%` : ""}` : undefined);
+  const taskSub = (r: ShiftRow) => (r.parentId ? pctText(look.taskPct?.(r.parentId)) : undefined);
   if (doneRows.length || asked.length) {
     out.push({
       id: "done", title: `Done — ${shiftName(shift)} ${f.D(shift.start)}`,
@@ -165,7 +194,13 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
         ...(byTaskDone.length ? [{
           k: "table", head: ["Task", "WO", "Done this shift", "Who", "What it means", "vs plan"], align: ["left", "left", "left", "left", "left", "right"],
           textLabels: ["", "WO", "", "by", "", "vs plan"], nowrap: [1, 5],
-          rows: byTaskDone.map((x) => [{ t: x.task, bold: true }, x.wo, x.steps, muted(x.who), { t: x.result.text, tone: x.result.tone === "amber" ? "amber" : "emerald", bold: true }, { t: x.vs.text, tone: x.vs.tone, bold: true }] as ExportCell[]),
+          rows: byTaskDone.map((x) => [
+            { t: x.task, bold: true, ...(x.taskPct ? { sub: [{ t: pctText(x.taskPct)! }] } : {}) }, x.wo,
+            // One step per line — its time when times are on, its WO when the task has several.
+            { t: `${x.head}:`, lines: x.lines.map((l) => ({ lead: [l.wo ? `WO ${l.wo}` : "", look.showTimes && l.time != null ? f.T(l.time) : ""].filter(Boolean).join(" ") || undefined, t: l.name, note: l.note })) },
+            muted(x.who),
+            { t: x.result.text, tone: x.result.tone === "amber" ? "amber" : "emerald", bold: true, ...(x.why ? { sub: [{ t: `Why behind: ${x.why}`, tone: "amber" as const, italic: true }] } : {}) },
+            { t: x.vs.text, tone: x.vs.tone, bold: true }] as ExportCell[]),
         } as ExportBlock] : []),
         ...(asked.length ? [{ k: "note", text: `Asked to try last turnover: ${askedLine(asked, askedResult)}` } as ExportBlock] : []),
       ],
@@ -203,7 +238,8 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   const vsCell = (r: ShiftRow): ExportCell => { const v = vsPlan(report, r, f.hrs); return { t: v.text, tone: v.tone, bold: true }; };
   // A step's comment shows once: with its credit under Done, if it moved.
   const credited = new Set([...plan.done, ...plan.moved].map((r) => r.leaf.id));
-  const stepCell = (r: ShiftRow): ExportCell => ({ t: r.leaf.name, note: [credited.has(r.leaf.id) ? undefined : note(r.leaf.id), kindOf.get(r) === "try" ? look.tryOf!(r.leaf.id!)?.note ?? undefined : undefined].filter(Boolean).join(" · ") || undefined });
+  const whyLine = (r: ShiftRow) => { const w = r.leaf.id && shareOf(report, r.leaf.id)?.side === "behind" ? look.whyOf?.(r.leaf.id)?.trim() : undefined; return w ? [{ t: `Why behind: ${w}`, tone: "amber" as const, italic: true }] : undefined; };
+  const stepCell = (r: ShiftRow): ExportCell => ({ t: r.leaf.name, note: [credited.has(r.leaf.id) ? undefined : note(r.leaf.id), kindOf.get(r) === "try" ? look.tryOf!(r.leaf.id!)?.note ?? undefined : undefined].filter(Boolean).join(" · ") || undefined, ...(whyLine(r) ? { sub: whyLine(r) } : {}) });
   const more = (n: number, cols: number) => (n > 0 ? [[muted(`+ ${n} more`), ...Array(cols - 1).fill("")] as ExportCell[]] : []);
   if (tonight.length || later.length) {
     const shown = tonight.slice(0, MAX_ROWS * 3);
@@ -218,7 +254,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
         tonight.length ? {
           k: "table", head: ["Task", "Step", "WO", "Who", "When", "Done", "Goal", "vs plan"], align: ["left", "left", "left", "left", "left", "right", "right", "right"],
           textLabels: ["", "", "WO", "by", "", "done", "goal", "vs plan"], nowrap: [2, 5, 6, 7],
-          rows: [...byTask(shown, (r) => [stepCell(r), wo(r), who(r), planCell(r), `${r.percent}%`, goalCell(r), vsCell(r)]), ...more(tonight.length - shown.length, 8)],
+          rows: [...byTask(shown, (r) => [stepCell(r), wo(r), who(r), planCell(r), `${r.percent}%`, goalCell(r), vsCell(r)], taskSub), ...more(tonight.length - shown.length, 8)],
         } as ExportBlock : { k: "note", text: `Nothing planned for the ${shiftName(next).toLowerCase()}.` } as ExportBlock,
         ...(tried.length ? [{ k: "note", text: `Could try if there's time: ${tried.length} step${tried.length === 1 ? "" : "s"}, ${f.hrs(capa.used)}${capa.hours > 0 && ps ? ` of ${f.hrs(capa.hours)}${capa.over ? " — over" : ""} (${ps.crew ? `${ps.crew}, ` : ""}${ps.hands} × ${Math.min(ps.hours, shiftHrs)} h)` : ""}.`, tone: "amber" } as ExportBlock] : []),
         ...(finishing.length ? [{ k: "note", text: `Planned to finish on the ${shiftName(next).toLowerCase()}: ${finishing.slice(0, 4).map((x) => `${x.name} (${f.T(x.at)})`).join(", ")}${finishing.length > 4 ? ` + ${finishing.length - 4} more` : ""}.` } as ExportBlock] : []),
@@ -241,19 +277,27 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       blocks: [{
         k: "table", head: ["Task", "Step", "WO", "Who", "Why it carries", "Done", "vs plan"], align: ["left", "left", "left", "left", "left", "right", "right"],
         textLabels: ["", "", "WO", "by", "", "done", "vs plan"], nowrap: [2, 5, 6],
-        rows: [...byTask(shown, (r) => [stepCell(r), wo(r), who(r), why(r), doneCell(r), vsCell(r)]), ...more(later.length - shown.length, 7)],
+        rows: [...byTask(shown, (r) => [stepCell(r), wo(r), who(r), why(r), doneCell(r), vsCell(r)], taskSub), ...more(later.length - shown.length, 7)],
       }],
     });
   }
 
   // ── Crews — right after where we stand: who was here, who's coming.
   const cr = crewsOf(report, plan, f.hrs);
+  // Each crew: its supervisor at the meeting and head count on site (the
+  // attendance) — and any company added at the meeting that has no steps.
+  const crewRows = (list: Array<{ crew: string; note?: string }>, counts?: Record<string, { supervisor?: string; headcount?: number | null }>) => {
+    const named = new Set(list.map((x) => x.crew));
+    const extra = Object.keys(counts ?? {}).filter((k) => !named.has(k) && (counts![k].supervisor?.trim() || counts![k].headcount != null));
+    const rows = [...list.map((x) => ({ title: x.crew, value: crewLine(counts?.[x.crew]), note: x.note })), ...extra.map((k) => ({ title: k, value: crewLine(counts![k]) }))];
+    return rows.length ? rows : [{ title: "No work planned", value: "" }];
+  };
   if (cr.worked.length || cr.coming.length) {
     out.splice(out.findIndex((x) => x.id === "stand") + 1, 0, {
       id: "who", title: "Crews",
       blocks: [{ k: "columns", cols: [
-        { title: `${shiftName(shift)} ${f.D(shift.start)} — who was here`, rows: cr.worked.length ? cr.worked.map((x) => ({ title: x.crew, value: x.text, note: x.note })) : [{ title: "No work planned", value: "" }] },
-        { title: `${shiftName(next)} ${f.D(next.start)} — who's coming`, rows: cr.coming.length ? cr.coming.map((x) => ({ title: x.crew, value: x.text, note: x.note })) : [{ title: "No work planned", value: "" }] },
+        { title: `${shiftName(shift)} ${f.D(shift.start)} — who was here`, rows: crewRows(cr.worked, look.crewsThis) },
+        { title: `${shiftName(next)} ${f.D(next.start)} — who's coming`, rows: crewRows(cr.coming, look.crewsNext) },
       ] }],
     });
   }
@@ -266,6 +310,27 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     out.push({
       id: "safety", title: `Safety topics — ${shiftName(next).toLowerCase()}`, offByDefault: true,
       blocks: topics.map((t, i) => ({ k: "bullets", title: `${i + 1}. ${t.title}`, lead: `${t.kicker} — ${t.why}`, tone: i === 0 ? "slate" : i === 1 ? "rose" : "amber", items: t.points.map((p) => p.say), sources: talkSources(t) } as ExportBlock)),
+    });
+  }
+
+  // ── Safety incidents on the shift — its own box, sent with or without
+  // the safety topics.
+  const inc = look.incidents;
+  out.push({
+    id: "incidents", title: `Safety incidents — ${shiftName(shift)} ${f.D(shift.start)}`,
+    blocks: !inc ? [{ k: "note", text: "Not recorded.", tone: "muted" }]
+      : inc.items.length ? [{ k: "table", head: ["Time", "Kind", "What happened"], align: ["left", "left", "left"], nowrap: [0],
+        rows: [...inc.items].sort((a, b) => a.at - b.at).map((x) => [f.T(x.at), { t: x.kind, bold: true }, x.text] as ExportCell[]) }]
+      : [{ k: "note", text: "None.", tone: "emerald" }],
+  });
+
+  // ── Notes & actions: the shift's own, then follow-ups left open earlier.
+  const sn = look.shiftNotes ?? [];
+  if (sn.length) {
+    out.push({
+      id: "notes", title: "Notes & actions", sub: "follow-ups and anything else that happened",
+      blocks: [{ k: "table", head: ["Time", "Note"], align: ["left", "left"], nowrap: [0],
+        rows: [...sn].sort((a, b) => a.at - b.at).map((x) => [x.from ? `${f.D(x.at)} ${f.T(x.at)}` : f.T(x.at), { t: x.text, ...(x.followUp ? { sub: [{ t: x.from ? `Follow-up, open since ${x.from}` : "Follow-up — stays until cleared", tone: "amber" as const }] } : {}) }] as ExportCell[]) }],
     });
   }
   return out;
