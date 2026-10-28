@@ -102,6 +102,8 @@ interface Props {
   /** Opens "Plan the next shift" (swap, pull in, push out — hosted by the
    *  schedule, the same panel as the calendar's). */
   onPlanNext?: (next: ShiftWindow) => void;
+  /** Correct when a step really started / finished. */
+  onFixTimes?: (id: string, t: { start?: number | null; finish?: number | null }) => Promise<boolean>;
 }
 
 const NONE_CANCELLED: CancelledJob[] = [];
@@ -112,7 +114,7 @@ const MEETINGS: Array<{ id: MeetingKind; label: string; Icon: typeof Rocket }> =
   { id: "closeout", label: "Close-out", Icon: Trophy },
 ];
 
-export default function ShiftReportView({ milestones: rawLive, progress: liveProgress, projectId, projectName, cancelled = NONE_CANCELLED, userId, userName, canEdit = false, onUpdateStep, onDiscovery, pathNow, onPlanNext }: Props) {
+export default function ShiftReportView({ milestones: rawLive, progress: liveProgress, projectId, projectName, cancelled = NONE_CANCELLED, userId, userName, canEdit = false, onUpdateStep, onDiscovery, pathNow, onPlanNext, onFixTimes }: Props) {
   const tz = useScheduleTz();
   // The project's shift-change times — the same on every device.
   const times = useShiftTimes(projectId);
@@ -843,7 +845,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       {/* A row's step, updated right here: the calendar's quick view. */}
       {mounted && editing && onUpdateStep && createPortal(
         <RowEditor id={editing} milestones={live} progress={liveProgress} planNow={planByTask} tz={tz} times={times} shift={shift} marks={pathMarks(crit)}
-          canEdit={canEdit} onUpdate={onUpdateStep} onClose={() => setEditing(null)} />,
+          canEdit={canEdit} onUpdate={onUpdateStep} onFixTimes={onFixTimes} onClose={() => setEditing(null)} />,
         document.body,
       )}
     </div>
@@ -853,10 +855,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
 
 /** One step from the report, in the quick view: status, %, the time it
  *  happened, its comment (revised in place too), why it's behind. */
-function RowEditor({ id, milestones, progress, planNow, tz, times, shift, canEdit, onUpdate, onClose, marks }: {
+function RowEditor({ id, milestones, progress, planNow, tz, times, shift, canEdit, onUpdate, onFixTimes, onClose, marks }: {
   id: string; milestones: Milestone[]; progress?: Map<string, ProgressInfo>; planNow?: Map<string, number>; marks?: PathMarks;
   tz: string; times: ShiftTimes; shift: ShiftWindow; canEdit: boolean;
   onUpdate: (id: string, u: StepUpdate) => Promise<boolean>; onClose: () => void;
+  onFixTimes?: (id: string, t: { start?: number | null; finish?: number | null }) => Promise<boolean>;
 }) {
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -878,7 +881,7 @@ function RowEditor({ id, milestones, progress, planNow, tz, times, shift, canEdi
           <button type="button" onClick={onClose} aria-label="Close" className="w-7 h-7 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <CalendarQuickView key={id} task={parent ?? step} onDay={[step]} others={others} dayKey={shift.dayKey} band={shift.kind} dayLabel={label}
-          tz={tz} times={times} progress={progress} planNow={planNow} canEdit={canEdit} onUpdate={onUpdate} marks={marks} />
+          tz={tz} times={times} progress={progress} planNow={planNow} canEdit={canEdit} onUpdate={onUpdate} onFixTimes={onFixTimes} marks={marks} />
       </div>
     </div>
   );

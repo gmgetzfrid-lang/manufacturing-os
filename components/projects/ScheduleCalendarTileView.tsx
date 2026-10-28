@@ -80,6 +80,8 @@ interface Props {
   now?: number;
   /** Opens "Plan the next shift" (swap, pull in, push out work orders). */
   onPlanNext?: (next: ShiftWindow) => void;
+  /** Correct when a step really started / finished. */
+  onFixTimes?: (id: string, t: { start?: number | null; finish?: number | null }) => Promise<boolean>;
   /** Found work on a task: into the schedule (DiscoveryForm). */
   onDiscovery?: (task: Milestone) => void;
 }
@@ -90,7 +92,7 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
  *  shift running into the next morning. */
 type Placed = DayPlacement<Milestone> & { band: Band; bandStart: number; bandEnd: number; ahead?: boolean; crit?: boolean };
 
-export default function ScheduleCalendarTileView({ planNow, userId, milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail, detailOpen, onAddNote, onSetProgressNote, onStartNote, shiftTimes = DEFAULT_SHIFT_TIMES, onUpdateStep, pathMarks, onDiscovery, now: clockNow, onPlanNext }: Props) {
+export default function ScheduleCalendarTileView({ planNow, userId, milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail, detailOpen, onAddNote, onSetProgressNote, onStartNote, shiftTimes = DEFAULT_SHIFT_TIMES, onUpdateStep, pathMarks, onDiscovery, now: clockNow, onPlanNext, onFixTimes }: Props) {
   const tz = useScheduleTz();
   // Multi-select for bulk actions on the calendar (mirrors the timeline).
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -671,6 +673,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           onAddNote={onAddNote}
           onSetProgressNote={onSetProgressNote}
           onUpdateStep={onUpdateStep}
+          onFixTimes={onFixTimes}
           pathMarks={pathMarks}
           now={clockNow}
           onStartNote={onStartNote}
@@ -922,7 +925,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                 task={subPopover.ms} onDay={onDay} others={others} dayKey={dayKey} band={band ?? null} dayLabel={dayLabel} marks={pathMarks}
                 onDiscovery={onDiscovery ? (t) => { setSubPopover(null); onDiscovery(t); } : undefined}
                 tz={tz} times={shiftTimes} progress={progress} planNow={planNow} canEdit={canEdit}
-                onUpdate={onUpdateStep}
+                onUpdate={onUpdateStep} onFixTimes={onFixTimes}
                 onOpenDetail={(m) => { onOpenDetail(m); setSubPopover(null); }}
                 onMoveDays={canEdit ? onMoveDays : undefined}
               />
@@ -952,6 +955,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           onAddNote={onAddNote}
           onSetProgressNote={onSetProgressNote}
           onUpdateStep={onUpdateStep}
+          onFixTimes={onFixTimes}
           pathMarks={pathMarks}
           now={clockNow}
           onStartNote={onStartNote}

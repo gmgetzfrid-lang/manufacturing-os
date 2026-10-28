@@ -34,7 +34,7 @@ import {
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import type { CancelledJob } from "@/lib/cancelledJobs";
-import { groupTasksUnderParent, setTaskDuration, addMilestoneNote, stateOf, deleteMilestones, restoreDeletedMilestones, applyBulkFieldChange, creditProgressTo, createMilestone, updateMilestone, deleteMilestone, deleteMilestoneNote, type MilestoneState } from "@/lib/milestones";
+import { groupTasksUnderParent, setTaskDuration, addMilestoneNote, stateOf, deleteMilestones, restoreDeletedMilestones, applyBulkFieldChange, creditProgressTo, createMilestone, updateMilestone, deleteMilestone, deleteMilestoneNote, setActualTimes, type MilestoneState } from "@/lib/milestones";
 import { planDiscovery, discoveryAttr, impactLine, type DiscoveryDraft, type DiscoveryRecord } from "@/lib/discovery";
 import DiscoveryForm from "@/components/projects/DiscoveryForm";
 import MarkSheet from "@/components/projects/MarkSheet";
@@ -618,7 +618,7 @@ export default function ExecutionView({
   }, [byId, orgId, userId, userName]);
   const progressWithNote = useCallback(async (id: string, pct: number, note: string, forShift?: ShiftCredit): Promise<boolean> => {
     const ok = await setProgress(id, pct, forShift);
-    if (ok && note) await addNote(id, noteFor(note, forShift && forShift.at < shiftAt(Date.now(), tz, shiftTimes).start ? forShift : undefined), forShift?.at, pct >= 100 ? "completed" : undefined);
+    if (ok && note) await addNote(id, noteFor(note, forShift && forShift.at < shiftAt(Date.now(), tz, shiftTimes).start ? forShift : undefined, tz, shiftTimes), forShift?.at, pct >= 100 ? "completed" : undefined);
     return ok;
   }, [setProgress, addNote, tz, shiftTimes]);
   // The calendar quick view's one Save: the status or % (stamped and filed
@@ -643,13 +643,24 @@ export default function ExecutionView({
     } else if (cur !== u.status) ok = await setStatus(id, u.status, undefined, undefined, w);
     if (!ok) return false;
     // What got done goes on the report (a hold's reason already did).
-    if (u.status !== "on_hold" && u.status !== "blocked") await addNote(id, noteFor(u.note, u.at < shiftAt(Date.now(), tz, shiftTimes).start ? w : undefined), u.at, u.status);
+    if (u.status !== "on_hold" && u.status !== "blocked" && u.note.trim()) await addNote(id, noteFor(u.note, u.at < shiftAt(Date.now(), tz, shiftTimes).start ? w : undefined, tz, shiftTimes), u.at, u.status);
     if (u.why) {
       try { await addMilestoneNote({ orgId, milestoneId: id, kind: "behind", statusAt: u.status, body: u.why, createdBy: userId, createdByName: userName, happenedAt: new Date(u.at).toISOString() }); }
       catch (e) { notify((e as Error).message, "warning"); }
     }
     return true;
   }, [byId, tz, shiftTimes, setProgress, setStatus, addNote, orgId, userId, userName, notify]);
+  // When a step really started / finished, corrected (the calendar shows it
+  // where it happened; the reports measure it from there).
+  const fixTimes = useCallback(async (id: string, t: { start?: number | null; finish?: number | null }): Promise<boolean> => {
+    if (!canEdit) return false;
+    try {
+      await setActualTimes({ id, ...(t.start !== undefined ? { actualStartAt: t.start != null ? new Date(t.start).toISOString() : null } : {}),
+        ...(t.finish !== undefined ? { actualAt: t.finish != null ? new Date(t.finish).toISOString() : null } : {}), actorUserId: userId, actorUserName: userName });
+      onRefresh();
+      return true;
+    } catch (e) { notify((e as Error).message, "warning"); return false; }
+  }, [canEdit, userId, userName, onRefresh, notify]);
   // Discovery work: found work into the schedule (lib/discovery). Its steps
   // go under the task, linked after the step they follow; what they hold up
   // waits on them; linked work downstream is pushed (the same cascade as a
@@ -746,7 +757,7 @@ export default function ExecutionView({
   const startWithNote = useCallback(async (id: string, pct: number, note: string, forShift?: ShiftCredit): Promise<boolean> => {
     const ok = pct >= 100 ? await setStatus(id, "completed", undefined, undefined, forShift) : await setStatus(id, "in_progress", undefined, pct, forShift);
     // Said for an earlier shift only when it was; the time it happened is kept.
-    if (ok && note) await addNote(id, noteFor(note, forShift && forShift.at < shiftAt(Date.now(), tz, shiftTimes).start ? forShift : undefined), forShift?.at, pct >= 100 ? "completed" : "in_progress");
+    if (ok && note) await addNote(id, noteFor(note, forShift && forShift.at < shiftAt(Date.now(), tz, shiftTimes).start ? forShift : undefined, tz, shiftTimes), forShift?.at, pct >= 100 ? "completed" : "in_progress");
     return ok;
   }, [setStatus, addNote, tz, shiftTimes]);
 
@@ -825,7 +836,7 @@ export default function ExecutionView({
         const earlier = when.at < shiftAt(Date.now(), tz, shiftTimes).start;
         for (const id of succeeded) {
           if (prev.get(id) !== next) await fileUnder(id, when);
-          await addNote(id, noteFor(note, earlier ? when : undefined), when.at, next);
+          await addNote(id, noteFor(note, earlier ? when : undefined, tz, shiftTimes), when.at, next);
         }
         // Only offer to undo what actually changed.
         announce(`${succeeded.length} task${succeeded.length === 1 ? "" : "s"} → ${statusWord(next)} · ${when.label}`,
@@ -1221,11 +1232,12 @@ export default function ExecutionView({
       {layout === "report" ? (
         <ExecutionReportView milestones={items} shiftTimes={shiftTimes} critical={critical} criticalSource={criticalSourceLabel} />
       ) : layout === "shift" ? (
-        <ShiftReportView milestones={items} cancelled={cancelled} userId={userId} userName={userName ?? userEmail} canEdit={canEdit} progress={progressIndex} projectId={projectId} projectName={projectName} onUpdateStep={updateStep} onDiscovery={canEdit ? setDiscoveryFor : undefined} pathNow={cpClock} onPlanNext={canEdit && onMoveMany ? setPlanNext : undefined} />
+        <ShiftReportView milestones={items} cancelled={cancelled} userId={userId} userName={userName ?? userEmail} canEdit={canEdit} progress={progressIndex} projectId={projectId} projectName={projectName} onUpdateStep={updateStep} onDiscovery={canEdit ? setDiscoveryFor : undefined} pathNow={cpClock} onPlanNext={canEdit && onMoveMany ? setPlanNext : undefined} onFixTimes={canEdit ? fixTimes : undefined} />
       ) : layout === "calendar" ? (
         <ScheduleCalendarTileView
           onDiscovery={canEdit ? setDiscoveryFor : undefined}
           onPlanNext={canEdit && onMoveMany ? setPlanNext : undefined}
+          onFixTimes={canEdit ? fixTimes : undefined}
           pathMarks={marks}
           now={cpClock}
           planNow={planNowAll}
@@ -1471,8 +1483,11 @@ export default function ExecutionView({
 }
 
 // A comment filed under an earlier shift says which.
-function noteFor(note: string, w?: ShiftCredit): string {
-  return w ? `${note} (for ${w.label} shift)` : note;
+function noteFor(note: string, w: ShiftCredit | undefined, tz: string, times: ShiftTimes): string {
+  if (!w) return note;
+  // The shift by name ("Sat night"), not a clock time.
+  const s = shiftAt(w.at, tz, times);
+  return `${note} (for ${fmtInTz(s.start, tz, { weekday: "short" })} ${s.kind} shift)`;
 }
 // Trim a task name for toast messages.
 function truncate(s: string, n = 28): string {

@@ -26,7 +26,7 @@ import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { clockLabel, dayKey, dayKeyToMs, fmtInTz, addDays, tzAbbrev } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
 import { carriedOpenWork } from "@/lib/openWork";
-import { DEFAULT_SHIFT_TIMES, expectedByParent, expectedFraction, shiftAt, shiftWindow, workShiftOf, TURNOVER_GRACE_MS, type ShiftTimes, type ShiftCredit, type ShiftWindow } from "@/lib/shiftReport";
+import { DEFAULT_SHIFT_TIMES, expectedByParent, expectedFraction, shiftAt, shiftWindow, workShiftOf, workHours, TURNOVER_GRACE_MS, type ShiftTimes, type ShiftCredit, type ShiftWindow } from "@/lib/shiftReport";
 import type { StepUpdate } from "@/components/projects/CalendarQuickView";
 import { clockForWork, shiftWord, typeClock, DayPick } from "@/components/projects/ShiftRecordParts";
 import { notesFor, updateMilestoneNote } from "@/lib/milestones";
@@ -37,6 +37,8 @@ import type { PathMarks } from "@/lib/criticalPath";
 import PathTag from "@/components/projects/PathTag";
 import { whenChoices } from "@/components/projects/ProgressControl";
 import { inheritedWorkOrders } from "@/lib/workOrderCrew";
+import StepCard from "@/components/projects/StepCard";
+import { loadProgressLog, type ProgressLogRow } from "@/lib/progressHistory";
 
 interface Props {
   day: string; // "YYYY-MM-DD" in the plant zone
@@ -68,6 +70,8 @@ interface Props {
   /** A step's status / % with the time it happened and what got done —
    *  the same save as the calendar's quick view. */
   onUpdateStep?: (id: string, u: StepUpdate) => Promise<boolean>;
+  /** Correct when a step really started / finished. */
+  onFixTimes?: (id: string, t: { start?: number | null; finish?: number | null }) => Promise<boolean>;
   /** The critical path, as the project has it (lib/criticalPath). */
   pathMarks?: PathMarks;
   /** The schedule's clock — the one the shift report reads. */
@@ -106,7 +110,7 @@ interface EquipmentGroup {
 
 export default function DayAgendaPanel({
   day, tz, milestones, childrenByParent, ancestorsOf, progress, canEdit, focus,
-  onSetStatus, onSetProgress, onAddNote, onOpenDetail, onChangeDay, onClose, colorOf, shiftTimes = DEFAULT_SHIFT_TIMES, hidden, planNow: planNowAll, userId, onSetProgressNote, onStartNote, onUpdateStep, pathMarks, inline, now: clockNow,
+  onSetStatus, onSetProgress, onAddNote, onOpenDetail, onChangeDay, onClose, colorOf, shiftTimes = DEFAULT_SHIFT_TIMES, hidden, planNow: planNowAll, userId, onSetProgressNote, onStartNote, onUpdateStep, onFixTimes, pathMarks, inline, now: clockNow,
 }: Props) {
   const [query, setQuery] = useState("");
   // A step's WO number: its own, else its work order's (or the file's WO column).
@@ -241,6 +245,16 @@ export default function DayAgendaPanel({
     notesFor(dayStepIds.split(",")).then((n) => { if (alive) setStepNotes(n); }).catch(() => undefined);
     return () => { alive = false; };
   }, [dayStepIds, notesTick]);
+  // Each step's history (the progress log), for the step card.
+  const projectId = milestones.find((m) => m.projectId)?.projectId ?? null;
+  const [log, setLog] = useState<ProgressLogRow[]>([]);
+  const logSig = useMemo(() => milestones.map((m) => `${m.id}:${m.status}:${m.percentComplete ?? 0}:${m.actualStartAt ?? ""}:${m.actualAt ?? ""}`).join("|"), [milestones]);
+  useEffect(() => {
+    if (!projectId || !onUpdateStep) return;
+    let alive = true;
+    loadProgressLog(projectId).then((l) => { if (alive) setLog(l ?? []); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [projectId, onUpdateStep, notesTick, logSig]);
   const dayEndsAt = shiftWindow(day, "night", tz, shiftTimes).end + TURNOVER_GRACE_MS;
   const dayStartsAt = shiftWindow(day, "day", tz, shiftTimes).start;
   const latestByStep = useMemo(() => {
@@ -505,7 +519,27 @@ export default function DayAgendaPanel({
                         })()}
                         </span>
                       </div>
-                      {openId === r.leaf.id && r.leaf.id && (
+                      {openId === r.leaf.id && r.leaf.id && onUpdateStep && (() => {
+                        // The same step card as the calendar's: start, progress, finish.
+                        const id = r.leaf.id;
+                        const planPct = Math.round(expectedFraction(r.leaf, clock, tz, shiftTimes) * 100);
+                        const h = Math.round(((pct - planPct) / 100) * workHours(r.leaf, tz) * 10) / 10;
+                        const nx = nextOf(id);
+                        return (
+                          <div className="pt-1">
+                            <StepCard key={`${id}:${r.leaf.status}:${pct}`} m={r.leaf} wo={woOf(r.leaf) ?? undefined} pct={pct} hours={h}
+                              rows={log.filter((x) => x.milestone_id === id)} notes={stepNotes.filter((n) => n.milestoneId === id)}
+                              tz={tz} times={shiftTimes} now={clock} canEdit={canEdit}
+                              onUpdate={async (u) => { const ok = await onUpdateStep(id, u); setNotesTick((t) => t + 1); return ok; }}
+                              onFixTimes={onFixTimes ? async (t) => { const ok = await onFixTimes(id, t); setNotesTick((x) => x + 1); return ok; } : undefined} />
+                            <div className="px-3 pl-7 pb-2 flex items-center justify-between text-[12px]">
+                              <button type="button" onClick={() => onOpenDetail(r.leaf)} className="font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Details</button>
+                              {nx && <button type="button" onClick={() => { setOpenId(nx); openGroupOf(nx); }} className="font-bold text-[var(--color-accent)] hover:underline">Next step ›</button>}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                      {openId === r.leaf.id && r.leaf.id && !onUpdateStep && (
                         <QuickEdit key={r.leaf.id} leaf={r.leaf} pct={pct} canEdit={canEdit}
                           latest={latestByStep.get(r.leaf.id)} userId={userId} onNotesChanged={() => setNotesTick((t) => t + 1)}
                           onSetStatus={onSetStatus} onSetProgress={onSetProgress} onAddNote={onAddNote}
