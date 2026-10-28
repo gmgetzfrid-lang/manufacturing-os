@@ -25,7 +25,7 @@ import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { splitPlacements, compareDayPlacements, wbsCompare, crewOf, startMsOf, finishMsOf, type DayPlacement, type DayCrew } from "@/lib/calendarPlacement";
 import { addDays as addDaysTz, addMonths as addMonthsTz, clockLabel, dayDiff as dayDiffTz, dayKey, dayKeyToMs, dayOfWeek, fmtInTz, hasTimeOfDay, tzAbbrev, startOfDay as startOfDayTz, startOfMonth as startOfMonthTz, wallClock } from "@/lib/scheduleTz";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
-import { DEFAULT_SHIFT_TIMES, crewWindows, workShiftOf, workSpan, shiftWindow, shiftAt, type ShiftTimes } from "@/lib/shiftReport";
+import { DEFAULT_SHIFT_TIMES, crewWindows, workShiftOf, workSpan, shiftWindow, shiftAt, type ShiftTimes, type ShiftCredit } from "@/lib/shiftReport";
 import { bandIndex, stepBandDays, type Band } from "@/lib/shiftBands";
 import ShiftMark from "@/components/projects/ShiftMark";
 import DayAgendaPanel from "@/components/projects/DayAgendaPanel";
@@ -64,9 +64,9 @@ interface Props {
   /** Add a note to a step's log (what got done, what's turned over). */
   onAddNote?: (id: string, body: string) => Promise<void> | void;
   /** Set a step's % with what got done (required for work in progress). */
-  onSetProgressNote?: (id: string, percent: number, note: string) => Promise<boolean> | boolean;
+  onSetProgressNote?: (id: string, percent: number, note: string, forShift?: ShiftCredit) => Promise<boolean> | boolean;
   /** Start a step ("in progress") with what got done. */
-  onStartNote?: (id: string, percent: number, note: string) => Promise<boolean> | boolean;
+  onStartNote?: (id: string, percent: number, note: string, forShift?: ShiftCredit) => Promise<boolean> | boolean;
   /** The project's shift-change times — which crew does each step. */
   shiftTimes?: ShiftTimes;
 }
@@ -880,7 +880,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                 onPick={(st, reason, p) => { if (leaf.id && onSetStatus) void onSetStatus(leaf.id, st, reason, p); }}
                 percent={pctOf(leaf)}
                 onSetProgress={onSetProgress ? (v) => { if (leaf.id) onSetProgress(leaf.id, v); } : undefined}
-                onStartWithNote={onStartNote && leaf.id ? (v, n) => onStartNote(leaf.id!, v, n) : undefined}
+                onStartWithNote={onStartNote && leaf.id ? (v, n, w) => onStartNote(leaf.id!, v, n, w) : undefined}
               />
             </span>
             <button onClick={() => { onOpenDetail(leaf); setSubPopover(null); }} className="flex-1 min-w-0 text-left">
@@ -893,7 +893,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
               <ProgressControl
                 percent={pctOf(leaf)}
                 onPick={(v) => { if (leaf.id && onSetProgress) onSetProgress(leaf.id, v); }}
-                onSaveWithNote={onSetProgressNote && leaf.id ? (v, n) => onSetProgressNote(leaf.id!, v, n) : undefined}
+                onSaveWithNote={onSetProgressNote && leaf.id ? (v, n, w) => onSetProgressNote(leaf.id!, v, n, w) : undefined}
                 disabled={!canEdit || !onSetProgress || !leaf.id}
                 size="sm"
               />
@@ -1055,8 +1055,8 @@ function Chip({
   onClick: () => void;
   onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => unknown;
   onSetProgress?: (id: string, percent: number) => unknown;
-  onSetProgressNote?: (id: string, percent: number, note: string) => Promise<boolean> | boolean;
-  onStartNote?: (id: string, percent: number, note: string) => Promise<boolean> | boolean;
+  onSetProgressNote?: (id: string, percent: number, note: string, forShift?: ShiftCredit) => Promise<boolean> | boolean;
+  onStartNote?: (id: string, percent: number, note: string, forShift?: ShiftCredit) => Promise<boolean> | boolean;
   progress?: Map<string, ProgressInfo>;
   shiftTimes?: ShiftTimes;
   canExpand?: boolean; isExpanded?: boolean; onToggleExpand?: (e: React.MouseEvent) => void;
@@ -1192,7 +1192,7 @@ function Chip({
               onPick={(st, reason, p) => { if (ms.id && onSetStatus) onSetStatus(ms.id, st, reason, p); }}
               percent={pct}
               onSetProgress={onSetProgress ? (p) => { if (ms.id) onSetProgress(ms.id, p); } : undefined}
-              onStartWithNote={onStartNote && ms.id ? (p, n) => onStartNote(ms.id!, p, n) : undefined}
+              onStartWithNote={onStartNote && ms.id ? (p, n, w) => onStartNote(ms.id!, p, n, w) : undefined}
             />
           ) : (
             // A work order's status rolls up from its steps: tapping it opens
@@ -1229,7 +1229,7 @@ function Chip({
                 <ProgressControl
                   percent={pct}
                   onPick={(p) => { if (ms.id && onSetProgress) onSetProgress(ms.id, p); }}
-                  onSaveWithNote={onSetProgressNote && ms.id ? (p, n) => onSetProgressNote(ms.id!, p, n) : undefined}
+                  onSaveWithNote={onSetProgressNote && ms.id ? (p, n, w) => onSetProgressNote(ms.id!, p, n, w) : undefined}
                   disabled={!canEdit || !onSetProgress || !ms.id}
                   size="sm"
                 />

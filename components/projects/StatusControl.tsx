@@ -20,6 +20,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Circle, Loader2, CircleCheck, PauseCircle, AlertTriangle, XCircle } from "lucide-react";
 import type { MilestoneStatus } from "@/types/schema";
+import type { ShiftCredit } from "@/lib/shiftReport";
 import { ProgressSlider, ProgressNoteForm } from "@/components/projects/ProgressControl";
 
 export const STATUS_ORDER: MilestoneStatus[] = ["planned", "in_progress", "completed", "on_hold", "blocked", "missed"];
@@ -63,7 +64,7 @@ interface Props {
   onSetProgress?: (percent: number) => void;
   /** Starting work with a comment: "In progress" asks how far and what got
    *  done, and saves both (status + % + note). */
-  onStartWithNote?: (percent: number, note: string) => Promise<unknown> | unknown;
+  onStartWithNote?: (percent: number, note: string, forShift?: ShiftCredit) => Promise<unknown> | unknown;
 }
 
 export default function StatusControl({ status, onPick, disabled, onDisabledClick, busy, variant = "pill", size = "md", readOnly, title, percent, onSetProgress, onStartWithNote }: Props) {
@@ -189,7 +190,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                 </div>
                 {onStartWithNote ? (
                   <ProgressNoteForm percent={percent ?? 0} start busy={busy} onCancel={() => setOpen(false)}
-                    onSave={async (v, n) => { const ok = await onStartWithNote(v, n); if (ok !== false) setOpen(false); return ok; }} />
+                    onSave={async (v, n, w) => { const ok = await onStartWithNote(v, n, w); if (ok !== false) setOpen(false); return ok; }} />
                 ) : <ProgressSlider
                   percent={seedPct}
                   commitSame

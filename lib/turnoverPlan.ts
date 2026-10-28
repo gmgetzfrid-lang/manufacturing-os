@@ -288,11 +288,20 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
     if (early.length) parts.push(`${early.length} done early (planned ${t.DTs(Math.min(...early.map((r) => r.crewStart)))}${early.length > 1 ? " on" : ""})`);
     if (late.length) parts.push(`${late.length} done late (was due ${t.DTs(Math.min(...late.map((r) => r.dueAt)))})`);
     if (movedEarly.length) parts.push(`${movedEarly.length} started early (planned ${t.DTs(Math.min(...movedEarly.map((r) => r.crewStart)))}${movedEarly.length > 1 ? " on" : ""})`);
-    if (moved.length - movedEarly.length) parts.push(`${moved.length - movedEarly.length} in progress`);
-    // Hours count once: a step still on a list below has them on that row.
-    const onList = new Set(plan.items.map((x) => x.r.leaf.id));
+    // Still going: where it stands against where the plan has it by now.
+    const going = moved.filter((r) => !r.plannedLater);
+    const behind = going.filter((r) => r.percent < r.expectedPct - 2);
+    const ahead = going.filter((r) => r.percent > r.expectedPct + 2);
+    if (going.length === 1) {
+      const r = going[0];
+      parts.push(behind.length ? `in progress — behind, plan had ${r.expectedPct}% by now` : ahead.length ? `in progress — ahead, plan had ${r.expectedPct}% by now` : "in progress, on plan");
+    } else if (going.length > 1) {
+      parts.push(`${going.length} in progress${behind.length ? ` — ${behind.length} behind plan` : ahead.length === going.length ? " — ahead of plan" : ", on plan"}`);
+    }
+    // Every step's hours ahead or behind, the ones still going too (they
+    // show again on their own row below — this is the task's account).
     let net = 0;
-    for (const r of rows) { if (onList.has(r.leaf.id)) continue; const sh = shareOf(report, r.leaf.id); if (sh) net += sh.side === "ahead" ? sh.hours : -sh.hours; }
+    for (const r of rows) { const sh = shareOf(report, r.leaf.id); if (sh) net += sh.side === "ahead" ? sh.hours : -sh.hours; }
     const h = t.hrs(Math.round(Math.abs(net) * 10) / 10);
     const who = [...new Set(rows.map((r) => r.leaf.responsibleParty?.trim()).filter(Boolean))].join(", ");
     return {
@@ -301,7 +310,7 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
       wo: [...new Set(rows.map((r) => r.leaf.workOrderRef?.trim()).filter(Boolean))].join(", "),
       steps: `${done.length ? `${done.length} done` : ""}${done.length && moved.length ? ", " : ""}${moved.length ? `${moved.length} in progress` : ""}: ${stepText}`,
       who,
-      result: { text: parts.join("; "), tone: late.length ? "amber" : "emerald" },
+      result: { text: parts.join("; "), tone: late.length || behind.length ? "amber" : "emerald" },
       vs: Math.abs(net) < 0.1 ? { text: "" } : net > 0 ? { text: `+${h}`, tone: "emerald" } : { text: `−${h}`, tone: "rose" },
       ids: rows.map((r) => r.leaf.id ?? r.leaf.name),
     };

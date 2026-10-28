@@ -34,7 +34,7 @@ import {
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import type { CancelledJob } from "@/lib/cancelledJobs";
-import { groupTasksUnderParent, setTaskDuration, addMilestoneNote, stateOf, deleteMilestones, restoreDeletedMilestones, applyBulkFieldChange, type MilestoneState } from "@/lib/milestones";
+import { groupTasksUnderParent, setTaskDuration, addMilestoneNote, stateOf, deleteMilestones, restoreDeletedMilestones, applyBulkFieldChange, creditProgressTo, type MilestoneState } from "@/lib/milestones";
 import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, cascadeDependents, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import { resolveCriticalPath, CRITICAL_MODES, type CriticalMode, type CriticalOverride } from "@/lib/criticalPath";
 import { useCriticalMode, saveCriticalMode } from "@/lib/criticalModeStore";
@@ -51,14 +51,14 @@ import { addDays as addDaysTz, dayDiff as dayDiffTz, dayKey, dayOfWeek, fmtInTz,
 import { needsFutureConfirm } from "@/lib/scheduleRules";
 import { startMsOf as plannedStartMsOf } from "@/lib/calendarPlacement";
 import { effectiveSpans, byStart, spanLabel, barGeometry, xAt, hourStep, startOf as timedStart, finishOf as timedFinish } from "@/lib/scheduleTime";
-import { expectedByParent, isOverdue, standingOf, workShiftOf, type ShiftTimes, type WorkShift } from "@/lib/shiftReport";
+import { expectedByParent, isOverdue, standingOf, workShiftOf, type ShiftCredit, type ShiftTimes, type WorkShift } from "@/lib/shiftReport";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
 import { linkOf } from "@/lib/scheduleLinks";
 import ShiftMark from "@/components/projects/ShiftMark";
 import BulkEditModal from "@/components/projects/BulkEditModal";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import StatusControl from "@/components/projects/StatusControl";
-import ProgressControl from "@/components/projects/ProgressControl";
+import ProgressControl, { ShiftClockContext } from "@/components/projects/ProgressControl";
 import ExecutionGuide from "@/components/projects/ExecutionGuide";
 import ExecutionReportView from "@/components/projects/ExecutionReportView";
 import MovePreviewSheet from "@/components/projects/MovePreviewSheet";
@@ -86,9 +86,11 @@ interface Props {
    *  subtree + bleed its ancestors). */
   onMoveMany?: (changes: DateChange[]) => Promise<boolean>;
   /** `percent` rides with "in progress" so starting a held task is one write. */
-  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => Promise<boolean>;
+  /** `at` (ISO): a change filed under an earlier shift — its start or
+   *  finish is stamped then. */
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number, at?: string) => Promise<boolean>;
   /** Persist a leaf task's physical % complete (derives status server-side). */
-  onSetProgress?: (id: string, percent: number) => Promise<boolean>;
+  onSetProgress?: (id: string, percent: number, at?: string) => Promise<boolean>;
   /** Undo: put tasks back exactly as they were — status, %, hold reason,
    *  actual times — in one write each. */
   onRestore?: (states: MilestoneState[]) => Promise<boolean>;
@@ -255,6 +257,9 @@ export default function ExecutionView({
   // The project's shift-change times (set on the shift report, the same on
   // every device) — the timeline marks day and night shifts with them.
   const shiftTimes = useShiftTimes(projectId);
+  // The progress form asks which shift a change counts for (this one or a
+  // fix to an earlier one) — on the project's clock.
+  const shiftClock = useMemo(() => (canEdit ? { tz, times: shiftTimes } : null), [canEdit, tz, shiftTimes]);
 
   // ── Search / filter ──────────────────────────────────────────
   const [filter, setFilter] = useState<ScheduleFilter>(EMPTY_FILTER);
@@ -506,7 +511,16 @@ export default function ExecutionView({
     }
   }, [onRestore]);
 
-  const setStatus = useCallback(async (id: string, next: MilestoneStatus, reason?: string, percent?: number): Promise<boolean> => {
+  // A change filed under an earlier shift: the save is done; now its line
+  // in the progress log moves to that shift. Said plainly when it can't.
+  const fileUnder = useCallback(async (id: string, w: ShiftCredit) => {
+    const res = await creditProgressTo(id, w.at);
+    if (res === "ok" || res === "late") return;
+    notify(res === "missing" ? `Saved as this shift's — counting it for ${w.label} needs migration 20261104_progress_for_shift.sql run first.`
+      : res === "changed" ? `Saved as this shift's — it was changed again after ${w.label}, so it can't go back there.`
+        : `Saved as this shift's — it couldn't be filed under ${w.label}.`, "warning");
+  }, [notify]);
+  const setStatus = useCallback(async (id: string, next: MilestoneStatus, reason?: string, percent?: number, forShift?: ShiftCredit): Promise<boolean> => {
     if (!canEdit || !onSetStatus) return false;
     const prev = byId.get(id);                       // snapshot for undo
     const before = prev?.id ? stateOf(prev) : null;
@@ -517,16 +531,18 @@ export default function ExecutionView({
     if (nextPct != null) setOptimisticPct((m) => new Map(m).set(id, Math.round(nextPct)));
     setBusy((s) => new Set(s).add(id));
     try {
-      const ok = await onSetStatus(id, next, reason, percent);
+      const ok = await onSetStatus(id, next, reason, percent, forShift ? new Date(forShift.at).toISOString() : undefined);
       if (!ok) {
         setOptimistic((m) => { const n = new Map(m); n.delete(id); return n; });
         setOptimisticPct((m) => { const n = new Map(m); n.delete(id); return n; });
         return false;
       }
       if (before && (before.status !== next || (percent != null && Math.round(before.percentComplete) !== Math.round(percent)))) {
+        if (forShift) await fileUnder(id, forShift);
         announce(
-          `“${truncate(name)}” → ${statusWord(next)}${next === "in_progress" && percent != null ? ` ${Math.round(percent)}%` : ""}`,
-          () => restore([before]),
+          `“${truncate(name)}” → ${statusWord(next)}${next === "in_progress" && percent != null ? ` ${Math.round(percent)}%` : ""}${forShift ? ` · ${forShift.label}` : ""}`,
+          // Undone on the same shift it was filed under.
+          async () => { await restore([before]); if (forShift) await creditProgressTo(id, forShift.at + 1000); },
           next === "completed" ? "success" : "default",
         );
       }
@@ -534,12 +550,12 @@ export default function ExecutionView({
     } finally {
       setBusy((s) => { const n = new Set(s); n.delete(id); return n; });
     }
-  }, [canEdit, onSetStatus, byId, announce, confirmFuture, restore]);
+  }, [canEdit, onSetStatus, byId, announce, confirmFuture, restore, fileUnder]);
 
   // Set a leaf task's physical % complete. Optimistically updates BOTH the
   // percent and the derived status (so the fill bar and the status dot move
   // together), then persists. Summary rows never call this — their % rolls up.
-  const setProgress = useCallback(async (id: string, pct: number): Promise<boolean> => {
+  const setProgress = useCallback(async (id: string, pct: number, forShift?: ShiftCredit): Promise<boolean> => {
     if (!canEdit || !onSetProgress) return false;
     const prev = byId.get(id);
     const before = prev?.id ? stateOf(prev) : null;
@@ -557,20 +573,23 @@ export default function ExecutionView({
     setOptimistic((m) => new Map(m).set(id, nextStatus));
     setBusy((s) => new Set(s).add(id));
     try {
-      const ok = await onSetProgress(id, clamped);
+      const ok = await onSetProgress(id, clamped, forShift ? new Date(forShift.at).toISOString() : undefined);
       if (!ok) {
         setOptimisticPct((m) => { const n = new Map(m); n.delete(id); return n; });
         setOptimistic((m) => { const n = new Map(m); n.delete(id); return n; });
         return false;
       }
+      if (forShift && (prevPct !== clamped || prevStatus !== nextStatus)) await fileUnder(id, forShift);
       if (prevPct !== clamped && before) {
-        announce(`“${truncate(prev?.name ?? "Task")}” → ${clamped}%`, () => restore([before]), clamped >= 100 ? "success" : "default");
+        announce(`“${truncate(prev?.name ?? "Task")}” → ${clamped}%${forShift ? ` · ${forShift.label}` : ""}`,
+          async () => { await restore([before]); if (forShift) await creditProgressTo(id, forShift.at + 1000); },
+          clamped >= 100 ? "success" : "default");
       }
       return true;
     } finally {
       setBusy((s) => { const n = new Set(s); n.delete(id); return n; });
     }
-  }, [canEdit, onSetProgress, byId, announce, confirmFuture, restore]);
+  }, [canEdit, onSetProgress, byId, announce, confirmFuture, restore, fileUnder]);
 
   // Progress always comes with what got done (the line the next crew and
   // the shift report read): the % (or "started") saves first, then the
@@ -579,14 +598,14 @@ export default function ExecutionView({
     const m = byId.get(id);
     await addMilestoneNote({ orgId, milestoneId: id, kind: "note", statusAt: m?.status ?? null, body, createdBy: userId, createdByName: userName });
   }, [byId, orgId, userId, userName]);
-  const progressWithNote = useCallback(async (id: string, pct: number, note: string): Promise<boolean> => {
-    const ok = await setProgress(id, pct);
-    if (ok && note) await addNote(id, note);
+  const progressWithNote = useCallback(async (id: string, pct: number, note: string, forShift?: ShiftCredit): Promise<boolean> => {
+    const ok = await setProgress(id, pct, forShift);
+    if (ok && note) await addNote(id, noteFor(note, forShift));
     return ok;
   }, [setProgress, addNote]);
-  const startWithNote = useCallback(async (id: string, pct: number, note: string): Promise<boolean> => {
-    const ok = pct >= 100 ? await setStatus(id, "completed") : await setStatus(id, "in_progress", undefined, pct);
-    if (ok && note) await addNote(id, note);
+  const startWithNote = useCallback(async (id: string, pct: number, note: string, forShift?: ShiftCredit): Promise<boolean> => {
+    const ok = pct >= 100 ? await setStatus(id, "completed", undefined, undefined, forShift) : await setStatus(id, "in_progress", undefined, pct, forShift);
+    if (ok && note) await addNote(id, noteFor(note, forShift));
     return ok;
   }, [setStatus, addNote]);
 
@@ -927,6 +946,7 @@ export default function ExecutionView({
   }
 
   return (
+    <ShiftClockContext.Provider value={shiftClock}>
     <div className="space-y-3">
       <ExecutionGuide />
 
@@ -1129,8 +1149,8 @@ export default function ExecutionView({
                   onToggleSelected={() => r.ms.id && toggleSelected(r.ms.id)}
                   onSetStatus={(s, reason, p) => { if (r.ms.id) void setStatus(r.ms.id, s, reason, p); }}
                   onSetProgress={(p) => { if (r.ms.id) void setProgress(r.ms.id, p); }}
-                  onSetProgressNote={(p, n) => (r.ms.id ? progressWithNote(r.ms.id, p, n) : false)}
-                  onStartNote={(p, n) => (r.ms.id ? startWithNote(r.ms.id, p, n) : false)}
+                  onSetProgressNote={(p, n, w) => (r.ms.id ? progressWithNote(r.ms.id, p, n, w) : false)}
+                  onStartNote={(p, n, w) => (r.ms.id ? startWithNote(r.ms.id, p, n, w) : false)}
                   onSetDuration={() => setDurationFor(r.ms)}
                   onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
                   onViewOnly={notifyViewOnly}
@@ -1265,9 +1285,14 @@ export default function ExecutionView({
 
       <UndoToastHost toasts={toasts} onUndo={(t) => void runUndo(t)} onDismiss={dismiss} />
     </div>
+    </ShiftClockContext.Provider>
   );
 }
 
+// A comment filed under an earlier shift says which.
+function noteFor(note: string, w?: ShiftCredit): string {
+  return w ? `${note} (for ${w.label} shift)` : note;
+}
 // Trim a task name for toast messages.
 function truncate(s: string, n = 28): string {
   return s.length > n ? s.slice(0, n - 1) + "…" : s;
@@ -1439,8 +1464,8 @@ function OutlineRow({
   row: FlatRow; span: { start: number; finish: number }; work: WorkShift | null; color: GroupColor; collapsed: boolean; selected: boolean; focused?: boolean; canEdit: boolean; busy: boolean;
   onToggleCollapse: () => void; onToggleSelected: () => void;
   onSetStatus: (s: MilestoneStatus, reason?: string, percent?: number) => void; onSetProgress: (percent: number) => void;
-  onSetProgressNote: (percent: number, note: string) => Promise<boolean> | boolean;
-  onStartNote: (percent: number, note: string) => Promise<boolean> | boolean;
+  onSetProgressNote: (percent: number, note: string, forShift?: ShiftCredit) => Promise<boolean> | boolean;
+  onStartNote: (percent: number, note: string, forShift?: ShiftCredit) => Promise<boolean> | boolean;
   onSetDuration: () => void; onOpenDetail: () => void;
   onViewOnly?: () => void; onSequence?: () => void;
   /** Critical-path editing: on the path or not, its own mark, and the

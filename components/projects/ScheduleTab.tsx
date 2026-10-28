@@ -459,10 +459,10 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               return false;
             }
           }}
-          onSetStatus={async (id, status, reason, percent) => {
+          onSetStatus={async (id, status, reason, percent, at) => {
             try {
               const saved = await setMilestoneStatus({
-                id, status, statusReason: reason, percentComplete: percent,
+                id, status, statusReason: reason, percentComplete: percent, at,
                 actorUserId: userId, actorUserName: userName,
                 actorUserEmail: userEmail, actorUserRole: userRole,
               });
@@ -481,10 +481,10 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
             if (failed.length) { setError(`Undo couldn't restore ${failed.length} task${failed.length === 1 ? "" : "s"}.`); return false; }
             return true;
           }}
-          onSetProgress={async (id, percent) => {
+          onSetProgress={async (id, percent, at) => {
             try {
               const saved = await setMilestoneProgress({
-                id, percentComplete: percent,
+                id, percentComplete: percent, at,
                 actorUserId: userId, actorUserName: userName,
                 actorUserEmail: userEmail, actorUserRole: userRole,
               });

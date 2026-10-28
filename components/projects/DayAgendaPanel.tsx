@@ -26,7 +26,7 @@ import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { clockLabel, dayKey, dayKeyToMs, fmtInTz, addDays, tzAbbrev } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
 import { overdueOpenWork, startedEarlyWork } from "@/lib/openWork";
-import { DEFAULT_SHIFT_TIMES, expectedByParent, expectedFraction, shiftAt, shiftWindow, workShiftOf, type ShiftTimes } from "@/lib/shiftReport";
+import { DEFAULT_SHIFT_TIMES, expectedByParent, expectedFraction, shiftAt, shiftWindow, workShiftOf, type ShiftTimes, type ShiftCredit } from "@/lib/shiftReport";
 import { latestNotes, updateMilestoneNote } from "@/lib/milestones";
 import ShiftMark from "@/components/projects/ShiftMark";
 import { stepBandDays, type BandDays } from "@/lib/shiftBands";
@@ -56,9 +56,9 @@ interface Props {
   /** Who is signed in — their own comments can be edited here. */
   userId?: string;
   /** Set a step's % with what got done (required for work in progress). */
-  onSetProgressNote?: (id: string, percent: number, note: string) => Promise<boolean> | boolean;
+  onSetProgressNote?: (id: string, percent: number, note: string, forShift?: ShiftCredit) => Promise<boolean> | boolean;
   /** Start a step with what got done. */
-  onStartNote?: (id: string, percent: number, note: string) => Promise<boolean> | boolean;
+  onStartNote?: (id: string, percent: number, note: string, forShift?: ShiftCredit) => Promise<boolean> | boolean;
   /** The project's shift-change times — which crew does each step. */
   shiftTimes?: ShiftTimes;
   onOpenDetail: (m: Milestone) => void;
@@ -408,7 +408,7 @@ export default function DayAgendaPanel({
                             onPick={(st, reason, p) => { if (r.leaf.id && onSetStatus) onSetStatus(r.leaf.id, st, reason, p); }}
                             percent={pct}
                             onSetProgress={onSetProgress ? (v) => { if (r.leaf.id) onSetProgress(r.leaf.id, v); } : undefined}
-                            onStartWithNote={onStartNote && r.leaf.id ? async (v, n) => { const ok = await onStartNote(r.leaf.id!, v, n); setNotesTick((t) => t + 1); return ok; } : undefined}
+                            onStartWithNote={onStartNote && r.leaf.id ? async (v, n, w) => { const ok = await onStartNote(r.leaf.id!, v, n, w); setNotesTick((t) => t + 1); return ok; } : undefined}
                           />
                         </span>
                         <button onClick={() => setOpenId(openId === r.leaf.id ? null : r.leaf.id ?? null)} className="flex-1 min-w-0 text-left" aria-expanded={openId === r.leaf.id}
@@ -439,7 +439,7 @@ export default function DayAgendaPanel({
                           <ProgressControl
                             percent={pct}
                             onPick={(v) => { if (r.leaf.id && onSetProgress) onSetProgress(r.leaf.id, v); }}
-                            onSaveWithNote={onSetProgressNote && r.leaf.id ? async (v, n) => { const ok = await onSetProgressNote(r.leaf.id!, v, n); setNotesTick((t) => t + 1); return ok; } : undefined}
+                            onSaveWithNote={onSetProgressNote && r.leaf.id ? async (v, n, w) => { const ok = await onSetProgressNote(r.leaf.id!, v, n, w); setNotesTick((t) => t + 1); return ok; } : undefined}
                             disabled={!canEdit || !onSetProgress || !r.leaf.id}
                             size="sm"
                           />

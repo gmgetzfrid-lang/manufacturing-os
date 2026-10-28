@@ -49,10 +49,11 @@ describe("work done early and progress made show on the turnover", () => {
     // One row for E-17: everything the shift did on it — finished AND in
     // progress (the bundle pulled to 40% gets its credit), and the hours.
     const doneSec = text.slice(text.search(/^DONE — /m), text.search(/^NEXT — |^CARRIES /m));
-    expect(doneSec).toMatch(/E-17 Exchanger — 1 done, 2 in progress: Remove components, Pull bundle \(40%\), Hydroblast \(30%\) · .*1 done early \(planned 10-27T13:00\); 1 started early \(planned 10-28T11:00\); 1 in progress · \+5.8 h/);
-    // Unfinished and due: it carries — where it stands, its hours counted here (once).
+    // Still going: where it stands against the plan, and the task's hours
+    // with it (+5.8 early, −4.8 behind on the bundle pull).
+    expect(doneSec).toMatch(/E-17 Exchanger — 1 done, 2 in progress: Remove components, Pull bundle \(40%\), Hydroblast \(30%\) · .*1 done early \(planned 10-27T13:00\); 1 started early \(planned 10-28T11:00\); in progress — behind, plan had 100% by now · \+1 h/);
+    // Unfinished and due: it carries — where it stands, and its own hours on its own row.
     expect(text).toMatch(/Pull bundle · Schultz · was due 10-26T21:00 · done 40% · −4.8 h/);
-    expect(text).not.toMatch(/this shift ·.*−4.8 h/);
     // Why it's ahead: both early steps, with the hours each is worth.
     // No bottom-line box: the numbers, and each step's hours in "vs plan".
     expect(text).not.toMatch(/BOTTOM LINE/);
@@ -149,5 +150,26 @@ describe("crews box on a phone", () => {
     const { toEmailHtml } = await import("@/lib/reportExport");
     const html = toEmailHtml({ kind: "k", project: "p", when: "w", asOf: "a", sections: [{ title: "Crews", blocks: [{ k: "columns", cols: [{ title: "Day", rows: [{ title: "Schultz", value: "12 of 15 done" }] }] }] }] });
     expect(html).toContain("12&nbsp;of&nbsp;15&nbsp;done");
+  });
+});
+
+describe("a step finished on an earlier shift and marked done again isn't this shift's work", () => {
+  // Done Sunday; a second "done" tap Monday re-stamped its finish time
+  // without a status change (so no log row).
+  const rc = mk({ id: "rc2", name: "Remove components", parentId: "e17", plannedStartAt: at("2026-10-25", "08:00"), plannedAt: at("2026-10-25", "12:00"), durationHours: 4, status: "completed", percentComplete: 100, actualAt: at("2026-10-26", "15:27") });
+  const ms2 = [e17, rc];
+  const log2 = [{ milestone_id: "rc2", at: at("2026-10-25", "16:58"), old_status: "in_progress", old_percent: 50, new_status: "completed", new_percent: 100 }];
+  const start2 = new Map(scheduleAt(ms2, log2 as never, day.start).milestones.map((m) => [m.id!, m.status === "completed" ? 100 : m.percentComplete ?? 0]));
+  it("the log has it done before the shift began, so it isn't under Done", () => {
+    expect(start2.get("rc2")).toBe(100);
+    const r = buildShiftReport({ milestones: ms2, tz: CHI, shift: day, now: day.end, startPct: start2 });
+    expect(r.review.done.map((x) => x.leaf.id)).not.toContain("rc2");
+  });
+  it("finished on the shift, it still is", () => {
+    const fresh = [{ ...log2[0], at: at("2026-10-26", "15:27") }];
+    const s = new Map(scheduleAt(ms2, fresh as never, day.start).milestones.map((m) => [m.id!, m.status === "completed" ? 100 : m.percentComplete ?? 0]));
+    expect(s.get("rc2")).toBe(50);
+    const r = buildShiftReport({ milestones: ms2, tz: CHI, shift: day, now: day.end, startPct: s });
+    expect(r.review.done.map((x) => x.leaf.id)).toContain("rc2");
   });
 });

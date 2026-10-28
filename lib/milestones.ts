@@ -411,6 +411,9 @@ export interface SetMilestoneStatusInput {
   /** When the work was really finished (ISO), for a completion recorded
    *  after the fact — so the shift that did it gets the credit. */
   completedAt?: string;
+  /** When this really happened (ISO), for a correction filed under an
+   *  earlier shift: the start or finish is stamped then, not now. */
+  at?: string;
   /** Progress to record with the move to in progress (1–99). */
   percentComplete?: number;
   actorUserId: string;
@@ -439,8 +442,8 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
   // was LAST signed off: a reopen→complete cycle stamps the new sign-off so
   // the shift that really finished it gets the credit.
   const { data: cur } = await supabase
-    .from("milestones").select("actual_start_at, first_completed_at, percent_complete, status_reason").eq("id", input.id).maybeSingle();
-  const curRow = cur as { actual_start_at: string | null; first_completed_at: string | null; percent_complete: number | null; status_reason: string | null } | null;
+    .from("milestones").select("actual_start_at, first_completed_at, percent_complete, status_reason, status").eq("id", input.id).maybeSingle();
+  const curRow = cur as { actual_start_at: string | null; first_completed_at: string | null; percent_complete: number | null; status_reason: string | null; status: MilestoneStatus | null } | null;
   const existingStart = curRow?.actual_start_at ?? null;
   const existingFirstCompleted = curRow?.first_completed_at ?? null;
   const existingPct = curRow?.percent_complete != null ? Math.round(Number(curRow.percent_complete)) : 0;
@@ -456,12 +459,18 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
   // Keep percent_complete coherent with the workflow state so the fill bar and
   // earned value can never contradict the status: completed ⇒ 100, planned ⇒ 0,
   // in_progress clamped below 100. blocked/on_hold/missed keep their logged %.
-  if (input.status === "completed") {
+  const doneWhen = input.completedAt ?? input.at;
+  if (input.status === "completed" && curRow?.status === "completed" && !doneWhen) {
+    // Already done: marking it done again keeps when it was done — a second
+    // tap must not move the finish to now (the report would credit this
+    // shift with work an earlier one finished).
+    update.percent_complete = 100;
+  } else if (input.status === "completed") {
     update.percent_complete = 100;
     // The sign-off time is now (or when the work really finished); the
     // FIRST completion stays on record in first_completed_at so the history
     // of a reopen is never lost.
-    const doneAt = pastIso(input.completedAt, now);
+    const doneAt = pastIso(doneWhen, now);
     update.actual_at = doneAt;
     if (!existingFirstCompleted) update.first_completed_at = doneAt;
     update.completed_by = input.actorUserId;
@@ -473,7 +482,7 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
     update.actual_at = null;
     update.completed_by = null;
     update.completed_by_name = null;
-    if (!existingStart) update.actual_start_at = now;
+    if (!existingStart) update.actual_start_at = pastIso(input.at, now);
   } else if (input.status === "planned") {
     update.percent_complete = 0;
     update.actual_at = null;
@@ -535,6 +544,9 @@ export interface SetMilestoneProgressInput {
   resume?: boolean;
   /** When the work was really finished (ISO), if it reaches 100%. */
   completedAt?: string;
+  /** When this really happened (ISO), for a correction filed under an
+   *  earlier shift. */
+  at?: string;
   actorUserId: string;
   actorUserName?: string;
   actorUserEmail?: string;
@@ -577,8 +589,11 @@ export async function setMilestoneProgress(input: SetMilestoneProgressInput): Pr
     updated_by: input.actorUserId,
   };
   if (!HOLDS.includes(nextStatus)) update.status_reason = null;
-  if (nextStatus === "completed") {
-    const doneAt = pastIso(input.completedAt, now);
+  const doneWhen = input.completedAt ?? input.at;
+  if (nextStatus === "completed" && prevStatus === "completed" && !doneWhen) {
+    // Already done: 100% again keeps when it was done.
+  } else if (nextStatus === "completed") {
+    const doneAt = pastIso(doneWhen, now);
     update.actual_at = doneAt;
     if (!existingFirstCompleted) update.first_completed_at = doneAt;
     update.completed_by = input.actorUserId;
@@ -589,7 +604,7 @@ export async function setMilestoneProgress(input: SetMilestoneProgressInput): Pr
     update.completed_by = null;
     update.completed_by_name = null;
     // Starting work (first crossing above 0%) stamps the actual start.
-    if (pct > 0 && !existingStart) update.actual_start_at = now;
+    if (pct > 0 && !existingStart) update.actual_start_at = pastIso(input.at, now);
   }
 
   const { data, error } = await supabase.from("milestones").update(update).eq("id", input.id).select("*").single();
@@ -723,6 +738,20 @@ export async function addMilestoneNote(input: {
   }).select("*").single();
   if (error || !data) throw new Error(error?.message ?? "Failed to add note");
   return noteRowTo(data as MilestoneNoteRow);
+}
+
+/** File the change just saved under an earlier shift: its line in the
+ *  progress log moves to `at` (a minute before that shift ended), so that
+ *  shift's report shows it and the one running now measures from it.
+ *  "missing" — the database function isn't installed (migration
+ *  20261104_progress_for_shift.sql); "changed" — the step was changed
+ *  again after then, so the history can't be reordered; "late" — no
+ *  change was just saved. */
+export type CreditResult = "ok" | "changed" | "late" | "range" | "missing" | "error";
+export async function creditProgressTo(milestoneId: string, at: number): Promise<CreditResult> {
+  const { data, error } = await supabase.rpc("credit_progress_to", { p_milestone_id: milestoneId, p_at: new Date(at).toISOString() });
+  if (error) return error.code === "PGRST202" || error.code === "42883" ? "missing" : "error";
+  return (["ok", "changed", "late", "range"] as const).find((x) => x === data) ?? "error";
 }
 
 /** The latest comment on each step (kind "note" — not status or

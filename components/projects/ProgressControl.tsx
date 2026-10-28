@@ -11,8 +11,14 @@
 // Summary/parent tasks never use this — their % is rolled up from children
 // (see lib/scheduleProgress.ts), so callers render it read-only there.
 
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { creditShifts, type ShiftCredit, type ShiftTimes } from "@/lib/shiftReport";
+
+/** The project's clock. Given, the progress form asks which shift a change
+ *  counts for — a fix to what last shift entered goes on last shift's
+ *  report, and this shift's progress counts from the fixed number. */
+export const ShiftClockContext = createContext<{ tz: string; times: ShiftTimes } | null>(null);
 
 function clamp(p: number): number {
   return Math.max(0, Math.min(100, Math.round(p || 0)));
@@ -116,12 +122,17 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy, autoF
   percent: number;
   /** Starting work ("In progress"): a pick is required, even the current %. */
   start?: boolean;
-  /** Saves the % and the comment together; false = not saved. */
-  onSave: (percent: number, note: string) => Promise<unknown> | unknown;
+  /** Saves the % and the comment together — filed under an earlier shift
+   *  when one was picked; false = not saved. */
+  onSave: (percent: number, note: string, forShift?: ShiftCredit) => Promise<unknown> | unknown;
   onCancel?: () => void;
   busy?: boolean;
   autoFocus?: boolean;
 }) {
+  const clock = useContext(ShiftClockContext);
+  // The shifts before the one running now, as of when the form opened.
+  const [earlier] = useState(() => (clock ? creditShifts(Date.now(), clock.tz, clock.times) : []));
+  const [forShift, setForShift] = useState<ShiftCredit | null>(null);
   const cur = clamp(percent);
   const [pick, setPick] = useState<number | null>(start ? (cur > 0 && cur < 100 ? cur : null) : null);
   const [typed, setTyped] = useState("");
@@ -149,7 +160,7 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy, autoF
     if (missing) { setMsg("Add a few words first — what got done, or why it's corrected. It goes on the shift report."); noteRef.current?.focus(); return; }
     setSaving(true);
     try {
-      const ok = await onSave(pick!, note.trim());
+      const ok = await onSave(pick!, note.trim(), forShift ?? undefined);
       if (ok === false) setMsg("Not saved.");
     } catch (e) { setMsg((e as Error).message || "Not saved."); }
     finally { setSaving(false); }
@@ -186,12 +197,35 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy, autoF
           aria-required={wantsNote}
           className={`w-full h-8 px-2 rounded-md border bg-[var(--color-surface)] pointer-coarse:h-10 focus:outline-none focus:border-[var(--color-accent-ring)] ${missing ? (msg ? "border-2 border-rose-500" : "border-2 border-amber-400 bg-amber-50/60 dark:bg-amber-950/30") : "border-[var(--color-border-strong)]"}`} />
       </div>
+      {/* Which shift it counts for: fixing what an earlier shift entered
+          shouldn't read as this shift's progress (or its loss). */}
+      {earlier.length > 0 && (
+        <div className="space-y-1">
+          <div className="flex items-center gap-1 flex-wrap" role="group" aria-label="Counts for">
+            <span className="font-bold text-[var(--color-text)] mr-0.5">Counts for</span>
+            {[null, ...earlier].map((c) => {
+              const on = (forShift?.at ?? null) === (c?.at ?? null);
+              return (
+                <button key={c?.at ?? "now"} type="button" aria-pressed={on} disabled={busy || saving} onClick={() => { setForShift(c); setMsg(null); }}
+                  className={`h-7 px-2 rounded-md border font-semibold pointer-coarse:h-9 disabled:opacity-50 ${on ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
+                  {c ? c.label : "This shift"}
+                </button>
+              );
+            })}
+          </div>
+          {forShift && (
+            <div className="text-[var(--color-text-muted)] leading-snug">
+              A fix to what {forShift.label} shift entered: it shows on that shift&rsquo;s report, and this shift&rsquo;s progress counts from it.
+            </div>
+          )}
+        </div>
+      )}
       {msg && <div className="text-rose-700 dark:text-rose-400 font-semibold">{msg}</div>}
       <div className="flex items-center gap-2">
         {onCancel && <button type="button" onClick={onCancel} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>}
         <button type="button" disabled={!ready} onClick={() => void save()}
           className={`ml-auto h-8 px-3 rounded-md font-black bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 pointer-coarse:h-10 ${missing ? "opacity-70" : ""}`}>
-          {saving ? "Saving…" : missing ? "Add a comment to save" : pick === 100 ? "Mark done" : pick != null ? `Save ${pick}%` : "Save"}
+          {saving ? "Saving…" : missing ? "Add a comment to save" : `${pick === 100 ? "Mark done" : pick != null ? `Save ${pick}%` : "Save"}${forShift && pick != null ? ` for ${forShift.label}` : ""}`}
         </button>
       </div>
     </div>
@@ -201,7 +235,7 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy, autoF
 interface ChipProps extends SliderProps {
   /** Saves the % with a comment (required for work in progress). When
    *  given, the chip opens the comment form instead of the bare slider. */
-  onSaveWithNote?: (percent: number, note: string) => Promise<unknown> | unknown;
+  onSaveWithNote?: (percent: number, note: string, forShift?: ShiftCredit) => Promise<unknown> | unknown;
   onDisabledClick?: () => void;
   size?: "sm" | "md";
 }
@@ -266,7 +300,7 @@ export default function ProgressControl({ percent, onPick, disabled, onDisabledC
           >
             {onSaveWithNote ? (
               <ProgressNoteForm percent={pct} busy={busy} onCancel={() => setOpen(false)}
-                onSave={async (v, n) => { const ok = await onSaveWithNote(v, n); if (ok !== false) setOpen(false); return ok; }} />
+                onSave={async (v, n, w) => { const ok = await onSaveWithNote(v, n, w); if (ok !== false) setOpen(false); return ok; }} />
             ) : (
               /* A pick saves and closes — one click per task. */
               <ProgressSlider percent={pct} onPick={(v) => { onPick(v); setOpen(false); }} busy={busy} />

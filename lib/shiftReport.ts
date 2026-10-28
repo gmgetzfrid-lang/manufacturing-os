@@ -796,7 +796,10 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   const done: ShiftRow[] = [];
   // Done on an earlier shift (a step that spans several) isn't this
   // shift's news — it was reported when it was marked done.
-  const doneBefore = (m: Milestone) => { const a = toMs(m.actualAt); return Number.isFinite(a) && a < shift.start; };
+  // The progress log says so too: already 100% when the shift began, it was
+  // done before — whatever its finish stamp says now (a second "done" tap
+  // used to re-stamp it).
+  const doneBefore = (m: Milestone) => { const a = toMs(m.actualAt); return (Number.isFinite(a) && a < shift.start) || (!!m.id && (input.startPct?.get(m.id) ?? 0) >= 100); };
   for (const r of scheduled) if (DONE(r) && !doneBefore(r.leaf)) { done.push(r); if (r.leaf.id) seenDone.add(r.leaf.id); }
   for (const m of leaves) {
     if (!m.id || seenDone.has(m.id)) continue;
@@ -805,7 +808,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     // Finished during the shift: its completion time says so, or — with
     // no time recorded — the progress log shows it open when the shift began.
     const startPctOf = input.startPct?.get(m.id);
-    if (inWin(toMs(m.actualAt), shift) || (!Number.isFinite(toMs(m.actualAt)) && startPctOf != null && startPctOf < 100)) { done.push(row); seenDone.add(m.id); }
+    if ((inWin(toMs(m.actualAt), shift) && !(startPctOf != null && startPctOf >= 100)) || (!Number.isFinite(toMs(m.actualAt)) && startPctOf != null && startPctOf < 100)) { done.push(row); seenDone.add(m.id); }
   }
   done.sort(cmp);
   const isOpen = (r: { status: MilestoneStatus; percent: number }) => !DONE(r) && (r.status === "in_progress" || r.percent > 0);
@@ -969,6 +972,21 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
 }
 
 /** "Day · Mon Oct 26 · 05:30–17:30" */
+/** An earlier shift a progress entry can be filed under: the time it's
+ *  filed at (a minute before that shift ended) and its short name. */
+export interface ShiftCredit { at: number; label: string }
+/** The shifts a correction can count for — the ones before the shift
+ *  running now ("Mon night", "Mon day"). */
+export function creditShifts(now: number, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES, n = 2): ShiftCredit[] {
+  const out: ShiftCredit[] = [];
+  let w = shiftAt(now, tz, times);
+  for (let i = 0; i < n; i++) {
+    w = previousShift(w, tz, times);
+    out.push({ at: w.end - 60_000, label: `${new Date(w.start).toLocaleDateString("en-US", { weekday: "short", timeZone: tz })} ${w.kind}` });
+  }
+  return out;
+}
+
 export function shiftLabel(w: ShiftWindow, tz: string): string {
   const d = new Date(w.start).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: tz });
   const t = (ms: number) => { const c = wallClock(ms, tz); return `${String(c.hour).padStart(2, "0")}:${String(c.minute).padStart(2, "0")}`; };

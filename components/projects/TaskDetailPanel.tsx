@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { spanLabel, startOf, finishOf, effectiveSpans } from "@/lib/scheduleTime";
-import { workShiftOf, calendarShift } from "@/lib/shiftReport";
+import { workShiftOf, calendarShift, type ShiftCredit } from "@/lib/shiftReport";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
 import { fmtInTz, fromDateTimeInput, toDateTimeInput, tzAbbrev } from "@/lib/scheduleTz";
 import {
@@ -59,8 +59,8 @@ interface Props {
   critical?: { ids: Set<string>; sourceLabel: string };
   /** A step's % with what got done (required for work in progress), and
    *  starting one — for the steps listed under a work order. */
-  onSetProgressNote?: (id: string, percent: number, note: string) => Promise<boolean> | boolean;
-  onStartNote?: (id: string, percent: number, note: string) => Promise<boolean> | boolean;
+  onSetProgressNote?: (id: string, percent: number, note: string, forShift?: ShiftCredit) => Promise<boolean> | boolean;
+  onStartNote?: (id: string, percent: number, note: string, forShift?: ShiftCredit) => Promise<boolean> | boolean;
 }
 
 /** Schedule-file values the app reads for itself, shown elsewhere in
@@ -295,7 +295,7 @@ export default function TaskDetailPanel({
                       // "In progress" asks for the % (and what got done) — never a bare status.
                       percent={effPct}
                       onSetProgress={(p) => void applyProgress(p)}
-                      onStartWithNote={onStartNote && m.id ? async (p, n) => { const ok = await onStartNote(m.id!, p, n); loadNotes(); onChanged(); return ok; } : undefined}
+                      onStartWithNote={onStartNote && m.id ? async (p, n, w) => { const ok = await onStartNote(m.id!, p, n, w); loadNotes(); onChanged(); return ok; } : undefined}
                     />
                     <span className="text-[10px] text-[var(--color-text-faint)]">incl. on-hold / blocked</span>
                   </div>
@@ -308,7 +308,7 @@ export default function TaskDetailPanel({
                         <span className="text-sm font-black text-[var(--color-text)] tabular-nums">{effPct}%</span>
                       </div>
                       <ProgressNoteForm key={`${m.id}:${effPct}`} percent={effPct} autoFocus={false} busy={busyStatus}
-                        onSave={async (v, n) => { const ok = await onSetProgressNote(m.id!, v, n); loadNotes(); onChanged(); return ok; }} />
+                        onSave={async (v, n, w) => { const ok = await onSetProgressNote(m.id!, v, n, w); loadNotes(); onChanged(); return ok; }} />
                     </div>
                   ) : (
                     <ProgressSlider percent={effPct} onPick={(p) => void applyProgress(p)} disabled={!canEdit} busy={busyStatus} />
@@ -482,7 +482,7 @@ export default function TaskDetailPanel({
                                 id: s.id, status: st, statusReason: reason, percentComplete: p,
                                 actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
                               }).catch(failed).finally(onChanged)}
-                              onStartWithNote={onStartNote && s.id ? async (p, n) => { const ok = await onStartNote(s.id!, p, n); onChanged(); return ok; } : undefined}
+                              onStartWithNote={onStartNote && s.id ? async (p, n, w) => { const ok = await onStartNote(s.id!, p, n, w); onChanged(); return ok; } : undefined}
                             />
                           )}
                         </span>
@@ -499,7 +499,7 @@ export default function TaskDetailPanel({
                                 id: s.id!, percentComplete: v,
                                 actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
                               }).catch(failed).finally(onChanged)}
-                              onSaveWithNote={onSetProgressNote ? async (v, n) => { const ok = await onSetProgressNote(s.id!, v, n); onChanged(); return ok; } : undefined}
+                              onSaveWithNote={onSetProgressNote ? async (v, n, w) => { const ok = await onSetProgressNote(s.id!, v, n, w); onChanged(); return ok; } : undefined}
                               disabled={!canEdit}
                               size="sm"
                             />
