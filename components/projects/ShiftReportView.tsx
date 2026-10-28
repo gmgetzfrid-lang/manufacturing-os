@@ -30,7 +30,7 @@ import { createPortal } from "react-dom";
 import {
   Printer, ChevronLeft, ChevronRight, ChevronDown, Sun, Moon, CheckCircle2, Flag, FastForward,
   TrendingUp, TrendingDown, Minus, Zap, Presentation, X, Settings2, Rocket, ArrowLeftRight, Trophy,
-  Mail, FileText, Hourglass, Clock, Pencil, Plus,
+  Mail, FileText, Hourglass, Clock, Pencil, Plus, CalendarClock,
 } from "lucide-react";
 import type { Milestone, MilestoneNote } from "@/types/schema";
 import { buildProgressIndex, leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
@@ -98,6 +98,9 @@ interface Props {
   /** The schedule's clock for the critical path — the same moment the
    *  calendar and the discovery preview use, so the forecast reads alike. */
   pathNow?: number;
+  /** Opens "Plan the next shift" (swap, pull in, push out — hosted by the
+   *  schedule, the same panel as the calendar's). */
+  onPlanNext?: (next: ShiftWindow) => void;
 }
 
 const NONE_CANCELLED: CancelledJob[] = [];
@@ -108,7 +111,7 @@ const MEETINGS: Array<{ id: MeetingKind; label: string; Icon: typeof Rocket }> =
   { id: "closeout", label: "Close-out", Icon: Trophy },
 ];
 
-export default function ShiftReportView({ milestones: rawLive, progress: liveProgress, projectId, projectName, cancelled = NONE_CANCELLED, userId, userName, canEdit = false, onUpdateStep, onDiscovery, pathNow }: Props) {
+export default function ShiftReportView({ milestones: rawLive, progress: liveProgress, projectId, projectName, cancelled = NONE_CANCELLED, userId, userName, canEdit = false, onUpdateStep, onDiscovery, pathNow, onPlanNext }: Props) {
   const tz = useScheduleTz();
   // The project's shift-change times — the same on every device.
   const times = useShiftTimes(projectId);
@@ -448,8 +451,10 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     : meeting === "closeout"
       ? closeoutSections(closeout, report, ctx, cancelled, discoveryList)
       : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet, onEdit: canEdit && onUpdateStep ? setEditing : undefined, forecast, pathSource, discovery: discoveryList,
-        onDiscovery: onDiscovery ? () => { const first = view.goals.all[0]?.parentId ?? view.review.done[0]?.parentId; const t = (first ? live.find((m) => m.id === first) : undefined) ?? live.find((m) => live.some((k) => k.parentId === m.id)); if (t) onDiscovery(t); } : undefined }),
-  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, onDiscovery, live]);
+        onDiscovery: onDiscovery ? () => { const first = view.goals.all[0]?.parentId ?? view.review.done[0]?.parentId; const t = (first ? live.find((m) => m.id === first) : undefined) ?? live.find((m) => live.some((k) => k.parentId === m.id)); if (t) onDiscovery(t); } : undefined,
+        // Only while the next shift is still ahead (or on).
+        onPlanNext: onPlanNext && report.next.end > now ? () => onPlanNext(report.next) : undefined }),
+  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, onDiscovery, live, onPlanNext, now]);
 
   // A step's card: asked about mid-meeting, answered from the schedule.
   const qlIndex = useMemo(() => quickLookIndex(milestones), [milestones]);
@@ -1191,7 +1196,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
    *  otherwise — with the switch. */
   pathSource?: { label: string; theirs: number; calculated: number; onUse?: () => void; msg?: string | null };
   /** Discovery work on the schedule, and the way to add it. */
-  discovery?: Discovery[]; onDiscovery?: () => void }): Sec[] {
+  discovery?: Discovery[]; onDiscovery?: () => void;
+  /** Change what the next shift does, in the schedule. */
+  onPlanNext?: () => void }): Sec[] {
   const { overall, review, goals, shift, next } = report;
   // A step's latest comment, as one quiet line under it (each step shows once).
   const comment = (r: ShiftRow) => {
@@ -1509,6 +1516,12 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
             </div>
           )}
           {!print && addButton}
+          {!print && o.onPlanNext && (
+            <button type="button" onClick={o.onPlanNext}
+              className="ml-2 inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-accent)] px-3 py-1.5 text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] print:hidden">
+              <CalendarClock className="w-3.5 h-3.5" /> Plan the {next.kind} shift — swap, pull in, push out
+            </button>
+          )}
         </div>
       ),
       data: () => [

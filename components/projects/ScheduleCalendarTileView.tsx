@@ -16,7 +16,7 @@
 // surfaces a group chip's subtask accordion.
 
 import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, ChevronDown, Crosshair, Info, GripVertical, CheckSquare, X as XIcon, ListChecks, Moon, Sun } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, Crosshair, Info, GripVertical, CheckSquare, X as XIcon, ListChecks, Moon, Sun, CalendarClock } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import StatusControl from "@/components/projects/StatusControl";
 import { assignGroupColors } from "@/lib/scheduleColors";
@@ -24,7 +24,7 @@ import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { splitPlacements, compareDayPlacements, wbsCompare, crewOf, startMsOf, finishMsOf, type DayPlacement, type DayCrew } from "@/lib/calendarPlacement";
 import { addDays as addDaysTz, addMonths as addMonthsTz, clockLabel, dayDiff as dayDiffTz, dayKey, dayKeyToMs, dayOfWeek, fmtInTz, hasTimeOfDay, tzAbbrev, startOfDay as startOfDayTz, startOfMonth as startOfMonthTz, wallClock } from "@/lib/scheduleTz";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
-import { DEFAULT_SHIFT_TIMES, crewWindows, workShiftOf, workSpan, shiftWindow, shiftAt, type ShiftTimes, type ShiftCredit } from "@/lib/shiftReport";
+import { DEFAULT_SHIFT_TIMES, crewWindows, workShiftOf, workSpan, shiftWindow, shiftAt, nextShift, type ShiftTimes, type ShiftCredit, type ShiftWindow } from "@/lib/shiftReport";
 import { type Band } from "@/lib/shiftBands";
 import { asBuilt } from "@/lib/asBuilt";
 import type { PathMarks } from "@/lib/criticalPath";
@@ -78,6 +78,8 @@ interface Props {
   pathMarks?: PathMarks;
   /** The schedule's clock — the one the shift report reads. */
   now?: number;
+  /** Opens "Plan the next shift" (swap, pull in, push out work orders). */
+  onPlanNext?: (next: ShiftWindow) => void;
   /** Found work on a task: into the schedule (DiscoveryForm). */
   onDiscovery?: (task: Milestone) => void;
 }
@@ -88,7 +90,7 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
  *  shift running into the next morning. */
 type Placed = DayPlacement<Milestone> & { band: Band; bandStart: number; bandEnd: number; ahead?: boolean; crit?: boolean };
 
-export default function ScheduleCalendarTileView({ planNow, userId, milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail, detailOpen, onAddNote, onSetProgressNote, onStartNote, shiftTimes = DEFAULT_SHIFT_TIMES, onUpdateStep, pathMarks, onDiscovery, now: clockNow }: Props) {
+export default function ScheduleCalendarTileView({ planNow, userId, milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail, detailOpen, onAddNote, onSetProgressNote, onStartNote, shiftTimes = DEFAULT_SHIFT_TIMES, onUpdateStep, pathMarks, onDiscovery, now: clockNow, onPlanNext }: Props) {
   const tz = useScheduleTz();
   // Multi-select for bulk actions on the calendar (mirrors the timeline).
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -334,12 +336,14 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   const shiftTags = useMemo(() => {
     const now = shiftAt(clock, tz, shiftTimes);
     const last = now.kind === "night" ? { kind: "day", dayKey: now.dayKey } : { kind: "night", dayKey: dayKey(addDaysTz(dayKeyToMs(now.dayKey, tz), -1, tz), tz) };
-    return { now: `${now.kind}:${now.dayKey}`, last: `${last.kind}:${last.dayKey}` };
+    const nx = nextShift(now, tz, shiftTimes);
+    return { now: `${now.kind}:${now.dayKey}`, last: `${last.kind}:${last.dayKey}`, next: `${nx.kind}:${nx.dayKey}`, nextWin: nx };
   }, [clock, tz, shiftTimes]);
   const tagOf = (key: string, band: Band) => {
     const k = `${band}:${key}`;
     if (k === shiftTags.now) return <span className="shrink-0 rounded px-1 py-px text-[8.5px] font-black uppercase tracking-wider bg-rose-600 text-white">Now</span>;
     if (k === shiftTags.last) return <span title="The shift that just ended — the one to write up" className="shrink-0 rounded px-1 py-px text-[8.5px] font-black uppercase tracking-wider bg-amber-500 text-white">Last shift</span>;
+    if (k === shiftTags.next) return <span title="The next shift" className="shrink-0 rounded px-1 py-px text-[8.5px] font-black uppercase tracking-wider bg-sky-600 text-white">Next</span>;
     return null;
   };
   // Which shift the day list opens on (from a shift's heading).
@@ -351,16 +355,26 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   };
   const bandHead = (key: string, band: Band, n: number, big = false, short = false) => {
     const w = shiftWindow(key, band, tz, shiftTimes);
-    return (
+    // The next shift: plan it from here (swap, pull in, push out).
+    const plan = canEdit && onPlanNext && `${band}:${key}` === shiftTags.next;
+    const head = (
       <button type="button" onClick={() => openShift(key, band)}
         title={`${band === "day" ? "Day" : "Night"} shift ${clockLabel(w.start, tz)}–${clockLabel(w.end, tz)}${band === "night" ? ` (into ${fmtInTz(w.end, tz, { weekday: "short" })} morning)` : ""} — open its list to enter progress`}
-        className={`shrink-0 flex items-center gap-1 px-1 min-w-0 ${big ? "text-[10.5px]" : "text-[9px]"} font-black uppercase tracking-wider hover:underline ${band === "day" ? "text-sky-800 dark:text-sky-300" : "text-violet-800 dark:text-violet-200"}`}>
+        className={`${plan ? "flex-1" : "shrink-0"} flex items-center gap-1 px-1 min-w-0 ${big ? "text-[10.5px]" : "text-[9px]"} font-black uppercase tracking-wider hover:underline ${band === "day" ? "text-sky-800 dark:text-sky-300" : "text-violet-800 dark:text-violet-200"}`}>
         {band === "day" ? <Sun className="w-2.5 h-2.5 shrink-0" aria-hidden /> : <Moon className="w-2.5 h-2.5 shrink-0" aria-hidden />}
         {band === "day" ? "Day" : "Night"}
         <span className="font-semibold normal-case tracking-normal opacity-80 truncate">{clockLabel(w.start, tz)}–{band === "night" && !short ? `${fmtInTz(w.end, tz, { weekday: "short" })} ` : ""}{clockLabel(w.end, tz)}</span>
         {tagOf(key, band)}
         <span className="ml-auto tabular-nums">{n}</span>
       </button>
+    );
+    if (!plan) return head;
+    return (
+      <div className="shrink-0 flex items-center gap-1 min-w-0">
+        {head}
+        <button type="button" onClick={() => onPlanNext!(w)} title="Plan this shift — swap, pull in or push out work orders. The schedule, the shift report and the email follow."
+          className="shrink-0 rounded px-1.5 py-px text-[9px] font-black uppercase tracking-wider bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:brightness-110">Plan</button>
+      </div>
     );
   };
   // Work orders open across a day with no step on it: folded into one line.
@@ -558,6 +572,13 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-2.5 py-1 rounded-md shadow-sm transition-colors">
           <ListChecks className="w-3.5 h-3.5" /> Update progress
         </button>
+        {canEdit && onPlanNext && (
+          <button onClick={() => onPlanNext(shiftTags.nextWin)}
+            title="Change what the next shift does — swap, pull in or push out work orders. The schedule, the shift report and the email follow."
+            className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] border border-[var(--color-accent)] hover:bg-[var(--color-surface-2)] px-2.5 py-1 rounded-md transition-colors">
+            <CalendarClock className="w-3.5 h-3.5" /> Plan next shift
+          </button>
+        )}
         {span && (
           <button onClick={() => { setCursor(firstOfMonthUTC(span.earliest, tz)); setFocusDay(startOfDayUTC(span.earliest, tz)); }} className="text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)] transition-colors">
             ⏮ Schedule start

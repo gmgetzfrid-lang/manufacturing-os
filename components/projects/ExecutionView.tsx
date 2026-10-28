@@ -34,10 +34,12 @@ import {
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import type { CancelledJob } from "@/lib/cancelledJobs";
-import { groupTasksUnderParent, setTaskDuration, addMilestoneNote, stateOf, deleteMilestones, restoreDeletedMilestones, applyBulkFieldChange, creditProgressTo, createMilestone, updateMilestone, deleteMilestone, type MilestoneState } from "@/lib/milestones";
+import { groupTasksUnderParent, setTaskDuration, addMilestoneNote, stateOf, deleteMilestones, restoreDeletedMilestones, applyBulkFieldChange, creditProgressTo, createMilestone, updateMilestone, deleteMilestone, deleteMilestoneNote, type MilestoneState } from "@/lib/milestones";
 import { planDiscovery, discoveryAttr, impactLine, type DiscoveryDraft, type DiscoveryRecord } from "@/lib/discovery";
 import DiscoveryForm from "@/components/projects/DiscoveryForm";
 import MarkSheet from "@/components/projects/MarkSheet";
+import PlanNextShift from "@/components/projects/PlanNextShift";
+import { planNote, type ShiftPlanChange } from "@/lib/shiftPlan";
 import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, cascadeDependents, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import { resolveCriticalPath, pathMarks, CRITICAL_MODES, type CriticalMode, type CriticalOverride } from "@/lib/criticalPath";
 import { useCriticalMode, saveCriticalMode } from "@/lib/criticalModeStore";
@@ -54,7 +56,7 @@ import { addDays as addDaysTz, dayDiff as dayDiffTz, dayKey, dayOfWeek, fmtInTz,
 import { needsFutureConfirm } from "@/lib/scheduleRules";
 import { startMsOf as plannedStartMsOf } from "@/lib/calendarPlacement";
 import { effectiveSpans, byStart, spanLabel, barGeometry, xAt, hourStep, startOf as timedStart, finishOf as timedFinish } from "@/lib/scheduleTime";
-import { expectedByParent, isOverdue, shiftAt, standingOf, workShiftOf, type ShiftCredit, type ShiftTimes, type WorkShift } from "@/lib/shiftReport";
+import { expectedByParent, isOverdue, shiftAt, standingOf, workShiftOf, type ShiftCredit, type ShiftTimes, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
 import type { StepUpdate } from "@/components/projects/CalendarQuickView";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
 import { linkOf } from "@/lib/scheduleLinks";
@@ -704,6 +706,43 @@ export default function ExecutionView({
       return false;
     }
   }, [canEdit, items, tz, criticalMode, byId, childrenOf, orgId, projectId, userId, userName, userEmail, userRole, onMoveMany, onRefresh, announce, notify]);
+
+  // Plan the next shift (PlanNextShift, lib/shiftPlan): a swap, pull-in or
+  // push-out moves the planned dates — linked work after it too — so the
+  // calendar, the report and the email follow. The reason goes on each step
+  // moved as a reschedule entry (never in place of the work comment the
+  // report reads). Undo puts the dates back and takes the entries off.
+  const [planNext, setPlanNext] = useState<ShiftWindow | null>(null);
+  const savePlan = useCallback(async (c: ShiftPlanChange, reason: string): Promise<boolean> => {
+    if (!canEdit || !onMoveMany || !c.moves.length) return false;
+    const before: DateChange[] = c.moves.map((x) => { const m = byId.get(x.id); return { id: x.id, plannedStartAt: (m?.plannedStartAt as string | undefined) ?? (m?.plannedAt as string), plannedAt: m?.plannedAt as string }; });
+    if (!(await onMoveMany(c.moves))) return false;
+    // The step pulled in: on the shift's hours, by the crew named.
+    const inBefore = c.in && c.inPatch ? byId.get(c.in.id) : undefined;
+    const who = { updatedBy: userId, updatedByName: userName, updatedByEmail: userEmail, updatedByRole: userRole };
+    if (c.in && c.inPatch) {
+      try { await updateMilestone({ id: c.in.id, ...who, patch: c.inPatch }); }
+      catch (e) { notify(`Moved, but ${c.in.name}'s crew or hours couldn't be changed: ${(e as Error).message}`, "warning"); }
+    }
+    const label = (t: number) => { const w = shiftAt(t, tz, shiftTimes); return `${fmtInTz(w.start, tz, { weekday: "short" })} ${w.kind} ${fmtInTz(t, tz, { hour: "2-digit", minute: "2-digit", hour12: false })}`; };
+    const made: string[] = [];
+    for (const n of planNote(c, reason, label)) {
+      try {
+        const saved = await addMilestoneNote({ orgId, milestoneId: n.id, kind: "reschedule", statusAt: byId.get(n.id)?.status ?? null, body: n.body, createdBy: userId, createdByName: userName });
+        if (saved.id) made.push(saved.id);
+      } catch { /* the move is saved; the reason is best-effort */ }
+    }
+    announce([c.in ? `“${truncate(c.in.name)}” in` : null, c.out ? `“${truncate(c.out.name)}” out` : null].filter(Boolean).join(", ") + ` · ${label(c.in?.to[0] ?? c.out!.to[0]).replace(/ \d\d:\d\d$/, "")}`,
+      async () => {
+        await onMoveMany(before);
+        if (inBefore?.id && c.inPatch) await updateMilestone({ id: inBefore.id, ...who, patch: { ...(c.inPatch.shift ? { shift: inBefore.shift ?? null } : {}), ...(c.inPatch.responsibleParty ? { responsibleParty: inBefore.responsibleParty ?? null } : {}) } }).catch(() => undefined);
+        for (const id of made) await deleteMilestoneNote(id).catch(() => undefined);
+        onRefresh();
+      },
+      c.impact.critical ? "default" : "success");
+    if (c.inPatch) onRefresh();
+    return true;
+  }, [canEdit, onMoveMany, byId, tz, shiftTimes, orgId, userId, userName, userEmail, userRole, announce, notify, onRefresh]);
   const startWithNote = useCallback(async (id: string, pct: number, note: string, forShift?: ShiftCredit): Promise<boolean> => {
     const ok = pct >= 100 ? await setStatus(id, "completed", undefined, undefined, forShift) : await setStatus(id, "in_progress", undefined, pct, forShift);
     // Said for an earlier shift only when it was; the time it happened is kept.
@@ -1182,10 +1221,11 @@ export default function ExecutionView({
       {layout === "report" ? (
         <ExecutionReportView milestones={items} shiftTimes={shiftTimes} critical={critical} criticalSource={criticalSourceLabel} />
       ) : layout === "shift" ? (
-        <ShiftReportView milestones={items} cancelled={cancelled} userId={userId} userName={userName ?? userEmail} canEdit={canEdit} progress={progressIndex} projectId={projectId} projectName={projectName} onUpdateStep={updateStep} onDiscovery={canEdit ? setDiscoveryFor : undefined} pathNow={cpClock} />
+        <ShiftReportView milestones={items} cancelled={cancelled} userId={userId} userName={userName ?? userEmail} canEdit={canEdit} progress={progressIndex} projectId={projectId} projectName={projectName} onUpdateStep={updateStep} onDiscovery={canEdit ? setDiscoveryFor : undefined} pathNow={cpClock} onPlanNext={canEdit && onMoveMany ? setPlanNext : undefined} />
       ) : layout === "calendar" ? (
         <ScheduleCalendarTileView
           onDiscovery={canEdit ? setDiscoveryFor : undefined}
+          onPlanNext={canEdit && onMoveMany ? setPlanNext : undefined}
           pathMarks={marks}
           now={cpClock}
           planNow={planNowAll}
@@ -1373,6 +1413,11 @@ export default function ExecutionView({
           onStartNote={startWithNote}
           onSetStatus={setStatus}
         />
+      )}
+
+      {planNext && (
+        <PlanNextShift milestones={items} next={planNext} now={cpClock} tz={tz} times={shiftTimes} mode={criticalMode} criticalIds={critical.ids}
+          onSave={savePlan} onClose={() => setPlanNext(null)} />
       )}
 
       {pendingMark && (
