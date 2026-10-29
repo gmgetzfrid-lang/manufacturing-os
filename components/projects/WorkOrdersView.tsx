@@ -6,7 +6,9 @@
 // crew. Open one and its steps are there to update, each with the step
 // card: start, %, finish, fix times, and the history with Edit. Steps with
 // no WO are listed under their equipment. Print puts the work orders shown
-// on paper, every one opened up with all its steps (lib/workOrdersPrint).
+// on paper, every one opened up with all its steps, in a format of its own
+// — report, report with history, or the pen-and-paper field tracker
+// (lib/workOrdersPrint) — without changing the view.
 
 import React, { useMemo, useState } from "react";
 import { Search, ChevronRight, Printer } from "lucide-react";
@@ -25,7 +27,7 @@ import { loadProgressLog } from "@/lib/progressHistory";
 import { buildTimeLog, type TimeLogRow } from "@/lib/timeLog";
 import { useLetterhead } from "@/lib/letterheadStore";
 import { letterheadDocument } from "@/lib/letterhead";
-import { workOrdersHtml, PRINT_CSS, type PrintOrder } from "@/lib/workOrdersPrint";
+import { workOrdersHtml, PRINT_CSS, type PrintOrder, type PrintFormat } from "@/lib/workOrdersPrint";
 
 const STEP_STATUS: Record<MilestoneStatus, string> = { planned: "Not started", in_progress: "In progress", completed: "Done", on_hold: "On hold", blocked: "Blocked", missed: "Missed" };
 const SHOW_WORD: Record<string, string> = { all: "All work orders", open: "Open work orders", behind: "Work orders behind plan", held: "Held work orders", done: "Done work orders" };
@@ -159,7 +161,8 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
   const { lh } = useLetterhead(projectId);
   const [printMenu, setPrintMenu] = useState(false);
   const [printMsg, setPrintMsg] = useState<string | null>(null);
-  const printIt = async (history: boolean) => {
+  const printIt = async (format: PrintFormat) => {
+    const history = format === "history";
     setPrintMenu(false); setPrintMsg(null);
     // Opened at the tap, so the browser doesn't take it for a pop-up.
     const w = window.open("", "_blank");
@@ -201,7 +204,7 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
             id: s.id ?? "", name: s.name, crew: s.responsibleParty?.trim() ?? "",
             planStart: startMsOf(s), planFinish: finishMsOf(s),
             actStart: ms(s.actualStartAt), actFinish: s.status === "completed" ? ms(s.actualAt) : NaN,
-            status: STEP_STATUS[s.status] ?? s.status, pct: Math.round(pctOf(s)),
+            status: STEP_STATUS[s.status] ?? s.status, done: s.status === "completed", pct: Math.round(pctOf(s)),
             added: d ? ADDED[kindOf(d)].word : undefined,
             latest: s.id ? latest.get(s.id) ?? null : null,
             history: s.id ? hist.get(s.id) : undefined,
@@ -210,8 +213,8 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
       }));
       const project = projectName?.trim() || "Schedule";
       const scope = `${SHOW_WORD[show]}${query.trim() ? ` · search “${query.trim()}”` : ""}${history ? " · with each step's history" : ""}`;
-      const body = workOrdersHtml({ project, scope, tz, orders, history });
-      const title = `${project} — Work orders`;
+      const body = workOrdersHtml({ project, scope, tz, orders, format });
+      const title = `${project} — ${format === "field" ? "Field tracker" : "Work orders"}`;
       const doc = lh ? letterheadDocument(lh, title, body, PRINT_CSS)
         : `<!doctype html><html><head><meta charset="utf-8"><title>${title.replace(/</g, "&lt;")}</title><style>@page{size:landscape;margin:10mm}body{margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}${PRINT_CSS}</style></head><body>${body}</body></html>`;
       w.document.open(); w.document.write(doc); w.document.close();
@@ -251,14 +254,18 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
             <>
               <span className="fixed inset-0 z-[40]" onClick={() => setPrintMenu(false)} aria-hidden />
               <span className="absolute right-0 top-full mt-1 z-[41] w-72 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-1.5 flex flex-col text-[12px]">
-                <span className="px-2 pt-1 pb-1.5 text-[11px] text-[var(--color-text-muted)]">The {shown.length} work order{shown.length === 1 ? "" : "s"} shown, each opened up with all its steps.</span>
-                <button type="button" onClick={() => void printIt(false)} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)]">
-                  <span className="font-semibold">All steps</span>
+                <span className="px-2 pt-1 pb-1.5 text-[11px] text-[var(--color-text-muted)]">The {shown.length} work order{shown.length === 1 ? "" : "s"} shown, each opened up with all its steps. Your view here stays as it is.</span>
+                <button type="button" onClick={() => void printIt("report")} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)]">
+                  <span className="font-semibold">Report</span>
                   <span className="block text-[11px] text-[var(--color-text-muted)]">Plan, actual, status, % and the latest comment</span>
                 </button>
-                <button type="button" onClick={() => void printIt(true)} disabled={!projectId} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)] disabled:opacity-50">
-                  <span className="font-semibold">All steps with their history</span>
+                <button type="button" onClick={() => void printIt("history")} disabled={!projectId} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                  <span className="font-semibold">Report with history</span>
                   <span className="block text-[11px] text-[var(--color-text-muted)]">Every start, % update, hold and comment, with its time</span>
+                </button>
+                <button type="button" onClick={() => void printIt("field")} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)]">
+                  <span className="font-semibold">Field tracker — fill in by pen</span>
+                  <span className="block text-[11px] text-[var(--color-text-muted)]">Lines to write starts, finishes, % and notes; spare rows for steps not on the schedule; what should have happened by now marked</span>
                 </button>
               </span>
             </>
