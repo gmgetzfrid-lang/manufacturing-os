@@ -35,7 +35,7 @@ import {
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import type { CancelledJob } from "@/lib/cancelledJobs";
 import { groupTasksUnderParent, setTaskDuration, addMilestoneNote, stateOf, deleteMilestones, restoreDeletedMilestones, applyBulkFieldChange, creditProgressTo, createMilestone, updateMilestone, deleteMilestone, deleteMilestoneNote, setActualTimes, type MilestoneState } from "@/lib/milestones";
-import { planDiscovery, discoveryAttr, impactLine, type DiscoveryDraft, type DiscoveryRecord } from "@/lib/discovery";
+import { planDiscovery, discoveryAttr, impactLine, addedNote, ADDED, type DiscoveryDraft, type DiscoveryRecord } from "@/lib/discovery";
 import DiscoveryForm from "@/components/projects/DiscoveryForm";
 import MarkSheet from "@/components/projects/MarkSheet";
 import PlanNextShift from "@/components/projects/PlanNextShift";
@@ -731,7 +731,7 @@ export default function ExecutionView({
         const created = await createMilestone({ orgId, projectId, name: st.name, plannedStartAt: st.plannedStartAt, plannedAt: st.plannedAt, durationHours: st.hours, parentId: draft.taskId,
           createdBy: userId, createdByName: userName, createdByEmail: userEmail, createdByRole: userRole });
         made.push(created.id!);
-        const rec: DiscoveryRecord = { id: groupId, what: draft.what, foundAt: draft.foundAt, foundBy: userName, approvedBy: draft.approvedBy, addedAt: now, addedBy: userName,
+        const rec: DiscoveryRecord = { id: groupId, kind: draft.kind ?? "discovery", what: draft.what, foundAt: draft.foundAt, foundBy: userName, approvedBy: draft.approvedBy, addedAt: now, addedBy: userName,
           seq: i + 1, of: plan.steps.length, afterId: draft.afterId ?? null, holdsIds: draft.holdsIds, impact: plan.impact };
         const sibAttrs = (sib?.attributes ?? {}) as Record<string, string | number | boolean | null>;
         await updateMilestone({ id: created.id!, ...who, patch: {
@@ -745,9 +745,9 @@ export default function ExecutionView({
       for (const l of plan.links) await updateMilestone({ id: l.id, ...who, patch: { dependsOn: l.dependsOn.map(real) } });
       if (plan.moves.length && onMoveMany) await onMoveMany(plan.moves);
       // Said where the work is: a comment on the step it follows.
-      if (after?.id) await addMilestoneNote({ orgId, milestoneId: after.id, kind: "note", statusAt: after.status, body: `Discovery: ${draft.what}`, createdBy: userId, createdByName: userName, happenedAt: new Date(draft.foundAt).toISOString() }).catch(() => undefined);
+      if (after?.id) await addMilestoneNote({ orgId, milestoneId: after.id, kind: "note", statusAt: after.status, body: addedNote(draft.kind ?? "discovery", draft.what), createdBy: userId, createdByName: userName, happenedAt: new Date(draft.foundAt).toISOString() }).catch(() => undefined);
       onRefresh();
-      announce(`Discovery on ${truncate(task?.name ?? "the task", 24)}: ${impactLine(plan.impact, (h) => `${h} h`)}`, async () => {
+      announce(`${ADDED[draft.kind ?? "discovery"].word} on ${truncate(task?.name ?? "the task", 24)}: ${impactLine(plan.impact, (h) => `${h} h`)}`, async () => {
         for (const id of made) await deleteMilestone(id, userId).catch(() => undefined);
         for (const l of linksBefore) await updateMilestone({ id: l.id, ...who, patch: { dependsOn: l.dependsOn } }).catch(() => undefined);
         if (datesBefore.length && onMoveMany) await onMoveMany(datesBefore);

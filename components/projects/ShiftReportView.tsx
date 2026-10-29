@@ -54,7 +54,7 @@ import { buildLookBack, CAUSE_LABEL, type LookBack, type StepLook } from "@/lib/
 import { CrewCountEditor, IncidentsLine, ShiftNotesBox, AddCompany, TimeLogButton } from "@/components/projects/ShiftRecordParts";
 import { useSortRows, Grip } from "@/components/projects/SortRows";
 import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
-import { discoveries, discoveryOf, discoverySummary, discoveryStepLine, impactLine, type Discovery } from "@/lib/discovery";
+import { discoveries, discoveryOf, discoverySummary, discoveryStepLine, impactLine, ADDED, kindOf, addedTitle, type Discovery } from "@/lib/discovery";
 import { buildTimeLog, downloadTimeLog } from "@/lib/timeLog";
 import { loadProgressLog, scheduleAt, type ProgressLogRow } from "@/lib/progressHistory";
 import { resolveCriticalPath, floatsOf, pathMarks, CRITICAL_MODES, type PathMarks } from "@/lib/criticalPath";
@@ -1246,7 +1246,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     const cp = r.leaf.id ? comp.get(r.leaf.id) : undefined;
     const nums = cp?.critical.map((x) => priorityOf.get(x.leaf.id ?? "")).filter((n): n is number => n != null) ?? [];
     return [
-      discoveryOf(r.leaf) ? { t: "discovery", tone: "violet" } : null,
+      discoveryOf(r.leaf) ? { t: ADDED[kindOf(discoveryOf(r.leaf))].lower, tone: "violet" } : null,
       pn ? { t: pn, tone: "amber" } : null,
       cp ? { t: `${cp.crew}: critical ${nums.length ? `#${nums.join(", #")}` : cp.critical[0].leaf.name} goes first`, tone: "amber" } : null,
     ];
@@ -1570,13 +1570,13 @@ function discoverySection(shift: ShiftWindow, c: Ctx, list: Discovery[], onAdd?:
   const ds = discoverySummary(list, shift.start, shift.end);
   if (!ds.inShift.length && !ds.open.length && !onAdd) return [];
   return [{
-    id: "discovery", title: "Discovery work", short: "Discovery",
+    id: "discovery", title: addedTitle([...ds.inShift, ...ds.open].map((d) => kindOf(d.record))), short: "Added work",
     sub: discoverySub(ds, c.hrs),
     count: ds.inShift.length,
     flag: ds.shift.critical ? "rose" : null,
     body: (print) => (
       <div className="space-y-2">
-        {ds.inShift.length === 0 ? <Empty>Nothing found this shift.</Empty> : <DiscoveryList list={ds.inShift} c={c} print={print} />}
+        {ds.inShift.length === 0 ? <Empty>Nothing added this shift.</Empty> : <DiscoveryList list={ds.inShift} c={c} print={print} />}
         {ds.open.length > 0 && (
           <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">
             Still open from earlier: {ds.open.map((d) => `${d.task?.name ?? ""} — ${d.record.what} (${d.steps.filter((x) => x.status !== "completed").length} of ${d.steps.length} steps open)`).join("; ")}.
@@ -1585,12 +1585,12 @@ function discoverySection(shift: ShiftWindow, c: Ctx, list: Discovery[], onAdd?:
         {!print && onAdd && (
           <button type="button" onClick={onAdd}
             className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-violet-400 dark:border-violet-700 px-3 py-1.5 text-[12px] font-bold text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950/40 print:hidden">
-            <Plus className="w-3.5 h-3.5" /> Add discovery work
+            <Plus className="w-3.5 h-3.5" /> Add discovery or added scope
           </button>
         )}
       </div>
     ),
-    data: () => ds.inShift.length ? [discoveryBlock(ds.inShift, c)] : [{ k: "note", text: "Nothing found this shift." } as ExportBlock],
+    data: () => ds.inShift.length ? [discoveryBlock(ds.inShift, c)] : [{ k: "note", text: "Nothing added this shift." } as ExportBlock],
   }];
 }
 
@@ -1610,7 +1610,7 @@ function DiscoveryList({ list, c, print }: { list: Discovery[]; c: Ctx; print: b
                 <b className="break-words">{d.task?.name}{d.task?.workOrderRef && <span className="ml-1.5 font-mono text-[11px] text-[var(--color-text-muted)]">WO {d.task.workOrderRef}</span>}</b>
                 <span className="shrink-0 font-mono text-[11px] text-[var(--color-text-muted)]">{c.DTs(d.record.foundAt)}</span>
               </div>
-              <div className="break-words">{d.record.what}</div>
+              <div className="break-words"><b className="text-[11px] uppercase tracking-wide text-[var(--color-text-muted)] mr-1">{ADDED[kindOf(d.record)].word}</b>{d.record.what}</div>
               {d.steps.map((m) => <div key={m.id} className="text-[11.5px] text-[var(--color-text-muted)] break-words">{discoveryStepLine(m, c.hrs)}</div>)}
               <div className={`text-[11.5px] ${impactCls(d)}`}>{impactLine(d.record.impact, c.hrs)}</div>
             </div>
@@ -1621,7 +1621,7 @@ function DiscoveryList({ list, c, print }: { list: Discovery[]; c: Ctx; print: b
         <table className={`w-full border-collapse ${print ? "text-[8pt]" : "text-[12.5px]"}`}>
           <thead>
             <tr className="border-b border-slate-300 dark:border-slate-600 text-[11px] font-medium text-slate-500 dark:text-slate-400 text-left">
-              <th className={`${cell} w-[92px]`}>Found</th><th className={`${cell} w-[18%]`}>Task</th><th className={cell}>What was found</th><th className={`${cell} w-[30%]`}>Work it added</th><th className={`${cell} w-[22%]`}>What it did</th>
+              <th className={`${cell} w-[92px]`}>When</th><th className={`${cell} w-[18%]`}>Task</th><th className={cell}>What</th><th className={`${cell} w-[30%]`}>Work it added</th><th className={`${cell} w-[22%]`}>What it did</th>
             </tr>
           </thead>
           <tbody>
@@ -1629,7 +1629,7 @@ function DiscoveryList({ list, c, print }: { list: Discovery[]; c: Ctx; print: b
               <tr key={d.record.id} className="border-b border-slate-100 dark:border-slate-800 align-top">
                 <td className={`${cell} font-mono text-[11px] whitespace-nowrap`}>{c.DTs(d.record.foundAt)}</td>
                 <td className={`${cell} font-semibold break-words`}>{d.task?.name}{d.task?.workOrderRef && <div className="font-mono font-normal text-[11px] text-[var(--color-text-muted)]">WO {d.task.workOrderRef}</div>}</td>
-                <td className={`${cell} break-words`}>{d.record.what}{d.record.approvedBy && <div className="text-[11px] text-[var(--color-text-muted)]">Approved by {d.record.approvedBy}</div>}</td>
+                <td className={`${cell} break-words`}><div className="text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">{ADDED[kindOf(d.record)].word}</div>{d.record.what}{d.record.approvedBy && <div className="text-[11px] text-[var(--color-text-muted)]">Approved by {d.record.approvedBy}</div>}</td>
                 <td className={`${cell} break-words`}>{d.steps.map((m) => <div key={m.id}>{discoveryStepLine(m, c.hrs)}</div>)}</td>
                 <td className={`${cell} break-words ${impactCls(d)}`}>{impactLine(d.record.impact, c.hrs)}</td>
               </tr>
@@ -1802,8 +1802,8 @@ function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftRep
     // Discovery over the whole job: what was found, the work it added, and
     // what it did to the finish.
     ...(found.length ? [{
-      id: "discovery", title: "Discovery work", short: "Discovery",
-      sub: `${found.length} found · ${c.hrs(Math.round(found.reduce((a, d) => a + d.record.impact.hours, 0) * 10) / 10)} of work added · ${found.filter((d) => d.record.impact.critical).length} on the critical path`,
+      id: "discovery", title: addedTitle(found.map((d) => kindOf(d.record))), short: "Added work",
+      sub: `${found.length} added · ${c.hrs(Math.round(found.reduce((a, d) => a + d.record.impact.hours, 0) * 10) / 10)} of work added · ${found.filter((d) => d.record.impact.critical).length} on the critical path`,
       count: found.length,
       flag: null,
       body: (print: boolean) => <DiscoveryList list={found} c={c} print={print} />,
@@ -1833,7 +1833,7 @@ function whyLost(s: StepLook, c: Ctx): string[] {
   if (s.lost.longer) out.push(`Ran ${c.hrs(s.lost.longer)} longer than planned`);
   if (s.lost["late-start"]) out.push(`Started ${c.hrs(s.lost["late-start"])} late — no hold or earlier work recorded`);
   if (s.lost.replanned) out.push(`Re-planned (${c.hrs(s.lost.replanned)})${s.replans[0] ? ` — “${s.replans[0]}”` : ""}`);
-  if (s.discovery) out.push(`Discovery — “${s.discovery}”`);
+  if (s.discovery) out.push(`${ADDED[s.addedKind ?? "discovery"].word} — “${s.discovery}”`);
   for (const w of s.why.slice(-2)) out.push(`Said: “${w}”`);
   return out;
 }
@@ -2551,7 +2551,7 @@ function DoneLines({ x, stamps, T, print, onEdit }: { x: DoneTask; stamps: boole
             {lead && <span className={`font-mono text-slate-600 dark:text-slate-300 mr-1.5 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>{lead}</span>}
             <span>{l.name}</span>
             {l.critical && <span className={`ml-1.5 font-bold text-rose-700 dark:text-rose-400 ${print ? "text-[7pt]" : "text-[10.5px]"}`}>critical path</span>}
-            {l.discovery && <span className={`ml-1.5 font-bold text-violet-700 dark:text-violet-300 ${print ? "text-[7pt]" : "text-[10.5px]"}`}>discovery</span>}
+            {l.discovery && <span className={`ml-1.5 font-bold text-violet-700 dark:text-violet-300 ${print ? "text-[7pt]" : "text-[10.5px]"}`}>{l.discovery}</span>}
             {!print && onEdit && <EditBtn label={l.name} onClick={() => onEdit(l.id)} />}
             {l.note && <div className={`italic text-slate-500 dark:text-slate-400 ${lead ? "ml-3" : ""} ${print ? "text-[7.5pt]" : "text-[11px]"}`}>“{l.note}”</div>}
           </div>

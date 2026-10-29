@@ -27,7 +27,8 @@ import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { DEFAULT_SHIFT_TIMES, crewWindows, workShiftOf, workSpan, shiftWindow, shiftAt, nextShift, type ShiftTimes, type ShiftCredit, type ShiftWindow } from "@/lib/shiftReport";
 import { type Band } from "@/lib/shiftBands";
 import { asBuilt, builtSpan } from "@/lib/asBuilt";
-import { discoveryOf } from "@/lib/discovery";
+import { discoveryOf, kindOf, ADDED } from "@/lib/discovery";
+import { ADDED_TONE } from "@/components/projects/DiscoveryTag";
 import type { PathMarks } from "@/lib/criticalPath";
 import ShiftMark from "@/components/projects/ShiftMark";
 import DayAgendaPanel from "@/components/projects/DayAgendaPanel";
@@ -1065,7 +1066,8 @@ function Chip({
       const sp = builtSpan(k);
       return sp.start < w1 && sp.finish > w0;
     };
-    return on(ms) || leafKids.some(on);
+    // Which kinds: discovery, added scope, or both.
+    return [...new Set([ms, ...leafKids].filter(on).map((k) => kindOf(discoveryOf(k))))];
   })();
   // Effective progress + status: a leaf's own, or a summary's weighted roll-up
   // (computed by the parent). Fall back to a shallow count if not supplied.
@@ -1199,10 +1201,10 @@ function Chip({
             <span className="flex items-center gap-1 min-w-0 flex-1 text-[9.5px] leading-tight opacity-70">
               {/* Night work is tagged; round the clock and day-and-night
                   mixes are marked; day work — most of it — is left quiet. */}
-              {foundHere && (
-                <span title={discoveryOf(ms) ? "Discovery — added when it was opened, not in the original schedule" : "Discovery work on this shift — added when it was opened, not in the original schedule"}
-                  className="shrink-0 rounded px-1 text-[8.5px] font-black uppercase leading-[14px] bg-violet-100 text-violet-800 dark:bg-violet-900/60 dark:text-violet-100">Discovery</span>
-              )}
+              {foundHere.map((k) => (
+                <span key={k} title={`${ADDED[k].word} on this shift — ${ADDED[k].tip}`}
+                  className={`shrink-0 rounded border px-1 text-[8.5px] font-black uppercase leading-[13px] ${ADDED_TONE[k]}`}>{ADDED[k].word}</span>
+              ))}
               {night && bandStart == null && (
                 <span title="Night-shift work" className="shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-[8.5px] font-black leading-[14px] bg-indigo-900 text-white dark:bg-indigo-300 dark:text-indigo-950">
                   <Moon className="w-2.5 h-2.5" />NIGHT

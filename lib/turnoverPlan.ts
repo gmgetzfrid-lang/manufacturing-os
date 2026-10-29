@@ -14,6 +14,7 @@
 
 import { whoOf, type ShiftReport, type ShiftRow } from "@/lib/shiftReport";
 import { equipmentTag } from "@/lib/safetyMoment";
+import { discoveryOf, kindOf, ADDED } from "@/lib/discovery";
 
 export type NextKind = "next" | "try" | "carry" | "held";
 
@@ -291,8 +292,8 @@ export function crewsOf(report: ShiftReport, plan: TurnoverPlan, hrs: (h: number
 export interface DoneLine { id: string; name: string; time?: number; wo?: string; note?: string;
   /** Was on the critical path when the shift began. */
   critical?: boolean;
-  /** Discovery work (lib/discovery). */
-  discovery?: boolean }
+  /** Discovery or added scope (lib/discovery): the word for it. */
+  discovery?: string }
 
 // ── The critical path on the report's rows — the screen and the email read
 // these, so they say the same. ────────────────────────────────────────────
@@ -399,7 +400,7 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
         wo: wos.length > 1 ? r.leaf.workOrderRef?.trim() || undefined : undefined,
         note: r.leaf.id ? noteOf?.(r.leaf.id) : undefined,
         critical: r.wasCritical || r.critical || undefined,
-        discovery: !!(r.leaf.attributes as Record<string, unknown> | null | undefined)?.discovery || undefined,
+        discovery: discoveryOf(r.leaf) ? ADDED[kindOf(discoveryOf(r.leaf))].lower : undefined,
       };
     });
     // Why it's behind: the steps behind plan that have a reason given.

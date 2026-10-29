@@ -69,7 +69,7 @@ interface Props {
 
 /** Schedule-file values the app reads for itself, shown elsewhere in
  *  plain words (Critical path row), not in the raw list. */
-import { discoveryOf, impactLine } from "@/lib/discovery";
+import { discoveryOf, impactLine, ADDED, kindOf } from "@/lib/discovery";
 
 const HIDDEN_ATTRS = new Set(["ms_critical", "discovery"]);
 
@@ -440,10 +440,10 @@ export default function TaskDetailPanel({
                 if (!d) return null;
                 return (
                   <div className="px-4 py-3 border-b border-[var(--color-border)] bg-violet-50/60 dark:bg-violet-950/20">
-                    <div className="text-[10px] font-black uppercase tracking-widest text-violet-700 dark:text-violet-300 mb-1">Discovery work{d.of > 1 ? ` · step ${d.seq} of ${d.of}` : ""}</div>
+                    <div className="text-[10px] font-black uppercase tracking-widest text-violet-700 dark:text-violet-300 mb-1">{ADDED[kindOf(d)].word}{d.of > 1 ? ` · step ${d.seq} of ${d.of}` : ""}</div>
                     <div className="text-xs text-[var(--color-text)] break-words">{d.what}</div>
                     <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-                      Found {new Date(d.foundAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false })}{d.foundBy ? ` by ${d.foundBy}` : ""}{d.approvedBy ? ` · approved by ${d.approvedBy}` : ""}
+                      {ADDED[kindOf(d)].found[0].toUpperCase() + ADDED[kindOf(d)].found.slice(1)} {fmtInTz(d.foundAt, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}{d.foundBy ? ` by ${d.foundBy}` : ""}{d.approvedBy ? ` · approved by ${d.approvedBy}` : ""}
                     </div>
                     <div className={`text-[11px] mt-0.5 ${d.impact.critical ? "font-bold text-rose-700 dark:text-rose-400" : "text-[var(--color-text)]"}`}>When added: {impactLine(d.impact, (h) => `${h} h`)}</div>
                   </div>

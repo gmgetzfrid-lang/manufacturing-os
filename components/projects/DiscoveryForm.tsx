@@ -13,7 +13,7 @@ import { X, Plus, Trash2 } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import type { ShiftTimes } from "@/lib/shiftReport";
 import { fmtInTz, toDateTimeInput, fromDateTimeInput } from "@/lib/scheduleTz";
-import { planDiscovery, defaultAfter, defaultHolds, impactLine, earliestStart, followsUntil, type DiscoveryDraft } from "@/lib/discovery";
+import { planDiscovery, defaultAfter, defaultHolds, impactLine, earliestStart, followsUntil, ADDED, type DiscoveryDraft, type AddedKind } from "@/lib/discovery";
 import type { CriticalMode } from "@/lib/criticalPath";
 import DateTimePicker from "@/components/projects/DateTimePicker";
 
@@ -57,6 +57,10 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
   };
   const pickAfter = (id: string | null) => { setAfterId(id); setHolds(defaultHolds(milestones, taskId, id)); };
   const [what, setWhat] = useState("");
+  // Discovery — found when it was opened — or added scope: known work
+  // that wasn't on the schedule.
+  const [kind, setKind] = useState<AddedKind>("discovery");
+  const k = ADDED[kind];
   const [rows, setRows] = useState<Array<{ name: string; crew: string; hours: string }>>(() => [{ name: "", crew: steps.find((s) => s.id === afterId)?.responsibleParty ?? "", hours: "" }]);
   const [approvedBy, setApprovedBy] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
@@ -72,15 +76,15 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
   const foundAt = toMs(foundV);
   const startAt = startMode === "set" ? toMs(startV) : null;
   // What's wrong with the times, if anything.
-  const timeProblem = !Number.isFinite(foundAt) ? "Put in when it was found — the day and the time."
+  const timeProblem = !Number.isFinite(foundAt) ? `Put in when it was ${k.found} — the day and the time.`
       : startMode === "set" && !Number.isFinite(startAt as number) ? "Pick when the work starts — the day and the time."
-        : startAt != null && startAt < foundAt ? "The work can't start before it was found."
+        : startAt != null && startAt < foundAt ? `The work can't start before it was ${k.found}.`
           : startAt != null && follows != null && startAt < follows ? `It starts after “${afterName ?? "the step it follows"}”, planned to be done ${fmt(follows)} — pick that or later, or change what it starts after.`
             : null;
 
   const filled = rows.map((r) => ({ name: r.name.trim(), crew: r.crew.trim(), hours: Number(r.hours) })).filter((r) => r.name && Number.isFinite(r.hours) && r.hours > 0);
   const draft: DiscoveryDraft | null = taskId && filled.length && !timeProblem
-    ? { taskId, what: what.trim(), foundAt, approvedBy: approvedBy.trim() || undefined, steps: filled, afterId, holdsIds: holds, startAt }
+    ? { taskId, kind, what: what.trim(), foundAt, approvedBy: approvedBy.trim() || undefined, steps: filled, afterId, holdsIds: holds, startAt }
     : null;
   // Worked out again only when what's entered changes.
   const draftKey = draft ? JSON.stringify(draft) : "";
@@ -90,10 +94,10 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
   const taskName = tasks.find((t) => t.id === taskId)?.name ?? start.name;
 
   const save = async () => {
-    if (!what.trim()) { setMsg("Say what was found."); return; }
+    if (!what.trim()) { setMsg(kind === "added" ? "Say what's being added." : "Say what was found."); return; }
     if (!filled.length) { setMsg("Add the work it needs — a step with its hours."); return; }
     if (timeProblem) { setMsg(timeProblem); return; }
-    if (foundAt > Date.now() + 60_000) { setMsg("When it was found can't be in the future."); return; }
+    if (foundAt > Date.now() + 60_000) { setMsg(`When it was ${k.found} can't be in the future.`); return; }
     if (!draft) return;
     setBusy(true); setMsg(null);
     const ok = await onSave(draft, now).catch((e: Error) => { setMsg(e.message); return false; });
@@ -105,16 +109,25 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
   const lbl = "block font-bold text-[var(--color-text)] mb-1";
   return (
     <div className="fixed inset-0 z-[185] bg-black/30" onClick={onClose}>
-      <div role="dialog" aria-label="Discovery work" onClick={(e) => e.stopPropagation()}
+      <div role="dialog" aria-label="Add work to the schedule" onClick={(e) => e.stopPropagation()}
         className="absolute left-1/2 top-10 -translate-x-1/2 w-[560px] max-w-[96vw] max-h-[88dvh] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-xl text-[12px] max-sm:left-0 max-sm:right-0 max-sm:top-auto max-sm:bottom-0 max-sm:translate-x-0 max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none max-sm:max-h-[92dvh]">
         <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2">
           <div>
-            <div className="text-[14px] font-black">Discovery work</div>
-            <div className="text-[11px] text-[var(--color-text-muted)]">Found work, into the schedule — and what it does to it.</div>
+            <div className="text-[14px] font-black">{k.word === "Discovery" ? "Discovery work" : "Added scope"}</div>
+            <div className="text-[11px] text-[var(--color-text-muted)]">Work that wasn&apos;t in the plan, into the schedule — and what it does to it.</div>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="w-7 h-7 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="px-4 py-3 space-y-3">
+          <div className="space-y-1">
+            <div className="flex flex-wrap gap-1" role="group" aria-label="What kind of work">
+              {(["discovery", "added"] as const).map((x) => (
+                <button key={x} type="button" aria-pressed={kind === x} onClick={() => { setKind(x); setMsg(null); }}
+                  className={`h-8 px-3 rounded-md border text-[12px] font-bold ${kind === x ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>{ADDED[x].word}</button>
+              ))}
+            </div>
+            <div className="text-[11px] text-[var(--color-text-muted)]">{kind === "added" ? "Known work that wasn't on the schedule." : "Found when the equipment was opened."} You can change this later.</div>
+          </div>
           <label className="block">
             <span className={lbl}>Equipment / task</span>
             <select value={taskId} onChange={(e) => pickTask(e.target.value)} className={`${inp} w-full`}>
@@ -122,11 +135,11 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
             </select>
           </label>
           <label className="block">
-            <span className={lbl}>What was found <span className="font-bold text-amber-700 dark:text-amber-400">— required</span></span>
-            <textarea value={what} onChange={(e) => { setWhat(e.target.value); setMsg(null); }} rows={2} placeholder="e.g. Tray 14 cracked at the weld — needs repair before close-up"
+            <span className={lbl}>{k.what} <span className="font-bold text-amber-700 dark:text-amber-400">— required</span></span>
+            <textarea value={what} onChange={(e) => { setWhat(e.target.value); setMsg(null); }} rows={2} placeholder={kind === "added" ? "e.g. Clean the downcomers while the tower is open" : "e.g. Tray 14 cracked at the weld — needs repair before close-up"}
               className={`${inp} w-full h-auto py-1.5`} />
           </label>
-          <DateTimePicker label="When was it found?" hint="— required" value={foundV} onChange={(v) => { setFoundV(v); setMsg(null); }} tz={tz} times={times} />
+          <DateTimePicker label={`When was it ${k.found}?`} hint="— required" value={foundV} onChange={(v) => { setFoundV(v); setMsg(null); }} tz={tz} times={times} />
           <div>
             <span className={lbl}>Work it adds</span>
             <div className="space-y-1.5">
@@ -210,7 +223,7 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
               {busy ? "Adding…" : "Add to the schedule"}
             </button>
           </div>
-          <div className="text-[10.5px] text-[var(--color-text-faint)]">It goes in as steps under {taskName}, marked as discovery, linked after the step it follows; what it holds up waits on it, and linked work downstream moves later. The baseline stays as it was, so the report shows the difference.</div>
+          <div className="text-[10.5px] text-[var(--color-text-faint)]">It goes in as steps under {taskName}, marked as {k.lower}, linked after the step it follows; what it holds up waits on it, and linked work downstream moves later. The baseline stays as it was, so the report shows the difference.</div>
         </div>
       </div>
     </div>

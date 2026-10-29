@@ -20,6 +20,24 @@ import { resolveCriticalPath, type CriticalMode } from "@/lib/criticalPath";
 
 export interface DiscoveryStepInput { name: string; crew?: string; hours: number }
 
+/** Work put in after the plan: discovery — found when the equipment was
+ *  opened — or added scope — known work that wasn't on the schedule. The
+ *  words every view, report and email use for each (one place). */
+export type AddedKind = "discovery" | "added";
+export const ADDED: Record<AddedKind, { word: string; lower: string; found: string; what: string; tip: string }> = {
+  discovery: { word: "Discovery", lower: "discovery", found: "found", what: "What was found", tip: "found when it was opened — not in the original schedule" },
+  added: { word: "Added scope", lower: "added scope", found: "raised", what: "What's being added", tip: "known work that wasn't on the schedule — not in the original plan" },
+};
+/** Its kind; one saved before there were two is discovery. */
+export const kindOf = (r?: { kind?: AddedKind | null } | null): AddedKind => (r?.kind === "added" ? "added" : "discovery");
+/** What a list of them is called: "Discovery work", "Added scope", or both. */
+export function addedTitle(kinds: AddedKind[]): string {
+  const d = kinds.includes("discovery"), a = kinds.includes("added");
+  return d && a ? "Discovery & added scope" : a ? "Added scope" : "Discovery work";
+}
+/** The comment it leaves on the step it follows: "Discovery: …". */
+export const addedNote = (kind: AddedKind, what: string) => `${ADDED[kind].word}: ${what.trim()}`;
+
 export interface DiscoveryDraft {
   /** The equipment / task it's under. */
   taskId: string;
@@ -36,6 +54,7 @@ export interface DiscoveryDraft {
   /** When the work is planned to start; none — as soon as it can
    *  (earliestStart). */
   startAt?: number | null;
+  kind?: AddedKind;
 }
 
 export interface DiscoveryImpact {
@@ -54,6 +73,8 @@ export interface DiscoveryImpact {
 /** Kept on each step it added (attributes.discovery). */
 export interface DiscoveryRecord {
   id: string;
+  /** Discovery (the default) or added scope. */
+  kind?: AddedKind;
   what: string;
   foundAt: number;
   foundBy?: string;

@@ -10,7 +10,7 @@
 
 import { capacityOf, askedResult } from "@/lib/shiftHandover";
 import { turnoverPlan, nextOf, askedLine, crewsOf, vsPlan, doneByTask, shareOf, pathNote, competition, type TableOrder } from "@/lib/turnoverPlan";
-import { discoveryOf, discoverySummary, discoveryStepLine, impactLine, type Discovery } from "@/lib/discovery";
+import { discoveryOf, discoverySummary, discoveryStepLine, impactLine, ADDED, kindOf as addedKind, addedTitle, type Discovery } from "@/lib/discovery";
 import { type PullCrew, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
 import { rankHazards, type HazardJobInput, type HazardKind } from "@/lib/safetyMoment";
 import { safetyBrief, talkSources, projectFacts, RISKS_RANKED, type ProjectBase } from "@/lib/safetyTalk";
@@ -218,7 +218,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
           rows: byTaskDone.map((x) => [
             { t: x.task, bold: true, ...(x.taskPct || x.critical ? { sub: [...(x.critical ? [{ t: "Critical path", tone: "rose" as const }] : []), ...(x.taskPct ? [{ t: pctText(x.taskPct)! }] : [])] } : {}) }, x.wo,
             // One step per line — its time when times are on, its WO when the task has several.
-            { t: `${x.head}:`, lines: x.lines.map((l) => ({ lead: [l.wo ? `WO ${l.wo}` : "", look.showTimes && l.time != null ? f.T(l.time) : ""].filter(Boolean).join(" ") || undefined, t: `${l.name}${l.critical ? " · critical path" : ""}${l.discovery ? " · discovery" : ""}`, note: l.note })) },
+            { t: `${x.head}:`, lines: x.lines.map((l) => ({ lead: [l.wo ? `WO ${l.wo}` : "", look.showTimes && l.time != null ? f.T(l.time) : ""].filter(Boolean).join(" ") || undefined, t: `${l.name}${l.critical ? " · critical path" : ""}${l.discovery ? ` · ${l.discovery}` : ""}`, note: l.note })) },
             muted(x.who),
             { t: x.result.text, tone: x.result.tone === "amber" ? "amber" : "emerald", bold: true, ...(x.why ? { sub: [{ t: `Why behind: ${x.why}`, tone: "amber" as const, italic: true }] } : {}) },
             { t: x.vs.text, tone: x.vs.tone, bold: true }] as ExportCell[]),
@@ -269,7 +269,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       ...(r.critical ? [{ t: "Critical path", tone: "rose" as const }] : []),
       ...(pn ? [{ t: pn[0].toUpperCase() + pn.slice(1), tone: "amber" as const }] : []),
       ...(c ? [{ t: `Same crew as critical work (${c.crew}): ${c.critical.slice(0, 2).map((x) => x.leaf.name).join(", ")} goes first`, tone: "amber" as const }] : []),
-      ...(discoveryOf(r.leaf) ? [{ t: `Discovery — ${discoveryOf(r.leaf)!.what}`, tone: "slate" as const }] : []),
+      ...(discoveryOf(r.leaf) ? [{ t: `${ADDED[addedKind(discoveryOf(r.leaf))].word} — ${discoveryOf(r.leaf)!.what}`, tone: "slate" as const }] : []),
     ];
   };
   // What it waits on, as the screen says it: after steps on this list, or
@@ -382,7 +382,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   const ds = discoverySummary(look.discovery ?? [], shift.start, shift.end);
   if (ds.inShift.length || ds.open.length) {
     out.push({
-      id: "discovery", title: `Discovery work — ${shiftName(shift)} ${f.D(shift.start)}`, sub: discoverySub(ds, f.hrs),
+      id: "discovery", title: `${addedTitle([...ds.inShift, ...ds.open].map((d) => addedKind(d.record)))} — ${shiftName(shift)} ${f.D(shift.start)}`, sub: discoverySub(ds, f.hrs),
       blocks: [
         ...(ds.inShift.length ? [discoveryBlock(ds.inShift, f)] : [{ k: "note", text: "Nothing found this shift.", tone: "muted" } as ExportBlock]),
         ...(ds.open.length ? [{ k: "note", text: `Still open from earlier: ${ds.open.map((d) => `${d.task?.name ?? ""} — ${d.record.what} (${d.steps.filter((x) => x.status !== "completed").length} of ${d.steps.length} steps open)`).join("; ")}.`, tone: "amber" } as ExportBlock] : []),
@@ -395,7 +395,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
 /** "2 found · 14 h added · turnaround +8 h · so far 5, 40 h" */
 export function discoverySub(ds: ReturnType<typeof discoverySummary>, hrs: (h: number) => string): string {
   return [
-    `${ds.shift.count} found this shift`,
+    `${ds.shift.count} added this shift`,
     ds.shift.hours ? `${hrs(ds.shift.hours)} added` : null,
     ds.shift.finishH ? `turnaround +${hrs(ds.shift.finishH)}` : null,
     ds.shift.critical ? `${ds.shift.critical} on the critical path` : null,
@@ -406,11 +406,11 @@ export function discoverySub(ds: ReturnType<typeof discoverySummary>, hrs: (h: n
 /** Discovery as a table — the turnover email and the close-out alike. */
 export function discoveryBlock(list: Discovery[], f: { DTs: (ms: number) => string; hrs: (h: number) => string }): ExportBlock {
   return {
-    k: "table", head: ["Found", "Task", "What was found", "Work it added", "What it did"], align: ["left", "left", "left", "left", "left"], nowrap: [0],
+    k: "table", head: ["When", "Task", "What", "Work it added", "What it did"], align: ["left", "left", "left", "left", "left"], nowrap: [0],
     rows: list.map((d) => [
       f.DTs(d.record.foundAt),
       { t: d.task?.name ?? "", bold: true, ...(d.task?.workOrderRef ? { sub: [{ t: `WO ${d.task.workOrderRef}` }] } : {}) },
-      { t: d.record.what, ...(d.record.approvedBy ? { sub: [{ t: `Approved by ${d.record.approvedBy}`, tone: "muted" as const }] } : {}) },
+      { t: d.record.what, sub: [{ t: ADDED[addedKind(d.record)].word, tone: "slate" as const }, ...(d.record.approvedBy ? [{ t: `Approved by ${d.record.approvedBy}`, tone: "muted" as const }] : [])] },
       { t: `${d.steps.length} step${d.steps.length === 1 ? "" : "s"}:`, lines: d.steps.map((m) => ({ t: discoveryStepLine(m, f.hrs) })) },
       { t: impactLine(d.record.impact, f.hrs), tone: d.record.impact.critical ? "rose" : "slate", bold: d.record.impact.critical },
     ] as ExportCell[]),

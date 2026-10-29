@@ -23,7 +23,7 @@ import { effectiveWeight, leafPercent } from "@/lib/scheduleProgress";
 import { mergeImportedProgress } from "@/lib/scheduleRules";
 import { DEFAULT_SCHEDULE_TZ, naiveToIso, normalizeTimeZone, shiftWallClock, addDays, hasTimeOfDay, dayDiff } from "@/lib/scheduleTz";
 import { fetchAllRows } from "@/lib/fetchAllRows";
-import { discoveryOf, discoveryAttr } from "@/lib/discovery";
+import { discoveryOf, discoveryAttr, addedNote, kindOf, type AddedKind } from "@/lib/discovery";
 import type {
   Milestone, MilestoneStatus, MilestoneSource, MilestoneNote, MilestoneAttributes,
 } from "@/types/schema";
@@ -790,7 +790,7 @@ export async function creditProgressTo(milestoneId: string, at: number): Promise
  *  when. It's kept on each step it added (attributes.discovery), and its
  *  "Discovery: …" comment on the step it follows says when — all of them
  *  are changed. Returns how many steps were changed. */
-export async function updateDiscoveryRecord(projectId: string, recordId: string, patch: { foundAt?: number; what?: string }): Promise<number> {
+export async function updateDiscoveryRecord(projectId: string, recordId: string, patch: { foundAt?: number; what?: string; kind?: AddedKind }): Promise<number> {
   const { rows, error } = await fetchAllRows<{ id: string; attributes: Record<string, unknown> | null }>((from, to) => supabase
     .from("milestones").select("id, attributes").eq("project_id", projectId).order("id").range(from, to) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>);
   if (error) throw new Error(error);
@@ -799,7 +799,7 @@ export async function updateDiscoveryRecord(projectId: string, recordId: string,
     const rec = discoveryOf({ attributes: r.attributes } as unknown as Milestone);
     if (!rec || rec.id !== recordId) continue;
     if (!before || rec.seq === 1) before = rec;
-    const next = { ...rec, ...(patch.what != null ? { what: patch.what.trim() } : {}), ...(patch.foundAt != null ? { foundAt: patch.foundAt } : {}) };
+    const next = { ...rec, ...(patch.what != null ? { what: patch.what.trim() } : {}), ...(patch.foundAt != null ? { foundAt: patch.foundAt } : {}), ...(patch.kind ? { kind: patch.kind } : {}) };
     const { error: e } = await supabase.from("milestones").update({ attributes: { ...(r.attributes ?? {}), discovery: discoveryAttr(next) } }).eq("id", r.id);
     if (e) throw new Error(e.message);
     n++;
@@ -808,8 +808,9 @@ export async function updateDiscoveryRecord(projectId: string, recordId: string,
   if (before?.afterId) {
     const upd: Record<string, unknown> = {};
     if (patch.foundAt != null) upd.happened_at = new Date(patch.foundAt).toISOString();
-    if (patch.what != null) upd.body = `Discovery: ${patch.what.trim()}`;
-    if (Object.keys(upd).length) await supabase.from("milestone_notes").update(upd).eq("milestone_id", before.afterId).eq("body", `Discovery: ${before.what}`);
+    if (patch.what != null || patch.kind) upd.body = addedNote(patch.kind ?? kindOf(before), patch.what ?? before.what);
+    // Its comment, whichever word it was saved with.
+    if (Object.keys(upd).length) await supabase.from("milestone_notes").update(upd).eq("milestone_id", before.afterId).in("body", [addedNote("discovery", before.what), addedNote("added", before.what)]);
   }
   if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("milestone-notes:changed"));
   return n;

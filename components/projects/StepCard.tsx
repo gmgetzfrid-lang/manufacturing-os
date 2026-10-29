@@ -13,7 +13,8 @@ import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import { shiftAt, workHours, type ShiftTimes } from "@/lib/shiftReport";
 import { fmtInTz, toDateTimeInput, fromDateTimeInput } from "@/lib/scheduleTz";
 import DateTimePicker from "@/components/projects/DateTimePicker";
-import { discoveryOf } from "@/lib/discovery";
+import { discoveryOf, kindOf, ADDED, type AddedKind } from "@/lib/discovery";
+import { ADDED_TONE } from "@/components/projects/DiscoveryTag";
 import PctSlider from "@/components/projects/PctSlider";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { updateMilestoneNote, setProgressTime, setNoteTime, updateDiscoveryRecord } from "@/lib/milestones";
@@ -102,7 +103,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   const ps = startMsOf(m), pf = finishMsOf(m);
   const found = discoveryOf(m);
   // Correcting what was found and when (on every step it added).
-  const [foundEdit, setFoundEdit] = useState<{ what: string; at: string } | null>(null);
+  const [foundEdit, setFoundEdit] = useState<{ kind: AddedKind; what: string; at: string } | null>(null);
   const [foundMsg, setFoundMsg] = useState<string | null>(null);
   const [foundBusy, setFoundBusy] = useState(false);
   const saveFound = async () => {
@@ -110,14 +111,15 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     const what = foundEdit.what.trim();
     const iso = foundEdit.at.length >= 16 ? fromDateTimeInput(foundEdit.at, tz) : null;
     const at = iso ? Date.parse(iso) : NaN;
-    if (!what) { setFoundMsg("Say what was found."); return; }
-    if (!Number.isFinite(at)) { setFoundMsg("Pick the day and the time it was found."); return; }
-    if (at > Date.now() + 60_000) { setFoundMsg("When it was found can't be in the future."); return; }
+    const k = ADDED[foundEdit.kind];
+    if (!what) { setFoundMsg(foundEdit.kind === "added" ? "Say what's being added." : "Say what was found."); return; }
+    if (!Number.isFinite(at)) { setFoundMsg(`Pick the day and the time it was ${k.found}.`); return; }
+    if (at > Date.now() + 60_000) { setFoundMsg(`When it was ${k.found} can't be in the future.`); return; }
     setFoundBusy(true);
     try {
-      await updateDiscoveryRecord(m.projectId, found.id, { what, foundAt: at });
+      await updateDiscoveryRecord(m.projectId, found.id, { kind: foundEdit.kind, what, foundAt: at });
       window.dispatchEvent(new CustomEvent("schedule:changed"));
-      setFoundEdit(null); setSaved(`Discovery: found ${when(at)}`);
+      setFoundEdit(null); setSaved(`${k.word}: ${k.found} ${when(at)}`);
     } catch (e) { setFoundMsg((e as Error).message || "Not saved."); }
     finally { setFoundBusy(false); }
   };
@@ -447,15 +449,21 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   return (
     <div ref={rootRef} className="px-3 pb-3 pl-7 space-y-2 bg-[var(--color-surface)] text-[12.5px]">
       {found && (
-        <div className="rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-violet-900 dark:border-violet-900 dark:bg-violet-950/40 dark:text-violet-200">
+        <div className={`rounded-md border px-2 py-1 ${ADDED_TONE[foundEdit?.kind ?? kindOf(found)]}`}>
           {foundEdit ? (
             <div className="space-y-2 py-1">
+              <div className="flex flex-wrap gap-1" role="group" aria-label="What kind of work">
+                {(["discovery", "added"] as const).map((x) => (
+                  <button key={x} type="button" aria-pressed={foundEdit.kind === x} onClick={() => { setFoundEdit({ ...foundEdit, kind: x }); setFoundMsg(null); }}
+                    className={`h-8 px-3 rounded-md border text-[12px] font-bold text-[var(--color-text)] ${foundEdit.kind === x ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] opacity-70"}`}>{ADDED[x].word}</button>
+                ))}
+              </div>
               <label className="block">
-                <span className="block font-semibold mb-1">What was found</span>
-                <input value={foundEdit.what} onChange={(e) => { setFoundEdit({ ...foundEdit, what: e.target.value }); setFoundMsg(null); }} aria-label="What was found"
+                <span className="block font-semibold mb-1">{ADDED[foundEdit.kind].what}</span>
+                <input value={foundEdit.what} onChange={(e) => { setFoundEdit({ ...foundEdit, what: e.target.value }); setFoundMsg(null); }} aria-label={ADDED[foundEdit.kind].what}
                   className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]" />
               </label>
-              <DateTimePicker label="When was it found?" value={foundEdit.at} onChange={(v) => { setFoundEdit({ ...foundEdit, at: v }); setFoundMsg(null); }} tz={tz} times={times} />
+              <DateTimePicker label={`When was it ${ADDED[foundEdit.kind].found}?`} value={foundEdit.at} onChange={(v) => { setFoundEdit({ ...foundEdit, at: v }); setFoundMsg(null); }} tz={tz} times={times} />
               {foundMsg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{foundMsg}</div>}
               <div className="flex items-center gap-2">
                 <button type="button" onClick={() => void saveFound()} disabled={foundBusy}
@@ -465,8 +473,8 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
             </div>
           ) : (
             <>
-              <b>Discovery</b>{Number.isFinite(found.foundAt) ? ` · found ${when(found.foundAt)}` : ""} — “{found.what}”. Added scope, not in the original schedule.
-              {canEdit && m.projectId && <button type="button" onClick={() => { setFoundEdit({ what: found.what, at: toDateTimeInput(found.foundAt, tz) }); setFoundMsg(null); }} className="ml-1.5 text-[11px] font-semibold text-[var(--color-accent)] hover:underline">Edit</button>}
+              <b>{ADDED[kindOf(found)].word}</b>{Number.isFinite(found.foundAt) ? ` · ${ADDED[kindOf(found)].found} ${when(found.foundAt)}` : ""} — “{found.what}”. Not in the original schedule.
+              {canEdit && m.projectId && <button type="button" onClick={() => { setFoundEdit({ kind: kindOf(found), what: found.what, at: toDateTimeInput(found.foundAt, tz) }); setFoundMsg(null); }} className="ml-1.5 text-[11px] font-semibold text-[var(--color-accent)] hover:underline">Edit</button>}
             </>
           )}
         </div>

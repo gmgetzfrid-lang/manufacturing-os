@@ -211,7 +211,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
       )}
       <div className="px-3 py-1.5 border-t border-[var(--color-border)] flex items-center justify-between gap-2 text-[10.5px] text-[var(--color-text-faint)]">
         {onDiscovery ? (
-          <button type="button" onClick={() => onDiscovery(task)} className="font-bold text-violet-700 dark:text-violet-300 hover:underline">+ Discovery work found</button>
+          <button type="button" onClick={() => onDiscovery(task)} className="font-bold text-violet-700 dark:text-violet-300 hover:underline">+ Discovery or added scope</button>
         ) : <span>Tap a step to update it.</span>}
         {onOpenDetail && <button type="button" onClick={() => onOpenDetail(task)} className="font-semibold text-[var(--color-accent)] hover:underline">Schedule details (move, depends on) ›</button>}
       </div>

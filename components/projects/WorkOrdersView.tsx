@@ -16,7 +16,7 @@ import { expectedFraction, workHours, type ShiftTimes } from "@/lib/shiftReport"
 import { fmtInTz, dayKey } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { woOf } from "@/lib/workOrderCrew";
-import { discoveryOf } from "@/lib/discovery";
+import { discoveryOf, kindOf, ADDED, type AddedKind } from "@/lib/discovery";
 import type { PathMarks } from "@/lib/criticalPath";
 import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
 
@@ -44,8 +44,8 @@ interface WorkOrder {
   pct: number; plan: number; hours: number;
   standing: Standing;
   done: number;
-  /** Discovery: steps added when it was opened, and their hours. */
-  found: number; foundH: number;
+  /** Put in after the plan — discovery, added scope — steps and hours of each. */
+  added: Array<{ kind: AddedKind; n: number; h: number }>;
   find: string;
 }
 
@@ -108,15 +108,17 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
       }
       const all = done === steps.length;
       const crews = [...new Set(steps.map((s) => s.responsibleParty?.trim()).filter((c): c is string => !!c))].sort();
-      const added = steps.filter((s) => discoveryOf(s));
-      const foundH = Math.round(added.reduce((a, s) => a + (s.durationHours != null && s.durationHours > 0 ? s.durationHours : workHours(s, tz)), 0) * 10) / 10;
+      const added = (["discovery", "added"] as const).map((kind) => {
+        const xs = steps.filter((s) => { const d = discoveryOf(s); return d && kindOf(d) === kind; });
+        return { kind, n: xs.length, h: Math.round(xs.reduce((a, s) => a + (s.durationHours != null && s.durationHours > 0 ? s.durationHours : workHours(s, tz)), 0) * 10) / 10 };
+      }).filter((x) => x.n > 0);
       out.push({
         key, wo: g.wo, owner: g.owner, steps, crews,
         planStart, planFinish, actStart, actFinish: all ? actFinish : NaN,
         pct: Math.round(pSum / wSum), plan: Math.round(planSum / wSum), hours: Math.round(hours * 10) / 10,
         standing: all ? "done" : held ? "held" : started ? "in_progress" : "not_started", done,
-        found: added.length, foundH,
-        find: [g.wo, g.owner.name, ...crews, ...steps.flatMap((s) => [s.name, s.description, woOf(s)]), added.length ? "discovery added scope" : null].filter(Boolean).join(" ").toLowerCase(),
+        added,
+        find: [g.wo, g.owner.name, ...crews, ...steps.flatMap((s) => [s.name, s.description, woOf(s)]), ...added.map((x) => ADDED[x.kind].lower)].filter(Boolean).join(" ").toLowerCase(),
       });
     }
     return out.sort((a, b) => a.planStart - b.planStart || (a.wo ?? "~").localeCompare(b.wo ?? "~"));
@@ -186,7 +188,11 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
                       {descOf(o.owner) && <div className="text-[12px] text-[var(--color-text)] line-clamp-2 break-words">{descOf(o.owner)}</div>}
                       <div className="text-[11.5px] text-[var(--color-text-muted)]">
                         {[o.crews.join(", ") || null, single ? null : `${o.done} of ${o.steps.length} steps done`].filter(Boolean).join(" · ")}
-                        {o.found > 0 && <span className="ml-1.5 font-semibold text-violet-700 dark:text-violet-300" title="Added when the equipment was opened — not in the original schedule">+ {o.found} discovery step{o.found === 1 ? "" : "s"} ({o.foundH} h)</span>}
+                        {o.added.map((x) => (
+                          <span key={x.kind} className={`ml-1.5 font-semibold ${x.kind === "added" ? "text-teal-700 dark:text-teal-300" : "text-violet-700 dark:text-violet-300"}`} title={ADDED[x.kind].tip}>
+                            + {x.n} {ADDED[x.kind].lower} step{x.n === 1 ? "" : "s"} ({x.h} h)
+                          </span>
+                        ))}
                       </div>
                       <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 text-[11.5px]">
                         <span className="text-[var(--color-text-muted)]">Plan</span>

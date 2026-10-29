@@ -3,7 +3,7 @@
 // impact said before it's saved and kept after.
 
 import { describe, it, expect } from "vitest";
-import { planDiscovery, defaultAfter, defaultHolds, discoveries, impactLine, discoveryAttr, earliestStart, followsUntil, type DiscoveryRecord } from "@/lib/discovery";
+import { planDiscovery, defaultAfter, defaultHolds, discoveries, impactLine, discoveryAttr, discoveryOf, earliestStart, followsUntil, addedTitle, kindOf, type DiscoveryRecord } from "@/lib/discovery";
 import type { Milestone } from "@/types/schema";
 
 const UTC = "UTC";
@@ -107,11 +107,22 @@ describe("discovery on the turnover and in the time log", () => {
     const sections = turnoverUpdate(report, f, { pctOf: () => 0, finishOf: () => undefined, discovery: discoveries(ms) });
     expect(sections[sections.length - 1].id).toBe("discovery");
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections });
-    expect(text).toMatch(/DISCOVERY WORK — DAY SHIFT 10-27 — 1 found this shift · 8 h added · turnaround \+6 h · 1 on the critical path · so far 1 \(8 h, finish \+6 h\)/);
+    expect(text).toMatch(/DISCOVERY WORK — DAY SHIFT 10-27 — 1 added this shift · 8 h added · turnaround \+6 h · 1 on the critical path · so far 1 \(8 h, finish \+6 h\)/);
     expect(text).toMatch(/Tray 14 cracked at the weld/);
     expect(text).toMatch(/Weld repair tray 14 — Ancon, 8 h · not started/);
     expect(text).toMatch(/8 h of work · task finish \+8 h · turnaround finish \+6 h · on the critical path/);
     expect(text).toMatch(/Discovery — Tray 14 cracked at the weld/);
+  });
+  it("added scope reads as added scope — the section, the step's tag, the time log", () => {
+    const asAdded = ms.map((m) => { const d = discoveryOf(m); return d ? { ...m, attributes: { ...(m.attributes ?? {}), discovery: discoveryAttr({ ...d, kind: "added" }) } } as Milestone : m; });
+    const sections = turnoverUpdate(report, f, { pctOf: () => 0, finishOf: () => undefined, discovery: discoveries(asAdded) });
+    const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections });
+    expect(text).toMatch(/ADDED SCOPE — DAY SHIFT 10-27 — 1 added this shift/);
+    expect(text).not.toMatch(/DISCOVERY WORK/);
+    const rows = buildTimeLog({ milestones: asAdded, log: [], notes: [], tz: LA, times });
+    expect(rows.find((r) => r.what === "Added scope raised")).toMatchObject({ at: found, step: "Weld repair tray 14" });
+    expect(addedTitle(["discovery", "added"])).toBe("Discovery & added scope");
+    expect(kindOf(undefined)).toBe("discovery");
   });
   it("in the time log, when it was found", () => {
     const rows = buildTimeLog({ milestones: ms, log: [], notes: [], tz: LA, times });

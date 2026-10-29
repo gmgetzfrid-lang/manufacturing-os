@@ -19,7 +19,7 @@ import type { Milestone, MilestoneNote } from "@/types/schema";
 import { computeCpm, linkGraph } from "@/lib/cpm";
 import { earliestStart } from "@/lib/scheduleLinks";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
-import { discoveryOf, type Discovery } from "@/lib/discovery";
+import { discoveryOf, kindOf, type Discovery, type AddedKind } from "@/lib/discovery";
 import { woOf } from "@/lib/workOrderCrew";
 
 const H = 3_600_000;
@@ -34,7 +34,7 @@ export const CAUSE_LABEL: Record<Cause, string> = {
   replanned: "Re-planned",
   "late-start": "Started late — no hold or earlier work recorded",
   longer: "Took longer than planned",
-  discovery: "Discovery work",
+  discovery: "Discovery & added scope",
 };
 const CAUSES: Cause[] = ["hold", "longer", "late-start", "replanned", "discovery"];
 
@@ -64,6 +64,8 @@ export interface StepLook {
   replans: string[];
   /** Discovery work: what was found. */
   discovery?: string;
+  /** Discovery or added scope (lib/discovery). */
+  addedKind?: AddedKind;
   /** Hours it lost on its own, by cause. */
   lost: Partial<Record<Cause, number>>;
   lostH: number;
@@ -209,7 +211,7 @@ export function buildLookBack(input: {
       bs: t.bs, bf: t.bf, as: t.as, af: t.af, done: t.done,
       finishH: r1(finishH), startH: r1(startH), overrunH: r1(overrunH), inheritedH: r1(inheritedH),
       holdH: r1([...holdTotal.values()].reduce((a, h) => a + h, 0)), holds: [...holdTotal].map(([reason, h]) => ({ reason, hours: r1(h) })),
-      why, replans, ...(disc ? { discovery: disc.what } : {}), lost, lostH,
+      why, replans, ...(disc ? { discovery: disc.what, addedKind: kindOf(disc) } : {}), lost, lostH,
     });
   }
   const look = new Map(steps.map((s) => [s.id, s]));
