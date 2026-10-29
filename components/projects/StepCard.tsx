@@ -12,6 +12,7 @@ import { ChevronLeft, ChevronRight, Play, Check } from "lucide-react";
 import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import { shiftAt, workHours, type ShiftTimes } from "@/lib/shiftReport";
 import { fmtInTz, toDateTimeInput, fromDateTimeInput } from "@/lib/scheduleTz";
+import { whenDated } from "@/lib/timeWords";
 import DateTimePicker from "@/components/projects/DateTimePicker";
 import { discoveryOf, kindOf, ADDED, type AddedKind } from "@/lib/discovery";
 import { ADDED_TONE } from "@/components/projects/DiscoveryTag";
@@ -100,10 +101,8 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   onFixTimes?: (t: { start?: number | null; finish?: number | null }) => Promise<boolean>;
   onMoveDays?: (id: string, delta: number) => void;
 }) {
-  // "Sat 10:00 PM" this week; further off "Oct 24, 10:00 PM".
-  const when = (t: number) => fmtInTz(t, tz, Math.abs(t - now) < 6 * 86_400_000
-    ? { weekday: "short", hour: "numeric", minute: "2-digit", hour12: true }
-    : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
+  // Always with its date — a multi-week job has more than one Monday.
+  const when = (t: number) => whenDated(t, tz);
 
   const ps = startMsOf(m), pf = finishMsOf(m);
   const found = discoveryOf(m);

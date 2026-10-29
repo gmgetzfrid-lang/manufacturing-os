@@ -15,8 +15,8 @@ import { ChevronRight, Layers } from "lucide-react";
 import type { Milestone, MilestoneNote } from "@/types/schema";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { leafPercent } from "@/lib/scheduleProgress";
-import { expectedFraction, shiftWindow, workHours, notesForShift, TURNOVER_GRACE_MS, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
-import { fmtInTz } from "@/lib/scheduleTz";
+import { expectedFraction, shiftWindow, workHours, hoursInSpan, notesForShift, TURNOVER_GRACE_MS, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
+import { whenDated, spanDated, hoursShort } from "@/lib/timeWords";
 import { notesFor } from "@/lib/milestones";
 import { loadProgressLog, type ProgressLogRow } from "@/lib/progressHistory";
 import StepCard, { type StepUpdate } from "@/components/projects/StepCard";
@@ -107,10 +107,8 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
     const d = shiftWindow(dayKey, "day", tz, times), n = shiftWindow(dayKey, "night", tz, times);
     return { kind: "day", dayKey, start: d.start, end: n.end };
   }, [band, dayKey, tz, times]);
-  // "Tue 2:30 PM" this week; further off, with its date ("Oct 23, 4:23 PM").
-  const fmt = (t: number) => fmtInTz(t, tz, Math.abs(t - now) < 6 * 86_400_000
-    ? { weekday: "short", hour: "numeric", minute: "2-digit", hour12: true }
-    : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
+  // Always with its date — a multi-week job has more than one Monday.
+  const fmt = (t: number) => whenDated(t, tz);
   const [open, setOpen] = useState<string | null>(onDay.length === 1 ? onDay[0].id ?? null : null);
   const [showOthers, setShowOthers] = useState(false);
 
@@ -167,7 +165,16 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
                 // Where it actually happened, beside the plan.
                 const b = builtSpan(m);
                 const planned = Number.isFinite(s0) && Number.isFinite(f0) ? `${fmt(s0)} → ${fmt(f0)}` : "";
-                if (b.kind === "done") return `Done ${fmt(b.finish)}${planned ? ` · planned ${planned}` : ""}`;
+                if (b.kind === "done") {
+                  // Started → done as recorded, and the hours it was open on its
+                  // crew's shift (overnight, with the crew gone, isn't counted).
+                  const a = ms(m.actualStartAt);
+                  if (!Number.isFinite(a) || a >= b.finish) return `Done ${fmt(b.finish)}${planned ? ` · planned ${planned}` : ""}`;
+                  const open = (b.finish - a) / 3_600_000, on = hoursInSpan(m, a, b.finish, tz, times);
+                  const plan = m.durationHours != null && m.durationHours > 0 ? m.durationHours : workHours(m, tz);
+                  const took = on > 0 && on < open - 0.5 ? `${hoursShort(on)} on shift (open ${hoursShort(open)})` : hoursShort(open);
+                  return `Done ${spanDated(a, b.finish, tz)} · ${took}, plan ${hoursShort(plan)}`;
+                }
                 if (b.kind === "started") return `Started ${fmt(b.start)}${planned ? ` · planned ${planned}` : ""}`;
                 return planned;
               })()}{m.status !== "completed" ? ` · plan ${plan}% by now` : ""}{m.workOrderRef && wos.length > 1 ? ` · WO ${m.workOrderRef}` : ""}

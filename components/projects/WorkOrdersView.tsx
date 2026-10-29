@@ -16,7 +16,8 @@ import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { leafPercent } from "@/lib/scheduleProgress";
 import { expectedFraction, workHours, type ShiftTimes } from "@/lib/shiftReport";
-import { fmtInTz, dayKey } from "@/lib/scheduleTz";
+import { dayKey } from "@/lib/scheduleTz";
+import { whenDated } from "@/lib/timeWords";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { woOf } from "@/lib/workOrderCrew";
 import { discoveryOf, kindOf, ADDED, type AddedKind } from "@/lib/discovery";
@@ -151,10 +152,8 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
   // One you have open stays while you work in it, whatever the filter.
   const shown = found.filter((o) => is[show](o) || open.has(o.key));
   const today = dayKey(now, tz);
-  // "Tue 2:30 PM" this week; further off "Oct 23, 4:23 PM".
-  const fmt = (t: number) => (Number.isFinite(t) ? fmtInTz(t, tz, Math.abs(t - now) < 6 * 86_400_000
-    ? { weekday: "short", hour: "numeric", minute: "2-digit", hour12: true }
-    : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) : "—");
+  // Always with its date — a multi-week job has more than one Monday.
+  const fmt = (t: number) => whenDated(t, tz);
   const toggle = (k: string) => setOpen((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
 
   // ── Print: the work orders shown, each opened up with all its steps.
