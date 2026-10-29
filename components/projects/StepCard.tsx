@@ -17,7 +17,7 @@ import { discoveryOf, kindOf, ADDED, type AddedKind } from "@/lib/discovery";
 import { ADDED_TONE } from "@/components/projects/DiscoveryTag";
 import PctSlider from "@/components/projects/PctSlider";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
-import { updateMilestoneNote, setProgressTime, setNoteTime, updateDiscoveryRecord, deleteDiscovery } from "@/lib/milestones";
+import { updateMilestoneNote, setProgressTime, setNoteTime, updateDiscoveryRecord, deleteDiscovery, deleteMilestoneNote, undoLastProgress, resetStepProgress } from "@/lib/milestones";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import type { ProgressLogRow } from "@/lib/progressHistory";
 import { describeChange } from "@/lib/timeLog";
@@ -52,6 +52,8 @@ interface HistoryEvent {
   unsure?: "unset" | "order";
   /** Its comment (a hold's reason, or what got done) — edited with it. */
   comment?: { note: MilestoneNote; text: string };
+  /** The status it left the step in — what a comment added to it is said at. */
+  status?: MilestoneStatus;
 }
 /** A logged change in words: "Started", "Progress · 25%", "Blocked". */
 const logWords = (x: ProgressLogRow) => {
@@ -168,8 +170,8 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   // came with.
   const history = useMemo(() => {
     const ev: HistoryEvent[] = [];
-    if (Number.isFinite(as)) ev.push({ key: "start", at: as, sort: as, seq: -1, text: "Started", said: [], fix: "start", noteIds: [] });
-    if (done && Number.isFinite(af)) ev.push({ key: "finish", at: af, sort: af, seq: 1e9, text: "Finished", said: [], fix: "finish", noteIds: [] });
+    if (Number.isFinite(as)) ev.push({ key: "start", at: as, sort: as, seq: -1, text: "Started", said: [], fix: "start", noteIds: [], status: "in_progress" });
+    if (done && Number.isFinite(af)) ev.push({ key: "finish", at: af, sort: af, seq: 1e9, text: "Finished", said: [], fix: "finish", noteIds: [], status: "completed" });
     const real = rows.filter((x) => x.old_status != null && !(x.old_status === x.new_status && Number(x.old_percent ?? 0) === Number(x.new_percent ?? 0)))
       .sort((a, b) => (a.id ?? 0) - (b.id ?? 0) || Date.parse(a.at) - Date.parse(b.at));
     // The earliest time of anything entered after each change.
@@ -196,7 +198,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         if (h > 0) text += ` · ${x.old_status === "blocked" ? "blocked" : "on hold"} ${hoursWords(h)}`;
       }
       const key = `r${x.id ?? ""}${x.at}${x.new_status}${x.new_percent}`;
-      ev.push({ key, at: t, sort: unsure[i] ? after[i] : t, seq: i, text, said: [], logId: x.id, noteIds: [], unsure: unsure[i] });
+      ev.push({ key, at: t, sort: unsure[i] ? after[i] : t, seq: i, text, said: [], logId: x.id, noteIds: [], unsure: unsure[i], status: x.new_status });
       saves.push({ at: savedAt, key });
     }
     // Started straight off a hold (blocked before it began): one line.
@@ -255,7 +257,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   const [fixMsg, setFixMsg] = useState<string | null>(null);
   const [fixBusy, setFixBusy] = useState(false);
   const canFix = (x: HistoryEvent) => canEdit && (x.fix ? !!onFixTimes : x.logId != null || x.noteIds.length > 0);
-  const canEditEntry = (x: HistoryEvent) => canFix(x) || (canEdit && !!x.comment);
+  const canEditEntry = (x: HistoryEvent) => canFix(x) || (canEdit && (!!x.comment || (!!onUpdate && x.text !== "")));
   const openFix = (x: HistoryEvent) => {
     setFixing(fixing === x.key ? null : x.key); setFixMsg(null); setSaved(null);
     setFixV(toDateTimeInput(x.unsure === "unset" ? x.sort : x.at, tz));
@@ -270,7 +272,9 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     if (x.comment && !text) { setFixMsg("The comment can't be empty."); return; }
     const timeChanged = canFix(x) && (x.unsure === "unset" || Math.abs(t - x.at) >= 60_000);
     const textChanged = !!x.comment && text !== x.comment.text;
-    if (!timeChanged && !textChanged) { setFixing(null); return; }
+    // No comment on it yet: what's typed is added to it, at its time.
+    const textAdded = !x.comment && !!text;
+    if (!timeChanged && !textChanged && !textAdded) { setFixing(null); return; }
     if (timeChanged) {
       if (t > Date.now() + 60_000) { setFixMsg("That time is in the future."); return; }
       if (x.fix === "start" && Number.isFinite(af) && t > af) { setFixMsg(`It finished ${when(af)} — it can't start after that.`); return; }
@@ -291,7 +295,14 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     setFixBusy(true); setFixMsg(null);
     try {
       if (textChanged && x.comment?.note.id) await updateMilestoneNote(x.comment.note.id, text);
-      if (!timeChanged) { window.dispatchEvent(new CustomEvent("milestone-notes:changed")); setFixing(null); setSaved("Comment saved"); return; }
+      const addComment = async (at: number) => {
+        if (!textAdded || !onUpdate) return true;
+        return onUpdate({ status: x.status ?? m.status, pct: null, note: text, at, comment: true });
+      };
+      if (!timeChanged) {
+        if (!(await addComment(x.unsure === "unset" ? x.sort : x.at))) { setFixMsg("Comment not saved."); return; }
+        window.dispatchEvent(new CustomEvent("milestone-notes:changed")); setFixing(null); setSaved(textAdded ? "Comment added" : "Comment saved"); return;
+      }
       if (x.logId != null) {
         const r = await setProgressTime(x.logId, t);
         if (r !== "ok") { setFixMsg(r === "missing" ? "Fixing a time needs the database update run first." : r === "range" ? "That's more than 60 days back." : "Not saved."); return; }
@@ -299,6 +310,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       if (x.fix && onFixTimes && !(await onFixTimes(x.fix === "start" ? { start: t } : { finish: t }))) { setFixMsg("Not saved."); return; }
       // Its comments go with it.
       for (const id of x.noteIds) await setNoteTime(id, t).catch(() => undefined);
+      if (!(await addComment(t))) { setFixMsg("Time saved; the comment wasn't."); return; }
       window.dispatchEvent(new CustomEvent("milestone-notes:changed"));
       setFixing(null); setSaved(`Saved: ${when(t)}`);
     } catch (e) { setFixMsg((e as Error).message || "Not saved."); }
@@ -438,6 +450,67 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     finally { setBusy(false); }
   };
 
+  // Taking back what was entered: the latest change (the step goes back to
+  // how it stood before it), a comment, or the whole record (start over).
+  const lastChange = useMemo(() => {
+    let best: ProgressLogRow | null = null;
+    for (const x of rows) {
+      if (x.old_status == null || x.id == null || (x.old_status === x.new_status && Number(x.old_percent ?? 0) === Number(x.new_percent ?? 0))) continue;
+      if (!best || x.id > best.id!) best = x;
+    }
+    return best;
+  }, [rows]);
+  const STATUS_WORD: Record<MilestoneStatus, string> = { planned: "not started", in_progress: "in progress", completed: "done", on_hold: "on hold", blocked: "blocked", missed: "missed" };
+  const removable = (x: HistoryEvent): "change" | "comment" | null =>
+    x.logId != null && lastChange && x.logId === lastChange.id ? "change"
+      : x.logId == null && !x.fix && x.noteIds.length > 0 ? "comment" : null;
+  const changed = (ids: string[]) => {
+    window.dispatchEvent(new CustomEvent("schedule:changed", { detail: { ids } }));
+    window.dispatchEvent(new CustomEvent("milestone-notes:changed"));
+  };
+  const removeEntry = async (x: HistoryEvent) => {
+    const kind = removable(x);
+    if (!kind || !m.id) return;
+    const before = lastChange ? `${STATUS_WORD[lastChange.old_status as MilestoneStatus] ?? lastChange.old_status}${lastChange.old_status === "in_progress" || lastChange.old_status === "on_hold" || lastChange.old_status === "blocked" ? `, ${Math.round(Number(lastChange.old_percent ?? 0))}%` : ""}` : "";
+    if (!(await appConfirm(kind === "change" ? {
+      title: `Take back “${x.text}”?`,
+      message: `It comes off the history${x.noteIds.length ? " with its comment" : ""}, and the step goes back to how it stood before it: ${before}${x.fix === "finish" ? ", with no finish time" : x.fix === "start" ? ", with no start time" : ""}. Then enter it again the right way.`,
+      confirmLabel: "Take it back",
+    } : {
+      title: "Remove this comment?",
+      message: "It comes off the step's history and the reports.",
+      confirmLabel: "Remove",
+    }))) return;
+    setFixBusy(true); setFixMsg(null);
+    try {
+      if (kind === "change") {
+        const r = await undoLastProgress(m.id);
+        if (r !== "ok") { setFixMsg(r === "missing" ? "Taking back an entry needs the database update (20261109_history_remove.sql) run first." : r === "none" ? "There's nothing to take back." : "Not taken back."); return; }
+      }
+      for (const id of x.noteIds) await deleteMilestoneNote(id).catch(() => undefined);
+      changed([m.id]);
+      setFixing(null); setSaved(kind === "change" ? `Took back “${x.text}”` : "Comment removed");
+    } catch (e) { setFixMsg((e as Error).message || "Not removed."); }
+    finally { setFixBusy(false); }
+  };
+  const [resetMsg, setResetMsg] = useState<string | null>(null);
+  const startOver = async () => {
+    if (!m.id) return;
+    if (!(await appConfirm({
+      title: `Start “${m.name}” over?`,
+      message: "It goes back to not started: its start and finish times, %, holds, history and comments are all removed. The plan stays as it is. Then enter it again from Start.",
+      confirmLabel: "Start over",
+    }))) return;
+    setBusy(true); setResetMsg(null);
+    try {
+      const r = await resetStepProgress(m.id);
+      if (r !== "ok") { setResetMsg(r === "missing" ? "Starting over needs the database update (20261109_history_remove.sql) run first." : "Not reset."); return; }
+      changed([m.id]);
+      setAction(null); setSaved("Started over — not started, nothing recorded");
+    } catch (e) { setResetMsg((e as Error).message || "Not reset."); }
+    finally { setBusy(false); }
+  };
+
   // One main button; the rest are small.
   const main: { a: Action; label: string; icon: React.ReactNode } | null = !canEdit || !onUpdate ? null
     : done ? null : held ? { a: "resume", label: "Resume", icon: <Play className="w-3.5 h-3.5" /> }
@@ -570,7 +643,11 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         <div className="flex items-baseline justify-between gap-2 mb-0.5">
           <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">History</span>
           {toSet > 0 && <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-400">{toSet === 1 ? "1 time" : `${toSet} times`} to set</span>}
+          {canEdit && onUpdate && (started || history.length > 0) && (
+            <button type="button" onClick={() => void startOver()} disabled={busy} className="ml-auto text-[11px] font-semibold text-rose-700 dark:text-rose-400 hover:underline disabled:opacity-50">Start over</button>
+          )}
         </div>
+        {resetMsg && <div role="alert" className="mb-1 font-semibold text-rose-700 dark:text-rose-400">{resetMsg}</div>}
         {history.length === 0 ? <div className="text-[var(--color-text-muted)]">Nothing yet.</div> : (
           <>
             {hidden > 0 && <button type="button" onClick={() => setAllHistory(true)} className="mb-0.5 text-[11.5px] font-semibold text-[var(--color-accent)] hover:underline">Show {hidden} earlier</button>}
@@ -596,15 +673,23 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                     {fixing === x.key && (
                       <div className="mt-1 mb-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-2.5 space-y-2 text-[12.5px]">
                         {canFix(x) && <DateTimePicker label="When it happened" value={fixV} onChange={(v) => { setFixV(v); setFixMsg(null); }} tz={tz} times={times} showNow={false} disabled={fixBusy} />}
-                        {x.comment && (
+                        {(x.comment || onUpdate) && (
                           <input value={fixText} onChange={(e) => { setFixText(e.target.value); setFixMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") void saveFix(x); }}
-                            aria-label="Comment" disabled={fixBusy} className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px]" />
+                            placeholder={x.comment ? undefined : "Add a comment (optional)"} aria-label="Comment" disabled={fixBusy}
+                            className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px]" />
                         )}
                         {fixMsg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{fixMsg}</div>}
                         <div className="flex items-center gap-2">
                           <button type="button" onClick={() => void saveFix(x)} disabled={fixBusy}
                             className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-60">{fixBusy ? "Saving…" : "Save"}</button>
                           <button type="button" onClick={() => setFixing(null)} className="h-9 px-3 rounded-lg text-[var(--color-text-muted)] font-semibold hover:text-[var(--color-text)]">Cancel</button>
+                          {removable(x) ? (
+                            <button type="button" onClick={() => void removeEntry(x)} disabled={fixBusy} className="ml-auto h-9 px-3 rounded-lg font-semibold text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 disabled:opacity-50">
+                              {removable(x) === "change" ? "Take back" : "Remove"}
+                            </button>
+                          ) : x.logId != null && (
+                            <span className="ml-auto text-[11px] text-[var(--color-text-muted)]">Only the latest entry can be taken back — or Start over.</span>
+                          )}
                         </div>
                       </div>
                     )}

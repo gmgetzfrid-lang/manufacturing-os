@@ -844,6 +844,19 @@ export async function deleteDiscovery(projectId: string, recordId: string, actor
   return group.length;
 }
 
+/** Take back a step's latest change: the step as it stood before it, that
+ *  line off its history (20261109_history_remove.sql). "none" — nothing to
+ *  take back; "missing" — the database update isn't run yet. */
+export type HistoryRemoveResult = "ok" | "none" | "missing" | "error";
+const historyRpc = async (fn: string, milestoneId: string): Promise<HistoryRemoveResult> => {
+  const { data, error } = await supabase.rpc(fn, { p_milestone_id: milestoneId });
+  if (error) return error.code === "PGRST202" || error.code === "42883" ? "missing" : "error";
+  return data === "ok" ? "ok" : data === "none" ? "none" : "error";
+};
+export const undoLastProgress = (milestoneId: string) => historyRpc("undo_last_progress", milestoneId);
+/** Start a step over: not started, no times, no history, no comments. */
+export const resetStepProgress = (milestoneId: string) => historyRpc("reset_step_progress", milestoneId);
+
 /** Correct when a logged change happened (a time picked, entered later,
  *  or picked wrong): its line in the progress log moves to `at`. "start"
  *  — the log's starting line, not a change; "range" — in the future or

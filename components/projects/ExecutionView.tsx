@@ -272,7 +272,16 @@ export default function ExecutionView({
   // A change saved straight to the database elsewhere (a discovery's
   // record corrected on a step card): read the schedule again.
   useEffect(() => {
-    const on = () => onRefresh();
+    const on = (e: Event) => {
+      // A step taken back or started over: whatever was put on screen for
+      // it at a save goes, so the database's version shows.
+      const ids = (e as CustomEvent<{ ids?: string[] }>).detail?.ids ?? [];
+      if (ids.length) {
+        const drop = <T,>(m: Map<string, T>) => { if (!ids.some((id) => m.has(id))) return m; const n = new Map(m); for (const id of ids) n.delete(id); return n; };
+        setOptimistic(drop); setOptimisticPct(drop); setOptimisticAt(drop);
+      }
+      onRefresh();
+    };
     window.addEventListener("schedule:changed", on);
     return () => window.removeEventListener("schedule:changed", on);
   }, [onRefresh]);
@@ -685,7 +694,9 @@ export default function ExecutionView({
     // shift's report; its status stays as it is.
     if (u.comment) {
       if (!u.note.trim()) return false;
-      await addNote(id, u.note.trim(), u.at, m.status);
+      // Said at the status of what it's about (a comment on "Finished" is
+      // said done, one on "Started" in progress).
+      await addNote(id, u.note.trim(), u.at, u.status);
       return true;
     }
     const label = fmtInTz(u.at, tz, { weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false });
