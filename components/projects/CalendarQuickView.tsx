@@ -16,7 +16,8 @@ import type { Milestone, MilestoneNote } from "@/types/schema";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { leafPercent } from "@/lib/scheduleProgress";
 import { expectedFraction, shiftWindow, workHours, hoursInSpan, notesForShift, TURNOVER_GRACE_MS, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
-import { whenDated, spanDated, hoursShort } from "@/lib/timeWords";
+import { whenDated, hoursShort } from "@/lib/timeWords";
+import { fmtInTz, dayKey as dayOf } from "@/lib/scheduleTz";
 import { notesFor } from "@/lib/milestones";
 import { loadProgressLog, type ProgressLogRow } from "@/lib/progressHistory";
 import StepCard, { type StepUpdate } from "@/components/projects/StepCard";
@@ -170,10 +171,14 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
                   // crew's shift (overnight, with the crew gone, isn't counted).
                   const a = ms(m.actualStartAt);
                   if (!Number.isFinite(a) || a >= b.finish) return `Done ${fmt(b.finish)}${planned ? ` · planned ${planned}` : ""}`;
+                  // Done first, then when it started — and the hours said for what
+                  // they are: start to finish, not hours worked.
                   const open = (b.finish - a) / 3_600_000, on = hoursInSpan(m, a, b.finish, tz, times);
                   const plan = m.durationHours != null && m.durationHours > 0 ? m.durationHours : workHours(m, tz);
-                  const took = on > 0 && on < open - 0.5 ? `${hoursShort(on)} on shift (open ${hoursShort(open)})` : hoursShort(open);
-                  return `Done ${spanDated(a, b.finish, tz)} · ${took}, plan ${hoursShort(plan)}`;
+                  const sameDay = dayOf(a, tz) === dayOf(b.finish, tz);
+                  const started = sameDay ? fmtInTz(a, tz, { hour: "numeric", minute: "2-digit", hour12: true }) : fmt(a);
+                  const took = `${hoursShort(open)} start to finish${on > 0 && on < open - 0.5 ? `, ${hoursShort(on)} on shift` : ""}`;
+                  return `Done ${fmt(b.finish)} · started ${started} · ${took} (plan ${hoursShort(plan)})`;
                 }
                 if (b.kind === "started") return `Started ${fmt(b.start)}${planned ? ` · planned ${planned}` : ""}`;
                 return planned;
