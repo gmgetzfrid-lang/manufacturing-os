@@ -7,6 +7,7 @@
 // nothing goes in the email or on paper until someone approves it.
 
 import React, { useState } from "react";
+import Link from "next/link";
 import { AlertTriangle, CheckCircle2, Loader2, Pencil, Plus, Sparkles, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -176,6 +177,7 @@ export function ShiftHourlyBox({ h, edit, print, shift, tz }: {
               className="text-[11.5px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">Take back to draft</button>
           )}
           {lines.length === 0 && <span className="text-[11px] text-[var(--color-text-muted)]">AI writes a draft from the starts, progress, holds, comments and notes logged on the shift. You check it before it goes anywhere.</span>}
+          <Link href="/intelligence/setup" className="text-[11px] font-semibold text-[var(--color-accent)] hover:underline">Model for shift notes</Link>
         </div>
       )}
       {edit && <AddLine shift={shift} tz={tz} onAdd={addLine} />}

@@ -351,6 +351,22 @@ export function JobModelsEditor({ orgId, current, jobModels, ready, jobUse, onCh
   );
 }
 
+/** The per-job menus for a saved connection — what both AI settings screens
+ *  (this modal and Intelligence → AI setup) show under the key. */
+export function JobModelsFor({ orgId, data, onChanged }: {
+  orgId: string;
+  data: Awaited<ReturnType<typeof getAiConnections>>;
+  onChanged: () => void;
+}) {
+  const p = data.personal;
+  if (!p || (p.provider !== "anthropic" && p.provider !== "openai")) return null;
+  return (
+    <JobModelsEditor orgId={orgId} current={p}
+      jobModels={data.jobModels ?? {}} ready={data.jobModelsReady ?? false} jobUse={data.jobUse ?? {}}
+      onChanged={onChanged} />
+  );
+}
+
 // ── Embeddings key — a DIFFERENT service from the chat key ────────────────
 //
 // Anthropic makes no embeddings model. That is a fact about Anthropic's
@@ -756,11 +772,7 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
               <UsagePanel orgId={orgId} />
               <KeyEditor orgId={orgId} current={data.personal}
                 onChanged={() => setReloadTick((t) => t + 1)} />
-              {data.personal && (data.personal.provider === "anthropic" || data.personal.provider === "openai") && (
-                <JobModelsEditor orgId={orgId} current={data.personal}
-                  jobModels={data.jobModels ?? {}} ready={data.jobModelsReady ?? false} jobUse={data.jobUse ?? {}}
-                  onChanged={() => setReloadTick((t) => t + 1)} />
-              )}
+              <JobModelsFor orgId={orgId} data={data} onChanged={() => setReloadTick((t) => t + 1)} />
               <EmbeddingKeyEditor orgId={orgId} current={data.personal}
                 onChanged={() => setReloadTick((t) => t + 1)} />
             </>

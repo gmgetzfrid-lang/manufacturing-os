@@ -12,7 +12,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { getAiConnections } from "@/lib/knowledge";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
-import { KeyEditor, EmbeddingKeyEditor, UsagePanel } from "@/components/knowledge/AiSettingsModal";
+import { KeyEditor, EmbeddingKeyEditor, UsagePanel, JobModelsFor } from "@/components/knowledge/AiSettingsModal";
 
 export default function IntelligenceSetupPage() {
   const { activeOrgId, activeRole } = useRole();
@@ -54,6 +54,7 @@ export default function IntelligenceSetupPage() {
             <UsagePanel orgId={activeOrgId} />
             <KeyEditor orgId={activeOrgId} current={data.personal}
               onChanged={() => setReloadTick((t) => t + 1)} />
+            <JobModelsFor orgId={activeOrgId} data={data} onChanged={() => setReloadTick((t) => t + 1)} />
             <EmbeddingKeyEditor orgId={activeOrgId} current={data.personal}
               onChanged={() => setReloadTick((t) => t + 1)} />
           </>
