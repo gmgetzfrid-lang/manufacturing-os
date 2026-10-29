@@ -854,6 +854,14 @@ const historyRpc = async (fn: string, milestoneId: string): Promise<HistoryRemov
   return data === "ok" ? "ok" : data === "none" ? "none" : "error";
 };
 export const undoLastProgress = (milestoneId: string) => historyRpc("undo_last_progress", milestoneId);
+/** Correct the % of a progress entry in a step's history (and the step's
+ *  own %, when nothing after it changed it) — 20261110_progress_percent.sql. */
+export async function setProgressPercent(logId: number, pct: number): Promise<"ok" | "status" | "range" | "missing" | "error"> {
+  const { data, error } = await supabase.rpc("set_progress_percent", { p_log_id: logId, p_pct: Math.round(pct) });
+  if (error) return error.code === "PGRST202" || error.code === "42883" ? "missing" : "error";
+  return data === "ok" || data === "status" || data === "range" ? data : "error";
+}
+
 /** Start a step over: not started, no times, no history, no comments. */
 export const resetStepProgress = (milestoneId: string) => historyRpc("reset_step_progress", milestoneId);
 

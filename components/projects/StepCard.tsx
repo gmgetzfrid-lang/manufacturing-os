@@ -18,7 +18,7 @@ import { discoveryOf, kindOf, ADDED, type AddedKind } from "@/lib/discovery";
 import { ADDED_TONE } from "@/components/projects/DiscoveryTag";
 import PctSlider from "@/components/projects/PctSlider";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
-import { updateMilestoneNote, setProgressTime, setNoteTime, updateDiscoveryRecord, deleteDiscovery, deleteMilestoneNote, undoLastProgress, resetStepProgress } from "@/lib/milestones";
+import { updateMilestoneNote, setProgressTime, setNoteTime, updateDiscoveryRecord, deleteDiscovery, deleteMilestoneNote, undoLastProgress, resetStepProgress, setProgressPercent } from "@/lib/milestones";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import type { ProgressLogRow } from "@/lib/progressHistory";
 import { describeChange } from "@/lib/timeLog";
@@ -55,6 +55,8 @@ interface HistoryEvent {
   comment?: { note: MilestoneNote; text: string };
   /** The status it left the step in — what a comment added to it is said at. */
   status?: MilestoneStatus;
+  /** A progress entry's % — correctable from its Edit. */
+  pct?: number;
 }
 /** A logged change in words: "Started", "Progress · 25%", "Blocked". */
 const logWords = (x: ProgressLogRow) => {
@@ -197,7 +199,8 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         if (h > 0) text += ` · ${x.old_status === "blocked" ? "blocked" : "on hold"} ${hoursWords(h)}`;
       }
       const key = `r${x.id ?? ""}${x.at}${x.new_status}${x.new_percent}`;
-      ev.push({ key, at: t, sort: unsure[i] ? after[i] : t, seq: i, text, said: [], logId: x.id, noteIds: [], unsure: unsure[i], status: x.new_status });
+      const isProgress = x.old_status === "in_progress" && x.new_status === "in_progress" && Number(x.old_percent ?? 0) !== Number(x.new_percent ?? 0);
+      ev.push({ key, at: t, sort: unsure[i] ? after[i] : t, seq: i, text, said: [], logId: x.id, noteIds: [], unsure: unsure[i], status: x.new_status, ...(isProgress ? { pct: Math.round(Number(x.new_percent ?? 0)) } : {}) });
       saves.push({ at: savedAt, key });
     }
     // Started straight off a hold (blocked before it began): one line.
@@ -257,6 +260,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   const [fixing, setFixing] = useState<string | null>(null);
   const [fixV, setFixV] = useState("");
   const [fixText, setFixText] = useState("");
+  const [fixPct, setFixPct] = useState<number | null>(null);
   const [fixMsg, setFixMsg] = useState<string | null>(null);
   const [fixBusy, setFixBusy] = useState(false);
   const canFix = (x: HistoryEvent) => canEdit && (x.fix ? !!onFixTimes : x.logId != null || x.noteIds.length > 0);
@@ -265,6 +269,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     setFixing(fixing === x.key ? null : x.key); setFixMsg(null); setSaved(null);
     setFixV(toDateTimeInput(x.unsure === "unset" ? x.sort : x.at, tz));
     setFixText(x.comment?.text ?? "");
+    setFixPct(x.pct ?? null);
   };
   // Saves what changed: the time (its log line, the actual start or
   // finish, its comments move together) and the comment's words.
@@ -277,7 +282,9 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     const textChanged = !!x.comment && text !== x.comment.text;
     // No comment on it yet: what's typed is added to it, at its time.
     const textAdded = !x.comment && !!text;
-    if (!timeChanged && !textChanged && !textAdded) { setFixing(null); return; }
+    const pctChanged = x.pct != null && fixPct != null && fixPct !== x.pct;
+    if (pctChanged && (fixPct! < 0 || fixPct! > 99)) { setFixMsg("A progress entry is 0–99%. 100% is finished — use Finish."); return; }
+    if (!timeChanged && !textChanged && !textAdded && !pctChanged) { setFixing(null); return; }
     if (timeChanged) {
       if (t > Date.now() + 60_000) { setFixMsg("That time is in the future."); return; }
       if (x.fix === "start" && Number.isFinite(af) && t > af) { setFixMsg(`It finished ${when(af)} — it can't start after that.`); return; }
@@ -297,6 +304,11 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     }
     setFixBusy(true); setFixMsg(null);
     try {
+      if (pctChanged && x.logId != null) {
+        const r = await setProgressPercent(x.logId, fixPct!);
+        if (r !== "ok") { setFixMsg(r === "missing" ? "Changing a % needs the database update (20261110_progress_percent.sql) run first." : r === "range" ? "A progress entry is 0–99%." : "The % wasn't saved."); return; }
+        window.dispatchEvent(new CustomEvent("schedule:changed", { detail: { ids: [m.id] } }));
+      }
       if (textChanged && x.comment?.note.id) await updateMilestoneNote(x.comment.note.id, text);
       const addComment = async (at: number) => {
         if (!textAdded || !onUpdate) return true;
@@ -304,7 +316,8 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       };
       if (!timeChanged) {
         if (!(await addComment(x.unsure === "unset" ? x.sort : x.at))) { setFixMsg("Comment not saved."); return; }
-        window.dispatchEvent(new CustomEvent("milestone-notes:changed")); setFixing(null); setSaved(textAdded ? "Comment added" : "Comment saved"); return;
+        window.dispatchEvent(new CustomEvent("milestone-notes:changed")); setFixing(null);
+        setSaved(pctChanged ? `Changed to ${fixPct}%` : textAdded ? "Comment added" : "Comment saved"); return;
       }
       if (x.logId != null) {
         const r = await setProgressTime(x.logId, t);
@@ -693,6 +706,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                     </div>
                     {fixing === x.key && (
                       <div className="mt-1 mb-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-2.5 space-y-2 text-[12.5px]">
+                        {x.pct != null && fixPct != null && <PctSlider value={fixPct} was={x.pct} onChange={(v) => { setFixPct(v); setFixMsg(null); }} disabled={fixBusy} />}
                         {canFix(x) && <DateTimePicker label="When it happened" value={fixV} onChange={(v) => { setFixV(v); setFixMsg(null); }} tz={tz} times={times} showNow={false} disabled={fixBusy} />}
                         {(x.comment || onUpdate) && (
                           <input value={fixText} onChange={(e) => { setFixText(e.target.value); setFixMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") void saveFix(x); }}
