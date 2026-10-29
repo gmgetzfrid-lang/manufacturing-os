@@ -18,6 +18,7 @@
 import { ok, fail, type AskHandlerInput, type AskHandlerResult } from "@/lib/ask/types";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
+import { jobModel } from "@/lib/ai/jobModelsServer";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { loadAnswerSkillsBlock } from "@/lib/answerSkillsServer";
 import { atlasForPrompt } from "@/lib/featureAtlas";
@@ -76,7 +77,7 @@ export async function handleOrchestrator(input: AskHandlerInput): Promise<AskHan
     );
   }
   const provider = conn.provider as AiProviderId;
-  const model = conn.model as string;
+  const model = await jobModel(orgId, user.id, { provider, model: conn.model as string }, "knowledge");
   const apiKey = openAiKey(conn.api_key as string);
 
   {

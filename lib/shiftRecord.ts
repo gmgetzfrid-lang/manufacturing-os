@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import type { TableOrder } from "@/lib/turnoverPlan";
+import type { HourlyNotes } from "@/lib/shiftHourly";
 
 export interface CrewCount {
   /** The crew's supervisor at the turnover meeting — doubles as attendance. */
@@ -50,6 +51,8 @@ export interface ShiftRecord {
   order?: TableOrder;
   /** The close-out's lessons (record CLOSEOUT_KEY). */
   lessons?: Lesson[];
+  /** Shift notes, hour by hour (lib/shiftHourly) — in the email once approved. */
+  hourly?: HourlyNotes;
 }
 
 export const SHIFT_RECORD_MIGRATION = "20261105_shift_record.sql";

@@ -75,9 +75,16 @@ const WEB_SEARCH_USD = 0.01;
 /** $ per MILLION tokens: [input, output]. Longest-prefix match on the model
  *  id so dated snapshots ("gpt-4o-2024-11-20") price like their family. */
 const MODEL_PRICES: Array<[prefix: string, inPerM: number, outPerM: number]> = [
+  ["claude-fable", 10, 50],
+  ["claude-mythos", 10, 50],
   ["claude-opus", 5, 25],
+  ["claude-opus-5-5", 4, 20],
   ["claude-sonnet", 3, 15],
+  ["claude-sonnet-5", 2, 10],
   ["claude-haiku", 1, 5],
+  // Up to 100K input tokens; longer prompts bill at the long-prompt rate
+  // (LONG_PROMPT below).
+  ["claude-haiku-5-5", 0.1, 0.5],
   ["gpt-5", 1.25, 10],
   ["gpt-4o-mini", 0.15, 0.6],
   ["gpt-4o", 2.5, 10],
@@ -114,8 +121,12 @@ export function modelPricePerMTok(model: string): [inPerM: number, outPerM: numb
 }
 
 /** Estimated USD cost of one call (or one summed ask) on the given model. */
+/** That model bills a prompt over 100K input tokens at this rate. */
+const LONG_PROMPT: [number, number] = [0.5, 2.5];
+
 export function estimateCostUsd(model: string, usage: AiUsage): number {
-  const [inPerM, outPerM] = modelPricePerMTok(model);
+  const long = model.trim().toLowerCase().startsWith("claude-haiku-5-5") && usage.inputTokens > 100_000;
+  const [inPerM, outPerM] = long ? LONG_PROMPT : modelPricePerMTok(model);
   const cost =
     (Math.max(0, usage.inputTokens) / 1_000_000) * inPerM +
     (Math.max(0, usage.outputTokens) / 1_000_000) * outPerM +

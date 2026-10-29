@@ -10,7 +10,8 @@ import {
 describe("modelPricePerMTok", () => {
   it("prices known model families", () => {
     expect(modelPricePerMTok("claude-opus-5")).toEqual([5, 25]);
-    expect(modelPricePerMTok("claude-sonnet-5")).toEqual([3, 15]);
+    expect(modelPricePerMTok("claude-sonnet-5")).toEqual([2, 10]);
+    expect(modelPricePerMTok("claude-sonnet-4-6")).toEqual([3, 15]);
     expect(modelPricePerMTok("claude-haiku-4-5")).toEqual([1, 5]);
     expect(modelPricePerMTok("gemini-2.5-flash")).toEqual([0.3, 2.5]);
   });
@@ -22,7 +23,14 @@ describe("modelPricePerMTok", () => {
 
   it("dated snapshots price like their family", () => {
     expect(modelPricePerMTok("gpt-4o-2024-11-20")).toEqual([2.5, 10]);
-    expect(modelPricePerMTok("claude-sonnet-5-20260203")).toEqual([3, 15]);
+    expect(modelPricePerMTok("claude-sonnet-5-20260203")).toEqual([2, 10]);
+  });
+
+  it("prices the 5.5 generation and Fable on their own rates", () => {
+    expect(modelPricePerMTok("claude-opus-5-5")).toEqual([4, 20]);
+    expect(modelPricePerMTok("claude-sonnet-5-5")).toEqual([2, 10]);
+    expect(modelPricePerMTok("claude-haiku-5-5")).toEqual([0.1, 0.5]);
+    expect(modelPricePerMTok("claude-fable-5-1")).toEqual([10, 50]);
   });
 
   it("unknown models fall back to frontier pricing (never undercharges the cap)", () => {
@@ -34,8 +42,17 @@ describe("modelPricePerMTok", () => {
 describe("estimateCostUsd", () => {
   it("computes input + output cost at the model's rates", () => {
     // 100k in @ $3/M + 10k out @ $15/M = 0.30 + 0.15 = $0.45
-    expect(estimateCostUsd("claude-sonnet-5", { inputTokens: 100_000, outputTokens: 10_000 }))
+    expect(estimateCostUsd("claude-sonnet-4-6", { inputTokens: 100_000, outputTokens: 10_000 }))
       .toBeCloseTo(0.45, 6);
+  });
+
+  it("Haiku 5.5 prompts over 100K tokens bill at the long-prompt rate", () => {
+    // 100k in @ $0.10/M + 10k out @ $0.50/M = 0.01 + 0.005
+    expect(estimateCostUsd("claude-haiku-5-5", { inputTokens: 100_000, outputTokens: 10_000 }))
+      .toBeCloseTo(0.015, 6);
+    // 200k in @ $0.50/M + 10k out @ $2.50/M = 0.10 + 0.025
+    expect(estimateCostUsd("claude-haiku-5-5", { inputTokens: 200_000, outputTokens: 10_000 }))
+      .toBeCloseTo(0.125, 6);
   });
 
   it("keeps micro-dollar precision so tiny calls accumulate", () => {

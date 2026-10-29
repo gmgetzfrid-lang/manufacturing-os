@@ -19,15 +19,12 @@
 // indexing, metered as its own op, and stops at their monthly cap.
 
 import { callAiModel, type AiProviderId } from "@/lib/ai/providerCall";
+import { READING_DEFAULT } from "@/lib/ai/jobModels";
 
 /** Bulk transcription tier per provider — ~10× cheaper than frontier and
  *  entirely adequate for reading tags off a drawing. Falls back to the
  *  user's configured model if the provider rejects this one. */
-export const VISION_MODEL: Record<AiProviderId, string> = {
-  anthropic: "claude-haiku-4-5",
-  openai: "gpt-4o-mini",
-  gemini: "gemini-2.5-flash",
-};
+export const VISION_MODEL: Record<AiProviderId, string> = READING_DEFAULT;
 
 const VISION_SYSTEM =
   "You transcribe engineering documents from page images so they become searchable. " +
@@ -64,6 +61,8 @@ export interface VisionResult {
 export async function transcribePageImage(input: {
   provider: AiProviderId;
   fallbackModel: string;
+  /** The model picked for reading (AI settings); unset = the cheap tier. */
+  model?: string;
   apiKey: string;
   base64: string;
   mediaType: string;
@@ -93,7 +92,7 @@ export async function transcribePageImage(input: {
     return { text: out.text, usage: out.usage, model };
   };
 
-  const cheap = VISION_MODEL[provider];
+  const cheap = input.model || VISION_MODEL[provider];
   try {
     return await attempt(cheap);
   } catch (e) {

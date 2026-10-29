@@ -9,6 +9,7 @@ import type { ProgressLogRow } from "@/lib/progressHistory";
 import { shiftAt, TURNOVER_GRACE_MS, type ShiftTimes } from "@/lib/shiftReport";
 import type { ShiftRecord } from "@/lib/shiftRecord";
 import { discoveries, impactLine, ADDED, kindOf } from "@/lib/discovery";
+import { inheritedWorkOrders, woOf } from "@/lib/workOrderCrew";
 
 export interface TimeLogRow {
   at: number;
@@ -61,6 +62,9 @@ export function buildTimeLog(input: {
   const { tz, times } = input;
   const byId = new Map(input.milestones.filter((m) => m.id).map((m) => [m.id!, m]));
   const parents = new Set(input.milestones.map((m) => m.parentId).filter(Boolean) as string[]);
+  // A step's WO is often only on its work order (the group above it).
+  const wos = inheritedWorkOrders(input.milestones);
+  const woFor = (m?: Milestone) => (m ? m.workOrderRef?.trim() || (m.id ? wos.get(m.id) : undefined) || woOf(m) : "");
   const shiftOf = (at: number) => {
     const w = shiftAt(at, tz, times);
     const d = new Date(w.start).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: tz });
@@ -72,7 +76,7 @@ export function buildTimeLog(input: {
     const p = m?.parentId ? byId.get(m.parentId) : undefined;
     return {
       task: p?.name ?? m?.name ?? "", step: m && p ? m.name : "",
-      wo: m?.workOrderRef?.trim() || p?.workOrderRef?.trim() || "", crew: m?.responsibleParty?.trim() || "",
+      wo: woFor(m) || woFor(p) || "", crew: m?.responsibleParty?.trim() || "",
     };
   };
   // Notes by step, oldest first; each used once.
@@ -136,7 +140,7 @@ export function buildTimeLog(input: {
     if (!inRange(at)) continue;
     out.push({
       at, shift: shiftOf(at), task: d.task?.name ?? "", step: d.steps.map((s) => s.name).join("; "),
-      wo: d.task?.workOrderRef?.trim() || d.steps[0]?.workOrderRef?.trim() || "", crew: [...new Set(d.steps.map((s) => s.responsibleParty?.trim()).filter(Boolean))].join(", "),
+      wo: woFor(d.task) || woFor(d.steps[0]) || "", crew: [...new Set(d.steps.map((s) => s.responsibleParty?.trim()).filter(Boolean))].join(", "),
       what: `${ADDED[kindOf(d.record)].word} ${ADDED[kindOf(d.record)].found}`, pct: "",
       comment: `${d.record.what} — ${impactLine(d.record.impact, (h) => `${h} h`)}${d.record.approvedBy ? ` · approved by ${d.record.approvedBy}` : ""}`,
       enteredBy: d.record.addedBy ?? d.record.foundBy ?? "", enteredAt: d.record.addedAt - at > 5 * 60_000 ? d.record.addedAt : null,

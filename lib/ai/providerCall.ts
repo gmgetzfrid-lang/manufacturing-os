@@ -27,7 +27,7 @@ export const PROVIDER_LABELS: Record<AiProviderId, string> = {
 /** Suggested models per provider — free-text everywhere, these just seed the
  *  pickers so people don't have to guess IDs. First entry = default. */
 export const PROVIDER_MODEL_SUGGESTIONS: Record<AiProviderId, string[]> = {
-  anthropic: ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
+  anthropic: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
   openai: ["gpt-5.1", "gpt-4o", "gpt-4o-mini"],
   gemini: ["gemini-2.5-pro", "gemini-2.5-flash"],
 };
@@ -173,6 +173,49 @@ async function* sseData(body: ReadableStream<Uint8Array>): AsyncGenerator<string
   if (buf.startsWith("data:")) yield buf.slice(5).trim();
 }
 
+/** How each Claude model is asked for "answer only, no hidden reasoning".
+ *  Callers budget max_tokens for the ANSWER, so thinking stays off where a
+ *  model allows it. The newest Opus line (and Fable/Mythos) can't turn it
+ *  off — the API rejects "disabled" — so it runs at low effort with room
+ *  added for the thinking on top of the answer budget. The newest Sonnet
+ *  turns it off with "between_tools"; "disabled" is a 400 there too. */
+export function claudeThinking(model: string, maxTokens: number): Record<string, unknown> {
+  const id = model.trim().toLowerCase();
+  if (/^claude-(opus-5-5|fable|mythos)/.test(id)) {
+    return { max_tokens: maxTokens + 8000, output_config: { effort: "low" } };
+  }
+  if (id.startsWith("claude-sonnet-5-5")) {
+    return { max_tokens: maxTokens, thinking: { type: "between_tools" } };
+  }
+  return { max_tokens: maxTokens, thinking: { type: "disabled" } };
+}
+
+/** Server-side refusal fallback: a classifier decline is re-run on the model
+ *  Anthropic recommends for that category, inside the same call. Only the
+ *  newest Opus and Sonnet get it; if the API ever refuses the parameter
+ *  itself, the call is repeated once without it (claudeFetch). */
+const FALLBACK_BETA = "server-side-fallback-2026-07-01";
+const wantsFallback = (model: string) => /^claude-(opus|sonnet)-5-5/.test(model.trim().toLowerCase());
+
+async function claudeFetch(apiKey: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<Response> {
+  const send = (withFallback: boolean) => fetchWithRetry("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+      ...(withFallback ? { "anthropic-beta": FALLBACK_BETA } : {}),
+    },
+    body: JSON.stringify(withFallback ? { ...body, fallbacks: "default" } : body),
+    signal,
+  });
+  if (!wantsFallback(String(body.model ?? ""))) return send(false);
+  const res = await send(true);
+  if (res.status !== 400) return res;
+  const detail = await res.clone().text().catch(() => "");
+  return /fallback|anthropic-beta/i.test(detail) ? send(false) : res;
+}
+
 /** Run one system+user prompt, return the model's text (+ web sources when
  *  webSearch ran). Throws AiCallError. */
 export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
@@ -204,18 +247,9 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
     if (onDelta && !webSearch) {
       // Streamed variant: same request plus stream:true; text deltas go to
       // the caller as they arrive, usage comes from message_start/delta.
-      const res = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          model, max_tokens: maxTokens, thinking: { type: "disabled" }, system, messages, stream: true,
-        }),
-        signal,
-      });
+      const res = await claudeFetch(apiKey, {
+        model, ...claudeThinking(model, maxTokens), system, messages, stream: true,
+      }, signal);
       if (!res.ok) throw friendly(provider, res.status, await res.text().catch(() => ""));
       if (!res.body) throw new AiCallError("The provider returned no stream.", 502);
       let text = "";
@@ -261,32 +295,22 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
     } = {};
     const usage = { inputTokens: 0, outputTokens: 0, webSearches: 0 };
     for (let round = 0; round < 4; round++) {
-      const res = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: maxTokens,
-          // Claude 5-generation models THINK BY DEFAULT when this is omitted,
-          // and thinking tokens come out of max_tokens before any visible
-          // text. Callers here budget 200–4000 tokens for the ANSWER — with
-          // default thinking, a tight budget can be consumed entirely by
-          // invisible reasoning, returning zero text blocks ("empty answer").
-          // This pipeline is single-turn Q&A over already-retrieved passages;
-          // every token the user pays for should be answer text.
-          thinking: { type: "disabled" },
-          system,
-          messages,
-          ...(webSearch
-            ? { tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }] }
-            : {}),
-        }),
-        signal,
-      });
+      const res = await claudeFetch(apiKey, {
+        model,
+        // Claude 5-generation models THINK BY DEFAULT when this is omitted,
+        // and thinking tokens come out of max_tokens before any visible
+        // text. Callers here budget 200–4000 tokens for the ANSWER — with
+        // default thinking, a tight budget can be consumed entirely by
+        // invisible reasoning, returning zero text blocks ("empty answer").
+        // This pipeline is single-turn Q&A over already-retrieved passages;
+        // every token the user pays for should be answer text.
+        ...claudeThinking(model, maxTokens),
+        system,
+        messages,
+        ...(webSearch
+          ? { tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }] }
+          : {}),
+      }, signal);
       if (!res.ok) throw friendly(provider, res.status, await res.text().catch(() => ""));
       data = (await res.json()) as typeof data;
       // Each pause_turn round bills separately — sum across rounds.

@@ -21,7 +21,7 @@ import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import { callAiModel, type AiProviderId } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
-import { VISION_MODEL } from "@/lib/knowledgeVision";
+import { jobModel } from "@/lib/ai/jobModelsServer";
 import { LOCATE_SYSTEM, buildLocateUser, parseLocateResponse } from "@/lib/drawingLocate";
 import { ensurePdfPolyfills } from "@/lib/knowledgeText";
 import { r2, R2_BUCKET } from "@/lib/r2";
@@ -193,6 +193,8 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // AI settings → Reading drawings & scans (default: the cheap reading tier).
+  const readModel = await jobModel(orgId, user.id, { provider, model: conn.model as string }, "reading");
   try {
     ensurePdfPolyfills();
     const obj = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: doc.file_key as string }));
@@ -205,7 +207,7 @@ export async function POST(req: NextRequest) {
     });
     const out = await callAiModel({
       provider,
-      model: VISION_MODEL[provider] ?? (conn.model as string),
+      model: readModel,
       apiKey: openAiKey(conn.api_key as string),
       system: LOCATE_SYSTEM,
       user: buildLocateUser(toLocate, doc.name as string, page),
@@ -215,7 +217,7 @@ export async function POST(req: NextRequest) {
     });
     await recordAskUsage({
       orgId, userId: user.id, provider,
-      model: VISION_MODEL[provider] ?? (conn.model as string),
+      model: readModel,
       usage: out.usage, ok: true, op: "drawingLocate",
     });
 
@@ -254,7 +256,7 @@ export async function POST(req: NextRequest) {
           try {
             const fine = await callAiModel({
               provider,
-              model: VISION_MODEL[provider] ?? (conn.model as string),
+              model: readModel,
               apiKey: openAiKey(conn.api_key as string),
               system: LOCATE_SYSTEM,
               user:

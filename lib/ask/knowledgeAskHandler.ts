@@ -33,6 +33,7 @@ import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { loadAnswerSkillRows, buildAnswerSkillsBlock, skillsInPlay } from "@/lib/answerSkillsServer";
 import { skillFits, searchNotesOf } from "@/lib/answerSkillsData";
 import { VISION_MODEL } from "@/lib/knowledgeVision";
+import { jobModel } from "@/lib/ai/jobModelsServer";
 import { callAiModel, AiCallError, type AiProviderId, type AiCallInput } from "@/lib/ai/providerCall";
 import {
   ALLOWED_PROVIDERS, estimateCostUsd, AGREEMENT_VERSION, buildAgreementText,
@@ -297,7 +298,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
     );
   }
   const provider = conn.provider as AiProviderId;
-  const model = conn.model as string;
+  const model = await jobModel(orgId, user.id, { provider, model: conn.model as string }, "knowledge");
   // Live web search with per-sentence sources exists on Claude keys only;
   // anything else would be the model's memory dressed up as the web.
   const webOn = useWebAsked && mode === "library" && provider === "anthropic";

@@ -21,15 +21,20 @@ import { Input, Select } from "@/components/ui/Field";
 import {
   getAiConnections, saveAiConnection, testAiConnection, removeAiConnection,
   saveEmbeddingKey, removeEmbeddingKey, testEmbeddingKey,
-  getAiUsage, setAiCap,
+  getAiUsage, setAiCap, saveJobModels,
   type AiConnectionInfo, type AiUsageSummary,
 } from "@/lib/knowledge";
+import type { AiProviderId } from "@/lib/ai/providerCall";
+import {
+  AI_JOBS, MAIN, jobDefault, modelName, costPerUse, fmtCost,
+  type AiJob, type JobModels,
+} from "@/lib/ai/jobModels";
 import { ALLOWED_PROVIDERS, PROVIDER_BLOCK_MESSAGE } from "@/lib/ai/pricing";
 import { EMBEDDING_PROVIDERS, defaultEmbeddingModel } from "@/lib/ai/embeddings";
 
 // The complete provider offering — Claude and OpenAI, nothing else, ever.
 const PROVIDERS = [
-  { id: "anthropic", label: "Anthropic (Claude)", models: ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"] },
+  { id: "anthropic", label: "Anthropic (Claude)", models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"] },
   { id: "openai", label: "OpenAI", models: ["gpt-5.1", "gpt-4o", "gpt-4o-mini"] },
 ];
 
@@ -72,7 +77,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
     PROVIDERS.some((c) => c.id === p) ? p : PROVIDERS[0].id;
 
   const [provider, setProvider] = useState(normalizeProvider(current?.provider ?? "anthropic"));
-  const [model, setModel] = useState(current?.model ?? "claude-opus-5");
+  const [model, setModel] = useState(current?.model ?? PROVIDERS[0].models[0]);
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState<"save" | "test" | "remove" | null>(null);
   const [notice, setNotice] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
@@ -83,7 +88,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
 
   useEffect(() => {
     setProvider(normalizeProvider(current?.provider ?? "anthropic"));
-    setModel(current?.model ?? "claude-opus-5");
+    setModel(current?.model ?? PROVIDERS[0].models[0]);
     setApiKey("");
   }, [current]);
 
@@ -243,6 +248,103 @@ export function KeyEditor({ orgId, current, onChanged }: {
         works. <b>Test only</b> never saves anything. Saving again replaces your key; if your provider
         runs out of credits it simply stops answering until you top up.
       </p>
+    </div>
+  );
+}
+
+// ── Which model each job runs on ──────────────────────────────────────────
+// One tap per job. The main model (above) covers anything not listed; a job
+// with its own default (reading on the cheap tier, shift notes lighter)
+// keeps it until someone picks otherwise. Each choice shows what one use
+// costs on it — from the person's own averages once they have a few.
+export function JobModelsEditor({ orgId, current, jobModels, ready, jobUse, onChanged }: {
+  orgId: string;
+  current: AiConnectionInfo;
+  jobModels: JobModels;
+  ready: boolean;
+  jobUse: Partial<Record<AiJob, { inputTokens: number; outputTokens: number; n: number }>>;
+  onChanged: () => void;
+}) {
+  const { showToast } = useToast();
+  const [picks, setPicks] = useState<JobModels>(jobModels);
+  const [busy, setBusy] = useState<AiJob | null>(null);
+  const [notice, setNotice] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
+  useEffect(() => { setPicks(jobModels); }, [jobModels]);
+  const provider = current.provider as AiProviderId;
+  const suggestions = PROVIDERS.find((p) => p.id === provider)?.models ?? [];
+  const mainName = modelName(current.model);
+
+  const pick = async (job: AiJob, value: string) => {
+    const next = { ...picks, [job]: value };
+    setPicks(next); setBusy(job); setNotice(null);
+    try {
+      await saveJobModels(orgId, next);
+      const label = AI_JOBS.find((j) => j.id === job)?.label ?? job;
+      showToast({ type: "success", title: `${label} now runs on ${value === MAIN ? `the main model (${mainName})` : modelName(value)}.` });
+      onChanged();
+    } catch (e) {
+      setPicks(picks);
+      setNotice({ tone: "err", text: (e as Error).message });
+    } finally { setBusy(null); }
+  };
+
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] p-4 space-y-3">
+      <div className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
+        <Sparkles className="w-3.5 h-3.5" /> Model for each job
+      </div>
+      {!ready && (
+        <p className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+          Picking a model per job needs a one-time database update (20261108_job_models.sql). Until it&apos;s run,
+          every job uses its default below.
+        </p>
+      )}
+      <ul className="space-y-3">
+        {AI_JOBS.map((j) => {
+          const def = jobDefault(j.id, provider);
+          const chosen = picks[j.id] ?? (def ?? MAIN);
+          const options = [MAIN, ...suggestions, ...(def && !suggestions.includes(def) ? [def] : [])];
+          if (chosen !== MAIN && !options.includes(chosen)) options.push(chosen);
+          const own = jobUse[j.id];
+          const use = own && own.n >= 3 ? own : j.use;
+          return (
+            <li key={j.id} className="space-y-1.5">
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <span className="text-[13px] font-black text-[var(--color-text)]">{j.label}</span>
+                <span className="text-[11px] text-[var(--color-text-muted)]">{j.what}</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={`Model for ${j.label}`}>
+                {options.map((m) => {
+                  const id = m === MAIN ? current.model : m;
+                  const on = chosen === m;
+                  const isDefault = (def ?? MAIN) === m;
+                  return (
+                    <button key={m} type="button" role="radio" aria-checked={on}
+                      disabled={!ready || busy !== null}
+                      onClick={() => { if (!on) void pick(j.id, m); }}
+                      className={`text-[11px] font-bold px-2.5 py-1.5 rounded-lg border transition-colors disabled:cursor-not-allowed ${
+                        on
+                          ? "border-[var(--color-accent)] bg-[var(--color-accent)]/10 text-[var(--color-accent)]"
+                          : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-60"}`}>
+                      {m === MAIN ? `Main · ${mainName}` : modelName(m)}
+                      <span className="ml-1.5 font-semibold opacity-80 tabular-nums">{fmtCost(costPerUse(id, use))}</span>
+                      {isDefault && <span className="ml-1.5 text-[9.5px] font-black uppercase opacity-70">default</span>}
+                      {busy === j.id && on && <Loader2 className="w-3 h-3 animate-spin inline ml-1" />}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[10.5px] text-[var(--color-text-muted)]">
+                Cost of one {j.use.per}{own && own.n >= 3 ? ` (your average of ${own.n})` : " (typical size)"}.
+              </p>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="text-[11px] text-[var(--color-text-muted)]">
+        Everything else (codebook, flows, links, equipment census, catalog) runs on the main model, {mainName}.
+      </p>
+      <Notice notice={notice} />
     </div>
   );
 }
@@ -652,6 +754,11 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
               <UsagePanel orgId={orgId} />
               <KeyEditor orgId={orgId} current={data.personal}
                 onChanged={() => setReloadTick((t) => t + 1)} />
+              {data.personal && (data.personal.provider === "anthropic" || data.personal.provider === "openai") && (
+                <JobModelsEditor orgId={orgId} current={data.personal}
+                  jobModels={data.jobModels ?? {}} ready={data.jobModelsReady ?? false} jobUse={data.jobUse ?? {}}
+                  onChanged={() => setReloadTick((t) => t + 1)} />
+              )}
               <EmbeddingKeyEditor orgId={orgId} current={data.personal}
                 onChanged={() => setReloadTick((t) => t + 1)} />
             </>

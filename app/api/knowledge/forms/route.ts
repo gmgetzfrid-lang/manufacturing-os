@@ -23,6 +23,7 @@ import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import { profilesFor, readPdfFormFields } from "@/lib/knowledgeCatalogServer";
 import { parseModelJson, slugField, FORM_PURPOSE_LABEL, type FormField } from "@/lib/knowledgeCatalog";
 import { fillAcroForm, buildCompletedForm } from "@/lib/formFill";
+import { jobModel } from "@/lib/ai/jobModelsServer";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -165,9 +166,10 @@ export async function POST(req: NextRequest) {
   const proof = citations.map((c) =>
     `- ${String(c.documentName ?? "Document")}${c.section ? `, ${String(c.section)}` : ""}, p.${String(c.page ?? "?")}: "${String(c.highlight ?? c.quote ?? "").slice(0, 500)}"`).join("\n");
   const usage: AiUsage = { inputTokens: 0, outputTokens: 0 };
+  const model = await jobModel(orgId, user.id, { provider: conn.provider as string, model: conn.model as string }, "drafting");
   try {
     const out = await callAiModel({
-      provider: conn.provider as AiProviderId, model: conn.model as string, apiKey: openAiKey(conn.api_key as string),
+      provider: conn.provider as AiProviderId, model, apiKey: openAiKey(conn.api_key as string),
       system: DRAFT_SYSTEM,
       user: [
         `FORM: ${meta.title} (${meta.purpose}) — file "${doc.name}"`,
@@ -196,14 +198,14 @@ export async function POST(req: NextRequest) {
     });
     // A blank field nobody flagged still needs a person.
     for (const f of fields) if (!f.value && !needsInput.includes(f.name)) needsInput.push(f.name);
-    await recordAskUsage({ orgId, userId: user.id, provider: conn.provider as string, model: conn.model as string, usage, ok: true, op: "formDraft" });
+    await recordAskUsage({ orgId, userId: user.id, provider: conn.provider as string, model, usage, ok: true, op: "formDraft" });
     return NextResponse.json({
       form: { documentId: doc.id, name: doc.name, title: meta.title, purpose: meta.purpose, fillable: meta.fillable, fields },
       needsInput,
       notes: typeof parsed.notes === "string" ? parsed.notes.slice(0, 600) : "",
     });
   } catch (e) {
-    await recordAskUsage({ orgId, userId: user.id, provider: conn.provider as string, model: conn.model as string, usage, ok: false, op: "formDraft" });
+    await recordAskUsage({ orgId, userId: user.id, provider: conn.provider as string, model, usage, ok: false, op: "formDraft" });
     return NextResponse.json({ error: `Couldn't draft the form: ${(e as Error).message}` }, { status: 502 });
   }
 }

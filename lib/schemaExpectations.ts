@@ -123,6 +123,7 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   { table: "projects", column: "authorized_amount", migration: "20261020_project_budget_basis.sql", feature: "Project budget basis (AFE number, charge account, authorized amount)" },
   { table: "transmittals", column: "portal_token", migration: "20260910_transmittal_portal.sql", feature: "Transmittal recipient portal + issue emails" },
   { table: "ai_connections", column: "embedding_api_key", migration: "20260930_semantic_layer.sql", feature: "Meaning-based (semantic) search" },
+  { table: "ai_connections", column: "job_models", migration: "20261108_job_models.sql", feature: "A model per AI job (AI settings)" },
   { table: "knowledge_chunks", column: "embedding", migration: "20260930_semantic_layer.sql", feature: "pgvector semantic index" },
   { table: "documents", column: "ai_excluded", migration: "20260807_link_proposals.sql", feature: "Per-document AI exclusion (Pillar A)" },
   { table: "checkout_sessions", column: "auto_expires_at", migration: "20260527_projects_and_collaboration.sql", feature: "24h ad-hoc checkout cap" },

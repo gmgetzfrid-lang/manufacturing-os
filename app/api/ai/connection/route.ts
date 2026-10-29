@@ -11,6 +11,8 @@
 //                                the model can change without re-pasting.
 //   POST   { action: "test" }  → live 1-line call so a bad key fails HERE,
 //                                not on someone's first real question.
+//   POST   { action: "job-models", jobModels }
+//                              → which model each AI job runs on.
 //   DELETE { orgId }           → remove your connection.
 //
 // Auth mirrors /api/storage/*: bearer session + active org membership.
@@ -21,6 +23,38 @@ import { callAiModel, AiCallError, type AiProviderId } from "@/lib/ai/providerCa
 import { ALLOWED_PROVIDERS, PROVIDER_BLOCK_MESSAGE } from "@/lib/ai/pricing";
 import { EMBEDDING_PROVIDERS, embedPassages, defaultEmbeddingModel, type EmbeddingProviderId } from "@/lib/ai/embeddings";
 import { sealAiKey, openAiKey } from "@/lib/ai/keyVault";
+import { AI_JOBS, cleanJobModels, type AiJob, type JobModels } from "@/lib/ai/jobModels";
+
+const JOB_MODELS_MIGRATION = "20261108_job_models.sql";
+
+/** The person's model per job, and whether the column exists yet. */
+async function readJobModels(orgId: string, userId: string): Promise<{ jobModels: JobModels; ready: boolean }> {
+  const { data, error } = await supabaseAdmin
+    .from("ai_connections").select("job_models")
+    .eq("org_id", orgId).eq("user_id", userId).maybeSingle();
+  if (error) return { jobModels: {}, ready: false };
+  return { jobModels: cleanJobModels((data as { job_models?: unknown } | null)?.job_models), ready: true };
+}
+
+/** Their own average size of one use of each job (last 90 days), so the
+ *  cost per use in settings is what THEIR questions cost, not a guess. */
+async function readJobUse(orgId: string, userId: string): Promise<Partial<Record<AiJob, { inputTokens: number; outputTokens: number; n: number }>>> {
+  const ops = AI_JOBS.flatMap((j) => j.ops);
+  const { data, error } = await supabaseAdmin
+    .from("ai_usage_events").select("op, input_tokens, output_tokens")
+    .eq("org_id", orgId).eq("user_id", userId).eq("ok", true).in("op", ops)
+    .gte("created_at", new Date(Date.now() - 90 * 86_400_000).toISOString())
+    .limit(5000);
+  if (error) return {};
+  const out: Partial<Record<AiJob, { inputTokens: number; outputTokens: number; n: number }>> = {};
+  for (const j of AI_JOBS) {
+    const rows = ((data ?? []) as Array<{ op: string; input_tokens: number | null; output_tokens: number | null }>).filter((r) => j.ops.includes(r.op));
+    if (rows.length === 0) continue;
+    const sum = (k: "input_tokens" | "output_tokens") => rows.reduce((a, r) => a + (r[k] ?? 0), 0);
+    out[j.id] = { inputTokens: Math.round(sum("input_tokens") / rows.length), outputTokens: Math.round(sum("output_tokens") / rows.length), n: rows.length };
+  }
+  return out;
+}
 
 const EMBEDDING_PROVIDER_IDS: readonly string[] = EMBEDDING_PROVIDERS.map((p) => p.id);
 
@@ -98,11 +132,17 @@ export async function GET(req: NextRequest) {
     );
   }
   const personal = mask((data as Row | null) ?? null);
+  const [jobs, jobUse] = personal
+    ? await Promise.all([readJobModels(orgId, auth.userId), readJobUse(orgId, auth.userId)])
+    : [{ jobModels: {}, ready: false }, {}];
   return NextResponse.json({
     org: null,                               // workspace keys are retired
     personal,
     effective: personal,
     canManageOrg: auth.isController,
+    jobModels: jobs.jobModels,
+    jobModelsReady: jobs.ready,
+    jobUse,
   });
 }
 
@@ -112,6 +152,7 @@ export async function POST(req: NextRequest) {
     apiKey?: string; action?: string;
     embeddingProvider?: string; embeddingModel?: string; embeddingApiKey?: string;
     clearEmbedding?: boolean;
+    jobModels?: unknown;
   };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   const orgId = String(body.orgId ?? "").trim();
@@ -247,6 +288,30 @@ export async function POST(req: NextRequest) {
       details: { provider: ep, keyChanged: !!key },
     }).then(() => undefined, () => undefined);
     return NextResponse.json({ ok: true });
+  }
+
+  // ── Which model each AI job runs on ────────────────────────────────────
+  if (body.action === "job-models") {
+    const jobModels = cleanJobModels(body.jobModels);
+    const { data: row, error } = await supabaseAdmin
+      .from("ai_connections").update({ job_models: jobModels })
+      .eq("org_id", orgId).eq("user_id", auth.userId).select("id").maybeSingle();
+    if (error) {
+      return bad(
+        columnMissing(error)
+          ? `Choosing a model per job needs the database update ${JOB_MODELS_MIGRATION} — run it in Supabase, then try again.`
+          : `Couldn't save: ${error.message}`,
+        columnMissing(error) ? 424 : 500,
+      );
+    }
+    if (!row) return bad("Save your API key first — the choices attach to it.", 409);
+    await supabaseAdmin.from("audit_logs").insert({
+      action: "AI_JOB_MODELS_SAVED",
+      resource_type: "ai_connection", resource_id: orgId,
+      org_id: orgId, user_id: auth.userId,
+      details: { jobModels },
+    }).then(() => undefined, () => undefined);
+    return NextResponse.json({ ok: true, jobModels });
   }
 
   // ── Save YOUR key ───────────────────────────────────────────────────────

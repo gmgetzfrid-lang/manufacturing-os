@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
 import { ingestKnowledgeDocBatch, type VisionContext } from "@/lib/knowledgeIngest";
+import { jobModel } from "@/lib/ai/jobModelsServer";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { ALLOWED_PROVIDERS, estimateCostUsd, type AiUsage } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
@@ -117,6 +118,7 @@ export async function POST(req: NextRequest) {
         vision = {
           provider: conn!.provider as AiProviderId,
           model: conn!.model as string,
+          readingModel: await jobModel(orgId, user.id, { provider: conn!.provider as string, model: conn!.model as string }, "reading"),
           apiKey: openAiKey(conn!.api_key as string),
           instructions: await loadOrgInstructionsBlock(supabaseAdmin, orgId, "equipment"),
           // Bounded per invocation: render + transcribe is seconds per page

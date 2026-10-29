@@ -27,6 +27,7 @@ import { transcribePageImage } from "@/lib/knowledgeVision";
 import { isTimeoutError, callAiModel, type AiProviderId } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS, AGREEMENT_VERSION, type AiUsage } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
+import { jobModel } from "@/lib/ai/jobModelsServer";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { loadCodebookAdmin } from "@/lib/codebookServer";
 import { readAutoRead, pagesLeft, withPagesUsed } from "@/lib/estate/autoRead";
@@ -41,6 +42,9 @@ const clamp01 = (n: number): number => Math.min(1, Math.max(0, n));
 export interface VisionContext {
   provider: AiProviderId;
   model: string;
+  /** The model scanned pages are read on (AI settings → Reading drawings &
+   *  scans); unset = the cheap reading tier. */
+  readingModel?: string;
   apiKey: string;
   /** Max pages this invocation may transcribe (serverless time + cost). */
   budgetPages: number;
@@ -285,6 +289,7 @@ export async function ingestKnowledgeDocBatch(
           const out = await transcribePageImage({
             provider: vision.provider,
             fallbackModel: vision.model,
+            model: vision.readingModel,
             apiKey: vision.apiKey,
             base64: Buffer.from(img as ArrayBuffer).toString("base64"),
             mediaType: "image/png",
@@ -718,6 +723,7 @@ async function loadSponsorVision(
     ctx: {
       provider: conn.provider as AiProviderId,
       model: conn.model as string,
+      readingModel: await jobModel(doc.org_id, sponsor, { provider: conn.provider as string, model: conn.model as string }, "reading"),
       apiKey: openAiKey(conn.api_key as string),
       budgetPages: Math.min(4, autoLeft),   // per batch — same as interactive
       forceAllPages,

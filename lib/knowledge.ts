@@ -7,6 +7,7 @@
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { uploadToPath, type UploadProgress } from "@/lib/storage";
+import type { AiJob, JobModels } from "@/lib/ai/jobModels";
 
 export interface KnowledgeLibrary {
   id: string;
@@ -680,6 +681,12 @@ export async function getAiConnections(orgId: string): Promise<{
   personal: AiConnectionInfo | null;
   effective: AiConnectionInfo | null;
   canManageOrg: boolean;
+  /** Model per AI job (lib/ai/jobModels); "main" = the main model. */
+  jobModels?: JobModels;
+  /** False until 20261108_job_models.sql is run. */
+  jobModelsReady?: boolean;
+  /** Their own average size of one use of each job. */
+  jobUse?: Partial<Record<AiJob, { inputTokens: number; outputTokens: number; n: number }>>;
 }> {
   const token = await authToken();
   const res = await fetch(`/api/ai/connection?orgId=${encodeURIComponent(orgId)}`, {
@@ -690,6 +697,11 @@ export async function getAiConnections(orgId: string): Promise<{
     throw new Error((data as { error?: string } | null)?.error || `Couldn't load AI settings (HTTP ${res.status})`);
   }
   return data;
+}
+
+/** Which model each AI job runs on. */
+export async function saveJobModels(orgId: string, jobModels: JobModels): Promise<void> {
+  await apiPost("/api/ai/connection", { orgId, action: "job-models", jobModels });
 }
 
 export async function saveAiConnection(input: {

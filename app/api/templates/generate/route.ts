@@ -34,6 +34,7 @@ import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import { renderTemplate, TemplateRenderError } from "@/lib/docxRender";
 import { parseWorkbook } from "@/lib/xlsxData";
 import { fetchBytes } from "@/lib/r2Bytes";
+import { jobModel } from "@/lib/ai/jobModelsServer";
 import {
   autoMapColumns, missingRequirements, renderFilename, uniqueFilenames,
   type Placeholder,
@@ -197,7 +198,9 @@ export async function POST(req: NextRequest) {
           402,
         );
       }
-      conn = { provider: c.provider as AiProviderId, model: c.model as string, api_key: openAiKey(c.api_key as string) };
+      // AI settings → Forms & templates (default: the main model).
+      const model = await jobModel(orgId, user.id, { provider: c.provider as string, model: c.model as string }, "drafting");
+      conn = { provider: c.provider as AiProviderId, model, api_key: openAiKey(c.api_key as string) };
       providerUsed = conn.provider; modelUsed = conn.model;
     }
 

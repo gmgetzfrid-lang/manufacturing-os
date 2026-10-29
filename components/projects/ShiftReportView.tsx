@@ -45,7 +45,7 @@ import {
 import { buildKickoff, buildCloseout, defaultMeeting, type MeetingKind, type PlanRow } from "@/lib/meetingPlan";
 import { clockLabel, fmtInTz, tzAbbrev } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
-import { toPlainText, toEmailHtml, type ExportBlock, type ExportDoc, type ExportStepRow } from "@/lib/reportExport";
+import { toPlainText, toEmailHtml, type ExportBlock, type ExportCell, type ExportDoc, type ExportStepRow } from "@/lib/reportExport";
 import { turnoverUpdate, withoutEmpty, noteLine, hazardJobsOf, crewLine, forecastText, discoverySub, discoveryBlock } from "@/lib/managementUpdate";
 import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
 import { notesFor } from "@/lib/milestones";
@@ -74,6 +74,8 @@ import { TryControl, ShipBar } from "@/components/projects/HandoverControls";
 import { PullAheadPicker } from "@/components/projects/PullAheadPicker";
 import { useHandoverDraft } from "@/lib/useHandoverDraft";
 import { scopeOf } from "@/lib/pullAhead";
+import { ShiftHourlyBox, type HourlyCtx } from "@/components/projects/ShiftHourly";
+import { approvedLines, hourlyClocks } from "@/lib/shiftHourly";
 
 /** The crew the report is narrowed to (tables then drop their Who column). */
 const ReportCrew = React.createContext<string | null>(null);
@@ -381,6 +383,16 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     try { await saveShiftRecord({ orgId, projectId, shiftKey: key, userId, change }); setRecMsg(null); }
     catch (e) { setRecMsg((e as Error).message); }
   }, [orgId, projectId, userId]);
+  // The shift's entries — the time log for its window — for the
+  // hour-by-hour notes to be written from.
+  const shiftRows = useCallback(async () => {
+    const [rows, notes] = await Promise.all([loadProgressLog(projectId), notesFor(stepIds ? stepIds.split(",") : [])]);
+    return buildTimeLog({ milestones: live, log: rows ?? [], notes, records, tz, times, from: shift.start, to: shift.end });
+  }, [projectId, stepIds, live, records, tz, times, shift.start, shift.end]);
+  const saveHourly = useCallback(async (next: ShiftRecord["hourly"] | null) => {
+    if (!userId || !orgId) throw new Error("Sign in to save the notes.");
+    await saveShiftRecord({ orgId, projectId, shiftKey: thisKey, userId, change: (r) => ({ ...r, hourly: next ?? undefined }) });
+  }, [orgId, projectId, userId, thisKey]);
   // The tables' order as dragged at the meeting — shown at once, kept on
   // the shift's record (the email follows it too).
   const [orderLocal, setOrderLocal] = useState<{ key: string; order: TableOrder } | null>(null);
@@ -405,13 +417,18 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       removeNote: (n) => void saveRec(n.shiftKey, (r) => ({ ...r, notes: (r.notes ?? []).filter((y) => y.id !== n.id) })),
       error: recMsg ?? (recErr && canEdit ? recErr : null),
       tz,
+      hourly: orgId ? {
+        notes: recThis?.hourly, save: saveHourly, rows: shiftRows, orgId, projectId, by,
+        shiftTitle: `${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`,
+        window: ctx.win(shift),
+      } : undefined,
       order: tableOrder,
       setOrder: (table, ids) => {
         setOrderLocal({ key: thisKey, order: { ...(tableOrder ?? {}), [table]: ids ?? undefined } });
         void saveRec(thisKey, (r) => ({ ...r, order: { ...(r.order ?? {}), [table]: ids ?? undefined } }));
       },
     };
-  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, saveRec, recMsg, recErr, tableOrder, setOrderLocal]);
+  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, saveRec, recMsg, recErr, tableOrder, setOrderLocal, saveHourly, shiftRows, projectId, shift]);
   const shiftTitle = `${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`;
   // The time log: every step's times, for the project file — its own
   // export, not part of the update.
@@ -567,6 +584,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           crewsThis: sheet.crewsThis, crewsNext: sheet.crewsNext,
           incidents: sheet.incidents && (sheet.incidents.none || sheet.incidents.items?.length) ? { none: !!sheet.incidents.none, items: sheet.incidents.items ?? [] } : undefined,
           shiftNotes: sheet.notes.map((n) => ({ at: n.at, text: n.text, followUp: n.followUp, from: n.from })),
+          hourly: (() => { const ls = approvedLines(sheet.hourly?.notes); const cl = hourlyClocks(ls.map((l) => l.at), tz); return ls.map((l, i) => ({ clock: cl[i], text: l.text })); })(),
           order: sheet.order,
           forecast,
           discovery: discoveryList,
@@ -1186,6 +1204,8 @@ interface SheetCtx {
   removeNote: (n: ShiftNote & { shiftKey: string }) => void;
   error: string | null;
   tz: string;
+  /** Shift notes, hour by hour: the record's, how to write and save them. */
+  hourly?: HourlyCtx;
   /** The tables' order as dragged; null puts a table back the usual way. */
   order?: TableOrder;
   setOrder: (table: keyof TableOrder, ids: string[] | null) => void;
@@ -1558,10 +1578,29 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       data: () => [stepsBlock(nextRows(true, false), "Done", "Why")],
     } as Sec] : []),
     ...discoverySection(shift, c, o.discovery ?? [], o.onDiscovery),
+    ...(sh?.hourly ? [hourlySection(sh, sh.hourly, shift)] : []),
     closeSection("Close", ["Outgoing supervisor", "Incoming supervisor", "Crew lead"], undefined, sh ? (print) => (
       <ShiftNotesBox notes={sh.notes} edit={sh.edit} print={print} shift={shift} tz={sh.tz} T={c.T} D={c.D} onAdd={sh.addNote} onClear={sh.clearNote} onRemove={sh.removeNote} />
     ) : undefined),
   ];
+}
+
+/** Shift notes, hour by hour — written from the entries, approved by a
+ *  person before the email or paper carries them. */
+function hourlySection(sh: SheetCtx, h: HourlyCtx, shift: ShiftWindow): Sec {
+  const lines = approvedLines(h.notes);
+  const clocks = hourlyClocks(lines.map((l) => l.at), sh.tz);
+  const draft = !h.notes?.approved && (h.notes?.lines.length ?? 0) > 0;
+  return {
+    id: "hourly", title: "Shift notes — hour by hour", short: "Hour by hour",
+    sub: draft ? "Draft — approve it to put it in the email" : "What happened on the shift, by the time it happened",
+    count: lines.length || undefined,
+    flag: draft ? "amber" : null,
+    body: (print) => <ShiftHourlyBox h={h} edit={sh.edit} print={print} shift={shift} tz={sh.tz} />,
+    data: () => lines.length
+      ? [{ k: "table", head: ["Time", "What happened"], align: ["left", "left"], nowrap: [0], rows: lines.map((l, i) => [clocks[i], l.text] as ExportCell[]) }]
+      : [{ k: "note", text: "Not written yet.", tone: "muted" }],
+  };
 }
 
 /** Discovery work — found on the shift, what it added and did to the

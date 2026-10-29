@@ -14,6 +14,8 @@ import { openAiKey } from "@/lib/ai/keyVault";
 import { ALLOWED_PROVIDERS, AGREEMENT_VERSION } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
+import { jobOfOp } from "@/lib/ai/jobModels";
+import { jobModel } from "@/lib/ai/jobModelsServer";
 
 export class GovernedCallError extends Error {
   constructor(message: string, public status: number) { super(message); }
@@ -36,7 +38,7 @@ export async function governedAiCall(input: {
   images?: AiCallImage[];
   maxTokens?: number;
   timeoutMs?: number;
-}): Promise<AiCallResult> {
+}): Promise<AiCallResult & { model: string }> {
   const { orgId, userId } = input;
 
   const { data: conn } = await supabaseAdmin
@@ -73,7 +75,9 @@ export async function governedAiCall(input: {
     : "";
 
   const provider = conn.provider as AiProviderId;
-  const model = String(conn.model);
+  // The op's job (project documents, shift notes…) may run on its own model.
+  const job = jobOfOp(input.op);
+  const model = job ? await jobModel(orgId, userId, { provider, model: String(conn.model) }, job) : String(conn.model);
   try {
     const out = await callAiModel({
       provider, model,
@@ -85,7 +89,7 @@ export async function governedAiCall(input: {
       timeoutMs: input.timeoutMs ?? 45_000,
     });
     await recordAskUsage({ orgId, userId, provider, model, usage: out.usage, ok: true, op: input.op });
-    return out;
+    return { ...out, model };
   } catch (e) {
     await recordAskUsage({
       orgId, userId, provider, model,

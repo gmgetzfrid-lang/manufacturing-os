@@ -76,6 +76,9 @@ export interface UpdateLookups {
   /** Discovery work on the schedule (lib/discovery). */
   discovery?: Discovery[];
   shiftNotes?: Array<{ at: number; text: string; followUp?: boolean; from?: string }>;
+  /** Shift notes, hour by hour — the approved lines, with the clock each
+   *  shows ("8:00 AM", "8:30"). */
+  hourly?: Array<{ clock: string; text: string }>;
 }
 
 /** "forecast finish Nov 01 02:18 — 8.3 h late": where the work as it
@@ -367,6 +370,15 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
         rows: [...inc.items].sort((a, b) => a.at - b.at).map((x) => [f.T(x.at), { t: x.kind, bold: true }, x.text] as ExportCell[]) }]
       : [{ k: "note", text: "None.", tone: "emerald" }],
   });
+
+  // ── Shift notes, hour by hour — approved lines only.
+  const hl = look.hourly ?? [];
+  if (hl.length) {
+    out.push({
+      id: "hourly", title: `Shift notes — ${shiftName(shift)} ${f.D(shift.start)}`, sub: "hour by hour",
+      blocks: [{ k: "table", head: ["Time", "What happened"], align: ["left", "left"], nowrap: [0], rows: hl.map((x) => [{ t: x.clock, bold: true }, x.text] as ExportCell[]) }],
+    });
+  }
 
   // ── Notes & actions: the shift's own, then follow-ups left open earlier.
   const sn = look.shiftNotes ?? [];
