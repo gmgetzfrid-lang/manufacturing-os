@@ -23,6 +23,7 @@ import { effectiveWeight, leafPercent } from "@/lib/scheduleProgress";
 import { mergeImportedProgress } from "@/lib/scheduleRules";
 import { DEFAULT_SCHEDULE_TZ, naiveToIso, normalizeTimeZone, shiftWallClock, addDays, hasTimeOfDay, dayDiff } from "@/lib/scheduleTz";
 import { fetchAllRows } from "@/lib/fetchAllRows";
+import { discoveryOf, discoveryAttr } from "@/lib/discovery";
 import type {
   Milestone, MilestoneStatus, MilestoneSource, MilestoneNote, MilestoneAttributes,
 } from "@/types/schema";
@@ -783,6 +784,35 @@ export async function creditProgressTo(milestoneId: string, at: number): Promise
   const { data, error } = await supabase.rpc("credit_progress_to", { p_milestone_id: milestoneId, p_at: new Date(at).toISOString() });
   if (error) return error.code === "PGRST202" || error.code === "42883" ? "missing" : "error";
   return (["ok", "changed", "late", "range"] as const).find((x) => x === data) ?? "error";
+}
+
+/** Correct a piece of discovery after it was added: what was found and
+ *  when. It's kept on each step it added (attributes.discovery), and its
+ *  "Discovery: …" comment on the step it follows says when — all of them
+ *  are changed. Returns how many steps were changed. */
+export async function updateDiscoveryRecord(projectId: string, recordId: string, patch: { foundAt?: number; what?: string }): Promise<number> {
+  const { rows, error } = await fetchAllRows<{ id: string; attributes: Record<string, unknown> | null }>((from, to) => supabase
+    .from("milestones").select("id, attributes").eq("project_id", projectId).order("id").range(from, to) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>);
+  if (error) throw new Error(error);
+  let n = 0, before: ReturnType<typeof discoveryOf>;
+  for (const r of rows ?? []) {
+    const rec = discoveryOf({ attributes: r.attributes } as unknown as Milestone);
+    if (!rec || rec.id !== recordId) continue;
+    if (!before || rec.seq === 1) before = rec;
+    const next = { ...rec, ...(patch.what != null ? { what: patch.what.trim() } : {}), ...(patch.foundAt != null ? { foundAt: patch.foundAt } : {}) };
+    const { error: e } = await supabase.from("milestones").update({ attributes: { ...(r.attributes ?? {}), discovery: discoveryAttr(next) } }).eq("id", r.id);
+    if (e) throw new Error(e.message);
+    n++;
+  }
+  // The comment it left on the step it follows.
+  if (before?.afterId) {
+    const upd: Record<string, unknown> = {};
+    if (patch.foundAt != null) upd.happened_at = new Date(patch.foundAt).toISOString();
+    if (patch.what != null) upd.body = `Discovery: ${patch.what.trim()}`;
+    if (Object.keys(upd).length) await supabase.from("milestone_notes").update(upd).eq("milestone_id", before.afterId).eq("body", `Discovery: ${before.what}`);
+  }
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("milestone-notes:changed"));
+  return n;
 }
 
 /** Correct when a logged change happened (a time picked, entered later,

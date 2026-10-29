@@ -33,6 +33,9 @@ export interface DiscoveryDraft {
   afterId?: string | null;
   /** Steps that can't start until it's done. */
   holdsIds?: string[];
+  /** When the work is planned to start; none — as soon as it can
+   *  (earliestStart). */
+  startAt?: number | null;
 }
 
 export interface DiscoveryImpact {
@@ -105,15 +108,29 @@ export function defaultHolds(milestones: Milestone[], taskId: string, afterId: s
   return leavesUnder(milestones, taskId).filter((m) => m.id && m.id !== afterId && (m.dependsOn ?? []).includes(afterId) && m.status !== "completed").map((m) => m.id!);
 }
 
+/** As soon as the work can start: now, or when the step it follows is
+ *  done (as planned, or when it was), whichever is later. */
+export function earliestStart(milestones: Milestone[], afterId: string | null | undefined, now: number): number {
+  const after = afterId ? milestones.find((m) => m.id === afterId) : undefined;
+  const afterEnd = after ? (after.status === "completed" ? ms(after.actualAt ?? after.plannedAt) : ms(after.plannedAt)) : -Infinity;
+  return Math.max(now, Number.isFinite(afterEnd) ? afterEnd : -Infinity);
+}
+
+/** When the step it follows is planned to be done (or was), if it follows one. */
+export function followsUntil(milestones: Milestone[], afterId: string | null | undefined): number | null {
+  const after = afterId ? milestones.find((m) => m.id === afterId) : undefined;
+  if (!after) return null;
+  const t = after.status === "completed" ? ms(after.actualAt ?? after.plannedAt) : ms(after.plannedAt);
+  return Number.isFinite(t) ? t : null;
+}
+
 /** `mode`: the project's critical-path setting — "on the critical path"
  *  means what it means everywhere else (lib/criticalPath, hand marks too). */
 export function planDiscovery(milestones: Milestone[], draft: DiscoveryDraft, o: { now: number; tz: string; mode?: CriticalMode | null }): DiscoveryPlan {
   const byId = new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m]));
   const after = draft.afterId ? byId.get(draft.afterId) : undefined;
-  // It starts when it's found (never earlier than now) and the step it
-  // follows is done (as planned, or when it was).
-  const afterEnd = after ? (after.status === "completed" ? ms(after.actualAt ?? after.plannedAt) : ms(after.plannedAt)) : -Infinity;
-  let t = Math.max(o.now, Number.isFinite(afterEnd) ? afterEnd : -Infinity);
+  // When it's planned to start, or as soon as it can.
+  let t = draft.startAt != null && Number.isFinite(draft.startAt) ? draft.startAt : earliestStart(milestones, draft.afterId, o.now);
   const steps: DiscoveryPlan["steps"] = [];
   draft.steps.forEach((s, i) => {
     const hrs = Math.max(0.25, s.hours || 0);

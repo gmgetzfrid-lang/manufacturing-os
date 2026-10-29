@@ -26,7 +26,7 @@ const dayWords = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("e
 /** "10:30 PM" for "22:30". */
 export const time12 = (hm: string) => { const h = Number(hm.slice(0, 2)); return `${h % 12 || 12}:${hm.slice(3, 5)} ${h < 12 ? "AM" : "PM"}`; };
 
-export default function DateTimePicker({ label, value, onChange, tz, times, planned, shortcuts = [], showNow = true, disabled, hint }: {
+export default function DateTimePicker({ label, value, onChange, tz, times, planned, shortcuts = [], showNow = true, disabled, hint, future = false }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
@@ -39,6 +39,8 @@ export default function DateTimePicker({ label, value, onChange, tz, times, plan
   disabled?: boolean;
   /** Next to the label, e.g. "optional". */
   hint?: string;
+  /** For planning: days after today can be picked. */
+  future?: boolean;
 }) {
   // "Today" and the future, as of when it's opened, or when Now is tapped.
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -87,11 +89,11 @@ export default function DateTimePicker({ label, value, onChange, tz, times, plan
           <CalendarDays className="w-4 h-4 opacity-70" />{date ? (date === today ? `Today, ${dayWords(date).split(", ")[1]}` : dayWords(date)) : "Pick day"}
         </button>
         <TimeBox value={time} label={`${label}: time`} open={panel === "time"} onOpen={openTime} onSet={setTime} disabled={disabled} className={chip(panel === "time", !time)} />
-        {sh && (t > nowMs + 60_000
+        {sh && (!future && t > nowMs + 60_000
           ? <span className="text-[12px] font-semibold text-rose-700 dark:text-rose-400">in the future</span>
           : <span className="text-[12px] text-[var(--color-text-muted)]">{fmtInTz(sh.start, tz, { weekday: "short" })} {sh.kind} shift</span>)}
       </div>
-      {panel === "date" && <Month value={date} today={today} planned={plannedDay} onPick={pickDay} />}
+      {panel === "date" && <Month value={date} today={today} planned={plannedDay} onPick={pickDay} future={future} />}
       {panel === "time" && (
         <div className="space-y-1">
           <TimeWheels h24={h24} mi={mi} onSet={setTime} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]" />
@@ -200,14 +202,14 @@ function TimeWheels({ h24, mi, onSet, className = "" }: { h24: number; mi: numbe
   );
 }
 
-/** A month to tap a day on: no days after today. */
-function Month({ value, today, planned, onPick }: { value: string; today: string; planned: string | null; onPick: (d: string) => void }) {
+/** A month to tap a day on: no days after today (unless for planning). */
+function Month({ value, today, planned, onPick, future }: { value: string; today: string; planned: string | null; onPick: (d: string) => void; future?: boolean }) {
   const from = value || today;
   const [ym, setYm] = useState(() => Number(from.slice(0, 4)) * 12 + Number(from.slice(5, 7)) - 1);
   const y = Math.floor(ym / 12), mo = ym % 12;
   const lead = new Date(Date.UTC(y, mo, 1)).getUTCDay();
   const n = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate();
-  const latest = ym >= Number(today.slice(0, 4)) * 12 + Number(today.slice(5, 7)) - 1;
+  const latest = !future && ym >= Number(today.slice(0, 4)) * 12 + Number(today.slice(5, 7)) - 1;
   const key = (d: number) => `${y}-${p2(mo + 1)}-${p2(d)}`;
   const nav = "w-8 h-8 inline-flex items-center justify-center rounded-md hover:bg-[var(--color-surface-2)] disabled:opacity-30";
   return (
@@ -223,7 +225,7 @@ function Month({ value, today, planned, onPick }: { value: string; today: string
       <div className="grid grid-cols-7 gap-y-0.5">
         {Array.from({ length: lead }, (_, i) => <span key={`b${i}`} />)}
         {Array.from({ length: n }, (_, i) => {
-          const k = key(i + 1), on = k === value, later = k > today;
+          const k = key(i + 1), on = k === value, later = !future && k > today;
           return (
             <button key={k} type="button" disabled={later} aria-pressed={on} aria-label={dayWords(k)} onClick={() => onPick(k)}
               className={`relative mx-auto w-9 h-9 rounded-full text-[13px] tabular-nums ${on ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-bold" : later ? "text-[var(--color-text-faint)] opacity-40" : `hover:bg-[var(--color-surface-2)] ${k === today ? "font-bold text-[var(--color-accent)] ring-1 ring-inset ring-[var(--color-accent)]" : ""}`}`}>

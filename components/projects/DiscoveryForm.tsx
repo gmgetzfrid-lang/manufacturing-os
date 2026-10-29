@@ -1,19 +1,21 @@
 "use client";
 
 // DiscoveryForm — work found when the equipment is opened, into the
-// schedule. What was found and when; the steps it adds (crew, hours); the
-// step it follows and the ones it holds up; who approved it. Before it's
-// saved, what it does to the schedule (lib/discovery): the task's finish,
-// the turnaround's, the critical path, and the steps it pushes.
+// schedule. What was found and when it was found; the steps it adds (crew,
+// hours); the step it follows and the ones it holds up; when the work can
+// start — as soon as it can, or a set time (two different times: found
+// is history, the start is the plan); who approved it. Before it's saved,
+// what it does to the schedule (lib/discovery): the task's finish, the
+// turnaround's, the critical path, and the steps it pushes.
 
 import React, { useMemo, useState } from "react";
 import { X, Plus, Trash2 } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import type { ShiftTimes } from "@/lib/shiftReport";
-import { fmtInTz } from "@/lib/scheduleTz";
-import { planDiscovery, defaultAfter, defaultHolds, impactLine, type DiscoveryDraft } from "@/lib/discovery";
+import { fmtInTz, toDateTimeInput, fromDateTimeInput } from "@/lib/scheduleTz";
+import { planDiscovery, defaultAfter, defaultHolds, impactLine, earliestStart, followsUntil, type DiscoveryDraft } from "@/lib/discovery";
 import type { CriticalMode } from "@/lib/criticalPath";
-import { shiftChoices, resolveWhen, WhenFields, pickOf } from "@/components/projects/ProgressControl";
+import DateTimePicker from "@/components/projects/DateTimePicker";
 
 const ms = (v: unknown) => (v == null ? NaN : Date.parse(String(v)));
 
@@ -57,29 +59,41 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
   const [what, setWhat] = useState("");
   const [rows, setRows] = useState<Array<{ name: string; crew: string; hours: string }>>(() => [{ name: "", crew: steps.find((s) => s.id === afterId)?.responsibleParty ?? "", hours: "" }]);
   const [approvedBy, setApprovedBy] = useState("");
-  const choices = useMemo(() => shiftChoices({ tz, times }, now), [tz, times, now]);
-  const [wi, setWi] = useState(0);
-  const [otherDay, setOtherDay] = useState<string | null>(null);
-  const [clock, setClock] = useState(() => new Date(now).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz }));
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // When it was found (history) — and when the work starts (the plan).
+  const toMs = (v: string) => { const x = v.length >= 16 ? fromDateTimeInput(v, tz) : null; return x ? Date.parse(x) : NaN; };
+  const [foundV, setFoundV] = useState(() => toDateTimeInput(now, tz));
+  const [startMode, setStartMode] = useState<"asap" | "set">("asap");
+  const [startV, setStartV] = useState("");
+  const asap = useMemo(() => earliestStart(milestones, afterId, now), [milestones, afterId, now]);
+  const follows = useMemo(() => followsUntil(milestones, afterId), [milestones, afterId]);
+  const afterName = steps.find((s) => s.id === afterId)?.name;
+  const foundAt = toMs(foundV);
+  const startAt = startMode === "set" ? toMs(startV) : null;
+  // What's wrong with the times, if anything.
+  const timeProblem = !Number.isFinite(foundAt) ? "Put in when it was found — the day and the time."
+      : startMode === "set" && !Number.isFinite(startAt as number) ? "Pick when the work starts — the day and the time."
+        : startAt != null && startAt < foundAt ? "The work can't start before it was found."
+          : startAt != null && follows != null && startAt < follows ? `It starts after “${afterName ?? "the step it follows"}”, planned to be done ${fmt(follows)} — pick that or later, or change what it starts after.`
+            : null;
 
-  const when = clock ? resolveWhen(pickOf(choices, wi, otherDay, tz, times), clock, tz, times) : null;
   const filled = rows.map((r) => ({ name: r.name.trim(), crew: r.crew.trim(), hours: Number(r.hours) })).filter((r) => r.name && Number.isFinite(r.hours) && r.hours > 0);
-  const draft: DiscoveryDraft | null = taskId && filled.length && when && "credit" in when
-    ? { taskId, what: what.trim(), foundAt: when.credit.at, approvedBy: approvedBy.trim() || undefined, steps: filled, afterId, holdsIds: holds }
+  const draft: DiscoveryDraft | null = taskId && filled.length && !timeProblem
+    ? { taskId, what: what.trim(), foundAt, approvedBy: approvedBy.trim() || undefined, steps: filled, afterId, holdsIds: holds, startAt }
     : null;
   // Worked out again only when what's entered changes.
   const draftKey = draft ? JSON.stringify(draft) : "";
   const plan = useMemo(() => (draftKey ? planDiscovery(milestones, JSON.parse(draftKey) as DiscoveryDraft, { now, tz, mode }) : null), [milestones, now, tz, mode, draftKey]);
-  const fmt = (t: number) => (Number.isFinite(t) ? fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }) : "—");
+  function fmt(t: number) { return Number.isFinite(t) ? fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) : "—"; }
   const hrs = (h: number) => `${Math.round(h * 10) / 10} h`;
   const taskName = tasks.find((t) => t.id === taskId)?.name ?? start.name;
 
   const save = async () => {
     if (!what.trim()) { setMsg("Say what was found."); return; }
     if (!filled.length) { setMsg("Add the work it needs — a step with its hours."); return; }
-    if (!when || "error" in when) { setMsg(when && "error" in when ? when.error : "Put in when it was found."); return; }
+    if (timeProblem) { setMsg(timeProblem); return; }
+    if (foundAt > Date.now() + 60_000) { setMsg("When it was found can't be in the future."); return; }
     if (!draft) return;
     setBusy(true); setMsg(null);
     const ok = await onSave(draft, now).catch((e: Error) => { setMsg(e.message); return false; });
@@ -112,9 +126,7 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
             <textarea value={what} onChange={(e) => { setWhat(e.target.value); setMsg(null); }} rows={2} placeholder="e.g. Tray 14 cracked at the weld — needs repair before close-up"
               className={`${inp} w-full h-auto py-1.5`} />
           </label>
-          <div>
-            <WhenFields choices={choices} idx={wi} setIdx={setWi} clock={clock} setClock={setClock} tz={tz} times={times} other={otherDay} setOther={setOtherDay} />
-          </div>
+          <DateTimePicker label="When was it found?" hint="— required" value={foundV} onChange={(v) => { setFoundV(v); setMsg(null); }} tz={tz} times={times} />
           <div>
             <span className={lbl}>Work it adds</span>
             <div className="space-y-1.5">
@@ -157,6 +169,18 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
               </div>
             </div>
           </div>
+          <div className="space-y-1.5">
+            <span className={lbl}>When can the work start?</span>
+            <div className="flex flex-wrap gap-1" role="group" aria-label="When the work starts">
+              {([["asap", `As soon as it can — ${fmt(asap)}`], ["set", "At a set time"]] as const).map(([k, l]) => (
+                <button key={k} type="button" aria-pressed={startMode === k} onClick={() => { setStartMode(k); setMsg(null); if (k === "set" && !startV) setStartV(toDateTimeInput(asap, tz)); }}
+                  className={`h-8 px-3 rounded-md border text-[12px] font-bold ${startMode === k ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>{l}</button>
+              ))}
+            </div>
+            {startMode === "asap"
+              ? <div className="text-[11px] text-[var(--color-text-muted)]">{afterName && follows != null && follows >= now ? `When “${afterName}” is planned to be done.` : "Now — what it starts after is done or due."}</div>
+              : <DateTimePicker label="Planned start" value={startV} onChange={(v) => { setStartV(v); setMsg(null); }} tz={tz} times={times} future showNow={false} />}
+          </div>
           <label className="block">
             <span className={lbl}>Approved by <span className="font-normal text-[var(--color-text-muted)]">— optional</span></span>
             <input value={approvedBy} onChange={(e) => setApprovedBy(e.target.value)} placeholder="e.g. TA manager / owner rep" className={`${inp} w-full`} />
@@ -165,13 +189,13 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
           {/* What it does to the schedule — before it's saved. */}
           <div className={`rounded-lg border px-3 py-2 space-y-1 ${plan?.impact.critical ? "border-rose-300 bg-rose-50 dark:border-rose-900 dark:bg-rose-950/30" : "border-[var(--color-border)] bg-[var(--color-surface-2)]"}`}>
             <div className="font-black text-[11px] uppercase tracking-wider text-[var(--color-text-muted)]">What it does to the schedule</div>
-            {!plan ? <div className="text-[var(--color-text-muted)]">Add the work it needs (a step and its hours) to see.</div> : (
+            {!plan ? <div className="text-[var(--color-text-muted)]">{timeProblem && filled.length ? timeProblem : "Add the work it needs (a step and its hours) to see."}</div> : (
               <>
                 <div className="font-bold">{impactLine(plan.impact, hrs)}</div>
                 <div>{taskName}: finish {fmt(plan.impact.taskFinish[0])} → <b>{fmt(plan.impact.taskFinish[1])}</b></div>
                 <div>Turnaround (forecast): {fmt(plan.impact.finish[0])} → <b className={plan.impact.finish[1] > plan.impact.finish[0] + 6 * 60_000 ? "text-rose-700 dark:text-rose-400" : ""}>{fmt(plan.impact.finish[1])}</b>
                   {plan.impact.finish[1] <= plan.impact.finish[0] + 6 * 60_000 && plan.impact.taskFinish[1] > plan.impact.taskFinish[0] ? " — it fits in the float" : ""}</div>
-                <div className="text-[var(--color-text-muted)]">New work: {plan.steps.map((s) => `${s.name} ${fmt(Date.parse(s.plannedStartAt))} → ${fmtInTz(Date.parse(s.plannedAt), tz, { hour: "2-digit", minute: "2-digit", hour12: false })}`).join("; ")}</div>
+                <div className="text-[var(--color-text-muted)]">New work: {plan.steps.map((s) => `${s.name} ${fmt(Date.parse(s.plannedStartAt))} → ${fmt(Date.parse(s.plannedAt))}`).join("; ")}</div>
                 {plan.impact.pushed.length > 0 && (
                   <div>Pushes {plan.impact.pushed.length} planned step{plan.impact.pushed.length === 1 ? "" : "s"}: {plan.impact.pushed.slice(0, 5).map((p) => `${p.name} +${hrs(p.hours)}`).join(", ")}{plan.impact.pushed.length > 5 ? ` + ${plan.impact.pushed.length - 5} more` : ""}</div>
                 )}

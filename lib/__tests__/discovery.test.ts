@@ -3,7 +3,7 @@
 // impact said before it's saved and kept after.
 
 import { describe, it, expect } from "vitest";
-import { planDiscovery, defaultAfter, defaultHolds, discoveries, impactLine, discoveryAttr, type DiscoveryRecord } from "@/lib/discovery";
+import { planDiscovery, defaultAfter, defaultHolds, discoveries, impactLine, discoveryAttr, earliestStart, followsUntil, type DiscoveryRecord } from "@/lib/discovery";
 import type { Milestone } from "@/types/schema";
 
 const UTC = "UTC";
@@ -25,6 +25,17 @@ const base = () => [
 const now = T0 + 4 * 3_600_000;
 
 describe("discovery work into the schedule", () => {
+  it("found and planned are two different times: it starts when it's planned to, not when it was found", () => {
+    // Found at hour 2; the step it follows is planned done at 10.
+    expect(earliestStart(base(), "open", now)).toBe(T0 + 10 * 3_600_000);
+    expect(earliestStart(base(), null, now)).toBe(now);
+    expect(followsUntil(base(), "open")).toBe(T0 + 10 * 3_600_000);
+    const asap = planDiscovery(base(), { taskId: "v7", what: "Tray 14", foundAt: T0 + 2 * 3_600_000, steps: [{ name: "Weld", hours: 4 }], afterId: "open" }, { now, tz: UTC });
+    expect([asap.steps[0].plannedStartAt, asap.steps[0].plannedAt]).toEqual([h(10), h(14)]);
+    // Planned for a set time — the next morning.
+    const set = planDiscovery(base(), { taskId: "v7", what: "Tray 14", foundAt: T0 + 2 * 3_600_000, steps: [{ name: "Weld", hours: 4 }, { name: "QC", hours: 1 }], afterId: "open", startAt: T0 + 24 * 3_600_000 }, { now, tz: UTC });
+    expect(set.steps.map((x) => [x.plannedStartAt, x.plannedAt])).toEqual([[h(24), h(28)], [h(28), h(29)]]);
+  });
   it("defaults: after the step under way, holding up what waits on it", () => {
     expect(defaultAfter(base(), "v7")).toBe("open");
     expect(defaultHolds(base(), "v7", "open")).toEqual(["clean"]);

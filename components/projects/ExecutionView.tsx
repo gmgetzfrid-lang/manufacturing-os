@@ -266,7 +266,14 @@ export default function ExecutionView({
     for (const x of items) if (x.id) m.set(x.id, x);
     return m;
   }, [items]);
-  // The latest of each step, for a save made in two parts (started, then
+  // A change saved straight to the database elsewhere (a discovery's
+  // record corrected on a step card): read the schedule again.
+  useEffect(() => {
+    const on = () => onRefresh();
+    window.addEventListener("schedule:changed", on);
+    return () => window.removeEventListener("schedule:changed", on);
+  }, [onRefresh]);
+    // The latest of each step, for a save made in two parts (started, then
   // finished): the second part sees what the first did.
   const latest = useRef(byId);
   useEffect(() => { latest.current = byId; }, [byId]);
