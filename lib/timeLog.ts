@@ -13,6 +13,8 @@ import { inheritedWorkOrders, woOf } from "@/lib/workOrderCrew";
 
 export interface TimeLogRow {
   at: number;
+  /** The step it's about (none for the shift's own notes and incidents). */
+  id?: string;
   /** "Tue, Oct 27 · Day" */
   shift: string;
   task: string;
@@ -110,7 +112,7 @@ export function buildTimeLog(input: {
     const reason = r.new_status === "on_hold" || r.new_status === "blocked" ? status?.body?.trim() : undefined;
     const o = Number(r.old_percent ?? 0), n = Number(r.new_percent ?? 0);
     out.push({
-      at, shift: shiftOf(at), ...base(r.milestone_id),
+      at, id: r.milestone_id, shift: shiftOf(at), ...base(r.milestone_id),
       what: describeChange(r.old_status, r.old_percent, r.new_status, r.new_percent),
       pct: o !== n ? `${o}% → ${n}%` : `${n}%`,
       comment: [reason, comment?.body?.trim()].filter(Boolean).join(" — "),
@@ -128,7 +130,7 @@ export function buildTimeLog(input: {
     if (!inRange(forShift)) continue;
     const written = ms(n.createdAt);
     out.push({
-      at, shift: shiftOf(forShift), ...base(n.milestoneId),
+      at, id: n.milestoneId, shift: shiftOf(forShift), ...base(n.milestoneId),
       what: n.kind === "behind" ? "Why it's behind" : "Comment", pct: "",
       comment: n.body.trim(), enteredBy: n.createdByName ?? "",
       enteredAt: written - at > 5 * 60_000 ? written : null,

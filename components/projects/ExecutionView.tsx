@@ -1275,6 +1275,7 @@ export default function ExecutionView({
 
       {layout === "wo" ? (
         <WorkOrdersView milestones={items} childrenByParent={childrenOf} tz={tz} times={shiftTimes} progress={progressIndex} canEdit={canEdit} marks={marks}
+          projectId={projectId} projectName={projectName}
           onUpdate={canEdit ? updateStep : undefined} onFixTimes={canEdit ? fixTimes : undefined}
           onOpenDetail={(m) => m.id && setDetailId(m.id)}
           onMoveDays={(id, days) => { const target = byId.get(id); if (target) void moveByDays(target, days); }}

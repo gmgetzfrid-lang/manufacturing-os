@@ -5,11 +5,12 @@
 // many hours ahead or behind. Search for a WO number, equipment, step or
 // crew. Open one and its steps are there to update, each with the step
 // card: start, %, finish, fix times, and the history with Edit. Steps with
-// no WO are listed under their equipment.
+// no WO are listed under their equipment. Print puts the work orders shown
+// on paper, every one opened up with all its steps (lib/workOrdersPrint).
 
 import React, { useMemo, useState } from "react";
-import { Search, ChevronRight } from "lucide-react";
-import type { Milestone } from "@/types/schema";
+import { Search, ChevronRight, Printer } from "lucide-react";
+import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { leafPercent } from "@/lib/scheduleProgress";
 import { expectedFraction, workHours, type ShiftTimes } from "@/lib/shiftReport";
@@ -19,6 +20,16 @@ import { woOf } from "@/lib/workOrderCrew";
 import { discoveryOf, kindOf, ADDED, type AddedKind } from "@/lib/discovery";
 import type { PathMarks } from "@/lib/criticalPath";
 import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
+import { notesFor } from "@/lib/milestones";
+import { loadProgressLog } from "@/lib/progressHistory";
+import { buildTimeLog, type TimeLogRow } from "@/lib/timeLog";
+import { useLetterhead } from "@/lib/letterheadStore";
+import { letterheadDocument } from "@/lib/letterhead";
+import { workOrdersHtml, PRINT_CSS, type PrintOrder } from "@/lib/workOrdersPrint";
+
+const STEP_STATUS: Record<MilestoneStatus, string> = { planned: "Not started", in_progress: "In progress", completed: "Done", on_hold: "On hold", blocked: "Blocked", missed: "Missed" };
+const SHOW_WORD: Record<string, string> = { all: "All work orders", open: "Open work orders", behind: "Work orders behind plan", held: "Held work orders", done: "Done work orders" };
+const noteAt = (n: MilestoneNote) => ms(n.happenedAt ?? n.createdAt);
 
 type Standing = "not_started" | "in_progress" | "held" | "done";
 const STANDING: Record<Standing, { word: string; cls: string }> = {
@@ -49,8 +60,10 @@ interface WorkOrder {
   find: string;
 }
 
-export default function WorkOrdersView({ milestones, childrenByParent, tz, times, progress, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery }: {
+export default function WorkOrdersView({ milestones, childrenByParent, tz, times, progress, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery, projectId, projectName }: {
   milestones: Milestone[];
+  /** For printing: the project's letterhead, history and name. */
+  projectId?: string; projectName?: string;
   childrenByParent: Map<string, Milestone[]>;
   tz: string; times: ShiftTimes;
   progress?: Map<string, ProgressInfo>;
@@ -142,6 +155,73 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
     : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) : "—");
   const toggle = (k: string) => setOpen((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
 
+  // ── Print: the work orders shown, each opened up with all its steps.
+  const { lh } = useLetterhead(projectId);
+  const [printMenu, setPrintMenu] = useState(false);
+  const [printMsg, setPrintMsg] = useState<string | null>(null);
+  const printIt = async (history: boolean) => {
+    setPrintMenu(false); setPrintMsg(null);
+    // Opened at the tap, so the browser doesn't take it for a pop-up.
+    const w = window.open("", "_blank");
+    if (!w) { setPrintMsg("Your browser blocked the print window — allow pop-ups for this site and try again."); return; }
+    w.document.write(`<p style="font:14px Arial,sans-serif;padding:24px">Getting ${shown.length} work order${shown.length === 1 ? "" : "s"} ready to print…</p>`);
+    try {
+      const ids = shown.flatMap((o) => o.steps.map((s) => s.id)).filter((id): id is string => !!id);
+      const notes = await notesFor(ids);
+      const latest = new Map<string, { at: number; text: string }>();
+      for (const n of notes) {
+        const text = n.body?.trim();
+        // What people wrote: comments, why it's behind, and hold / block
+        // reasons — not the app's own status lines ("Progress → 67%").
+        const said = n.kind === "note" || n.kind === "field" || n.kind === "behind"
+          || (n.kind === "status" && (n.statusAt === "on_hold" || n.statusAt === "blocked"));
+        if (!text || !said) continue;
+        const at = noteAt(n), cur = latest.get(n.milestoneId);
+        if (Number.isFinite(at) && (!cur || at >= cur.at)) latest.set(n.milestoneId, { at, text });
+      }
+      const hist = new Map<string, TimeLogRow[]>();
+      if (history && projectId) {
+        const log = await loadProgressLog(projectId);
+        for (const r of buildTimeLog({ milestones, log: log ?? [], notes, tz, times })) {
+          if (!r.id) continue;
+          const list = hist.get(r.id);
+          if (list) list.push(r); else hist.set(r.id, [r]);
+        }
+      }
+      const pctOf = (m: Milestone) => (m.id ? progress?.get(m.id)?.percent : undefined) ?? leafPercent(m);
+      const orders: PrintOrder[] = shown.map((o) => ({
+        wo: o.wo, name: o.owner.name, desc: descOf(o.owner), crews: o.crews,
+        standing: STANDING[o.standing].word, pct: o.pct, plan: o.plan, hours: o.hours,
+        planStart: o.planStart, planFinish: o.planFinish, actStart: o.actStart, actFinish: o.actFinish,
+        added: o.added.map((x) => `${x.n} ${ADDED[x.kind].lower} step${x.n === 1 ? "" : "s"} (${x.h} h)`),
+        done: o.done,
+        steps: o.steps.map((s) => {
+          const d = discoveryOf(s);
+          return {
+            id: s.id ?? "", name: s.name, crew: s.responsibleParty?.trim() ?? "",
+            planStart: startMsOf(s), planFinish: finishMsOf(s),
+            actStart: ms(s.actualStartAt), actFinish: s.status === "completed" ? ms(s.actualAt) : NaN,
+            status: STEP_STATUS[s.status] ?? s.status, pct: Math.round(pctOf(s)),
+            added: d ? ADDED[kindOf(d)].word : undefined,
+            latest: s.id ? latest.get(s.id) ?? null : null,
+            history: s.id ? hist.get(s.id) : undefined,
+          };
+        }),
+      }));
+      const project = projectName?.trim() || "Schedule";
+      const scope = `${SHOW_WORD[show]}${query.trim() ? ` · search “${query.trim()}”` : ""}${history ? " · with each step's history" : ""}`;
+      const body = workOrdersHtml({ project, scope, tz, orders, history });
+      const title = `${project} — Work orders`;
+      const doc = lh ? letterheadDocument(lh, title, body, PRINT_CSS)
+        : `<!doctype html><html><head><meta charset="utf-8"><title>${title.replace(/</g, "&lt;")}</title><style>@page{size:landscape;margin:10mm}body{margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}${PRINT_CSS}</style></head><body>${body}</body></html>`;
+      w.document.open(); w.document.write(doc); w.document.close();
+      w.focus();
+      setTimeout(() => w.print(), 300);
+    } catch (e) {
+      w.document.body.textContent = `Couldn't get the work orders ready: ${(e as Error).message}`;
+    }
+  };
+
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
@@ -162,7 +242,30 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
             );
           })}
         </div>
+        <span className="relative ml-auto inline-flex">
+          <button type="button" onClick={() => setPrintMenu((v) => !v)} aria-expanded={printMenu} disabled={shown.length === 0}
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+            <Printer className="w-3.5 h-3.5" /> Print
+          </button>
+          {printMenu && (
+            <>
+              <span className="fixed inset-0 z-[40]" onClick={() => setPrintMenu(false)} aria-hidden />
+              <span className="absolute right-0 top-full mt-1 z-[41] w-72 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-1.5 flex flex-col text-[12px]">
+                <span className="px-2 pt-1 pb-1.5 text-[11px] text-[var(--color-text-muted)]">The {shown.length} work order{shown.length === 1 ? "" : "s"} shown, each opened up with all its steps.</span>
+                <button type="button" onClick={() => void printIt(false)} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)]">
+                  <span className="font-semibold">All steps</span>
+                  <span className="block text-[11px] text-[var(--color-text-muted)]">Plan, actual, status, % and the latest comment</span>
+                </button>
+                <button type="button" onClick={() => void printIt(true)} disabled={!projectId} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                  <span className="font-semibold">All steps with their history</span>
+                  <span className="block text-[11px] text-[var(--color-text-muted)]">Every start, % update, hold and comment, with its time</span>
+                </button>
+              </span>
+            </>
+          )}
+        </span>
       </div>
+      {printMsg && <div role="alert" className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">{printMsg}</div>}
 
       {shown.length === 0 ? (
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-6 text-center text-[12.5px] text-[var(--color-text-muted)]">
