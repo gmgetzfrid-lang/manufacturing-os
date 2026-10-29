@@ -39,6 +39,7 @@ import { planDiscovery, discoveryAttr, impactLine, type DiscoveryDraft, type Dis
 import DiscoveryForm from "@/components/projects/DiscoveryForm";
 import MarkSheet from "@/components/projects/MarkSheet";
 import PlanNextShift from "@/components/projects/PlanNextShift";
+import WorkOrdersView from "@/components/projects/WorkOrdersView";
 import { planNote, type ShiftPlanChange } from "@/lib/shiftPlan";
 import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, cascadeDependents, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import { resolveCriticalPath, pathMarks, CRITICAL_MODES, type CriticalMode, type CriticalOverride } from "@/lib/criticalPath";
@@ -144,7 +145,7 @@ export default function ExecutionView({
   // manual multiplier on the fitted width (1 = fit, >1 = zoomed in).
   const [zoomFactor, setZoomFactor] = useState<number | null>(null);
   const [drag, setDrag] = useState<{ id: string; deltaDays: number } | null>(null);
-  const [layout, setLayout] = useState<"timeline" | "calendar" | "report" | "shift">("timeline");
+  const [layout, setLayout] = useState<"timeline" | "calendar" | "wo" | "report" | "shift">("timeline");
   const [detailId, setDetailId] = useState<string | null>(null);
   // Keyboard navigation: the currently keyboard-focused timeline row.
   const [focusedId, setFocusedId] = useState<string | null>(null);
@@ -1152,7 +1153,7 @@ export default function ExecutionView({
 
       <div className="flex items-center gap-2 flex-wrap">
         <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-lg p-0.5 gap-0.5">
-          {([["timeline", "Timeline"], ["calendar", "Calendar"], ["shift", "Shift report"], ["report", "Report"]] as const).map(([id, label]) => (
+          {([["timeline", "Timeline"], ["calendar", "Calendar"], ["wo", "Work orders"], ["shift", "Shift report"], ["report", "Report"]] as const).map(([id, label]) => (
             <button
               key={id}
               onClick={() => setLayout(id)}
@@ -1200,7 +1201,7 @@ export default function ExecutionView({
       </div>
 
       {/* Find anything — applies to Timeline & Calendar. */}
-      {layout !== "report" && (
+      {layout !== "report" && layout !== "wo" && (
         <ScheduleFilterBar
           filter={filter}
           onChange={setFilter}
@@ -1213,7 +1214,7 @@ export default function ExecutionView({
       {/* Group color key — decodes the phase hues. Uses the color anchors
           (which, under a single overarching project, are its first-level
           phases) so the key shows even for a one-root schedule. */}
-      {layout !== "report" && colors.groups.length > 1 && (
+      {layout !== "report" && layout !== "wo" && colors.groups.length > 1 && (
         <div className="flex items-center gap-x-3 gap-y-1 flex-wrap px-1 text-[11px]">
           <span className="font-black uppercase tracking-widest text-[var(--color-text-faint)]">Phases</span>
           {colors.groups.map((g) => {
@@ -1228,7 +1229,13 @@ export default function ExecutionView({
         </div>
       )}
 
-      {layout === "report" ? (
+      {layout === "wo" ? (
+        <WorkOrdersView milestones={items} childrenByParent={childrenOf} tz={tz} times={shiftTimes} progress={progressIndex} canEdit={canEdit} marks={marks}
+          onUpdate={canEdit ? updateStep : undefined} onFixTimes={canEdit ? fixTimes : undefined}
+          onOpenDetail={(m) => m.id && setDetailId(m.id)}
+          onMoveDays={(id, days) => { const target = byId.get(id); if (target) void moveByDays(target, days); }}
+          onDiscovery={canEdit ? setDiscoveryFor : undefined} />
+      ) : layout === "report" ? (
         <ExecutionReportView milestones={items} shiftTimes={shiftTimes} critical={critical} criticalSource={criticalSourceLabel} />
       ) : layout === "shift" ? (
         <ShiftReportView milestones={items} cancelled={cancelled} userId={userId} userName={userName ?? userEmail} canEdit={canEdit} progress={progressIndex} projectId={projectId} projectName={projectName} onUpdateStep={updateStep} onDiscovery={canEdit ? setDiscoveryFor : undefined} pathNow={cpClock} onPlanNext={canEdit && onMoveMany ? setPlanNext : undefined} onFixTimes={canEdit ? fixTimes : undefined} />

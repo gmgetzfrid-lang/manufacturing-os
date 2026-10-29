@@ -1,0 +1,219 @@
+"use client";
+
+// WorkOrdersView: the job by work order. Each WO's equipment, crews,
+// plan against actual (start and finish), how far along it is, and how
+// many hours ahead or behind. Search for a WO number, equipment, step or
+// crew. Open one and its steps are there to update, each with the step
+// card: start, %, finish, fix times, and the history with Edit. Steps with
+// no WO are listed under their equipment.
+
+import React, { useMemo, useState } from "react";
+import { Search, ChevronRight } from "lucide-react";
+import type { Milestone } from "@/types/schema";
+import type { ProgressInfo } from "@/lib/scheduleProgress";
+import { leafPercent } from "@/lib/scheduleProgress";
+import { expectedFraction, workHours, type ShiftTimes } from "@/lib/shiftReport";
+import { fmtInTz, dayKey } from "@/lib/scheduleTz";
+import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
+import { woOf } from "@/lib/workOrderCrew";
+import type { PathMarks } from "@/lib/criticalPath";
+import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
+
+type Standing = "not_started" | "in_progress" | "held" | "done";
+const STANDING: Record<Standing, { word: string; cls: string }> = {
+  not_started: { word: "Not started", cls: "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]" },
+  in_progress: { word: "In progress", cls: "text-blue-700 bg-blue-50 border-blue-200 dark:text-blue-300 dark:bg-blue-950/40 dark:border-blue-900" },
+  held: { word: "Held", cls: "text-amber-800 bg-amber-50 border-amber-200 dark:text-amber-300 dark:bg-amber-950/40 dark:border-amber-900" },
+  done: { word: "Done", cls: "text-emerald-700 bg-emerald-50 border-emerald-200 dark:text-emerald-300 dark:bg-emerald-950/40 dark:border-emerald-900" },
+};
+type Show = "all" | "open" | "behind" | "held" | "done";
+/** Its description — not the schedule file's "Summary (rolls up children)". */
+const descOf = (m: Milestone) => { const d = m.description?.trim() ?? ""; return /^summary \(rolls up children\)$/i.test(d) ? "" : d; };
+const ms = (v: unknown) => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
+
+interface WorkOrder {
+  key: string;
+  wo: string | null;
+  /** The task (or single step) the WO is on. */
+  owner: Milestone;
+  steps: Milestone[];
+  crews: string[];
+  planStart: number; planFinish: number;
+  actStart: number; actFinish: number;
+  pct: number; plan: number; hours: number;
+  standing: Standing;
+  done: number;
+  find: string;
+}
+
+export default function WorkOrdersView({ milestones, childrenByParent, tz, times, progress, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery }: {
+  milestones: Milestone[];
+  childrenByParent: Map<string, Milestone[]>;
+  tz: string; times: ShiftTimes;
+  progress?: Map<string, ProgressInfo>;
+  canEdit: boolean;
+  onUpdate?: (id: string, u: StepUpdate) => Promise<boolean>;
+  onFixTimes?: (id: string, t: { start?: number | null; finish?: number | null }) => Promise<boolean>;
+  onOpenDetail?: (m: Milestone) => void;
+  onMoveDays?: (id: string, delta: number) => void;
+  marks?: PathMarks;
+  onDiscovery?: (task: Milestone) => void;
+}) {
+  const [now] = useState(() => Date.now());
+  const [query, setQuery] = useState("");
+  const [show, setShow] = useState<Show>("all");
+  const [open, setOpen] = useState<Set<string>>(new Set());
+
+  const orders = useMemo(() => {
+    const byId = new Map<string, Milestone>();
+    for (const m of milestones) if (m.id) byId.set(m.id, m);
+    const pctOf = (m: Milestone) => (m.id ? progress?.get(m.id)?.percent : undefined) ?? leafPercent(m);
+    // Each step's work order: its own, else the nearest group above with one.
+    const groups = new Map<string, { wo: string | null; owner: Milestone; steps: Milestone[] }>();
+    for (const m of milestones) {
+      if (!m.id || (childrenByParent.get(m.id)?.length ?? 0) > 0) continue;
+      let x: Milestone | undefined = m, wo = "", owner: Milestone | undefined;
+      const seen = new Set<string>();
+      while (x && x.id && !seen.has(x.id)) {
+        seen.add(x.id);
+        wo = woOf(x);
+        if (wo) { owner = x; break; }
+        x = x.parentId ? byId.get(x.parentId) : undefined;
+      }
+      if (!owner) owner = (m.parentId ? byId.get(m.parentId) : undefined) ?? m;
+      const key = `${wo || "-"}:${owner.id}`;
+      const g = groups.get(key) ?? { wo: wo || null, owner, steps: [] };
+      g.steps.push(m);
+      groups.set(key, g);
+    }
+    const out: WorkOrder[] = [];
+    for (const [key, g] of groups) {
+      const steps = [...g.steps].sort((a, b) => startMsOf(a) - startMsOf(b));
+      let wSum = 0, pSum = 0, planSum = 0, hours = 0, done = 0, held = false, started = false;
+      let planStart = Infinity, planFinish = -Infinity, actStart = Infinity, actFinish = -Infinity;
+      for (const s of steps) {
+        const w = Math.max(0.1, s.durationHours != null && s.durationHours > 0 ? s.durationHours : workHours(s, tz));
+        const p = pctOf(s), e = Math.round(expectedFraction(s, now, tz, times) * 100);
+        wSum += w; pSum += p * w; planSum += e * w; hours += ((p - e) / 100) * w;
+        if (s.status === "completed") done++;
+        if (s.status === "on_hold" || s.status === "blocked") held = true;
+        if (s.status !== "planned" && s.status !== "missed") started = true;
+        planStart = Math.min(planStart, startMsOf(s)); planFinish = Math.max(planFinish, finishMsOf(s));
+        const a0 = ms(s.actualStartAt), a1 = s.status === "completed" ? ms(s.actualAt) : NaN;
+        if (Number.isFinite(a0)) actStart = Math.min(actStart, a0);
+        if (Number.isFinite(a1)) actFinish = Math.max(actFinish, a1);
+      }
+      const all = done === steps.length;
+      const crews = [...new Set(steps.map((s) => s.responsibleParty?.trim()).filter((c): c is string => !!c))].sort();
+      out.push({
+        key, wo: g.wo, owner: g.owner, steps, crews,
+        planStart, planFinish, actStart, actFinish: all ? actFinish : NaN,
+        pct: Math.round(pSum / wSum), plan: Math.round(planSum / wSum), hours: Math.round(hours * 10) / 10,
+        standing: all ? "done" : held ? "held" : started ? "in_progress" : "not_started", done,
+        find: [g.wo, g.owner.name, ...crews, ...steps.flatMap((s) => [s.name, s.description, woOf(s)])].filter(Boolean).join(" ").toLowerCase(),
+      });
+    }
+    return out.sort((a, b) => a.planStart - b.planStart || (a.wo ?? "~").localeCompare(b.wo ?? "~"));
+  }, [milestones, childrenByParent, progress, tz, times, now]);
+
+  const is: Record<Show, (o: WorkOrder) => boolean> = {
+    all: () => true,
+    open: (o) => o.standing !== "done",
+    behind: (o) => o.standing !== "done" && o.hours <= -0.5,
+    held: (o) => o.standing === "held",
+    done: (o) => o.standing === "done",
+  };
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const found = orders.filter((o) => words.every((w) => o.find.includes(w)));
+  const shown = found.filter(is[show]);
+  const today = dayKey(now, tz);
+  // "Tue 2:30 PM" this week; further off "Oct 23, 4:23 PM".
+  const fmt = (t: number) => (Number.isFinite(t) ? fmtInTz(t, tz, Math.abs(t - now) < 6 * 86_400_000
+    ? { weekday: "short", hour: "numeric", minute: "2-digit", hour12: true }
+    : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) : "—");
+  const toggle = (k: string) => setOpen((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-1.5 h-9 flex-1 min-w-[220px] max-w-[420px] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 focus-within:border-[var(--color-accent-ring)]">
+          <Search className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="WO #, equipment, step, crew…" aria-label="Search work orders"
+            className="flex-1 min-w-0 bg-transparent text-[13px] outline-none" />
+          {query && <button type="button" onClick={() => setQuery("")} className="text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Clear</button>}
+        </label>
+        <div className="inline-flex flex-wrap gap-1" role="group" aria-label="Show">
+          {([["all", "All"], ["open", "Open"], ["behind", "Behind"], ["held", "Held"], ["done", "Done"]] as const).map(([k, l]) => {
+            const n = found.filter(is[k]).length;
+            return (
+              <button key={k} type="button" aria-pressed={show === k} onClick={() => setShow(k)}
+                className={`h-8 px-2.5 rounded-full border text-[12px] font-semibold ${show === k ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                {l} <span className="tabular-nums opacity-80">{n}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {shown.length === 0 ? (
+        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-6 text-center text-[12.5px] text-[var(--color-text-muted)]">
+          {orders.length === 0 ? "No steps on the schedule yet." : "No work orders match."}
+        </div>
+      ) : (
+        <ul className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden divide-y divide-[var(--color-border)]">
+          {shown.map((o) => {
+            const isOpen = open.has(o.key);
+            const st = STANDING[o.standing];
+            const single = o.steps.length === 1 && o.steps[0].id === o.owner.id;
+            return (
+              <li key={o.key}>
+                <button type="button" onClick={() => toggle(o.key)} aria-expanded={isOpen}
+                  className={`w-full text-left px-3 py-2.5 hover:bg-[var(--color-surface-2)] ${isOpen ? "bg-[var(--color-surface-2)]" : ""}`}>
+                  <div className="flex items-start gap-2">
+                    <ChevronRight className={`w-4 h-4 mt-0.5 shrink-0 text-[var(--color-text-muted)] transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-baseline gap-x-2">
+                        <span className={`font-mono text-[12.5px] font-bold ${o.wo ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{o.wo ? `WO ${o.wo}` : "No WO"}</span>
+                        <span className="text-[13px] font-semibold text-[var(--color-text)] break-words">{o.owner.name}</span>
+                      </div>
+                      {descOf(o.owner) && <div className="text-[12px] text-[var(--color-text)] line-clamp-2 break-words">{descOf(o.owner)}</div>}
+                      <div className="text-[11.5px] text-[var(--color-text-muted)]">
+                        {[o.crews.join(", ") || null, single ? null : `${o.done} of ${o.steps.length} steps done`].filter(Boolean).join(" · ")}
+                      </div>
+                      <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 text-[11.5px]">
+                        <span className="text-[var(--color-text-muted)]">Plan</span>
+                        <span className="text-[var(--color-text)]">{fmt(o.planStart)} → {fmt(o.planFinish)}</span>
+                        <span className="text-[var(--color-text-muted)]">Actual</span>
+                        <span className="font-semibold text-[var(--color-text)]">{Number.isFinite(o.actStart) ? `${fmt(o.actStart)} → ${Number.isFinite(o.actFinish) ? fmt(o.actFinish) : "…"}` : "not started"}</span>
+                      </div>
+                    </div>
+                    <div className="shrink-0 flex flex-col items-end gap-1">
+                      <span className={`rounded-md border px-1.5 py-0.5 text-[11px] font-bold ${st.cls}`}>{st.word}</span>
+                      <span className="text-[12px] font-bold tabular-nums text-[var(--color-text)]">{o.pct}%</span>
+                      {o.standing !== "done" && Math.abs(o.hours) >= 0.1 && (
+                        <span className={`font-mono text-[11px] font-bold ${o.hours < 0 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{o.hours > 0 ? "+" : "−"}{Math.abs(o.hours)} h</span>
+                      )}
+                    </div>
+                  </div>
+                  {/* Done against where the plan says it should be by now. */}
+                  <span className="relative mt-1.5 ml-6 block h-1.5 rounded-full bg-slate-200 dark:bg-slate-700" aria-hidden>
+                    <span className={`absolute inset-y-0 left-0 rounded-full ${o.standing === "done" ? "bg-emerald-500" : "bg-[var(--color-text)]"}`} style={{ width: `${Math.min(100, o.pct)}%` }} />
+                    {o.standing !== "done" && <span className="absolute -top-[3px] w-0.5 h-3 bg-rose-700" style={{ left: `calc(${Math.min(100, o.plan)}% - 1px)` }} title={`Plan ${o.plan}% by now`} />}
+                  </span>
+                </button>
+                {isOpen && (
+                  <div className="border-t border-[var(--color-border)]">
+                    <CalendarQuickView whole task={o.owner} onDay={o.steps} others={[]} dayKey={today} band={null} dayLabel="" marks={marks}
+                      tz={tz} times={times} progress={progress} canEdit={canEdit}
+                      onUpdate={onUpdate} onFixTimes={onFixTimes} onOpenDetail={onOpenDetail} onMoveDays={canEdit ? onMoveDays : undefined} onDiscovery={onDiscovery} />
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <div className="px-1 text-[11px] text-[var(--color-text-muted)]">{shown.length} of {orders.length} work orders · tap one to update its steps</div>
+    </div>
+  );
+}

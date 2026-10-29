@@ -32,7 +32,7 @@ const DOT: Record<string, string> = { planned: "bg-slate-300", in_progress: "bg-
 const WORD: Record<string, string> = { planned: "Not started", in_progress: "In progress", on_hold: "On hold", blocked: "Blocked", missed: "Missed", completed: "Done" };
 const ms = (v: unknown) => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
 
-export default function CalendarQuickView({ task, onDay, others, dayKey, band, dayLabel, tz, times, progress, planNow, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery }: {
+export default function CalendarQuickView({ task, onDay, others, dayKey, band, dayLabel, tz, times, progress, planNow, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery, whole }: {
   task: Milestone;
   /** Steps on the shift (or day) tapped; the rest behind a toggle. */
   onDay: Milestone[]; others: Milestone[];
@@ -52,6 +52,8 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
   marks?: PathMarks;
   /** Found work on this task: into the schedule. */
   onDiscovery?: (task: Milestone) => void;
+  /** All its steps, under a heading already shown (the work order list). */
+  whole?: boolean;
 }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(t); }, []);
@@ -181,7 +183,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
 
   return (
     <div>
-      {header}
+      {!whole && header}
       {onDay.length === 0
         ? <div className="px-3 py-3 text-[11px] text-[var(--color-text-faint)]">Nothing under this task is scheduled on {dayLabel}.</div>
         : <ul>{onDay.map((m) => stepRow(m))}</ul>}
