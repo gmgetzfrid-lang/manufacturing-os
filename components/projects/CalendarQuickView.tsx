@@ -23,6 +23,7 @@ import StepCard, { type StepUpdate } from "@/components/projects/StepCard";
 import { builtSpan } from "@/lib/asBuilt";
 import type { PathMarks } from "@/lib/criticalPath";
 import PathTag from "@/components/projects/PathTag";
+import DiscoveryTag from "@/components/projects/DiscoveryTag";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 
 /** What the quick view saves for a step. */
@@ -148,7 +149,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
           className={`w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] ${isOpen ? "bg-[var(--color-surface-2)]" : ""}`}>
           <span className={`mt-1 w-2.5 h-2.5 rounded-full shrink-0 ${DOT[m.status] ?? DOT.planned}`} aria-label={WORD[m.status]} />
           <span className="flex-1 min-w-0">
-            <span className={`block text-[12.5px] font-semibold break-words ${m.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{m.name} <PathTag id={m.id} marks={marks} /></span>
+            <span className={`block text-[12.5px] font-semibold break-words ${m.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{m.name} <PathTag id={m.id} marks={marks} /> <DiscoveryTag m={m} tz={tz} /></span>
             {!isOpen && <><span className="block text-[10.5px] text-[var(--color-text-muted)]">
               {(() => {
                 // Where it actually happened, beside the plan.

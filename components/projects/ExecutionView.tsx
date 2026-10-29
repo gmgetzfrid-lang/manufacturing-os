@@ -40,6 +40,7 @@ import DiscoveryForm from "@/components/projects/DiscoveryForm";
 import MarkSheet from "@/components/projects/MarkSheet";
 import PlanNextShift from "@/components/projects/PlanNextShift";
 import WorkOrdersView from "@/components/projects/WorkOrdersView";
+import DiscoveryTag from "@/components/projects/DiscoveryTag";
 import { planNote, type ShiftPlanChange } from "@/lib/shiftPlan";
 import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, cascadeDependents, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import { resolveCriticalPath, pathMarks, CRITICAL_MODES, type CriticalMode, type CriticalOverride } from "@/lib/criticalPath";
@@ -1728,6 +1729,7 @@ function OutlineRow({
         </div>
         <div className="flex items-center gap-1.5 text-[10px] text-[var(--color-text-faint)] font-mono leading-tight min-w-0">
           {work && <ShiftMark work={work} />}
+          <DiscoveryTag m={ms} tz={tz} className="shrink-0" />
           {ms.wbs && <span className="text-[var(--color-text-faint)] shrink-0">{ms.wbs}</span>}
           <span className="truncate" title={spanLabel(span.start, span.finish, tz)}>{spanLabel(span.start, span.finish, tz)}</span>
           {(ms.dependsOn?.length ?? 0) > 0 && (

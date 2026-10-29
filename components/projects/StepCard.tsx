@@ -13,6 +13,7 @@ import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import { shiftAt, workHours, type ShiftTimes } from "@/lib/shiftReport";
 import { fmtInTz, toDateTimeInput, fromDateTimeInput } from "@/lib/scheduleTz";
 import DateTimePicker from "@/components/projects/DateTimePicker";
+import { discoveryOf } from "@/lib/discovery";
 import PctSlider from "@/components/projects/PctSlider";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { updateMilestoneNote, setProgressTime, setNoteTime } from "@/lib/milestones";
@@ -91,6 +92,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
 
   const ps = startMsOf(m), pf = finishMsOf(m);
+  const found = discoveryOf(m);
   const as = ms(m.actualStartAt), af = m.status === "completed" ? ms(m.actualAt) : NaN;
   const done = m.status === "completed", held = m.status === "on_hold" || m.status === "blocked";
   const started = done || m.status === "in_progress" || held || Number.isFinite(as);
@@ -371,6 +373,11 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   const pickLabel = action === "start" || action === "resume" ? "Started" : action === "finish" ? "Finished" : action === "hold" ? "Stopped" : action === "edit" ? "Finished" : "When";
   return (
     <div className="px-3 pb-3 pl-7 space-y-2 bg-[var(--color-surface)] text-[12.5px]">
+      {found && (
+        <div className="rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-violet-900 dark:border-violet-900 dark:bg-violet-950/40 dark:text-violet-200">
+          <b>Discovery</b>{Number.isFinite(found.foundAt) ? ` · found ${when(found.foundAt)}` : ""} — “{found.what}”. Added scope, not in the original schedule.
+        </div>
+      )}
       {m.description?.trim() && <div className="text-[var(--color-text-muted)] line-clamp-2 break-words">{m.description.trim()}</div>}
       <div className="text-[var(--color-text-muted)]">{[wo ? `WO ${wo}` : null, m.responsibleParty?.trim() || null, `${allotted} h`].filter(Boolean).join(" · ")}</div>
       <table className="text-[12.5px]">

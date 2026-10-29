@@ -27,6 +27,7 @@ import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { DEFAULT_SHIFT_TIMES, crewWindows, workShiftOf, workSpan, shiftWindow, shiftAt, nextShift, type ShiftTimes, type ShiftCredit, type ShiftWindow } from "@/lib/shiftReport";
 import { type Band } from "@/lib/shiftBands";
 import { asBuilt } from "@/lib/asBuilt";
+import { discoveryOf } from "@/lib/discovery";
 import type { PathMarks } from "@/lib/criticalPath";
 import ShiftMark from "@/components/projects/ShiftMark";
 import DayAgendaPanel from "@/components/projects/DayAgendaPanel";
@@ -1186,6 +1187,10 @@ function Chip({
             <span className="flex items-center gap-1 min-w-0 flex-1 text-[9.5px] leading-tight opacity-70">
               {/* Night work is tagged; round the clock and day-and-night
                   mixes are marked; day work — most of it — is left quiet. */}
+              {(discoveryOf(ms) || leafKids.some((k) => discoveryOf(k))) && (
+                <span title={discoveryOf(ms) ? "Discovery — added when it was opened, not in the original schedule" : "Has discovery work — added when it was opened, not in the original schedule"}
+                  className="shrink-0 rounded px-1 text-[8.5px] font-black uppercase leading-[14px] bg-violet-100 text-violet-800 dark:bg-violet-900/60 dark:text-violet-100">Discovery</span>
+              )}
               {night && bandStart == null && (
                 <span title="Night-shift work" className="shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-[8.5px] font-black leading-[14px] bg-indigo-900 text-white dark:bg-indigo-300 dark:text-indigo-950">
                   <Moon className="w-2.5 h-2.5" />NIGHT

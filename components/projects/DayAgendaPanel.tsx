@@ -22,6 +22,7 @@ import { ChevronLeft, ChevronRight, X as XIcon, CalendarDays, Layers, ExternalLi
 import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl, { PICK_PCTS } from "@/components/projects/ProgressControl";
+import DiscoveryTag from "@/components/projects/DiscoveryTag";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { clockLabel, dayKey, dayKeyToMs, fmtInTz, addDays, tzAbbrev } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
@@ -482,7 +483,7 @@ export default function DayAgendaPanel({
                         </span>
                         <button onClick={() => setOpenId(openId === r.leaf.id ? null : r.leaf.id ?? null)} className="flex-1 min-w-0 text-left" aria-expanded={openId === r.leaf.id}
                           title={canEdit ? "Update this step here — % done, status, what's blocking it, a note" : "Show this step"}>
-                          <span className={`block text-[12px] leading-snug break-words font-semibold ${r.leaf.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{r.leaf.name} <PathTag id={r.leaf.id} marks={pathMarks} /></span>
+                          <span className={`block text-[12px] leading-snug break-words font-semibold ${r.leaf.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{r.leaf.name} <PathTag id={r.leaf.id} marks={pathMarks} /> <DiscoveryTag m={r.leaf} tz={tz} /></span>
                           <span className="block text-[9.5px] text-[var(--color-text-faint)] truncate">
                             {[note, r.leaf.responsibleParty, woOf(r.leaf) ? `WO ${woOf(r.leaf)}` : null].filter(Boolean).join(" · ")}
                           </span>
