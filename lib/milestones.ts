@@ -23,7 +23,7 @@ import { effectiveWeight, leafPercent } from "@/lib/scheduleProgress";
 import { mergeImportedProgress } from "@/lib/scheduleRules";
 import { DEFAULT_SCHEDULE_TZ, naiveToIso, normalizeTimeZone, shiftWallClock, addDays, hasTimeOfDay, dayDiff } from "@/lib/scheduleTz";
 import { fetchAllRows } from "@/lib/fetchAllRows";
-import { discoveryOf, discoveryAttr, addedNote, kindOf, type AddedKind } from "@/lib/discovery";
+import { discoveryOf, discoveryAttr, addedNote, kindOf, relinkWithout, type AddedKind } from "@/lib/discovery";
 import type {
   Milestone, MilestoneStatus, MilestoneSource, MilestoneNote, MilestoneAttributes,
 } from "@/types/schema";
@@ -814,6 +814,34 @@ export async function updateDiscoveryRecord(projectId: string, recordId: string,
   }
   if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("milestone-notes:changed"));
   return n;
+}
+
+/** Take a discovery (or added scope) off the schedule: its steps are
+ *  deleted with their progress, a step that waited on them waits on what
+ *  they waited on instead (so the chain still holds), and the comment it
+ *  left on the step it follows goes too. Planned dates it pushed later stay
+ *  where they are. Returns how many steps were deleted. */
+export async function deleteDiscovery(projectId: string, recordId: string, actorUserId?: string): Promise<number> {
+  const actor = actorUserId ?? (await supabase.auth.getUser()).data.user?.id ?? "";
+  const { rows, error } = await fetchAllRows<{ id: string; attributes: Record<string, unknown> | null; depends_on: string[] | null }>((from, to) => supabase
+    .from("milestones").select("id, attributes, depends_on").eq("project_id", projectId).order("id").range(from, to) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>);
+  if (error) throw new Error(error);
+  const all = rows ?? [];
+  const group = all.filter((r) => discoveryOf({ attributes: r.attributes } as unknown as Milestone)?.id === recordId);
+  if (group.length === 0) return 0;
+  const gone = new Set(group.map((r) => r.id));
+  for (const r of relinkWithout(all.map((x) => ({ id: x.id, dependsOn: x.depends_on ?? [] })), gone)) {
+    const { error: e } = await supabase.from("milestones").update({ depends_on: r.dependsOn }).eq("id", r.id);
+    if (e) throw new Error(e.message);
+  }
+  // Its comment on the step it follows, whichever word it was saved with.
+  const rec = group.map((r) => discoveryOf({ attributes: r.attributes } as unknown as Milestone)!).find((x) => x.seq === 1) ?? discoveryOf({ attributes: group[0].attributes } as unknown as Milestone)!;
+  if (rec.afterId) {
+    await supabase.from("milestone_notes").delete().eq("milestone_id", rec.afterId).in("body", [addedNote("discovery", rec.what), addedNote("added", rec.what)]);
+  }
+  for (const r of group) await deleteMilestone(r.id, actor);
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("milestone-notes:changed"));
+  return group.length;
 }
 
 /** Correct when a logged change happened (a time picked, entered later,

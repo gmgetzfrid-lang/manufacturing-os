@@ -48,6 +48,8 @@ interface Props {
   userEmail?: string;
   userRole?: string;
   onClose: () => void;
+  /** Open on the edit form (a step card's "Edit plan"). */
+  startEditing?: boolean;
   onChanged: () => void;                 // parent refreshes its milestone list
   onSelectSubtask?: (m: Milestone) => void;
   /** Open another milestone (used by the breadcrumb to jump to a parent). */
@@ -75,10 +77,10 @@ const HIDDEN_ATTRS = new Set(["ms_critical", "discovery"]);
 
 export default function TaskDetailPanel({
   milestone, subtasks, allTasks, childCount, ancestors, canEdit, userId, userName, userEmail, userRole,
-  onClose, onChanged, onSelectSubtask, onSelectMilestone, onMoveDays, critical, onSetProgressNote, onStartNote, onSetStatus,
+  onClose, onChanged, onSelectSubtask, onSelectMilestone, onMoveDays, critical, onSetProgressNote, onStartNote, onSetStatus, startEditing,
 }: Props) {
   const tz = useScheduleTz();
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(!!startEditing && canEdit);
   const [saving, setSaving] = useState(false);
   const [busyStatus, setBusyStatus] = useState(false);
   const [notes, setNotes] = useState<MilestoneNote[]>([]);
@@ -662,6 +664,7 @@ function EditForm({
   onDone: () => void; onCancel: () => void;
 }) {
   const tz = useScheduleTz();
+  const shiftTimes = useShiftTimes(milestone.projectId);
   const m = milestone;
   const [name, setName] = useState(m.name);
   const [start, setStart] = useState(toLocalInput(m.plannedStartAt as string | null | undefined, tz));
@@ -688,6 +691,9 @@ function EditForm({
     const startMs = start ? Date.parse(start) : NaN;
     const finishMs = finish ? Date.parse(finish) : NaN;
     if (!finish || Number.isNaN(finishMs)) errors.finish = "A finish date is required.";
+    // A day picked without its time isn't a time yet.
+    if (start && start.length < 16) errors.start = "Pick the start time too.";
+    if (finish && finish.length < 16) errors.finish = "Pick the finish time too.";
     if (Number.isFinite(startMs) && Number.isFinite(finishMs) && finishMs < startMs) {
       errors.finish = "Finish can't be before the start.";
     }
@@ -763,9 +769,9 @@ function EditForm({
   return (
     <div className="p-4 space-y-3">
       <L label="Task name"><input value={name} onChange={(e) => setName(e.target.value)} className={cls("name")} /><Note err={v.errors.name} warn={v.warnings.name} /></L>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <L label={`Start (${tzAbbrev(tz)})`}><input type="datetime-local" value={start} disabled={!isLeaf} onChange={(e) => setStart(e.target.value)} className={cls("start")} /><Note err={v.errors.start} warn={v.warnings.start} /></L>
-        <L label={`Finish (${tzAbbrev(tz)})`}><input type="datetime-local" value={finish} disabled={!isLeaf} onChange={(e) => setFinish(e.target.value)} className={cls("finish")} /><Note err={v.errors.finish} warn={v.warnings.finish} /></L>
+      <div className="space-y-2.5">
+        <div><DateTimePicker label="Planned start" value={start} onChange={setStart} tz={tz} times={shiftTimes} disabled={!isLeaf} future showNow={false} /><Note err={v.errors.start} warn={v.warnings.start} /></div>
+        <div><DateTimePicker label="Planned finish" value={finish} onChange={setFinish} tz={tz} times={shiftTimes} disabled={!isLeaf} future showNow={false} /><Note err={v.errors.finish} warn={v.warnings.finish} /></div>
       </div>
       {!isLeaf && <div className="text-[10px] text-[var(--color-text-muted)] -mt-1">A phase runs from its first step to its last — move the phase (or its steps) on the timeline to change its dates.</div>}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">

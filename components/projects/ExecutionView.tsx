@@ -158,6 +158,9 @@ export default function ExecutionView({
   const [drag, setDrag] = useState<{ id: string; deltaDays: number } | null>(null);
   const [layout, setLayout] = useState<"timeline" | "calendar" | "wo" | "report" | "shift">("timeline");
   const [detailId, setDetailId] = useState<string | null>(null);
+  // "Edit plan" on a step card: its panel opens on the edit form. The count
+  // opens it afresh each time, even on the step already showing.
+  const [planEdit, setPlanEdit] = useState<{ id: string; n: number } | null>(null);
   // Keyboard navigation: the currently keyboard-focused timeline row.
   const [focusedId, setFocusedId] = useState<string | null>(null);
   // Critical-path-lite highlight toggle.
@@ -273,6 +276,16 @@ export default function ExecutionView({
     window.addEventListener("schedule:changed", on);
     return () => window.removeEventListener("schedule:changed", on);
   }, [onRefresh]);
+  useEffect(() => {
+    const on = (e: Event) => {
+      const id = (e as CustomEvent<{ id?: string }>).detail?.id;
+      if (!id) return;
+      setDetailId(id);
+      setPlanEdit((p) => ({ id, n: (p?.n ?? 0) + 1 }));
+    };
+    window.addEventListener("step:edit-plan", on);
+    return () => window.removeEventListener("step:edit-plan", on);
+  }, []);
     // The latest of each step, for a save made in two parts (started, then
   // finished): the second part sees what the first did.
   const latest = useRef(byId);
@@ -1459,6 +1472,8 @@ export default function ExecutionView({
 
       {detailId && byId.get(detailId) && (
         <TaskDetailPanel
+          key={planEdit?.id === detailId ? `${detailId}:edit${planEdit.n}` : detailId}
+          startEditing={planEdit?.id === detailId}
           milestone={byId.get(detailId)!}
           subtasks={(childrenOf.get(detailId) ?? []).slice().sort(cmp)}
           allTasks={items}

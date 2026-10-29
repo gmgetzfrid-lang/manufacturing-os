@@ -17,7 +17,8 @@ import { discoveryOf, kindOf, ADDED, type AddedKind } from "@/lib/discovery";
 import { ADDED_TONE } from "@/components/projects/DiscoveryTag";
 import PctSlider from "@/components/projects/PctSlider";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
-import { updateMilestoneNote, setProgressTime, setNoteTime, updateDiscoveryRecord } from "@/lib/milestones";
+import { updateMilestoneNote, setProgressTime, setNoteTime, updateDiscoveryRecord, deleteDiscovery } from "@/lib/milestones";
+import { appConfirm } from "@/components/providers/DialogProvider";
 import type { ProgressLogRow } from "@/lib/progressHistory";
 import { describeChange } from "@/lib/timeLog";
 
@@ -121,6 +122,23 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       window.dispatchEvent(new CustomEvent("schedule:changed"));
       setFoundEdit(null); setSaved(`${k.word}: ${k.found} ${when(at)}`);
     } catch (e) { setFoundMsg((e as Error).message || "Not saved."); }
+    finally { setFoundBusy(false); }
+  };
+  // Taking it off the schedule: every step it added, with their progress.
+  const removeFound = async () => {
+    if (!found || !m.projectId) return;
+    const k = ADDED[kindOf(found)];
+    const n = Math.max(1, found.of ?? 1);
+    if (!(await appConfirm({
+      title: `Delete this ${k.lower}?`,
+      message: `“${found.what}” comes off the schedule: ${n === 1 ? "its step is" : `all ${n} of its steps are`} deleted, with any progress and comments on ${n === 1 ? "it" : "them"}. Steps that waited on it wait on what it waited on instead. Planned dates it pushed later stay where they are — move them back if they should.`,
+      confirmLabel: `Delete ${k.lower}`,
+    }))) return;
+    setFoundBusy(true); setFoundMsg(null);
+    try {
+      await deleteDiscovery(m.projectId, found.id);
+      window.dispatchEvent(new CustomEvent("schedule:changed"));
+    } catch (e) { setFoundMsg((e as Error).message || "Not deleted."); }
     finally { setFoundBusy(false); }
   };
   const as = ms(m.actualStartAt), af = m.status === "completed" ? ms(m.actualAt) : NaN;
@@ -287,9 +305,6 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   const [why, setWhy] = useState("");
   const [showWhy, setShowWhy] = useState(false);
   const [holdKind, setHoldKind] = useState<"on_hold" | "blocked">("on_hold");
-  // Starting (or back to work): then still going — with a % as of a time,
-  // if given — or already finished, all in one save.
-  const [then, setThen] = useState<"going" | "done">("going");
   // After a save the form closes up, but what you're looking at stays put:
   // near the bottom of a scrolling list the browser would pull everything
   // down to fill the room the form took, so that room stays, out of sight
@@ -304,14 +319,11 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     const need = a.h - root.offsetHeight - a.slack;
     if (need > 0) { room.style.height = `${need}px`; a.sc.scrollTop = a.top; }
   }, [action]);
-  const [endV, setEndV] = useState("");
-  const [addPct, setAddPct] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const open = (a: Action) => {
     setAction(a); setMsg(null); setSaved(null); setNote(""); setWhy(""); setShowWhy(false); setP(null);
-    setThen("going"); setAddPct(false); setEndV(toDateTimeInput(Date.now(), tz));
     // Opens on now (entering it as it happens); earlier is a tap away.
     setAtV(a === "edit" ? (Number.isFinite(af) ? toDateTimeInput(af, tz) : "") : toDateTimeInput(Date.now(), tz));
     setStartV(a === "edit" && Number.isFinite(as) ? toDateTimeInput(as, tz) : "");
@@ -333,32 +345,11 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     setBusy(true);
     try {
       if (action === "start" || action === "resume") {
-        const t = need(atV, action === "resume" ? "when work started again" : "when it started");
+        const t = need(atV, "when it started");
         if (typeof t === "string") { setMsg(t); return; }
         const late = beforeLast(t); if (late) { setMsg(late); return; }
-        const verb = action === "resume" ? "Back to work" : "Started";
-        const base = Math.round(pct);
-        if (then === "done") {
-          // Started and finished, one save.
-          const f = need(endV, "when it finished");
-          if (typeof f === "string") { setMsg(f); return; }
-          if (f < t) { setMsg("It can't finish before it started."); return; }
-          if (!(await run({ status: "in_progress", pct: null, note: "", at: t }))) { setMsg("Not saved."); return; }
-          ok = await run({ status: "completed", pct: null, note: note.trim(), at: f, ...extra });
-          said = `${verb} ${when(t)} · finished ${when(f)}`;
-        } else if (addPct && p != null && p !== base) {
-          // Started, and how far along it is as of a time after.
-          const a = need(endV, "when it was at that %");
-          if (typeof a === "string") { setMsg(a); return; }
-          if (a < t) { setMsg(`The % has to be as of ${when(t)} or later — when it ${action === "resume" ? "started again" : "started"}.`); return; }
-          if (p >= 100) { setMsg("100% is finished — pick Finished."); return; }
-          if (!(await run({ status: "in_progress", pct: null, note: "", at: t }))) { setMsg("Not saved."); return; }
-          ok = await run({ status: "in_progress", pct: p, note: note.trim(), at: a, ...extra });
-          said = `${verb} ${when(t)} · ${p}% at ${when(a)}`;
-        } else {
-          ok = await run({ status: "in_progress", pct: null, note: note.trim(), at: t, ...extra });
-          said = `${verb} ${when(t)}`;
-        }
+        ok = await run({ status: "in_progress", pct: null, note: note.trim(), at: t, ...extra });
+        said = `Started ${when(t)}`;
       } else if (action === "progress") {
         if (p == null || p === Math.round(pct)) { setMsg("Slide it to the new %."); return; }
         const t = need(atV, "when");
@@ -445,7 +436,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     return { key: `${w.dayKey}:${w.kind}`, night: w.kind === "night", label: `${fmtInTz(w.start, tz, { weekday: "short", month: "short", day: "numeric" })} · ${w.kind} shift` };
   };
   const clock = (t: number) => fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true });
-  const pickLabel = action === "resume" ? "Back to work" : action === "start" ? "Started" : action === "finish" ? "Finished" : action === "hold" ? "Stopped" : action === "edit" ? "Finished" : "When";
+  const pickLabel = action === "start" || action === "resume" ? "Started" : action === "finish" ? "Finished" : action === "hold" ? "Stopped" : action === "edit" ? "Finished" : "When";
   return (
     <div ref={rootRef} className="px-3 pb-3 pl-7 space-y-2 bg-[var(--color-surface)] text-[12.5px]">
       {found && (
@@ -475,6 +466,8 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
             <>
               <b>{ADDED[kindOf(found)].word}</b>{Number.isFinite(found.foundAt) ? ` · ${ADDED[kindOf(found)].found} ${when(found.foundAt)}` : ""} — “{found.what}”. Not in the original schedule.
               {canEdit && m.projectId && <button type="button" onClick={() => { setFoundEdit({ kind: kindOf(found), what: found.what, at: toDateTimeInput(found.foundAt, tz) }); setFoundMsg(null); }} className="ml-1.5 text-[11px] font-semibold text-[var(--color-accent)] hover:underline">Edit</button>}
+              {canEdit && m.projectId && <button type="button" onClick={() => void removeFound()} disabled={foundBusy} className="ml-2 text-[11px] font-semibold text-rose-700 dark:text-rose-400 hover:underline disabled:opacity-50">{foundBusy ? "Deleting…" : "Delete"}</button>}
+              {foundMsg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{foundMsg}</div>}
             </>
           )}
         </div>
@@ -492,7 +485,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       {held && m.statusReason && <div className="text-amber-800 dark:text-amber-300">“{m.statusReason}”</div>}
       {saved && <div role="status" className="font-semibold text-emerald-700 dark:text-emerald-400">✓ {saved}</div>}
 
-      {(main || more.length > 0) && !action && (
+      {(main || more.length > 0 || (canEdit && m.id)) && !action && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           {main && (
             <button type="button" onClick={() => open(main.a)} className="inline-flex items-center gap-1 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)]">
@@ -500,6 +493,8 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
             </button>
           )}
           {more.map((x) => <button key={x.a} type="button" onClick={() => open(x.a)} className="font-semibold text-[var(--color-accent)] hover:underline">{x.label}</button>)}
+          {/* The plan itself — dates, hours, crew, name — in the step's panel. */}
+          {canEdit && m.id && <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("step:edit-plan", { detail: { id: m.id } }))} className="font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">Edit plan</button>}
         </div>
       )}
 
@@ -523,27 +518,6 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
               planned={action === "finish" || action === "edit" ? pf : ps}
               shortcuts={[{ label: "Planned", at: action === "finish" || action === "edit" ? pf : action === "start" || action === "resume" ? ps : NaN }]}
               showNow={action !== "edit"} />
-          )}
-          {(action === "start" || action === "resume") && (
-            <div className="space-y-2">
-              <div className="flex gap-1" role="group" aria-label="And now">
-                {([["going", "Still going"], ["done", "Finished"]] as const).map(([k, l]) => (
-                  <button key={k} type="button" aria-pressed={then === k} onClick={() => { setThen(k); setMsg(null); }}
-                    className={`h-8 px-3 rounded-md border text-[12px] font-bold ${then === k ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>{l}</button>
-                ))}
-              </div>
-              {then === "done" ? (
-                <DateTimePicker label="Finished" value={endV} onChange={(v) => { setEndV(v); setMsg(null); }} tz={tz} times={times} planned={pf}
-                  shortcuts={[{ label: "Planned", at: pf }]} />
-              ) : addPct ? (
-                <>
-                  <PctSlider value={p ?? Math.round(pct)} was={Math.round(pct)} onChange={(v) => { setP(v); setMsg(null); }} />
-                  <DateTimePicker label="At that % as of" value={endV} onChange={(v) => { setEndV(v); setMsg(null); }} tz={tz} times={times} />
-                </>
-              ) : (
-                <button type="button" onClick={() => setAddPct(true)} className="text-[11.5px] font-semibold text-[var(--color-accent)] hover:underline">+ % done so far</button>
-              )}
-            </div>
           )}
           {action !== "edit" && (
             <input value={note} onChange={(e) => { setNote(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") void save(); }}

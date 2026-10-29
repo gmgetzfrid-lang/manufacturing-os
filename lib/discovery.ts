@@ -273,3 +273,23 @@ export function discoveryStepLine(m: Milestone, hrs: (h: number) => string): str
   const h = Number(m.durationHours);
   return `${m.name} — ${[m.responsibleParty?.trim(), Number.isFinite(h) && h > 0 ? hrs(h) : null].filter(Boolean).join(", ")} · ${state}`;
 }
+
+/** Links once some steps are gone: a step that waited on a removed one
+ *  waits on what it waited on instead (through any other removed ones), so
+ *  the chain still holds. Only the steps whose links change, with their
+ *  new ones. */
+export function relinkWithout(rows: Array<{ id: string; dependsOn: string[] }>, gone: Set<string>): Array<{ id: string; dependsOn: string[] }> {
+  const depsOf = new Map(rows.map((r) => [r.id, r.dependsOn]));
+  const through = (id: string, seen: Set<string>): string[] => {
+    if (seen.has(id)) return [];
+    seen.add(id);
+    return (depsOf.get(id) ?? []).flatMap((d) => (gone.has(d) ? through(d, seen) : [d]));
+  };
+  const out: Array<{ id: string; dependsOn: string[] }> = [];
+  for (const r of rows) {
+    if (gone.has(r.id) || !r.dependsOn.some((d) => gone.has(d))) continue;
+    const seen = new Set<string>();
+    out.push({ id: r.id, dependsOn: [...new Set(r.dependsOn.flatMap((d) => (gone.has(d) ? through(d, seen) : [d])))].filter((d) => d !== r.id) });
+  }
+  return out;
+}

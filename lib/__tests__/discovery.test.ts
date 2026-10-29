@@ -3,7 +3,7 @@
 // impact said before it's saved and kept after.
 
 import { describe, it, expect } from "vitest";
-import { planDiscovery, defaultAfter, defaultHolds, discoveries, impactLine, discoveryAttr, discoveryOf, earliestStart, followsUntil, addedTitle, kindOf, type DiscoveryRecord } from "@/lib/discovery";
+import { planDiscovery, defaultAfter, defaultHolds, discoveries, impactLine, discoveryAttr, discoveryOf, earliestStart, followsUntil, addedTitle, kindOf, relinkWithout, type DiscoveryRecord } from "@/lib/discovery";
 import type { Milestone } from "@/types/schema";
 
 const UTC = "UTC";
@@ -150,5 +150,24 @@ describe("a comment typed without a time, in the time log", () => {
   it("with a time put in, that time's shift", () => {
     const rows = buildTimeLog({ milestones: ms, log: [], notes: [note("2026-10-27T18:20:00-07:00", "2026-10-27T18:10:00-07:00")], tz: LA, times });
     expect(rows[0].shift).toMatch(/Oct 27 · Night/);
+  });
+});
+
+describe("relinkWithout — deleting a discovery keeps the chain", () => {
+  it("a step that waited on the removed steps waits on what they waited on", () => {
+    // A → D1 → D2 → X (D1, D2 the discovery's steps); Y waits on D2 and B.
+    const rows = [
+      { id: "A", dependsOn: [] }, { id: "B", dependsOn: [] },
+      { id: "D1", dependsOn: ["A"] }, { id: "D2", dependsOn: ["D1"] },
+      { id: "X", dependsOn: ["D2"] }, { id: "Y", dependsOn: ["D2", "B"] }, { id: "Z", dependsOn: ["A"] },
+    ];
+    expect(relinkWithout(rows, new Set(["D1", "D2"]))).toEqual([
+      { id: "X", dependsOn: ["A"] },
+      { id: "Y", dependsOn: ["A", "B"] },
+    ]);
+  });
+  it("no duplicates, no self-links, no loops", () => {
+    const rows = [{ id: "A", dependsOn: [] }, { id: "D", dependsOn: ["A", "X"] }, { id: "X", dependsOn: ["D", "A"] }];
+    expect(relinkWithout(rows, new Set(["D"]))).toEqual([{ id: "X", dependsOn: ["A"] }]);
   });
 });
