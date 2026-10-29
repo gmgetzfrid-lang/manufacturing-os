@@ -33,9 +33,11 @@ export interface StepUpdate {
   at: number;
   /** Why it's behind, when given. */
   why?: string;
+  /** Just a comment, as of `at` — nothing else changes. */
+  comment?: boolean;
 }
 
-type Action = "start" | "progress" | "finish" | "hold" | "resume" | "edit" | "reopen";
+type Action = "start" | "progress" | "finish" | "hold" | "resume" | "edit" | "reopen" | "comment";
 /** Something in the history, and what moves when its time is fixed: its
  *  log line, the step's actual start / finish, its comments. */
 interface HistoryEvent {
@@ -229,14 +231,20 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   // The step's last logged change: a time put in has to come after it
   // (the history reads in order; the reports read it by time). The log's
   // starting line isn't a change.
+  // Read as the history shows it: the Started / Finished lines at the
+  // step's own start and finish (a time fixed on the step counts).
+  const logAt = useMemo(() => new Map(rows.filter((x) => x.id != null).map((x) => [x.id!, Date.parse(x.at)])), [rows]);
   const lastEntry = useMemo(() => {
+    const shown = new Map<number, HistoryEvent>();
+    for (const e of history) if (e.logId != null) shown.set(e.logId, e);
     let best: { at: number; text: string } | null = null;
     for (const x of rows) {
-      const t = Date.parse(x.at);
-      if (x.old_status != null && Number.isFinite(t) && (!best || t > best.at)) best = { at: t, text: logWords(x) };
+      const e = x.id != null ? shown.get(x.id) : undefined;
+      const t = e?.fix ? e.at : Date.parse(x.at);
+      if (x.old_status != null && Number.isFinite(t) && (!best || t > best.at)) best = { at: t, text: e?.fix ? e.text : logWords(x) };
     }
     return best;
-  }, [rows]);
+  }, [rows, history]);
   const beforeLast = (t: number) => (lastEntry && t < lastEntry.at - 60_000
     ? `That's before the last entry on this step — “${lastEntry.text}” at ${when(lastEntry.at)}. Pick a later time, or tap that entry's time in History to fix it first.`
     : null);
@@ -350,6 +358,12 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         const late = beforeLast(t); if (late) { setMsg(late); return; }
         ok = await run({ status: "in_progress", pct: null, note: note.trim(), at: t, ...extra });
         said = `Started ${when(t)}`;
+      } else if (action === "comment") {
+        if (!note.trim()) { setMsg("Type the comment."); return; }
+        const t = need(atV, "when");
+        if (typeof t === "string") { setMsg(t); return; }
+        ok = await run({ status: m.status, pct: null, note: note.trim(), at: t, comment: true });
+        said = `Comment added · ${when(t)}`;
       } else if (action === "progress") {
         if (p == null || p === Math.round(pct)) { setMsg("Slide it to the new %."); return; }
         const t = need(atV, "when");
@@ -401,8 +415,19 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         const f = done ? (atV ? need(atV, "the finish") : null) : undefined;
         if (typeof f === "string") { setMsg(f); return; }
         if (s != null && f != null && f < s) { setMsg("The finish can't be before the start."); return; }
+        // The history's Started / Finished lines move with the times, as an
+        // Edit in History does — otherwise the log keeps the old time and
+        // the next entry is checked against it.
+        const moved: string[] = [];
+        for (const [k, t] of [["start", s], ["finish", f]] as const) {
+          const ev = history.find((e) => e.fix === k && e.logId != null);
+          if (ev?.logId == null || t == null || Math.abs((logAt.get(ev.logId) ?? t) - t) < 60_000) continue;
+          const r = await setProgressTime(ev.logId, t);
+          if (r !== "ok") moved.push(k === "start" ? "start" : "finish");
+        }
         ok = await onFixTimes({ start: s, ...(done ? { finish: f ?? null } : {}) });
-        said = "Times fixed";
+        said = moved.length ? `Times fixed — the history's ${moved.join(" and ")} line couldn't move with it; edit it in History` : "Times fixed";
+        if (ok) window.dispatchEvent(new CustomEvent("milestone-notes:changed"));
       }
       if (ok) {
         const root = rootRef.current;
@@ -423,6 +448,8 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     ...(!done && !held ? [{ a: "hold" as Action, label: "Hold" }] : []),
     ...(started && onFixTimes ? [{ a: "edit" as Action, label: "Fix times" }] : []),
     ...(done ? [{ a: "reopen" as Action, label: "Reopen" }] : []),
+    // Something to say about it, any time — as it happens or after the fact.
+    { a: "comment" as Action, label: "Add comment" },
   ].filter((x) => x.a !== main?.a);
 
   const cell = "py-0.5 pr-3 whitespace-nowrap";
@@ -521,7 +548,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
           )}
           {action !== "edit" && (
             <input value={note} onChange={(e) => { setNote(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
-              placeholder={action === "hold" ? "Why? (required)" : action === "reopen" ? "Why reopen? (required)" : "Comment (optional)"} aria-label="Comment"
+              placeholder={action === "hold" ? "Why? (required)" : action === "reopen" ? "Why reopen? (required)" : action === "comment" ? "The comment" : "Comment (optional)"} aria-label="Comment" autoFocus={action === "comment"}
               className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px]" />
           )}
           {hours < -0.05 && !done && (action === "start" || action === "progress" || action === "finish" || action === "resume") && (

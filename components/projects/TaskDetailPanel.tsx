@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { spanLabel, startOf, finishOf, effectiveSpans } from "@/lib/scheduleTime";
-import { workShiftOf, calendarShift, type ShiftCredit } from "@/lib/shiftReport";
+import { workShiftOf, calendarShift, hoursInSpan, type ShiftCredit } from "@/lib/shiftReport";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
 import DateTimePicker from "@/components/projects/DateTimePicker";
 import { fmtInTz, fromDateTimeInput, toDateTimeInput, tzAbbrev } from "@/lib/scheduleTz";
@@ -670,6 +670,23 @@ function EditForm({
   const [start, setStart] = useState(toLocalInput(m.plannedStartAt as string | null | undefined, tz));
   const [finish, setFinish] = useState(toLocalInput(m.plannedAt as string, tz));
   const [durationHours, setDurationHours] = useState(m.durationHours != null ? String(m.durationHours) : "");
+  // The work hours the dates hold on its crew's hours — the hours follow
+  // the dates when they're changed here, unless the hours were typed.
+  const [hoursTyped, setHoursTyped] = useState(false);
+  const spanOf = (s: string, f: string) => {
+    const a = s.length >= 16 ? Date.parse(fromDateTimeInput(s, tz) ?? "") : NaN, b = f.length >= 16 ? Date.parse(fromDateTimeInput(f, tz) ?? "") : NaN;
+    return isLeaf ? hoursInSpan(m, a, b, tz, shiftTimes) : 0;
+  };
+  const fromDates = spanOf(start, finish);
+  const crewWord = (() => {
+    const k = isLeaf && fromDates > 0 ? workShiftOf({ ...m, plannedStartAt: fromDateTimeInput(start, tz) ?? m.plannedStartAt, plannedAt: fromDateTimeInput(finish, tz) ?? m.plannedAt, durationHours: null } as Milestone, tz, shiftTimes) : null;
+    return k === "both" ? "round the clock" : k === "night" ? "night shift hours" : k === "day" ? "day shift hours" : "";
+  })();
+  const datesTo = (s: string, f: string) => {
+    setStart(s); setFinish(f);
+    const h = spanOf(s, f);
+    if (!hoursTyped && h > 0) setDurationHours(String(h));
+  };
   const [workOrderRef, setWorkOrderRef] = useState(m.workOrderRef ?? "");
   const [responsibleParty, setResponsibleParty] = useState(m.responsibleParty ?? "");
   const [responsibleOrg, setResponsibleOrg] = useState(m.responsibleOrg ?? "");
@@ -770,12 +787,23 @@ function EditForm({
     <div className="p-4 space-y-3">
       <L label="Task name"><input value={name} onChange={(e) => setName(e.target.value)} className={cls("name")} /><Note err={v.errors.name} warn={v.warnings.name} /></L>
       <div className="space-y-2.5">
-        <div><DateTimePicker label="Planned start" value={start} onChange={setStart} tz={tz} times={shiftTimes} disabled={!isLeaf} future showNow={false} /><Note err={v.errors.start} warn={v.warnings.start} /></div>
-        <div><DateTimePicker label="Planned finish" value={finish} onChange={setFinish} tz={tz} times={shiftTimes} disabled={!isLeaf} future showNow={false} /><Note err={v.errors.finish} warn={v.warnings.finish} /></div>
+        <div><DateTimePicker label="Planned start" value={start} onChange={(x) => datesTo(x, finish)} tz={tz} times={shiftTimes} disabled={!isLeaf} future showNow={false} /><Note err={v.errors.start} warn={v.warnings.start} /></div>
+        <div><DateTimePicker label="Planned finish" value={finish} onChange={(x) => datesTo(start, x)} tz={tz} times={shiftTimes} disabled={!isLeaf} future showNow={false} /><Note err={v.errors.finish} warn={v.warnings.finish} /></div>
       </div>
       {!isLeaf && <div className="text-[10px] text-[var(--color-text-muted)] -mt-1">A phase runs from its first step to its last — move the phase (or its steps) on the timeline to change its dates.</div>}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <L label="Work hours"><input type="number" min={0} value={durationHours} onChange={(e) => setDurationHours(e.target.value)} className={cls("durationHours")} /><Note err={v.errors.durationHours} warn={v.warnings.durationHours} /></L>
+        <L label="Work hours">
+          <input type="number" min={0} value={durationHours} onChange={(e) => { setDurationHours(e.target.value); setHoursTyped(true); }} className={cls("durationHours")} />
+          <Note err={v.errors.durationHours} warn={v.warnings.durationHours} />
+          {fromDates > 0 && (Number(durationHours) !== fromDates ? (
+            <span className="block mt-1 text-[11px] text-amber-700 dark:text-amber-400">
+              Its dates hold {fromDates} h{crewWord ? ` (${crewWord})` : ""}.{" "}
+              <button type="button" onClick={() => { setDurationHours(String(fromDates)); setHoursTyped(false); }} className="font-bold underline">Use {fromDates} h</button>
+            </span>
+          ) : (
+            <span className="block mt-1 text-[11px] text-[var(--color-text-muted)]">From its dates{crewWord ? `, ${crewWord}` : ""}.</span>
+          ))}
+        </L>
         <L label="Work order #"><input value={workOrderRef} onChange={(e) => setWorkOrderRef(e.target.value)} className={inp} /></L>
       </div>
       <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] pt-1">Responsible (planned)</div>

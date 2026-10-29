@@ -303,6 +303,18 @@ export function workWindows(m: Milestone, tz: string, times: ShiftTimes = DEFAUL
   return crewWindows(m, tz, times, span).windows;
 }
 
+/** The work hours a planned span holds for this step: the time inside its
+ *  crew's hours (its shift, or its calendar) between `start` and `finish`
+ *  — round the clock, the whole span. What its hours should be when its
+ *  dates are changed. */
+export function hoursInSpan(m: Milestone, start: number, finish: number, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): number {
+  if (!Number.isFinite(start) || !Number.isFinite(finish) || finish <= start) return 0;
+  // Its hours aren't known yet — that's what this works out.
+  const at = { ...m, plannedStartAt: new Date(start).toISOString(), plannedAt: new Date(finish).toISOString(), durationHours: null };
+  const ms = workWindows(at, tz, times).reduce((a, [x, y]) => a + Math.max(0, Math.min(y, finish) - Math.max(x, start)), 0);
+  return Math.round((ms / 3_600_000) * 10) / 10;
+}
+
 /** Does this task have work planned in this shift? */
 export function worksIn(m: Milestone, w: ShiftWindow, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): boolean {
   const kind = workShiftOf(m, tz, times);

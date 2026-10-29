@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildShiftReport, shiftWindow, shiftAt, nextShift, previousShift, shiftLabel, defaultReviewShift, nextShiftWithWork, workShiftOf, plannedFraction, worksIn } from "@/lib/shiftReport";
+import { buildShiftReport, shiftWindow, shiftAt, nextShift, previousShift, shiftLabel, defaultReviewShift, nextShiftWithWork, workShiftOf, plannedFraction, worksIn, hoursInSpan } from "@/lib/shiftReport";
 import { wallClock } from "@/lib/scheduleTz";
 import type { Milestone } from "@/types/schema";
 
@@ -300,5 +300,22 @@ describe("one answer to 'are we on time' everywhere", () => {
     const pace = computeExecutionReport([exch, tower], { now: new Date(night.end), tz: CHI });
     expect(pace.expectedPct).toBe(shiftRep.overall.plannedPct);
     expect(Math.abs(pace.paceDelta)).toBeLessThan(3); // on track, not "behind pace"
+  });
+});
+
+describe("hoursInSpan — a step's hours from its dates", () => {
+  const LA = "America/Los_Angeles";
+  const t = (d: string, hm: string) => Date.parse(`${d}T${hm}:00-07:00`);
+  const step = (p: Partial<Milestone>) => ({ ...mk({ id: "s", name: "s", plannedStartAt: t("2026-10-28", "05:30"), plannedAt: t("2026-10-29", "11:30") }), durationHours: 18, ...p } as Milestone);
+  it("round the clock: the whole span", () => {
+    expect(hoursInSpan(step({ shift: "swing" }), t("2026-10-28", "05:30"), t("2026-10-29", "11:30"), LA)).toBe(30);
+  });
+  it("a day crew: only its day hours", () => {
+    // Day shift 05:30–17:30: 06:00–17:30 on the 28th, 05:30–17:30 on the 29th.
+    expect(hoursInSpan(step({ shift: "day" }), t("2026-10-28", "06:00"), t("2026-10-29", "18:00"), LA)).toBe(23.5);
+  });
+  it("its old hours don't count; a backwards span is none", () => {
+    expect(hoursInSpan(step({ shift: "swing", durationHours: 2 }), t("2026-10-28", "08:00"), t("2026-10-28", "14:00"), LA)).toBe(6);
+    expect(hoursInSpan(step({}), t("2026-10-29", "08:00"), t("2026-10-28", "08:00"), LA)).toBe(0);
   });
 });

@@ -681,6 +681,13 @@ export default function ExecutionView({
   const updateStep = useCallback(async (id: string, u: StepUpdate): Promise<boolean> => {
     const m = latest.current.get(id) ?? byId.get(id);
     if (!m) return false;
+    // Just a comment, as of the time given: on the step's history and that
+    // shift's report; its status stays as it is.
+    if (u.comment) {
+      if (!u.note.trim()) return false;
+      await addNote(id, u.note.trim(), u.at, m.status);
+      return true;
+    }
     const label = fmtInTz(u.at, tz, { weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false });
     const w: ShiftCredit = { at: u.at, label };
     const cur = m.status;
