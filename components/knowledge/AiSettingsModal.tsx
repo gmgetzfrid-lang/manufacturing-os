@@ -40,6 +40,18 @@ const PROVIDERS = [
 
 const providerAllowed = (p: string) => (ALLOWED_PROVIDERS as readonly string[]).includes(p);
 
+// What each offered model is for, in the picker.
+const MODEL_BLURB: Record<string, string> = {
+  "claude-opus-5-5": "most capable",
+  "claude-sonnet-5-5": "balanced — about half the cost",
+  "claude-haiku-5-5": "fastest, lowest cost",
+  "gpt-5.1": "most capable",
+  "gpt-4o": "balanced",
+  "gpt-4o-mini": "fastest, lowest cost",
+};
+const modelLabel = (m: string, offered: string[]) =>
+  `${modelName(m)}${MODEL_BLURB[m] ? ` — ${MODEL_BLURB[m]}` : offered.includes(m) ? "" : " — older model, your current setting"}`;
+
 // Persistent inline status line — toasts vanish; this stays until the next
 // action, so "did that work?" always has a visible answer.
 function Notice({ notice }: { notice: { tone: "ok" | "err"; text: string } | null }) {
@@ -93,9 +105,19 @@ export function KeyEditor({ orgId, current, onChanged }: {
   }, [current]);
 
   const providerMeta = PROVIDERS.find((p) => p.id === provider) ?? PROVIDERS[0];
+  // The models offered, plus a saved one that isn't offered any more — so
+  // the picker always shows what's really set.
+  const offered = providerMeta.models;
+  const options = offered.includes(model) || !model ? offered : [...offered, model];
+  // With a key already saved, picking a model is the whole change — saved
+  // at once. A new key waits for Verify & save.
+  const pickModel = (m: string) => {
+    setModel(m);
+    if (current && !apiKey.trim() && provider === current.provider && m !== current.model) void save(m);
+  };
 
-  const save = async () => {
-    if (!model.trim()) { showToast({ type: "error", title: "Enter a model name." }); return; }
+  const save = async (m = model) => {
+    if (!m.trim()) { showToast({ type: "error", title: "Pick a model." }); return; }
     if (!apiKey.trim() && !current) { showToast({ type: "error", title: "Paste an API key." }); return; }
     // Before a NEW key goes live: whatever this key sends, the provider
     // receives — questions AND excerpts of indexed documents. (The recorded
@@ -119,16 +141,16 @@ export function KeyEditor({ orgId, current, onChanged }: {
       // if this succeeds, the key both works and is saved.
       const last4 = apiKey.trim().slice(-4);
       await saveAiConnection({
-        orgId, scope: "personal", provider, model: model.trim(),
+        orgId, scope: "personal", provider, model: m.trim(),
         apiKey: apiKey.trim() || undefined,
       });
       setNotice({
         tone: "ok",
         text: hadNewKey
           ? `Key verified and saved — ends in ····${last4}. You're set for questions.`
-          : "Settings saved (your existing key is unchanged).",
+          : `Main model set to ${modelName(m)} (your key is unchanged).`,
       });
-      showToast({ type: "success", title: hadNewKey ? "Key verified and saved." : "Settings saved." });
+      showToast({ type: "success", title: hadNewKey ? "Key verified and saved." : `Main model set to ${modelName(m)}.` });
       setApiKey("");
       onChanged();
     } catch (e) {
@@ -205,23 +227,13 @@ export function KeyEditor({ orgId, current, onChanged }: {
           </Select>
         </label>
         <label className="block">
-          <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Model</span>
-          <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder={providerMeta.models[0]} />
+          <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Main model</span>
+          <Select value={model} onChange={(e) => pickModel(e.target.value)} disabled={busy !== null}>
+            {options.map((m) => <option key={m} value={m}>{modelLabel(m, offered)}</option>)}
+          </Select>
         </label>
       </div>
       <p className="text-[10px] text-[var(--color-text-muted)]">{PROVIDER_BLOCK_MESSAGE}</p>
-      <div className="flex flex-wrap gap-1.5">
-        {providerMeta.models.map((m) => (
-          <button key={m} type="button" onClick={() => setModel(m)}
-            className={`text-[10px] font-black px-2 py-1 rounded-lg border transition-colors ${
-              model === m
-                ? "border-[var(--color-accent)] bg-[var(--color-accent)]/10 text-[var(--color-accent)]"
-                : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-            {m}
-          </button>
-        ))}
-        <span className="text-[10px] text-[var(--color-text-muted)] self-center">or type any model ID</span>
-      </div>
       <label className="block">
         <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
           API key {current ? "(leave blank to keep the saved key)" : ""}
@@ -253,7 +265,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
 }
 
 // ── Which model each job runs on ──────────────────────────────────────────
-// One tap per job. The main model (above) covers anything not listed; a job
+// One menu per job. The main model (above) covers anything not listed; a job
 // with its own default (reading on the cheap tier, shift notes lighter)
 // keeps it until someone picks otherwise. Each choice shows what one use
 // costs on it — from the person's own averages once they have a few.
@@ -313,29 +325,19 @@ export function JobModelsEditor({ orgId, current, jobModels, ready, jobUse, onCh
                 <span className="text-[13px] font-black text-[var(--color-text)]">{j.label}</span>
                 <span className="text-[11px] text-[var(--color-text-muted)]">{j.what}</span>
               </div>
-              <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={`Model for ${j.label}`}>
-                {options.map((m) => {
-                  const id = m === MAIN ? current.model : m;
-                  const on = chosen === m;
-                  const isDefault = (def ?? MAIN) === m;
-                  return (
-                    <button key={m} type="button" role="radio" aria-checked={on}
-                      disabled={!ready || busy !== null}
-                      onClick={() => { if (!on) void pick(j.id, m); }}
-                      className={`text-[11px] font-bold px-2.5 py-1.5 rounded-lg border transition-colors disabled:cursor-not-allowed ${
-                        on
-                          ? "border-[var(--color-accent)] bg-[var(--color-accent)]/10 text-[var(--color-accent)]"
-                          : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-60"}`}>
-                      {m === MAIN ? `Main · ${mainName}` : modelName(m)}
-                      <span className="ml-1.5 font-semibold opacity-80 tabular-nums">{fmtCost(costPerUse(id, use))}</span>
-                      {isDefault && <span className="ml-1.5 text-[9.5px] font-black uppercase opacity-70">default</span>}
-                      {busy === j.id && on && <Loader2 className="w-3 h-3 animate-spin inline ml-1" />}
-                    </button>
-                  );
-                })}
+              <div className="flex items-center gap-2">
+                <Select value={chosen} onChange={(e) => void pick(j.id, e.target.value)}
+                  disabled={!ready || busy !== null} aria-label={`Model for ${j.label}`} className="flex-1 min-w-0">
+                  {options.map((m) => (
+                    <option key={m} value={m}>
+                      {m === MAIN ? `Main (${mainName})` : modelName(m)} · {fmtCost(costPerUse(m === MAIN ? current.model : m, use))}{(def ?? MAIN) === m ? " · default" : ""}
+                    </option>
+                  ))}
+                </Select>
+                {busy === j.id && <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />}
               </div>
               <p className="text-[10.5px] text-[var(--color-text-muted)]">
-                Cost of one {j.use.per}{own && own.n >= 3 ? ` (your average of ${own.n})` : " (typical size)"}.
+                Cost per {j.use.per}{own && own.n >= 3 ? ` from your average of ${own.n}` : " at a typical size"}.
               </p>
             </li>
           );
