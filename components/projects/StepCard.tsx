@@ -229,13 +229,17 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     }
     return ev.filter((e) => Number.isFinite(e.sort)).sort((a, b) => a.sort - b.sort || a.seq - b.seq);
   }, [rows, notes, as, af, done]);
+  // Every time on the step — started, each hold and back to work, each %,
+  // finished — in the order they were entered (the order they happened):
+  // what Fix times lists, all changeable at once.
+  const timed = useMemo(() => history.filter((e) => e.logId != null || e.fix).sort((a, b) => a.seq - b.seq || a.sort - b.sort), [history]);
+  const [fixAll, setFixAll] = useState<Record<string, string>>({});
   const [allHistory, setAllHistory] = useState(false);
   // The step's last logged change: a time put in has to come after it
   // (the history reads in order; the reports read it by time). The log's
   // starting line isn't a change.
   // Read as the history shows it: the Started / Finished lines at the
   // step's own start and finish (a time fixed on the step counts).
-  const logAt = useMemo(() => new Map(rows.filter((x) => x.id != null).map((x) => [x.id!, Date.parse(x.at)])), [rows]);
   const lastEntry = useMemo(() => {
     const shown = new Map<number, HistoryEvent>();
     for (const e of history) if (e.logId != null) shown.set(e.logId, e);
@@ -248,7 +252,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     return best;
   }, [rows, history]);
   const beforeLast = (t: number) => (lastEntry && t < lastEntry.at - 60_000
-    ? `That's before the last entry on this step — “${lastEntry.text}” at ${when(lastEntry.at)}. Pick a later time, or tap that entry's time in History to fix it first.`
+    ? `That's before the last entry on this step — “${lastEntry.text}” at ${when(lastEntry.at)}. Pick a later time, or change that one with Fix times (or Take back in History).`
     : null);
   // Fixing the time of something in the history.
   const [fixing, setFixing] = useState<string | null>(null);
@@ -288,8 +292,8 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         let prev: ProgressLogRow | null = null, next: ProgressLogRow | null = null;
         for (let j = k - 1; j >= 0 && !prev; j--) if (!unsaved(j)) prev = seq[j];
         for (let j = k + 1; k >= 0 && j < seq.length && !next; j++) if (!unsaved(j)) next = seq[j];
-        if (prev && t < Date.parse(prev.at)) { setFixMsg(`That's before “${logWords(prev)}” at ${when(Date.parse(prev.at))}, which came first. If that one's wrong, fix it first.`); return; }
-        if (next && t > Date.parse(next.at)) { setFixMsg(`That's after “${logWords(next)}” at ${when(Date.parse(next.at))}, which came next. If that one's wrong, fix it first.`); return; }
+        if (prev && t < Date.parse(prev.at)) { setFixMsg(`That's before “${logWords(prev)}” at ${when(Date.parse(prev.at))}, which came first. To move both, use Fix times — it changes every time on the step at once.`); return; }
+        if (next && t > Date.parse(next.at)) { setFixMsg(`That's after “${logWords(next)}” at ${when(Date.parse(next.at))}, which came next. To move both, use Fix times — it changes every time on the step at once.`); return; }
       }
     }
     setFixBusy(true); setFixMsg(null);
@@ -347,6 +351,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     // Opens on now (entering it as it happens); earlier is a tap away.
     setAtV(a === "edit" ? (Number.isFinite(af) ? toDateTimeInput(af, tz) : "") : toDateTimeInput(Date.now(), tz));
     setStartV(a === "edit" && Number.isFinite(as) ? toDateTimeInput(as, tz) : "");
+    if (a === "edit") setFixAll(Object.fromEntries(timed.map((e) => [e.key, toDateTimeInput(e.unsure === "unset" ? e.sort : e.at, tz)])));
   };
   const toMs = (v: string) => { const iso = fromDateTimeInput(v, tz); return iso ? Date.parse(iso) : NaN; };
   const need = (v: string, what: string): number | string => {
@@ -421,25 +426,33 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         ok = await run({ status: "in_progress", pct: p ?? 90, note: note.trim(), at: t });
         said = "Reopened";
       } else if (action === "edit") {
-        if (!onFixTimes) return;
-        const s = startV ? need(startV, "the start") : null;
-        if (typeof s === "string") { setMsg(s); return; }
-        const f = done ? (atV ? need(atV, "the finish") : null) : undefined;
-        if (typeof f === "string") { setMsg(f); return; }
-        if (s != null && f != null && f < s) { setMsg("The finish can't be before the start."); return; }
-        // The history's Started / Finished lines move with the times, as an
-        // Edit in History does — otherwise the log keeps the old time and
-        // the next entry is checked against it.
-        const moved: string[] = [];
-        for (const [k, t] of [["start", s], ["finish", f]] as const) {
-          const ev = history.find((e) => e.fix === k && e.logId != null);
-          if (ev?.logId == null || t == null || Math.abs((logAt.get(ev.logId) ?? t) - t) < 60_000) continue;
-          const r = await setProgressTime(ev.logId, t);
-          if (r !== "ok") moved.push(k === "start" ? "start" : "finish");
+        // Every time on the step at once, kept in the order it happened —
+        // moving two that pass each other is one save, not a lock.
+        const vals = timed.map((e) => ({ e, t: (fixAll[e.key] ?? "").length >= 16 ? toMs(fixAll[e.key]) : NaN }));
+        const blank = vals.find((v) => !Number.isFinite(v.t));
+        if (blank) { setMsg(`Pick the day and the time for “${blank.e.text}”.`); return; }
+        const ahead = vals.find((v) => v.t > Date.now() + 60_000);
+        if (ahead) { setMsg(`“${ahead.e.text}” at ${when(ahead.t)} hasn't happened yet.`); return; }
+        for (let k = 1; k < vals.length; k++) {
+          if (vals[k].t < vals[k - 1].t) { setMsg(`“${vals[k].e.text}” at ${when(vals[k].t)} is before “${vals[k - 1].e.text}” at ${when(vals[k - 1].t)}, which happened first. Change both so they stay in order.`); return; }
         }
-        ok = await onFixTimes({ start: s, ...(done ? { finish: f ?? null } : {}) });
-        said = moved.length ? `Times fixed — the history's ${moved.join(" and ")} line couldn't move with it; edit it in History` : "Times fixed";
-        if (ok) window.dispatchEvent(new CustomEvent("milestone-notes:changed"));
+        const moved = vals.filter((v) => v.e.unsure === "unset" || Math.abs(v.t - v.e.at) >= 60_000);
+        if (moved.length === 0) { setAction(null); return; }
+        let s: number | undefined, f: number | undefined;
+        for (const v of moved) {
+          if (v.e.logId != null) {
+            const r = await setProgressTime(v.e.logId, v.t);
+            if (r !== "ok") { setMsg(r === "missing" ? "Fixing a time needs the database update run first." : r === "range" ? `“${v.e.text}”: that's more than 60 days back.` : `“${v.e.text}” wasn't saved.`); return; }
+          }
+          for (const id of v.e.noteIds) await setNoteTime(id, v.t).catch(() => undefined);
+          if (v.e.fix === "start") s = v.t;
+          if (v.e.fix === "finish") f = v.t;
+        }
+        ok = s !== undefined || f !== undefined
+          ? !!onFixTimes && await onFixTimes({ ...(s !== undefined ? { start: s } : {}), ...(f !== undefined ? { finish: f } : {}) })
+          : true;
+        window.dispatchEvent(new CustomEvent("milestone-notes:changed"));
+        said = moved.length === 1 ? `“${moved[0].e.text}” moved to ${when(moved[0].t)}` : `${moved.length} times fixed`;
       }
       if (ok) {
         const root = rootRef.current;
@@ -609,15 +622,24 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
               ))}
             </div>
           )}
-          {(action === "edit" || (action === "finish" && !started)) && (
-            <DateTimePicker label="Started" hint={action === "finish" ? "(if known)" : undefined} value={startV} onChange={(v) => { setStartV(v); setMsg(null); }} tz={tz} times={times} planned={ps}
-              shortcuts={[{ label: "Planned", at: ps }]} showNow={action !== "edit"} />
+          {action === "edit" && (
+            <div className="space-y-2.5">
+              <div className="text-[11.5px] text-[var(--color-text-muted)]">Every time on this step, in the order it happened. Change any of them, then Save once.</div>
+              {timed.map((e) => (
+                <DateTimePicker key={e.key} label={`${e.text}${e.said[0] ? ` — ${e.said[0].text}` : ""}`} value={fixAll[e.key] ?? ""}
+                  onChange={(v) => { setFixAll((x) => ({ ...x, [e.key]: v })); setMsg(null); }} tz={tz} times={times} showNow={false}
+                  planned={e.fix === "start" ? ps : e.fix === "finish" ? pf : undefined} />
+              ))}
+            </div>
           )}
-          {(action !== "edit" || done) && (
+          {action === "finish" && !started && (
+            <DateTimePicker label="Started" hint="(if known)" value={startV} onChange={(v) => { setStartV(v); setMsg(null); }} tz={tz} times={times} planned={ps}
+              shortcuts={[{ label: "Planned", at: ps }]} />
+          )}
+          {action !== "edit" && (
             <DateTimePicker label={pickLabel} value={atV} onChange={(v) => { setAtV(v); setMsg(null); }} tz={tz} times={times}
-              planned={action === "finish" || action === "edit" ? pf : ps}
-              shortcuts={[{ label: "Planned", at: action === "finish" || action === "edit" ? pf : action === "start" || action === "resume" ? ps : NaN }]}
-              showNow={action !== "edit"} />
+              planned={action === "finish" ? pf : ps}
+              shortcuts={[{ label: "Planned", at: action === "finish" ? pf : action === "start" || action === "resume" ? ps : NaN }]} />
           )}
           {action !== "edit" && (
             <input value={note} onChange={(e) => { setNote(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
