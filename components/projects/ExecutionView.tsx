@@ -40,6 +40,7 @@ import DiscoveryForm from "@/components/projects/DiscoveryForm";
 import MarkSheet from "@/components/projects/MarkSheet";
 import PlanNextShift from "@/components/projects/PlanNextShift";
 import WorkOrdersView from "@/components/projects/WorkOrdersView";
+import { timesAfterStatus, timesAfterProgress, type ActualTimes } from "@/lib/optimisticTimes";
 import DiscoveryTag from "@/components/projects/DiscoveryTag";
 import { planNote, type ShiftPlanChange } from "@/lib/shiftPlan";
 import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, cascadeDependents, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
@@ -137,6 +138,15 @@ export default function ExecutionView({
   // Optimistic % overlay so dragging a progress slider feels instant (paired
   // with an optimistic status above so the bar + dot move together).
   const [optimisticPct, setOptimisticPct] = useState<Map<string, number>>(new Map());
+  // And the actual start / finish the save will set (lib/optimisticTimes):
+  // a step started or finished at a time put in shows there at once — not
+  // at its plan (or today) until the database answers. Kept until the
+  // database has them, or has the status they came with.
+  const [optimisticAt, setOptimisticAt] = useState<Map<string, { times: ActualTimes; status?: MilestoneStatus }>>(new Map());
+  const expectTimes = (id: string, times: ActualTimes, status?: MilestoneStatus) => {
+    if (Object.keys(times).length) setOptimisticAt((m) => new Map(m).set(id, { times: { ...m.get(id)?.times, ...times }, status }));
+  };
+  const forgetTimes = (ids: string[]) => setOptimisticAt((m) => { if (!ids.some((id) => m.has(id))) return m; const n = new Map(m); for (const id of ids) n.delete(id); return n; });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // Bulk change: replace a name everywhere, or set a value on the selection.
   const [bulkMode, setBulkMode] = useState<"replace" | "set" | null>(null);
@@ -201,19 +211,21 @@ export default function ExecutionView({
 
   // Overlay optimistic status + percent onto the raw list.
   const items = useMemo(() => {
-    if (optimistic.size === 0 && optimisticPct.size === 0) return milestones;
+    if (optimistic.size === 0 && optimisticPct.size === 0 && optimisticAt.size === 0) return milestones;
     return milestones.map((m) => {
       if (!m.id) return m;
       const st = optimistic.get(m.id);
       const pc = optimisticPct.get(m.id);
-      if (st === undefined && pc === undefined) return m;
+      const at = optimisticAt.get(m.id)?.times;
+      if (st === undefined && pc === undefined && !at) return m;
       return {
         ...m,
         ...(st !== undefined ? { status: st } : {}),
         ...(pc !== undefined ? { percentComplete: pc } : {}),
+        ...(at ?? {}),
       };
     });
-  }, [milestones, optimistic, optimisticPct]);
+  }, [milestones, optimistic, optimisticPct, optimisticAt]);
 
   // Drop optimistic entries once the server agrees.
   useEffect(() => {
@@ -234,6 +246,18 @@ export default function ExecutionView({
       }
       return next;
     });
+    setOptimisticAt((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Map(prev);
+      const same = (a: unknown, b: unknown) => { const x = a == null ? NaN : Date.parse(String(a)), y = b == null ? NaN : Date.parse(String(b)); return Number.isNaN(x) ? Number.isNaN(y) : Math.abs(x - y) < 1000; };
+      for (const m of milestones) {
+        const e = m.id ? next.get(m.id) : undefined;
+        if (!e) continue;
+        const agree = Object.entries(e.times).every(([k, v]) => same((m as unknown as Record<string, unknown>)[k], v));
+        if (agree || (e.status && m.status === e.status)) next.delete(m.id!);
+      }
+      return next;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [milestones]);
 
@@ -242,6 +266,10 @@ export default function ExecutionView({
     for (const x of items) if (x.id) m.set(x.id, x);
     return m;
   }, [items]);
+  // The latest of each step, for a save made in two parts (started, then
+  // finished): the second part sees what the first did.
+  const latest = useRef(byId);
+  useEffect(() => { latest.current = byId; }, [byId]);
 
   const childrenOf = useMemo(() => {
     const m = new Map<string, Milestone[]>();
@@ -540,11 +568,12 @@ export default function ExecutionView({
   }, [notify]);
   const setStatus = useCallback(async (id: string, next: MilestoneStatus, reason?: string, percent?: number, forShift?: ShiftCredit): Promise<boolean> => {
     if (!canEdit || !onSetStatus) return false;
-    const prev = byId.get(id);                       // snapshot for undo
+    const prev = latest.current.get(id) ?? byId.get(id);   // snapshot for undo
     const before = prev?.id ? stateOf(prev) : null;
     const name = prev?.name ?? "Task";
     if (!(await confirmFuture(prev, next, percent ?? null))) return false;
     setOptimistic((m) => new Map(m).set(id, next));
+    if (prev) expectTimes(id, timesAfterStatus(prev, next, forShift ? new Date(forShift.at).toISOString() : undefined, new Date().toISOString()), next);
     const nextPct = next === "completed" ? 100 : next === "planned" ? 0 : percent;
     if (nextPct != null) setOptimisticPct((m) => new Map(m).set(id, Math.round(nextPct)));
     setBusy((s) => new Set(s).add(id));
@@ -553,6 +582,7 @@ export default function ExecutionView({
       if (!ok) {
         setOptimistic((m) => { const n = new Map(m); n.delete(id); return n; });
         setOptimisticPct((m) => { const n = new Map(m); n.delete(id); return n; });
+        forgetTimes([id]);
         return false;
       }
       if (before && (before.status !== next || (percent != null && Math.round(before.percentComplete) !== Math.round(percent)))) {
@@ -575,7 +605,7 @@ export default function ExecutionView({
   // together), then persists. Summary rows never call this — their % rolls up.
   const setProgress = useCallback(async (id: string, pct: number, forShift?: ShiftCredit): Promise<boolean> => {
     if (!canEdit || !onSetProgress) return false;
-    const prev = byId.get(id);
+    const prev = latest.current.get(id) ?? byId.get(id);
     const before = prev?.id ? stateOf(prev) : null;
     const prevStatus = prev?.status;
     const prevPct = prev?.percentComplete != null ? Math.round(prev.percentComplete) : (prevStatus === "completed" ? 100 : 0);
@@ -589,12 +619,14 @@ export default function ExecutionView({
     if (clamped > prevPct && !(await confirmFuture(prev, null, clamped))) return false;
     setOptimisticPct((m) => new Map(m).set(id, clamped));
     setOptimistic((m) => new Map(m).set(id, nextStatus));
+    if (prev) expectTimes(id, timesAfterProgress(prev, clamped, forShift ? new Date(forShift.at).toISOString() : undefined, new Date().toISOString()), nextStatus);
     setBusy((s) => new Set(s).add(id));
     try {
       const ok = await onSetProgress(id, clamped, forShift ? new Date(forShift.at).toISOString() : undefined);
       if (!ok) {
         setOptimisticPct((m) => { const n = new Map(m); n.delete(id); return n; });
         setOptimistic((m) => { const n = new Map(m); n.delete(id); return n; });
+        forgetTimes([id]);
         return false;
       }
       if (forShift && (prevPct !== clamped || prevStatus !== nextStatus)) await fileUnder(id, forShift);
@@ -627,7 +659,7 @@ export default function ExecutionView({
   // at the time it happened), the comment that goes on the report, and why
   // it's behind.
   const updateStep = useCallback(async (id: string, u: StepUpdate): Promise<boolean> => {
-    const m = byId.get(id);
+    const m = latest.current.get(id) ?? byId.get(id);
     if (!m) return false;
     const label = fmtInTz(u.at, tz, { weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false });
     const w: ShiftCredit = { at: u.at, label };
@@ -656,12 +688,14 @@ export default function ExecutionView({
   // where it happened; the reports measure it from there).
   const fixTimes = useCallback(async (id: string, t: { start?: number | null; finish?: number | null }): Promise<boolean> => {
     if (!canEdit) return false;
+    expectTimes(id, { ...(t.start !== undefined ? { actualStartAt: t.start != null ? new Date(t.start).toISOString() : null } : {}),
+      ...(t.finish !== undefined ? { actualAt: t.finish != null ? new Date(t.finish).toISOString() : null } : {}) });
     try {
       await setActualTimes({ id, ...(t.start !== undefined ? { actualStartAt: t.start != null ? new Date(t.start).toISOString() : null } : {}),
         ...(t.finish !== undefined ? { actualAt: t.finish != null ? new Date(t.finish).toISOString() : null } : {}), actorUserId: userId, actorUserName: userName });
       onRefresh();
       return true;
-    } catch (e) { notify((e as Error).message, "warning"); return false; }
+    } catch (e) { forgetTimes([id]); notify((e as Error).message, "warning"); return false; }
   }, [canEdit, userId, userName, onRefresh, notify]);
   // Discovery work: found work into the schedule (lib/discovery). Its steps
   // go under the task, linked after the step they follow; what they hold up
@@ -811,6 +845,7 @@ export default function ExecutionView({
     const before = new Map<string, MilestoneState>();
     for (const id of ids) { const m = byId.get(id); if (m) { prev.set(id, m.status); before.set(id, stateOf(m)); } }
     setOptimistic((m) => { const n = new Map(m); for (const id of ids) n.set(id, next); return n; });
+    for (const id of ids) { const m = byId.get(id); if (m) expectTimes(id, timesAfterStatus(m, next, atIso, new Date().toISOString()), next); }
     setBusy((s) => { const n = new Set(s); for (const id of ids) n.add(id); return n; });
     try {
       // Await each result individually so a partial failure can't masquerade
@@ -830,6 +865,7 @@ export default function ExecutionView({
           for (const id of failed) { const st = prev.get(id); if (st) n.set(id, st); else n.delete(id); }
           return n;
         });
+        forgetTimes(failed);
         notify(`${failed.length} of ${ids.length} task${ids.length === 1 ? "" : "s"} couldn't be updated.`, "warning");
       }
 

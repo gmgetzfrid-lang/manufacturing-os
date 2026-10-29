@@ -59,6 +59,18 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(t); }, []);
   const all = useMemo(() => [...onDay, ...others], [onDay, others]);
+  // The steps it opened with stay where they were while it's open — a
+  // start or finish put in for another day moves the step there on the
+  // calendar, not out from under you here.
+  const [opened] = useState(() => new Map(onDay.map((m, i) => [m.id ?? m.name, i])));
+  const here = useMemo(() => {
+    const now = new Set(onDay.map((m) => m.id ?? m.name));
+    const rank = (m: Milestone) => opened.get(m.id ?? m.name) ?? opened.size + onDay.indexOf(m);
+    return {
+      main: all.filter((m) => opened.has(m.id ?? m.name) || now.has(m.id ?? m.name)).sort((a, b) => rank(a) - rank(b)),
+      rest: all.filter((m) => !opened.has(m.id ?? m.name) && !now.has(m.id ?? m.name)),
+    };
+  }, [all, onDay, opened]);
   const ids = useMemo(() => all.map((m) => m.id).filter((x): x is string => !!x), [all]);
   const idsKey = ids.join(",");
   // Each step's comments, reasons and history.
@@ -174,7 +186,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
           </span>
         </button>
         {isOpen && (
-          <StepCard key={`${id}:${m.status}:${pct}`} m={m} wo={(m.workOrderRef?.trim() || task.workOrderRef?.trim() || wos[0]) ?? undefined} pct={pct} hours={h} rows={info.rows} notes={info.mine}
+          <StepCard key={id} m={m} wo={(m.workOrderRef?.trim() || task.workOrderRef?.trim() || wos[0]) ?? undefined} pct={pct} hours={h} rows={info.rows} notes={info.mine}
             tz={tz} times={times} now={now} canEdit={canEdit && !!onUpdate && !!m.id} onUpdate={onUpdate && m.id ? (u) => onUpdate(m.id!, u) : undefined}
             onFixTimes={onFixTimes && m.id ? (t) => onFixTimes(m.id!, t) : undefined} onMoveDays={onMoveDays} />
         )}
@@ -185,16 +197,16 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
   return (
     <div>
       {!whole && header}
-      {onDay.length === 0
+      {here.main.length === 0
         ? <div className="px-3 py-3 text-[11px] text-[var(--color-text-faint)]">Nothing under this task is scheduled on {dayLabel}.</div>
-        : <ul>{onDay.map((m) => stepRow(m))}</ul>}
-      {others.length > 0 && (
+        : <ul>{here.main.map((m) => stepRow(m))}</ul>}
+      {here.rest.length > 0 && (
         <div className="border-t border-[var(--color-border)]">
           <button type="button" onClick={() => setShowOthers((v) => !v)} className="w-full px-3 py-1.5 text-left text-[10.5px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-1">
             <ChevronRight className={`w-3 h-3 transition-transform ${showOthers ? "rotate-90" : ""}`} />
-            {others.length} step{others.length === 1 ? "" : "s"} on other {band ? "shifts" : "days"}
+            {here.rest.length} step{here.rest.length === 1 ? "" : "s"} on other {band ? "shifts" : "days"}
           </button>
-          {showOthers && <ul className="border-t border-[var(--color-border)]">{others.map((m) => stepRow(m, true))}</ul>}
+          {showOthers && <ul className="border-t border-[var(--color-border)]">{here.rest.map((m) => stepRow(m, true))}</ul>}
         </div>
       )}
       <div className="px-3 py-1.5 border-t border-[var(--color-border)] flex items-center justify-between gap-2 text-[10.5px] text-[var(--color-text-faint)]">

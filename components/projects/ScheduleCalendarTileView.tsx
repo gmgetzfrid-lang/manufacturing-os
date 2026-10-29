@@ -26,7 +26,7 @@ import { addDays as addDaysTz, addMonths as addMonthsTz, clockLabel, dayDiff as 
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { DEFAULT_SHIFT_TIMES, crewWindows, workShiftOf, workSpan, shiftWindow, shiftAt, nextShift, type ShiftTimes, type ShiftCredit, type ShiftWindow } from "@/lib/shiftReport";
 import { type Band } from "@/lib/shiftBands";
-import { asBuilt } from "@/lib/asBuilt";
+import { asBuilt, builtSpan } from "@/lib/asBuilt";
 import { discoveryOf } from "@/lib/discovery";
 import type { PathMarks } from "@/lib/criticalPath";
 import ShiftMark from "@/components/projects/ShiftMark";
@@ -1055,6 +1055,18 @@ function Chip({
   const kids = ms.id ? (childrenByParent.get(ms.id) ?? []) : [];
   const leafKids = kids.filter((k) => !k.id || (childrenByParent.get(k.id) ?? []).length === 0);
   const hasSubs = leafKids.length > 0;
+  // Discovery work on this day's (or shift's) part of it — not on every
+  // day the task spans.
+  const foundHere = (() => {
+    const w0 = bandStart ?? todayStart, w1 = bandEnd ?? todayEnd;
+    const on = (k: Milestone) => {
+      if (!discoveryOf(k)) return false;
+      if (w0 == null || w1 == null) return k.id === ms.id;
+      const sp = builtSpan(k);
+      return sp.start < w1 && sp.finish > w0;
+    };
+    return on(ms) || leafKids.some(on);
+  })();
   // Effective progress + status: a leaf's own, or a summary's weighted roll-up
   // (computed by the parent). Fall back to a shallow count if not supplied.
   const info = ms.id ? progress?.get(ms.id) : undefined;
@@ -1187,8 +1199,8 @@ function Chip({
             <span className="flex items-center gap-1 min-w-0 flex-1 text-[9.5px] leading-tight opacity-70">
               {/* Night work is tagged; round the clock and day-and-night
                   mixes are marked; day work — most of it — is left quiet. */}
-              {(discoveryOf(ms) || leafKids.some((k) => discoveryOf(k))) && (
-                <span title={discoveryOf(ms) ? "Discovery — added when it was opened, not in the original schedule" : "Has discovery work — added when it was opened, not in the original schedule"}
+              {foundHere && (
+                <span title={discoveryOf(ms) ? "Discovery — added when it was opened, not in the original schedule" : "Discovery work on this shift — added when it was opened, not in the original schedule"}
                   className="shrink-0 rounded px-1 text-[8.5px] font-black uppercase leading-[14px] bg-violet-100 text-violet-800 dark:bg-violet-900/60 dark:text-violet-100">Discovery</span>
               )}
               {night && bandStart == null && (

@@ -7,7 +7,7 @@
 // optional comment. The shift works itself out from the time. The last
 // few things that happened sit underneath.
 
-import React, { useMemo, useState } from "react";
+import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Play, Check } from "lucide-react";
 import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import { shiftAt, workHours, type ShiftTimes } from "@/lib/shiftReport";
@@ -66,6 +66,14 @@ const logWords = (x: ProgressLogRow) => {
     default: return describeChange(x.old_status, x.old_percent, x.new_status, x.new_percent);
   }
 };
+/** The box that scrolls it: the nearest scrolling parent, else the page. */
+function scrollParentOf(el: HTMLElement): HTMLElement {
+  for (let e = el.parentElement; e; e = e.parentElement) {
+    const o = getComputedStyle(e).overflowY;
+    if ((o === "auto" || o === "scroll") && e.scrollHeight > e.clientHeight) return e;
+  }
+  return (document.scrollingElement ?? document.documentElement) as HTMLElement;
+}
 const hoursWords = (h: number) => (h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : `${Math.round(h * 10) / 10} h`);
 const ms = (v: unknown) => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
 const H = 3_600_000;
@@ -257,11 +265,31 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   const [why, setWhy] = useState("");
   const [showWhy, setShowWhy] = useState(false);
   const [holdKind, setHoldKind] = useState<"on_hold" | "blocked">("on_hold");
+  // Starting (or back to work): then still going — with a % as of a time,
+  // if given — or already finished, all in one save.
+  const [then, setThen] = useState<"going" | "done">("going");
+  // After a save the form closes up, but what you're looking at stays put:
+  // near the bottom of a scrolling list the browser would pull everything
+  // down to fill the room the form took, so that room stays, out of sight
+  // at the end of the card, and the list keeps its place.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const roomRef = useRef<HTMLDivElement>(null);
+  const anchor = useRef<{ h: number; sc: HTMLElement; top: number; slack: number } | null>(null);
+  useLayoutEffect(() => {
+    const a = anchor.current, root = rootRef.current, room = roomRef.current;
+    if (action || !a || !root || !room) return;
+    anchor.current = null;
+    const need = a.h - root.offsetHeight - a.slack;
+    if (need > 0) { room.style.height = `${need}px`; a.sc.scrollTop = a.top; }
+  }, [action]);
+  const [endV, setEndV] = useState("");
+  const [addPct, setAddPct] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const open = (a: Action) => {
     setAction(a); setMsg(null); setSaved(null); setNote(""); setWhy(""); setShowWhy(false); setP(null);
+    setThen("going"); setAddPct(false); setEndV(toDateTimeInput(Date.now(), tz));
     // Opens on now (entering it as it happens); earlier is a tap away.
     setAtV(a === "edit" ? (Number.isFinite(af) ? toDateTimeInput(af, tz) : "") : toDateTimeInput(Date.now(), tz));
     setStartV(a === "edit" && Number.isFinite(as) ? toDateTimeInput(as, tz) : "");
@@ -283,11 +311,32 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     setBusy(true);
     try {
       if (action === "start" || action === "resume") {
-        const t = need(atV, "when it started");
+        const t = need(atV, action === "resume" ? "when work started again" : "when it started");
         if (typeof t === "string") { setMsg(t); return; }
         const late = beforeLast(t); if (late) { setMsg(late); return; }
-        ok = await run({ status: "in_progress", pct: null, note: note.trim(), at: t, ...extra });
-        said = `Started ${when(t)}`;
+        const verb = action === "resume" ? "Back to work" : "Started";
+        const base = Math.round(pct);
+        if (then === "done") {
+          // Started and finished, one save.
+          const f = need(endV, "when it finished");
+          if (typeof f === "string") { setMsg(f); return; }
+          if (f < t) { setMsg("It can't finish before it started."); return; }
+          if (!(await run({ status: "in_progress", pct: null, note: "", at: t }))) { setMsg("Not saved."); return; }
+          ok = await run({ status: "completed", pct: null, note: note.trim(), at: f, ...extra });
+          said = `${verb} ${when(t)} · finished ${when(f)}`;
+        } else if (addPct && p != null && p !== base) {
+          // Started, and how far along it is as of a time after.
+          const a = need(endV, "when it was at that %");
+          if (typeof a === "string") { setMsg(a); return; }
+          if (a < t) { setMsg(`The % has to be as of ${when(t)} or later — when it ${action === "resume" ? "started again" : "started"}.`); return; }
+          if (p >= 100) { setMsg("100% is finished — pick Finished."); return; }
+          if (!(await run({ status: "in_progress", pct: null, note: "", at: t }))) { setMsg("Not saved."); return; }
+          ok = await run({ status: "in_progress", pct: p, note: note.trim(), at: a, ...extra });
+          said = `${verb} ${when(t)} · ${p}% at ${when(a)}`;
+        } else {
+          ok = await run({ status: "in_progress", pct: null, note: note.trim(), at: t, ...extra });
+          said = `${verb} ${when(t)}`;
+        }
       } else if (action === "progress") {
         if (p == null || p === Math.round(pct)) { setMsg("Slide it to the new %."); return; }
         const t = need(atV, "when");
@@ -342,7 +391,11 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         ok = await onFixTimes({ start: s, ...(done ? { finish: f ?? null } : {}) });
         said = "Times fixed";
       }
-      if (ok) { setSaved(said); setAction(null); } else setMsg((x) => x ?? "Not saved.");
+      if (ok) {
+        const root = rootRef.current;
+        if (root) { const sc = scrollParentOf(root); anchor.current = { h: root.offsetHeight, sc, top: sc.scrollTop, slack: sc.scrollHeight - sc.scrollTop - sc.clientHeight }; }
+        setSaved(said); setAction(null);
+      } else setMsg((x) => x ?? "Not saved.");
     } catch (e) { setMsg((e as Error).message || "Not saved."); }
     finally { setBusy(false); }
   };
@@ -370,9 +423,9 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     return { key: `${w.dayKey}:${w.kind}`, night: w.kind === "night", label: `${fmtInTz(w.start, tz, { weekday: "short", month: "short", day: "numeric" })} · ${w.kind} shift` };
   };
   const clock = (t: number) => fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true });
-  const pickLabel = action === "start" || action === "resume" ? "Started" : action === "finish" ? "Finished" : action === "hold" ? "Stopped" : action === "edit" ? "Finished" : "When";
+  const pickLabel = action === "resume" ? "Back to work" : action === "start" ? "Started" : action === "finish" ? "Finished" : action === "hold" ? "Stopped" : action === "edit" ? "Finished" : "When";
   return (
-    <div className="px-3 pb-3 pl-7 space-y-2 bg-[var(--color-surface)] text-[12.5px]">
+    <div ref={rootRef} className="px-3 pb-3 pl-7 space-y-2 bg-[var(--color-surface)] text-[12.5px]">
       {found && (
         <div className="rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-violet-900 dark:border-violet-900 dark:bg-violet-950/40 dark:text-violet-200">
           <b>Discovery</b>{Number.isFinite(found.foundAt) ? ` · found ${when(found.foundAt)}` : ""} — “{found.what}”. Added scope, not in the original schedule.
@@ -422,6 +475,27 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
               planned={action === "finish" || action === "edit" ? pf : ps}
               shortcuts={[{ label: "Planned", at: action === "finish" || action === "edit" ? pf : action === "start" || action === "resume" ? ps : NaN }]}
               showNow={action !== "edit"} />
+          )}
+          {(action === "start" || action === "resume") && (
+            <div className="space-y-2">
+              <div className="flex gap-1" role="group" aria-label="And now">
+                {([["going", "Still going"], ["done", "Finished"]] as const).map(([k, l]) => (
+                  <button key={k} type="button" aria-pressed={then === k} onClick={() => { setThen(k); setMsg(null); }}
+                    className={`h-8 px-3 rounded-md border text-[12px] font-bold ${then === k ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>{l}</button>
+                ))}
+              </div>
+              {then === "done" ? (
+                <DateTimePicker label="Finished" value={endV} onChange={(v) => { setEndV(v); setMsg(null); }} tz={tz} times={times} planned={pf}
+                  shortcuts={[{ label: "Planned", at: pf }]} />
+              ) : addPct ? (
+                <>
+                  <PctSlider value={p ?? Math.round(pct)} was={Math.round(pct)} onChange={(v) => { setP(v); setMsg(null); }} />
+                  <DateTimePicker label="At that % as of" value={endV} onChange={(v) => { setEndV(v); setMsg(null); }} tz={tz} times={times} />
+                </>
+              ) : (
+                <button type="button" onClick={() => setAddPct(true)} className="text-[11.5px] font-semibold text-[var(--color-accent)] hover:underline">+ % done so far</button>
+              )}
+            </div>
           )}
           {action !== "edit" && (
             <input value={note} onChange={(e) => { setNote(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
@@ -501,6 +575,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
           <button type="button" onClick={() => onMoveDays(m.id!, 1)} title="1 day later" className="w-6 h-6 inline-flex items-center justify-center rounded hover:bg-[var(--color-surface-2)]"><ChevronRight className="w-3.5 h-3.5" /></button>
         </div>
       )}
+      <div ref={roomRef} aria-hidden className="!mt-0" />
     </div>
   );
 }

@@ -131,7 +131,8 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
   };
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const found = orders.filter((o) => words.every((w) => o.find.includes(w)));
-  const shown = found.filter(is[show]);
+  // One you have open stays while you work in it, whatever the filter.
+  const shown = found.filter((o) => is[show](o) || open.has(o.key));
   const today = dayKey(now, tz);
   // "Tue 2:30 PM" this week; further off "Oct 23, 4:23 PM".
   const fmt = (t: number) => (Number.isFinite(t) ? fmtInTz(t, tz, Math.abs(t - now) < 6 * 86_400_000

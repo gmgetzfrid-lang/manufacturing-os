@@ -227,6 +227,17 @@ export default function DayAgendaPanel({
     ];
   }, [shownGroups, tz, shiftTimes, day]);
 
+  // While a step is open, the list holds still: the same rows in the same
+  // places (their data live) — a start or finish put in for another day
+  // moves the step on the calendar, not out from under you here.
+  const [frozen, setFrozen] = useState<{ key: string | null; sections: typeof sections | null }>({ key: null, sections: null });
+  const freezeKey = openId ? `${openId}|${query}` : null;
+  if (frozen.key !== freezeKey) setFrozen({ key: freezeKey, sections: freezeKey ? sections : null });
+  const leafNow = useMemo(() => new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m])), [milestones]);
+  const shownSections = useMemo(() => (frozen.sections
+    ? frozen.sections.map((sec) => ({ ...sec, groups: sec.groups.map((g) => ({ ...g, rows: g.rows.map((r) => ({ ...r, leaf: (r.leaf.id ? leafNow.get(r.leaf.id) : undefined) ?? r.leaf })) })) }))
+    : sections), [frozen.sections, sections, leafNow]);
+
   // Opened from a night shift's heading: start there.
   const nightRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -410,7 +421,7 @@ export default function DayAgendaPanel({
 
         {/* Body: equipment groups, each with the steps due today. */}
         <div className="flex-1 overflow-y-auto">
-          {sections.map((sec) => (
+          {shownSections.map((sec) => (
             <React.Fragment key={sec.key}>
             {sec.shift === "day" && (
               <div className="sticky top-0 z-[1] px-4 py-1.5 flex items-center gap-2 border-b border-sky-200 bg-sky-100 text-sky-900 dark:border-sky-900 dark:bg-sky-950/70 dark:text-sky-100">
@@ -534,7 +545,7 @@ export default function DayAgendaPanel({
                         const nx = nextOf(id);
                         return (
                           <div className="pt-1">
-                            <StepCard key={`${id}:${r.leaf.status}:${pct}`} m={r.leaf} wo={woOf(r.leaf) ?? undefined} pct={pct} hours={h}
+                            <StepCard key={id} m={r.leaf} wo={woOf(r.leaf) ?? undefined} pct={pct} hours={h}
                               rows={log.filter((x) => x.milestone_id === id)} notes={stepNotes.filter((n) => n.milestoneId === id)}
                               tz={tz} times={shiftTimes} now={clock} canEdit={canEdit}
                               onUpdate={async (u) => { const ok = await onUpdateStep(id, u); setNotesTick((t) => t + 1); return ok; }}
