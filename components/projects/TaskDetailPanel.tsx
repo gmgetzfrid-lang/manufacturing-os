@@ -31,6 +31,7 @@ import {
 import { buildProgressIndex } from "@/lib/scheduleProgress";
 import StatusControl from "@/components/projects/StatusControl";
 import { CancelJobForm } from "@/components/projects/CancelledJobs";
+import CrewPicker from "@/components/projects/CrewPicker";
 import ProgressControl, { ProgressSlider, ProgressNoteForm } from "@/components/projects/ProgressControl";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 
@@ -689,6 +690,8 @@ function EditForm({
   };
   const [workOrderRef, setWorkOrderRef] = useState(m.workOrderRef ?? "");
   const [responsibleParty, setResponsibleParty] = useState(m.responsibleParty ?? "");
+  // Every crew on the schedule, to pick from.
+  const crewList = useMemo(() => [...new Set((allTasks ?? []).map((t) => t.responsibleParty?.trim()).filter((x): x is string => !!x))], [allTasks]);
   const [responsibleOrg, setResponsibleOrg] = useState(m.responsibleOrg ?? "");
   const [responsibleKind, setResponsibleKind] = useState(m.responsibleKind ?? "");
   const [actualParty, setActualParty] = useState(m.actualParty ?? "");
@@ -808,7 +811,7 @@ function EditForm({
       </div>
       <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] pt-1">Responsible (planned)</div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <L label="Person / crew"><input value={responsibleParty} onChange={(e) => setResponsibleParty(e.target.value)} className={inp} /></L>
+        <L label="Person / crew"><CrewPicker value={responsibleParty} onChange={setResponsibleParty} crews={crewList} className="w-full" label="Person / crew" /></L>
         <L label="Dept / company"><input value={responsibleOrg} onChange={(e) => setResponsibleOrg(e.target.value)} className={inp} /></L>
       </div>
       <L label="Type"><KindSelect value={responsibleKind} onChange={setResponsibleKind} /></L>

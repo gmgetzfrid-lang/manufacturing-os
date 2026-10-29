@@ -16,6 +16,7 @@ import { fmtInTz, toDateTimeInput, fromDateTimeInput } from "@/lib/scheduleTz";
 import { planDiscovery, defaultAfter, defaultHolds, impactLine, earliestStart, followsUntil, ADDED, type DiscoveryDraft, type AddedKind } from "@/lib/discovery";
 import type { CriticalMode } from "@/lib/criticalPath";
 import DateTimePicker from "@/components/projects/DateTimePicker";
+import CrewPicker from "@/components/projects/CrewPicker";
 
 const ms = (v: unknown) => (v == null ? NaN : Date.parse(String(v)));
 
@@ -147,8 +148,7 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
                 <div key={i} className="flex flex-wrap items-center gap-1.5">
                   <input value={r.name} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} placeholder="Step — e.g. Weld repair tray 14" aria-label="Step"
                     className={`${inp} flex-1 min-w-[180px]`} />
-                  <input value={r.crew} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, crew: e.target.value } : x)))} placeholder="Crew" aria-label="Crew" list="discovery-crews"
-                    className={`${inp} w-32`} />
+                  <CrewPicker value={r.crew} onChange={(v) => setRows(rows.map((x, j) => (j === i ? { ...x, crew: v } : x)))} crews={crews} className="w-40" />
                   <span className="inline-flex items-center gap-1">
                     <input value={r.hours} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, hours: e.target.value.replace(/[^0-9.]/g, "").slice(0, 5) } : x)))} inputMode="decimal" placeholder="hrs" aria-label="Hours"
                       className={`${inp} w-14 text-right font-mono`} />
@@ -157,7 +157,6 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
                   {rows.length > 1 && <button type="button" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label="Remove this step" className="w-7 h-7 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><Trash2 className="w-3.5 h-3.5" /></button>}
                 </div>
               ))}
-              <datalist id="discovery-crews">{crews.map((c) => <option key={c} value={c} />)}</datalist>
               <button type="button" onClick={() => setRows([...rows, { name: "", crew: rows[rows.length - 1]?.crew ?? "", hours: "" }])} className="inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline"><Plus className="w-3.5 h-3.5" /> Another step (done after the one above)</button>
             </div>
           </div>
