@@ -11,7 +11,7 @@
 // (lib/workOrdersPrint) — without changing the view.
 
 import React, { useMemo, useState } from "react";
-import { Search, ChevronRight, Printer } from "lucide-react";
+import { Search, ChevronRight, Printer, Ban } from "lucide-react";
 import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { leafPercent } from "@/lib/scheduleProgress";
@@ -29,6 +29,7 @@ import { buildTimeLog, type TimeLogRow } from "@/lib/timeLog";
 import { useLetterhead } from "@/lib/letterheadStore";
 import { letterheadDocument } from "@/lib/letterhead";
 import { workOrdersHtml, PRINT_CSS, type PrintOrder, type PrintFormat } from "@/lib/workOrdersPrint";
+import { CancelJobForm } from "@/components/projects/CancelledJobs";
 
 const STEP_STATUS: Record<MilestoneStatus, string> = { planned: "Not started", in_progress: "In progress", completed: "Done", on_hold: "On hold", blocked: "Blocked", missed: "Missed" };
 const SHOW_WORD: Record<string, string> = { all: "All work orders", open: "Open work orders", behind: "Work orders behind plan", held: "Held work orders", done: "Done work orders" };
@@ -63,10 +64,14 @@ interface WorkOrder {
   find: string;
 }
 
-export default function WorkOrdersView({ milestones, childrenByParent, tz, times, progress, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery, projectId, projectName }: {
+export default function WorkOrdersView({ milestones, childrenByParent, tz, times, progress, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery, projectId, projectName, user, onCancelled }: {
   milestones: Milestone[];
   /** For printing: the project's letterhead, history and name. */
   projectId?: string; projectName?: string;
+  /** Who's working: cancelling a work order is stamped with it. */
+  user?: { id: string; name?: string; email?: string };
+  /** A work order came off the schedule. */
+  onCancelled?: () => void;
   childrenByParent: Map<string, Milestone[]>;
   tz: string; times: ShiftTimes;
   progress?: Map<string, ProgressInfo>;
@@ -82,6 +87,8 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
   const [query, setQuery] = useState("");
   const [show, setShow] = useState<Show>("all");
   const [open, setOpen] = useState<Set<string>>(new Set());
+  // The work order being taken off the schedule (its key).
+  const [cancelling, setCancelling] = useState<string | null>(null);
 
   const orders = useMemo(() => {
     const byId = new Map<string, Milestone>();
@@ -329,6 +336,22 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
                     <CalendarQuickView whole task={o.owner} onDay={o.steps} others={[]} dayKey={today} band={null} dayLabel="" marks={marks}
                       tz={tz} times={times} progress={progress} canEdit={canEdit}
                       onUpdate={onUpdate} onFixTimes={onFixTimes} onOpenDetail={onOpenDetail} onMoveDays={canEdit ? onMoveDays : undefined} onDiscovery={onDiscovery} />
+                    {/* Off this schedule — still done, somewhere else (Put back is above the schedule). */}
+                    {canEdit && user && o.owner.id && (
+                      <div className="px-3 py-2 border-t border-[var(--color-border)] bg-[var(--color-surface-2)]/50">
+                        {cancelling === o.key ? (
+                          <CancelJobForm id={o.owner.id} name={`${o.wo ? `WO ${o.wo} · ` : ""}${o.owner.name}`} steps={o.steps.length}
+                            userId={user.id} userName={user.name} userEmail={user.email}
+                            onClose={() => setCancelling(null)}
+                            onDone={() => { setCancelling(null); toggle(o.key); onCancelled?.(); }} />
+                        ) : (
+                          <button type="button" onClick={() => setCancelling(o.key)} title="Take it off this schedule — it's still done, somewhere else"
+                            className="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 px-2 py-1 rounded-md">
+                            <Ban className="w-3.5 h-3.5" /> Cancel work order
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </li>
