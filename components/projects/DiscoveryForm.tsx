@@ -6,7 +6,8 @@
 // start — as soon as it can, or a set time (two different times: found
 // is history, the start is the plan); who approved it. Before it's saved,
 // what it does to the schedule (lib/discovery): the task's finish, the
-// turnaround's, the critical path, and the steps it pushes.
+// turnaround's, the critical path, and the steps it holds up (a forecast —
+// no other step's planned dates are changed).
 
 import React, { useMemo, useState } from "react";
 import { X, Plus, Trash2 } from "lucide-react";
@@ -209,7 +210,7 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
                   {plan.impact.finish[1] <= plan.impact.finish[0] + 6 * 60_000 && plan.impact.taskFinish[1] > plan.impact.taskFinish[0] ? " — it fits in the float" : ""}</div>
                 <div className="text-[var(--color-text-muted)]">New work: {plan.steps.map((s) => `${s.name} ${fmt(Date.parse(s.plannedStartAt))} → ${fmt(Date.parse(s.plannedAt))}`).join("; ")}</div>
                 {plan.impact.pushed.length > 0 && (
-                  <div>Pushes {plan.impact.pushed.length} planned step{plan.impact.pushed.length === 1 ? "" : "s"}: {plan.impact.pushed.slice(0, 5).map((p) => `${p.name} +${hrs(p.hours)}`).join(", ")}{plan.impact.pushed.length > 5 ? ` + ${plan.impact.pushed.length - 5} more` : ""}</div>
+                  <div>Holds up {plan.impact.pushed.length} planned step{plan.impact.pushed.length === 1 ? "" : "s"} (forecast): {plan.impact.pushed.slice(0, 5).map((p) => `${p.name} +${hrs(p.hours)}`).join(", ")}{plan.impact.pushed.length > 5 ? ` + ${plan.impact.pushed.length - 5} more` : ""}. Their planned dates don&apos;t change.</div>
                 )}
               </>
             )}
@@ -222,7 +223,7 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
               {busy ? "Adding…" : "Add to the schedule"}
             </button>
           </div>
-          <div className="text-[10.5px] text-[var(--color-text-faint)]">It goes in as steps under {taskName}, marked as {k.lower}, linked after the step it follows; what it holds up waits on it, and linked work downstream moves later. The baseline stays as it was, so the report shows the difference.</div>
+          <div className="text-[10.5px] text-[var(--color-text-faint)]">It goes in as steps under {taskName}, marked as {k.lower}, linked after the step it follows; what it holds up waits on it. No other step&apos;s planned dates change — the delay shows as the forecast finish, against the plan.</div>
         </div>
       </div>
     </div>

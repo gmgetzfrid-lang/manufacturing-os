@@ -756,7 +756,6 @@ export default function ExecutionView({
     const who = { updatedBy: userId, updatedByName: userName, updatedByEmail: userEmail, updatedByRole: userRole };
     const real = (id: string) => (id.startsWith("new:") ? made[Number(id.slice(4))] : id);
     const linksBefore = plan.links.map((l) => ({ id: l.id, dependsOn: byId.get(l.id)?.dependsOn ?? [] }));
-    const datesBefore: DateChange[] = plan.moves.map((c) => { const m = byId.get(c.id); return { id: c.id, plannedStartAt: (m?.plannedStartAt as string | undefined) ?? (m?.plannedAt as string), plannedAt: m?.plannedAt as string }; });
     try {
       for (const [i, st] of plan.steps.entries()) {
         const created = await createMilestone({ orgId, projectId, name: st.name, plannedStartAt: st.plannedStartAt, plannedAt: st.plannedAt, durationHours: st.hours, parentId: draft.taskId,
@@ -774,14 +773,15 @@ export default function ExecutionView({
         } });
       }
       for (const l of plan.links) await updateMilestone({ id: l.id, ...who, patch: { dependsOn: l.dependsOn.map(real) } });
-      if (plan.moves.length && onMoveMany) await onMoveMany(plan.moves);
+      // The plan's dates never move for found or added work: what it would
+      // push is the forecast (the critical path reads the links), and the
+      // planned dates stay the yardstick for behind / ahead.
       // Said where the work is: a comment on the step it follows.
       if (after?.id) await addMilestoneNote({ orgId, milestoneId: after.id, kind: "note", statusAt: after.status, body: addedNote(draft.kind ?? "discovery", draft.what), createdBy: userId, createdByName: userName, happenedAt: new Date(draft.foundAt).toISOString() }).catch(() => undefined);
       onRefresh();
       announce(`${ADDED[draft.kind ?? "discovery"].word} on ${truncate(task?.name ?? "the task", 24)}: ${impactLine(plan.impact, (h) => `${h} h`)}`, async () => {
         for (const id of made) await deleteMilestone(id, userId).catch(() => undefined);
         for (const l of linksBefore) await updateMilestone({ id: l.id, ...who, patch: { dependsOn: l.dependsOn } }).catch(() => undefined);
-        if (datesBefore.length && onMoveMany) await onMoveMany(datesBefore);
         onRefresh();
       }, plan.impact.critical ? "default" : "success");
       return true;
@@ -790,7 +790,7 @@ export default function ExecutionView({
       onRefresh();
       return false;
     }
-  }, [canEdit, items, tz, criticalMode, byId, childrenOf, orgId, projectId, userId, userName, userEmail, userRole, onMoveMany, onRefresh, announce, notify]);
+  }, [canEdit, items, tz, criticalMode, byId, childrenOf, orgId, projectId, userId, userName, userEmail, userRole, onRefresh, announce, notify]);
 
   // Plan the next shift (PlanNextShift, lib/shiftPlan): a swap, pull-in or
   // push-out moves the planned dates — linked work after it too — so the
