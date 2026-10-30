@@ -2,17 +2,17 @@
 // or every shift of the job, for the PDF, Word and Excel exports. The same
 // hours the report shows (lib/shiftHourly): the meeting (who attended),
 // start of shift (permitting), each hour, its breaks, and what each crew
-// kept working on. An hour nothing was written for yet (a shift nobody
-// opened the report on) is said plainly from its entries, never made up.
+// kept working on, and where each stood. Each hour says its own entries
+// (or what someone typed over it), never anything made up.
 
 import {
-  hourSlots, hourlyRows, ongoingByHour, breaksOn, plainHour, rowsBySlot, breakLabel, SLOT_LABEL, type SlotKind,
+  hourSlots, hourlyRows, ongoingByHour, breaksOn, breakLabel, SLOT_LABEL, type SlotKind,
 } from "@/lib/shiftHourly";
 import { meetingLeadMin, shiftWindow, shiftWindowsBetween, workShiftOf, type ShiftTimes, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
 import { crewLine } from "@/lib/managementUpdate";
 import { noEmDash } from "@/lib/noEmDash";
 import type { ShiftRecord } from "@/lib/shiftRecord";
-import type { TimeLogRow } from "@/lib/timeLog";
+import { stepLabels, type TimeLogRow } from "@/lib/timeLog";
 import type { Milestone } from "@/types/schema";
 
 export interface LogEntry {
@@ -45,7 +45,7 @@ export interface ShiftLog {
 /** A step as the log needs it: who works it, and on which shift. */
 export interface LogStep { id: string; name: string; task: string; crew: string; work: WorkShift }
 
-export type LogProgress = { milestone_id: string; at: string; new_status: string };
+export type LogProgress = { milestone_id: string; at: string; new_status: string; new_percent?: number | null };
 
 /** "5:30 AM", "12:00 AM": plant time, always with AM / PM. */
 export function clockAt(at: number, tz: string): string {
@@ -61,8 +61,9 @@ export const exportedLabel = (now: number, tz: string) =>
 export function logSteps(milestones: Milestone[], tz: string, times: ShiftTimes): LogStep[] {
   const parents = new Set(milestones.map((m) => m.parentId).filter((x): x is string => !!x));
   const name = new Map(milestones.map((m) => [m.id, m.name]));
+  const label = stepLabels(milestones);
   return milestones.filter((m) => m.id && !parents.has(m.id)).map((m) => ({
-    id: m.id!, name: m.name, task: (m.parentId ? name.get(m.parentId) : "") ?? "", crew: m.responsibleParty?.trim() ?? "", work: workShiftOf(m, tz, times),
+    id: m.id!, name: label.get(m.id!) ?? m.name, task: (m.parentId ? name.get(m.parentId) : "") ?? "", crew: m.responsibleParty?.trim() ?? "", work: workShiftOf(m, tz, times),
   }));
 }
 
@@ -88,16 +89,13 @@ export function shiftLog(o: {
   const slots = hourSlots(shift, meetingLeadMin(o.times), breaksOn(shift, o.times.breaks, tz));
   const going = ongoingByHour(slots, o.steps.map((s) => ({ ...s, worksShift: s.work === "both" || s.work === shift.kind })), o.log, upTo);
   const rows = o.rows.filter((r) => r.at >= shift.start && r.at < shift.end);
-  const said = rowsBySlot(rows, slots);
-  const split = (t: string) => t.split("\n").map((x) => noEmDash(x).trim()).filter(Boolean);
-  const entries = hourlyRows(o.record?.hourly, slots, upTo).map(({ slot, text }): LogEntry => {
+  // The same hours, and the same lines, as the report shows.
+  const entries = hourlyRows(o.record?.hourly, slots, upTo, rows, tz).map(({ slot, lines }): LogEntry => {
     const clock = clockAt(slot.start, tz);
     if (slot.kind === "meeting") {
-      return { clock, kind: "meeting", title: SLOT_LABEL.meeting, lines: [...meetingCrews(o.record, rows, [...going.values()].flat()), ...split(text)], continuing: [] };
+      return { clock, kind: "meeting", title: SLOT_LABEL.meeting, lines: [...meetingCrews(o.record, rows, [...going.values()].flat()), ...lines], continuing: [] };
     }
     if (slot.kind === "break") return { clock, kind: "break", title: breakLabel(slot), lines: [], continuing: [] };
-    // As written on the report; an hour never written, from its entries.
-    const lines = split(text || plainHour(said.get(slot.key) ?? []));
     return { clock, kind: slot.kind, ...(slot.kind === "permit" ? { title: SLOT_LABEL.permit } : {}), lines, continuing: (going.get(slot.key) ?? []).map(noEmDash) };
   });
   return {

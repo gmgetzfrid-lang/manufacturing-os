@@ -8,18 +8,17 @@ const conn = { provider: "anthropic" as const, model: "claude-opus-5-5" };
 
 describe("modelForJob", () => {
   it("a choice wins; 'main' is the main model", () => {
-    expect(modelForJob({ ...conn, jobModels: { shiftNotes: "claude-haiku-5-5" } }, "shiftNotes")).toBe("claude-haiku-5-5");
+    expect(modelForJob({ ...conn, jobModels: { drafting: "claude-haiku-5-5" } }, "drafting")).toBe("claude-haiku-5-5");
     expect(modelForJob({ ...conn, jobModels: { reading: "main" } }, "reading")).toBe("claude-opus-5-5");
   });
   it("no choice: the job's default, else the main model", () => {
-    expect(modelForJob(conn, "shiftNotes")).toBe("claude-sonnet-5-5");
     expect(modelForJob(conn, "reading")).toBe("claude-haiku-4-5");
     expect(modelForJob(conn, "knowledge")).toBe("claude-opus-5-5");
     expect(modelForJob(conn, null)).toBe("claude-opus-5-5");
   });
   it("a choice for another provider is ignored", () => {
     expect(modelForJob({ ...conn, jobModels: { knowledge: "gpt-4o" } }, "knowledge")).toBe("claude-opus-5-5");
-    expect(modelForJob({ provider: "openai", model: "gpt-5.1", jobModels: { shiftNotes: "claude-sonnet-5-5" } }, "shiftNotes")).toBe("gpt-5.1");
+    expect(modelForJob({ provider: "openai", model: "gpt-5.1", jobModels: { drafting: "claude-sonnet-5-5" } }, "drafting")).toBe("gpt-5.1");
   });
 });
 

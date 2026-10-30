@@ -2,22 +2,19 @@
 
 // Shift notes, hour by hour — on the turnover report. The shift's meeting
 // (who attended: each crew's supervisor and head count), the first hour —
-// start of shift, permitting — then each hour to the end, written from the
-// shift's own entries in that hour (lib/shiftHourly) whenever the report is
-// open and they've changed. Any hour can be typed over; that one is then
-// kept as typed.
+// start of shift, permitting — then each hour to the end, saying the
+// shift's own entries in that hour, one line each (lib/shiftHourly). Any
+// hour can be typed over; that one is then kept as typed.
 
-import React, { useEffect, useRef, useState } from "react";
-import { Loader2, Pencil, RotateCcw } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import React, { useState } from "react";
+import { Pencil, RotateCcw } from "lucide-react";
 import { CrewCountEditor, AddCompany } from "@/components/projects/ShiftRecordParts";
 import { crewLine } from "@/lib/managementUpdate";
 import type { CrewCount } from "@/lib/shiftRecord";
 import { newId } from "@/lib/shiftRecord";
 import type { TimeLogRow } from "@/lib/timeLog";
 import {
-  hourlyClocks, hourlyPrompt, hourlyRows, hoursToWrite, linesBySlot, liveLines, parseHourly, rowsBySlot, slotOf, wordHours,
-  SLOT_LABEL, breakLabel, type HourSlot, type HourlyLine, type HourlyNotes,
+  hourlyClocks, hourlyRows, typedLines, slotOf, SLOT_LABEL, breakLabel, type HourSlot, type HourlyNotes,
 } from "@/lib/shiftHourly";
 
 const inputCls = "rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1 text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent-ring)]";
@@ -27,21 +24,14 @@ export interface HourlyCtx {
   notes?: HourlyNotes;
   /** Change the notes as saved now (read fresh, so nothing typed meanwhile is lost). */
   update: (change: (cur: HourlyNotes | undefined) => HourlyNotes | null) => Promise<void>;
-  /** The shift's entries (the time log for its window). */
-  rows: () => Promise<TimeLogRow[]>;
-  orgId: string;
-  projectId: string;
-  by: string | null;
-  shiftTitle: string;
-  window: string;
+  /** The shift's entries (the time log for its window); null while they're read. */
+  entries: TimeLogRow[] | null;
   /** The shift by the hour (lib/shiftHourly hourSlots). */
   slots: HourSlot[];
   /** Up to when the hours show: now, or the shift's end. */
   upTo: number;
   /** What each crew kept working on in an hour nothing new was entered for it (lib/shiftHourly ongoingByHour). */
   ongoing?: Map<string, string[]>;
-  /** Being written now. */
-  busy?: boolean;
 }
 
 /** The meeting's attendance: each crew on the shift, its supervisor at the
@@ -59,83 +49,12 @@ export function meetingLine(m: MeetingCrews | undefined, extra?: string): string
   return [crews.length ? crews.join("; ") : null, extra?.trim() || null].filter(Boolean).join(". ");
 }
 
-/** Keeps the shift's hours written: on opening the report and whenever its
- *  entries change, the hours whose entries changed (and nobody typed over)
- *  are written again; hours said plainly last time are worded once more. */
-export function useAutoHourly(h: HourlyCtx | undefined, on: boolean, tz: string): boolean {
-  const [busy, setBusy] = useState(false);
-  const notes = useRef<HourlyNotes | undefined>(undefined);
-  const tried = useRef(new Set<string>());
-  const running = useRef(false);
-  // A change while it was writing: once more when it's done.
-  const again = useRef(false);
-  const [tick, setTick] = useState(0);
-  useEffect(() => { notes.current = h?.notes; }, [h?.notes]);
-  const rows = h?.rows;
-  const update = h?.update;
-  const slots = h?.slots;
-  const orgId = h?.orgId, projectId = h?.projectId, shiftTitle = h?.shiftTitle ?? "", win = h?.window ?? "", by = h?.by ?? null;
-  useEffect(() => {
-    if (!on || !rows || !update || !slots?.length || !orgId || !projectId) return;
-    if (running.current) { again.current = true; return; }
-    const meta = { orgId, projectId, shiftTitle, window: win, by };
-    let alive = true;
-    void (async () => {
-      running.current = true;
-      try {
-        const entries = rowsBySlot(await rows(), slots);
-        const have = linesBySlot(notes.current, slots);
-        const due = hoursToWrite(slots, entries, have, tz, true);
-        // Worded once per visit: an hour said plainly isn't asked again until its entries change.
-        const write = due.write.filter((w) => !(tried.current.has(`${w.slot.key}:${w.src}`) && (have.get(w.slot.key)?.length ?? 0) > 0));
-        const clear = due.clear;
-        if (!write.length && !clear.length) return;
-        for (const w of write) tried.current.add(`${w.slot.key}:${w.src}`);
-        if (alive) setBusy(true);
-        let answer: Array<{ time: string; text: string }> = [];
-        let model: string | undefined;
-        if (write.length) {
-          try {
-            const { data } = await supabase.auth.getSession();
-            const res = await fetch("/api/projects/shift-notes", {
-              method: "POST",
-              headers: { "content-type": "application/json", ...(data.session?.access_token ? { authorization: `Bearer ${data.session.access_token}` } : {}) },
-              body: JSON.stringify({ orgId: meta.orgId, projectId: meta.projectId, prompt: hourlyPrompt(write, { tz, shiftTitle: meta.shiftTitle, window: meta.window }) }),
-            });
-            const out = await res.json().catch(() => null) as { text?: string; model?: string } | null;
-            if (res.ok && out?.text) { answer = parseHourly(out.text); model = out.model; }
-          } catch { /* said plainly below */ }
-        }
-        const worded = wordHours(answer, write, tz);
-        const redo = new Set([...write.map((w) => w.slot.key), ...clear]);
-        await update((cur) => {
-          // Onto the notes as they are now: an hour typed meanwhile stays.
-          const keep = liveLines(cur).filter((l) => l.hand || !redo.has(slotOf(l.at, slots).key));
-          const typed = new Set(keep.filter((l) => l.hand).map((l) => slotOf(l.at, slots).key));
-          const added: HourlyLine[] = write.filter((w) => !typed.has(w.slot.key)).map((w) => {
-            const x = worded.get(w.slot.key)!;
-            return { id: newId(), at: w.slot.start, text: x.text, src: w.src, ...(x.plain ? { plain: true } : {}) };
-          });
-          return { v: 2, lines: [...keep, ...added], model: model ?? cur?.model, madeAt: Date.now(), madeBy: meta.by };
-        });
-      } catch { /* the hours stay as they were; tried again on the next change */ }
-      finally {
-        running.current = false;
-        setBusy(false);
-        if (again.current) { again.current = false; setTick((t) => t + 1); }
-      }
-    })();
-    return () => { alive = false; };
-  }, [on, rows, update, slots, tz, orgId, projectId, shiftTitle, win, by, tick]);
-  return busy;
-}
-
 export function ShiftHourlyBox({ h, edit, print, tz, meeting }: {
   h: HourlyCtx; edit: boolean; print: boolean; tz: string; meeting?: MeetingCrews;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const rows = hourlyRows(h.notes, h.slots, h.upTo);
+  const rows = hourlyRows(h.notes, h.slots, h.upTo, h.entries, tz);
   const clocks = hourlyClocks(rows.map((r) => r.slot.start), tz);
 
   // An hour as typed: kept as typed (empty puts it back to the entries).
@@ -143,7 +62,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meeting }: {
     setEditing(null);
     try {
       await h.update((cur) => {
-        const rest = liveLines(cur).filter((l) => slotOf(l.at, h.slots).key !== slot.key);
+        const rest = typedLines(cur).filter((l) => slotOf(l.at, h.slots).key !== slot.key);
         const t = text?.split("\n").map((x) => x.replace(/\s+/g, " ").trim()).filter(Boolean).join("\n");
         return { ...(cur?.v === 2 ? cur : {}), v: 2, lines: t ? [...rest, { id: newId(), at: slot.start, text: t, hand: true }] : rest };
       });
@@ -176,12 +95,9 @@ export function ShiftHourlyBox({ h, edit, print, tz, meeting }: {
 
   return (
     <div className="space-y-1.5">
-      {h.busy && (
-        <div className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3 h-3 animate-spin" /> Updating…</div>
-      )}
       <ul className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)]">
         {rows.map((r, i) => {
-          const typed = r.lines.some((l) => l.hand);
+          const typed = r.typed;
           const label = SLOT_LABEL[r.slot.kind];
           // A break: its own quiet row, blocked off.
           if (r.slot.kind === "break") {
@@ -237,7 +153,7 @@ function Items({ text, going, empty }: { text: string; going: string[]; empty: b
   return (
     <ul className="space-y-0.5">
       {items.map((x, i) => <li key={i} className="break-words text-[var(--color-text)]">{x}</li>)}
-      {going.map((x, i) => <li key={`g${i}`} className="break-words text-[var(--color-text-muted)]"><span className="font-semibold">Continuing:</span> {x}</li>)}
+      {going.map((x, i) => <li key={`g${i}`} className="break-words text-[var(--color-text-muted)]"><span className="font-semibold">In progress:</span> {x}</li>)}
     </ul>
   );
 }

@@ -28,7 +28,7 @@ const MS = [
 ];
 const record: ShiftRecord = {
   crews: { Schultz: { supervisor: "Mike Leonard", headcount: 12 } },
-  hourly: { v: 2, lines: [{ id: "a", at: at(1), text: "Ancon started cleaning the tower on V-7." }] },
+  hourly: { v: 2, lines: [{ id: "a", at: at(1), text: "Ancon started cleaning the tower on V-7.", hand: true }, { id: "b", at: at(3), text: "Written for them earlier", src: "x" }] },
 };
 const rows = [row(at(1, 10), {}), row(at(3, 20), { id: "s2", step: "Install Manways", crew: "Schultz", what: "Done", comment: "All 4 in" })];
 // Schultz's step was started before the shift, and nothing new on it until 9:20.
@@ -55,10 +55,10 @@ describe("one shift's hourly log", () => {
     expect(one().entries[0].lines).toEqual(["Schultz: Mike Leonard · 12 on site", "Ancon: -"]);
   });
 
-  it("an hour as written on the report; one never written, from its entries", () => {
+  it("an hour typed over, as typed; the others say their entries", () => {
     const l = one();
     expect(l.entries.find((e) => e.clock === "7:00 AM")?.lines).toEqual(["Ancon started cleaning the tower on V-7."]);
-    expect(l.entries.find((e) => e.clock === "9:00 AM")?.lines).toEqual(["Schultz: V-7 Install Manways done - All 4 in."]);
+    expect(l.entries.find((e) => e.clock === "9:00 AM")?.lines).toEqual(["9:20 AM Schultz: V-7 Install Manways done. All 4 in."]);
   });
 
   it("what kept going, each hour nothing new was entered for it", () => {
@@ -148,7 +148,7 @@ describe("the files", () => {
     const t = hourlyLogTable([one()]);
     expect(t[0]).toEqual(["Thu, Oct 29, 2026", "Day shift", "5:30 AM", "Meeting", "Schultz: Mike Leonard · 12 on site"]);
     expect(t).toContainEqual(["Thu, Oct 29, 2026", "Day shift", "12:00 PM", "Break", "Lunch, 30 min"]);
-    expect(t).toContainEqual(["Thu, Oct 29, 2026", "Day shift", "8:00 AM", "Continuing", "Ancon - V-7 Clean Tower"]);
+    expect(t).toContainEqual(["Thu, Oct 29, 2026", "Day shift", "8:00 AM", "In progress", "Ancon - V-7 Clean Tower"]);
     const XLSX = await import("xlsx");
     const wb = XLSX.read(await hourlyLogXlsx([one()], OPTS), { type: "array" });
     const back = XLSX.utils.sheet_to_json<string[]>(wb.Sheets["Hourly log"], { header: 1 });

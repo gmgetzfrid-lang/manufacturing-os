@@ -41,7 +41,7 @@ export function entryParas(e: LogEntry): Array<{ text: string; style: "title" | 
   const out: Array<{ text: string; style: "title" | "line" | "cont" | "muted" }> = [];
   if (e.title) out.push({ text: e.title, style: e.kind === "break" ? "muted" : "title" });
   for (const l of e.lines) out.push({ text: l, style: "line" });
-  for (const c of e.continuing) out.push({ text: `Continuing: ${c}`, style: "cont" });
+  for (const c of e.continuing) out.push({ text: `In progress: ${c}`, style: "cont" });
   if (e.kind !== "break" && !e.lines.length && !e.continuing.length) out.push({ text: e.kind === "meeting" ? "No attendance entered" : "Nothing logged", style: "muted" });
   return out.map((p) => ({ ...p, text: noEmDash(p.text) }));
 }
@@ -544,7 +544,7 @@ export function hourlyLogTable(logs: ShiftLog[]): string[][] {
       if (e.kind === "break") { out.push([...at, e.clock, "Break", e.title ?? "Break"]); continue; }
       const k = KIND_WORD[e.kind];
       for (const x of e.lines) out.push([...at, e.clock, k, noEmDash(x)]);
-      for (const x of e.continuing) out.push([...at, e.clock, "Continuing", noEmDash(x)]);
+      for (const x of e.continuing) out.push([...at, e.clock, "In progress", noEmDash(x)]);
       if (!e.lines.length && !e.continuing.length) out.push([...at, e.clock, k, e.kind === "meeting" ? "No attendance entered" : "Nothing logged"]);
     }
   }

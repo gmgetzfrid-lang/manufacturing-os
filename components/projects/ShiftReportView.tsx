@@ -56,7 +56,7 @@ import { IncidentsLine, ShiftNotesBox, TimeLogButton } from "@/components/projec
 import { useSortRows, Grip } from "@/components/projects/SortRows";
 import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
 import { discoveries, discoveryOf, discoverySummary, discoveryStepLine, impactLine, ADDED, kindOf, addedTitle, type Discovery } from "@/lib/discovery";
-import { buildTimeLog, downloadTimeLog } from "@/lib/timeLog";
+import { buildTimeLog, downloadTimeLog, stepLabels } from "@/lib/timeLog";
 import { loadProgressLog, scheduleAt, type ProgressLogRow } from "@/lib/progressHistory";
 import { resolveCriticalPath, floatsOf, pathMarks, CRITICAL_MODES, type PathMarks } from "@/lib/criticalPath";
 import { useCriticalMode, saveCriticalMode } from "@/lib/criticalModeStore";
@@ -75,7 +75,7 @@ import { TryControl, ShipBar } from "@/components/projects/HandoverControls";
 import { PullAheadPicker } from "@/components/projects/PullAheadPicker";
 import { useHandoverDraft } from "@/lib/useHandoverDraft";
 import { scopeOf } from "@/lib/pullAhead";
-import { ShiftHourlyBox, useAutoHourly, meetingLine, type HourlyCtx, type MeetingCrews } from "@/components/projects/ShiftHourly";
+import { ShiftHourlyBox, meetingLine, type HourlyCtx, type MeetingCrews } from "@/components/projects/ShiftHourly";
 import { HourlyLogExport } from "@/components/projects/HourlyLogExport";
 import { exportedLabel, logSteps, shiftLog } from "@/lib/hourlyLog";
 import { pngInBrowser, saveHourlyLog, type LogFormat } from "@/lib/hourlyLogFiles";
@@ -420,6 +420,10 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     if (!userId || !orgId) throw new Error("Sign in to save the notes.");
     await saveShiftRecord({ orgId, projectId, shiftKey: thisKey, userId, change: (r) => ({ ...r, hourly: change(r.hourly) ?? undefined }) });
   }, [orgId, projectId, userId, thisKey]);
+  // The shift's entries as the hours say them: the time log for its window,
+  // each comment with the entry it was typed with. Re-read as progress is entered.
+  const entries = useMemo(() => (log ? buildTimeLog({ milestones: live, log, notes: allNotes, records, tz, times, from: shift.start, to: shift.end }) : null),
+    [log, live, allNotes, records, tz, times, shift.start, shift.end]);
   // The shift by the hour: its meeting (from the shift times), the first
   // hour (permitting), then each hour.
   const slots = useMemo(() => hourSlots(shift, meetingLeadMin(times), breaksOn(shift, times.breaks, tz)), [shift, times, tz]);
@@ -427,9 +431,10 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const ongoing = useMemo(() => {
     const parents = new Set(live.map((m) => m.parentId).filter((x): x is string => !!x));
     const name = new Map(live.map((m) => [m.id, m.name]));
+    const label = stepLabels(live);
     const steps = live.filter((m) => m.id && !parents.has(m.id)).map((m) => {
       const w = workShiftOf(m, tz, times);
-      return { id: m.id!, name: m.name, task: (m.parentId ? name.get(m.parentId) : "") ?? "", crew: m.responsibleParty?.trim() ?? "", worksShift: w === "both" || w === shift.kind };
+      return { id: m.id!, name: label.get(m.id!) ?? m.name, task: (m.parentId ? name.get(m.parentId) : "") ?? "", crew: m.responsibleParty?.trim() ?? "", worksShift: w === "both" || w === shift.kind };
     });
     return ongoingByHour(slots, steps, log ?? [], Math.min(now, shift.end));
   }, [live, tz, times, shift.kind, shift.end, slots, log, now]);
@@ -458,9 +463,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       error: recMsg ?? (recErr && canEdit ? recErr : null),
       tz,
       hourly: orgId ? {
-        notes: recThis?.hourly, update: updateHourly, rows: shiftRows, orgId, projectId, by, slots, upTo: Math.min(now, shift.end), ongoing,
-        shiftTitle: `${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`,
-        window: ctx.win(shift),
+        notes: recThis?.hourly, update: updateHourly, entries, slots, upTo: Math.min(now, shift.end), ongoing,
       } : undefined,
       order: tableOrder,
       setOrder: (table, ids) => {
@@ -468,10 +471,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         void saveRec(thisKey, (r) => ({ ...r, order: { ...(r.order ?? {}), [table]: ids ?? undefined } }));
       },
     };
-  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, saveRec, recMsg, recErr, tableOrder, setOrderLocal, updateHourly, shiftRows, projectId, shift, slots, now, ongoing]);
-  // The hours keep themselves written while the turnover is open.
-  const hourlyBusy = useAutoHourly(sheet.hourly, meeting === "turnover" && sheet.edit, tz);
-  const sheetNow = useMemo<SheetCtx>(() => (sheet.hourly ? { ...sheet, hourly: { ...sheet.hourly, busy: hourlyBusy } } : sheet), [sheet, hourlyBusy]);
+  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, saveRec, recMsg, recErr, tableOrder, setOrderLocal, updateHourly, entries, shift, slots, now, ongoing]);
   const shiftTitle = `${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`;
   // The hourly log of the shift on screen (any shift, backed up by date),
   // as a file on the letterhead.
@@ -532,11 +532,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     ? kickoffSections(kickoff, ctx)
     : meeting === "closeout"
       ? closeoutSections(closeout, report, ctx, cancelled, discoveryList, lookBack, lessons)
-      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet: sheetNow, onEdit: canEdit && onUpdateStep ? setEditing : undefined, forecast, pathSource, discovery: discoveryList, why, taskSteps: (id) => stepTally.get(id),
+      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet, onEdit: canEdit && onUpdateStep ? setEditing : undefined, forecast, pathSource, discovery: discoveryList, why, taskSteps: (id) => stepTally.get(id),
         onDiscovery: onDiscovery ? () => { const first = view.goals.all[0]?.parentId ?? view.review.done[0]?.parentId; const t = (first ? live.find((m) => m.id === first) : undefined) ?? live.find((m) => live.some((k) => k.parentId === m.id)); if (t) onDiscovery(t); } : undefined,
         // Only while the next shift is still ahead (or on).
         onPlanNext: onPlanNext && report.next.end > now ? () => onPlanNext(report.next) : undefined }),
-  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheetNow, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, lessons]);
+  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, lessons]);
   // Sections left off the report, on screen and in print — the viewer's own
   // choice for each meeting, remembered like the email's. Each comes back
   // with a tap (listed at the bottom); the email keeps its own choice.
@@ -654,7 +654,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           incidents: sheet.incidents && (sheet.incidents.none || sheet.incidents.items?.length) ? { none: !!sheet.incidents.none, items: sheet.incidents.items ?? [] } : undefined,
           shiftNotes: sheet.notes.map((n) => ({ at: n.at, text: n.text, followUp: n.followUp, from: n.from })),
           hourly: sheet.hourly ? (() => {
-            const hr = hourlyRows(sheet.hourly.notes, sheet.hourly.slots, sheet.hourly.upTo);
+            const hr = hourlyRows(sheet.hourly.notes, sheet.hourly.slots, sheet.hourly.upTo, sheet.hourly.entries, tz);
             const cl = hourlyClocks(hr.map((r) => r.slot.start), tz);
             return hr.map((r, i) => ({ clock: cl[i], kind: r.slot.kind, text: r.slot.kind === "break" ? breakLabel(r.slot) : r.text, ongoing: sheet.hourly?.ongoing?.get(r.slot.key) }));
           })() : [],
@@ -1709,7 +1709,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
 /** Shift notes, hour by hour: the meeting that started the shift (who
  *  attended), the first hour (permitting), then each hour so far. */
 function hourlySection(sh: SheetCtx, h: HourlyCtx, meeting?: MeetingCrews): Sec {
-  const rows = hourlyRows(h.notes, h.slots, h.upTo);
+  const rows = hourlyRows(h.notes, h.slots, h.upTo, h.entries, sh.tz);
   const clocks = hourlyClocks(rows.map((r) => r.slot.start), sh.tz);
   const said = rows.filter((r) => r.slot.kind !== "meeting" && r.text).length;
   return {

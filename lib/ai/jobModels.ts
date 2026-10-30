@@ -3,14 +3,14 @@
 // One main model (ai_connections.model) covers everything; a person can
 // point a job at a different model (ai_connections.job_models, from
 // 20261108_job_models.sql) — the strongest model for Ask Knowledge, a
-// lighter one for shift notes, a cheap tier for reading drawings. A job with
+// cheap tier for reading drawings. A job with
 // no choice keeps its own default (jobDefault) or the main model.
 // Client-safe: no server imports.
 
 import type { AiProviderId } from "@/lib/ai/providerCall";
 import { estimateCostUsd } from "@/lib/ai/pricing";
 
-export type AiJob = "knowledge" | "shiftNotes" | "reading" | "drafting" | "projectDocs";
+export type AiJob = "knowledge" | "reading" | "drafting" | "projectDocs";
 
 /** A stored choice: a model id, or "main" for the main model. */
 export type JobModels = Partial<Record<AiJob, string>>;
@@ -32,7 +32,6 @@ export interface AiJobInfo {
 // The settings panel swaps in the person's own averages when they have them.
 export const AI_JOBS: AiJobInfo[] = [
   { id: "knowledge", label: "Ask Knowledge", what: "Questions answered from your documents", ops: ["knowledgeAsk", "orchestrator"], use: { inputTokens: 127_000, outputTokens: 3_700, per: "question" } },
-  { id: "shiftNotes", label: "Shift notes", what: "The hour-by-hour notes for the shift report", ops: ["shiftNotes"], use: { inputTokens: 6_000, outputTokens: 800, per: "shift" } },
   { id: "reading", label: "Reading drawings & scans", what: "Pages with no text layer, read when a library is indexed", ops: ["knowledgeVision", "drawingLocate"], use: { inputTokens: 3_400, outputTokens: 620, per: "page" } },
   { id: "drafting", label: "Forms & templates", what: "Filling forms and drafting from templates", ops: ["formDraft", "templateDraft"], use: { inputTokens: 20_000, outputTokens: 3_000, per: "draft" } },
   { id: "projectDocs", label: "Project documents", what: "Quotes, invoices, budgets, checklists, quality manuals", ops: ["quoteParse", "invoiceParse", "budgetDocParse", "checklistSegment", "checklistAssess", "qualityManualReview"], use: { inputTokens: 15_000, outputTokens: 2_000, per: "document" } },
@@ -48,7 +47,6 @@ export const READING_DEFAULT: Record<AiProviderId, string> = {
 /** A job's model when nobody has picked one (undefined = the main model). */
 export function jobDefault(job: AiJob, provider: AiProviderId): string | undefined {
   if (job === "reading") return READING_DEFAULT[provider];
-  if (job === "shiftNotes" && provider === "anthropic") return "claude-sonnet-5-5";
   return undefined;
 }
 

@@ -37,6 +37,24 @@ const ms = (v: string | number | Date | null | undefined) => (v == null ? NaN : 
 
 const WHAT: Partial<Record<MilestoneStatus, string>> = { completed: "Done", on_hold: "On hold", blocked: "Blocked", missed: "Missed" };
 
+/** Each step's name as the log says it: two steps of one name under the
+ *  same task ("Welded pipe replacements") are told apart, in plan order:
+ *  "Welded pipe replacements (1 of 2)". */
+export function stepLabels(milestones: Milestone[]): Map<string, string> {
+  const groups = new Map<string, Milestone[]>();
+  for (const m of milestones) {
+    if (!m.id) continue;
+    const k = `${m.parentId ?? ""}\u0000${m.name.trim().toLowerCase()}`;
+    groups.set(k, [...(groups.get(k) ?? []), m]);
+  }
+  const out = new Map<string, string>();
+  for (const g of groups.values()) {
+    const sorted = [...g].sort((a, b) => (ms(a.plannedStartAt) || Infinity) - (ms(b.plannedStartAt) || Infinity) || (ms(a.plannedAt) || Infinity) - (ms(b.plannedAt) || Infinity) || a.id!.localeCompare(b.id!));
+    sorted.forEach((m, i) => out.set(m.id!, g.length > 1 ? `${m.name} (${i + 1} of ${g.length})` : m.name));
+  }
+  return out;
+}
+
 /** What a logged change was, in plain words. */
 export function describeChange(oldS: MilestoneStatus | null, oldP: number | null, newS: MilestoneStatus, newP: number | null): string {
   const o = Number(oldP ?? 0), n = Number(newP ?? 0);
@@ -73,11 +91,12 @@ export function buildTimeLog(input: {
     return `${d} · ${w.kind === "day" ? "Day" : "Night"}`;
   };
   const inRange = (at: number) => Number.isFinite(at) && (input.from == null || at >= input.from) && (input.to == null || at < input.to);
+  const label = stepLabels(input.milestones);
   const base = (id: string) => {
     const m = byId.get(id);
     const p = m?.parentId ? byId.get(m.parentId) : undefined;
     return {
-      task: p?.name ?? m?.name ?? "", step: m && p ? m.name : "",
+      task: p?.name ?? m?.name ?? "", step: m && p ? label.get(id) ?? m.name : "",
       wo: woFor(m) || woFor(p) || "", crew: m?.responsibleParty?.trim() || "",
     };
   };
@@ -88,26 +107,42 @@ export function buildTimeLog(input: {
     notesBy.get(n.milestoneId)!.push(n);
   }
   const used = new Set<MilestoneNote>();
-  // The note written with a change — one that says something first (a
-  // change can leave a bare status note beside the one with the reason).
-  const near = (id: string, kind: MilestoneNote["kind"], t: number, slackMs = 120_000) => {
-    const c = (notesBy.get(id) ?? []).filter((n) => !used.has(n) && n.kind === kind && Math.abs(ms(n.createdAt) - t) <= slackMs);
-    return c.find((n) => n.body?.trim()) ?? c[0];
-  };
+  // The log's changes (its own start line, old = new or a step being
+  // created, isn't one).
+  const changes = input.log.filter((r) => {
+    const m = byId.get(r.milestone_id);
+    return !!m && !parents.has(r.milestone_id) && !m.isSummary && r.old_status != null
+      && !(r.old_status === r.new_status && Number(r.old_percent ?? 0) === Number(r.new_percent ?? 0));
+  }).map((r) => ({ r, at: ms(r.at), entered: ms(r.entered_at ?? r.at) }));
+  // Each note goes with the change it was saved with: saved within two
+  // minutes of it, about the time the change is for (a note keeps the time
+  // it's about), else the change entered closest to it. One entry can make
+  // two changes (a start at 7:00 and its 25% now): its comment is the one
+  // about now. A note that says something first (a change can leave a bare
+  // status note beside the one with the reason).
+  const statusOf = new Map<number, MilestoneNote>(), noteOf = new Map<number, MilestoneNote>();
+  const pairs: Array<{ i: number; n: MilestoneNote; score: number }> = [];
+  changes.forEach((c, i) => {
+    for (const n of notesBy.get(c.r.milestone_id) ?? []) {
+      if (n.kind !== "status" && n.kind !== "note") continue;
+      const gap = Math.abs(ms(n.createdAt) - c.entered);
+      if (!(gap <= 120_000)) continue;
+      const about = n.happenedAt != null && Math.abs(ms(n.happenedAt) - c.at) <= 60_000;
+      pairs.push({ i, n, score: (about ? 0 : 1e9) + (n.body?.trim() ? 0 : 1e7) + gap });
+    }
+  });
+  for (const p of pairs.sort((a, b) => a.score - b.score)) {
+    const to = p.n.kind === "status" ? statusOf : noteOf;
+    if (used.has(p.n) || to.has(p.i)) continue;
+    to.set(p.i, p.n);
+    used.add(p.n);
+  }
 
   const out: TimeLogRow[] = [];
-  for (const r of input.log) {
-    const m = byId.get(r.milestone_id);
-    if (!m || parents.has(r.milestone_id) || m.isSummary) continue;
-    // The log's own start line (old = new, or a step being created) isn't a change.
-    if (r.old_status == null || (r.old_status === r.new_status && Number(r.old_percent ?? 0) === Number(r.new_percent ?? 0))) continue;
-    const at = ms(r.at);
+  for (const [i, { r, at, entered }] of changes.entries()) {
     if (!inRange(at)) continue;
-    const entered = ms(r.entered_at ?? r.at);
-    const status = near(r.milestone_id, "status", entered);
-    const comment = near(r.milestone_id, "note", entered);
-    if (status) used.add(status);
-    if (comment) used.add(comment);
+    const status = statusOf.get(i);
+    const comment = noteOf.get(i);
     // A hold's reason is the status note's text; work's comment is the note.
     const reason = r.new_status === "on_hold" || r.new_status === "blocked" ? status?.body?.trim() : undefined;
     const o = Number(r.old_percent ?? 0), n = Number(r.new_percent ?? 0);

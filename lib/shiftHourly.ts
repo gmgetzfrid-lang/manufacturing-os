@@ -1,17 +1,14 @@
-// shiftHourly — the shift's notes by the hour, for the report and email:
-// the meeting that starts the shift (who attended), the first hour — start
-// of shift, permitting — then every hour to the end, each written from the
-// shift's own entries in that hour (lib/timeLog: starts, progress, holds,
-// done, comments, the shift's notes and incidents) and nothing else.
-//
-// An hour is written when the report is opened and its entries have
-// changed since it was last written. Its wording is checked against that
-// hour's entries: wording that names a tag, number, date or time they don't
-// have is replaced by the entries said plainly. An hour someone types over
-// is theirs — never written over.
+// shiftHourly — the shift's notes by the hour, for the report, email and
+// exported log: the meeting that starts the shift (who attended), the first
+// hour (start of shift, permitting), then every hour to the end. Each hour
+// says its own entries (lib/timeLog: starts, progress, holds, done, each
+// comment with the entry it was typed with, the shift's notes and
+// incidents), one line each, in fixed words: nothing made up, nothing
+// written by a model. An hour someone types over is theirs, kept as typed.
 
 import type { TimeLogRow } from "@/lib/timeLog";
 import { timeInShift, type ShiftBreak, type ShiftWindow } from "@/lib/shiftReport";
+import { noEmDash } from "@/lib/noEmDash";
 
 export interface HourlyLine {
   id: string;
@@ -82,18 +79,19 @@ export function slotOf(at: number, slots: HourSlot[]): HourSlot {
   return hours.find((x) => at >= x.start && at < x.end) ?? hours[hours.length - 1];
 }
 
-/** The lines that stand: by the hour, or an earlier draft someone approved
- *  (kept as theirs). An earlier draft nobody approved is written again. */
-export function liveLines(n?: HourlyNotes | null): HourlyLine[] {
+/** The lines someone typed: by the hour, or an earlier draft someone
+ *  approved (kept as theirs). Anything written for them is not kept: the
+ *  hours say their entries, as they stand now. */
+export function typedLines(n?: HourlyNotes | null): HourlyLine[] {
   if (!n) return [];
-  if (n.v === 2) return n.lines;
+  if (n.v === 2) return n.lines.filter((l) => l.hand);
   return n.approved ? n.lines.map((l) => ({ ...l, hand: true })) : [];
 }
 
-/** Each hour's lines, by its key. */
-export function linesBySlot(n: HourlyNotes | null | undefined, slots: HourSlot[]): Map<string, HourlyLine[]> {
+/** Each hour's typed lines, by its key. */
+export function typedBySlot(n: HourlyNotes | null | undefined, slots: HourSlot[]): Map<string, HourlyLine[]> {
   const out = new Map<string, HourlyLine[]>();
-  for (const l of [...liveLines(n)].sort((a, b) => a.at - b.at)) {
+  for (const l of [...typedLines(n)].sort((a, b) => a.at - b.at)) {
     const k = slotOf(l.at, slots).key;
     out.set(k, [...(out.get(k) ?? []), l]);
   }
@@ -111,69 +109,72 @@ export function rowsBySlot(rows: TimeLogRow[], slots: HourSlot[]): Map<string, T
   return out;
 }
 
-/** What an hour's entries are: a line written from them stands while this matches. */
-export function hourSource(rows: TimeLogRow[], tz: string): string {
-  const s = rows.map((r) => factLine(r, tz)).sort().join("\n");
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
-  return `${rows.length}.${(h >>> 0).toString(36)}`;
-}
+/** "5:09 PM" in plant time. */
+const clock = (at: number, tz: string) =>
+  new Date(at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: tz }).replace(/[\u202f\u00a0]/g, " ");
+/** A comment as typed, as a sentence: "bundles all in" → "Bundles all in." */
+const sentence = (s: string) => {
+  const t = noEmDash(s).replace(/\s+/g, " ").trim();
+  if (!t) return "";
+  const c = t[0].toUpperCase() + t.slice(1);
+  return /[.!?)]$/.test(c) ? c : `${c}.`;
+};
 
-/** What to write: hours with entries whose line wasn't written from them
- *  (or was said plainly, when `retryPlain`), and hours whose entries are
- *  gone. An hour someone typed over is left alone. */
-export function hoursToWrite(slots: HourSlot[], rows: Map<string, TimeLogRow[]>, lines: Map<string, HourlyLine[]>, tz: string, retryPlain: boolean): { write: Array<{ slot: HourSlot; rows: TimeLogRow[]; src: string }>; clear: string[] } {
-  const write: Array<{ slot: HourSlot; rows: TimeLogRow[]; src: string }> = [], clear: string[] = [];
-  for (const slot of slots) {
-    if (slot.kind === "meeting" || slot.kind === "break") continue;
-    const ls = lines.get(slot.key) ?? [];
-    if (ls.some((l) => l.hand)) continue;
-    const rs = rows.get(slot.key) ?? [];
-    if (!rs.length) { if (ls.length) clear.push(slot.key); continue; }
-    const src = hourSource(rs, tz);
-    if (ls.length === 1 && ls[0].src === src && !(retryPlain && ls[0].plain)) continue;
-    write.push({ slot, rows: rs, src });
+/** One entry, one line, in fixed words: who, which step, what happened,
+ *  and the comment typed with it as it was typed. */
+export function entryLine(r: TimeLogRow): string {
+  const said = sentence(r.comment);
+  // The shift's own notes and incidents: as written.
+  if (!r.step && !r.id && !/^(Discovery|Added scope)/.test(r.what)) return `${r.what}: ${said || "-"}`;
+  const who = r.crew ? `${r.crew}: ` : "";
+  const found = /^(Discovery found|Added scope raised)/.exec(r.what);
+  if (found) {
+    // "Corroded vortex break. Fabricating in house - 3 h of work · task finish +23 h · approved by TA management"
+    const [what, ...impact] = r.comment.split(" - ");
+    return `${who}${found[1]} on ${shortTask(r.task)}${r.step ? `, ${r.step}` : ""}. ${sentence(what)}${impact.length ? ` ${sentence(impact.join(" - ").replace(/\s*·\s*/g, ", "))}` : ""}`.trim();
   }
-  return { write, clear };
+  const where = `${shortTask(r.task)} ${r.step}`.trim();
+  const m = /(\d+)% → (\d+)%/.exec(r.pct);
+  const from = m ? Number(m[1]) : null, to = m ? Number(m[2]) : Number(/(\d+)%/.exec(r.pct)?.[1] ?? NaN);
+  const w = r.what;
+  const event =
+    w === "Started" ? (Number.isFinite(to) && to > 0 ? `started, ${to}%` : "started")
+      : w === "Progress" ? `${to}%${from != null ? ` (was ${from}%)` : ""}`
+        : w === "Progress corrected down" ? `corrected to ${to}%${from != null ? ` (was ${from}%)` : ""}`
+          : w.startsWith("Done") ? `done${w.includes("(was") ? ` ${w.slice(5)}` : ""}`
+            : w.startsWith("Off ") ? `back in progress (was ${w.startsWith("Off hold") ? "on hold" : "blocked"})`
+              : w === "On hold" ? "on hold"
+                : w === "Blocked" ? "blocked"
+                  : w === "Reopened" ? "reopened"
+                    : w === "Missed" ? "marked missed"
+                      : w === "Set back to not started" ? "set back to not started"
+                        : w === "Why it's behind" ? "behind plan"
+                          : w === "Comment" ? ""
+                            : w.toLowerCase();
+  return `${who}${where}${event ? ` ${event}` : ""}.${said ? ` ${said}` : ""}`;
 }
 
-/** An hour's entries said plainly — when the wording isn't to be had, or
- *  said something the entries don't: by crew, each step and what happened
- *  to it, with its comment. "Ancon: V-7 Hydroblast Piping done. Schultz:
- *  V-7 Inspect for Cleanliness started." */
-export function plainHour(rows: TimeLogRow[]): string {
-  const said = (r: TimeLogRow) => r.comment.replace(/\s+/g, " ").trim();
-  // A discovery's own line says it; the comment it left on the step doesn't again.
-  const shown = [...rows].sort((a, b) => a.at - b.at).filter((r) => !(r.what === "Comment" && /^(Discovery|Added scope):/.test(said(r))));
-  const crews: string[] = [];
-  const by = new Map<string, string[]>();
+/** An hour's entries, one line each, in the order they happened (an entry
+ *  off the hour says its time). The same line twice is said once. */
+export function hourItems(rows: TimeLogRow[], hourStart: number, tz: string): string[] {
   const out: string[] = [];
-  for (const r of shown) {
-    // The shift's own notes and incidents: as said.
-    if (!r.step) { out.push(`${r.what}: ${said(r)}`); continue; }
-    const where = [shortTask(r.task), r.step].filter(Boolean).join(" ");
-    const w = r.what;
-    const what = /^Discovery found|^Added scope raised/.test(w) ? `${w.split(" ")[0] === "Added" ? "added scope" : "discovery"} - ${said(r).split(" - ")[0]}`
-      : w === "Progress" ? `to ${r.pct.split("→").pop()?.trim() ?? r.pct}`
-        : w.startsWith("Off ") ? "back in progress"
-          : w === "Comment" || w === "Why it's behind" ? ""
-            : w.toLowerCase();
-    const note = /^Discovery found|^Added scope raised/.test(w) || !said(r) ? "" : `${what ? " - " : ": "}${said(r)}`;
-    const k = r.crew || "";
-    if (!by.has(k)) { by.set(k, []); crews.push(k); }
-    by.get(k)!.push(`${where}${what ? ` ${what}` : ""}${note}`);
+  for (const r of [...rows].sort((a, b) => a.at - b.at || a.crew.localeCompare(b.crew) || a.task.localeCompare(b.task))) {
+    const line = noEmDash(`${r.at - hourStart >= 60_000 ? `${clock(r.at, tz)} ` : ""}${entryLine(r)}`);
+    if (!out.includes(line)) out.push(line);
   }
-  // One line each: a crew's work, a note, an incident.
-  return [...crews.map((k) => `${k ? `${k}: ` : ""}${by.get(k)!.join("; ")}`), ...out].map((x) => (/[.!?]$/.test(x) ? x : `${x}.`)).join("\n");
+  return out;
 }
 
-/** The notes as the report and email give them: each hour up to `upTo`
- *  (the meeting always), its lines, "" when nothing was logged. */
-export function hourlyRows(n: HourlyNotes | null | undefined, slots: HourSlot[], upTo: number): Array<{ slot: HourSlot; lines: HourlyLine[]; text: string }> {
-  const by = linesBySlot(n, slots);
+/** The hours as the report, email and exported log say them, up to `upTo`
+ *  (the meeting always): an hour typed over, as typed; otherwise its
+ *  entries, one line each (none while they're still being read). */
+export function hourlyRows(n: HourlyNotes | null | undefined, slots: HourSlot[], upTo: number, entries: TimeLogRow[] | null | undefined, tz: string): Array<{ slot: HourSlot; lines: string[]; typed: boolean; text: string }> {
+  const typed = typedBySlot(n, slots);
+  const said = rowsBySlot(entries ?? [], slots);
   return slots.filter((x) => x.kind === "meeting" || x.start <= upTo).map((slot) => {
-    const lines = by.get(slot.key) ?? [];
-    return { slot, lines, text: lines.map((l) => l.text).join("\n") };
+    const own = (typed.get(slot.key) ?? []).flatMap((l) => l.text.split("\n")).map((x) => noEmDash(x).trim()).filter(Boolean);
+    const lines = own.length || slot.kind === "meeting" || slot.kind === "break" ? own : hourItems(said.get(slot.key) ?? [], slot.start, tz);
+    return { slot, lines, typed: own.length > 0, text: lines.join("\n") };
   });
 }
 
@@ -183,147 +184,16 @@ export const SLOT_LABEL: Record<SlotKind, string> = { meeting: "Shift meeting", 
 /** "Lunch, 30 min" - a break as its row says it. */
 export const breakLabel = (x: HourSlot) => `${x.label || "Break"}${x.minutes ? `, ${x.minutes} min` : ""}`;
 
-/** "08:00" in plant time — the form times go to and come back from the model in. */
-export function clock24(at: number, tz: string): string {
-  return new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tz });
-}
-
-/** "14:30" → "2:30 PM" — how the notes say a time to a person. */
-export function clock12(hhmm: string): string {
-  const [h, m] = hhmm.split(":").map(Number);
-  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
-}
-
 /** "8:00 AM" on the first line and wherever AM/PM changes, "8:30" between
  *  — the way a shift writes its notes. */
 export function hourlyClocks(ats: number[], tz: string): string[] {
   let prev = "";
   return ats.map((at) => {
-    const s = new Date(at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: tz });
-    const [t, ap] = s.split(" ");
+    const [t, ap] = clock(at, tz).split(" ");
     const out = ap !== prev ? `${t} ${ap}` : t;
     prev = ap;
     return out;
   });
-}
-
-/** One entry, one line, for the model: time | what | step | task (WO) | crew | comment. */
-export function factLine(r: TimeLogRow, tz: string): string {
-  const what = r.what === "Progress" || (r.pct.includes("→") && r.what !== "Done") ? `${r.what} ${r.pct}` : r.what;
-  const where = [r.step, r.task ? `${r.task}${r.wo ? ` (WO ${r.wo})` : ""}` : ""].filter(Boolean).join(" | ");
-  return [clock24(r.at, tz), what, where, r.crew ? `crew ${r.crew}` : "", r.comment ? `comment: "${r.comment.replace(/\s+/g, " ").trim()}"` : ""]
-    .filter(Boolean).join(" | ");
-}
-
-export const HOURLY_SYSTEM =
-  "You write the hour-by-hour shift notes for a refinery turnaround shift report, the way a field " +
-  "supervisor writes them for management: for each hour, short plain lines - one per crew's work, " +
-  "one per note or incident.\n\n" +
-  "Example of the style:\n" +
-  "07:00 – SS X-12 failed hydro, will stab X-11 takeout bundle.\n" +
-  "09:00 – X-01 TS hydro sold, moving to X-14 TS and X-7.\n" +
-  "14:00 – X-3 head hung, hanging X-4.\n\n" +
-  "Rules:\n" +
-  "- Write lines for each HOUR given, and no other hours. Return the hour exactly as given (HH:MM).\n" +
-  "- One line per crew (all of that crew's work in the hour on it), and one per shift note or incident. Never run them together.\n" +
-  "- Use ONLY that hour's entries. Never add a fact, cause, quantity, time, name, forecast or reason " +
-  "that is not in them. If an entry says a thing is expected (\"expected back in 72 hrs\"), keep it " +
-  "as expected.\n" +
-  "- Cover every entry in the hour on its lines. Don't put a clock time in the text unless an entry's " +
-  "comment has it.\n" +
-  "- Say who and what: the crew (\"Schultz\", \"Maintenance\"), the work in plain words (\"setting " +
-  "blinds\", \"pulling the bundle\", \"done removing components\") and the equipment tag as the entry " +
-  "has it (E-12, V-7, PSV-021, LV-009B). Name several of the same work together (\"blinds done on " +
-  "E-12 and E-20\").\n" +
-  "- Started → what they're doing now (\"Schultz removing components on E-20\"); Done → finished " +
-  "(\"E-20 components removed\"); Progress → where it got, using the comment when there is one " +
-  "(\"2 of 5 bundles out\"); a hold or block → held, with its reason.\n" +
-  "- Keep each comment's facts; fix spelling and grammar only.\n" +
-  "- No work order numbers and no percentages unless a comment is only a percentage.\n" +
-  "- A shift note or a safety incident is its own fact on its hour's line, worded as given.\n" +
-  "- Write it as the supervisor's own notes: never mention entries, instructions, a system or an assistant.\n\n" +
-  'Return STRICT JSON only: {"hours":[{"hour":"07:00","lines":["Schultz setting blinds on E-12 and E-20.","Maintenance pulling LV-009B."]}]}';
-
-/** The prompt's user turn: each hour to write, with its entries. */
-export function hourlyPrompt(hours: Array<{ slot: HourSlot; rows: TimeLogRow[] }>, o: { tz: string; shiftTitle: string; window: string }): string {
-  return [
-    `SHIFT: ${o.shiftTitle} (${o.window})`,
-    ...[...hours].sort((a, b) => a.slot.start - b.slot.start).flatMap(({ slot, rows }) => [
-      "",
-      `HOUR ${clock24(slot.start, o.tz)}${slot.kind === "permit" ? " - start of shift, permitting" : ""} (${clock24(slot.start, o.tz)}–${clock24(slot.end, o.tz)}), ${rows.length} entr${rows.length === 1 ? "y" : "ies"}, time | what | step | task (WO) | crew | comment:`,
-      ...[...rows].sort((a, b) => a.at - b.at).map((r) => factLine(r, o.tz)),
-    ]),
-  ].join("\n");
-}
-
-/** The model's lines, read tolerantly: the JSON it was asked for, else
- *  "08:00 – text" lines. */
-export function parseHourly(text: string): Array<{ time: string; text: string }> {
-  const norm = (t: string) => {
-    const m = /^\s*(\d{1,2}):(\d{2})/.exec(t);
-    return m ? `${m[1].padStart(2, "0")}:${m[2]}` : "";
-  };
-  const start = text.indexOf("{"), end = text.lastIndexOf("}");
-  if (start >= 0 && end > start) {
-    try {
-      type Hour = { time?: unknown; hour?: unknown; text?: unknown; lines?: unknown };
-      const j = JSON.parse(text.slice(start, end + 1)) as { lines?: Hour[]; hours?: Hour[] };
-      // Each item on its own line ("lines"), or the hour's text as one.
-      const say = (l: Hour) => (Array.isArray(l.lines) ? l.lines.map((x) => String(x)) : [String(l.text ?? "")])
-        .map((x) => x.replace(/\s+/g, " ").trim()).filter(Boolean).join("\n");
-      const lines = (j.hours ?? j.lines ?? [])
-        .map((l) => ({ time: norm(String(l.hour ?? l.time ?? "")), text: say(l) }))
-        .filter((l) => l.time && l.text);
-      if (lines.length) return lines;
-    } catch { /* fall through to plain lines */ }
-  }
-  return text.split("\n").map((l) => {
-    const m = /^\s*(\d{1,2}:\d{2})\s*(?:[AP]M)?\s*[–—-]\s*(.+)$/i.exec(l);
-    return m ? { time: norm(m[1]), text: m[2].trim() } : null;
-  }).filter((l): l is { time: string; text: string } => !!l);
-}
-
-// Tags (E-12, PSV-021, LV-009B, 14TS), numbers and dates, compared without
-// dashes, spaces or case: "E12" is "E-12".
-const squash = (s: string) => s.toUpperCase().replace(/[\s\-_.]/g, "");
-const TAG = /\b[A-Za-z]{0,5}-?\d{1,5}[A-Za-z]{0,3}\b/g;
-const DATE = /\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/g;
-const CLOCK = /\b\d{1,2}:\d{2}\b/g;
-
-/** What a line says that its entries don't: a tag, date, clock time or
- *  number not in them. Empty when every one of them is. */
-export function flagsFor(text: string, rows: TimeLogRow[]): string[] {
-  const facts = rows.map((r) => `${r.task} ${r.step} ${r.crew} ${r.pct} ${r.comment} ${r.what}`).join(" \n ");
-  const factsSq = squash(facts);
-  const factNums = new Set((facts.match(/\d+/g) ?? []).map((n) => String(Number(n))));
-  const flags: string[] = [];
-  const unknownTags = [...new Set((text.replace(CLOCK, " ").match(TAG) ?? []).filter((t) => /[A-Za-z]/.test(t) && !factsSq.includes(squash(t))))];
-  if (unknownTags.length) flags.push(`not in the entries: ${unknownTags.join(", ")}`);
-  const unknownDates = [...new Set((text.match(DATE) ?? []).filter((d) => !d.split("/").every((n) => factNums.has(String(Number(n))))))];
-  if (unknownDates.length) flags.push(`date not in the entries: ${unknownDates.join(", ")}`);
-  // A time said in the text ("in orientation 6:00–7:15"): its hour must be
-  // in the entries ("6am-7:15am"); ":00" needs nothing more.
-  const clocks = [...new Set((text.match(CLOCK) ?? []).filter((c) => {
-    const [h, m] = c.split(":").map(Number);
-    return !(factNums.has(String(h)) && (m === 0 || factNums.has(String(m))));
-  }))];
-  if (clocks.length) flags.push(`time not in the entries: ${clocks.join(", ")}`);
-  const bare = text.replace(CLOCK, " ").replace(TAG, (t) => (/[A-Za-z]/.test(t) ? " " : t)).replace(DATE, " ");
-  const unknownNums = [...new Set((bare.match(/\d+/g) ?? []).map((n) => String(Number(n))).filter((n) => !factNums.has(n)))];
-  if (unknownNums.length) flags.push(`number not in the entries: ${unknownNums.join(", ")}`);
-  return flags;
-}
-
-/** The wording for each hour asked for, checked against that hour's
- *  entries — an hour missing from the answer, or whose wording says what
- *  its entries don't, is said plainly instead. */
-export function wordHours(answer: Array<{ time: string; text: string }>, hours: Array<{ slot: HourSlot; rows: TimeLogRow[] }>, tz: string): Map<string, { text: string; plain: boolean }> {
-  const out = new Map<string, { text: string; plain: boolean }>();
-  for (const { slot, rows } of hours) {
-    const said = answer.filter((a) => a.time === clock24(slot.start, tz)).map((a) => a.text).join("\n").trim();
-    out.set(slot.key, said && flagsFor(said, rows).length === 0 ? { text: said, plain: false } : { text: plainHour(rows), plain: true });
-  }
-  return out;
 }
 
 /** "E-20 - Transmix Charge Exchanger" → "E-20". */
@@ -331,18 +201,19 @@ export const shortTask = (t: string) => t.replace(/\s+[-–—]\s+.*$/, "").trim
 
 /** What each crew kept working on, hour by hour, when nothing new was
  *  entered for it that hour: steps under way at the hour's start (by the
- *  progress log, not held) whose crew works this shift. "Schultz - V-7
- *  Clean Tower, E-12 Tube Side Hydro". Only hours up to `upTo`. */
+ *  progress log, not held) whose crew works this shift, with where each
+ *  stood then. "Schultz - V-7 Clean Tower 50%, E-12 Tube Side Hydro 0%".
+ *  Only hours up to `upTo`. */
 export function ongoingByHour(
   slots: HourSlot[],
   steps: Array<{ id: string; name: string; task: string; crew: string; worksShift: boolean }>,
-  log: Array<{ milestone_id: string; at: string; new_status: string }>,
+  log: Array<{ milestone_id: string; at: string; new_status: string; new_percent?: number | null }>,
   upTo: number,
 ): Map<string, string[]> {
-  const byStep = new Map<string, Array<{ t: number; status: string }>>();
+  const byStep = new Map<string, Array<{ t: number; status: string; pct: number | null }>>();
   for (const r of log) {
     const t = Date.parse(r.at);
-    if (Number.isFinite(t)) byStep.set(r.milestone_id, [...(byStep.get(r.milestone_id) ?? []), { t, status: r.new_status }]);
+    if (Number.isFinite(t)) byStep.set(r.milestone_id, [...(byStep.get(r.milestone_id) ?? []), { t, status: r.new_status, pct: r.new_percent ?? null }]);
   }
   for (const v of byStep.values()) v.sort((a, b) => a.t - b.t);
   const out = new Map<string, string[]>();
@@ -355,11 +226,12 @@ export function ongoingByHour(
       // Something entered for it this hour: the hour's own lines say it.
       if (rows.some((r) => r.t >= slot.start && r.t < slot.end)) continue;
       const before = rows.filter((r) => r.t < slot.start);
-      if (before[before.length - 1]?.status !== "in_progress") continue;
+      const last = before[before.length - 1];
+      if (last?.status !== "in_progress") continue;
       const k = s.crew || "No crew named";
-      crews.set(k, [...(crews.get(k) ?? []), `${shortTask(s.task)} ${s.name}`.trim()]);
+      crews.set(k, [...(crews.get(k) ?? []), noEmDash(`${shortTask(s.task)} ${s.name}${last.pct != null ? ` ${last.pct}%` : ""}`.trim())]);
     }
-    // Two steps of one name (two pipe jobs) say it once, with how many.
+    // The same step name at the same % twice (two pipe jobs) is said once, with how many.
     const said = (names: string[]) => [...new Set(names)].map((n) => { const k = names.filter((x) => x === n).length; return k > 1 ? `${n} (${k})` : n; });
     if (crews.size) out.set(slot.key, [...crews].map(([crew, names]) => `${crew} - ${said(names).join(", ")}`));
   }

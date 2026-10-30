@@ -391,7 +391,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
           ...(x.kind === "meeting" ? [`Shift meeting - ${[attended, x.text].filter(Boolean).join(". ") || "-"}`]
             : x.kind === "permit" ? [`Start of shift - permitting`, ...x.text.split("\n").filter(Boolean)]
               : x.text.split("\n").filter(Boolean)),
-          ...(x.ongoing ?? []).map((o) => `Continuing: ${o}`),
+          ...(x.ongoing ?? []).map((o) => `In progress: ${o}`),
         ];
         const [first, ...rest] = items;
         return [{ t: x.clock, bold: true }, !first ? { t: "-", tone: "muted" as const }
