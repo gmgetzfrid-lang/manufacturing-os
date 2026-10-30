@@ -156,3 +156,17 @@ describe("the files", () => {
     expect(back.length).toBe(4 + t.length);
   });
 });
+
+describe("when the job starts", () => {
+  it("the first planned or baseline start on the schedule", async () => {
+    const { jobStartOf } = await import("@/components/projects/JobStartContext");
+    expect(jobStartOf([{ plannedStartAt: "2026-10-25T13:00:00Z" }, { plannedStartAt: "2026-10-24T21:00:00Z", baselineStartAt: "2026-10-24T21:00:00Z" }, { plannedStartAt: null }]))
+      .toBe(Date.parse("2026-10-24T21:00:00Z"));
+    expect(jobStartOf([])).toBeUndefined();
+  });
+  it("the whole-job log starts at the first entry, not the log's own lines for steps being made", () => {
+    const made = [{ milestone_id: "x", at: new Date(DAY.start - 6 * 86_400_000).toISOString(), new_status: "planned" }];
+    const logs = jobLogs({ milestones: MS, timeLog: rows, records: new Map(), log: made, tz: TZ, times: TIMES, now: DAY.end });
+    expect(logs[0].key).toBe("2026-10-29:day");
+  });
+});

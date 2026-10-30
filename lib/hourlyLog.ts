@@ -121,9 +121,10 @@ export function jobLogs(o: {
 }): ShiftLog[] {
   const { tz, times } = o;
   const steps = logSteps(o.milestones, tz, times);
+  // From the first thing that happened (the progress log's own lines for
+  // a step being made aren't).
   const starts = [
     ...o.timeLog.map((r) => r.at),
-    ...o.log.map((r) => Date.parse(r.at)),
     ...[...o.records.keys()].map((k) => /^(\d{4}-\d{2}-\d{2}):(day|night)$/.exec(k)).filter((m): m is RegExpExecArray => !!m)
       .map((m) => shiftWindow(m[1], m[2] as "day" | "night", tz, times).start),
   ].filter((t) => Number.isFinite(t) && t <= o.now);

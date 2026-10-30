@@ -15,6 +15,7 @@ import { CalendarDays, Clock, ChevronLeft, ChevronRight } from "lucide-react";
 import { shiftAt, type ShiftTimes } from "@/lib/shiftReport";
 import { fmtInTz, toDateTimeInput, fromDateTimeInput, dayKey } from "@/lib/scheduleTz";
 import { parseTypedTime } from "@/lib/typedTime";
+import { useJobStart } from "@/components/projects/JobStartContext";
 
 const ROW = 36;
 const HOURS = Array.from({ length: 12 }, (_, i) => String(i + 1));
@@ -49,6 +50,11 @@ export default function DateTimePicker({ label, value, onChange, tz, times, plan
   const date = value.slice(0, 10), time = value.length >= 16 ? value.slice(11, 16) : "";
   const hasPlan = planned != null && Number.isFinite(planned);
   const plannedDay = hasPlan ? dayKey(planned!, tz) : null;
+  // When work happened: not before the job started.
+  const jobStart = useJobStart();
+  const firstDay = !future && jobStart != null ? dayKey(jobStart, tz) : null;
+  const dayGap = (a: string, b: string) => Math.round((Date.parse(`${b}T12:00:00Z`) - Date.parse(`${a}T12:00:00Z`)) / 86_400_000);
+  const early = !future && date && plannedDay ? dayGap(date, plannedDay) : 0;
 
   const take = (at: number) => { onChange(toDateTimeInput(at, tz)); setPanel(null); };
   const now = () => { const t = Date.now(); setNowMs(t); take(t); };
@@ -93,7 +99,12 @@ export default function DateTimePicker({ label, value, onChange, tz, times, plan
           ? <span className="text-[12px] font-semibold text-rose-700 dark:text-rose-400">in the future</span>
           : <span className="text-[12px] text-[var(--color-text-muted)]">{fmtInTz(sh.start, tz, { weekday: "short" })} {sh.kind} shift</span>)}
       </div>
-      {panel === "date" && <Month value={date} today={today} planned={plannedDay} onPick={pickDay} future={future} />}
+      {date && firstDay && date < firstDay ? (
+        <div className="text-[12px] font-semibold text-rose-700 dark:text-rose-400">Before the job started ({dayWords(firstDay)}). Pick the right day.</div>
+      ) : early >= 2 && (
+        <div className="text-[12px] font-semibold text-amber-700 dark:text-amber-400">{early} days before its planned day ({dayWords(plannedDay!)}). Check the day.</div>
+      )}
+      {panel === "date" && <Month value={date} today={today} planned={plannedDay} onPick={pickDay} future={future} earliest={firstDay} />}
       {panel === "time" && (
         <div className="space-y-1">
           <TimeWheels h24={h24} mi={mi} onSet={setTime} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]" />
@@ -203,19 +214,21 @@ function TimeWheels({ h24, mi, onSet, className = "" }: { h24: number; mi: numbe
 }
 
 /** A month to tap a day on: no days after today (unless for planning). */
-function Month({ value, today, planned, onPick, future }: { value: string; today: string; planned: string | null; onPick: (d: string) => void; future?: boolean }) {
+function Month({ value, today, planned, onPick, future, earliest }: { value: string; today: string; planned: string | null; onPick: (d: string) => void; future?: boolean; earliest?: string | null }) {
   const from = value || today;
   const [ym, setYm] = useState(() => Number(from.slice(0, 4)) * 12 + Number(from.slice(5, 7)) - 1);
   const y = Math.floor(ym / 12), mo = ym % 12;
   const lead = new Date(Date.UTC(y, mo, 1)).getUTCDay();
   const n = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate();
   const latest = !future && ym >= Number(today.slice(0, 4)) * 12 + Number(today.slice(5, 7)) - 1;
+  // No month, and no day, before the job started.
+  const first = !!earliest && ym <= Number(earliest.slice(0, 4)) * 12 + Number(earliest.slice(5, 7)) - 1;
   const key = (d: number) => `${y}-${p2(mo + 1)}-${p2(d)}`;
   const nav = "w-8 h-8 inline-flex items-center justify-center rounded-md hover:bg-[var(--color-surface-2)] disabled:opacity-30";
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2 w-[280px] max-w-full">
       <div className="flex items-center justify-between mb-1">
-        <button type="button" aria-label="Previous month" onClick={() => setYm(ym - 1)} className={nav}><ChevronLeft className="w-4 h-4" /></button>
+        <button type="button" aria-label="Previous month" disabled={first} onClick={() => setYm(ym - 1)} className={nav}><ChevronLeft className="w-4 h-4" /></button>
         <span className="text-[13px] font-bold">{new Date(Date.UTC(y, mo, 1)).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" })}</span>
         <button type="button" aria-label="Next month" disabled={latest} onClick={() => setYm(ym + 1)} className={nav}><ChevronRight className="w-4 h-4" /></button>
       </div>
@@ -225,7 +238,7 @@ function Month({ value, today, planned, onPick, future }: { value: string; today
       <div className="grid grid-cols-7 gap-y-0.5">
         {Array.from({ length: lead }, (_, i) => <span key={`b${i}`} />)}
         {Array.from({ length: n }, (_, i) => {
-          const k = key(i + 1), on = k === value, later = !future && k > today;
+          const k = key(i + 1), on = k === value, later = (!future && k > today) || (!!earliest && k < earliest);
           return (
             <button key={k} type="button" disabled={later} aria-pressed={on} aria-label={dayWords(k)} onClick={() => onPick(k)}
               className={`relative mx-auto w-9 h-9 rounded-full text-[13px] tabular-nums ${on ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-bold" : later ? "text-[var(--color-text-faint)] opacity-40" : `hover:bg-[var(--color-surface-2)] ${k === today ? "font-bold text-[var(--color-accent)] ring-1 ring-inset ring-[var(--color-accent)]" : ""}`}`}>

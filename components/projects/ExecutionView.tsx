@@ -70,6 +70,7 @@ import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl, { ShiftClockContext } from "@/components/projects/ProgressControl";
 import ExecutionGuide from "@/components/projects/ExecutionGuide";
 import ExecutionReportView from "@/components/projects/ExecutionReportView";
+import { JobStartContext, jobStartOf } from "@/components/projects/JobStartContext";
 import MovePreviewSheet from "@/components/projects/MovePreviewSheet";
 import UndoToastHost from "@/components/projects/UndoToastHost";
 import { useUndoableActions } from "@/components/projects/useUndoableActions";
@@ -325,6 +326,8 @@ export default function ExecutionView({
   // The progress form asks which shift a change counts for (this one or a
   // fix to an earlier one) — on the project's clock.
   const shiftClock = useMemo(() => (canEdit ? { tz, times: shiftTimes } : null), [canEdit, tz, shiftTimes]);
+  // When the job starts: no work is entered as happening before it.
+  const jobStart = useMemo(() => jobStartOf(milestones), [milestones]);
 
   // ── Search / filter ──────────────────────────────────────────
   const [filter, setFilter] = useState<ScheduleFilter>(EMPTY_FILTER);
@@ -1191,6 +1194,7 @@ export default function ExecutionView({
 
   return (
     <ShiftClockContext.Provider value={shiftClock}>
+    <JobStartContext.Provider value={jobStart}>
     <div className="space-y-3">
       <ExecutionGuide />
 
@@ -1563,6 +1567,7 @@ export default function ExecutionView({
 
       <UndoToastHost toasts={toasts} onUndo={(t) => void runUndo(t)} onDismiss={dismiss} />
     </div>
+    </JobStartContext.Provider>
     </ShiftClockContext.Provider>
   );
 }
