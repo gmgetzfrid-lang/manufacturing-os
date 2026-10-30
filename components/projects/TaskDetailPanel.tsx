@@ -18,7 +18,7 @@ import {
   X as XIcon, Pencil, Trash2, Loader2, Save, Clock, MapPin, Hash,
   User, HardHat, AlertTriangle, Sun, Moon, Sunset,
   CalendarDays, Layers, MessageSquarePlus, History, ChevronRight, ChevronLeft,
-  Link2, Target, Zap, Ban,
+  Link2, Target, Zap, Ban, ArrowRight,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus, MilestoneNote, ProjectMember } from "@/types/schema";
 import { wouldCreateCycle, cascadeDependents, withAncestors, type ReflowNode } from "@/lib/scheduleReflow";
@@ -286,12 +286,18 @@ export default function TaskDetailPanel({
             </div>
           )}
           {editing ? (
-            <EditForm
-              milestone={m} isLeaf={isLeaf} allTasks={allTasks} canSave={canEdit} saving={saving} setSaving={setSaving}
-              userId={userId} userName={userName} userEmail={userEmail} userRole={userRole}
-              onDone={() => { setEditing(false); onChanged(); }}
-              onCancel={() => setEditing(false)}
-            />
+            <>
+              <EditForm
+                milestone={m} isLeaf={isLeaf} allTasks={allTasks} canSave={canEdit} saving={saving} setSaving={setSaving}
+                userId={userId} userName={userName} userEmail={userEmail} userRole={userRole}
+                onDone={() => { setEditing(false); onChanged(); }}
+                onCancel={() => setEditing(false)}
+              />
+              {/* Its links are part of the plan too: what it waits on, what
+                  waits on it (each saves as it's changed). */}
+              <DependencyEditor key={`d:${m.id}`} milestone={m} allTasks={allTasks ?? []} canEdit={canEdit} userId={userId} onChanged={onChanged} onSelectMilestone={onSelectMilestone} />
+              <HoldsUpEditor key={`h:${m.id}`} milestone={m} allTasks={allTasks ?? []} canEdit={canEdit} userId={userId} onChanged={onChanged} onSelectMilestone={onSelectMilestone} />
+            </>
           ) : (
             <>
               {/* Status + progress. A LEAF is set directly (status picker +
@@ -482,6 +488,7 @@ export default function TaskDetailPanel({
                 onChanged={onChanged}
                 onSelectMilestone={onSelectMilestone}
               />
+              <HoldsUpEditor key={`h:${m.id}`} milestone={m} allTasks={allTasks ?? []} canEdit={canEdit} userId={userId} onChanged={onChanged} onSelectMilestone={onSelectMilestone} />
 
               {/* Subtasks */}
               {subtasks.length > 0 && (
@@ -1013,9 +1020,9 @@ function DependencyEditor({
             const t = byId.get(id);
             const l = linkOf(links, id);
             return (
-              <div key={id} className="flex items-center gap-1.5 rounded-md bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-indigo-800 dark:text-indigo-300 text-[11px] font-semibold pl-2 pr-1 py-0.5">
-                <button type="button" className="flex-1 min-w-0 truncate text-left hover:underline" onClick={() => t && onSelectMilestone?.(t)} title={t?.name ?? id}>
-                  {t?.name ?? "(removed task)"}
+              <div key={id} className="flex flex-wrap items-center gap-1.5 rounded-md bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-indigo-800 dark:text-indigo-300 text-[11px] font-semibold pl-2 pr-1 py-0.5">
+                <button type="button" className="flex-1 min-w-[55%] break-words text-left hover:underline" onClick={() => t && onSelectMilestone?.(t)} title={withTask(t, byId)}>
+                  {withTask(t, byId)}
                 </button>
                 {canEdit ? (
                   <>
@@ -1050,8 +1057,96 @@ function DependencyEditor({
         >
           <option value="">{candidates.length === 0 ? "No other tasks available" : "+ Add a predecessor…"}</option>
           {candidates.map((t) => (
-            <option key={t.id} value={t.id!}>{t.name}</option>
+            <option key={t.id} value={t.id!}>{withTask(t, byId)}</option>
           ))}
+        </select>
+      )}
+      {error && <div className="text-[11px] text-rose-600 dark:text-rose-400 mt-1">{error}</div>}
+    </div>
+  );
+}
+
+/** "V-7 - Overhead and Bottoms Piping › Welded pipe replacements": a step
+ *  with the task it's under, so two of the same name can be told apart. */
+function withTask(t: Milestone | undefined, byId: Map<string, Milestone>): string {
+  if (!t) return "(removed task)";
+  const p = t.parentId ? byId.get(t.parentId) : undefined;
+  const h = t.durationHours != null && t.durationHours > 0 ? ` (${Math.round(t.durationHours * 10) / 10} h)` : "";
+  return `${p ? `${p.name} › ` : ""}${t.name}${h}`;
+}
+
+// ─── Holds up: what can't start until this is done ─────────────
+/** The steps that wait on this one (they have it under Depends on), to see
+ *  and to change from here: the link is kept on the step that waits. Their
+ *  planned dates stay; what the wait pushes shows in the forecast (the
+ *  critical path reads the links). */
+function HoldsUpEditor({ milestone, allTasks, canEdit, userId, onChanged, onSelectMilestone }: {
+  milestone: Milestone; allTasks: Milestone[]; canEdit: boolean; userId: string;
+  onChanged: () => void; onSelectMilestone?: (m: Milestone) => void;
+}) {
+  const me = milestone.id ?? "";
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const byId = useMemo(() => new Map(allTasks.filter((t) => t.id).map((t) => [t.id!, t])), [allTasks]);
+  // As last saved here, so two changes in a row (before the reload) both stand.
+  const [local, setLocal] = useState<{ from: Milestone[]; deps: Map<string, string[]> } | null>(null);
+  const depsOf = (t: Milestone) => (local && local.from === allTasks ? local.deps.get(t.id!) : undefined) ?? t.dependsOn ?? [];
+  const waiting = allTasks.filter((t) => t.id && t.id !== me && depsOf(t).includes(me))
+    .sort((a, b) => Date.parse((a.plannedStartAt ?? a.plannedAt) as string) - Date.parse((b.plannedStartAt ?? b.plannedAt) as string));
+  const reflowNodes = useMemo<ReflowNode[]>(() => allTasks.map((t) => ({
+    id: t.id!, parentId: t.parentId ?? null, plannedStartAt: (t.plannedStartAt as string | undefined) ?? null,
+    plannedAt: t.plannedAt as string, dependsOn: t.dependsOn ?? null, links: t.linkTypes ?? null, status: t.status,
+  })), [allTasks]);
+  // Steps (not whole tasks) that could wait on it: its own task's first.
+  const parents = useMemo(() => new Set(allTasks.map((t) => t.parentId).filter(Boolean)), [allTasks]);
+  const candidates = allTasks
+    .filter((t) => t.id && t.id !== me && !parents.has(t.id) && t.status !== "completed" && !t.cancelledAt && !depsOf(t).includes(me) && !wouldCreateCycle(reflowNodes, t.id, me))
+    .sort((a, b) => Number(b.parentId === milestone.parentId) - Number(a.parentId === milestone.parentId)
+      || Date.parse((a.plannedStartAt ?? a.plannedAt) as string) - Date.parse((b.plannedStartAt ?? b.plannedAt) as string));
+  const save = async (t: Milestone, next: string[]) => {
+    if (!t.id) return;
+    setSaving(true); setError(null);
+    try {
+      const lt = { ...(t.linkTypes ?? {}) };
+      for (const k of Object.keys(lt)) if (!next.includes(k)) delete lt[k];
+      setLocal((x) => { const deps = new Map(x && x.from === allTasks ? x.deps : []); deps.set(t.id!, next); return { from: allTasks, deps }; });
+      await updateMilestone({ id: t.id, patch: { dependsOn: next, linkTypes: Object.keys(lt).length ? lt : null }, updatedBy: userId });
+      onChanged();
+    } catch (e) { setError((e as Error).message); }
+    finally { setSaving(false); }
+  };
+  if (!me || allTasks.length === 0) return null;
+  return (
+    <div className="px-4 py-3 border-b border-[var(--color-border)]">
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <ArrowRight className="w-3.5 h-3.5 text-amber-600" />
+        <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Holds up</span>
+        <span className="text-[10px] text-[var(--color-text-faint)]">- can&apos;t start until this is done</span>
+      </div>
+      {waiting.length === 0 ? (
+        <div className="text-[11px] text-[var(--color-text-faint)] italic mb-1.5">Nothing waits on it.</div>
+      ) : (
+        <div className="space-y-1 mb-1.5">
+          {waiting.map((t) => (
+            <div key={t.id} className="flex items-center gap-1.5 rounded-md bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-[11px] font-semibold pl-2 pr-1 py-0.5">
+              <button type="button" className="flex-1 min-w-0 break-words text-left hover:underline" onClick={() => onSelectMilestone?.(t)} title={withTask(t, byId)}>
+                {withTask(t, byId)}{t.status === "completed" ? " (done)" : ""}
+              </button>
+              {canEdit && (
+                <button type="button" disabled={saving} onClick={() => void save(t, depsOf(t).filter((d) => d !== me))} className="p-0.5 rounded-full hover:bg-amber-200/60 text-amber-700 hover:text-amber-900" title="It doesn't wait on this">
+                  <XIcon className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {canEdit && (
+        <select value="" disabled={saving || candidates.length === 0} aria-label="Add a step it holds up"
+          onChange={(e) => { const t = byId.get(e.target.value); if (t) void save(t, [...depsOf(t), me]); }}
+          className="w-full text-[12px] border border-[var(--color-border-strong)] rounded-md px-2 py-1.5 bg-[var(--color-surface)] text-[var(--color-text)] disabled:opacity-50">
+          <option value="">{candidates.length === 0 ? "Nothing else could wait on it" : "+ Add a step it holds up…"}</option>
+          {candidates.map((t) => <option key={t.id} value={t.id!}>{withTask(t, byId)}</option>)}
         </select>
       )}
       {error && <div className="text-[11px] text-rose-600 dark:text-rose-400 mt-1">{error}</div>}
