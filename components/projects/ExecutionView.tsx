@@ -1313,7 +1313,7 @@ export default function ExecutionView({
           onMoveDays={(id, days) => { const target = byId.get(id); if (target) void moveByDays(target, days); }}
           onDiscovery={canEdit ? setDiscoveryFor : undefined} />
       ) : layout === "report" ? (
-        <ExecutionReportView milestones={items} shiftTimes={shiftTimes} critical={critical} criticalSource={criticalSourceLabel} />
+        <ExecutionReportView milestones={items} shiftTimes={shiftTimes} critical={critical} criticalSource={criticalSourceLabel} projectId={projectId} projectName={projectName} />
       ) : layout === "shift" ? (
         <ShiftReportView milestones={items} cancelled={cancelled} userId={userId} userName={userName ?? userEmail} canEdit={canEdit} progress={progressIndex} projectId={projectId} projectName={projectName} onUpdateStep={updateStep} onDiscovery={canEdit ? setDiscoveryFor : undefined} pathNow={cpClock} onPlanNext={canEdit && onMoveMany ? setPlanNext : undefined} onFixTimes={canEdit ? fixTimes : undefined} />
       ) : layout === "calendar" ? (

@@ -76,6 +76,9 @@ import { PullAheadPicker } from "@/components/projects/PullAheadPicker";
 import { useHandoverDraft } from "@/lib/useHandoverDraft";
 import { scopeOf } from "@/lib/pullAhead";
 import { ShiftHourlyBox, useAutoHourly, meetingLine, type HourlyCtx, type MeetingCrews } from "@/components/projects/ShiftHourly";
+import { HourlyLogExport } from "@/components/projects/HourlyLogExport";
+import { exportedLabel, logSteps, shiftLog } from "@/lib/hourlyLog";
+import { pngInBrowser, saveHourlyLog, type LogFormat } from "@/lib/hourlyLogFiles";
 import { hourlyClocks, hourlyRows, hourSlots, breaksOn, breakLabel, ongoingByHour } from "@/lib/shiftHourly";
 import { saidWithLatest } from "@/lib/stepComment";
 
@@ -470,6 +473,15 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const hourlyBusy = useAutoHourly(sheet.hourly, meeting === "turnover" && sheet.edit, tz);
   const sheetNow = useMemo<SheetCtx>(() => (sheet.hourly ? { ...sheet, hourly: { ...sheet.hourly, busy: hourlyBusy } } : sheet), [sheet, hourlyBusy]);
   const shiftTitle = `${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`;
+  // The hourly log of the shift on screen (any shift, backed up by date),
+  // as a file on the letterhead.
+  const exportHourly = async (format: LogFormat) => {
+    const [rows, progressRows] = await Promise.all([shiftRows(), log ? Promise.resolve(log) : loadProgressLog(projectId)]);
+    const one = shiftLog({ shift, tz, times, record: records.get(thisKey), rows, steps: logSteps(live, tz, times), log: progressRows ?? [], now: Date.now() });
+    const name = (projectName ?? "Schedule").trim() || "Schedule";
+    await saveHourlyLog([one], format, { project: name, lh, exported: exportedLabel(Date.now(), tz), toPng: pngInBrowser, fileName: `${name} - hourly log ${shift.dayKey} ${shift.kind}` });
+    return "Saved.";
+  };
   // The time log: every step's times, for the project file — its own
   // export, not part of the update.
   const [logBusy, setLogBusy] = useState(false);
@@ -708,7 +720,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           </>
         )}
 
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
           <div className="relative">
             {timesSaved === false ? (
               <button onClick={() => setShowTimes((v) => !v)} aria-expanded={showTimes} title="The day / night split is a guess until the shift times are saved"
@@ -787,6 +799,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                 <Clock className="w-3.5 h-3.5" /> Times {stamps ? "on" : "off"}
               </button>
               <TimeLogButton busy={logBusy} msg={logMsg} onExport={(sc) => void exportTimeLog(sc)} shiftLabel={shiftTitle} />
+              <HourlyLogExport formats={["pdf", "docx"]} what={`Hourly log - ${shiftTitle}`} letterhead={!!lh} onExport={exportHourly} />
             </>
           )}
           <CopyUpdate doc={exportDoc} meeting={meeting} lh={lh} stamps={meeting === "turnover" ? { on: stamps, set: setStamps } : undefined} />

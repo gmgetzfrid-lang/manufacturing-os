@@ -19,9 +19,21 @@ import type { Milestone } from "@/types/schema";
 import { computeExecutionReport } from "@/lib/executionReport";
 import { standingOf, type ShiftTimes } from "@/lib/shiftReport";
 import { computeCriticalPathLite, type CriticalPathResult } from "@/lib/criticalPath";
+import { HourlyLogExport } from "@/components/projects/HourlyLogExport";
+import { useLetterhead } from "@/lib/letterheadStore";
+import { exportedLabel, jobLogs } from "@/lib/hourlyLog";
+import { pngInBrowser, saveHourlyLog, type LogFormat } from "@/lib/hourlyLogFiles";
+import { loadProgressLog } from "@/lib/progressHistory";
+import { loadShiftRecords } from "@/lib/shiftRecord";
+import { notesFor } from "@/lib/milestones";
+import { buildTimeLog } from "@/lib/timeLog";
+import { withWorkOrderCrews } from "@/lib/workOrderCrew";
+import { DEFAULT_SHIFT_TIMES } from "@/lib/shiftReport";
 
-export default function ExecutionReportView({ milestones, shiftTimes, critical: given, criticalSource }: {
+export default function ExecutionReportView({ milestones, shiftTimes, critical: given, criticalSource, projectId, projectName }: {
   milestones: Milestone[]; shiftTimes?: ShiftTimes;
+  /** For the hourly shift log export (every shift of the job). */
+  projectId?: string; projectName?: string;
   /** The project's critical path (its source plus hand marks). */
   critical?: CriticalPathResult;
   /** Where it comes from, for the note on the card. */
@@ -33,6 +45,22 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(t); }, []);
   const r = useMemo(() => computeExecutionReport(milestones, { tz, shiftTimes, now: new Date(now) }), [milestones, tz, shiftTimes, now]);
   const critical = useMemo(() => given ?? computeCriticalPathLite(milestones), [given, milestones]);
+  const { lh } = useLetterhead(projectId);
+  // Every shift's hourly log, first to last, as one file.
+  const exportLogs = async (format: LogFormat) => {
+    if (!projectId) throw new Error("No project.");
+    const times = shiftTimes ?? DEFAULT_SHIFT_TIMES;
+    const live = withWorkOrderCrews(milestones);
+    const parents = new Set(live.map((m) => m.parentId).filter(Boolean));
+    const [log, records, notes] = await Promise.all([loadProgressLog(projectId), loadShiftRecords(projectId),
+      notesFor(live.filter((m) => m.id && !parents.has(m.id)).map((m) => m.id!))]);
+    const at = Date.now();
+    const timeLog = buildTimeLog({ milestones: live, log: log ?? [], notes, records, tz, times });
+    const logs = jobLogs({ milestones: live, timeLog, records, log: log ?? [], tz, times, now: at });
+    const name = (projectName ?? "Schedule").trim() || "Schedule";
+    await saveHourlyLog(logs, format, { project: name, lh, exported: exportedLabel(at, tz), toPng: pngInBrowser, fileName: `${name} - hourly log, whole job` });
+    return `${logs.length} shift${logs.length === 1 ? "" : "s"} saved.`;
+  };
   const criticalNames = useMemo(
     () => milestones.filter((m) => m.id && critical.ids.has(m.id)).map((m) => m.name),
     [milestones, critical],
@@ -159,9 +187,14 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
         <Health icon={<PauseCircle className="w-4 h-4" />} tone="amber" label="On hold" value={r.onHold} />
         <Health icon={<AlertTriangle className="w-4 h-4" />} tone="rose" label="Blocked" value={r.blocked} />
         <Health icon={<AlertTriangle className="w-4 h-4" />} tone="rose" label="Overdue" value={r.overdue} />
-        <button onClick={() => window.print()} className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)] px-2.5 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] print:hidden">
-          <Printer className="w-3.5 h-3.5" /> Print / export
-        </button>
+        <span className="ml-auto inline-flex items-center gap-2 print:hidden">
+          {!print && projectId && (
+            <HourlyLogExport formats={["pdf", "docx", "xlsx"]} what="Hourly shift log, every shift of the job" letterhead={!!lh} onExport={exportLogs} label="Export shift logs" />
+          )}
+          <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)] px-2.5 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)]">
+            <Printer className="w-3.5 h-3.5" /> Print / export
+          </button>
+        </span>
       </div>
 
       {/* Blockers — what's stopping work, with reasons */}
