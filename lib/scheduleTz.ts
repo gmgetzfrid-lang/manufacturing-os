@@ -66,8 +66,10 @@ function partsFormatter(tz: string): Intl.DateTimeFormat {
   return f;
 }
 
-/** The plant's wall clock for an instant. */
-export function wallClock(ms: number, tz: string): WallClock {
+/** The wall clock as the zone's formatter reads it (slow: the reports ask
+ *  this tens of thousands of times a render, so wallClock goes by the
+ *  zone's offset instead, read once per quarter hour). */
+function formattedClock(ms: number, tz: string): WallClock {
   const out: WallClock = { year: 0, month: 0, day: 0, hour: 0, minute: 0, second: 0 };
   for (const p of partsFormatter(tz).formatToParts(new Date(ms))) {
     const v = Number(p.value);
@@ -81,6 +83,31 @@ export function wallClock(ms: number, tz: string): WallClock {
     }
   }
   return out;
+}
+
+// A zone's offset changes only at its clock changes, and those fall on the
+// quarter hour: one quarter hour's offset holds for all of it.
+const QUARTER = 15 * 60_000;
+const offsets = new Map<string, Map<number, number>>();
+function quarterOffset(ms: number, tz: string): number {
+  let byQ = offsets.get(tz);
+  if (!byQ) { byQ = new Map(); offsets.set(tz, byQ); }
+  const q = Math.floor(ms / QUARTER);
+  let off = byQ.get(q);
+  if (off == null) {
+    if (byQ.size > 100_000) byQ.clear();
+    const at = q * QUARTER;
+    off = asUtc(formattedClock(at, tz)) - at;
+    byQ.set(q, off);
+  }
+  return off;
+}
+
+/** The plant's wall clock for an instant. */
+export function wallClock(ms: number, tz: string): WallClock {
+  if (!Number.isFinite(ms)) return formattedClock(ms, tz);
+  const d = new Date(Math.floor(ms / 1000) * 1000 + quarterOffset(ms, tz));
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate(), hour: d.getUTCHours(), minute: d.getUTCMinutes(), second: d.getUTCSeconds() };
 }
 
 function asUtc(w: WallClock): number {
@@ -236,10 +263,19 @@ export function tzLabel(tz: string, ms: number = Date.now()): string {
 }
 
 /** toLocaleDateString / toLocaleString pinned to the plant zone. */
+// One formatter per zone and format, made once (making one is the slow part).
+const fmtCache = new Map<string, Intl.DateTimeFormat>();
 export function fmtInTz(ms: number | string | Date, tz: string, options: Intl.DateTimeFormatOptions): string {
   const n = toMs(ms);
   if (!Number.isFinite(n)) return "";
-  return new Date(n).toLocaleString(undefined, { ...options, timeZone: tz });
+  const key = `${tz}|${JSON.stringify(options)}`;
+  let f = fmtCache.get(key);
+  if (!f) {
+    if (fmtCache.size > 500) fmtCache.clear();
+    f = new Intl.DateTimeFormat(undefined, { ...options, timeZone: tz });
+    fmtCache.set(key, f);
+  }
+  return f.format(new Date(n));
 }
 
 export function toMs(v: string | number | Date | null | undefined): number {

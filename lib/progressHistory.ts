@@ -54,7 +54,17 @@ export function scheduleAt(milestones: Milestone[], log: ProgressLogRow[], at: n
   const byTask = new Map<string, ProgressLogRow[]>();
   for (const r of log) byTask.set(r.milestone_id, [...(byTask.get(r.milestone_id) ?? []), r]);
   const firstLogged = log.length ? ms(log[0].at) : NaN;
-  const out = milestones.map((m) => {
+  // A time after then hadn't happened yet.
+  const later = (v: unknown) => v != null && v !== "" && Number.isFinite(ms(v)) && ms(v) > at;
+  // Work added by hand (discovery, added scope) after then wasn't there yet.
+  const addedLater = (m: Milestone) => {
+    if (m.source !== "manual") return false;
+    let found = NaN;
+    const raw = (m.attributes as Record<string, unknown> | undefined)?.discovery;
+    try { found = Number((typeof raw === "string" ? JSON.parse(raw) : raw as { foundAt?: number } | null)?.foundAt); } catch { /* no record */ }
+    return later(Number.isFinite(found) ? found : m.createdAt);
+  };
+  const out = milestones.filter((m) => !addedLater(m)).map((m) => {
     if (!m.id) return m;
     const rows = byTask.get(m.id) ?? [];
     let status: MilestoneStatus = m.status;
@@ -68,10 +78,12 @@ export function scheduleAt(milestones: Milestone[], log: ProgressLogRow[], at: n
     else if (after) { status = after.old_status ?? "planned"; pct = Number(after.old_percent ?? 0); }
     const done = ms(m.actualAt);
     if (m.status === "completed" && Number.isFinite(done) && done <= at) { status = "completed"; pct = 100; }
-    if (status === m.status && pct === (m.percentComplete ?? 0)) return m;
+    const startLater = later(m.actualStartAt);
+    if (status === m.status && pct === (m.percentComplete ?? 0) && !startLater) return m;
     return {
       ...m, status, percentComplete: pct,
-      // Not finished then: no completion stamp then either.
+      // Not started then: no start then. Not finished then: no finish then.
+      ...(startLater ? { actualStartAt: undefined } : {}),
       ...(status !== "completed" ? { actualAt: undefined } : {}),
     } as Milestone;
   });
