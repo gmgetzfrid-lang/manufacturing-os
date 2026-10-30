@@ -1,8 +1,8 @@
 // A time typed the way people say it: "10:30 PM", "1030p", "10p", "22:30",
-// "2230", "7:15". An hour of 1-12 with no AM/PM keeps the AM/PM it had.
-// Null until it reads as a whole time.
+// "2230". An hour of 1-12 with no AM or PM isn't a time yet ("1130" could
+// be either): it's never guessed. Null until it reads as a whole time.
 
-export function parseTypedTime(text: string, pm: boolean): { h: number; m: number } | null {
+export function parseTypedTime(text: string): { h: number; m: number } | null {
   const s = text.trim().toLowerCase().replace(/\s+/g, "").replace(".", ":");
   const x = /^(\d{1,4})(?::(\d{2}))?(?:([ap])m?)?$/.exec(s);
   if (!x) return null;
@@ -19,6 +19,6 @@ export function parseTypedTime(text: string, pm: boolean): { h: number; m: numbe
   if (x[3]) {
     if (h < 1 || h > 12) return null;
     h = (h % 12) + (x[3] === "p" ? 12 : 0);
-  } else if (h >= 1 && h <= 12) h = (h % 12) + (pm ? 12 : 0);
+  } else if (h >= 1 && h <= 12) return null;
   return { h, m };
 }

@@ -5,25 +5,24 @@ import { parseTypedTime } from "@/lib/typedTime";
 
 describe("a typed time", () => {
   it("with AM/PM, however it's written", () => {
-    expect(parseTypedTime("10:30 PM", false)).toEqual({ h: 22, m: 30 });
-    expect(parseTypedTime("1030p", false)).toEqual({ h: 22, m: 30 });
-    expect(parseTypedTime("10p", false)).toEqual({ h: 22, m: 0 });
-    expect(parseTypedTime("7:15am", true)).toEqual({ h: 7, m: 15 });
-    expect(parseTypedTime("12a", true)).toEqual({ h: 0, m: 0 });
-    expect(parseTypedTime("12 pm", false)).toEqual({ h: 12, m: 0 });
+    expect(parseTypedTime("10:30 PM")).toEqual({ h: 22, m: 30 });
+    expect(parseTypedTime("1030p")).toEqual({ h: 22, m: 30 });
+    expect(parseTypedTime("10p")).toEqual({ h: 22, m: 0 });
+    expect(parseTypedTime("7:15am")).toEqual({ h: 7, m: 15 });
+    expect(parseTypedTime("12a")).toEqual({ h: 0, m: 0 });
+    expect(parseTypedTime("12 pm")).toEqual({ h: 12, m: 0 });
   });
   it("24-hour", () => {
-    expect(parseTypedTime("22:30", false)).toEqual({ h: 22, m: 30 });
-    expect(parseTypedTime("2230", false)).toEqual({ h: 22, m: 30 });
-    expect(parseTypedTime("0", true)).toEqual({ h: 0, m: 0 });
-    expect(parseTypedTime("14", false)).toEqual({ h: 14, m: 0 });
+    expect(parseTypedTime("22:30")).toEqual({ h: 22, m: 30 });
+    expect(parseTypedTime("2230")).toEqual({ h: 22, m: 30 });
+    expect(parseTypedTime("0")).toEqual({ h: 0, m: 0 });
+    expect(parseTypedTime("14")).toEqual({ h: 14, m: 0 });
   });
-  it("1-12 with no AM/PM keeps the AM/PM it had", () => {
-    expect(parseTypedTime("7", true)).toEqual({ h: 19, m: 0 });
-    expect(parseTypedTime("730", false)).toEqual({ h: 7, m: 30 });
-    expect(parseTypedTime("12", false)).toEqual({ h: 0, m: 0 });
+  it("1-12 with no AM or PM is never guessed: it needs its a or p", () => {
+    for (const s of ["7", "730", "1130", "11:30", "12"]) expect(parseTypedTime(s)).toBeNull();
+    expect(parseTypedTime("1130p")).toEqual({ h: 23, m: 30 });
   });
   it("nothing until it's a whole time", () => {
-    for (const s of ["", "10:", "10:3", "25:00", "10:75", "13p", "0a", "abc", "12345"]) expect(parseTypedTime(s, false)).toBeNull();
+    for (const s of ["", "10:", "10:3", "25:00", "10:75", "13p", "0a", "abc", "12345"]) expect(parseTypedTime(s)).toBeNull();
   });
 });

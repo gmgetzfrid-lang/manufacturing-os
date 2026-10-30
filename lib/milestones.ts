@@ -424,11 +424,20 @@ export interface SetMilestoneStatusInput {
   actorUserRole?: string;
 }
 
-/** A recorded time, never later than now. */
+/** A recorded time as it was picked: never swapped for another. None
+ *  picked: now. Later than now isn't saved at all (it's a wrong day or AM
+ *  and PM), and a clock a minute or two ahead is now. */
 function pastIso(iso: string | undefined, now: string): string {
-  const t = iso ? Date.parse(iso) : NaN;
-  return Number.isFinite(t) && t < Date.parse(now) ? new Date(t).toISOString() : now;
+  if (!iso) return now;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) throw new Error("That time couldn't be read - pick it again.");
+  if (t > Date.parse(now) + 2 * 60_000) throw new Error("That time is later than now - check the day and AM or PM.");
+  return new Date(Math.min(t, Date.parse(now))).toISOString();
 }
+
+/** A finish before the start already recorded isn't saved: the start isn't
+ *  moved to make it fit. */
+const FINISH_BEFORE_START = "That finish is before this step's recorded start - check the time (AM or PM?), or fix the start first.";
 
 const HOLDS: MilestoneStatus[] = ["blocked", "on_hold", "missed"];
 
@@ -477,7 +486,8 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
     if (!existingFirstCompleted) update.first_completed_at = doneAt;
     update.completed_by = input.actorUserId;
     update.completed_by_name = input.actorUserName ?? null;
-    if (!existingStart || Date.parse(existingStart) > Date.parse(doneAt)) update.actual_start_at = doneAt;
+    if (existingStart && Date.parse(existingStart) > Date.parse(doneAt)) throw new Error(FINISH_BEFORE_START);
+    if (!existingStart) update.actual_start_at = doneAt;
   } else if (input.status === "in_progress") {
     const want = input.percentComplete != null && Number.isFinite(input.percentComplete) ? Math.round(input.percentComplete) : existingPct;
     update.percent_complete = Math.min(99, Math.max(0, want));
@@ -612,7 +622,8 @@ export async function setMilestoneProgress(input: SetMilestoneProgressInput): Pr
     if (!existingFirstCompleted) update.first_completed_at = doneAt;
     update.completed_by = input.actorUserId;
     update.completed_by_name = input.actorUserName ?? null;
-    if (!existingStart || Date.parse(existingStart) > Date.parse(doneAt)) update.actual_start_at = doneAt;
+    if (existingStart && Date.parse(existingStart) > Date.parse(doneAt)) throw new Error(FINISH_BEFORE_START);
+    if (!existingStart) update.actual_start_at = doneAt;
   } else {
     update.actual_at = null;
     update.completed_by = null;
