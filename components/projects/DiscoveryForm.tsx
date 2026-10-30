@@ -13,7 +13,7 @@ import React, { useMemo, useState } from "react";
 import { X, Plus, Trash2 } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import type { ShiftTimes } from "@/lib/shiftReport";
-import { fmtInTz, toDateTimeInput, fromDateTimeInput } from "@/lib/scheduleTz";
+import { fmtInTz, toDateTimeInput, fromDateTimeInput, dayKeyToMs } from "@/lib/scheduleTz";
 import { planDiscovery, defaultAfter, defaultHolds, impactLine, earliestStart, followsUntil, ADDED, type DiscoveryDraft, type AddedKind } from "@/lib/discovery";
 import type { CriticalMode } from "@/lib/criticalPath";
 import DateTimePicker from "@/components/projects/DateTimePicker";
@@ -21,7 +21,7 @@ import CrewPicker from "@/components/projects/CrewPicker";
 
 const ms = (v: unknown) => (v == null ? NaN : Date.parse(String(v)));
 
-export default function DiscoveryForm({ milestones, task: start, tz, times, crews, now: clockNow, mode, onSave, onClose }: {
+export default function DiscoveryForm({ milestones, task: start, tz, times, crews, now: clockNow, mode, day, onSave, onClose }: {
   milestones: Milestone[];
   /** Where it was found (a task, or one of its steps). */
   task: Milestone;
@@ -32,6 +32,10 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
   now?: number;
   /** The project's critical-path setting. */
   mode?: CriticalMode | null;
+  /** Added from a calendar day ("YYYY-MM-DD"): the work goes on that day.
+   *  An earlier day: found then, and starting then (the times to pick). A
+   *  later day: found now, starting then. */
+  day?: string;
   /** Saved with the moment its preview was worked out, so the record says
    *  what the preview said. */
   onSave: (d: DiscoveryDraft, at: number) => Promise<boolean>;
@@ -46,15 +50,18 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
   // Tasks with steps under them: where discovery work goes.
   const tasks = useMemo(() => milestones.filter((m) => m.id && (kids.get(m.id) ?? []).some((c) => !c.id || !(kids.get(c.id) ?? []).length))
     .sort((a, b) => a.name.localeCompare(b.name)), [milestones, kids]);
+  // Added from a calendar day other than today: the work goes on that day.
+  const onDay = day && day !== toDateTimeInput(now, tz).slice(0, 10) ? day : null;
+  const dayFrom = useMemo(() => (onDay ? { from: dayKeyToMs(onDay, tz), now } : undefined), [onDay, tz, now]);
   const initialTask = start.id && kids.get(start.id)?.length ? start.id : start.parentId ?? start.id ?? "";
   const [taskId, setTaskId] = useState(initialTask);
   const steps = useMemo(() => (kids.get(taskId) ?? []).filter((m) => m.id && !(kids.get(m.id) ?? []).length)
     .sort((a, b) => ms(a.plannedStartAt ?? a.plannedAt) - ms(b.plannedStartAt ?? b.plannedAt)), [kids, taskId]);
-  const [afterId, setAfterId] = useState<string | null>(() => (start.id && !kids.get(start.id)?.length ? start.id : defaultAfter(milestones, initialTask)));
-  const [holds, setHolds] = useState<string[]>(() => defaultHolds(milestones, initialTask, start.id && !kids.get(start.id)?.length ? start.id : defaultAfter(milestones, initialTask)));
+  const [afterId, setAfterId] = useState<string | null>(() => (start.id && !kids.get(start.id)?.length ? start.id : defaultAfter(milestones, initialTask, dayFrom)));
+  const [holds, setHolds] = useState<string[]>(() => defaultHolds(milestones, initialTask, start.id && !kids.get(start.id)?.length ? start.id : defaultAfter(milestones, initialTask, dayFrom)));
   const pickTask = (id: string) => {
     setTaskId(id);
-    const a = defaultAfter(milestones, id);
+    const a = defaultAfter(milestones, id, dayFrom);
     setAfterId(a); setHolds(defaultHolds(milestones, id, a));
   };
   const pickAfter = (id: string | null) => { setAfterId(id); setHolds(defaultHolds(milestones, taskId, id)); };
@@ -69,9 +76,9 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
   const [busy, setBusy] = useState(false);
   // When it was found (history) — and when the work starts (the plan).
   const toMs = (v: string) => { const x = v.length >= 16 ? fromDateTimeInput(v, tz) : null; return x ? Date.parse(x) : NaN; };
-  const [foundV, setFoundV] = useState(() => toDateTimeInput(now, tz));
-  const [startMode, setStartMode] = useState<"asap" | "set">("asap");
-  const [startV, setStartV] = useState("");
+  const [foundV, setFoundV] = useState(() => (onDay && onDay < toDateTimeInput(now, tz) ? onDay : toDateTimeInput(now, tz)));
+  const [startMode, setStartMode] = useState<"asap" | "set">(onDay ? "set" : "asap");
+  const [startV, setStartV] = useState(onDay ?? "");
   const asap = useMemo(() => earliestStart(milestones, afterId, now), [milestones, afterId, now]);
   const follows = useMemo(() => followsUntil(milestones, afterId), [milestones, afterId]);
   const afterName = steps.find((s) => s.id === afterId)?.name;
@@ -165,7 +172,7 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
             <label className="block">
               <span className={lbl}>Starts after</span>
               <select value={afterId ?? ""} onChange={(e) => pickAfter(e.target.value || null)} className={`${inp} w-full`}>
-                <option value="">Nothing - starts now</option>
+                <option value="">{startMode === "set" ? "Nothing before it" : "Nothing - starts now"}</option>
                 {steps.map((s) => <option key={s.id} value={s.id!}>{s.name}{s.status === "completed" ? " (done)" : s.status === "in_progress" ? " (under way)" : ""}</option>)}
               </select>
               {/* After work that isn't done: it waits for it — say so, so two

@@ -743,6 +743,9 @@ export default function ExecutionView({
   // waits on them; linked work downstream is pushed (the same cascade as a
   // move); each step keeps the record and the impact. Undo takes it all out.
   const [discoveryFor, setDiscoveryFor] = useState<Milestone | null>(null);
+  // Added from a calendar day: the form starts on that day.
+  const [discoveryDay, setDiscoveryDay] = useState<string | null>(null);
+  const openDiscovery = useCallback((t: Milestone, day?: string) => { setDiscoveryDay(day ?? null); setDiscoveryFor(t); }, []);
   const crewNames = useMemo(() => [...new Set(items.map((m) => m.responsibleParty?.trim()).filter((x): x is string => !!x))].sort(), [items]);
   const saveDiscovery = useCallback(async (draft: DiscoveryDraft, at: number): Promise<boolean> => {
     if (!canEdit) return false;
@@ -1303,14 +1306,14 @@ export default function ExecutionView({
           onUpdate={canEdit ? updateStep : undefined} onFixTimes={canEdit ? fixTimes : undefined}
           onOpenDetail={(m) => m.id && setDetailId(m.id)}
           onMoveDays={(id, days) => { const target = byId.get(id); if (target) void moveByDays(target, days); }}
-          onDiscovery={canEdit ? setDiscoveryFor : undefined} />
+          onDiscovery={canEdit ? openDiscovery : undefined} />
       ) : layout === "report" ? (
         <ExecutionReportView milestones={items} shiftTimes={shiftTimes} critical={critical} criticalSource={criticalSourceLabel} projectId={projectId} projectName={projectName} />
       ) : layout === "shift" ? (
-        <ShiftReportView milestones={items} cancelled={cancelled} userId={userId} userName={userName ?? userEmail} canEdit={canEdit} progress={progressIndex} projectId={projectId} projectName={projectName} onUpdateStep={updateStep} onDiscovery={canEdit ? setDiscoveryFor : undefined} pathNow={cpClock} onPlanNext={canEdit && onMoveMany ? setPlanNext : undefined} onFixTimes={canEdit ? fixTimes : undefined} />
+        <ShiftReportView milestones={items} cancelled={cancelled} userId={userId} userName={userName ?? userEmail} canEdit={canEdit} progress={progressIndex} projectId={projectId} projectName={projectName} onUpdateStep={updateStep} onDiscovery={canEdit ? openDiscovery : undefined} pathNow={cpClock} onPlanNext={canEdit && onMoveMany ? setPlanNext : undefined} onFixTimes={canEdit ? fixTimes : undefined} />
       ) : layout === "calendar" ? (
         <ScheduleCalendarTileView
-          onDiscovery={canEdit ? setDiscoveryFor : undefined}
+          onDiscovery={canEdit ? openDiscovery : undefined}
           onPlanNext={canEdit && onMoveMany ? setPlanNext : undefined}
           onFixTimes={canEdit ? fixTimes : undefined}
           pathMarks={marks}
@@ -1517,8 +1520,8 @@ export default function ExecutionView({
       )}
 
       {discoveryFor && (
-        <DiscoveryForm milestones={items} task={discoveryFor} tz={tz} times={shiftTimes} crews={crewNames} now={cpClock} mode={criticalMode}
-          onSave={saveDiscovery} onClose={() => setDiscoveryFor(null)} />
+        <DiscoveryForm key={`${discoveryFor.id}:${discoveryDay ?? ""}`} milestones={items} task={discoveryFor} tz={tz} times={shiftTimes} crews={crewNames} now={cpClock} mode={criticalMode}
+          day={discoveryDay ?? undefined} onSave={saveDiscovery} onClose={() => { setDiscoveryFor(null); setDiscoveryDay(null); }} />
       )}
 
       {bulkMode && (

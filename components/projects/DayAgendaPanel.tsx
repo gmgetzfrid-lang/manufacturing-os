@@ -18,7 +18,7 @@
 // for a progress update.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, X as XIcon, CalendarDays, Layers, ExternalLink, Search, ArrowDown, Check, Sun, Moon } from "lucide-react";
+import { ChevronLeft, ChevronRight, X as XIcon, CalendarDays, Layers, ExternalLink, Search, ArrowDown, Check, Sun, Moon, Plus } from "lucide-react";
 import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl, { PICK_PCTS } from "@/components/projects/ProgressControl";
@@ -78,6 +78,8 @@ interface Props {
   pathMarks?: PathMarks;
   /** The schedule's clock — the one the shift report reads. */
   now?: number;
+  /** Add discovery or added scope on this day (pick the work order, then the form). */
+  onAddWork?: () => void;
   /** The project's shift-change times — which crew does each step. */
   shiftTimes?: ShiftTimes;
   onOpenDetail: (m: Milestone) => void;
@@ -112,7 +114,7 @@ interface EquipmentGroup {
 
 export default function DayAgendaPanel({
   day, tz, milestones, childrenByParent, ancestorsOf, progress, canEdit, focus,
-  onSetStatus, onSetProgress, onAddNote, onOpenDetail, onChangeDay, onClose, colorOf, shiftTimes = DEFAULT_SHIFT_TIMES, hidden, planNow: planNowAll, userId, onSetProgressNote, onStartNote, onUpdateStep, onFixTimes, pathMarks, inline, now: clockNow,
+  onSetStatus, onSetProgress, onAddNote, onOpenDetail, onChangeDay, onClose, colorOf, shiftTimes = DEFAULT_SHIFT_TIMES, hidden, planNow: planNowAll, userId, onSetProgressNote, onStartNote, onUpdateStep, onFixTimes, pathMarks, inline, now: clockNow, onAddWork,
 }: Props) {
   const [query, setQuery] = useState("");
   // A step's WO number: its own, else its work order's (or the file's WO column).
@@ -402,6 +404,12 @@ export default function DayAgendaPanel({
             <div className="mt-2 h-1.5 rounded-full bg-black/10 overflow-hidden">
               <div className={`h-full ${totals.avg >= 100 ? "bg-emerald-500" : "bg-[var(--color-accent)]"}`} style={{ width: `${totals.avg}%` }} />
             </div>
+          )}
+          {onAddWork && (
+            <button type="button" onClick={onAddWork}
+              className="mt-2 inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
+              <Plus className="w-3.5 h-3.5" /> Add discovery or added scope
+            </button>
           )}
           {totals.n > 0 && (
             <div className="mt-2 relative">

@@ -16,7 +16,7 @@
 // surfaces a group chip's subtask accordion.
 
 import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, ChevronDown, Crosshair, Info, GripVertical, CheckSquare, X as XIcon, ListChecks, Moon, Sun, CalendarClock } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, Crosshair, Info, GripVertical, CheckSquare, X as XIcon, ListChecks, Moon, Sun, CalendarClock, Plus } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import StatusControl from "@/components/projects/StatusControl";
 import { assignGroupColors } from "@/lib/scheduleColors";
@@ -32,6 +32,7 @@ import { ADDED_TONE } from "@/components/projects/DiscoveryTag";
 import type { PathMarks } from "@/lib/criticalPath";
 import ShiftMark from "@/components/projects/ShiftMark";
 import DayAgendaPanel from "@/components/projects/DayAgendaPanel";
+import AddWorkPicker from "@/components/projects/AddWorkPicker";
 import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
 import { OPEN_SETUP_EVENT } from "@/lib/scheduleSetup";
 import { carriedOpenWork } from "@/lib/openWork";
@@ -85,7 +86,7 @@ interface Props {
   /** Correct when a step really started / finished. */
   onFixTimes?: (id: string, t: { start?: number | null; finish?: number | null }) => Promise<boolean>;
   /** Found work on a task: into the schedule (DiscoveryForm). */
-  onDiscovery?: (task: Milestone) => void;
+  onDiscovery?: (task: Milestone, day?: string) => void;
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -133,6 +134,16 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   // The day agenda: click a day number to get that day's full work list
   // (every step due, grouped by equipment, with progress entry).
   const [agendaDay, setAgendaDay] = useState<string | null>(null);
+  // Adding discovery or added scope on a day: which work order first.
+  const [addOn, setAddOn] = useState<string | null>(null);
+  const canAdd = canEdit && !!onDiscovery;
+  const addBtn = (key: string, cls = "w-5 h-5") => canAdd ? (
+    <button type="button" onClick={(e) => { e.stopPropagation(); setAddOn(key); }}
+      title="Add discovery or added scope on this day" aria-label="Add discovery or added scope on this day"
+      className={`shrink-0 inline-flex items-center justify-center rounded-md border border-dashed border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] ${cls}`}>
+      <Plus className="w-3 h-3" />
+    </button>
+  ) : null;
   const today = useMemo(() => startOfDayUTC(new Date(), tz), [tz]);
 
   const byId = useMemo(() => {
@@ -682,6 +693,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           shiftTimes={shiftTimes}
           onOpenDetail={(m) => { onOpenDetail(m); }}
           onChangeDay={(k) => setFocusDay(ymdToDate(k, tz))}
+          onAddWork={canAdd ? () => setAddOn(ymd(focusDay, tz)) : undefined}
           onClose={() => setMode("month")}
           colorOf={(top) => colorFor(top)}
         />
@@ -698,7 +710,8 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
             const isDone = isDonePl;
             return (
               <section key={key} data-daykey={key} className="px-2 py-2">
-                <button type="button" onClick={() => setAgendaDay(key)} className="w-full flex items-center justify-between gap-2 mb-1.5 text-left">
+                <div className="flex items-center gap-2 mb-1.5">
+                <button type="button" onClick={() => setAgendaDay(key)} className="flex-1 min-w-0 flex items-center justify-between gap-2 text-left">
                   <span className={`text-[12px] font-black ${isToday ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"}`}>
                     {fmtInTz(day, tz, { weekday: "long", month: "short", day: "numeric" })}
                   </span>
@@ -706,6 +719,8 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                     {items.length ? `${items.length} task${items.length === 1 ? "" : "s"}${nightN ? ` · ${nightN} night` : ""}${items.filter(isDone).length ? ` · ${items.filter(isDone).length} done` : ""} ›` : "Nothing scheduled"}
                   </span>
                 </button>
+                {addBtn(key, "w-7 h-7")}
+                </div>
                 {uniqueOf(key).length > 0 && <div className="flex flex-col gap-1.5">{renderBands(key, true)}</div>}
               </section>
             );
@@ -732,12 +747,15 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                 const key = ymd(day, tz);
                 const isToday = sameDayUTC(day, today, tz);
                 return (
-                  <button key={key} type="button" onClick={() => { setAgendaFocus(null); setAgendaDay(key); }} style={{ gridColumn: `${2 * i + 1} / span 2` }}
-                    title="Open this day's list - every step, with progress entry"
-                    className={`px-2 py-1.5 text-center text-[11px] font-black uppercase tracking-wider border-r border-[var(--color-border)] hover:text-[var(--color-accent)] ${isToday ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
-                    {fmtInTz(day, tz, { weekday: "short" })} {wallClock(day.getTime(), tz).day}
-                    {(() => { const n = uniqueOf(key).filter((p) => !p.idleToday).length; return n > 0 ? <span className="ml-1 font-semibold normal-case tracking-normal text-[var(--color-text-faint)]">· {n}</span> : null; })()}
-                  </button>
+                  <div key={key} style={{ gridColumn: `${2 * i + 1} / span 2` }} className="flex items-center justify-center gap-1 px-1 border-r border-[var(--color-border)]">
+                    <button type="button" onClick={() => { setAgendaFocus(null); setAgendaDay(key); }}
+                      title="Open this day's list - every step, with progress entry"
+                      className={`min-w-0 truncate px-1 py-1.5 text-center text-[11px] font-black uppercase tracking-wider hover:text-[var(--color-accent)] ${isToday ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
+                      {fmtInTz(day, tz, { weekday: "short" })} {wallClock(day.getTime(), tz).day}
+                      {(() => { const n = uniqueOf(key).filter((p) => !p.idleToday).length; return n > 0 ? <span className="ml-1 font-semibold normal-case tracking-normal text-[var(--color-text-faint)]">· {n}</span> : null; })()}
+                    </button>
+                    {addBtn(key)}
+                  </div>
                 );
               })}
               <div style={{ gridColumn: "15 / span 1" }} className="px-1 py-1.5 text-center text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)]">
@@ -834,7 +852,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                 // tap for the day's full list.
                 const avg = items.length ? Math.round(items.reduce((a, p) => a + ((p.ms.id ? progress?.get(p.ms.id)?.percent : undefined) ?? 0), 0) / items.length) : 0;
                 return (
-                  <button key={key} type="button" data-daykey={key} onClick={() => items.length && setAgendaDay(key)}
+                  <button key={key} type="button" data-daykey={key} onClick={() => (items.length || canAdd) && setAgendaDay(key)}
                     className={`min-w-0 border-r border-[var(--color-border)] last:border-r-0 p-1 flex flex-col items-start gap-0.5 text-left ${inMonth ? "bg-[var(--color-surface)]" : "bg-slate-50/40 dark:bg-transparent"} ${isToday ? "ring-1 ring-inset ring-rose-300" : ""}`}>
                     <span className={`text-[11px] font-bold ${isToday ? "text-rose-600 dark:text-rose-400" : inMonth ? "text-[var(--color-text)]" : "text-slate-300 dark:text-slate-600"}`}>{wallClock(day.getTime(), tz).day}</span>
                     {items.length > 0 && <>
@@ -863,10 +881,11 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                       {items.length > 0 && <span className="text-[8px] font-black uppercase tracking-wider opacity-0 group-hover/tile:opacity-70">Open day</span>}
                     </button>
                     {items.length > 0 && (
-                      <span className={`min-w-0 truncate whitespace-nowrap text-[9.5px] font-semibold tabular-nums ${inMonth ? "text-[var(--color-text-faint)]" : "text-slate-300"}`}>
+                      <span className={`ml-auto min-w-0 truncate whitespace-nowrap text-[9.5px] font-semibold tabular-nums ${inMonth ? "text-[var(--color-text-faint)]" : "text-slate-300"}`}>
                         {items.length} task{items.length === 1 ? "" : "s"}{nightN > 0 && <span className="text-violet-700 dark:text-violet-300"> · {nightN} night</span>}{doneHere ? ` · ${doneHere} done` : ""}
                       </span>
                     )}
+                    {addBtn(key, `${items.length ? "" : "ml-auto "}w-[18px] h-[18px]`)}
                   </div>
                   {isToday && overdueToday.length > 0 && (
                     <button
@@ -937,6 +956,12 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
       })()}
 
       {/* Day agenda — the work list for one day. */}
+      {addOn && canAdd && (
+        <AddWorkPicker day={addOn} tz={tz} milestones={milestones}
+          onPick={(t) => { const d = addOn; setAddOn(null); onDiscovery!(t, d); }}
+          onClose={() => setAddOn(null)} />
+      )}
+
       {/* Stays mounted (hidden) while a task's details are open, so its
           search and open row are still there on the way back. */}
       {agendaDay && (
@@ -964,6 +989,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           shiftTimes={shiftTimes}
           onOpenDetail={(m) => { onOpenDetail(m); }}
           onChangeDay={(k) => { setAgendaFocus(null); setAgendaDay(k); }}
+          onAddWork={canAdd ? () => setAddOn(agendaDay) : undefined}
           onClose={() => { setAgendaDay(null); setAgendaFocus(null); }}
           colorOf={(top) => colorFor(top)}
         />

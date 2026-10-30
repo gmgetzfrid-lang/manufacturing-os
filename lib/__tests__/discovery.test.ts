@@ -40,6 +40,15 @@ describe("discovery work into the schedule", () => {
     expect(defaultAfter(base(), "v7")).toBe("open");
     expect(defaultHolds(base(), "v7", "open")).toEqual(["clean"]);
   });
+  it("added on a calendar day: after the last step done by then, so it can start that day", () => {
+    const done = base().map((m) => (m.id === "open" ? { ...m, status: "completed" as const, actualAt: h(9) } : m));
+    // A day already gone: only what was done by its start counts.
+    expect(defaultAfter(done, "v7", { from: T0 + 12 * 3_600_000, now })).toBe("open");
+    expect(defaultAfter(done, "v7", { from: T0 + 8 * 3_600_000, now })).toBeNull();
+    expect(defaultAfter(base(), "v7", { from: T0 + 2 * 3_600_000, now })).toBeNull();
+    // A day to come: planned done by then counts too.
+    expect(defaultAfter(base(), "v7", { from: T0 + 24 * 3_600_000, now })).toBe("clean");
+  });
   it("runs after the step it follows, holds up the next, pushes everything linked downstream", () => {
     const p = planDiscovery(base(), { taskId: "v7", what: "Tray 14 cracked", foundAt: now, steps: [{ name: "Weld repair tray 14", crew: "Ancon", hours: 8 }, { name: "QC weld", crew: "Inspector", hours: 2 }], afterId: "open", holdsIds: ["clean"] }, { now, tz: UTC });
     expect(p.steps.map((s) => [s.name, s.plannedStartAt, s.plannedAt, s.dependsOn])).toEqual([

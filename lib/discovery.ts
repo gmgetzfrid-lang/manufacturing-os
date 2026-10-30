@@ -114,8 +114,15 @@ const finishOf = (rows: Milestone[]) => rows.reduce((a, m) => Math.max(a, ms(m.p
 
 /** The step new work most likely follows: the one under way, else the last
  *  one done, else the first not started. */
-export function defaultAfter(milestones: Milestone[], taskId: string): string | null {
+export function defaultAfter(milestones: Milestone[], taskId: string, on?: { from: number; now: number }): string | null {
   const steps = leavesUnder(milestones, taskId).sort((a, b) => ms(a.plannedStartAt ?? a.plannedAt) - ms(b.plannedStartAt ?? b.plannedAt));
+  // Added on a day (the calendar): after the last step done by the start
+  // of that day (or, a day still to come, planned done by then).
+  if (on) {
+    const end = (m: Milestone) => (m.status === "completed" ? ms(m.actualAt ?? m.plannedAt) : on.from > on.now ? ms(m.plannedAt) : NaN);
+    const by = steps.filter((m) => m.id && end(m) <= on.from).sort((a, b) => end(a) - end(b));
+    return by[by.length - 1]?.id ?? null;
+  }
   const going = steps.find((m) => m.status === "in_progress" || m.status === "on_hold" || m.status === "blocked");
   if (going?.id) return going.id;
   const done = steps.filter((m) => m.status === "completed");
