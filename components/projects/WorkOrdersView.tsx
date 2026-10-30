@@ -66,7 +66,7 @@ interface WorkOrder {
   find: string;
 }
 
-export default function WorkOrdersView({ milestones, childrenByParent, tz, times, progress, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery, projectId, projectName, user, onCancelled }: {
+export default function WorkOrdersView({ milestones, childrenByParent, tz, times, progress, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery, onNewWorkOrder, projectId, projectName, user, onCancelled }: {
   milestones: Milestone[];
   /** For printing: the project's letterhead, history and name. */
   projectId?: string; projectName?: string;
@@ -84,6 +84,8 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
   onMoveDays?: (id: string, delta: number) => void;
   marks?: PathMarks;
   onDiscovery?: (task: Milestone) => void;
+  /** A work order of its own (DiscoveryForm, new). */
+  onNewWorkOrder?: () => void;
 }) {
   const [now] = useState(() => Date.now());
   const [query, setQuery] = useState("");
@@ -246,7 +248,7 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
     <div className="space-y-2">
       {picking && onDiscovery && (
         <AddWorkPicker day={today} tz={tz} milestones={milestones}
-          onPick={(t) => { setPicking(false); onDiscovery(t); }} onClose={() => setPicking(false)} />
+          onPick={(t) => { setPicking(false); onDiscovery(t); }} onNew={onNewWorkOrder ? () => { setPicking(false); onNewWorkOrder(); } : undefined} onClose={() => setPicking(false)} />
       )}
       <div className="flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-1.5 h-9 flex-1 min-w-[220px] max-w-[420px] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 focus-within:border-[var(--color-accent-ring)]">
@@ -266,13 +268,19 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
             );
           })}
         </div>
-        {canEdit && onDiscovery && (
-          <button type="button" onClick={() => setPicking(true)}
-            className="ml-auto inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
-            <Plus className="w-3.5 h-3.5" /> Add discovery or added scope
+        {canEdit && onNewWorkOrder && (
+          <button type="button" onClick={() => onNewWorkOrder()}
+            className="ml-auto inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]">
+            <Plus className="w-3.5 h-3.5" /> New work order
           </button>
         )}
-        <span className={`relative inline-flex ${canEdit && onDiscovery ? "" : "ml-auto"}`}>
+        {canEdit && onDiscovery && (
+          <button type="button" onClick={() => setPicking(true)}
+            className={`${onNewWorkOrder ? "" : "ml-auto "}inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]`}>
+            <Plus className="w-3.5 h-3.5" /> Add to a work order
+          </button>
+        )}
+        <span className={`relative inline-flex ${canEdit && (onDiscovery || onNewWorkOrder) ? "" : "ml-auto"}`}>
           <button type="button" onClick={() => setPrintMenu((v) => !v)} aria-expanded={printMenu} disabled={shown.length === 0}
             className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
             <Printer className="w-3.5 h-3.5" /> Print

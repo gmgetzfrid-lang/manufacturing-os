@@ -45,6 +45,9 @@ export interface DiscoveryDraft {
   what: string;
   /** Its work order number; none: it's under the task's. */
   wo?: string | null;
+  /** A work order of its own, not under one already on the schedule: its
+   *  name and the group it goes under. `taskId` is then NEW_WO until saved. */
+  newTask?: { name: string; parentId: string | null };
   foundAt: number;
   foundBy?: string;
   approvedBy?: string;
@@ -259,7 +262,15 @@ export function discoveries(milestones: Milestone[]): Discovery[] {
 }
 
 /** "+14 h to V-7 · finish +8 h · critical" — the impact in a line. */
+/** The task id of a work order not saved yet (DiscoveryDraft.newTask). */
+export const NEW_WO = "new:wo";
+
 export function impactLine(i: DiscoveryImpact, hrs: (h: number) => string): string {
+  // A new work order had no finish before (kept as null once saved).
+  if (i.taskFinish[0] == null || !Number.isFinite(i.taskFinish[0])) {
+    const fin = (i.finish[1] - i.finish[0]) / H;
+    return [`${hrs(i.hours)} of work`, "a new work order", fin >= 0.1 ? `turnaround finish +${hrs(Math.round(fin * 10) / 10)}` : "turnaround finish unchanged", i.critical ? "on the critical path" : null].filter(Boolean).join(" · ");
+  }
   const task = (i.taskFinish[1] - i.taskFinish[0]) / H;
   const fin = (i.finish[1] - i.finish[0]) / H;
   return [

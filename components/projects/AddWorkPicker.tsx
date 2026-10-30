@@ -32,10 +32,12 @@ export function workOrdersForDay(milestones: Milestone[], day: string, tz: strin
   return { onDay: onDay.sort(byName), others: others.sort(byName) };
 }
 
-export default function AddWorkPicker({ day: when, tz, milestones, onPick, onClose }: {
+export default function AddWorkPicker({ day: when, tz, milestones, onPick, onNew, onClose }: {
   /** "YYYY-MM-DD", or "YYYY-MM-DDTHH:mm" for an hour. */
   day: string; tz: string; milestones: Milestone[];
   onPick: (task: Milestone) => void;
+  /** A work order of its own, not under one on the schedule. */
+  onNew?: () => void;
   onClose: () => void;
 }) {
   const [q, setQ] = useState("");
@@ -73,7 +75,7 @@ export default function AddWorkPicker({ day: when, tz, milestones, onPick, onClo
           <div className="flex items-start justify-between gap-2">
             <div>
               <div className="text-[15px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5"><Plus className="w-4 h-4" /> Add discovery or added scope</div>
-              <div className="text-[12px] text-[var(--color-text-muted)]">{label} - which work order is it under?</div>
+              <div className="text-[12px] text-[var(--color-text-muted)]">{label} - {onNew ? "a new work order, or under one on the schedule?" : "which work order is it under?"}</div>
             </div>
             <button type="button" onClick={onClose} aria-label="Close" className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><XIcon className="w-4 h-4" /></button>
           </div>
@@ -85,6 +87,13 @@ export default function AddWorkPicker({ day: when, tz, milestones, onPick, onClo
           </div>
         </div>
         <div className="overflow-y-auto">
+          {onNew && !q.trim() && (
+            <button type="button" onClick={onNew}
+              className="w-full text-left px-3 py-2.5 border-b border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
+              <div className="text-[13px] font-bold text-[var(--color-accent)] inline-flex items-center gap-1.5"><Plus className="w-4 h-4" /> New work order</div>
+              <div className="text-[11.5px] text-[var(--color-text-muted)]">Its own WO #, name, steps and crew - not under one already on the schedule</div>
+            </button>
+          )}
           {list("Worked this day", onDay)}
           {list(onDay.length ? "Every other work order" : "Work orders", others)}
           {![...onDay, ...others].some(hit) && <div className="px-4 py-6 text-center text-[12.5px] text-[var(--color-text-muted)]">No work order matches.</div>}

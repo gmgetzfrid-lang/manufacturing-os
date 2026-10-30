@@ -756,7 +756,10 @@ export default function ExecutionView({
   const [discoveryFor, setDiscoveryFor] = useState<Milestone | null>(null);
   // Added from a calendar day: the form starts on that day.
   const [discoveryDay, setDiscoveryDay] = useState<string | null>(null);
-  const openDiscovery = useCallback((t: Milestone, day?: string) => { setDiscoveryDay(day ?? null); setDiscoveryFor(t); }, []);
+  // A work order of its own (not under one on the schedule).
+  const [discoveryNew, setDiscoveryNew] = useState(false);
+  const openDiscovery = useCallback((t: Milestone, day?: string) => { setDiscoveryDay(day ?? null); setDiscoveryNew(false); setDiscoveryFor(t); }, []);
+  const openNewWorkOrder = useCallback((day?: string) => { setDiscoveryDay(typeof day === "string" ? day : null); setDiscoveryFor(null); setDiscoveryNew(true); }, []);
   const crewNames = useMemo(() => [...new Set(items.map((m) => m.responsibleParty?.trim()).filter((x): x is string => !!x))].sort(), [items]);
   const saveDiscovery = useCallback(async (draft: DiscoveryDraft, at: number): Promise<boolean> => {
     if (!canEdit) return false;
@@ -764,7 +767,10 @@ export default function ExecutionView({
     const now = at;
     const plan = planDiscovery(items, draft, { now, tz, mode: criticalMode });
     if (!plan.steps.length) return false;
+    // A new work order: made first (spanning its steps), its steps under it.
+    let taskId = draft.taskId, newTaskId: string | null = null;
     const task = byId.get(draft.taskId);
+    const taskName = draft.newTask?.name ?? task?.name ?? "the task";
     const after = draft.afterId ? byId.get(draft.afterId) : undefined;
     // Its steps work like their neighbours: the same crew hours and shift.
     const sib = after ?? items.find((m) => m.parentId === draft.taskId && !childrenOf.get(m.id ?? "")?.length);
@@ -774,8 +780,14 @@ export default function ExecutionView({
     const real = (id: string) => (id.startsWith("new:") ? made[Number(id.slice(4))] : id);
     const linksBefore = plan.links.map((l) => ({ id: l.id, dependsOn: byId.get(l.id)?.dependsOn ?? [] }));
     try {
+      if (draft.newTask) {
+        const t = await createMilestone({ orgId, projectId, name: draft.newTask.name, plannedStartAt: plan.steps[0].plannedStartAt, plannedAt: plan.steps[plan.steps.length - 1].plannedAt,
+          parentId: draft.newTask.parentId, createdBy: userId, createdByName: userName, createdByEmail: userEmail, createdByRole: userRole });
+        taskId = newTaskId = t.id!;
+        if (draft.wo?.trim()) await updateMilestone({ id: newTaskId, ...who, patch: { workOrderRef: draft.wo.trim() } });
+      }
       for (const [i, st] of plan.steps.entries()) {
-        const created = await createMilestone({ orgId, projectId, name: st.name, plannedStartAt: st.plannedStartAt, plannedAt: st.plannedAt, durationHours: st.hours, parentId: draft.taskId,
+        const created = await createMilestone({ orgId, projectId, name: st.name, plannedStartAt: st.plannedStartAt, plannedAt: st.plannedAt, durationHours: st.hours, parentId: taskId,
           createdBy: userId, createdByName: userName, createdByEmail: userEmail, createdByRole: userRole });
         made.push(created.id!);
         const rec: DiscoveryRecord = { id: groupId, kind: draft.kind ?? "discovery", what: draft.what, foundAt: draft.foundAt, foundBy: userName, approvedBy: draft.approvedBy, addedAt: now, addedBy: userName,
@@ -796,14 +808,15 @@ export default function ExecutionView({
       // Said where the work is: a comment on the step it follows.
       if (after?.id) await addMilestoneNote({ orgId, milestoneId: after.id, kind: "note", statusAt: after.status, body: addedNote(draft.kind ?? "discovery", draft.what), createdBy: userId, createdByName: userName, happenedAt: new Date(draft.foundAt).toISOString() }).catch(() => undefined);
       onRefresh();
-      announce(`${ADDED[draft.kind ?? "discovery"].word} on ${truncate(task?.name ?? "the task", 24)}: ${impactLine(plan.impact, (h) => `${h} h`)}`, async () => {
+      announce(`${draft.newTask ? `New work order (${ADDED[draft.kind ?? "discovery"].lower})` : ADDED[draft.kind ?? "discovery"].word} ${draft.newTask ? "" : "on "}${truncate(taskName, 24)}: ${impactLine(plan.impact, (h) => `${h} h`)}`, async () => {
         for (const id of made) await deleteMilestone(id, userId).catch(() => undefined);
+        if (newTaskId) await deleteMilestone(newTaskId, userId).catch(() => undefined);
         for (const l of linksBefore) await updateMilestone({ id: l.id, ...who, patch: { dependsOn: l.dependsOn } }).catch(() => undefined);
         onRefresh();
       }, plan.impact.critical ? "default" : "success");
       return true;
     } catch (e) {
-      notify(`Discovery not fully saved: ${(e as Error).message}${made.length ? ` (${made.length} step${made.length === 1 ? "" : "s"} were added)` : ""}`, "warning");
+      notify(`Not fully saved: ${(e as Error).message}${newTaskId ? " (the work order was added)" : ""}${made.length ? ` (${made.length} step${made.length === 1 ? "" : "s"} were added)` : ""}`, "warning");
       onRefresh();
       return false;
     }
@@ -1317,14 +1330,15 @@ export default function ExecutionView({
           onUpdate={canEdit ? updateStep : undefined} onFixTimes={canEdit ? fixTimes : undefined}
           onOpenDetail={(m) => m.id && setDetailId(m.id)}
           onMoveDays={(id, days) => { const target = byId.get(id); if (target) void moveByDays(target, days); }}
-          onDiscovery={canEdit ? openDiscovery : undefined} />
+          onDiscovery={canEdit ? openDiscovery : undefined} onNewWorkOrder={canEdit ? openNewWorkOrder : undefined} />
       ) : layout === "report" ? (
         <ExecutionReportView milestones={items} shiftTimes={shiftTimes} critical={critical} criticalSource={criticalSourceLabel} projectId={projectId} projectName={projectName} />
       ) : layout === "shift" ? (
-        <ShiftReportView milestones={items} cancelled={cancelled} userId={userId} userName={userName ?? userEmail} canEdit={canEdit} progress={progressIndex} projectId={projectId} projectName={projectName} onUpdateStep={updateStep} onDiscovery={canEdit ? openDiscovery : undefined} pathNow={cpClock} onPlanNext={canEdit && onMoveMany ? setPlanNext : undefined} onFixTimes={canEdit ? fixTimes : undefined} />
+        <ShiftReportView milestones={items} cancelled={cancelled} userId={userId} userName={userName ?? userEmail} canEdit={canEdit} progress={progressIndex} projectId={projectId} projectName={projectName} onUpdateStep={updateStep} onDiscovery={canEdit ? openDiscovery : undefined} onNewWorkOrder={canEdit ? openNewWorkOrder : undefined} pathNow={cpClock} onPlanNext={canEdit && onMoveMany ? setPlanNext : undefined} onFixTimes={canEdit ? fixTimes : undefined} />
       ) : layout === "calendar" ? (
         <ScheduleCalendarTileView
           onDiscovery={canEdit ? openDiscovery : undefined}
+          onNewWorkOrder={canEdit ? openNewWorkOrder : undefined}
           onPlanNext={canEdit && onMoveMany ? setPlanNext : undefined}
           onFixTimes={canEdit ? fixTimes : undefined}
           pathMarks={marks}
@@ -1530,9 +1544,9 @@ export default function ExecutionView({
           onClose={() => setPendingMark(null)} />
       )}
 
-      {discoveryFor && (
-        <DiscoveryForm key={`${discoveryFor.id}:${discoveryDay ?? ""}`} milestones={items} task={discoveryFor} tz={tz} times={shiftTimes} crews={crewNames} now={cpClock} mode={criticalMode}
-          day={discoveryDay ?? undefined} onSave={saveDiscovery} onClose={() => { setDiscoveryFor(null); setDiscoveryDay(null); }} />
+      {(discoveryFor || discoveryNew) && (
+        <DiscoveryForm key={`${discoveryFor?.id ?? "new"}:${discoveryDay ?? ""}`} milestones={items} task={discoveryFor ?? undefined} newWo={discoveryNew} tz={tz} times={shiftTimes} crews={crewNames} now={cpClock} mode={criticalMode}
+          day={discoveryDay ?? undefined} onSave={saveDiscovery} onClose={() => { setDiscoveryFor(null); setDiscoveryNew(false); setDiscoveryDay(null); }} />
       )}
 
       {bulkMode && (

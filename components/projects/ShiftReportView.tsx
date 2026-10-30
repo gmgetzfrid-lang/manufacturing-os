@@ -105,6 +105,8 @@ interface Props {
   /** Found work: into the schedule (DiscoveryForm, hosted by the schedule). */
   /** Discovery / added scope on a task; `at` ("YYYY-MM-DDTHH:mm"): from an hour of the notes. */
   onDiscovery?: (task: Milestone, at?: string) => void;
+  /** A work order of its own; `at`: from an hour of the notes. */
+  onNewWorkOrder?: (at?: string) => void;
   /** The schedule's clock for the critical path — the same moment the
    *  calendar and the discovery preview use, so the forecast reads alike. */
   pathNow?: number;
@@ -123,7 +125,7 @@ const MEETINGS: Array<{ id: MeetingKind; label: string; Icon: typeof Rocket }> =
   { id: "closeout", label: "Close-out", Icon: Trophy },
 ];
 
-export default function ShiftReportView({ milestones: rawLive, progress: liveProgress, projectId, projectName, cancelled = NONE_CANCELLED, userId, userName, canEdit = false, onUpdateStep, onDiscovery, pathNow, onPlanNext, onFixTimes }: Props) {
+export default function ShiftReportView({ milestones: rawLive, progress: liveProgress, projectId, projectName, cancelled = NONE_CANCELLED, userId, userName, canEdit = false, onUpdateStep, onDiscovery, onNewWorkOrder, pathNow, onPlanNext, onFixTimes }: Props) {
   const tz = useScheduleTz();
   // The project's shift-change times — the same on every device.
   const times = useShiftTimes(projectId);
@@ -900,6 +902,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       {addAt != null && onDiscovery && (
         <AddWorkPicker day={toDateTimeInput(addAt, tz)} tz={tz} milestones={live}
           onPick={(t) => { const at = toDateTimeInput(addAt, tz); setAddAt(null); onDiscovery(t, at); }}
+          onNew={onNewWorkOrder ? () => { const at = toDateTimeInput(addAt, tz); setAddAt(null); onNewWorkOrder(at); } : undefined}
           onClose={() => setAddAt(null)} />
       )}
       <QuickLookOpen.Provider value={openLook}>

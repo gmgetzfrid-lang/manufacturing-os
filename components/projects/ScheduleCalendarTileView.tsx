@@ -87,6 +87,8 @@ interface Props {
   onFixTimes?: (id: string, t: { start?: number | null; finish?: number | null }) => Promise<boolean>;
   /** Found work on a task: into the schedule (DiscoveryForm). */
   onDiscovery?: (task: Milestone, day?: string) => void;
+  /** A work order of its own, on a day. */
+  onNewWorkOrder?: (day?: string) => void;
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -95,7 +97,7 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
  *  shift running into the next morning. */
 type Placed = DayPlacement<Milestone> & { band: Band; bandStart: number; bandEnd: number; ahead?: boolean; crit?: boolean };
 
-export default function ScheduleCalendarTileView({ planNow, userId, milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail, detailOpen, onAddNote, onSetProgressNote, onStartNote, shiftTimes = DEFAULT_SHIFT_TIMES, onUpdateStep, pathMarks, onDiscovery, now: clockNow, onPlanNext, onFixTimes }: Props) {
+export default function ScheduleCalendarTileView({ planNow, userId, milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail, detailOpen, onAddNote, onSetProgressNote, onStartNote, shiftTimes = DEFAULT_SHIFT_TIMES, onUpdateStep, pathMarks, onDiscovery, onNewWorkOrder, now: clockNow, onPlanNext, onFixTimes }: Props) {
   const tz = useScheduleTz();
   // Multi-select for bulk actions on the calendar (mirrors the timeline).
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -959,6 +961,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
       {addOn && canAdd && (
         <AddWorkPicker day={addOn} tz={tz} milestones={milestones}
           onPick={(t) => { const d = addOn; setAddOn(null); onDiscovery!(t, d); }}
+          onNew={onNewWorkOrder ? () => { const d = addOn; setAddOn(null); onNewWorkOrder(d); } : undefined}
           onClose={() => setAddOn(null)} />
       )}
 
