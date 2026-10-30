@@ -19,7 +19,7 @@ export default function CandidateTablePanel({ table, onOpen }: {
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
       <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <ListFilter className="w-4 h-4 text-[var(--color-accent)]" />
-        <span className="text-sm font-black text-[var(--color-text)]">Shortlist — {table.rows.length} {table.rows.length === 1 ? "entry" : "entries"}{table.catalog ? ` from ${table.catalog}` : ""}</span>
+        <span className="text-sm font-black text-[var(--color-text)]">Shortlist - {table.rows.length} {table.rows.length === 1 ? "entry" : "entries"}{table.catalog ? ` from ${table.catalog}` : ""}</span>
         <span className="text-[11px] text-[var(--color-text-muted)]">{table.basis}</span>
       </div>
       <div className="overflow-x-auto">
@@ -43,9 +43,9 @@ export default function CandidateTablePanel({ table, onOpen }: {
                     </button>
                   ) : <span className="font-mono font-bold">{r.code}</span>}
                 </td>
-                {hasRating && <td className="px-3 py-1.5 whitespace-nowrap font-mono">{r.rating ?? <span className="font-sans text-[10px] text-[var(--color-text-faint)]" title="Not read from the page — check it on the entry's page">not recorded</span>}</td>}
-                <td className="px-3 py-1.5 min-w-[240px]">{r.service ?? "—"}</td>
-                {fieldCols.map((f) => <td key={f} className="px-3 py-1.5 whitespace-nowrap">{r.attrs[f] ?? "—"}</td>)}
+                {hasRating && <td className="px-3 py-1.5 whitespace-nowrap font-mono">{r.rating ?? <span className="font-sans text-[10px] text-[var(--color-text-faint)]" title="Not read from the page - check it on the entry's page">not recorded</span>}</td>}
+                <td className="px-3 py-1.5 min-w-[240px]">{r.service ?? "-"}</td>
+                {fieldCols.map((f) => <td key={f} className="px-3 py-1.5 whitespace-nowrap">{r.attrs[f] ?? "-"}</td>)}
                 <td className="px-3 py-1.5">
                   <div className="flex flex-wrap gap-1">
                     {r.matched.map((m) => (
@@ -64,7 +64,7 @@ export default function CandidateTablePanel({ table, onOpen }: {
       {(table.differ.length > 0 || table.related > 0) && (
         <div className="px-4 py-2 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] space-y-0.5">
           {table.differ.length > 0 && <div><b className="text-[var(--color-text)]">Narrow it by:</b> {table.differ.map((d) => `${d.field} (${d.values.join(" / ")})`).join(" · ")}</div>}
-          {table.related > 0 && <div>{table.related} more {table.related === 1 ? "entry" : "entries"} matched only on a related word — not shown.</div>}
+          {table.related > 0 && <div>{table.related} more {table.related === 1 ? "entry" : "entries"} matched only on a related word - not shown.</div>}
         </div>
       )}
     </div>

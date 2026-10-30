@@ -147,7 +147,7 @@ export async function POST(req: NextRequest) {
     tables: results,
     failedTables: failed.map((f) => f.name),
     note:
-      "Records restored additively (existing ids were skipped). File binaries are not re-uploaded here — " +
+      "Records restored additively (existing ids were skipped). File binaries are not re-uploaded here - " +
       "any referenced file that isn't in storage will prompt for its archive when opened. " +
       "Restored users are inactive placeholders; re-invite them to grant access.",
   });

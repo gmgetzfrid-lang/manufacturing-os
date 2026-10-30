@@ -293,7 +293,7 @@ export function rankEntries(
 
     // Dead files.
     let rejected = false;
-    if (e.sizeBytes === 0) { ev.push({ kind: "size", label: "0 KB — empty file", delta: W.emptyFile }); rejected = true; }
+    if (e.sizeBytes === 0) { ev.push({ kind: "size", label: "0 KB - empty file", delta: W.emptyFile }); rejected = true; }
     if (JUNK.test(e.name)) { ev.push({ kind: "junk", label: "OS or temp junk", delta: W.junk }); rejected = true; }
     if (e.status && /^(superseded|void|archived)$/i.test(e.status)) {
       ev.push({ kind: "status", label: `Status ${e.status}`, delta: W.superseded });
@@ -303,7 +303,7 @@ export function rankEntries(
     if (same.length) ev.push({ kind: "duplicate", label: `Same bytes in ${same.length + 1} places`, delta: 0 });
     if (e.source === "listing") {
       const twin = same.find((x) => x.source === "system");
-      if (twin) ev.push({ kind: "source", label: `On ${e.listingName} — same bytes as "${twin.name}", already in the system`, delta: 0 });
+      if (twin) ev.push({ kind: "source", label: `On ${e.listingName} - same bytes as "${twin.name}", already in the system`, delta: 0 });
       else ev.push({ kind: "source", label: `Listed on ${e.listingName}, not in the system`, delta: 0 });
     }
     if (e.read) ev.push({ kind: "source", label: e.read.status === "ready" ? `Content read by AI (${e.read.pages} pages${e.read.byHash ? ", same bytes as an indexed copy" : ""})` : `Content read: ${e.read.status}`, delta: 0 });

@@ -47,7 +47,7 @@ describe("GraphSim", () => {
     expect(dist(a, b)).toBeLessThan(dist(a, far));
   });
 
-  it("respects linkDistance — a longer rest length settles further apart", () => {
+  it("respects linkDistance - a longer rest length settles further apart", () => {
     const near = new GraphSim({ linkDistance: 40 });
     near.setGraph([{ id: "a" }, { id: "b" }], [{ a: "a", b: "b" }]);
     settle(near);

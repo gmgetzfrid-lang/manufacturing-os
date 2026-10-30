@@ -94,7 +94,7 @@ async function getPresignedUploadUrl(
     if (signal?.aborted) throw new UploadCancelledError();
     throw new Error(
       e.name === "TimeoutError" || e.name === "AbortError"
-        ? "timed out asking for an upload slot — the server is busy"
+        ? "timed out asking for an upload slot - the server is busy"
         : `couldn't reach the server (${e.message})`,
     );
   });
@@ -274,7 +274,7 @@ function putWithXhr(
       stall = setTimeout(() => {
         finish(() => {
           try { xhr.abort(); } catch { /* already gone */ }
-          reject(new Error("stalled — no data moved for 90s"));
+          reject(new Error("stalled - no data moved for 90s"));
         });
       }, STALL_MS);
     };
@@ -346,7 +346,7 @@ async function uploadMultipart(
       if (lastErr) throw new Error(`part ${partNumber}/${partCount}: ${lastErr.message}`);
       if (!etag) {
         throw new Error(
-          `part ${partNumber} uploaded but its ETag wasn't readable — the storage bucket's CORS policy must expose the ETag header (Cloudflare R2 → bucket → CORS → ExposeHeaders: ["ETag"]).`,
+          `part ${partNumber} uploaded but its ETag wasn't readable - the storage bucket's CORS policy must expose the ETag header (Cloudflare R2 → bucket → CORS → ExposeHeaders: ["ETag"]).`,
         );
       }
       parts.push({ partNumber, etag });

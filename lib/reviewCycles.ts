@@ -312,7 +312,7 @@ export async function scanAndNotifyReviews(orgId: string, opts?: { leadDays?: nu
         notify({
           orgId, userId: uid, kind: "owner_behind",
           title: `Owner behind on review: ${label}`,
-          body: `${owner.name || "The owner"} hasn't kept ${label} current — its review is ${-days} days overdue.`,
+          body: `${owner.name || "The owner"} hasn't kept ${label} current - its review is ${-days} days overdue.`,
           link, resourceType: "document", resourceId: doc.id,
         })
       ));

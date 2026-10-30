@@ -115,8 +115,8 @@ export function computeForecast(input: {
     return {
       eac, varianceAtCompletion: vac, basis: "cpi",
       sentence: vac > 0
-        ? `At this performance you'll finish around ${fmt(eac)} — ${fmt(vac)} over budget.`
-        : `At this performance you'll finish around ${fmt(eac)} — ${fmt(Math.abs(vac))} under budget.`,
+        ? `At this performance you'll finish around ${fmt(eac)} - ${fmt(vac)} over budget.`
+        : `At this performance you'll finish around ${fmt(eac)} - ${fmt(Math.abs(vac))} under budget.`,
     };
   }
   const s = input.scheduleStart ? toMs(input.scheduleStart) : NaN;
@@ -130,8 +130,8 @@ export function computeForecast(input: {
       return {
         eac, varianceAtCompletion: vac, basis: "run_rate",
         sentence: vac > 0
-          ? `At the current spend pace you'll finish around ${fmt(eac)} — ${fmt(vac)} over budget.`
-          : `At the current spend pace you'll finish around ${fmt(eac)} — on track against budget.`,
+          ? `At the current spend pace you'll finish around ${fmt(eac)} - ${fmt(vac)} over budget.`
+          : `At the current spend pace you'll finish around ${fmt(eac)} - on track against budget.`,
       };
     }
   }

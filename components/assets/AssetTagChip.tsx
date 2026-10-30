@@ -161,7 +161,7 @@ function PhotoTagChip({
               : creating
                 ? `Loading ${tag}…`
                 : hasPhotos
-                  ? `Quick-look — ${photoCount} photo${photoCount === 1 ? "" : "s"} of ${tag}`
+                  ? `Quick-look - ${photoCount} photo${photoCount === 1 ? "" : "s"} of ${tag}`
                   : cachedAsset
                     ? `Add photos to ${tag}`
                     : canManage

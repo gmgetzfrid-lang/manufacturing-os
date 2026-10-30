@@ -117,7 +117,7 @@ export default function CsvImportModal({
   const validateMapping = (): string | null => {
     for (const f of allFields) {
       if (f.required && !mapping[f.key]) {
-        return `Field "${f.label}" is required — pick the CSV column that holds it.`;
+        return `Field "${f.label}" is required - pick the CSV column that holds it.`;
       }
     }
     return null;
@@ -244,7 +244,7 @@ export default function CsvImportModal({
                       onChange={(e) => setMapping({ ...mapping, [f.key]: e.target.value })}
                       className="flex-1 px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-xs"
                     >
-                      <option value="">— skip —</option>
+                      <option value="">- skip -</option>
                       {headers.map((h, i) => <option key={i} value={h}>{h}</option>)}
                     </select>
                   </div>

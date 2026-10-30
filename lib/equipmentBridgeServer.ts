@@ -186,7 +186,7 @@ export async function applyForDocument(admin: SupabaseClient, input: {
   const { data: row } = await admin
     .from("document_equipment_suggestions").select("suggested, applied")
     .eq("org_id", orgId).eq("document_id", documentId).maybeSingle();
-  if (!row) throw new Error("No computed suggestions for this document — run the sweep first.");
+  if (!row) throw new Error("No computed suggestions for this document - run the sweep first.");
   const suggested = (Array.isArray(row.suggested) ? row.suggested : []) as Array<BridgeSuggestion & { unitCode?: string | null }>;
   const alreadyApplied = new Set<string>(Array.isArray(row.applied) ? (row.applied as string[]) : []);
   const wanted = suggested.filter((s) =>

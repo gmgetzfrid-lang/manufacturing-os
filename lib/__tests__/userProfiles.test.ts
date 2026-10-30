@@ -29,7 +29,7 @@ describe("initialsOf", () => {
 });
 
 describe("avatarToneOf", () => {
-  it("is deterministic — same person, same color everywhere", () => {
+  it("is deterministic - same person, same color everywhere", () => {
     expect(avatarToneOf("Grant Getzfrid")).toBe(avatarToneOf("Grant Getzfrid"));
   });
   it("returns a hex color even for empty input", () => {

@@ -78,7 +78,7 @@ async function loadRules(
     .eq("org_id", orgId)
     .limit(200);
   if (res.error) {
-    notes.push("Connection Skills not installed — run the connection-skills migration to author your own detectors. Built-in detectors ran with defaults.");
+    notes.push("Connection Skills not installed - run the connection-skills migration to author your own detectors. Built-in detectors ran with defaults.");
     return null;
   }
   const rows = (res.data as RuleRow[]) ?? [];
@@ -164,7 +164,7 @@ export async function runLinkProposers(
       .eq("org_id", orgId).limit(5000);
     if (plain.error) throw new Error(plain.error.message);
     docRows = (plain.data as typeof docRows) ?? [];
-    notes.push("Per-document AI exclusions not applied — run the link-proposal migration.");
+    notes.push("Per-document AI exclusions not applied - run the link-proposal migration.");
   } else {
     docRows = ((withFlag.data as Array<{ id: string; document_number: string | null; rev: string | null; ai_excluded: boolean; library_id: string | null }>) ?? [])
       .filter((d) => !(d.library_id && neverAi.has(d.library_id)))
@@ -200,7 +200,7 @@ export async function runLinkProposers(
   inputs.mirroredDocs = mirrorRows.length;
 
   if (kdocs.error) {
-    notes.push("Drawing entities unavailable — off-page continuity skipped.");
+    notes.push("Drawing entities unavailable - off-page continuity skipped.");
   } else if (mirrorRows.length > 0 && builtinEnabled("opc_continuity")) {
     const entities = await inChunks<{ document_id: string; kind: string; tag: string; raw: string | null; page: number }>(
       mirrorRows.map((k) => k.id),
@@ -263,7 +263,7 @@ export async function runLinkProposers(
   const { data: aliasRows, error: aliasErr } = await admin
     .from("asset_aliases").select("asset_id, alias").eq("org_id", orgId).limit(5000);
   if (aliasErr) {
-    notes.push("Aliases unavailable — run the link-proposal migration to widen matching.");
+    notes.push("Aliases unavailable - run the link-proposal migration to widen matching.");
   } else {
     for (const r of (aliasRows as Array<{ asset_id: string; alias: string }>) ?? []) {
       (aliasByAsset.get(r.asset_id) ?? aliasByAsset.set(r.asset_id, []).get(r.asset_id)!).push(r.alias);
@@ -305,7 +305,7 @@ export async function runLinkProposers(
         .select("document_id, page, content")
         .in("document_id", slice.map((k) => k.id))
         .limit(CHUNK_SCAN_CAP - inputs.chunksScanned);
-      if (error) { notes.push("Indexed text unavailable — custom skills skipped this pass."); break; }
+      if (error) { notes.push("Indexed text unavailable - custom skills skipped this pass."); break; }
       for (const c of (data as Array<{ document_id: string; page: number; content: string }>) ?? []) {
         const src = sourceByKdoc.get(c.document_id);
         if (!src || !allowed.has(src)) continue;

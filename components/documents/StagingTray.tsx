@@ -32,7 +32,7 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
                     {idx + 1}
                   </span>
                   <span className="text-[10px] font-mono font-bold text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded border border-orange-200 shrink-0 truncate max-w-[80px]">
-                    {doc.documentNumber || "—"}
+                    {doc.documentNumber || "-"}
                   </span>
                   <span className="text-xs text-[var(--color-text)] truncate flex-1 min-w-0">
                     {doc.title || doc.name}
@@ -65,7 +65,7 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
                   className="text-[10px] font-mono bg-slate-800 hover:bg-slate-700 px-2 py-0.5 rounded text-slate-300 whitespace-nowrap cursor-pointer transition-colors border border-slate-700"
                   title={doc.title || doc.name}
                 >
-                  {doc.documentNumber || (doc.title || "").slice(0, 10) || "—"}
+                  {doc.documentNumber || (doc.title || "").slice(0, 10) || "-"}
                 </span>
               ))}
               {docs.length > 6 && (

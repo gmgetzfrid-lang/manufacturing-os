@@ -145,7 +145,7 @@ export default function AskKnowledgeBody() {
         }
       }, ctl.signal);
       if (!gotResult) {
-        setTurns((t) => t.map((x, i) => (i === t.length - 1 && !x.answer ? { ...x, error: "The answer didn't come back — try again." } : x)));
+        setTurns((t) => t.map((x, i) => (i === t.length - 1 && !x.answer ? { ...x, error: "The answer didn't come back - try again." } : x)));
       }
     } catch (e) {
       if (!ctl.signal.aborted) {
@@ -341,7 +341,7 @@ export default function AskKnowledgeBody() {
                         ))}
                       </span>
                     ) : (
-                      <span className="block text-[10px] text-[var(--color-text-muted)] mt-0.5">Answer it in the box above — it continues this conversation.</span>
+                      <span className="block text-[10px] text-[var(--color-text-muted)] mt-0.5">Answer it in the box above - it continues this conversation.</span>
                     )}
                   </div>
                 )}
@@ -380,7 +380,7 @@ export default function AskKnowledgeBody() {
               </ul>
             </div>
           ) : (
-            <Empty>Ask anything your library can answer — the answer comes back cited to the page, from your documents only.</Empty>
+            <Empty>Ask anything your library can answer - the answer comes back cited to the page, from your documents only.</Empty>
           )
         )}
       </div>

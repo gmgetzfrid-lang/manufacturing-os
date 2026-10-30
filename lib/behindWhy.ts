@@ -22,7 +22,7 @@ export const CAUSE_WORD: Record<BehindCause, { word: string; short: string }> = 
   added: { word: "Added scope (your call)", short: "added scope" },
   discovery: { word: "Discovery (found work)", short: "discovery" },
   held: { word: "On hold / blocked", short: "on hold" },
-  own: { word: "Late or slow — nothing in the way", short: "late or slow" },
+  own: { word: "Late or slow - nothing in the way", short: "late or slow" },
 };
 export const CAUSE_ORDER: BehindCause[] = ["discovery", "added", "held", "own"];
 
@@ -200,17 +200,17 @@ export function chainText(ch: BehindChain, f: { DTs: (ms: number) => string; hrs
   const state = hd.status === "on_hold" || hd.status === "blocked" ? (hd.status === "blocked" ? "blocked" : "on hold")
     : hd.percent > 0 || hd.started != null ? `${hd.percent}%` : "not started";
   const facts: string[] = [];
-  if (hd.reason) facts.push(`On hold — ${hd.reason}.`);
-  if (hd.added) facts.push(`${hd.added === "added" ? "Added scope" : "Discovery work"} — its own work is behind its plan.`);
+  if (hd.reason) facts.push(`On hold - ${hd.reason}.`);
+  if (hd.added) facts.push(`${hd.added === "added" ? "Added scope" : "Discovery work"} - its own work is behind its plan.`);
   if (ch.pushed) {
     const p = ch.pushed;
-    facts.push(`Couldn't start until ${p.by}${p.byCause !== "own" ? ` (${CAUSE_WORD[p.byCause].short})` : ""} was done ${f.DTs(p.ready)} — ${h(p.lateH)} after its planned start${p.root ? `; that waited on ${p.root.name} (${CAUSE_WORD[p.root.cause].short})` : ""}.`);
+    facts.push(`Couldn't start until ${p.by}${p.byCause !== "own" ? ` (${CAUSE_WORD[p.byCause].short})` : ""} was done ${f.DTs(p.ready)} - ${h(p.lateH)} after its planned start${p.root ? `; that waited on ${p.root.name} (${CAUSE_WORD[p.root.cause].short})` : ""}.`);
   }
   if (hd.started != null && !hd.reason) {
     const late = hd.planStart != null ? (hd.started - hd.planStart) / H : 0;
-    facts.push(ch.pushed || late < 0.5 ? `Started ${f.DTs(hd.started)}.` : `Started ${f.DTs(hd.started)} — ${h(late)} after its planned start, nothing in its way.`);
+    facts.push(ch.pushed || late < 0.5 ? `Started ${f.DTs(hd.started)}.` : `Started ${f.DTs(hd.started)} - ${h(late)} after its planned start, nothing in its way.`);
   } else if (hd.started == null && !hd.reason && !hd.added) {
-    facts.push(ch.pushed ? "Not started yet." : "Not started — nothing it waits on is open.");
+    facts.push(ch.pushed ? "Not started yet." : "Not started - nothing it waits on is open.");
   }
   const rest = ch.steps.filter((x) => x.id !== hd.id);
   const waiting = rest.length
@@ -229,7 +229,7 @@ export function behindWhyBlocks(why: BehindWhy, f: { DTs: (ms: number) => string
   const h = (x: number) => f.hrs(r1(x));
   const top = why.chains.slice(0, max), rest = why.chains.slice(max);
   return [
-    { k: "label", text: `Why we're behind — ${h(why.total)} of work behind plan${why.ahead >= 0.5 ? `, ${h(why.ahead)} ahead elsewhere` : ""}` },
+    { k: "label", text: `Why we're behind - ${h(why.total)} of work behind plan${why.ahead >= 0.5 ? `, ${h(why.ahead)} ahead elsewhere` : ""}` },
     { k: "stats", items: CAUSE_ORDER.filter((k) => why.byCause[k] >= 0.05).map((k) => ({ label: CAUSE_WORD[k].word, value: h(why.byCause[k]), tone: CAUSE_EXPORT_TONE[k] })) },
     {
       k: "table", head: ["Holding it up", "Cause", "Work behind"], align: ["left", "left", "right"], textLabels: ["", "", "behind"], nowrap: [2],
@@ -237,7 +237,7 @@ export function behindWhyBlocks(why: BehindWhy, f: { DTs: (ms: number) => string
         ...top.map((ch) => {
           const t = chainText(ch, f);
           return [
-            { t: `${t.title} — ${t.state}`, bold: true, sub: [t.facts, t.waiting, t.split].filter((x): x is string => !!x).map((x) => ({ t: x })) },
+            { t: `${t.title} - ${t.state}`, bold: true, sub: [t.facts, t.waiting, t.split].filter((x): x is string => !!x).map((x) => ({ t: x })) },
             { t: CAUSE_WORD[ch.cause].short, tone: CAUSE_EXPORT_TONE[ch.cause] },
             { t: h(ch.hours), bold: true, tone: "rose" as const },
           ];

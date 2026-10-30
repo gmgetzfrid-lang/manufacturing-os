@@ -73,7 +73,7 @@ export async function signingReauthState(): Promise<SigningReauth | null> {
 export async function verifySigningCredential(email: string, password: string): Promise<void> {
   if (!password) throw new Error("Enter your password to sign.");
   const { error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) throw new Error("That password doesn't match — signature not applied.");
+  if (error) throw new Error("That password doesn't match - signature not applied.");
 }
 
 /** Send an SSO account back through its provider with a forced login prompt,

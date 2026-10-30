@@ -74,7 +74,7 @@ export function CancelledJobsBar({ jobs, canEdit, userId, userEmail, onChanged }
       <button onClick={() => setOpen((v) => !v)} aria-expanded={open}
         className="w-full flex items-center gap-2 px-3 py-2 text-left text-[12.5px] text-amber-900 dark:text-amber-200">
         <Ban className="w-4 h-4 shrink-0" />
-        <span className="flex-1 min-w-0"><b>{n} job{n === 1 ? "" : "s"} cancelled</b> from this schedule — still to be done elsewhere</span>
+        <span className="flex-1 min-w-0"><b>{n} job{n === 1 ? "" : "s"} cancelled</b> from this schedule - still to be done elsewhere</span>
         {open ? <ChevronDown className="w-4 h-4 shrink-0" /> : <ChevronRight className="w-4 h-4 shrink-0" />}
       </button>
       {open && (

@@ -443,7 +443,7 @@ function AssetsPageInner() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search all equipment — tag (E-22), site code (2030.22), description, location…"
+              placeholder="Search all equipment - tag (E-22), site code (2030.22), description, location…"
               className="w-full pl-10 pr-3 py-2.5 text-base sm:text-sm border border-[var(--color-border)] rounded-lg bg-[var(--color-surface)] focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
             />
           </div>
@@ -556,7 +556,7 @@ function AssetsPageInner() {
                         unitCode: unitFilter === "__unassigned" ? undefined : (unitFilter ?? undefined),
                       })}
                       className="w-full rounded-xl border-2 border-dashed border-[var(--color-border)] py-5 text-xs font-bold text-[var(--color-text-faint)] hover:border-purple-400 hover:text-purple-700">
-                      No {g.name.toLowerCase()} in this area yet{isAdmin ? " — add the first" : ""}
+                      No {g.name.toLowerCase()} in this area yet{isAdmin ? " - add the first" : ""}
                     </button>
                   ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -832,7 +832,7 @@ function UnitResources({ orgId, unitCode, links, canEdit, onChanged }: {
                 : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-purple-300 hover:text-purple-700"
             }`}>
             <Link2 className="w-3.5 h-3.5" />
-            {links.length === 0 ? "Pin this unit's libraries — P&IDs, manuals, unit data…" : "Pin another"}
+            {links.length === 0 ? "Pin this unit's libraries - P&IDs, manuals, unit data…" : "Pin another"}
           </button>
         )}
         {!canEdit && links.length === 0 && (
@@ -908,7 +908,7 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
           <Link2 className="w-4 h-4 text-purple-600" />
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">Pin a library to this unit</div>
-            <div className="text-[11px] text-[var(--color-text-muted)]">A whole library, or one folder of it — labeled for what it means here.</div>
+            <div className="text-[11px] text-[var(--color-text-muted)]">A whole library, or one folder of it - labeled for what it means here.</div>
           </div>
           <button onClick={onClose} className="p-1.5 rounded hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4 text-[var(--color-text-muted)]" /></button>
         </div>
@@ -918,7 +918,7 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
             <select value={libraryId}
               onChange={(e) => { setLibraryId(e.target.value); setFolders([]); setFolderId(""); }}
               className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]">
-              <option value="">— Pick a library —</option>
+              <option value="">- Pick a library -</option>
               {libs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
             </select>
           </div>
@@ -1030,7 +1030,7 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
     <div className="mt-3 rounded-2xl border border-violet-200 bg-violet-50/60 p-4">
       <div className="text-sm font-black text-[var(--color-text)] mb-0.5">File this equipment under its operating area</div>
       <p className="text-xs text-[var(--color-text-muted)] mb-2.5">
-        Pick a unit for each asset and hit Assign — the site code fills in automatically.
+        Pick a unit for each asset and hit Assign - the site code fills in automatically.
         Where the linked drawings already say which unit, it&apos;s pre-selected for you.
       </p>
       <div className="space-y-1.5">
@@ -1046,9 +1046,9 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
                 disabled={busy}
                 className="px-2 py-1.5 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)] font-bold"
               >
-                <option value="">— pick a unit —</option>
+                <option value="">- pick a unit -</option>
                 {book.units.map((u) => (
-                  <option key={u.code} value={u.code}>{u.code} — {u.label}</option>
+                  <option key={u.code} value={u.code}>{u.code} - {u.label}</option>
                 ))}
               </select>
               <span className="text-[10px] text-[var(--color-text-faint)] flex-1 min-w-[120px]">
@@ -1268,7 +1268,7 @@ function EmptyState({ onCreate, hasAny }: { onCreate?: () => void; hasAny: boole
       <p className="text-sm text-[var(--color-text-muted)] max-w-md mx-auto mb-4">
         {hasAny
           ? "Try a different search or clear the filters."
-          : "Create your first asset — equipment, instrument, valve, anything taggable. Once an asset exists, its tag becomes a clickable chip everywhere you reference it."}
+          : "Create your first asset - equipment, instrument, valve, anything taggable. Once an asset exists, its tag becomes a clickable chip everywhere you reference it."}
       </p>
       {!hasAny && onCreate && (
         <button onClick={onCreate} className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-black shadow-lg">
@@ -1389,7 +1389,7 @@ function AssetEditDrawer({
       }
     } catch (e) {
       const friendly = translatePostgresError(e, { entity: "asset", field: "tag" });
-      setError(`${friendly.heading} — ${friendly.message}`);
+      setError(`${friendly.heading} - ${friendly.message}`);
     }
     finally { setBusy(false); }
   };
@@ -1405,7 +1405,7 @@ function AssetEditDrawer({
       onClose();
     } catch (e) {
       const f = translatePostgresError(e, { entity: "asset" });
-      setError(`${f.heading} — ${f.message}`);
+      setError(`${f.heading} - ${f.message}`);
       setBusy(false);
     }
   };
@@ -1483,7 +1483,7 @@ function AssetEditDrawer({
             <div>
               <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Type</label>
               <select value={typeId} onChange={(e) => setTypeId(e.target.value)} disabled={!canEdit || busy} className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm">
-                <option value="">— Untyped —</option>
+                <option value="">- Untyped -</option>
                 {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
@@ -1501,14 +1501,14 @@ function AssetEditDrawer({
                   <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Operating unit</label>
                   <select value={unitCode} onChange={(e) => setUnitCode(e.target.value)} disabled={!canEdit || busy}
                     className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]">
-                    <option value="">—</option>
-                    {book.units.map((u) => <option key={u.code} value={u.code}>{u.code} — {u.label}</option>)}
+                    <option value="">-</option>
+                    {book.units.map((u) => <option key={u.code} value={u.code}>{u.code} - {u.label}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest">Site code</label>
                   <input value={siteCode} onChange={(e) => setSiteCode(e.target.value)} disabled={!canEdit || busy}
-                    placeholder="auto — e.g. 2030.22" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-mono" />
+                    placeholder="auto - e.g. 2030.22" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-mono" />
                 </div>
               </div>
             )}
@@ -1733,7 +1733,7 @@ function AddUnitModal({ orgId, userId, existingCodes, onClose, onCreated }: {
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">New operating area</div>
             <div className="text-[11px] text-[var(--color-text-muted)]">
-              Written into your Site Codebook — the one place the whole app decodes units from.
+              Written into your Site Codebook - the one place the whole app decodes units from.
             </div>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
@@ -1781,11 +1781,11 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
     const px = prefixes.split(",").map((x) => x.trim().toUpperCase()).filter(Boolean);
     const tc = typeCode.trim();
     if (px.length > 0 && !tc) {
-      setError("Prefixes need a code to live under — add the equipment-type code (e.g. 02).");
+      setError("Prefixes need a code to live under - add the equipment-type code (e.g. 02).");
       return;
     }
     if (tc && existingTypeCodes.some((c) => c.trim().toLowerCase() === tc.toLowerCase())) {
-      setError(`Code ${tc} is already used by another equipment type in the Site Codebook — pick a different code or leave it blank.`);
+      setError(`Code ${tc} is already used by another equipment type in the Site Codebook - pick a different code or leave it blank.`);
       return;
     }
     setBusy(true); setError(null);
@@ -1801,11 +1801,11 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
           origin: "manual", created_by: userId,
         });
         if (cbErr && cbErr.code === "23505") {
-          setError(`Code ${tc} is already used in the Site Codebook — pick a different code or leave it blank.`);
+          setError(`Code ${tc} is already used in the Site Codebook - pick a different code or leave it blank.`);
           setBusy(false); return;
         }
         if (cbErr && cbErr.code === "42501") {
-          setError("Only Admin or Doc Control can teach the Site Codebook — leave the code blank to create the category alone, or ask a controller.");
+          setError("Only Admin or Doc Control can teach the Site Codebook - leave the code blank to create the category alone, or ask a controller.");
           setBusy(false); return;
         }
         if (cbErr) { setError(cbErr.message); setBusy(false); return; }
@@ -1827,7 +1827,7 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
             <div className="text-sm font-black text-[var(--color-text)]">New equipment category</div>
             <div className="text-[11px] text-[var(--color-text-muted)]">
               Becomes a section in every operating area. Add the tag prefix and it also teaches
-              your Site Codebook — future assets categorize themselves.
+              your Site Codebook - future assets categorize themselves.
             </div>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
@@ -1835,13 +1835,13 @@ function AddCategoryModal({ orgId, userId, existingTypeCodes, onClose, onCreated
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (Exchanger)"
           className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm" />
         <div className="flex items-center gap-2">
-          <input value={prefixes} onChange={(e) => setPrefixes(e.target.value)} placeholder="Tag prefixes (E, EA) — optional"
+          <input value={prefixes} onChange={(e) => setPrefixes(e.target.value)} placeholder="Tag prefixes (E, EA) - optional"
             className="flex-1 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm font-mono" />
           <input value={typeCode} onChange={(e) => setTypeCode(e.target.value)} placeholder="Code (02)"
             className="w-24 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm font-mono" />
         </div>
         <p className="text-[10px] text-[var(--color-text-faint)]">
-          No numbering system? Leave prefixes blank and organize manually — you can teach the
+          No numbering system? Leave prefixes blank and organize manually - you can teach the
           codebook later and auto-categorize will catch up.
         </p>
         {error && <div className="text-[11px] text-rose-600">{error}</div>}

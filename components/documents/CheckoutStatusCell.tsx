@@ -270,7 +270,7 @@ const CheckoutInfoPopover = ({
                     <div className="flex justify-between items-center">
                       <p className="text-xs font-bold text-[var(--color-text)] truncate">{session.userName}</p>
                       {session.userId === docRecord.checkedOutBy && (
-                        <span className="flex items-center text-[9px] font-bold text-blue-600 bg-[var(--color-surface)] px-1.5 py-0.5 rounded-full border border-blue-100 shadow-sm" title="This person holds the lock — they're the one publishing wins for">
+                        <span className="flex items-center text-[9px] font-bold text-blue-600 bg-[var(--color-surface)] px-1.5 py-0.5 rounded-full border border-blue-100 shadow-sm" title="This person holds the lock - they're the one publishing wins for">
                           <Lock className="w-2.5 h-2.5 mr-1" /> HOLDS LOCK
                         </span>
                       )}
@@ -329,7 +329,7 @@ const CheckoutInfoPopover = ({
             title="Ends your session only. If others are still on the checkout, the lock passes to them."
           >
             {releasing ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Check className="w-3.5 h-3.5 mr-1.5" />}
-            {releasing ? "Releasing…" : "Release my checkout — no changes"}
+            {releasing ? "Releasing…" : "Release my checkout - no changes"}
           </button>
         )}
 

@@ -56,7 +56,7 @@ describe("why the job is behind", () => {
     const w = behindWhy({ behind: [drv("clean", 6), drv("inst", 25)], ahead: 0, milestones: ms, now: at(60) });
     expect(w.chains[0].cause).toBe("held");
     expect(w.byCause.held).toBe(31);
-    expect(chainText(w.chains[0], f).facts).toContain("On hold — waiting on vac truck");
+    expect(chainText(w.chains[0], f).facts).toContain("On hold - waiting on vac truck");
   });
 
   it("late with nothing in the way is its own", () => {
@@ -68,7 +68,7 @@ describe("why the job is behind", () => {
     const w = behindWhy({ behind: [drv("b", 8)], ahead: 0, milestones: ms, now: at(40) });
     expect(w.byCause.own).toBe(8);
     expect(w.chains[0].pushed).toBeUndefined();
-    expect(chainText(w.chains[0], f).facts).toBe("Started h30 — 20 h after its planned start, nothing in its way.");
+    expect(chainText(w.chains[0], f).facts).toBe("Started h30 - 20 h after its planned start, nothing in its way.");
   });
 
   it("found work running behind its own plan is discovery", () => {
@@ -99,11 +99,11 @@ describe("why the job is behind", () => {
     const t = chainText(w.chains[0], f);
     expect(t.title).toBe("V-7: clean");
     expect(t.state).toBe("50%");
-    expect(t.facts).toBe("Couldn't start until dc (added scope) was done h41 — 31 h after its planned start. Started h43.");
+    expect(t.facts).toBe("Couldn't start until dc (added scope) was done h41 - 31 h after its planned start. Started h43.");
     expect(t.waiting).toBe("Waiting on it: inst 25 h · insp 1 h");
     expect(t.split).toBe("added scope 22.5 h · late or slow 9.5 h");
     const blocks = behindWhyBlocks(w, f);
-    expect(blocks[0]).toEqual({ k: "label", text: "Why we're behind — 32 h of work behind plan" });
+    expect(blocks[0]).toEqual({ k: "label", text: "Why we're behind - 32 h of work behind plan" });
     expect(blocks[2].k).toBe("table");
   });
 });

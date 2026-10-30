@@ -93,7 +93,7 @@ export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseRes
   if (!ev || ev.action !== "DOC_SPLIT") throw new Error("Audit event is not a DOC_SPLIT.");
   const sourceDocId = ev.resource_id;
   const replacementIds = (ev.details?.replacementDocIds as string[] | undefined) ?? [];
-  if (replacementIds.length === 0) throw new Error("Split event has no replacement doc ids — cannot reverse precisely.");
+  if (replacementIds.length === 0) throw new Error("Split event has no replacement doc ids - cannot reverse precisely.");
 
   // Surface what'll get parked under Superseded.
   const auditAt = (ev.details?.auditAt as string) ?? "1970-01-01T00:00:00Z";
@@ -106,7 +106,7 @@ export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseRes
       status: "Superseded",
       superseded_at: now,
       superseded_by_user: input.actorUserId,
-      supersession_reason: `Reverted split — ${input.reason}`,
+      supersession_reason: `Reverted split - ${input.reason}`,
       updated_at: now,
       updated_by: input.actorUserId,
     }).eq("id", newId);
@@ -169,7 +169,7 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
   const sourceDocId = ev.resource_id;
   const targetDocId = ev.details?.mergedIntoDocumentId as string | undefined;
   const allSourceIds = ((ev.details?.mergeSiblings as string[] | undefined) ?? [sourceDocId]).filter(Boolean);
-  if (!targetDocId) throw new Error("Merge event has no mergedIntoDocumentId — cannot reverse precisely.");
+  if (!targetDocId) throw new Error("Merge event has no mergedIntoDocumentId - cannot reverse precisely.");
 
   // Was the target newly created? Prefer the explicit flag recorded on the
   // DOC_MERGED event itself (merges after this fix carry it). Only fall back
@@ -235,16 +235,16 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
       status: "Superseded",
       superseded_at: now,
       superseded_by_user: input.actorUserId,
-      supersession_reason: `Reverted merge — ${input.reason}`,
+      supersession_reason: `Reverted merge - ${input.reason}`,
       updated_at: now,
       updated_by: input.actorUserId,
     }).eq("id", targetDocId);
     if (!error) parked = 1;
     if (inferredFromLegacyHeuristic) {
-      warnings.unshift("This merge predates explicit intent tracking — whether the target was newly created was inferred. It has been parked as Superseded; verify this was the merge-created document and not a pre-existing one before relying on the reversal.");
+      warnings.unshift("This merge predates explicit intent tracking - whether the target was newly created was inferred. It has been parked as Superseded; verify this was the merge-created document and not a pre-existing one before relying on the reversal.");
     }
   } else {
-    warnings.unshift("Target was an existing document extended by the merge — it stays active. Its rev-up (if any) is NOT reverted by this action; use Revert on its version history if needed.");
+    warnings.unshift("Target was an existing document extended by the merge - it stays active. Its rev-up (if any) is NOT reverted by this action; use Revert on its version history if needed.");
   }
 
   await logRevisionEvent({
@@ -286,7 +286,7 @@ export async function reverseRenumber(input: ReverseRenumberInput): Promise<Reve
   const docId = ev.resource_id;
   const previous = (ev.details?.previousDocumentNumber as string | null) ?? null;
   const current  = (ev.details?.newDocumentNumber as string | null) ?? null;
-  if (!previous) throw new Error("Renumber event has no previousDocumentNumber — cannot reverse.");
+  if (!previous) throw new Error("Renumber event has no previousDocumentNumber - cannot reverse.");
 
   // Make sure the doc still has the renumbered value before we swap
   // it back, otherwise something else changed it in between and we
@@ -320,7 +320,7 @@ export async function reverseRenumber(input: ReverseRenumberInput): Promise<Reve
     const clash = (conflicts as Array<{ id: string; status: string; title: string | null }> | null)?.[0];
     if (clash) {
       throw new Error(
-        `Cannot restore document number "${previous}" — it's already in use by another active document ("${clash.title ?? clash.id}") in this library. ` +
+        `Cannot restore document number "${previous}" - it's already in use by another active document ("${clash.title ?? clash.id}") in this library. ` +
         `Renumber or retire that document first, then reverse this renumber.`,
       );
     }

@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
     const missing = error.code === "42P01" || /does not exist/i.test(error.message);
     return bad(
       missing
-        ? "The ai_key_agreements table doesn't exist yet — run migration 20260916 in Supabase first."
+        ? "The ai_key_agreements table doesn't exist yet - run migration 20260916 in Supabase first."
         : `Couldn't record the agreement: ${error.message}`,
       missing ? 424 : 500,
     );

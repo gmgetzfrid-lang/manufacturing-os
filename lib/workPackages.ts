@@ -223,7 +223,7 @@ export async function refreshWorkPackage(packageId: string): Promise<void> {
     throw new Error(
       failed > 0
         ? `Refresh failed for ${failed} of ${rows.length} pins: ${results.find((r) => r.error)?.error?.message}`
-        : `Refresh matched 0 rows for ${unmatched} of ${rows.length} pins — the pins did NOT move. Apply migration 20260828 (work_package_documents update policy) and retry.`,
+        : `Refresh matched 0 rows for ${unmatched} of ${rows.length} pins - the pins did NOT move. Apply migration 20260828 (work_package_documents update policy) and retry.`,
     );
   }
 }
@@ -278,7 +278,7 @@ export async function notifyPackagesOfRevUp(input: {
         category: "watched",
         kind: "doc_superseded",
         title: `Work package "${p.name}" went stale`,
-        body: `${input.docLabel} advanced to Rev ${input.newRev} — the package still pins the older revision. Review the change, then refresh the pack (or swap the print set) before execution.`,
+        body: `${input.docLabel} advanced to Rev ${input.newRev} - the package still pins the older revision. Review the change, then refresh the pack (or swap the print set) before execution.`,
         link: `/packages`,
         resource: { type: "document", id: input.documentId },
         actorUserId: input.actorUserId,

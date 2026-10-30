@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
     const missing = flagError.code === "42703" || /column/i.test(flagError.message);
     return bad(
       missing
-        ? "The AI carve-out needs migration 20260807 — run it in Supabase, then try again."
+        ? "The AI carve-out needs migration 20260807 - run it in Supabase, then try again."
         : flagError.message,
       missing ? 424 : 500,
     );

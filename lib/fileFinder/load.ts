@@ -46,7 +46,7 @@ type Client = Pick<typeof supabase, "from">;
 /** A query that never answers must not hang the page: name it and give up. */
 function withTimeout<T>(p: PromiseLike<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error(`${label} took longer than ${Math.round(ms / 1000)}s — check the browser console and Supabase status`)), ms);
+    const t = setTimeout(() => reject(new Error(`${label} took longer than ${Math.round(ms / 1000)}s - check the browser console and Supabase status`)), ms);
     Promise.resolve(p).then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
   });
 }

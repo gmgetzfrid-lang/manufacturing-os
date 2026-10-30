@@ -80,7 +80,7 @@ export function renderTemplate(
     });
   } catch (e) {
     throw new TemplateRenderError(
-      "The template's placeholders couldn't be parsed — check for an unclosed { or a stray brace.",
+      "The template's placeholders couldn't be parsed - check for an unclosed { or a stray brace.",
       flattenErrors(e),
     );
   }
@@ -90,7 +90,7 @@ export function renderTemplate(
   } catch (e) {
     const details = flattenErrors(e);
     throw new TemplateRenderError(
-      `The template failed to render: ${details.map((d) => d.tag ? `{${d.tag}} — ${d.message}` : d.message).join("; ")}`,
+      `The template failed to render: ${details.map((d) => d.tag ? `{${d.tag}} - ${d.message}` : d.message).join("; ")}`,
       details,
     );
   }

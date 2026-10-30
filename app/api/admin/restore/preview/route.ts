@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   try {
     envelope = await req.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body — upload a backup envelope." }, { status: 400 });
+    return NextResponse.json({ error: "Invalid JSON body - upload a backup envelope." }, { status: 400 });
   }
   if (!envelope?.manifest || !envelope?.tables) {
     return NextResponse.json({ error: "Not a recognizable backup: missing manifest/tables." }, { status: 400 });

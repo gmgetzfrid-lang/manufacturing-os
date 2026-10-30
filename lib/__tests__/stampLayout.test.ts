@@ -64,7 +64,7 @@ describe("wrapToWidth", () => {
   });
 });
 
-describe("pickQrCorner — the QR goes where the drawing isn't", () => {
+describe("pickQrCorner - the QR goes where the drawing isn't", () => {
   it("prefers bottom-right when everything is equally empty", () => {
     expect(pickQrCorner({ br: 0, bl: 0, tr: 0, tl: 0 })).toBe("br");
   });
@@ -88,7 +88,7 @@ describe("pickFooterEdge", () => {
   });
 });
 
-describe("placeQr — the plate can never leave the page", () => {
+describe("placeQr - the plate can never leave the page", () => {
   const pages = [
     { w: 612, h: 792 },   // letter portrait
     { w: 1224, h: 792 },  // ANSI D-ish landscape

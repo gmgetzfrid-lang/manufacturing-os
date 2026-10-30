@@ -83,7 +83,7 @@ export default function CompaniesPage() {
       <PageHeaderBar
         icon={HardHat}
         title="Known Companies"
-        subtitle={<>Every contractor, vendor, and crew you work with — scored on the evidence this platform witnesses, never on opinion.</>}
+        subtitle={<>Every contractor, vendor, and crew you work with - scored on the evidence this platform witnesses, never on opinion.</>}
         actions={canManage ? (
           <Button onClick={() => setShowAdd(true)}><Plus className="w-4 h-4" /> Add company</Button>
         ) : undefined}
@@ -123,7 +123,7 @@ export default function CompaniesPage() {
           </h3>
           <p className="text-xs text-[var(--color-text-muted)] max-w-md mx-auto">
             {companies.length === 0
-              ? "Add the contractors and vendors you work with. Their record — awards, change orders, turnover acceptance, safety events — builds itself as projects run."
+              ? "Add the contractors and vendors you work with. Their record - awards, change orders, turnover acceptance, safety events - builds itself as projects run."
               : "Try a different filter or search."}
           </p>
         </div>
@@ -289,7 +289,7 @@ function AddCompanyModal({ orgId, actorId, onClose, onCreated }: {
           <div className="p-2 bg-[var(--color-accent-soft)] rounded-lg"><HardHat className="w-5 h-5 text-[var(--color-accent)]" /></div>
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">Add a known company</div>
-            <div className="text-xs text-[var(--color-text-muted)]">Their record builds itself from real work — this is just the front of the file.</div>
+            <div className="text-xs text-[var(--color-text-muted)]">Their record builds itself from real work - this is just the front of the file.</div>
           </div>
           <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"><X className="w-4 h-4" /></button>
         </div>

@@ -72,7 +72,7 @@ export default function MarkupRequestModal({
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">Request markups</div>
             <div className="text-xs text-[var(--color-text-muted)] truncate">
-              {document.documentNumber || document.title || document.name} — from <b>{holderUserName || "the current checkout holder"}</b>
+              {document.documentNumber || document.title || document.name} - from <b>{holderUserName || "the current checkout holder"}</b>
             </div>
           </div>
           <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
@@ -92,7 +92,7 @@ export default function MarkupRequestModal({
               onChange={(e) => setMessage(e.target.value)}
               rows={4}
               className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:outline-none"
-              placeholder="e.g. Working on the discharge piping for the same project — could you share your markups on PSV-201 so we don't conflict?"
+              placeholder="e.g. Working on the discharge piping for the same project - could you share your markups on PSV-201 so we don't conflict?"
             />
           </div>
           {error && (

@@ -30,21 +30,21 @@ const bad = (error: string, status: number) => NextResponse.json({ error }, { st
 const MAX_PAGES = 8;
 
 const QUOTE_SYSTEM =
-  "You read vendor quotes/proposals for industrial mechanical work, extracting what is PRINTED — never inventing.\n" +
+  "You read vendor quotes/proposals for industrial mechanical work, extracting what is PRINTED - never inventing.\n" +
   "Rules:\n" +
   "- total: the bottom-line quoted price as a plain number (no currency symbols). If several totals appear (base + options), use the base bid and note options in notes.\n" +
   "- lineItems: each priced scope line. Include qty/unit/unitRate/total when printed. When a line states labor content, fill hours (total man-hours) and headcount (crew size) and craft (pipefitter, electrician…). Leave fields null when not printed.\n" +
-  "- exclusions: scope the vendor explicitly does NOT include, verbatim, one string each. These matter more than anything — they are why a low bid is low.\n" +
+  "- exclusions: scope the vendor explicitly does NOT include, verbatim, one string each. These matter more than anything - they are why a low bid is low.\n" +
   "- validUntil: the quote's expiry date as YYYY-MM-DD if printed.\n" +
   "- Numbers must be numbers, not strings. Do not compute values the page doesn't print.\n" +
   'Return STRICT JSON: {"vendorName":"…","total":182000,"currency":"USD","validUntil":null,"lineItems":[{"description":"…","qty":null,"unit":null,"unitRate":null,"total":52000,"craft":"pipefitter","hours":1680,"headcount":8}],"exclusions":["…"],"notes":null}';
 
 const INVOICE_SYSTEM =
-  "You read vendor invoices for industrial work, extracting what is PRINTED — never inventing.\n" +
+  "You read vendor invoices for industrial work, extracting what is PRINTED - never inventing.\n" +
   "Rules:\n" +
   "- total: the amount due as a plain number. docNumber: the invoice number. docDate: invoice date as YYYY-MM-DD. dueDate likewise.\n" +
   "- poNumber: the customer PO / work order / AFE reference the invoice bills against, verbatim, if printed. subtotal and tax when printed.\n" +
-  "- lineItems: each billed line — description, qty, unit, unitRate, total — leaving fields null when not printed.\n" +
+  "- lineItems: each billed line - description, qty, unit, unitRate, total - leaving fields null when not printed.\n" +
   "- Numbers must be numbers, not strings.\n" +
   'Return STRICT JSON: {"vendorName":"…","docNumber":"INV-1042","docDate":"2026-08-01","dueDate":null,"poNumber":null,"subtotal":null,"tax":null,"total":41250,"currency":"USD","lineItems":[{"description":"…","qty":null,"unit":null,"unitRate":null,"total":41250}]}';
 
@@ -91,8 +91,8 @@ export async function POST(req: NextRequest) {
   if (doc.status !== "draft" && doc.status !== "parsed") {
     return bad(
       doc.status === "awarded" || doc.status === "posted"
-        ? "This document already moved money — its extraction is locked."
-        : `This document is ${doc.status} — upload it again if it should be back in play.`,
+        ? "This document already moved money - its extraction is locked."
+        : `This document is ${doc.status} - upload it again if it should be back in play.`,
       409);
   }
   const looksPdf = (doc.mime_type ?? "").includes("pdf") || /\.pdf$/i.test(doc.file_name ?? "");
@@ -118,7 +118,7 @@ export async function POST(req: NextRequest) {
         ? [{ page: 1, mediaType: imageType!, base64: bytes.toString("base64") }] : [];
     } catch { images = []; }
   }
-  if (images.length === 0) return bad("The pages could not be rendered for reading — the file may be corrupt or password-protected.", 502);
+  if (images.length === 0) return bad("The pages could not be rendered for reading - the file may be corrupt or password-protected.", 502);
 
   const isQuote = doc.kind === "quote";
   let text: string;
@@ -139,9 +139,9 @@ export async function POST(req: NextRequest) {
   }
 
   const block = extractJsonBlock(text);
-  if (!block) return bad("The model returned nothing readable — try again.", 502);
+  if (!block) return bad("The model returned nothing readable - try again.", 502);
   let raw: unknown;
-  try { raw = JSON.parse(block); } catch { return bad("The extraction wasn't valid JSON — try again.", 502); }
+  try { raw = JSON.parse(block); } catch { return bad("The extraction wasn't valid JSON - try again.", 502); }
 
   const patch: Record<string, unknown> = { parsed: raw, status: "parsed" };
   if (isQuote) {

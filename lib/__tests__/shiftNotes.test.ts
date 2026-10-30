@@ -30,7 +30,7 @@ describe("the time you put in", () => {
     expect(parseClock("25:00")).toBeNull();
     expect(parseClock("2:5")).toBeNull();
   });
-  it("lands on the shift — a night shift's small hours are the next morning", () => {
+  it("lands on the shift - a night shift's small hours are the next morning", () => {
     expect(timeInShift(day, "14:30", LA)).toBe(t("2026-10-27", "14:30"));
     expect(timeInShift(day, "19:00", LA)).toBeNull(); // not on a 6–18 day shift
     const night = shiftWindow("2026-10-27", "night", LA, times);
@@ -58,10 +58,10 @@ describe("the shift's own record", () => {
     expect(open.map((n) => n.text)).toEqual(["Gaskets not on site"]);
     expect(open[0].shiftKey).toBe("2026-10-26:day");
   });
-  it("says a crew as supervisor and head count, '—' when nothing's entered", () => {
+  it("says a crew as supervisor and head count, '-' when nothing's entered", () => {
     expect(crewLine({ supervisor: "Mike Leonard", headcount: 6 })).toBe("Mike Leonard · 6 on site");
     expect(crewLine({ headcount: 0 })).toBe("0 on site");
-    expect(crewLine(undefined)).toBe("—");
+    expect(crewLine(undefined)).toBe("-");
   });
 });
 
@@ -93,27 +93,27 @@ describe("the turnover email: additions in the sections it already has", () => {
     expect(result.t).toBe("1 step done, 1 in progress");
     expect(result.sub?.[0].t).toBe("Why behind: trays heavier fouled than planned");
   });
-  it("times are off by default — and on when asked", () => {
+  it("times are off by default - and on when asked", () => {
     expect(text()).not.toMatch(/07:40 Set Blinds/);
     expect(text({ showTimes: true })).toMatch(/07:40 Set Blinds · Schultz · 1 step done, 1 in progress/);
   });
-  it("crews: who attended the meeting, supervisor and head count — the first line of the notes by the hour", () => {
+  it("crews: who attended the meeting, supervisor and head count - the first line of the notes by the hour", () => {
     const s = text({ crewsThis: { Schultz: { supervisor: "B. Smith", headcount: 14 } }, hourly: [{ clock: "5:30 AM", kind: "meeting", text: "" }] });
-    expect(s).toMatch(/5:30 AM — Shift meeting — Schultz: B\. Smith · 14 on site/);
+    expect(s).toMatch(/5:30 AM - Shift meeting - Schultz: B\. Smith · 14 on site/);
     expect(s).not.toMatch(/^CREWS/m);
     expect(s).not.toMatch(/of \d+ done/);
   });
-  it("safety incidents: their own box at the end — none, each one, or not recorded", () => {
-    expect(text()).toMatch(/SAFETY INCIDENTS — DAY SHIFT 10-27\n\s+Not recorded\./);
-    expect(text({ incidents: { none: true, items: [] } })).toMatch(/SAFETY INCIDENTS — DAY SHIFT 10-27\n\s+None\./);
-    expect(text({ incidents: { none: false, items: [{ at: t("2026-10-27", "14:10"), kind: "Near miss", text: "Dropped wrench from deck" }] } })).toMatch(/14:10 — Near miss.*Dropped wrench from deck/);
+  it("safety incidents: their own box at the end - none, each one, or not recorded", () => {
+    expect(text()).toMatch(/SAFETY INCIDENTS - DAY SHIFT 10-27\n\s+Not recorded\./);
+    expect(text({ incidents: { none: true, items: [] } })).toMatch(/SAFETY INCIDENTS - DAY SHIFT 10-27\n\s+None\./);
+    expect(text({ incidents: { none: false, items: [{ at: t("2026-10-27", "14:10"), kind: "Near miss", text: "Dropped wrench from deck" }] } })).toMatch(/14:10 - Near miss.*Dropped wrench from deck/);
     const ids = turnoverUpdate(report, f, look()).map((x) => x.id);
     expect(ids[ids.length - 1]).toBe("incidents");
   });
   it("notes & actions at the end: the shift's, and open follow-ups from before", () => {
-    const s = text({ shiftNotes: [{ at: t("2026-10-27", "12:01"), text: "Unit evacuated — adjacent unit upset" }, { at: t("2026-10-26", "11:00"), text: "Gaskets not on site", followUp: true, from: "10-26 day" }] });
+    const s = text({ shiftNotes: [{ at: t("2026-10-27", "12:01"), text: "Unit evacuated - adjacent unit upset" }, { at: t("2026-10-26", "11:00"), text: "Gaskets not on site", followUp: true, from: "10-26 day" }] });
     expect(s).toMatch(/NOTES & ACTIONS/);
-    expect(s).toMatch(/12:01 — .*Unit evacuated/);
+    expect(s).toMatch(/12:01 - .*Unit evacuated/);
     expect(s).toMatch(/Gaskets not on site.*Follow-up, open since 10-26 day/);
   });
   it("in the email itself: the last step, the why in amber under the count", () => {
@@ -124,7 +124,7 @@ describe("the turnover email: additions in the sections it already has", () => {
   });
 });
 
-describe("the time log — its own export", () => {
+describe("the time log - its own export", () => {
   const e17 = mk({ id: "e17", name: "E-17 Exchanger", workOrderRef: "301501" });
   const pb = mk({ id: "pb", name: "Pull Bundle", parentId: "e17", responsibleParty: "Schultz", status: "completed", percentComplete: 100 });
   const psv = mk({ id: "psv", name: "PSV-021", parentId: "e17", responsibleParty: "Maintenance (KE)", status: "on_hold", percentComplete: 25 });
@@ -151,10 +151,10 @@ describe("the time log — its own export", () => {
   it("a hold carries its reason (not the bare status note beside it), and the comment", () => {
     const h = rows.find((r) => r.step === "PSV-021")!;
     expect(h.what).toBe("On hold");
-    expect(h.comment).toBe("Waiting on plugging to be removed by Ancon — PSV pulled, ready to swap");
+    expect(h.comment).toBe("Waiting on plugging to be removed by Ancon - PSV pulled, ready to swap");
   });
   it("the shift's incidents are in it too", () => {
-    expect(rows.find((r) => r.what === "Safety incident — Near miss")?.comment).toBe("Dropped wrench");
+    expect(rows.find((r) => r.what === "Safety incident - Near miss")?.comment).toBe("Dropped wrench");
   });
   it("says what a change was", () => {
     expect(describeChange("planned", 0, "in_progress", 15)).toBe("Started");

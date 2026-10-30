@@ -118,7 +118,7 @@ export async function POST(req: NextRequest) {
     file_count: 0, total_bytes: 0,
     created_by: actor.userId, created_by_email: actor.email, note: "producing…",
   });
-  if (catErr) return NextResponse.json({ error: "Archive label collision — please retry." }, { status: 409 });
+  if (catErr) return NextResponse.json({ error: "Archive label collision - please retry." }, { status: 409 });
 
   // CLAIM the versions atomically before bundling so two concurrent produces can't
   // grab the same rows and race the archive_id stamp. Captured versions keep this
@@ -186,7 +186,7 @@ export async function POST(req: NextRequest) {
   const savePath = archiveLocation((locRow as { location_hint?: string | null } | null)?.location_hint, "space", archiveId);
   zip.file("ARCHIVE.txt",
     `Space-saver archive ${archiveId}\nProduced ${new Date().toISOString()}\nOrg ${orgId}\n` +
-    `${bundled} file(s), ${bytes} bytes.\nSave this as ${savePath} and keep it — ` +
+    `${bundled} file(s), ${bytes} bytes.\nSave this as ${savePath} and keep it - ` +
     `it's the only copy of these superseded revisions once space is reclaimed.\n`);
   const zipBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 

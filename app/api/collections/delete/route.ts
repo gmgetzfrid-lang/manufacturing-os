@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (held > 0) {
-      return bad(`${held} document${held === 1 ? " is" : "s are"} under a legal hold inside this folder — `
+      return bad(`${held} document${held === 1 ? " is" : "s are"} under a legal hold inside this folder - `
         + "release the hold or move those records out first. Nothing was deleted.", 409);
     }
     const deadline = Date.now() + 45_000;

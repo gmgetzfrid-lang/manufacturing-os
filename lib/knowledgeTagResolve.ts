@@ -55,7 +55,7 @@ export async function resolveTagAgainstIndex(
     diagnosis: `${tag} is not in the tag index (the index holds ${count ?? 0} equipment `
       + "tag entries in total"
       + ((count ?? 0) === 0
-        ? " — a rebuild with image indexing ON has not completed for this library)"
+        ? " - a rebuild with image indexing ON has not completed for this library)"
         : ")"),
   };
 }

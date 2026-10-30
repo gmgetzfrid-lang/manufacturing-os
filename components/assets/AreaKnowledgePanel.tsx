@@ -156,8 +156,8 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
       const r = await syncKnowledgeSources(orgId, status.boundLibrary.id);
       await loadStatus();
       setNote(r.added > 0
-        ? `Synced — ${r.added} new document${r.added === 1 ? "" : "s"} pulled in.`
-        : "Synced — up to date.");
+        ? `Synced - ${r.added} new document${r.added === 1 ? "" : "s"} pulled in.`
+        : "Synced - up to date.");
     } catch (e) { setNote((e as Error).message); }
     finally { setSyncing(false); }
   };
@@ -168,7 +168,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
     try {
       const r = await addKnowledgeSources(orgId, status.boundLibrary.id, [{ type: "folder", id: folderId }]);
       await loadStatus();
-      setNote(`Linked “${name}” — ${r.added} document${r.added === 1 ? "" : "s"} pulled in.`);
+      setNote(`Linked “${name}” - ${r.added} document${r.added === 1 ? "" : "s"} pulled in.`);
     } catch (e) { setNote((e as Error).message); }
     finally { setSyncing(false); }
   };
@@ -244,7 +244,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
                 {" · "}{status.counts.ready} readable{status.counts.pending > 0 ? ` · ${status.counts.pending} indexing` : ""}
                 {" · "}{status.sources.length} watched source{status.sources.length === 1 ? "" : "s"}
               </>
-            ) : "The setup path for this operating area, in order — each step shows its live state."}
+            ) : "The setup path for this operating area, in order - each step shows its live state."}
           </div>
         </div>
         {status?.boundLibrary && status.canManage && (
@@ -288,7 +288,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
             <div>
               {drift.movedOutTotal} document{drift.movedOutTotal === 1 ? " was" : "s were"} moved out of the
               watched folders ({drift.movedOut.slice(0, 3).map((d) => d.name).join(", ")}
-              {drift.movedOutTotal > 3 ? "…" : ""}) — the next sync will drop {drift.movedOutTotal === 1 ? "it" : "them"} from
+              {drift.movedOutTotal > 3 ? "…" : ""}) - the next sync will drop {drift.movedOutTotal === 1 ? "it" : "them"} from
               this area&apos;s knowledge. Link {drift.movedOutTotal === 1 ? "its" : "their"} new folder below to keep {drift.movedOutTotal === 1 ? "it" : "them"}.
             </div>
           )}
@@ -326,7 +326,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
           ) : undefined}>
           {status?.boundLibrary
             ? <>Watching {status.sources.length} source{status.sources.length === 1 ? "" : "s"}. New files, revisions, and removals inside them track automatically.</>
-            : <>One knowledge library per area keeps its answers pure — asking {unit.label} never surfaces another unit&apos;s drawings. The wizard finds this area&apos;s folders for you.</>}
+            : <>One knowledge library per area keeps its answers pure - asking {unit.label} never surfaces another unit&apos;s drawings. The wizard finds this area&apos;s folders for you.</>}
         </Step>
         <Step n={3} title="Deep read the drawings"
           state={status === null || flowCount === null ? "loading" : (flowCount > 0 ? "done" : "todo")}
@@ -378,7 +378,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
   const bound = status.boundLibrary;
   // Library choice: the bound one, an existing one, or create-new.
   const [libChoice, setLibChoice] = useState<string>(bound?.id ?? "__new");
-  const [newName, setNewName] = useState(`${unit.label} — Knowledge`);
+  const [newName, setNewName] = useState(`${unit.label} - Knowledge`);
   const [browse, setBrowse] = useState<SourceBrowseResult | null>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set()); // "folder:<id>" | "library:<id>"
   const [busy, setBusy] = useState(false);
@@ -446,7 +446,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
         if (createdRef.current) {
           klId = createdRef.current.id; klName = createdRef.current.name;
         } else {
-          const name = newName.trim() || `${unit.label} — Knowledge`;
+          const name = newName.trim() || `${unit.label} - Knowledge`;
           const kl = await createKnowledgeLibrary({
             orgId, name,
             description: `Everything the AI may read about ${unit.label} (unit ${unit.code}).`,
@@ -476,7 +476,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
         const r = await addKnowledgeSources(orgId, klId, add.slice(i, i + 25));
         added += r.added; linked += r.linked;
       }
-      onDone(`${unit.label} is connected to “${klName}” — ${linked} source${linked === 1 ? "" : "s"} watched, ${added} document${added === 1 ? "" : "s"} pulled in. Indexing runs automatically.`);
+      onDone(`${unit.label} is connected to “${klName}” - ${linked} source${linked === 1 ? "" : "s"} watched, ${added} document${added === 1 ? "" : "s"} pulled in. Indexing runs automatically.`);
     } catch (e) {
       setError((e as Error).message);
     } finally { setBusy(false); }
@@ -539,7 +539,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                 <Plus className="w-3.5 h-3.5 text-violet-600" />
                 <input value={newName} onChange={(e) => { setNewName(e.target.value); setLibChoice("__new"); }}
                   className="flex-1 px-2 py-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs font-bold"
-                  placeholder={`${unit.label} — Knowledge`} />
+                  placeholder={`${unit.label} - Knowledge`} />
               </label>
             </div>
           </div>
@@ -571,7 +571,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
               <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-faint)]" /></div>
             ) : foldersByLib.length === 0 ? (
               <div className="text-[11px] text-[var(--color-text-muted)]">
-                No document libraries yet — <Link href="/documents" className="font-bold underline">create them in Documents</Link> first.
+                No document libraries yet - <Link href="/documents" className="font-bold underline">create them in Documents</Link> first.
               </div>
             ) : (
               <div className="space-y-2.5">
@@ -585,7 +585,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                         onChange={() => toggle(`library:${libId}`)} />
                       <FolderOpen className="w-3.5 h-3.5 text-slate-500" /> {g.libraryName}
                       <span className="text-[9px] font-bold text-[var(--color-text-faint)] normal-case">
-                        {libWatched ? "(whole library — already watched)" : "(whole library)"}
+                        {libWatched ? "(whole library - already watched)" : "(whole library)"}
                       </span>
                     </label>
                     <div className="ml-5 mt-1 space-y-0.5">
@@ -611,7 +611,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
                         );
                       })}
                       {g.folders.length === 0 && (
-                        <div className="text-[10px] text-[var(--color-text-faint)]">No folders — link the whole library above.</div>
+                        <div className="text-[10px] text-[var(--color-text-faint)]">No folders - link the whole library above.</div>
                       )}
                     </div>
                   </div>

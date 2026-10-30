@@ -28,18 +28,18 @@ export const LOCATE_SYSTEM =
   "For each tag you are given, find where that tag's LABEL is printed on the sheet and report its " +
   "position as fractions of the page: x from the left edge, y from the TOP edge, each between 0 " +
   "and 1.\n\n" +
-  "Return STRICT JSON only — an object mapping each tag to [x, y]:\n" +
+  "Return STRICT JSON only - an object mapping each tag to [x, y]:\n" +
   '{"V-3": [0.42, 0.18], "P-101A": [0.77, 0.63]}\n\n' +
   "Rules:\n" +
-  "- Omit any tag you cannot actually see. A guess is worse than an absence — it sends someone " +
+  "- Omit any tag you cannot actually see. A guess is worse than an absence - it sends someone " +
   "hunting the wrong corner of a very large sheet.\n" +
   "- If a tag appears more than once, give the position of the DRAWN EQUIPMENT SYMBOL's label in " +
-  "the drawing area — NEVER a mention in the equipment summary row along the top of the sheet, a " +
+  "the drawing area - NEVER a mention in the equipment summary row along the top of the sheet, a " +
   "table, a note, the legend, or the title block. The summary row lists every vessel with its " +
   "duty; pointing there instead of at the drawn vessel sends a line-tracer to a spot with no " +
   "pipes at all.\n" +
   "- Off-page connector boxes (a number in a small box or pennant at the sheet edge) count as " +
-  "locatable tags — give the box's position.\n" +
+  "locatable tags - give the box's position.\n" +
   "- No markdown, no code fence, no commentary.";
 
 /** Ask for these tags, in the model's words. */
@@ -107,9 +107,9 @@ export function buildRelocateUser(
     .map(([t, [x, y]]) => `${t} at [${x.toFixed(2)}, ${y.toFixed(2)}]`).join("; ")
   return (
     `Sheet: ${documentName}, page ${page}. Locate: ${tags.join(", ")}.\n` +
-    `A previous attempt placed ${wrongList} — but there is NO pipe line-work near ` +
+    `A previous attempt placed ${wrongList} - but there is NO pipe line-work near ` +
     "there, so that was almost certainly the equipment summary row, a table, or a note. " +
-    "Find where each item is actually DRAWN in the diagram — the vessel/exchanger symbol " +
-    "with pipes connecting to it — and give THAT position."
+    "Find where each item is actually DRAWN in the diagram - the vessel/exchanger symbol " +
+    "with pipes connecting to it - and give THAT position."
   );
 }

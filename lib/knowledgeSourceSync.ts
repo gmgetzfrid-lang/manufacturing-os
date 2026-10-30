@@ -66,7 +66,7 @@ type DcDocRow = {
 const displayName = (d: DcDocRow): string => {
   const number = (d.document_number ?? "").trim();
   const title = (d.title ?? d.name ?? "").trim();
-  if (number && title && number !== title) return `${number} — ${title}`;
+  if (number && title && number !== title) return `${number} - ${title}`;
   return title || number || "Document";
 };
 

@@ -197,7 +197,7 @@ export async function nudgeStaleHolders(input: {
     category: "status",
     kind: "doc_superseded",
     title: `Your copy of ${input.docLabel} is out of date`,
-    body: `The current revision is Rev ${input.currentRev ?? "?"}. You downloaded an older one — re-download before doing any work from it, and destroy old prints.`,
+    body: `The current revision is Rev ${input.currentRev ?? "?"}. You downloaded an older one - re-download before doing any work from it, and destroy old prints.`,
     link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}` : undefined,
     resource: { type: "document", id: input.documentId },
     actorUserId: input.actorUserId,

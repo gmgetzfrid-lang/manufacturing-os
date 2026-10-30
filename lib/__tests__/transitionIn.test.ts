@@ -3,7 +3,7 @@ import { extractCandidateTags } from "@/lib/transitionIn";
 
 describe("extractCandidateTags", () => {
   it("finds equipment tags across number and title fields", () => {
-    expect(extractCandidateTags("D-25-1042", "P&ID DHT Feed — FE-201 to P-101A"))
+    expect(extractCandidateTags("D-25-1042", "P&ID DHT Feed - FE-201 to P-101A"))
       .toEqual(expect.arrayContaining(["FE-201", "P-101A"]));
   });
 

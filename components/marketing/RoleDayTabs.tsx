@@ -28,7 +28,7 @@ const ROLES: Role[] = [
     moments: [
       {
         before: "Five PDFs named “FINAL_rev3” on the shared drive. Which one is current? Nobody is certain.",
-        after: "One current revision per document. Superseded copies are marked, stamped — and recalled from everyone who downloaded them.",
+        after: "One current revision per document. Superseded copies are marked, stamped - and recalled from everyone who downloaded them.",
       },
       {
         before: "Importing 200 legacy drawings means a week of retyping title blocks into a spreadsheet.",
@@ -52,11 +52,11 @@ const ROLES: Role[] = [
       },
       {
         before: "A change went out with a sign-off from someone who wasn't qualified to give it.",
-        after: "Approval physically routes through a qualified engineer. The workflow enforces it — there is no way around.",
+        after: "Approval physically routes through a qualified engineer. The workflow enforces it - there is no way around.",
       },
       {
         before: "Which drawings, equipment, and open tickets does this change actually touch?",
-        after: "Open the impact panel or the site graph — everything wired to that tag, on one screen, before you commit.",
+        after: "Open the impact panel or the site graph - everything wired to that tag, on one screen, before you commit.",
       },
     ],
   },
@@ -68,15 +68,15 @@ const ROLES: Role[] = [
     moments: [
       {
         before: "“What does that vessel even look like?” means a walk across the site to find out.",
-        after: "Tap the equipment tag wherever it appears — date-stamped photo gallery, linked drawings, current status.",
+        after: "Tap the equipment tag wherever it appears - date-stamped photo gallery, linked drawings, current status.",
       },
       {
         before: "Is the drawing in your hand still current? Honestly, who knows.",
-        after: "Scan the QR stamped on the print. Your phone answers: current, or superseded — instantly, no login needed.",
+        after: "Scan the QR stamped on the print. Your phone answers: current, or superseded - instantly, no login needed.",
       },
       {
         before: "The job's paperwork is a folder of loose printouts assembled by hand.",
-        after: "Work packages bundle every document for the job — and acknowledged distribution proves who received what, when.",
+        after: "Work packages bundle every document for the job - and acknowledged distribution proves who received what, when.",
       },
     ],
   },
@@ -84,11 +84,11 @@ const ROLES: Role[] = [
     key: "biz",
     label: "Leadership & quality",
     icon: <LineChart className="w-4 h-4" />,
-    intro: "The state of the program at a glance — and leverage that stays with you.",
+    intro: "The state of the program at a glance - and leverage that stays with you.",
     moments: [
       {
         before: "“Are we audit-ready?” The honest answer is that nobody knows until the audit.",
-        after: "Live dashboards: past-due requests, unacknowledged distributions, the protection record — visible every day, not once a year.",
+        after: "Live dashboards: past-due requests, unacknowledged distributions, the protection record - visible every day, not once a year.",
       },
       {
         before: "The vendor doubles the price at renewal and your data is hostage in their format.",
@@ -96,7 +96,7 @@ const ROLES: Role[] = [
       },
       {
         before: "Contractor onboarding is weeks of IT tickets and over-broad access.",
-        after: "Scoped project membership and a tokened intake portal — external teams submit work without ever seeing the rest of your library.",
+        after: "Scoped project membership and a tokened intake portal - external teams submit work without ever seeing the rest of your library.",
       },
     ],
   },

@@ -95,7 +95,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
         <div className="min-w-0 flex-1">
           <div className="text-sm font-black text-[var(--color-text)]">Library map</div>
           <div className="text-[11px] text-[var(--color-text-muted)]">
-            What the assistant knows is here — so it can point you to the right form, checklist or spec without being asked.
+            What the assistant knows is here - so it can point you to the right form, checklist or spec without being asked.
           </div>
         </div>
         {data?.canMap && data.unmapped > 0 && !mapping && (
@@ -109,7 +109,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
       {mapping && (
         <div className="mt-3 flex items-center gap-2 text-[12px] text-[var(--color-text)]" role="status">
           <Loader2 className="w-4 h-4 animate-spin text-violet-600" />
-          Mapping — {mapping.profiled} profiled
+          Mapping - {mapping.profiled} profiled
           {mapping.remaining > 0 ? `, ${mapping.remaining} to go` : ""}. You can keep working; it continues while this page is open.
         </div>
       )}
@@ -135,7 +135,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
                 <span className="min-w-0 flex-1">
                   <span className="block text-xs font-bold text-[var(--color-text)] truncate">{e.title || e.name}</span>
                   <span className="block text-[10px] text-[var(--color-text-muted)] truncate">
-                    {e.type === "checklist" ? `Checklist${e.checklistFor ? ` — ${e.checklistFor}` : ""}` : PURPOSE_LABEL[e.form?.purpose ?? "other"]}
+                    {e.type === "checklist" ? `Checklist${e.checklistFor ? ` - ${e.checklistFor}` : ""}` : PURPOSE_LABEL[e.form?.purpose ?? "other"]}
                     {e.form ? ` · ${e.form.fieldCount} fields` : ""}
                   </span>
                 </span>
@@ -165,7 +165,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
           </div>
           {catalogs.length === 0 ? (
             <p className="text-[11px] text-[var(--color-text-muted)]">
-              Does this library hold a catalog — specs, data sheets, material classes, anything listed by code? Mark it, and
+              Does this library hold a catalog - specs, data sheets, material classes, anything listed by code? Mark it, and
               questions like &ldquo;which one should I use for …&rdquo; are answered by filtering every entry, not by a lucky search.
             </p>
           ) : (
@@ -180,7 +180,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
                       <span className="min-w-0 flex-1">
                         <span className="block text-xs font-bold text-[var(--color-text)] truncate">{c.name}</span>
                         <span className="block text-[10px] text-[var(--color-text-muted)] truncate">
-                          {c.scope === "document" ? `${(c.documentName ?? "").replace(/\.pdf$/i, "")} — each section is an entry` : `every document in ${c.libraryName} is an entry`}
+                          {c.scope === "document" ? `${(c.documentName ?? "").replace(/\.pdf$/i, "")} - each section is an entry` : `every document in ${c.libraryName} is an entry`}
                           {!here ? ` · in ${c.libraryName}` : ""}
                         </span>
                       </span>
@@ -191,7 +191,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
                             className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
                             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                           </button>
-                          <button type="button" onClick={() => void unmark(c)} disabled={busy} title="Unmark — it stays in the library as an ordinary document"
+                          <button type="button" onClick={() => void unmark(c)} disabled={busy} title="Unmark - it stays in the library as an ordinary document"
                             className="p-1.5 rounded-lg hover:bg-rose-500/10 text-[var(--color-text-muted)] hover:text-rose-600">
                             <X className="w-3.5 h-3.5" />
                           </button>
@@ -230,7 +230,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
             <li key={e.documentId} className="px-3.5 py-2">
               <div className="flex items-center gap-2">
                 <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-violet-700 dark:text-violet-300 w-28 truncate">{TYPE_LABEL[e.type] ?? e.type}</span>
-                <span className="text-xs font-bold text-[var(--color-text)] truncate">{e.designation ? `${e.designation} — ` : ""}{e.title || e.name}</span>
+                <span className="text-xs font-bold text-[var(--color-text)] truncate">{e.designation ? `${e.designation} - ` : ""}{e.title || e.name}</span>
               </div>
               {e.purpose && <div className="text-[11px] text-[var(--color-text-muted)] pl-[7.5rem] truncate">{e.purpose}</div>}
             </li>
@@ -241,13 +241,13 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
       {entries.length === 0 && !mapping && (
         <p className="mt-3 text-[12px] text-[var(--color-text-muted)]">
           {data?.canMap
-            ? "Nothing mapped yet. Mapping reads each indexed document once (fast AI tier, your key) and records what it is — forms with their fields, checklists with what they're for."
-            : "Nothing mapped yet — an Admin or Document Control member can map this library."}
+            ? "Nothing mapped yet. Mapping reads each indexed document once (fast AI tier, your key) and records what it is - forms with their fields, checklists with what they're for."
+            : "Nothing mapped yet - an Admin or Document Control member can map this library."}
         </p>
       )}
       {(data?.notReady ?? 0) > 0 && (
         <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
-          {data!.notReady} document{data!.notReady === 1 ? " is" : "s are"} still indexing — mapped once indexing finishes.
+          {data!.notReady} document{data!.notReady === 1 ? " is" : "s are"} still indexing - mapped once indexing finishes.
         </p>
       )}
     </div>
@@ -284,7 +284,7 @@ function MarkCatalogModal({ orgId, libraryId, libraryName, docs, onClose, onDone
 
   return (
     <Modal onClose={busy ? () => undefined : (result ? onDone : onClose)} size="md" dismissable={!busy}>
-      <ModalHeader icon={Table2} title="Mark a catalog" subtitle="Tell the assistant what this is — it reads it from the text, no AI cost." onClose={busy ? undefined : (result ? onDone : onClose)} />
+      <ModalHeader icon={Table2} title="Mark a catalog" subtitle="Tell the assistant what this is - it reads it from the text, no AI cost." onClose={busy ? undefined : (result ? onDone : onClose)} />
       <ModalBody className="space-y-4">
         {result ? (
           result.entries > 0 ? (
@@ -309,11 +309,11 @@ function MarkCatalogModal({ orgId, libraryId, libraryName, docs, onClose, onDone
               <div className="space-y-1.5">
                 <label className="flex items-start gap-2 text-[13px] text-[var(--color-text)] cursor-pointer">
                   <input type="radio" className="mt-1 accent-violet-600" checked={scope === "document"} onChange={() => setScope("document")} />
-                  <span><b>One document holds all of it</b><span className="block text-[11px] text-[var(--color-text-muted)]">Each section is an entry — found by the code that repeats on its pages.</span></span>
+                  <span><b>One document holds all of it</b><span className="block text-[11px] text-[var(--color-text-muted)]">Each section is an entry - found by the code that repeats on its pages.</span></span>
                 </label>
                 <label className="flex items-start gap-2 text-[13px] text-[var(--color-text)] cursor-pointer">
                   <input type="radio" className="mt-1 accent-violet-600" checked={scope === "library"} onChange={() => setScope("library")} />
-                  <span><b>Every document in {libraryName} is one entry</b><span className="block text-[11px] text-[var(--color-text-muted)]">A folder of separate sheets — {ready.length.toLocaleString()} indexed documents.</span></span>
+                  <span><b>Every document in {libraryName} is one entry</b><span className="block text-[11px] text-[var(--color-text-muted)]">A folder of separate sheets - {ready.length.toLocaleString()} indexed documents.</span></span>
                 </label>
               </div>
             </div>

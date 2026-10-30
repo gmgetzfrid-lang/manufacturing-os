@@ -226,7 +226,7 @@ describe("a chain that hasn't started: everything late says so", () => {
   const r = buildShiftReport({ milestones: [p, feed, cool, prep, chem, rinse], tz: CHI, shift, now: shift.end });
   const row = (id: string) => [...r.goals.all, ...r.review.notStarted, ...r.review.carryOver].find((x) => x.leaf.id === id)!;
 
-  it("every step past its finish is overdue — not only the one due inside the shift", () => {
+  it("every step past its finish is overdue - not only the one due inside the shift", () => {
     expect(["feed", "cool", "prep"].map((id) => row(id).overdue)).toEqual([true, true, true]);
   });
   it("a step past its start with nothing done is a late start, not yet overdue", () => {
@@ -243,7 +243,7 @@ describe("a chain that hasn't started: everything late says so", () => {
   });
 });
 
-describe("the plan runs on the crew's clock — day work doesn't fall behind overnight", () => {
+describe("the plan runs on the crew's clock - day work doesn't fall behind overnight", () => {
   // Exchanger: day-crew work Mon 06:00 → Wed 17:00, 33 h (three 11-hour days).
   const exch = mk({ id: "ex", name: "E-606 retube", plannedStartAt: at("2026-10-26", "06:00"), plannedAt: at("2026-10-28", "17:00"), durationHours: 33 });
   // Tower: night-crew work Mon 18:00 → Tue 05:00.
@@ -303,7 +303,7 @@ describe("one answer to 'are we on time' everywhere", () => {
   });
 });
 
-describe("hoursInSpan — a step's hours from its dates", () => {
+describe("hoursInSpan - a step's hours from its dates", () => {
   const LA = "America/Los_Angeles";
   const t = (d: string, hm: string) => Date.parse(`${d}T${hm}:00-07:00`);
   const step = (p: Partial<Milestone>) => ({ ...mk({ id: "s", name: "s", plannedStartAt: t("2026-10-28", "05:30"), plannedAt: t("2026-10-29", "11:30") }), durationHours: 18, ...p } as Milestone);

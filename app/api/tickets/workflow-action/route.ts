@@ -185,7 +185,7 @@ export async function POST(req: NextRequest) {
   if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
   if (!updated) {
     return NextResponse.json(
-      { error: "The ticket changed while you were acting — refresh and try again", conflict: true },
+      { error: "The ticket changed while you were acting - refresh and try again", conflict: true },
       { status: 409 },
     );
   }

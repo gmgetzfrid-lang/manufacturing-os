@@ -51,7 +51,7 @@ beforeEach(() => {
   h.selectedColumns.org_members = "";
 });
 
-describe("listActiveMembers — schema contract", () => {
+describe("listActiveMembers - schema contract", () => {
   it("selects display_name (NOT the non-existent org_members.name column)", async () => {
     h.members = [{ uid: "a", role: "Admin", display_name: "Ada", email: "a@x.com" }];
     const out = await listActiveMembers("org-1");

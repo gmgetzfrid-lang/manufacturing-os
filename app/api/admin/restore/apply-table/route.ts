@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Send at most ${MAX_ROWS_PER_CALL} rows per call.` }, { status: 413 });
   }
   if (!idRemap || typeof idRemap !== "object" || !idRemap.orgId || !idRemap.uid) {
-    return NextResponse.json({ error: "idRemap missing — call /api/admin/restore/begin first." }, { status: 400 });
+    return NextResponse.json({ error: "idRemap missing - call /api/admin/restore/begin first." }, { status: 400 });
   }
 
   // Remap, then FORCE the org boundary: whatever the backup (or a hostile

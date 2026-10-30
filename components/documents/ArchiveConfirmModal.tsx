@@ -80,7 +80,7 @@ export default function ArchiveConfirmModal({
             {isArchive ? (
               <p>
                 The document and its entire revision history will be hidden from the default library view.
-                Nothing is deleted — admins can restore it any time. The action is logged.
+                Nothing is deleted - admins can restore it any time. The action is logged.
               </p>
             ) : (
               <p>

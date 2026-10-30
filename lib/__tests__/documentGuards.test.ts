@@ -49,7 +49,7 @@ describe("isControllerRoleName", () => {
   });
 });
 
-describe("evaluatePublishGuard — happy paths", () => {
+describe("evaluatePublishGuard - happy paths", () => {
   it("allows publishing an unlocked, hold-free document", () => {
     expect(evaluatePublishGuard(unlockedNoHolds, { actorUserId: ME }).ok).toBe(true);
   });
@@ -66,7 +66,7 @@ describe("evaluatePublishGuard — happy paths", () => {
   });
 });
 
-describe("evaluatePublishGuard — lock blocking", () => {
+describe("evaluatePublishGuard - lock blocking", () => {
   it("blocks when the document is locked by another user", () => {
     const state: PublishGuardState = { checkedOutBy: OTHER, checkedOutByName: "Dana", activeHolds: [] };
     const d = evaluatePublishGuard(state, { actorUserId: ME });
@@ -125,7 +125,7 @@ describe("evaluatePublishGuard — lock blocking", () => {
   });
 });
 
-describe("evaluatePublishGuard — hold blocking", () => {
+describe("evaluatePublishGuard - hold blocking", () => {
   it("blocks when an active hold exists", () => {
     const state: PublishGuardState = { checkedOutBy: null, activeHolds: [hold("Client Review")] };
     const d = evaluatePublishGuard(state, { actorUserId: ME });
@@ -166,7 +166,7 @@ describe("evaluatePublishGuard — hold blocking", () => {
   });
 });
 
-describe("evaluatePublishGuard — precedence", () => {
+describe("evaluatePublishGuard - precedence", () => {
   it("reports the lock before the hold when both block", () => {
     const state: PublishGuardState = { checkedOutBy: OTHER, activeHolds: [hold("Client Review")] };
     const d = evaluatePublishGuard(state, { actorUserId: ME });
@@ -174,7 +174,7 @@ describe("evaluatePublishGuard — precedence", () => {
   });
 });
 
-describe("isDocumentCheckedOut — the authoritative lock signal", () => {
+describe("isDocumentCheckedOut - the authoritative lock signal", () => {
   it("is checked out when a lock holder is present", () => {
     expect(isDocumentCheckedOut({ checkedOutBy: ME })).toBe(true);
   });
@@ -202,7 +202,7 @@ describe("isDocumentCheckedOut — the authoritative lock signal", () => {
   });
 });
 
-describe("hasStaleCollaborators — zombie detection", () => {
+describe("hasStaleCollaborators - zombie detection", () => {
   it("flags a populated collaborator list with no lock holder", () => {
     expect(hasStaleCollaborators({ checkedOutBy: null, activeCollaborators: ["ggetzfrid"] })).toBe(true);
   });

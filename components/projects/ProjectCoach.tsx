@@ -98,7 +98,7 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
           <div className="pt-2">
             {items.length === 0 ? (
               <div className="text-xs text-[var(--color-text-muted)] italic">
-                Nothing to ask for — the system has what it needs. New gaps will show up here as the job runs.
+                Nothing to ask for - the system has what it needs. New gaps will show up here as the job runs.
               </div>
             ) : (
               <ul className="space-y-1.5">

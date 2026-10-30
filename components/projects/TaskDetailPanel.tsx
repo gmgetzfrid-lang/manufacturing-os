@@ -88,7 +88,7 @@ export default function TaskDetailPanel({
   const [noteDraft, setNoteDraft] = useState("");
   // A failed save says so, here, instead of the control just snapping back.
   const [err, setErr] = useState<string | null>(null);
-  const failed = (e: unknown) => setErr((e as Error)?.message || "That didn't save — try again.");
+  const failed = (e: unknown) => setErr((e as Error)?.message || "That didn't save - try again.");
   const shiftTimes = useShiftTimes(milestone.projectId);
 
   const m = milestone;
@@ -391,7 +391,7 @@ export default function TaskDetailPanel({
                         {m.status === "completed" ? (m.actualAt ? ` · finished ${fmtInTz(m.actualAt as string, tz, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}` : " · finish time not recorded") : ""}
                         {canEdit && (m.actualStartAt || m.status !== "planned") && (
                           <button onClick={() => setActualEdit({ start: toDateTimeInput(m.actualStartAt as string | null, tz), finish: toDateTimeInput(m.actualAt as string | null, tz) })}
-                            className="ml-1.5 text-[10px] font-bold text-[var(--color-accent)] hover:underline" title="Correct when the work really started or finished — the shift that did it gets the credit">correct</button>
+                            className="ml-1.5 text-[10px] font-bold text-[var(--color-accent)] hover:underline" title="Correct when the work really started or finished - the shift that did it gets the credit">correct</button>
                         )}
                       </span>
                     )}
@@ -426,7 +426,7 @@ export default function TaskDetailPanel({
                     <Field icon={w === "night" ? <Moon className="w-3.5 h-3.5" /> : w === "both" ? <Sunset className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />} label="Worked on">
                       {label} <span className="text-[10px] text-[var(--color-text-faint)]">{m.shift === "swing" || ((m.shift === "day" || m.shift === "night") && w === m.shift) ? "· set on the task"
                         : calendarShift(m, shiftTimes) ? `· from its calendar${typeof m.attributes?.work_calendar === "string" ? ` (${m.attributes.work_calendar}, ${String(m.attributes.work_hours ?? "").replace(/,/g, ", ")})` : ""}`
-                        : "· from its times — set the crew if that's wrong"}</span>
+                        : "· from its times - set the crew if that's wrong"}</span>
                     </Field>
                   );
                 })()}
@@ -503,7 +503,7 @@ export default function TaskDetailPanel({
                       <li key={s.id} className="flex items-center gap-2 py-1 px-1.5 rounded-md hover:bg-[var(--color-surface-2)] group">
                         <span className="shrink-0">
                           {sIsSummary ? (
-                            <StatusControl status={sStatus} size="sm" variant="dot" readOnly title="Phase — rolls up from its sub-tasks" onPick={() => {}} />
+                            <StatusControl status={sStatus} size="sm" variant="dot" readOnly title="Phase - rolls up from its sub-tasks" onPick={() => {}} />
                           ) : (
                             <StatusControl
                               status={s.status}
@@ -637,7 +637,7 @@ export default function TaskDetailPanel({
                 onClose={() => setCancelling(false)} onDone={() => { onChanged(); onClose(); }} />
             ) : (
               <>
-                <button onClick={() => setCancelling(true)} title="Take it off this schedule — it's still done, somewhere else"
+                <button onClick={() => setCancelling(true)} title="Take it off this schedule - it's still done, somewhere else"
                   className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-700 dark:text-amber-400 hover:text-amber-900 dark:hover:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40 px-2 py-1 rounded-md">
                   <Ban className="w-3.5 h-3.5" /> Cancel job
                 </button>
@@ -720,7 +720,7 @@ function EditForm({
     if (durationHours) {
       const h = Number(durationHours);
       if (Number.isNaN(h) || h < 0) errors.durationHours = "Hours must be 0 or more.";
-      else if (h > 24 * 365) warnings.durationHours = "That's a lot of hours — double-check.";
+      else if (h > 24 * 365) warnings.durationHours = "That's a lot of hours - double-check.";
     }
     // Advisory: span vs hours sanity. If a 1-day task claims 200h, flag.
     if (Number.isFinite(startMs) && Number.isFinite(finishMs) && durationHours) {
@@ -793,7 +793,7 @@ function EditForm({
         <div><DateTimePicker label="Planned start" value={start} onChange={(x) => datesTo(x, finish)} tz={tz} times={shiftTimes} disabled={!isLeaf} future showNow={false} /><Note err={v.errors.start} warn={v.warnings.start} /></div>
         <div><DateTimePicker label="Planned finish" value={finish} onChange={(x) => datesTo(start, x)} tz={tz} times={shiftTimes} disabled={!isLeaf} future showNow={false} /><Note err={v.errors.finish} warn={v.warnings.finish} /></div>
       </div>
-      {!isLeaf && <div className="text-[10px] text-[var(--color-text-muted)] -mt-1">A phase runs from its first step to its last — move the phase (or its steps) on the timeline to change its dates.</div>}
+      {!isLeaf && <div className="text-[10px] text-[var(--color-text-muted)] -mt-1">A phase runs from its first step to its last - move the phase (or its steps) on the timeline to change its dates.</div>}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <L label="Work hours">
           <input type="number" min={0} value={durationHours} onChange={(e) => { setDurationHours(e.target.value); setHoursTyped(true); }} className={cls("durationHours")} />
@@ -826,7 +826,7 @@ function EditForm({
         <L label="Shift">
           <select value={shift} onChange={(e) => setShift(e.target.value)} className={inp}
             title="Which crew does this work. The shift report counts its planned hours only on that shift.">
-            <option value="">Auto — from its times</option>
+            <option value="">Auto - from its times</option>
             <option value="day">Day shift</option>
             <option value="night">Night shift</option>
             <option value="swing">Round the clock</option>
@@ -869,7 +869,7 @@ function Note({ err, warn }: { err?: string; warn?: string }) {
 function KindSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} className={inp}>
-      <option value="">—</option>
+      <option value="">-</option>
       <option value="employee">Employee (in-house)</option>
       <option value="contractor">Contractor</option>
     </select>
@@ -1005,7 +1005,7 @@ function DependencyEditor({
       <div className="flex items-center gap-1.5 mb-1.5">
         <Link2 className="w-3.5 h-3.5 text-indigo-500" />
         <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Depends on</span>
-        <span className="text-[10px] text-[var(--color-text-faint)]">— and how it waits on each</span>
+        <span className="text-[10px] text-[var(--color-text-faint)]">- and how it waits on each</span>
       </div>
       {deps.length === 0 ? (
         <div className="text-[11px] text-[var(--color-text-faint)] italic mb-1.5">No dependencies.</div>
@@ -1101,7 +1101,7 @@ function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
       <div className="flex items-center gap-1.5 mb-1.5">
         <Target className="w-3.5 h-3.5 text-indigo-500" />
         <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Responsible</span>
-        <span className="text-[10px] text-[var(--color-text-faint)]">— the member who owns this deliverable</span>
+        <span className="text-[10px] text-[var(--color-text-faint)]">- the member who owns this deliverable</span>
       </div>
       {canEdit ? (
         <select
@@ -1113,7 +1113,7 @@ function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
           <option value="">Unassigned</option>
           {members.map((m) => (
             <option key={m.userId} value={m.userId}>
-              {(m.userName || m.userEmail || m.userId.slice(0, 8))}{m.responsibility ? ` — ${m.responsibility}` : ""}
+              {(m.userName || m.userEmail || m.userId.slice(0, 8))}{m.responsibility ? ` - ${m.responsibility}` : ""}
             </option>
           ))}
         </select>

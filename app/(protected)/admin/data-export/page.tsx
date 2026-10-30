@@ -243,22 +243,22 @@ export default function DataExportPage() {
                       {backupProgress.phase === "envelope" && "Reading every table…"}
                       {backupProgress.phase === "files" &&
                         `File ${backupProgress.filesDone + 1} of ${backupProgress.filesTotal} · ${(backupProgress.bytesDone / 1048576).toFixed(0)} MB · part ${backupProgress.part}` +
-                        (backupProgress.currentPath ? ` — ${backupProgress.currentPath.split("/").pop()}` : "")}
+                        (backupProgress.currentPath ? ` - ${backupProgress.currentPath.split("/").pop()}` : "")}
                       {backupProgress.phase === "finalizing" && `Packing part ${backupProgress.part}…`}
                     </span>
                     <button onClick={cancelBackup} className="font-bold text-rose-600 hover:underline shrink-0">Cancel</button>
                   </div>
                   <div className="text-[10px] text-[var(--color-text-faint)]">
-                    You can leave this page and keep working — the floating card tracks it anywhere in the app. Just don&apos;t close the tab.
+                    You can leave this page and keep working - the floating card tracks it anywhere in the app. Just don&apos;t close the tab.
                   </div>
                   {backupProgress.errors.length > 0 && (
-                    <div className="text-[10px] text-amber-700">{backupProgress.errors.length} file(s) failed so far — they&apos;ll be listed in backup-report.json.</div>
+                    <div className="text-[10px] text-amber-700">{backupProgress.errors.length} file(s) failed so far - they&apos;ll be listed in backup-report.json.</div>
                   )}
                 </div>
               )}
               {backupProgress?.phase === "done" && !busyZip && (
                 <div className="mt-2 text-[11px] font-bold text-emerald-700">
-                  Backup complete — {backupProgress.part} zip part(s), every file SHA-256 verified in files-manifest.json.
+                  Backup complete - {backupProgress.part} zip part(s), every file SHA-256 verified in files-manifest.json.
                 </div>
               )}
             </div>
@@ -279,7 +279,7 @@ export default function DataExportPage() {
             </div>
             <p className="text-xs text-[var(--color-text-muted)] mb-3 max-w-3xl">
               Configure your own S3 / R2 bucket or webhook URL. We push a fresh export on your schedule. We never see the
-              destination credentials in plaintext — they&apos;re encrypted at rest with AES-256-GCM and decrypted only at push time.
+              destination credentials in plaintext - they&apos;re encrypted at rest with AES-256-GCM and decrypted only at push time.
             </p>
 
             {loading ? (
@@ -429,7 +429,7 @@ function DestinationCard({
           )}
           {testResult && (
             <div className={`mt-2 p-2 border rounded text-[11px] ${testResult.ok ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-red-50 border-red-200 text-red-700"}`}>
-              {testResult.ok ? "Connection test passed — credentials work." : `Test failed: ${testResult.error}`}
+              {testResult.ok ? "Connection test passed - credentials work." : `Test failed: ${testResult.error}`}
             </div>
           )}
         </div>

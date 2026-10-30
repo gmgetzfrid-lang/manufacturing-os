@@ -226,7 +226,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const onClearSchedule = async () => {
     const n = allMilestones.length;
     const ok = await appConfirm({
-      message: `Delete all ${n} task${n === 1 ? "" : "s"} on this project's schedule? Notes on them go too. This can't be undone — import the schedule file again afterwards to rebuild it. This action is audited.`,
+      message: `Delete all ${n} task${n === 1 ? "" : "s"} on this project's schedule? Notes on them go too. This can't be undone - import the schedule file again afterwards to rebuild it. This action is audited.`,
       tone: "danger",
     });
     if (!ok) return;
@@ -304,8 +304,8 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       )}
 
       <FirstRunHint storageKey="schedule.intro.v2" tone="info">
-        Drop an exported schedule file and we&apos;ll parse it — from MS Project (.xml / .csv) or Primavera P6,
-        the scheduling tool big projects use (.xml / .xer export). No file? Type a few milestones by hand — that&apos;s
+        Drop an exported schedule file and we&apos;ll parse it - from MS Project (.xml / .csv) or Primavera P6,
+        the scheduling tool big projects use (.xml / .xer export). No file? Type a few milestones by hand - that&apos;s
         enough to unlock the board. Drag milestones in the calendar to reschedule; click a pill to advance its status.
       </FirstRunHint>
 
@@ -385,7 +385,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               {milestones.length > 0 && (
                 <button
                   onClick={() => setRebaseOpen(true)}
-                  title="Shift every task by a date delta — reuse an old schedule with a new start date"
+                  title="Shift every task by a date delta - reuse an old schedule with a new start date"
                   className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] bg-[var(--color-accent-soft)] border border-[var(--color-accent-ring)]/40 px-2.5 py-1.5 rounded-lg shadow-sm transition-colors"
                 >
                   <Calendar className="w-3.5 h-3.5" /> Rebase
@@ -397,7 +397,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
                   disabled={baselineBusy}
                   title={hasBaseline
                     ? "Re-capture the approved plan as the new baseline to measure drift against"
-                    : "Snapshot the current plan as the baseline — every view then shows how far you've drifted from it"}
+                    : "Snapshot the current plan as the baseline - every view then shows how far you've drifted from it"}
                   className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:text-emerald-900 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 border border-emerald-200 dark:border-emerald-800 px-2.5 py-1.5 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
                 >
                   <Flag className="w-3.5 h-3.5" /> {hasBaseline ? "Re-baseline" : "Set baseline"}
@@ -910,7 +910,7 @@ function AddMilestoneForm({
         <label className="col-span-2">
           <span className={lbl}>Under (equipment / group)</span>
           <select value={parentId} onChange={(e) => setParentId(e.target.value)} className={`${inp} w-full`}>
-            <option value="">— top level —</option>
+            <option value="">- top level -</option>
             {parentOptions.map((p) => <option key={p.id} value={p.id!}>{p.wbs ? `${p.wbs} ` : ""}{p.name}</option>)}
           </select>
         </label>
@@ -926,13 +926,13 @@ function AddMilestoneForm({
         <label>
           <span className={lbl}>Hours of work</span>
           <input value={hours} onChange={(e) => setHours(e.target.value)} inputMode="decimal" placeholder="e.g. 6"
-            title="Real hours this step takes — what the shift report weighs it by. Leave blank if unknown."
+            title="Real hours this step takes - what the shift report weighs it by. Leave blank if unknown."
             className={`${inp} w-full font-mono`} />
         </label>
         <label>
           <span className={lbl}>Weight</span>
           <input value={weight} onChange={(e) => setWeight(e.target.value)} placeholder="1"
-            title="How much this step counts in the % complete when it has no hours — a big scope worth 3× a small one gets weight 3. Leave 1 when unsure."
+            title="How much this step counts in the % complete when it has no hours - a big scope worth 3× a small one gets weight 3. Leave 1 when unsure."
             className={`${inp} w-full font-mono`} />
         </label>
       </div>

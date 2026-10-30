@@ -38,7 +38,7 @@ describe("a blank crew takes the work order's", () => {
 });
 
 describe("one verdict", () => {
-  it("25% vs 21% is on track — the tile must not say 'Work ahead' beside it", () => {
+  it("25% vs 21% is on track - the tile must not say 'Work ahead' beside it", () => {
     expect(standingOf(25, 21)).toBe("on track");
   });
 });

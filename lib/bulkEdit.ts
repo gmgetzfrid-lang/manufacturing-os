@@ -20,16 +20,16 @@ export interface BulkField {
 }
 
 export const BULK_FIELDS: BulkField[] = [
-  { key: "responsibleParty", label: "Responsible — person / crew / contractor", list: true },
-  { key: "responsibleOrg", label: "Responsible — company / department", list: true },
-  { key: "responsibleKind", label: "Responsible — type", list: false },
-  { key: "actualParty", label: "Did the work — person / crew", list: true },
-  { key: "actualOrg", label: "Did the work — company / department", list: true },
-  { key: "actualKind", label: "Did the work — type", list: false },
+  { key: "responsibleParty", label: "Responsible - person / crew / contractor", list: true },
+  { key: "responsibleOrg", label: "Responsible - company / department", list: true },
+  { key: "responsibleKind", label: "Responsible - type", list: false },
+  { key: "actualParty", label: "Did the work - person / crew", list: true },
+  { key: "actualOrg", label: "Did the work - company / department", list: true },
+  { key: "actualKind", label: "Did the work - type", list: false },
   { key: "location", label: "Location / area", list: false },
   { key: "workOrderRef", label: "Work order #", list: false },
   // Which crew works it. Auto = read from the task's times.
-  { key: "shift", label: "Crew — day / night / round the clock", list: false, options: [
+  { key: "shift", label: "Crew - day / night / round the clock", list: false, options: [
     { value: "", label: "Auto (from its calendar, else its times)" }, { value: "day", label: "Day" },
     { value: "night", label: "Night" }, { value: "swing", label: "Round the clock" },
   ] },

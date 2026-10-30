@@ -558,7 +558,7 @@ const FileViewerModal = ({
   const isImage = file.type?.includes('image') || file.name.match(/\.(jpeg|jpg|gif|png)$/i);
 
   const handlePrint = async () => {
-    if (!resolvedUrl) { await appAlert({ message: 'Still loading file — try again in a moment.' }); return; }
+    if (!resolvedUrl) { await appAlert({ message: 'Still loading file - try again in a moment.' }); return; }
     // Print the STAMPED stream, never the raw file: watermark + rev footer +
     // the verify QR, exactly like a download. Paper is where copies escape.
     let printUrl = resolvedUrl;
@@ -575,7 +575,7 @@ const FileViewerModal = ({
         watermarkText: file.type === "Draft" ? "REVIEW ONLY - DO NOT DISTRIBUTE" : "UNCONTROLLED COPY",
         verifyUrl,
         footerNotice: deliverableRev
-          ? `${ticketId ?? "Ticket"} deliverable Rev ${deliverableRev} at time of printing — scan the QR to confirm it is still the latest.`
+          ? `${ticketId ?? "Ticket"} deliverable Rev ${deliverableRev} at time of printing - scan the QR to confirm it is still the latest.`
           : undefined,
       });
       printUrl = URL.createObjectURL(blob);
@@ -647,7 +647,7 @@ const FileViewerModal = ({
           watermarkText: file.type === "Draft" ? "REVIEW ONLY - DO NOT DISTRIBUTE" : "CONTROLLED COPY",
           verifyUrl,
           footerNotice: deliverableRev
-            ? `${ticketId ?? "Ticket"} deliverable Rev ${deliverableRev} at time of download — scan the QR to confirm it is still the latest.`
+            ? `${ticketId ?? "Ticket"} deliverable Rev ${deliverableRev} at time of download - scan the QR to confirm it is still the latest.`
             : undefined,
         },
       });
@@ -754,7 +754,7 @@ const FileViewerModal = ({
               </div>
               <h3 className="text-xl font-bold text-[var(--color-text)] mb-2">This file is in the archive</h3>
               <p className="text-[var(--color-text-muted)] leading-relaxed">
-                It&apos;s not gone — because this ticket is long-closed, its files were moved to{' '}
+                It&apos;s not gone - because this ticket is long-closed, its files were moved to{' '}
                 {archiveId ? <span className="font-mono font-bold">{archiveId}</span> : 'the offline archive'} to save storage.
                 An admin can restore the ticket{archiveId && <> from <span className="font-mono break-all">&lt;root&gt;/data/{archiveId}.zip</span></>} to open it again.
               </p>
@@ -1182,7 +1182,7 @@ export default function TicketDetailView() {
         setShowUploadIFC(false);
         setPendingRedlineBlob(null);
         setFileToRedline(null);
-        await appAlert({ message: "This request was just updated by someone else, so your action wasn't applied. The latest state is loading — please review the change and try again.", tone: "danger" });
+        await appAlert({ message: "This request was just updated by someone else, so your action wasn't applied. The latest state is loading - please review the change and try again.", tone: "danger" });
         return;
       }
       if (!res.ok) {
@@ -1402,7 +1402,7 @@ export default function TicketDetailView() {
         isOpen={showCommentModal} 
         onClose={() => setShowCommentModal(false)} 
         title={pendingAction?.action === 'approve_minor_correction' ? 'Approve with Minor Correction' : pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject' ? 'Request Revision' : pendingAction?.variant === 'destructive' ? 'Reject & Return' : 'Workflow Comment'}
-        description={pendingAction?.action === 'approve_minor_correction' ? 'Describe the small fix (typo, mislabel). The deliverable is approved NOW — your note goes to the drafter to fold into the issued file, with no new review round.' : pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject' ? 'Please provide feedback on what needs to be revised.' : pendingAction?.variant === 'destructive' ? 'Please explain why this request is being returned or rejected.' : 'Add an optional comment to this action.'}
+        description={pendingAction?.action === 'approve_minor_correction' ? 'Describe the small fix (typo, mislabel). The deliverable is approved NOW - your note goes to the drafter to fold into the issued file, with no new review round.' : pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject' ? 'Please provide feedback on what needs to be revised.' : pendingAction?.variant === 'destructive' ? 'Please explain why this request is being returned or rejected.' : 'Add an optional comment to this action.'}
         isDestructive={pendingAction?.variant === 'destructive' || pendingAction?.action === 'request_revision'} 
         showCategorySelection={pendingAction?.action === 'request_revision' || pendingAction?.action === 'reject'}
         onSubmit={(comment, category) => pendingAction && executeWorkflowAction(pendingAction, comment, undefined, undefined, category)}
@@ -1492,7 +1492,7 @@ export default function TicketDetailView() {
                   <span
                     title={/^\d+$/.test(ticket.deliverableRev)
                       ? `Issued deliverable revision ${ticket.deliverableRev}`
-                      : `Review draft ${ticket.deliverableRev} — the letter drops when it's approved`}
+                      : `Review draft ${ticket.deliverableRev} - the letter drops when it's approved`}
                     className={`px-2 py-0.5 text-[10px] font-black rounded border uppercase tracking-wider ${
                       /^\d+$/.test(ticket.deliverableRev)
                         ? 'text-emerald-700 bg-emerald-100 border-emerald-200'
@@ -1538,7 +1538,7 @@ export default function TicketDetailView() {
                   deliverableRev: ticket.deliverableRev ?? null,
                 });
               }}
-              title="Print a traveler sheet for the paper folder — anyone can scan its QR (no login) to check the deliverable is still the latest revision"
+              title="Print a traveler sheet for the paper folder - anyone can scan its QR (no login) to check the deliverable is still the latest revision"
               className="px-3 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-all flex items-center gap-1.5 bg-[var(--color-surface)] border-2 border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"
             >
               <QrCode className="w-4 h-4" /> <span className="hidden sm:inline">Traveler</span>
@@ -1658,7 +1658,7 @@ export default function TicketDetailView() {
             <RotateCcw className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-sm font-black text-amber-900">Revision requested — here&apos;s what to fix</h3>
+                <h3 className="text-sm font-black text-amber-900">Revision requested - here&apos;s what to fix</h3>
                 {latestRevision.category && (
                   <span className="px-2 py-0.5 rounded-full bg-amber-200 text-amber-900 text-[10px] font-bold uppercase tracking-wider">{latestRevision.category}</span>
                 )}
@@ -1699,7 +1699,7 @@ export default function TicketDetailView() {
             <div className="rounded-xl border-2 border-sky-300 bg-sky-50 p-4 flex items-start gap-3">
               <Archive className="w-5 h-5 text-sky-600 shrink-0 mt-0.5" />
               <div className="min-w-0">
-                <h3 className="text-sm font-black text-sky-900">It&apos;s not gone — just archived because it&apos;s old</h3>
+                <h3 className="text-sm font-black text-sky-900">It&apos;s not gone - just archived because it&apos;s old</h3>
                 <p className="text-sm text-sky-900 mt-1 leading-relaxed">
                   Because this ticket has been closed a while, its full content was moved to the offline archive{' '}
                   {ticket.archiveId ? <span className="font-mono font-bold">{ticket.archiveId}</span> : 'a backup'} to save storage. What you see here is a lightweight stub.
@@ -1713,7 +1713,7 @@ export default function TicketDetailView() {
                 )}
                 <p className="text-[13px] text-sky-800 mt-2">
                   <span className="font-bold">To view it all again:</span> have the saved archive{' '}
-                  {ticket.archiveId ? <span className="font-mono break-all">&lt;root&gt;/data/{ticket.archiveId}.zip</span> : 'zip'}? Open it right here — or an admin can fully restore it from the Storage &amp; Backup page.
+                  {ticket.archiveId ? <span className="font-mono break-all">&lt;root&gt;/data/{ticket.archiveId}.zip</span> : 'zip'}? Open it right here - or an admin can fully restore it from the Storage &amp; Backup page.
                 </p>
                 <button
                   onClick={() => setShowArchiveViewer(true)}
@@ -2041,7 +2041,7 @@ export default function TicketDetailView() {
             ticket.archivedAt ? (
               <div className="p-4 bg-sky-50 border-t border-sky-200 text-[11px] text-sky-800 flex items-center gap-2 flex-wrap">
                 <Archive className="w-4 h-4 text-sky-600 shrink-0" />
-                <span>This ticket is archived — its discussion lives in the offline archive.</span>
+                <span>This ticket is archived - its discussion lives in the offline archive.</span>
                 <button onClick={() => setShowArchiveViewer(true)} className="font-bold text-sky-700 hover:underline">View from archive…</button>
                 <span className="text-sky-600">Restore it to comment again.</span>
               </div>

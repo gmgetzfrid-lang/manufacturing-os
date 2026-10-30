@@ -74,7 +74,7 @@ export default function OutputTemplatesPage() {
       <PageHeaderBar
         icon={FileOutput}
         title="Output templates"
-        subtitle="Your template owns the formatting, your example owns the voice, your data fills the blanks — batch documents in one pass."
+        subtitle="Your template owns the formatting, your example owns the voice, your data fills the blanks - batch documents in one pass."
         actions={isController ? (
           <Button onClick={() => setEditing(null)}><Plus className="w-4 h-4" /> New template</Button>
         ) : undefined}

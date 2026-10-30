@@ -41,7 +41,7 @@ export interface Handover {
 /** The shift the work is handed to — "2026-10-26:night". */
 export const handoverKey = (w: ShiftWindow) => `${w.dayKey}:${w.kind}`;
 
-const MISSING = "Shipping turnovers needs a one-time database update (20261103_shift_handovers.sql) — ask your admin to run it.";
+const MISSING = "Shipping turnovers needs a one-time database update (20261103_shift_handovers.sql) - ask your admin to run it.";
 const missing = (msg: string) => /shift_handovers/.test(msg) || /does not exist/.test(msg);
 
 // The crew & size ride in the same JSON as the decisions, under a key no
@@ -133,7 +133,7 @@ export function askedOutcomes(prior: Handover | null, pctOf: (id: string) => num
 
 /** What became of an asked step, in words: done, how far, or no progress. */
 export function askedResult(a: { from: number; now: number | null }): string {
-  if (a.now == null) return "—";
+  if (a.now == null) return "-";
   if (a.now >= 100) return "done ✓";
   if (a.now > a.from) return `${a.now}%`;
   return a.from > 0 ? "no progress" : "not started";

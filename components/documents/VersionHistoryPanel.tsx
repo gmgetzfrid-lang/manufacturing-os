@@ -222,9 +222,9 @@ export default function VersionHistoryPanel({
             Every revision of this document, newest first. Each row links to its file, SHA-256 hash,
             and the engineering signoffs (Drawn / Checked / Approved) captured at release.
             <b className="block mt-1">Compare</b> diffs an older rev against the current one.
-            <b className="block mt-1">Pencil</b> corrects a mislabeled rev after the fact (e.g. uploaded as Rev 0 but the stamp reads 38) — the old and new label are audited.
-            <b className="block mt-1">Revert</b> creates a new revision that copies the older file forward — no history is rewritten.
-            <b className="block mt-1">Backfill older</b> adds a historical revision without changing the current — for when you uploaded the current rev first and need to populate older ones.
+            <b className="block mt-1">Pencil</b> corrects a mislabeled rev after the fact (e.g. uploaded as Rev 0 but the stamp reads 38) - the old and new label are audited.
+            <b className="block mt-1">Revert</b> creates a new revision that copies the older file forward - no history is rewritten.
+            <b className="block mt-1">Backfill older</b> adds a historical revision without changing the current - for when you uploaded the current rev first and need to populate older ones.
           </HelpTooltip>
         </div>
         <div className="flex items-center gap-2">
@@ -260,7 +260,7 @@ export default function VersionHistoryPanel({
                     ? "bg-emerald-600 text-white"
                     : "bg-slate-200 text-[var(--color-text)]"
                 }`}>
-                  Rev {v.revisionLabel || "—"}
+                  Rev {v.revisionLabel || "-"}
                 </div>
 
                 <div className="flex-1 min-w-0">
@@ -272,7 +272,7 @@ export default function VersionHistoryPanel({
                     ) : v.isBranch ? (
                       <span
                         className="inline-flex items-center gap-1 text-[10px] font-bold text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded"
-                        title="Published as a branch from a stale base — never promoted to current. See the open-items queue for its reconciliation status."
+                        title="Published as a branch from a stale base - never promoted to current. See the open-items queue for its reconciliation status."
                       >
                         <ShieldAlert className="w-3 h-3" /> Branch
                       </span>
@@ -293,7 +293,7 @@ export default function VersionHistoryPanel({
                     {v.provenance === "unverified" && (
                       <span
                         className="text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded"
-                        title="Published with no recorded checkout/download trail and no verified base declaration. Document Control reviews these — like QA receiving inspection."
+                        title="Published with no recorded checkout/download trail and no verified base declaration. Document Control reviews these - like QA receiving inspection."
                       >
                         ⚑ Unverified provenance
                       </span>
@@ -301,7 +301,7 @@ export default function VersionHistoryPanel({
                     {v.provenance === "session" && (
                       <span
                         className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded"
-                        title="Published from an active checkout session — full provenance."
+                        title="Published from an active checkout session - full provenance."
                       >
                         Session
                       </span>
@@ -309,7 +309,7 @@ export default function VersionHistoryPanel({
                     {v.provenance === "external" && (
                       <span
                         className="text-[10px] font-bold text-orange-700 bg-orange-50 border border-orange-200 px-1.5 py-0.5 rounded"
-                        title="Submitted by an outside company through a project intake link. External work enters through review (or a trusted link's own documents) — the submitting company is on the record."
+                        title="Submitted by an outside company through a project intake link. External work enters through review (or a trusted link's own documents) - the submitting company is on the record."
                       >
                         External{v.createdByName ? ` · ${v.createdByName}` : ""}
                       </span>
@@ -360,7 +360,7 @@ export default function VersionHistoryPanel({
                   {canRevert && currentUserId && doc.orgId && doc.libraryId && v.reviewState !== "in_review" && (
                     <button
                       onClick={() => openCorrect(v)}
-                      title={`Correct the revision label (currently "${v.revisionLabel || "—"}") — audited`}
+                      title={`Correct the revision label (currently "${v.revisionLabel || "-"}") - audited`}
                       className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-blue-700 hover:bg-blue-50"
                     >
                       <Pencil className="w-3.5 h-3.5" />
@@ -464,9 +464,9 @@ export default function VersionHistoryPanel({
               <Pencil className="w-4 h-4 text-blue-600" /> Correct revision label
             </div>
             <p className="text-xs text-[var(--color-text-muted)] mt-1">
-              Rev <b className="font-mono">{correctTarget.revisionLabel || "—"}</b>
+              Rev <b className="font-mono">{correctTarget.revisionLabel || "-"}</b>
               {correctTarget.id === doc.currentVersionId ? " (current)" : ""} gets a new label.
-              The correction is audited — old and new label, who, when, and why.
+              The correction is audited - old and new label, who, when, and why.
               {correctTarget.id === doc.currentVersionId && " The document's own rev label is updated to match."}
             </p>
             <label className="block mt-3 text-xs font-bold text-[var(--color-text-muted)]">
@@ -484,7 +484,7 @@ export default function VersionHistoryPanel({
               <input
                 value={reasonDraft}
                 onChange={(e) => setReasonDraft(e.target.value)}
-                placeholder="e.g. mislabeled at upload — title block reads 38"
+                placeholder="e.g. mislabeled at upload - title block reads 38"
                 className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </label>

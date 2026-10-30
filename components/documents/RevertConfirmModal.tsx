@@ -64,7 +64,7 @@ export default function RevertConfirmModal({
           <div className="flex-1 min-w-0">
             <div className="text-sm font-black text-[var(--color-text)]">Revert to Rev {targetVersion.revisionLabel}</div>
             <div className="text-xs text-[var(--color-text-muted)] truncate">
-              {doc.documentNumber || doc.title || doc.name} — current is Rev {doc.rev}
+              {doc.documentNumber || doc.title || doc.name} - current is Rev {doc.rev}
             </div>
           </div>
           <button onClick={onClose} disabled={busy} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
@@ -79,7 +79,7 @@ export default function RevertConfirmModal({
               The current revision will be marked superseded but remain in the history.
             </p>
             <p className="text-xs text-[var(--color-text-muted)]">
-              Reverts never overwrite history — the audit chain stays intact and the action is logged with your reason.
+              Reverts never overwrite history - the audit chain stays intact and the action is logged with your reason.
             </p>
           </div>
 

@@ -90,7 +90,7 @@ export default function GraphShapeWizard({
         })));
         setStage("review");
       } catch {
-        if (alive) { setError("The analysis timed out — you can still connect manually below."); setStage("review"); }
+        if (alive) { setError("The analysis timed out - you can still connect manually below."); setStage("review"); }
       }
     })();
     return () => { alive = false; };
@@ -102,7 +102,7 @@ export default function GraphShapeWizard({
     const ca = byRef.get(manual.a), cb = byRef.get(manual.b);
     if (!ca || !cb || ca.ref === cb.ref) return;
     if (ca.type === "asset" && cb.type === "asset") {
-      setError("Equipment connects through documents — pick at least one document.");
+      setError("Equipment connects through documents - pick at least one document.");
       return;
     }
     setError(null);
@@ -121,7 +121,7 @@ export default function GraphShapeWizard({
     setStage("applying"); setError(null);
     let ok = 0;
     const evidenceDetail = (r: Row) =>
-      `${r.reason} — from the question: “${question.slice(0, 160)}”`;
+      `${r.reason} - from the question: “${question.slice(0, 160)}”`;
     for (const r of accepted) {
       const ca = byRef.get(r.a), cb = byRef.get(r.b);
       if (!ca || !cb) continue;
@@ -285,7 +285,7 @@ export default function GraphShapeWizard({
                   {candidates.length >= 2 && (
                     <div className="rounded-xl border border-dashed border-[var(--color-border-strong)] p-3 space-y-2">
                       <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
-                        Connect manually — same verified entities
+                        Connect manually - same verified entities
                       </div>
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <select value={manual.a} onChange={(e) => setManual((m) => ({ ...m, a: e.target.value }))}
@@ -314,7 +314,7 @@ export default function GraphShapeWizard({
 
                   {rows.length === 0 && candidates.length < 2 && (
                     <div className="text-[11px] text-[var(--color-text-muted)] text-center py-6">
-                      Nothing here can shape the graph — this answer doesn&apos;t ground to known
+                      Nothing here can shape the graph - this answer doesn&apos;t ground to known
                       documents or equipment.
                     </div>
                   )}

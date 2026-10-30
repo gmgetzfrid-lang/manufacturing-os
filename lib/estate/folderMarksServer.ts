@@ -164,12 +164,12 @@ export async function markFolder(admin: SupabaseClient, input: { orgId: string; 
   } else if (m.kind === "area") {
     const u = ctx.units.find((x) => x.code === m.unitCode);
     if (!u) throw new Error("Pick an operating area from the Site Codebook.");
-    await upsertMark(admin, input.orgId, f.id, "area", `cbunit:${u.code}`, `Folder "${f.name}" is ${u.label} (${u.code}) — marked by ${input.actor.name ?? "a person"}`, input.actor);
+    await upsertMark(admin, input.orgId, f.id, "area", `cbunit:${u.code}`, `Folder "${f.name}" is ${u.label} (${u.code}) - marked by ${input.actor.name ?? "a person"}`, input.actor);
     await refileBelow(admin, input.orgId, f.id, folders);
   } else if (m.kind === "type") {
     const label = m.label.trim().slice(0, 60);
     if (!label) throw new Error("Name the equipment type, e.g. Heaters.");
-    await upsertMark(admin, input.orgId, f.id, "type", eqtypeId(label), `Equipment under folder "${f.name}" is ${label} — marked by ${input.actor.name ?? "a person"}`, input.actor);
+    await upsertMark(admin, input.orgId, f.id, "type", eqtypeId(label), `Equipment under folder "${f.name}" is ${label} - marked by ${input.actor.name ?? "a person"}`, input.actor);
     await refileBelow(admin, input.orgId, f.id, folders);
   } else {
     const parsed = equipmentFromFolderName(m.tag) ?? null;
@@ -177,7 +177,7 @@ export async function markFolder(admin: SupabaseClient, input: { orgId: string; 
     if (!tag) throw new Error(`"${m.tag}" is not shaped like an equipment tag (like H-2 or P-101A).`);
     const name = m.name?.trim() || parsed?.name || null;
     const a = await findOrCreateAsset(admin, input.orgId, tag, name, f.id, input.actor);
-    await upsertMark(admin, input.orgId, f.id, "equipment", `asset:${a.id}`, `Folder "${f.name}" is ${tag}'s folder — marked by ${input.actor.name ?? "a person"}`, input.actor);
+    await upsertMark(admin, input.orgId, f.id, "equipment", `asset:${a.id}`, `Folder "${f.name}" is ${tag}'s folder - marked by ${input.actor.name ?? "a person"}`, input.actor);
     const chainIds = chainOf(f.id, folders).map((c) => c.id);
     await fileAsset(admin, input.orgId, a.id, f.id, folders, await markEdges(admin, input.orgId, chainIds));
   }

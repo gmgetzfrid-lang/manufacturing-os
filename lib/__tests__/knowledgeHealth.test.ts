@@ -9,7 +9,7 @@ const mirror = (over: Partial<MirrorFacts> = {}): MirrorFacts => ({
   id: "k1", status: "ready", sourceVersionId: "v2", pagesIndexed: 10, pageCount: 10, error: null, touchedAt: NOW - 1000, ...over,
 });
 
-describe("classifyDoc — one status per source document", () => {
+describe("classifyDoc - one status per source document", () => {
   it("indexed: current revision, every page read", () => expect(classifyDoc(doc(), mirror(), NOW)).toBe("indexed"));
   it("partial: ready but pages missing", () => expect(classifyDoc(doc(), mirror({ pagesIndexed: 4 }), NOW)).toBe("partial"));
   it("partial: ready with nothing read", () => expect(classifyDoc(doc(), mirror({ pagesIndexed: 0, pageCount: null }), NOW)).toBe("partial"));
@@ -21,7 +21,7 @@ describe("classifyDoc — one status per source document", () => {
   it("failed: keeps the reason", () => expect(classifyDoc(doc(), mirror({ status: "error", error: "bad PDF" }), NOW)).toBe("failed"));
   it("missing: should be mirrored and isn't", () => expect(classifyDoc(doc(), null, NOW)).toBe("missing"));
   it("retired: set aside here", () => expect(classifyDoc(doc(), mirror({ status: "retired" }), NOW)).toBe("retired"));
-  it("retired: set aside in another library — restorable, not missing", () => expect(classifyDoc(doc(), null, NOW, true)).toBe("retired"));
+  it("retired: set aside in another library - restorable, not missing", () => expect(classifyDoc(doc(), null, NOW, true)).toBe("retired"));
   it("notPdf: CAD / images can't be read", () => expect(classifyDoc(doc({ fileUrl: "a/b/plot.dwg", fileType: "application/acad" }), null, NOW)).toBe("notPdf"));
   it("noFile: nothing attached", () => expect(classifyDoc(doc({ currentVersionId: null, blocked: "no_file" }), null, NOW)).toBe("noFile"));
   it("heldBack wins over everything", () => expect(classifyDoc(doc({ blocked: "held_back" }), mirror(), NOW)).toBe("heldBack"));

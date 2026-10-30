@@ -19,7 +19,7 @@ describe("swap a contractor on every task", () => {
       { value: "Acme Mechanical Services", count: 1 },
     ]);
   });
-  it("replaces the name everywhere — whole names only, other names in a list untouched", () => {
+  it("replaces the name everywhere - whole names only, other names in a list untouched", () => {
     const plan = planReplace(ms, party, "Acme Mechanical", "Gulf Coast Mech");
     expect(plan.map((c) => [c.id, c.after])).toEqual([
       ["1", "Gulf Coast Mech"], ["2", "Gulf Coast Mech, Bay Crane"], ["3", "Gulf Coast Mech"],

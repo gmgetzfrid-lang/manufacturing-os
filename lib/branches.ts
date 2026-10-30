@@ -140,7 +140,7 @@ export async function announceBranchOpened(input: {
       category: "status",
       kind: "branch_open",
       title: `Unreconciled branch opened on ${input.documentLabel}`,
-      body: `${input.actorName} published a branch based on an older revision${input.divergedFromRev ? ` (diverged from Rev ${input.divergedFromRev})` : ""}: "${input.reason}". It must be merged or withdrawn — it is not the current revision.`,
+      body: `${input.actorName} published a branch based on an older revision${input.divergedFromRev ? ` (diverged from Rev ${input.divergedFromRev})` : ""}: "${input.reason}". It must be merged or withdrawn - it is not the current revision.`,
       link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}` : undefined,
       resource: { type: "document", id: input.documentId },
       // Deliberately NOT excluding the actor: the brancher owns this debt and

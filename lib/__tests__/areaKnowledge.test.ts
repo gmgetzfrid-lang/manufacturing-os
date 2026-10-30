@@ -35,7 +35,7 @@ describe("folderMatchesUnit", () => {
     expect(folderMatchesUnit(crude, folder("f9", "Area 205", ["Area 205"]))).toBe(false);
   });
 
-  it("a long unit label still finds its short folder — ANY distinctive token, whole-word", () => {
+  it("a long unit label still finds its short folder - ANY distinctive token, whole-word", () => {
     const cdu = { code: "20", label: "Crude Distillation Unit" };
     expect(folderMatchesUnit(cdu, folder("f10", "Crude", ["PFDs", "Crude"]))).toBe(true);
     expect(folderMatchesUnit(cdu, folder("f11", "Distillation", ["P&IDs", "Distillation"]))).toBe(true);
@@ -44,7 +44,7 @@ describe("folderMatchesUnit", () => {
     expect(folderMatchesUnit(gas, folder("f12", "Gaskets", ["Spares", "Gaskets"]))).toBe(false);
   });
 
-  it("punctuated and alphanumeric codes match through normalization — and never crash", () => {
+  it("punctuated and alphanumeric codes match through normalization - and never crash", () => {
     const u20 = { code: "U-20", label: "" };
     expect(folderMatchesUnit(u20, folder("f13", "U-20 PFDs", ["U-20 PFDs"]))).toBe(true);
     const weird = { code: "20(A)", label: "" };
@@ -83,7 +83,7 @@ describe("computeAreaDrift", () => {
     expect(drift.deadSources).toEqual([{ id: "s1", sourceName: "Drawings / PFDs / Crude Unit" }]);
   });
 
-  it("names mirrored docs MOVED outside watched folders — before the sync drops them", () => {
+  it("names mirrored docs MOVED outside watched folders - before the sync drops them", () => {
     const inputs = baseInputs();
     inputs.mirroredDocs = [
       { kdocId: "k1", name: "Crude PFD", collectionId: "fB", inDc: true },   // moved to unwatched folder
@@ -109,7 +109,7 @@ describe("computeAreaDrift", () => {
     expect(drift.newMatches.map((f) => f.id)).toEqual(["fB"]);
   });
 
-  it("a whole-library source can't drift — everything is always covered", () => {
+  it("a whole-library source can't drift - everything is always covered", () => {
     const inputs = baseInputs();
     inputs.coversEverything = true;
     inputs.mirroredDocs = [{ kdocId: "k1", name: "Anywhere", collectionId: "fB", inDc: true }];

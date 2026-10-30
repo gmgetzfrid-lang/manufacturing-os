@@ -114,7 +114,7 @@ export function tieIn(sentence: string, term: string, leads: string[]): { kind: 
   if (partsOf(term).length > 1) return { kind: "together", to: partsOf(term).slice(1).join(", ") };
   const paren = s.match(new RegExp(`${esc(term)}\\s*\\(([^)]{2,40})\\)`, "i"));
   if (paren && !/^\s*\d+\s*$/.test(paren[1])) return { kind: "paren", to: paren[1].trim() };
-  if (new RegExp(`${esc(term)}\\W{0,3}(\\s+(means|is defined as|refers to|shall mean|includes)\\b|\\s*[-–—:]\\s+[A-Z])`, "i").test(s)) {
+  if (new RegExp(`${esc(term)}\\W{0,3}(\\s+(means|is defined as|refers to|shall mean|includes)\\b|\\s*[-–\\u2014:]\\s+[A-Z])`, "i").test(s)) {
     return { kind: "defines", to: "its definition" };
   }
   const lower = s.toLowerCase();
@@ -368,12 +368,12 @@ export function sweepBlock(sweeps: TermSweep[], docName: (id: string) => string,
   const short = (name: string) => name.replace(/\.pdf$/i, "");
   const cite = (id: string) => { const k = n(id); return k ? ` [${k}]` : " (not attached)"; };
   const lines: string[] = [
-    `TERM SWEEP — every passage in these libraries that uses the asker's own words, found by searching all ${totalDocs} reachable documents (not a ranked sample). Words joined by "with" were searched TOGETHER — only sentences holding all of them count:`,
+    `TERM SWEEP - every passage in these libraries that uses the asker's own words, found by searching all ${totalDocs} reachable documents (not a ranked sample). Words joined by "with" were searched TOGETHER - only sentences holding all of them count:`,
   ];
   for (const s of sweeps) {
     const label = shown(s.term);
     if (s.passageCount === 0 || s.docCount === 0) { lines.push(`${label}: ${partsOf(s.term).length > 1 ? "never together in one sentence" : "used nowhere"} in the libraries.`); continue; }
-    if (s.tooCommon) { lines.push(`${label}: used in ${s.docCount} documents — too common to list.`); continue; }
+    if (s.tooCommon) { lines.push(`${label}: used in ${s.docCount} documents - too common to list.`); continue; }
     lines.push(`${label}: in ${s.docCount} document${s.docCount === 1 ? "" : "s"}.`);
     for (const d of s.docs.slice(0, 14)) {
       const h = d.best[0];
@@ -387,7 +387,7 @@ export function sweepBlock(sweeps: TermSweep[], docName: (id: string) => string,
       const fit = g.items.filter((i) => fits(i, ratings));
       const unknown = g.items.filter((i) => !i.rating);
       lines.push(`  Sections of ${short(docName(g.documentId))} whose own text has ${label}: ${g.items.length}` +
-        (ratings.length ? ` — ${fit.length} recorded as Class ${ratings.join("/")}${unknown.length ? `, ${unknown.length} with no rating recorded` : ""}` : "") + ":");
+        (ratings.length ? ` - ${fit.length} recorded as Class ${ratings.join("/")}${unknown.length ? `, ${unknown.length} with no rating recorded` : ""}` : "") + ":");
       const list = orderByFit(g.items, ratings).slice(0, 16);
       for (const it of list) {
         const onPage = it.seen.length ? ` · page shows ${it.seen.slice(0, 3).map(([n, k]) => `Class ${n} ×${k}`).join(", ")}` : "";
@@ -399,9 +399,9 @@ export function sweepBlock(sweeps: TermSweep[], docName: (id: string) => string,
   lines.push(
     "READ THIS BEFORE ANSWERING: it is the complete list, not a sample. Before writing that the library doesn't use a term, " +
     "doesn't tie two terms together, or has no class, row or rule for the case asked, check it. A sentence here that ties the " +
-    "asker's term to another (\"sour gas (Wet H2S) service\") IS textual basis — cite it and say whose words they are and what " +
+    "asker's term to another (\"sour gas (Wet H2S) service\") IS textual basis - cite it and say whose words they are and what " +
     "they govern. In a spec book, a section's numbered NOTES say when one of its rows applies (\"use against … Class 300 " +
-    "flanged equipment nozzles\"): such a note is the rule — quote it with the section it belongs to. A section whose " +
+    "flanged equipment nozzles\"): such a note is the rule - quote it with the section it belongs to. A section whose " +
     "rating fits is a candidate answer: name it. A passage marked (not attached) can be named but not quoted.",
   );
   return "\n\n" + lines.join("\n");

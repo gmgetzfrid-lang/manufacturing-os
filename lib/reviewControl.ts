@@ -248,7 +248,7 @@ export async function openReviewRoster(input: {
     const controllers = await getOrgControllers(input.orgId);
     const targets = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]);
     const msg = primaries.length === 0
-      ? `A rev of ${input.revisionLabel} needs review, but no reviewer resolved — it can't publish until reviewers are set.`
+      ? `A rev of ${input.revisionLabel} needs review, but no reviewer resolved - it can't publish until reviewers are set.`
       : `The reviewer roster for ${input.revisionLabel} has gaps: ${warnings.join("; ")}.`;
     await Promise.all(targets.map((uid) =>
       notify({ orgId: input.orgId, userId: uid, kind: "review_overdue", title: `Review needs attention: ${input.revisionLabel}`, body: msg, link, resourceType: "document", resourceId: input.documentId })
@@ -273,7 +273,7 @@ export async function invalidateDraftSignoffs(input: {
     notify({
       orgId: input.orgId, userId: r.reviewer_user_id as string, kind: "review_invalidated",
       title: `Re-review needed: ${input.newRevisionLabel}`,
-      body: "The draft you approved was changed. Your sign-off was voided — please review the new draft.",
+      body: "The draft you approved was changed. Your sign-off was voided - please review the new draft.",
       link, resourceType: "document", resourceId: input.documentId,
     })
   ));
@@ -340,8 +340,8 @@ export async function recordReviewSignoff(input: {
         : `Reviewer signed: ${input.revisionLabel}`,
       body: complete
         ? (autoPublished
-            ? "All required reviewers signed off — the revision is now the controlled copy."
-            : "All required reviewers have signed off — the revision can be published.")
+            ? "All required reviewers signed off - the revision is now the controlled copy."
+            : "All required reviewers have signed off - the revision can be published.")
         : `${input.signerName} signed off on the draft.`,
       link, resourceType: "document", resourceId: input.documentId,
       actorUserId: input.signerUserId, actorName: input.signerName,
@@ -379,7 +379,7 @@ export async function activateAlternate(input: { orgId: string; documentId: stri
   await notify({
     orgId: input.orgId, userId: data.reviewer_user_id as string, kind: "review_alternate_activated",
     title: `You're now an active reviewer: ${(data.revision_label as string) || "a draft"}`,
-    body: "You've been activated as an alternate reviewer — a draft is waiting for your sign-off.",
+    body: "You've been activated as an alternate reviewer - a draft is waiting for your sign-off.",
     link: `/documents/${input.libraryId}?doc=${input.documentId}`, resourceType: "document", resourceId: input.documentId,
     actorUserId: input.actorId ?? undefined,
   });
@@ -567,7 +567,7 @@ export async function scanReviews(orgId: string, opts?: { cooldownDays?: number 
     work.push(async () => {
       await notify({
         orgId, userId: r.reviewer_user_id as string, kind: "review_requested",
-        title: `Reminder — review ${label}`,
+        title: `Reminder - review ${label}`,
         body: "A draft revision is still waiting on your sign-off.",
         link, resourceType: "document", resourceId: r.document_id as string,
       });
@@ -579,7 +579,7 @@ export async function scanReviews(orgId: string, opts?: { cooldownDays?: number 
         );
         const escalateTo = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]).filter((u) => u !== (r.reviewer_user_id as string));
         await Promise.all(escalateTo.map((uid) =>
-          notify({ orgId, userId: uid, kind: "review_overdue", title: `Review overdue: ${label}`, body: `${(r.reviewer_name as string) || "A reviewer"} hasn't signed off — ${ageDays} days outstanding.`, link, resourceType: "document", resourceId: r.document_id as string })
+          notify({ orgId, userId: uid, kind: "review_overdue", title: `Review overdue: ${label}`, body: `${(r.reviewer_name as string) || "A reviewer"} hasn't signed off - ${ageDays} days outstanding.`, link, resourceType: "document", resourceId: r.document_id as string })
         ));
       }
       await supabase.from("document_review_signoffs").update({ notified_at: new Date().toISOString() }).eq("id", r.id as string);

@@ -98,7 +98,7 @@ export default function SkillLibraryPage() {
   const removeConfirmed = async (id: string, name: string, fn: () => Promise<void>) => {
     const ok = await appConfirm({
       title: "Delete this skill?",
-      message: `“${name}” stops running and its definition is gone. Anything it already produced stays — it carries its own evidence.`,
+      message: `“${name}” stops running and its definition is gone. Anything it already produced stays - it carries its own evidence.`,
       confirmLabel: "Delete skill",
       tone: "danger",
     });
@@ -162,7 +162,7 @@ export default function SkillLibraryPage() {
   const toggleButton = (opts: { id: string; enabled: boolean; mayManage: boolean; onToggle: () => Promise<void> }) =>
     opts.mayManage ? (
       <button type="button" onClick={() => void guard(opts.id, opts.onToggle)} disabled={busyId === opts.id}
-        title={opts.enabled ? "Disable — it stops running" : "Enable"}
+        title={opts.enabled ? "Disable - it stops running" : "Enable"}
         className={`shrink-0 inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-black border transition-colors ${opts.enabled
           ? "border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40"
           : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
@@ -208,7 +208,7 @@ export default function SkillLibraryPage() {
           <Puzzle className="w-8 h-8 mx-auto text-[var(--color-text-faint)]" />
           <div className="text-sm font-bold text-[var(--color-text)]">The skill library isn&apos;t installed yet</div>
           <p className="text-xs text-[var(--color-text-muted)]">
-            Run the connection-skills and reasoning-skills migrations on your database, then reload —
+            Run the connection-skills and reasoning-skills migrations on your database, then reload -
             the built-ins will seed themselves and this page becomes your library.
           </p>
         </div>
@@ -235,7 +235,7 @@ export default function SkillLibraryPage() {
           {shelfHeading(
             <BrainCircuit className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />,
             "Reasoning skills",
-            "Disciplines the AI carries when it answers. Each names when it applies — enabling several is safe.",
+            "Disciplines the AI carries when it answers. Each names when it applies - enabling several is safe.",
           )}
           {rskills === null ? (
             <div className="text-[11px] text-[var(--color-text-muted)]">Run the reasoning-skills migration to unlock this shelf.</div>
@@ -285,7 +285,7 @@ export default function SkillLibraryPage() {
                 );
               })}
               {buildCard("reasoning", rskills.length,
-                "Describe a discipline in plain words — “when someone asks X, always do Y”. Your AI drafts the pack.")}
+                "Describe a discipline in plain words - “when someone asks X, always do Y”. Your AI drafts the pack.")}
             </div>
           )}
 
@@ -293,7 +293,7 @@ export default function SkillLibraryPage() {
           {shelfHeading(
             <Waypoints className="w-5 h-5 text-violet-600 mt-0.5 shrink-0" />,
             "Connection skills",
-            "Detectors the engine runs to grow the org graph. Findings queue for review — nothing custom applies itself.",
+            "Detectors the engine runs to grow the org graph. Findings queue for review - nothing custom applies itself.",
           )}
           {rules === null ? (
             <div className="text-[11px] text-[var(--color-text-muted)]">Run the connection-skills migration to unlock this shelf.</div>
@@ -347,7 +347,7 @@ export default function SkillLibraryPage() {
                 );
               })}
               {buildCard("connection", rules.length,
-                "Describe your facility's numbering convention — your AI drafts the detector, the tester proves it.")}
+                "Describe your facility's numbering convention - your AI drafts the detector, the tester proves it.")}
             </div>
           )}
 

@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
   if (askErr) {
     // Pre-migration orgs get a clear instruction, not a stack trace.
     if (/does not exist/i.test(askErr.message)) {
-      return bad("Search isn't installed yet — run migration 20260929_mention_engine.sql.", 503);
+      return bad("Search isn't installed yet - run migration 20260929_mention_engine.sql.", 503);
     }
     return bad(askErr.message, 500);
   }
@@ -181,7 +181,7 @@ export async function POST(req: NextRequest) {
   };
 
   if (payload.nodeIds.length === 0) {
-    payload.note = "Found passages, but none of these documents are linked to equipment yet — run the mention indexer to place them on the map.";
+    payload.note = "Found passages, but none of these documents are linked to equipment yet - run the mention indexer to place them on the map.";
   }
 
   return NextResponse.json(payload);

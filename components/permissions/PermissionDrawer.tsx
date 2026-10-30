@@ -588,7 +588,7 @@ export default function PermissionsDrawer(props: {
                           <option key={t.id} value={t.id}>{t.name} · {t.memberCount ?? 0} member{(t.memberCount ?? 0) === 1 ? "" : "s"}</option>
                         ))}
                       </select>
-                      {teams.length === 0 && <div className="text-[11px] text-zinc-500 mt-1">No teams yet — create them in Admin → Teams.</div>}
+                      {teams.length === 0 && <div className="text-[11px] text-zinc-500 mt-1">No teams yet - create them in Admin → Teams.</div>}
                     </div>
                   ) : (
                     <div className="sm:col-span-2">

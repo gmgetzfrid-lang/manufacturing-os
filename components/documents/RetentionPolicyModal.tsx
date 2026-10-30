@@ -98,7 +98,7 @@ export default function RetentionPolicyModal({ level, id, orgId, name, uid, user
                 </select>
               </div>
             )}
-            <div className="text-[10px] text-[var(--color-text-muted)]">Records are never auto-destroyed — disposition is always an explicit, logged action, and a legal hold overrides it.</div>
+            <div className="text-[10px] text-[var(--color-text-muted)]">Records are never auto-destroyed - disposition is always an explicit, logged action, and a legal hold overrides it.</div>
 
             <div className="flex justify-between gap-2 pt-2 border-t border-[var(--color-border)]">
               <button onClick={() => void remove()} disabled={busy || !existing} className="px-3 py-2 rounded-lg text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-40">Remove</button>

@@ -124,7 +124,7 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
             <FileText className="w-3.5 h-3.5 text-amber-600 shrink-0" />
             <div className="flex-1 min-w-0">
               <div className="text-xs font-bold text-amber-900 truncate">
-                <span className="font-mono">{r.docNumber || "—"}</span>
+                <span className="font-mono">{r.docNumber || "-"}</span>
                 {r.docTitle && <span className="ml-2 text-amber-800 font-medium">{r.docTitle}</span>}
               </div>
               <div className="text-[10px] text-amber-700">
@@ -153,7 +153,7 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
 }
 
 function formatRelative(ts: unknown): string {
-  if (!ts) return "—";
+  if (!ts) return "-";
   try {
     const d = new Date(ts as string);
     const diff = d.getTime() - Date.now();
@@ -166,5 +166,5 @@ function formatRelative(ts: unknown): string {
     if (hr < 24) return future ? `in ${hr}h` : `${hr}h ago`;
     const days = Math.floor(hr / 24);
     return future ? `in ${days}d` : `${days}d ago`;
-  } catch { return "—"; }
+  } catch { return "-"; }
 }

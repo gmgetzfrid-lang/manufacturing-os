@@ -229,7 +229,7 @@ export default function ActivityThread({
       <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] sticky top-0 z-10">
         <h3 className="text-sm font-bold text-[var(--color-text)] flex items-center">
           <MessageSquare className="w-4 h-4 mr-2 text-[var(--color-text-muted)]" />
-          {typeof episodeId === "string" && episodeSeq ? `Checkout #${episodeSeq} — Activity` : "Activity"}
+          {typeof episodeId === "string" && episodeSeq ? `Checkout #${episodeSeq} - Activity` : "Activity"}
           {messages.length > 0 && (
             <span className="ml-2 text-[10px] font-bold text-[var(--color-text-faint)]">{messages.length}</span>
           )}
@@ -283,7 +283,7 @@ export default function ActivityThread({
           </div>
         ) : composingDisabled ? (
           <div className="text-center text-[var(--color-text-faint)] text-xs mt-10 px-4">
-            No active checkout. Checking the document out opens a fresh thread —
+            No active checkout. Checking the document out opens a fresh thread -
             previous checkout conversations are in the history panel.
           </div>
         ) : topLevel.length === 0 ? (

@@ -53,7 +53,7 @@ const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
 /** A time in a table cell: the day and the clock each kept whole, so a
  *  narrow column (a portrait letterhead) breaks between them, never inside. */
 function cellTime(t: number, tz: string): string {
-  if (!Number.isFinite(t)) return "—";
+  if (!Number.isFinite(t)) return "-";
   const d = new Date(t).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: tz });
   const c = new Date(t).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: tz });
   return `<span class="nw">${esc(d)}</span> <span class="nw">${esc(c)}</span>`;
@@ -81,7 +81,7 @@ export function stepGaps(s: PrintStep, now: number): {
 
 /** "Oct 26, 8:00 AM" in plant time; "—" when there's no time. */
 export function printTime(t: number, tz: string): string {
-  if (!Number.isFinite(t)) return "—";
+  if (!Number.isFinite(t)) return "-";
   return new Date(t).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true, timeZone: tz });
 }
 
@@ -157,7 +157,7 @@ export function workOrdersHtml(input: {
   const blank = (label?: string, cls = "") => `${label ? `<span class="lbl">${label}</span>` : ""}<span class="blank${cls ? ` ${cls}` : ""}"></span>`;
   const steps = input.orders.reduce((n, o) => n + o.steps.length, 0);
   const parts: string[] = [];
-  parts.push(`<div class="wop${field ? " field" : ""}"><h1>${esc(input.project)} — ${field ? "Field tracker" : "Work orders"}</h1>`);
+  parts.push(`<div class="wop${field ? " field" : ""}"><h1>${esc(input.project)} - ${field ? "Field tracker" : "Work orders"}</h1>`);
   parts.push(`<div class="sub">${esc(input.scope)} · ${input.orders.length} work order${input.orders.length === 1 ? "" : "s"}, ${steps} step${steps === 1 ? "" : "s"} · printed ${esc(T(printedAt))}</div>`);
   if (field) {
     // What to go and find out.
@@ -169,7 +169,7 @@ export function workOrdersHtml(input: {
       if (g.check.length) checks++;
     }
     parts.push(`<div class="find">${starts + finishes + checks > 0
-      ? `<b>To find out:</b> ${[starts ? `${starts} start time${starts === 1 ? "" : "s"}` : "", finishes ? `${finishes} finish time${finishes === 1 ? "" : "s"}` : "", checks ? `${checks} recorded time${checks === 1 ? "" : "s"} to check` : ""].filter(Boolean).join(" · ")} — marked ⚑ below: the plan says they should have happened by now. `
+      ? `<b>To find out:</b> ${[starts ? `${starts} start time${starts === 1 ? "" : "s"}` : "", finishes ? `${finishes} finish time${finishes === 1 ? "" : "s"}` : "", checks ? `${checks} recorded time${checks === 1 ? "" : "s"} to check` : ""].filter(Boolean).join(" · ")} - marked ⚑ below: the plan says they should have happened by now. `
       : ""}Write each start, finish and % on its line as you get it; the spare rows under each work order are for steps that aren't on the schedule.</div>`);
   }
   for (const o of input.orders) {
@@ -207,10 +207,10 @@ ${meta || o.added.length ? `<div class="meta">${esc(meta)}${o.added.map((a) => `
         return;
       }
       const hist = format === "history" && s.history?.length
-        ? `<ul class="hist">${s.history.map((h) => `<li><span class="t">${esc(T(h.at))}</span>${esc([h.what === "Progress" || (h.pct.includes("→") && h.what !== "Done") ? `${h.what} ${h.pct}` : h.what, h.comment].filter(Boolean).join(" — "))}</li>`).join("")}</ul>`
+        ? `<ul class="hist">${s.history.map((h) => `<li><span class="t">${esc(T(h.at))}</span>${esc([h.what === "Progress" || (h.pct.includes("→") && h.what !== "Done") ? `${h.what} ${h.pct}` : h.what, h.comment].filter(Boolean).join(" - "))}</li>`).join("")}</ul>`
         : "";
       parts.push(`<tr><td class="n">${i + 1}</td><td>${name}${hist}</td><td class="c">${esc(s.crew)}</td>${plan}`
-        + `<td class="tm">${Number.isFinite(s.actStart) ? `<div>${cellTime(s.actStart, tz)}</div><div>${Number.isFinite(s.actFinish) ? cellTime(s.actFinish, tz) : "…"}</div>` : "—"}</td>`
+        + `<td class="tm">${Number.isFinite(s.actStart) ? `<div>${cellTime(s.actStart, tz)}</div><div>${Number.isFinite(s.actFinish) ? cellTime(s.actFinish, tz) : "…"}</div>` : "-"}</td>`
         + `<td>${esc(s.status)}${!s.done && s.pct > 0 ? `<br><b>${s.pct}%</b>` : ""}</td>`
         + (format === "history" ? "" : `<td class="c">${s.latest ? `<span class="t">${esc(T(s.latest.at))}</span> ${esc(s.latest.text)}` : ""}</td>`)
         + `</tr>`);

@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 
 export const metadata = {
-  title: "Data Portability — Manufacturing OS",
+  title: "Data Portability - Manufacturing OS",
   description: "Your data, exportable any time, in standard formats, with no lock-in.",
 };
 
@@ -33,7 +33,7 @@ export default function DataPortabilityPage() {
           <h1 className="text-4xl font-black text-[var(--color-text)] mb-3">No Lock-In, Ever.</h1>
           <p className="text-base text-[var(--color-text-muted)] leading-relaxed">
             Industrial document control is critical infrastructure. You can&apos;t afford to wonder whether a vendor outage
-            or a contract dispute will cost you years of engineering work. This page is the commitment — every
+            or a contract dispute will cost you years of engineering work. This page is the commitment - every
             organization on this platform owns its data, can export everything at any time, and can walk away cleanly
             without losing a single record.
           </p>
@@ -41,8 +41,8 @@ export default function DataPortabilityPage() {
 
         <Section title="The promise in one sentence">
           <p className="text-[var(--color-text)] leading-relaxed">
-            <b>Any administrator can download the complete dataset for their organization &mdash; every document,
-            every revision, every ticket, every audit-log entry, every comment, and every file &mdash; in standard
+            <b>Any administrator can download the complete dataset for their organization - every document,
+            every revision, every ticket, every audit-log entry, every comment, and every file - in standard
             formats, at any time, with one click.</b>
           </p>
         </Section>
@@ -50,8 +50,8 @@ export default function DataPortabilityPage() {
         <Section title="What's in the export">
           <ul className="space-y-3 text-sm text-[var(--color-text)]">
             <Bullet icon={<FileJson className="w-4 h-4 text-blue-600" />} title="One JSON file" body="Self-describing. Every Postgres column from our schema preserved verbatim. Read it with jq, import into Postgres, or open it in any text editor." />
-            <Bullet icon={<Layers className="w-4 h-4 text-purple-600" />} title="Every record type" body="Documents, document_versions, tickets, projects, project_activity, audit_logs, checkout sessions, markup requests, comments, history, configuration — every org-scoped table." />
-            <Bullet icon={<Inbox className="w-4 h-4 text-emerald-600" />} title="File manifest with presigned URLs" body="Every PDF, DWG, redline, IFC stamp — listed with size + a 24-hour signed download URL so you can pull binaries with curl, wget, or any S3 SDK." />
+            <Bullet icon={<Layers className="w-4 h-4 text-purple-600" />} title="Every record type" body="Documents, document_versions, tickets, projects, project_activity, audit_logs, checkout sessions, markup requests, comments, history, configuration - every org-scoped table." />
+            <Bullet icon={<Inbox className="w-4 h-4 text-emerald-600" />} title="File manifest with presigned URLs" body="Every PDF, DWG, redline, IFC stamp - listed with size + a 24-hour signed download URL so you can pull binaries with curl, wget, or any S3 SDK." />
             <Bullet icon={<Database className="w-4 h-4 text-amber-600" />} title="Schema DDL in the public repo" body="The complete database schema lives at supabase/schema.sql in our source tree. You can reconstruct the data layer in your own Postgres in minutes." />
           </ul>
         </Section>
@@ -60,7 +60,7 @@ export default function DataPortabilityPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <UseCase title="Offsite backup" body="Run it monthly, archive to your own S3 / R2 / NAS. Your continuity plan is yours to control." />
             <UseCase title="Compliance archive" body="OSHA PSM 1910.119 requires document and change history retention. Every revision + audit row is included." />
-            <UseCase title="Migration to a different system" body="Standard JSON + standard PDFs. Any competitor can import — that's the point." />
+            <UseCase title="Migration to a different system" body="Standard JSON + standard PDFs. Any competitor can import - that's the point." />
             <UseCase title="Disaster recovery" body="Even if our service is offline, your backed-up export contains every byte you've ever uploaded." />
           </div>
         </Section>
@@ -69,7 +69,7 @@ export default function DataPortabilityPage() {
           <ul className="space-y-2 text-sm text-[var(--color-text)]">
             <Bullet icon={<Lock className="w-4 h-4 text-[var(--color-text-muted)]" />} title="Encryption in transit + at rest" body="HTTPS only. Postgres data encrypted at rest by Supabase. File storage encrypted at rest by Cloudflare R2." />
             <Bullet icon={<Server className="w-4 h-4 text-[var(--color-text-muted)]" />} title="Row-level isolation between organizations" body="Postgres RLS enforces that your queries can only see rows belonging to your organization. No cross-tenant data leakage at the database layer." />
-            <Bullet icon={<Key className="w-4 h-4 text-[var(--color-text-muted)]" />} title="Audited service-role usage" body="The only code path that crosses RLS boundaries is the data-export endpoint itself — and exports are logged to your audit trail." />
+            <Bullet icon={<Key className="w-4 h-4 text-[var(--color-text-muted)]" />} title="Audited service-role usage" body="The only code path that crosses RLS boundaries is the data-export endpoint itself - and exports are logged to your audit trail." />
           </ul>
         </Section>
 

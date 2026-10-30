@@ -118,7 +118,7 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
     if (!todo.length) { setBulk({ done: 0, total: 0, equipment: 0, removed: 0, added: 0, created: 0, failed: 0, current: null, finished: true, lastError: null }); return; }
     if (!opts.consented) {
       const pagesDue = list.pagesDue ?? todo.length;
-      const ok = window.confirm(`Read ${pagesDue} sheet${pagesDue === 1 ? "" : "s"} in ${todo.length} drawing${todo.length === 1 ? "" : "s"} with your AI model?\n\nOnly sheets not yet read in full are read — sheets already read are left as they are. Each sheet is read zoomed-in, region by region, and its equipment tags are corrected. Billed to your key under your monthly cap. You can stop at any time, and undo the run afterwards.`);
+      const ok = window.confirm(`Read ${pagesDue} sheet${pagesDue === 1 ? "" : "s"} in ${todo.length} drawing${todo.length === 1 ? "" : "s"} with your AI model?\n\nOnly sheets not yet read in full are read - sheets already read are left as they are. Each sheet is read zoomed-in, region by region, and its equipment tags are corrected. Billed to your key under your monthly cap. You can stop at any time, and undo the run afterwards.`);
       if (!ok) return;
     }
     const rid = opts.runId ?? newRunId();
@@ -177,7 +177,7 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
 
 export function ConnectButton({ running, onClick, disabled, className = "" }: { running: boolean; onClick: () => void; disabled?: boolean; className?: string }) {
   return (
-    <button onClick={onClick} disabled={running || disabled} title="Units, drawings read, equipment registry and links — all of it, with sensible defaults. Safe to press again."
+    <button onClick={onClick} disabled={running || disabled} title="Units, drawings read, equipment registry and links - all of it, with sensible defaults. Safe to press again."
       className={`rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2.5 py-1 inline-flex items-center gap-1 font-bold disabled:opacity-60 ${className}`}>
       {running ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} {running ? "Connecting…" : "Connect everything"}
     </button>
@@ -199,7 +199,7 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-3 py-2 text-xs shadow-md space-y-1.5 max-w-md">
       <div className="flex items-center justify-between gap-2">
-        <div className="font-black inline-flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-[var(--color-accent)]" /> {running ? "Connecting the estate" : error ? "Stopped" : status?.more ? "Paused — press again to continue" : "Connected"}</div>
+        <div className="font-black inline-flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-[var(--color-accent)]" /> {running ? "Connecting the estate" : error ? "Stopped" : status?.more ? "Paused - press again to continue" : "Connected"}</div>
         {running ? <button onClick={onCancel} className="text-[11px] opacity-70 hover:opacity-100">stop</button> : <button onClick={onClose} className="opacity-60 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>}
       </div>
       {error && <div className="text-red-700">{error}</div>}
@@ -290,7 +290,7 @@ function AutoReadSwitch({ auto, hasKey, onChange }: { auto: ConnectStatus["ai"][
       </div>
       <div>
         {auto.on
-          ? <>On {auto.mine ? "your" : `${auto.sponsorName ?? "a colleague"}'s`} AI key{auto.mine ? "" : " — switching it off and on moves it to yours"}. Past the cap, new sheets wait in “Read all drawings with AI”.</>
+          ? <>On {auto.mine ? "your" : `${auto.sponsorName ?? "a colleague"}'s`} AI key{auto.mine ? "" : " - switching it off and on moves it to yours"}. Past the cap, new sheets wait in “Read all drawings with AI”.</>
           : hasKey ? <>Off. New sheets are indexed from their text and wait for “Read all drawings with AI”.</> : <>Needs your AI key (Intelligence › Setup).</>}
       </div>
     </div>

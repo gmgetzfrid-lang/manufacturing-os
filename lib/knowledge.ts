@@ -53,7 +53,7 @@ export interface KnowledgeAiFeatures {
 }
 
 export const LIBRARY_KINDS = [
-  { id: "mixed", label: "Mixed — figure it out per document" },
+  { id: "mixed", label: "Mixed - figure it out per document" },
   { id: "standards", label: "Engineering standards / practices (EPs)" },
   { id: "pipe_specs", label: "Specifications, data sheets & material lists" },
   { id: "forms", label: "Forms & checklists" },
@@ -351,7 +351,7 @@ export async function purgeKnowledge(
       await new Promise((res) => setTimeout(res, 1500 * misses));
     }
   }
-  throw new Error("Removal is still running — reopen the library to finish it.");
+  throw new Error("Removal is still running - reopen the library to finish it.");
 }
 
 export async function deleteKnowledgeLibrary(orgId: string, id: string,
@@ -379,7 +379,7 @@ export async function saveLibraryAiFeatures(libraryId: string, features: Knowled
   if (error) {
     throw new Error(
       error.code === "PGRST204" || /ai_features/.test(error.message)
-        ? "AI features need migration 20260918 — run it in Supabase first."
+        ? "AI features need migration 20260918 - run it in Supabase first."
         : error.message,
     );
   }
@@ -555,7 +555,7 @@ async function ingestLoop(
       const wait = 1500 * transientFailures;
       onIndex?.(Math.max(0, lastIndexed), null, {
         indexed: Math.max(0, lastIndexed), total: null, visionPages, reusedPages,
-        waiting: `The server is busy — trying again in ${Math.round(wait / 1000)}s (attempt ${transientFailures + 1} of 5). Pages already read are saved.`,
+        waiting: `The server is busy - trying again in ${Math.round(wait / 1000)}s (attempt ${transientFailures + 1} of 5). Pages already read are saved.`,
       });
       await new Promise((r) => setTimeout(r, wait));
       continue;
@@ -577,13 +577,13 @@ async function ingestLoop(
         `No page could be read in the time one server request allows (stuck at page ${out.pagesIndexed + 1}` +
         `${out.pageCount ? ` of ${out.pageCount}` : ""}). Repair in the Health panel retries it.`);
       throw new Error(
-        `Indexing stalled at page ${out.pagesIndexed}${out.pageCount ? ` of ${out.pageCount}` : ""} — ` +
+        `Indexing stalled at page ${out.pagesIndexed}${out.pageCount ? ` of ${out.pageCount}` : ""} - ` +
         "that page is taking longer than one server run allows. Turn off \"Index every page with " +
         "AI vision\" in Library AI setup if it's on, then rebuild.",
       );
     }
   }
-  throw new Error("Indexing did not finish — reopen the library to resume.");
+  throw new Error("Indexing did not finish - reopen the library to resume.");
 }
 
 /** Thumbs-up/down on an answer. 1 = useful (its cited pages will seed
@@ -1230,7 +1230,7 @@ export async function mapLibraryCatalog(
     if (out.remaining === 0) return;
     if (out.profiled === 0) {
       if (++stalls >= 3) {
-        throw new Error(`Mapping stopped with ${out.remaining} document(s) left${out.failed ? ` — ${out.failed} failed to read` : ""}. Try again, or check your AI key and monthly budget.`);
+        throw new Error(`Mapping stopped with ${out.remaining} document(s) left${out.failed ? ` - ${out.failed} failed to read` : ""}. Try again, or check your AI key and monthly budget.`);
       }
     } else stalls = 0;
   }

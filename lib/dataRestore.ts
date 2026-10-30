@@ -91,8 +91,8 @@ const SKIP_TABLES: Record<string, string> = {
   org_members: "membership is rebuilt from the user reconciliation",
   users: "user profiles are created via the additive-by-email reconciliation",
   notification_preferences: "per-user settings are re-established on re-invite",
-  subscriptions: "billing state is owned by the payment provider — re-subscribe, never copy",
-  push_subscriptions: "device push registrations are machine-specific — re-established per device",
+  subscriptions: "billing state is owned by the payment provider - re-subscribe, never copy",
+  push_subscriptions: "device push registrations are machine-specific - re-established per device",
 };
 
 interface BackupMember { uid?: string; email?: string; display_name?: string; role?: string }
@@ -156,7 +156,7 @@ export function planRestore(env: RestoreEnvelopeLike, current: CurrentOrgContext
 
   // ── Warnings ─────────────────────────────────────────────────────────────
   if (env.manifest.complete === false) {
-    warnings.push("This backup was marked INCOMPLETE — some tables were not exported. Restoring it will not fully reconstruct the workspace.");
+    warnings.push("This backup was marked INCOMPLETE - some tables were not exported. Restoring it will not fully reconstruct the workspace.");
   }
   const missing = env.manifest.files?.missing ?? 0;
   if (missing > 0) {
@@ -166,7 +166,7 @@ export function planRestore(env: RestoreEnvelopeLike, current: CurrentOrgContext
     warnings.push(`Org name differs: backup "${orgNameCollision.backupName}" vs current "${orgNameCollision.currentName}". Choose which to keep before applying.`);
   }
   if (users.length === 0) {
-    warnings.push("No members found in the backup (org_members empty) — users cannot be reconciled.");
+    warnings.push("No members found in the backup (org_members empty) - users cannot be reconciled.");
   }
 
   const matchedUsers = users.filter((u) => u.disposition === "linked").length;

@@ -70,7 +70,7 @@ export default function TicketArchiveViewer({
       // Find THIS ticket's snapshot: tickets/<rowId>.json.
       const jsonPath = paths.find((p) => new RegExp(`(^|/)tickets/${ticketRowId}\\.json$`).test(p));
       if (!jsonPath) {
-        setError(`This archive doesn't contain ${ticketLabel || "this ticket"}${archiveId ? ` — is it ${archiveId}.zip?` : "."}`);
+        setError(`This archive doesn't contain ${ticketLabel || "this ticket"}${archiveId ? ` - is it ${archiveId}.zip?` : "."}`);
         return;
       }
       const f = z.file(jsonPath);
@@ -143,7 +143,7 @@ export default function TicketArchiveViewer({
                 <>
                   <UploadCloud className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
                   <div className="text-sm font-bold text-[var(--color-text)]">Drop {archiveId ? `${archiveId}.zip` : "the saved archive"} here, or click to choose</div>
-                  <div className="text-[11px] text-[var(--color-text-muted)] mt-1">Its comment thread, history and files open here — nothing is re-uploaded, and closing discards it.</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)] mt-1">Its comment thread, history and files open here - nothing is re-uploaded, and closing discards it.</div>
                 </>
               )}
             </div>
@@ -182,7 +182,7 @@ export default function TicketArchiveViewer({
                     {history.map((h, i) => (
                       <div key={i} className="text-[11px] text-[var(--color-text-muted)] flex gap-2">
                         <span className="text-[var(--color-text-faint)] shrink-0">{fmtDate(h.at || h.date)}</span>
-                        <span className="text-[var(--color-text)]">{h.action || h.note || h.detail}{h.from && h.to ? ` (${h.from} → ${h.to})` : ""}{h.by || h.user ? ` — ${h.by || h.user}` : ""}</span>
+                        <span className="text-[var(--color-text)]">{h.action || h.note || h.detail}{h.from && h.to ? ` (${h.from} → ${h.to})` : ""}{h.by || h.user ? ` - ${h.by || h.user}` : ""}</span>
                       </div>
                     ))}
                   </div>

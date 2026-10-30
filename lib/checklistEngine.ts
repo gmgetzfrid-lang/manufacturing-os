@@ -34,7 +34,7 @@ export function validateSegmentedItems(raw: unknown): SegmentedItem[] {
     });
   }
   if (out.length === 0) throw new Error("No checklist items could be read from that document.");
-  if (out.length > 500) throw new Error("That checklist parsed to 500+ items — split the document and try again.");
+  if (out.length > 500) throw new Error("That checklist parsed to 500+ items - split the document and try again.");
   return out;
 }
 

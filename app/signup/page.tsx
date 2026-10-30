@@ -143,7 +143,7 @@ export default function SignupPage() {
             <>
               <div className="bg-slate-900 px-8 py-6 border-b border-slate-800">
                 <h2 className="text-lg font-black text-white">Create Your Workspace</h2>
-                <p className="text-slate-400 text-sm mt-1">Set up a new organization — you&rsquo;ll be the Admin</p>
+                <p className="text-slate-400 text-sm mt-1">Set up a new organization - you&rsquo;ll be the Admin</p>
               </div>
               <div className="p-8">
                 {error && (

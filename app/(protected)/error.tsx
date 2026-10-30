@@ -30,7 +30,7 @@ export default function ProtectedError({
           <div className="min-w-0 flex-1">
             <h1 className="text-base font-black text-[var(--color-text)]">This page hit an error</h1>
             <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-              The rest of the app is fine — only this view crashed. Try again, or head back to your dashboard.
+              The rest of the app is fine - only this view crashed. Try again, or head back to your dashboard.
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               <button

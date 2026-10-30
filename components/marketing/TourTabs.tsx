@@ -26,9 +26,9 @@ type TabKey = (typeof TABS)[number]["key"];
 
 const CAPTIONS: Record<TabKey, string> = {
   library: "Every drawing and procedure, one current revision each, filterable by collection, status, and age.",
-  ask: "Ask your document library a question in plain language — the answer is cited to the page, with highlighted proof one click away.",
+  ask: "Ask your document library a question in plain language - the answer is cited to the page, with highlighted proof one click away.",
   ticket: "Requests route through review, drafting, and engineer approval. The system enforces who is allowed to sign.",
-  graph: "Documents, equipment, and operating areas as one living map — switch lenses to see process flow, equipment, or paper.",
+  graph: "Documents, equipment, and operating areas as one living map - switch lenses to see process flow, equipment, or paper.",
   assets: "Tap an equipment tag anywhere it appears and get the photo record of the physical thing.",
   locking: "Projects scope people to their work; checkout locks stop two drafters saving over each other.",
 };
@@ -232,11 +232,11 @@ function DocumentLibraryMockup() {
             </button>
           </div>
           <div className="space-y-1.5">
-            <DocRow id="100-PRC-001" name="Process Drawing — Area 100 East" rev="Rev 7" status="current" age="2 days ago" />
-            <DocRow id="100-PRC-002" name="Process Drawing — Area 100 West" rev="Rev 5" status="current" age="5 days ago" />
-            <DocRow id="200-PRC-001" name="Process Drawing — Area 200" rev="Rev 2" status="draft" age="1 hr ago" checkedOut />
-            <DocRow id="200-ISO-014" name='Iso 14" Line — Feed Inlet' rev="Rev 1" status="current" age="1 month ago" />
-            <DocRow id="200-ISO-015" name='Iso 8" Line — Cooling Return' rev="Rev 3" status="revision" age="3 days ago" />
+            <DocRow id="100-PRC-001" name="Process Drawing - Area 100 East" rev="Rev 7" status="current" age="2 days ago" />
+            <DocRow id="100-PRC-002" name="Process Drawing - Area 100 West" rev="Rev 5" status="current" age="5 days ago" />
+            <DocRow id="200-PRC-001" name="Process Drawing - Area 200" rev="Rev 2" status="draft" age="1 hr ago" checkedOut />
+            <DocRow id="200-ISO-014" name='Iso 14" Line - Feed Inlet' rev="Rev 1" status="current" age="1 month ago" />
+            <DocRow id="200-ISO-015" name='Iso 8" Line - Cooling Return' rev="Rev 3" status="revision" age="3 days ago" />
           </div>
         </div>
       </div>
@@ -275,7 +275,7 @@ function AskAiMockup() {
             </p>
             <div className="space-y-1.5 text-[12px] text-slate-600 mb-4">
               <div className="flex items-start gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 mt-0.5 shrink-0" /> Basis: piping class table, line list entry for the 14&quot; feed line.</div>
-              <div className="flex items-start gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 mt-0.5 shrink-0" /> The answer can only reference documents in your library — nothing is invented.</div>
+              <div className="flex items-start gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 mt-0.5 shrink-0" /> The answer can only reference documents in your library - nothing is invented.</div>
             </div>
             <div className="flex flex-wrap gap-2">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-800 text-[11px] font-bold">
@@ -283,12 +283,12 @@ function AskAiMockup() {
                 <span className="inline-flex items-center gap-0.5 px-1.5 py-px rounded bg-white text-blue-700 text-[9px] font-black"><Eye className="w-2.5 h-2.5" /> Show me</span>
               </span>
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-800 text-[11px] font-bold">
-                <FileText className="w-3 h-3" /> Line List — Area 200 <span className="font-mono text-blue-600">p. 12</span>
+                <FileText className="w-3 h-3" /> Line List - Area 200 <span className="font-mono text-blue-600">p. 12</span>
               </span>
             </div>
           </div>
           <div className="px-4 py-2 bg-slate-50 border-t border-slate-200 text-[10px] text-slate-500 font-medium">
-            Runs on <b>your own AI key</b> (Claude or OpenAI) with per-user spend caps — your documents are never used to train anyone&apos;s model.
+            Runs on <b>your own AI key</b> (Claude or OpenAI) with per-user spend caps - your documents are never used to train anyone&apos;s model.
           </div>
         </div>
       </div>
@@ -395,8 +395,8 @@ function DraftingTicketMockup() {
             <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-black uppercase">MOC</span>
             <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-black uppercase">Pending Engineer Approval</span>
           </div>
-          <h3 className="text-base font-black text-slate-900 mb-1">Area 200 bypass — flow element FE-201</h3>
-          <p className="text-xs text-slate-500 mb-5">Opened 3 days ago by an operator — routed for qualified sign-off automatically</p>
+          <h3 className="text-base font-black text-slate-900 mb-1">Area 200 bypass - flow element FE-201</h3>
+          <p className="text-xs text-slate-500 mb-5">Opened 3 days ago by an operator - routed for qualified sign-off automatically</p>
 
           <div className="mb-5">
             <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Workflow</div>
@@ -425,7 +425,7 @@ function DraftingTicketMockup() {
                 <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-[12px] font-bold ring-1 ring-blue-200 mr-0.5">
                   <AtSign className="w-3 h-3" />Sarah Mitchell
                 </span>
-                {" "}— please confirm the sizing on FE-201 is correct for the new flow conditions. Scope doc is attached.
+                {" "}- please confirm the sizing on FE-201 is correct for the new flow conditions. Scope doc is attached.
               </p>
             </div>
           </div>
@@ -553,7 +553,7 @@ function AssetRegistryMockup() {
               <Camera className="w-2 h-2" /> 4
             </span>
           </span>
-          <span className="text-slate-500">→ document rows, viewers, tickets, the graph — one click, full carousel.</span>
+          <span className="text-slate-500">→ document rows, viewers, tickets, the graph - one click, full carousel.</span>
         </div>
       </div>
     </MockupFrame>
@@ -582,7 +582,7 @@ function ProjectMockup() {
           <span className="text-[10px] font-bold uppercase tracking-wider text-purple-600">Project</span>
           <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 text-[10px] font-black uppercase">Active</span>
         </div>
-        <h3 className="text-base font-black text-slate-900 mb-1">Area 200 Change — Bypass Install</h3>
+        <h3 className="text-base font-black text-slate-900 mb-1">Area 200 Change - Bypass Install</h3>
         <p className="text-xs text-slate-500 mb-4">12 documents · 6 open tickets · Phase 3 of 5</p>
 
         <div className="flex items-center gap-1 mb-5">
@@ -611,7 +611,7 @@ function CheckoutMockup() {
       <div className="p-5">
         <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Document</div>
         <h3 className="text-base font-black text-slate-900">100-PRC-001</h3>
-        <p className="text-xs text-slate-500 mb-4">Process Drawing — Area 100 East · Rev 7 Issued</p>
+        <p className="text-xs text-slate-500 mb-4">Process Drawing - Area 100 East · Rev 7 Issued</p>
 
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2.5 mb-4">
           <div className="p-1.5 bg-amber-100 rounded-lg shrink-0">
@@ -625,7 +625,7 @@ function CheckoutMockup() {
 
         <div className="bg-gradient-to-br from-slate-100 to-slate-50 border border-slate-200 rounded-xl h-32 flex flex-col items-center justify-center text-[10px] text-slate-400 font-mono gap-1">
           <FileText className="w-8 h-8 text-slate-300" />
-          [ PDF preview — process drawing ]
+          [ PDF preview - process drawing ]
         </div>
 
         <div className="flex gap-2 mt-4">
@@ -634,7 +634,7 @@ function CheckoutMockup() {
         </div>
 
         <div className="mt-3 text-[10px] text-slate-500 leading-relaxed">
-          <b>Why it&apos;s locked:</b> one editor at a time — two drafters can never save conflicting versions of the same drawing. Ad-hoc holds release themselves after 24 hours.
+          <b>Why it&apos;s locked:</b> one editor at a time - two drafters can never save conflicting versions of the same drawing. Ad-hoc holds release themselves after 24 hours.
         </div>
       </div>
     </MockupFrame>

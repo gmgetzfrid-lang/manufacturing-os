@@ -39,7 +39,7 @@ export default function MarkSheet({ names, status, tz, times, now: clockNow, ahe
   const save = async () => {
     const when = resolveWhen(pickOf(choices, wi, otherDay, tz, times), clock, tz, times);
     if ("error" in when) { setMsg(when.error); return; }
-    if (!note.trim()) { setMsg(status === "on_hold" || status === "blocked" ? "Put in the reason." : "Put in a comment — it's the line the report reads."); return; }
+    if (!note.trim()) { setMsg(status === "on_hold" || status === "blocked" ? "Put in the reason." : "Put in a comment - it's the line the report reads."); return; }
     setBusy(true);
     const ok = await onSave(when.credit, note.trim());
     setBusy(false);
@@ -65,7 +65,7 @@ export default function MarkSheet({ names, status, tz, times, now: clockNow, ahe
           )}
           <WhenFields choices={choices} idx={wi} setIdx={(i) => { setWi(i); setMsg(null); }} clock={clock} setClock={(v) => { setClock(v); setMsg(null); }} tz={tz} times={times} other={otherDay} setOther={(d) => { setOtherDay(d); setMsg(null); }} disabled={busy} />
           <label className="block">
-            <span className="block font-bold mb-1">{status === "on_hold" || status === "blocked" ? "Reason" : "Comment"} <span className="font-black text-amber-700 dark:text-amber-400">— required</span>{n > 1 && <span className="font-normal text-[var(--color-text-muted)]"> · goes on each step</span>}</span>
+            <span className="block font-bold mb-1">{status === "on_hold" || status === "blocked" ? "Reason" : "Comment"} <span className="font-black text-amber-700 dark:text-amber-400">- required</span>{n > 1 && <span className="font-normal text-[var(--color-text-muted)]"> · goes on each step</span>}</span>
             <textarea value={note} onChange={(e) => { setNote(e.target.value); setMsg(null); }} rows={2} disabled={busy}
               placeholder={status === "completed" ? "e.g. Bundle pulled and set on the pad" : status === "in_progress" ? "e.g. Blinds going in, 4 of 9" : "e.g. Waiting on the crane"}
               className="w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1.5 text-[12.5px] focus:outline-none focus:border-[var(--color-accent-ring)]" />

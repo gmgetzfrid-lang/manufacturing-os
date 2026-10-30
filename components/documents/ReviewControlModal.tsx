@@ -172,7 +172,7 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
         try {
           await saveDocClass({ level, id, docClass: docClass === "inherit" ? null : docClass });
         } catch (e) {
-          void appAlert({ title: "Review policy saved — document class was not", message: (e as Error).message });
+          void appAlert({ title: "Review policy saved - document class was not", message: (e as Error).message });
         }
       }
       onSaved?.(); onClose();
@@ -225,7 +225,7 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
                 {docClass === "drawing"
                   ? "PSM applies: a non-minor revision requires its MOC number, and check-in routes redlines to drafting."
                   : docClass === "procedure"
-                    ? "The effective owner (or granted publishers) releases revisions directly — through the review gate below if one is set."
+                    ? "The effective owner (or granted publishers) releases revisions directly - through the review gate below if one is set."
                     : "No class-specific rules. Declare a class so the right change process applies automatically."}
               </div>
             </div>

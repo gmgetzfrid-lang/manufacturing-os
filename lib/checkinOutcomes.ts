@@ -111,7 +111,7 @@ const attestCard = (recommended: boolean): CheckInCard => ({
   id: "field_verified",
   outcome: "field_verified",
   action: "attest_release",
-  label: "Field matches — verified",
+  label: "Field matches - verified",
   hint: "Records your walkdown: field verified against the current revision, with your name and the date. This is the drawing's accuracy record.",
   requiresNote: false,
   moc: "none",
@@ -123,7 +123,7 @@ const discrepancyCard = (docClass: DocClass | null): CheckInCard => ({
   id: "discrepancy",
   outcome: "discrepancy",
   action: "draft_ticket",
-  label: "Field is different — report it",
+  label: "Field is different - report it",
   hint: "Opens a drafting request so the document gets brought up to reality. Attach redline photos or a marked-up copy below.",
   requiresNote: true,
   notePrompt: "What's different in the field?",
@@ -152,8 +152,8 @@ const correctionCard = (canPublishEff: boolean): CheckInCard => ({
   action: canPublishEff ? "open_publish" : "draft_ticket",
   label: "Minor correction (typo, label, note)",
   hint: canPublishEff
-    ? "Replacement-in-kind — publish it as a Correction. No MOC needed; the review gate is waived for corrections."
-    : "Replacement-in-kind — sends a minor-correction request to drafting. No MOC needed.",
+    ? "Replacement-in-kind - publish it as a Correction. No MOC needed; the review gate is waived for corrections."
+    : "Replacement-in-kind - sends a minor-correction request to drafting. No MOC needed.",
   requiresNote: true,
   notePrompt: "What exactly needs correcting?",
   moc: "none",
@@ -167,7 +167,7 @@ const draftRevisionCard = (docClass: DocClass | null, recommended: boolean, redl
   action: "draft_ticket",
   label: docClass === "drawing" ? "Send redlines to drafting" : "Send to drafting",
   hint: redline
-    ? "Opens a drafting request with your markups attached — use Download w/ Markup in the viewer, then attach that file below."
+    ? "Opens a drafting request with your markups attached - use Download w/ Markup in the viewer, then attach that file below."
     : "Opens a drafting request for the real change, with your notes and any files attached.",
   requiresNote: true,
   notePrompt: "What needs to change, and why?",
@@ -184,7 +184,7 @@ const publishCard = (docClass: DocClass | null, recommended: boolean): CheckInCa
   action: "open_publish",
   label: docClass === "drawing" ? "Publish the drafted revision" : "Publish my update now",
   hint: docClass === "drawing"
-    ? "Opens the publish flow. A non-minor drawing revision requires its MOC number there — and your review gate applies as configured."
+    ? "Opens the publish flow. A non-minor drawing revision requires its MOC number there - and your review gate applies as configured."
     : "Opens the publish flow and releases your checkout. If this library reviews before release, it becomes Submit for Review automatically.",
   requiresNote: false,
   moc: "none", // enforced inside RevUpModal, where changeType is known
@@ -197,7 +197,7 @@ const sendToOwnerCard = (recommended: boolean): CheckInCard => ({
   outcome: "sent_to_owner",
   action: "notify_owner",
   label: "Send my changes to the owner to review & release",
-  hint: "You don't hold release authority here. Your notes go durably (in-app + email) to the document's effective owner — falling back to Document Control.",
+  hint: "You don't hold release authority here. Your notes go durably (in-app + email) to the document's effective owner - falling back to Document Control.",
   requiresNote: true,
   notePrompt: "Describe the change you're proposing.",
   moc: "none",
@@ -233,7 +233,7 @@ export function checkInCardsFor(ctx: CheckInContext): CheckInCard[] {
       // Reference use: "done" is the likely truth; attestation stays a
       // deliberate act, never the default.
       cards.push(
-        allClearCard("Done — no issues found", "Releases your checkout. Nothing else happens.", true),
+        allClearCard("Done - no issues found", "Releases your checkout. Nothing else happens.", true),
         attestCard(false),
         discrepancyCard(ctx.docClass),
       );
@@ -241,7 +241,7 @@ export function checkInCardsFor(ctx: CheckInContext): CheckInCard[] {
 
     case "review":
       cards.push(
-        allClearCard("Reviewed — good as is", "The document passed your review unchanged.", true),
+        allClearCard("Reviewed - good as is", "The document passed your review unchanged.", true),
         correctionCard(ctx.canPublishEff),
         draftRevisionCard(ctx.docClass, false, false),
       );
@@ -268,7 +268,7 @@ export function checkInCardsFor(ctx: CheckInContext): CheckInCard[] {
 
     case "generic":
       cards.push(
-        allClearCard("Done — release", "Releases your checkout. Nothing else happens.", true),
+        allClearCard("Done - release", "Releases your checkout. Nothing else happens.", true),
         draftRevisionCard(ctx.docClass, false, false),
       );
       if (ctx.canPublishEff) cards.push(publishCard(ctx.docClass, false));
@@ -293,7 +293,7 @@ export function validateCheckIn(card: CheckInCard, input: CheckInInput): string 
     return card.notePrompt ?? "Add a brief note (5+ characters).";
   }
   if (card.moc === "required") {
-    if (!input.mocStatus) return "State the MOC position — PSM requires it for drawing changes.";
+    if (!input.mocStatus) return "State the MOC position - PSM requires it for drawing changes.";
     if (input.mocStatus !== "none" && input.mocNumber.trim().length < 3) {
       return "Enter the MOC number.";
     }

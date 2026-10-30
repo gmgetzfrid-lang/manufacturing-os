@@ -22,7 +22,7 @@ import {
 export type ChecklistKind = "pssr" | "mi" | "qaqc" | "custom";
 
 export const CHECKLIST_KIND_LABEL: Record<ChecklistKind, string> = {
-  pssr: "PSSR — pre-startup safety review",
+  pssr: "PSSR - pre-startup safety review",
   mi: "Mechanical integrity",
   qaqc: "QA/QC",
   custom: "Custom",
@@ -219,7 +219,7 @@ export async function setChecklistStatus(input: {
     const items = await listChecklistItems(input.checklist.id);
     const blocking = items.filter((i) => i.applicability !== "na" && i.status !== "satisfied" && i.status !== "na");
     if (blocking.length > 0) {
-      return { ok: false, error: `${blocking.length} item${blocking.length === 1 ? " is" : "s are"} not satisfied yet — a checklist only completes when every applicable item is green or N/A.` };
+      return { ok: false, error: `${blocking.length} item${blocking.length === 1 ? " is" : "s are"} not satisfied yet - a checklist only completes when every applicable item is green or N/A.` };
     }
   }
   const { error } = await supabase.from("project_checklists").update({ status: input.status }).eq("id", input.checklist.id);

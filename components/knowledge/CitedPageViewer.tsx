@@ -283,7 +283,7 @@ export default function CitedPageViewer({
       if (res.skipped) notes.push(res.skipped);
       if (res.notOnPage?.length) notes.push(`Not in this drawing set: ${res.notOnPage.join(", ")}.`);
       if (res.notVisible?.length) {
-        notes.push(`Couldn't spot ${res.notVisible.join(", ")} on the sheet — it's indexed here, so try the next page or zoom in.`);
+        notes.push(`Couldn't spot ${res.notVisible.join(", ")} on the sheet - it's indexed here, so try the next page or zoom in.`);
       }
       setLocateNote(notes.length > 0 ? notes.join(" ") : null);
     } catch (e) {
@@ -466,7 +466,7 @@ export default function CitedPageViewer({
             </form>
             {marks.some((m) => m.source === "vision") && (
               <span className="text-[10px] text-sky-700 dark:text-sky-400">
-                Blue swipes are approximate — this sheet was read by AI, not extracted.
+                Blue swipes are approximate - this sheet was read by AI, not extracted.
               </span>
             )}
             {elsewhere.map((e) => (
@@ -474,7 +474,7 @@ export default function CitedPageViewer({
                 title={e.documentName}
                 className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-black border border-sky-300 dark:border-sky-800 text-sky-800 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/30 hover:bg-sky-100 transition-colors">
                 <Crosshair className="w-3 h-3" />
-                {e.tag} is on {e.sameDocument ? `p.${e.page}` : e.documentName.replace(/\.pdf$/i, "").slice(0, 28)} — jump
+                {e.tag} is on {e.sameDocument ? `p.${e.page}` : e.documentName.replace(/\.pdf$/i, "").slice(0, 28)} - jump
               </button>
             ))}
             {locateNote && (

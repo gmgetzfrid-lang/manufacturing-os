@@ -24,26 +24,26 @@ const TIERS: Array<{ tier: string; blurb: string; roles: Array<{ role: string; s
     blurb: "Full document-control authority. Most checks in code are literally: role is Admin or DocCtrl.",
     roles: [
       { role: "Admin", summary: "Everything DocCtrl has, plus org ownership: billing, branding, restore, granting the Admin role.", perms: [
-        ["Documents & publishing", ["Publish/revert any revision in any library (bypasses per-library grants)", "Force-publish past a checkout lock AND an active hold (the only role that passes holds)", "Force-unlock any checkout", "Delete documents/versions/folders (except legal-hold rows — blocked for everyone)", "Edit metadata, sets/binders, columns, review cycles, library config", "Open/edit every node's permission (ACL) drawer"]],
-        ["Reviews & compliance", ["Manage review rosters, activate alternates, void sign-off rows", "Cannot skip an incomplete review roster — the completion gate applies even to Admin", "Retention/disposition, legal holds, access recerts, storage purge & archive shed"]],
+        ["Documents & publishing", ["Publish/revert any revision in any library (bypasses per-library grants)", "Force-publish past a checkout lock AND an active hold (the only role that passes holds)", "Force-unlock any checkout", "Delete documents/versions/folders (except legal-hold rows - blocked for everyone)", "Edit metadata, sets/binders, columns, review cycles, library config", "Open/edit every node's permission (ACL) drawer"]],
+        ["Reviews & compliance", ["Manage review rosters, activate alternates, void sign-off rows", "Cannot skip an incomplete review roster - the completion gate applies even to Admin", "Retention/disposition, legal holds, access recerts, storage purge & archive shed"]],
         ["Requests (tickets)", ["Every management action: approve, assign, force-close, reopen", "Reassign the engineer at final approval (Admin only)"]],
         ["Administration", ["User management incl. granting Admin (only an Admin can make an Admin)", "Teams, request forms, permissions, operational scope, audit log", "Billing & Stripe (with Manager)", "Branding, workspace settings, restore-from-backup (Admin only)", "Data export (with Manager, DocCtrl)"]],
       ]},
       { role: "DocCtrl", summary: "Document control twin of Admin for documents; no billing/branding/restore, can't grant Admin.", perms: [
         ["Documents & publishing", ["Same as Admin: publish anywhere, force past locks and holds, force-unlock, delete, ACL drawer, metadata, library config"]],
         ["Reviews & compliance", ["Same as Admin: rosters, retention, legal holds, recerts, purge/shed"]],
-        ["Requests (tickets)", ["Direct approval of own requests (skips engineer review)", "NOT a management role in the ticket engine — no assign/force-close"]],
+        ["Requests (tickets)", ["Direct approval of own requests (skips engineer review)", "NOT a management role in the ticket engine - no assign/force-close"]],
         ["Administration", ["Users (create; not grant Admin), permissions, settings, request forms, data export", "No billing, no branding, no restore"]],
       ]},
     ],
   },
   {
     tier: "Management",
-    blurb: "People-and-work managers. NOT controllers: they cannot publish documents or see the Admin sidebar section (Manager reaches /admin/users only by URL — a known gap).",
+    blurb: "People-and-work managers. NOT controllers: they cannot publish documents or see the Admin sidebar section (Manager reaches /admin/users only by URL - a known gap).",
     roles: [
       { role: "Manager", summary: "Runs people and tickets, not documents.", perms: [
         ["Requests (tickets)", ["Approve/reject at every stage, assign drafters, force-close, reopen"]],
-        ["Administration", ["User management (add/remove members, change roles — not Admin grants)", "Teams, billing, storage stats, data export, audit log, operational scope, hold release (/admin/holds)"]],
+        ["Administration", ["User management (add/remove members, change roles - not Admin grants)", "Teams, billing, storage stats, data export, audit log, operational scope, hold release (/admin/holds)"]],
         ["Documents", ["No publish authority unless granted per-library or made an owner"]],
       ]},
       { role: "Supervisor", summary: "Ticket management without user administration.", perms: [
@@ -57,7 +57,7 @@ const TIERS: Array<{ tier: string; blurb: string; roles: Array<{ role: string; s
   },
   {
     tier: "Engineering",
-    blurb: "Engineer-1 through Engineer-4 are interchangeable in code — every check is 'role contains Engineer'. The number is a label, not a power level.",
+    blurb: "Engineer-1 through Engineer-4 are interchangeable in code - every check is 'role contains Engineer'. The number is a label, not a power level.",
     roles: [
       { role: "Engineer-1…4", summary: "Technical approval authority in the ticket workflow.", perms: [
         ["Requests (tickets)", ["Initial engineering approval / rejection", "Team review approval when assigned (or unassigned)", "Final engineering approval before IFC", "Own requests skip engineer review (self-approval)"]],
@@ -87,7 +87,7 @@ const TIERS: Array<{ tier: string; blurb: string; roles: Array<{ role: string; s
     roles: [
       { role: "Viewer", summary: "Default when membership is missing. Reduced sidebar (Home, Documents, Requests, Scratchpad).", perms: [["Everywhere", ["Read/browse per library visibility; no workflow actions, no publishing"]]] },
       { role: "Contractor", summary: "Same reduced sidebar as Viewer, plus can create requests. Not assignable in /admin/users today (gap).", perms: [["Requests", ["Create requests"]]] },
-      { role: "Auditor", summary: "Intended for audit review — but /admin/audit does NOT admit Auditor (gap: gated to Admin/Manager/Supervisor/DocCtrl).", perms: [["Everywhere", ["Read-only; excluded from document editing"]]] },
+      { role: "Auditor", summary: "Intended for audit review - but /admin/audit does NOT admit Auditor (gap: gated to Admin/Manager/Supervisor/DocCtrl).", perms: [["Everywhere", ["Read-only; excluded from document editing"]]] },
     ],
   },
 ];
@@ -95,18 +95,18 @@ const TIERS: Array<{ tier: string; blurb: string; roles: Array<{ role: string; s
 const SITUATIONAL: Array<{ title: string; body: string[] }> = [
   { title: "Effective owner (document → folder → library → owning team's supervisor)", body: [
     "The most specific owner_user_id wins: a document's owner, else its folder's, else its library's; if none, the library's owning TEAM makes that team's supervisor the effective owner.",
-    "Powers: publish/revert on that document, manage its review roster, acks, retention & origin sections, request deletion. Granted by the ownership chain — the person's base role doesn't matter.",
+    "Powers: publish/revert on that document, manage its review roster, acks, retention & origin sections, request deletion. Granted by the ownership chain - the person's base role doesn't matter.",
   ]},
   { title: "Granted publisher (per-library permission drawer)", body: [
     "A library's ACL can grant 'publish' (or full 'admin') to specific users, teams, or roles. Grants are evaluated deny-first; expiry dates honored.",
-    "Powers: publish revisions in that one library, override another user's checkout lock (with a required reason — never a hold), and void stale review/ack rows during publish.",
+    "Powers: publish revisions in that one library, override another user's checkout lock (with a required reason - never a hold), and void stale review/ack rows during publish.",
   ]},
   { title: "Review signer (roster row)", body: [
     "Being on a draft's review roster grants exactly one power: signing your own row (e-signature bound to the draft's content hash).",
-    "The LAST required signer triggers auto-finalize — the promote runs under their authority, so it only succeeds if they're also a controller, owner, or granted publisher; otherwise it falls back to the manual publish button.",
+    "The LAST required signer triggers auto-finalize - the promote runs under their authority, so it only succeeds if they're also a controller, owner, or granted publisher; otherwise it falls back to the manual publish button.",
   ]},
   { title: "Ticket participant (identity, not role)", body: [
-    "The assigned drafter, assigned engineer, and original requester get their workflow actions by IDENTITY — e.g. a Manager who filed a request acts as its requester regardless of role.",
+    "The assigned drafter, assigned engineer, and original requester get their workflow actions by IDENTITY - e.g. a Manager who filed a request acts as its requester regardless of role.",
   ]},
 ];
 
@@ -116,7 +116,7 @@ const SITUATIONAL: Array<{ title: string; body: string[] }> = [
 const GAPS: string[] = [
   "Additive extra roles (roles[]) are honored by the capability policy and the newer DB helpers, but a few older checks still read only the headline role.",
   "A deny-read rule on a 'normal'-visibility node is app-enforced; to make hiding database-hard, set the node private/hidden with explicit grants (the designed model).",
-  "Manager can administer users but the Admin sidebar section is shown only to Admin/DocCtrl — reachable by URL.",
+  "Manager can administer users but the Admin sidebar section is shown only to Admin/DocCtrl - reachable by URL.",
 ];
 
 function Fold({ label, count, children, tone }: { label: React.ReactNode; count?: number; children: React.ReactNode; tone?: "warn" }) {
@@ -180,7 +180,7 @@ export default function RoleModelTree({ orgId }: { orgId: string }) {
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
       <div className="flex items-center gap-2 mb-1">
         <GitBranch className="w-4 h-4 text-[var(--color-accent)]" />
-        <span className="text-base font-bold text-[var(--color-text)]">Role model — who can do what</span>
+        <span className="text-base font-bold text-[var(--color-text)]">Role model - who can do what</span>
       </div>
       <p className="text-xs text-[var(--color-text-muted)] mb-3">
         Generated from a code audit of every enforcement point. Two kinds of authority exist: <b>base roles</b> (set in Users) and <b>situational authority</b> (ownership, per-library grants, review rosters) that applies regardless of role.
@@ -193,7 +193,7 @@ export default function RoleModelTree({ orgId }: { orgId: string }) {
             {tier.roles.map((r) => {
               const holders = holdersOf(r.role);
               return (
-                <Fold key={r.role} label={<span>{r.role} <span className="font-normal text-[var(--color-text-muted)]">— {r.summary}</span></span>} count={holders.length}>
+                <Fold key={r.role} label={<span>{r.role} <span className="font-normal text-[var(--color-text-muted)]">- {r.summary}</span></span>} count={holders.length}>
                   <div className="flex flex-wrap gap-1 px-1">
                     {holders.length === 0 && <span className="text-[11px] italic text-[var(--color-text-faint)]">nobody holds this role</span>}
                     {holders.map((h) => (
@@ -229,7 +229,7 @@ export default function RoleModelTree({ orgId }: { orgId: string }) {
             const team = teamName(l.ownerTeamId);
             return (
               <div key={l.id} className="text-[11px] text-[var(--color-text)] px-1">
-                <b>{l.name}</b> — owner: {l.ownerName || (team ? `team ${team.name}${team.supervisorName ? ` (supervisor ${team.supervisorName})` : ""}` : <span className="italic text-[var(--color-text-faint)]">none → falls to Admin/DocCtrl</span>)}
+                <b>{l.name}</b> - owner: {l.ownerName || (team ? `team ${team.name}${team.supervisorName ? ` (supervisor ${team.supervisorName})` : ""}` : <span className="italic text-[var(--color-text-faint)]">none → falls to Admin/DocCtrl</span>)}
                 {l.publishGrants.length > 0 && <> · publish grants: {l.publishGrants.join(", ")}</>}
               </div>
             );
@@ -244,7 +244,7 @@ export default function RoleModelTree({ orgId }: { orgId: string }) {
             <li key={i} className="text-[11px] text-[var(--color-text)] flex gap-1.5"><span className="text-amber-600 dark:text-amber-400">▸</span> {g}</li>
           ))}
         </ul>
-        <p className="text-[11px] text-[var(--color-text-muted)] px-1 inline-flex items-center gap-1"><ShieldCheck className="w-3 h-3" /> These are candidates for the cleanup we&apos;ll plan next — documented here so the tree stays honest.</p>
+        <p className="text-[11px] text-[var(--color-text-muted)] px-1 inline-flex items-center gap-1"><ShieldCheck className="w-3 h-3" /> These are candidates for the cleanup we&apos;ll plan next - documented here so the tree stays honest.</p>
       </Fold>
     </div>
   );

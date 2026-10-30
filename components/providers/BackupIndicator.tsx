@@ -34,11 +34,11 @@ export default function BackupIndicator() {
           <HardDriveDownload className="w-4 h-4 text-emerald-600 shrink-0" />
         )}
         <span className="text-xs font-black text-[var(--color-text)] flex-1">
-          {p.phase === "envelope" && "Backup — reading every table…"}
-          {p.phase === "files" && `Backup — file ${p.filesDone + 1} of ${p.filesTotal}`}
-          {p.phase === "finalizing" && `Backup — packing part ${p.part}…`}
-          {p.phase === "done" && `Backup complete — ${p.part} part(s)`}
-          {p.phase === "cancelled" && "Backup cancelled — partial parts saved"}
+          {p.phase === "envelope" && "Backup - reading every table…"}
+          {p.phase === "files" && `Backup - file ${p.filesDone + 1} of ${p.filesTotal}`}
+          {p.phase === "finalizing" && `Backup - packing part ${p.part}…`}
+          {p.phase === "done" && `Backup complete - ${p.part} part(s)`}
+          {p.phase === "cancelled" && "Backup cancelled - partial parts saved"}
           {p.phase === "failed" && "Backup failed"}
         </span>
         {finished ? (
@@ -65,7 +65,7 @@ export default function BackupIndicator() {
             <button onClick={cancelBackup} className="font-black text-rose-600 hover:underline">Cancel</button>
           </div>
           <div className="mt-1.5 text-[9px] text-[var(--color-text-faint)]">
-            Keep this tab open — you can use the app freely while it runs.
+            Keep this tab open - you can use the app freely while it runs.
           </div>
         </>
       )}
@@ -76,8 +76,8 @@ export default function BackupIndicator() {
       {finished && p.phase !== "failed" && (
         <div className="text-[10px] text-[var(--color-text-muted)]">
           {p.errors.length > 0
-            ? `${p.errors.length} file(s) missed — see backup-report.json in the last part.`
-            : "Every file SHA-256 verified — manifest in the last part."}
+            ? `${p.errors.length} file(s) missed - see backup-report.json in the last part.`
+            : "Every file SHA-256 verified - manifest in the last part."}
         </div>
       )}
     </div>

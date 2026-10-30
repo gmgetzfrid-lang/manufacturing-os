@@ -2,10 +2,10 @@ import { describe, it, expect } from "vitest";
 import { settleItems, keywordsOf, dropLibraryAsks, loosened } from "@/lib/ask/settleItems";
 
 const draft = [
-  "**Answer:** NOT SETTLED — the Class 150 wet-H2S class code is not visible [62].",
+  "**Answer:** NOT SETTLED - the Class 150 wet-H2S class code is not visible [62].",
   "**To settle this:**",
-  "- **EP 5-2-3 — Kern Engineering Piping Standards, piping class index (Class 150 entries)** — pull the Class 150 section [62].",
-  "- **Line temperature and H2S partial pressure** — only you know these.",
+  "- **EP 5-2-3 - Kern Engineering Piping Standards, piping class index (Class 150 entries)** - pull the Class 150 section [62].",
+  "- **Line temperature and H2S partial pressure** - only you know these.",
   "- **Best answer with what I have:** a Class 150 carbon-steel NACE class.",
   "**Why:**",
   "- 1. Wet H2S per EP 10-2-1 [18].",
@@ -20,7 +20,7 @@ describe("the draft's To settle this list", () => {
   it("becomes a keyword search", () => {
     const item = settleItems(draft)[0];
     // Inside the named document, its own name is noise: the topic remains.
-    expect(keywordsOf(item, "EP 5-2-3 — Kern Engineering Piping Standards")).toMatch(/^class index Class 150 entries/i);
+    expect(keywordsOf(item, "EP 5-2-3 - Kern Engineering Piping Standards")).toMatch(/^class index Class 150 entries/i);
     expect(loosened("Class 150 entries")).toBe("150 Class or 150 entries");
     expect(keywordsOf("see [62] the section")).toBe("");
   });

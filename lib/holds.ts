@@ -240,7 +240,7 @@ async function notifyHoldChange(input: {
       category: "status",
       kind: input.opened ? "hold_opened" : "hold_released",
       title: input.opened
-        ? `HOLD placed on ${label} — ${input.reason}`
+        ? `HOLD placed on ${label} - ${input.reason}`
         : `Hold released on ${label}`,
       body: input.opened
         ? `${input.actorName || "Someone"} placed a "${input.reason}" hold. Work from this document should stop until it's released.`

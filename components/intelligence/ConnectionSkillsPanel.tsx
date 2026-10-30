@@ -91,8 +91,8 @@ export default function ConnectionSkillsPanel() {
           <div className="text-xs font-black text-[var(--color-text)]">Connection skills</div>
           <div className="text-[11px] text-[var(--color-text-muted)]">
             {rules === null
-              ? "Not installed yet — run the connection-skills migration to author your own detectors."
-              : `${rules.length} skill${rules.length === 1 ? "" : "s"} · ${enabledCount} enabled. The detectors “Find connections” runs — including ones you write for your own numbering conventions.`}
+              ? "Not installed yet - run the connection-skills migration to author your own detectors."
+              : `${rules.length} skill${rules.length === 1 ? "" : "s"} · ${enabledCount} enabled. The detectors “Find connections” runs - including ones you write for your own numbering conventions.`}
           </div>
         </div>
         <ChevronDown className={`w-4 h-4 text-[var(--color-text-faint)] shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
@@ -157,7 +157,7 @@ export default function ConnectionSkillsPanel() {
                     )}
                     {mayManage && (
                       <button type="button" onClick={() => void toggle(r)} disabled={busyId === r.id}
-                        title={r.enabled ? "Disable — the engine skips this skill" : "Enable"}
+                        title={r.enabled ? "Disable - the engine skips this skill" : "Enable"}
                         className={`inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-[10px] font-black border transition-colors ${r.enabled
                           ? "border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40"
                           : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
@@ -175,7 +175,7 @@ export default function ConnectionSkillsPanel() {
           <div className="flex items-center gap-1.5">
             <button type="button" onClick={() => setWizardOpen(true)}
               className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border-2 border-dashed border-[var(--color-border-strong)] text-[11px] font-black text-[var(--color-text-muted)] hover:border-violet-400 hover:text-violet-700 transition-colors">
-              <Plus className="w-3.5 h-3.5" /> New skill — teach the engine your numbering convention
+              <Plus className="w-3.5 h-3.5" /> New skill - teach the engine your numbering convention
             </button>
             <Link href="/intelligence/skills"
               className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-[11px] font-black text-violet-700 border border-violet-300 dark:border-violet-800 hover:bg-violet-50 dark:hover:bg-violet-950/40">

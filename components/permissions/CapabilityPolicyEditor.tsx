@@ -84,7 +84,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
       await saveCapabilityPolicy({ orgId: activeOrgId, policy: { caps: policy, grants: stored.grants ?? [] }, actorUserId: uid, actorEmail: userEmail });
       __resetCapabilityPolicyCache();
       setDirty(false);
-      setMsg({ tone: "ok", text: "Saved — enforced server-side on the next action. Change audited with before/after." });
+      setMsg({ tone: "ok", text: "Saved - enforced server-side on the next action. Change audited with before/after." });
     } catch (e) {
       setMsg({ tone: "err", text: (e as Error).message });
     } finally { setSaving(false); }
@@ -103,7 +103,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <SlidersHorizontal className="w-4 h-4 text-[var(--color-accent)]" />
         <span className="text-base font-bold text-[var(--color-text)]">Action permissions</span>
-        <span className="text-xs text-[var(--color-text-muted)]">who may perform each workflow action — enforced on the server, audited on save</span>
+        <span className="text-xs text-[var(--color-text-muted)]">who may perform each workflow action - enforced on the server, audited on save</span>
         {canEdit && (
           <div className="ml-auto flex items-center gap-2">
             <button onClick={resetDefaults} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">

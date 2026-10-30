@@ -8,6 +8,7 @@
 
 "use client";
 
+import { noEmDashDeep } from "@/lib/noEmDash";
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import type { TableOrder } from "@/lib/turnoverPlan";
@@ -107,7 +108,8 @@ export async function saveShiftRecord(input: {
   const { data: cur, error: readErr } = await supabase.from("shift_handovers").select("record")
     .eq("project_id", input.projectId).eq("shift_key", input.shiftKey).maybeSingle();
   if (readErr) throw new Error(missing(readErr.message) ? MISSING : readErr.message);
-  const next = input.change(((cur as { record: ShiftRecord | null } | null)?.record) ?? {});
+  // What's typed in it (notes, crews, the hours): no em dash.
+  const next = noEmDashDeep(input.change(((cur as { record: ShiftRecord | null } | null)?.record) ?? {}));
   const { error } = await supabase.from("shift_handovers").upsert({
     org_id: input.orgId, project_id: input.projectId, shift_key: input.shiftKey,
     record: next, updated_at: new Date().toISOString(), updated_by: input.userId,

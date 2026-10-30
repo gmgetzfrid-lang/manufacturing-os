@@ -98,12 +98,12 @@ export default function DocClassControl({ documentId, collectionId, libraryId, f
       </div>
       <div className="text-[10px] text-[var(--color-text-muted)] mt-1">
         {effective === "drawing"
-          ? "Effective: Drawing — non-minor publishes require an MOC; check-in routes redlines to drafting."
+          ? "Effective: Drawing - non-minor publishes require an MOC; check-in routes redlines to drafting."
           : effective === "procedure"
-            ? "Effective: Procedure — the owner/publishers release revisions directly."
+            ? "Effective: Procedure - the owner/publishers release revisions directly."
             : suggestion
-              ? `Unclassified. Suggested: ${suggestion === "drawing" ? "Drawing / CAD" : "Procedure"} (from the file's type) — declare it so the right change process applies.`
-              : "Unclassified — no class-specific rules apply. Declare here, or at the folder/library level in the review-policy settings."}
+              ? `Unclassified. Suggested: ${suggestion === "drawing" ? "Drawing / CAD" : "Procedure"} (from the file's type) - declare it so the right change process applies.`
+              : "Unclassified - no class-specific rules apply. Declare here, or at the folder/library level in the review-policy settings."}
       </div>
     </div>
   );

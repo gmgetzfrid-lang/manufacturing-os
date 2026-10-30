@@ -194,7 +194,7 @@ export default function ModifyDocumentRouter(props: ModifyDocumentRouterProps) {
           <div>
             <h2 className="font-black text-[var(--color-text)]">Modify Document</h2>
             <div className="text-[11px] font-mono text-[var(--color-text-muted)] mt-0.5">
-              {doc.documentNumber || doc.title || doc.id} · Rev {doc.rev || "—"} · {doc.status || "—"}
+              {doc.documentNumber || doc.title || doc.id} · Rev {doc.rev || "-"} · {doc.status || "-"}
             </div>
           </div>
           <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
@@ -207,7 +207,7 @@ export default function ModifyDocumentRouter(props: ModifyDocumentRouterProps) {
             <FirstRunHint storageKey="lifecycle.router.intro">
               Pick the action that best matches what you&apos;re doing.
               <b className="block mt-1">Every transformative action (Split, Merge, Renumber) is reversible</b>
-              from the document&apos;s Timeline tab — so it&apos;s safe to try things.
+              from the document&apos;s Timeline tab - so it&apos;s safe to try things.
             </FirstRunHint>
           </div>
           <RouterChoice

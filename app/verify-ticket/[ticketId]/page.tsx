@@ -42,14 +42,14 @@ const VERDICT_UI: Record<VerifyTicketResult["verdict"], {
   },
   superseded: {
     bg: "bg-red-600", icon: "stop", headline: "DO NOT USE",
-    sub: (r) => `This copy is Rev ${r.printedRev} — Rev ${r.latestIssuedRev} has since been issued. Get the current deliverable before use.`,
+    sub: (r) => `This copy is Rev ${r.printedRev} - Rev ${r.latestIssuedRev} has since been issued. Get the current deliverable before use.`,
   },
   draft_copy: {
     bg: "bg-amber-500", icon: "warn", headline: "REVIEW DRAFT",
     sub: (r) => {
       const sameCycle = r.printedRev && r.latestIssuedRev && parseInt(r.printedRev, 10) === parseInt(r.latestIssuedRev, 10);
       return sameCycle
-        ? `Rev ${r.printedRev} was a review draft — Rev ${r.latestIssuedRev} has since been ISSUED from it. Use the issued copy, not this draft.`
+        ? `Rev ${r.printedRev} was a review draft - Rev ${r.latestIssuedRev} has since been ISSUED from it. Use the issued copy, not this draft.`
         : `Rev ${r.printedRev ?? "?"} is a review draft, not an issued deliverable. Only issued revisions (Rev ${r.latestIssuedRev ?? "1"}, without a letter) are approved for use.`;
     },
   },
@@ -92,7 +92,7 @@ export default function VerifyTicketPage() {
 
   const ui = result ? VERDICT_UI[result.verdict] : null;
   const fmt = (iso: string | null) =>
-    iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—";
+    iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "-";
 
   return (
     <div className={`min-h-dvh flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
@@ -136,7 +136,7 @@ export default function VerifyTicketPage() {
             <div className="bg-white/95 rounded-2xl shadow-2xl p-5 text-left space-y-3">
               <div>
                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Drafting ticket</div>
-                <div className="text-sm font-bold text-slate-900">{result.ticketNumber ?? "—"}</div>
+                <div className="text-sm font-bold text-slate-900">{result.ticketNumber ?? "-"}</div>
                 {result.title && <div className="text-xs text-slate-500 mt-0.5">{result.title}</div>}
                 {result.unit && <div className="text-[10px] text-slate-400 mt-0.5">Unit {result.unit}</div>}
               </div>

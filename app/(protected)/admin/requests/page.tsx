@@ -474,7 +474,7 @@ function CategoryCard({
           className="w-full px-2 py-1 border border-[var(--color-border)] rounded text-xs text-[var(--color-text)]"
         />
         <div className="space-y-2 mt-2">
-          {cat.fields.length === 0 && <div className="text-[11px] italic text-[var(--color-text-faint)]">No fields yet — add one below.</div>}
+          {cat.fields.length === 0 && <div className="text-[11px] italic text-[var(--color-text-faint)]">No fields yet - add one below.</div>}
           {cat.fields.map((f, i) => (
             <FieldEditor key={f.key} field={f} onChange={(patch) => updateField(i, patch)} onRemove={() => removeField(i)} />
           ))}

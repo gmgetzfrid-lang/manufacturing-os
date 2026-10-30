@@ -13,7 +13,7 @@ describe("callAiModel with markWebCitations", () => {
       usage: { input_tokens: 10, output_tokens: 20 },
       content: [
         { type: "server_tool_use" },
-        { type: "text", text: "**Answer:** NO — EP 5-2-2 prohibits it [1]. " },
+        { type: "text", text: "**Answer:** NO - EP 5-2-2 prohibits it [1]. " },
         { type: "text", text: "ASME explains that slip-ons need straight pipe", citations: [
           { url: "https://asme.org/a", title: "ASME A", cited_text: "Slip-on flanges require straight pipe." },
         ] },
@@ -28,7 +28,7 @@ describe("callAiModel with markWebCitations", () => {
       webSearch: true, markWebCitations: true,
     });
     expect(out.text).toBe(
-      "**Answer:** NO — EP 5-2-2 prohibits it [1]. ASME explains that slip-ons need straight pipe[W1], and fitting ends are not straight.[W1][W2]\n");
+      "**Answer:** NO - EP 5-2-2 prohibits it [1]. ASME explains that slip-ons need straight pipe[W1], and fitting ends are not straight.[W1][W2]\n");
     expect(out.webSources).toEqual([
       { url: "https://asme.org/a", title: "ASME A", quote: "Slip-on flanges require straight pipe." },
       { url: "https://example.com/b", title: "B", quote: "Elbow ends are tapered." },

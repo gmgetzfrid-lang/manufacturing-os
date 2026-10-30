@@ -117,7 +117,7 @@ export default function LifecycleBoard() {
 
       setDocs(rows.map((r) => ({
         id: String(r.id),
-        number: (r.document_number as string) || (r.title as string) || (r.name as string) || "—",
+        number: (r.document_number as string) || (r.title as string) || (r.name as string) || "-",
         title: (r.title as string) || "",
         rev: (r.rev as string) ?? null,
         status: (r.status as string) ?? null,
@@ -153,7 +153,7 @@ export default function LifecycleBoard() {
     <div>
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <p className="text-xs text-[var(--color-text-muted)] flex-1 min-w-[200px]">
-          Every controlled document by lifecycle state. Hotter age chips = sitting longer — that&apos;s your bottleneck.
+          Every controlled document by lifecycle state. Hotter age chips = sitting longer - that&apos;s your bottleneck.
         </p>
         <div className="relative w-56 max-w-[60vw]">
           <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)] absolute left-2.5 top-1/2 -translate-y-1/2" />

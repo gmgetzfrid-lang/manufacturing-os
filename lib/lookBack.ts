@@ -32,7 +32,7 @@ export type Cause = "hold" | "replanned" | "late-start" | "longer" | "discovery"
 export const CAUSE_LABEL: Record<Cause, string> = {
   hold: "On hold / blocked",
   replanned: "Re-planned",
-  "late-start": "Started late — no hold or earlier work recorded",
+  "late-start": "Started late - no hold or earlier work recorded",
   longer: "Took longer than planned",
   discovery: "Discovery & added scope",
 };
@@ -179,7 +179,7 @@ export function buildLookBack(input: {
       holdRun += Math.max(0, Math.min(h.to, t.af) - Math.max(h.from, t.as)) / H;
     }
     const why = mine.filter((n) => n.kind === "behind" && n.body?.trim()).map((n) => n.body!.trim());
-    const replans = mine.filter((n) => n.kind === "reschedule" && /^Re-planned/.test(n.body ?? "")).map((n) => n.body!.replace(/^Re-planned to [^—]*— /, "").trim());
+    const replans = mine.filter((n) => n.kind === "reschedule" && /^Re-planned/.test(n.body ?? "")).map((n) => n.body!.replace(/^Re-planned to .*?(?: [-—] .*? done first)? [-—] /, "").trim());
     const disc = discoveryOf(m);
     const lost: Partial<Record<Cause, number>> = {};
     const add = (c: Cause, h: number) => { if (h > 0.05) lost[c] = r1((lost[c] ?? 0) + h); };
@@ -261,19 +261,19 @@ export function buildLookBack(input: {
   for (const s of steps) if (s.done && !s.discovery) byName.set(norm(s.name), [...(byName.get(norm(s.name)) ?? []), s]);
   const repeats = [...byName.values()].filter((g) => g.length >= 2);
   for (const g of repeats.map((g) => ({ g, over: g.filter((s) => s.overrunH >= ON_PLAN_H), avg: r1(g.reduce((a, s) => a + s.overrunH, 0) / g.length) })).filter((x) => x.over.length * 2 >= x.g.length && x.avg >= 2).sort((a, b) => b.avg - a.avg).slice(0, 4)) {
-    improve.push(`“${g.g[0].name}” ran long on ${g.over.length} of ${g.g.length} (${g.avg > 0 ? "+" : ""}${g.avg} h on average) — plan more time for it next turnaround.`);
+    improve.push(`“${g.g[0].name}” ran long on ${g.over.length} of ${g.g.length} (${g.avg > 0 ? "+" : ""}${g.avg} h on average) - plan more time for it next turnaround.`);
   }
   for (const g of repeats.map((g) => ({ g, under: g.filter((s) => s.overrunH <= -ON_PLAN_H), avg: r1(g.reduce((a, s) => a + s.overrunH, 0) / g.length) })).filter((x) => x.under.length * 2 >= x.g.length && x.avg <= -2).sort((a, b) => a.avg - b.avg).slice(0, 3)) {
-    keep.push(`“${g.g[0].name}” took less than planned on ${g.under.length} of ${g.g.length} (${g.avg} h on average) — it can be planned tighter.`);
+    keep.push(`“${g.g[0].name}” took less than planned on ${g.under.length} of ${g.g.length} (${g.avg} h on average) - it can be planned tighter.`);
   }
   // Holds for the same reason, again and again.
   const holdBy = new Map<string, { reason: string; hours: number; n: number }>();
   for (const s of steps) for (const h of s.holds) { if (!h.reason) continue; const k = norm(h.reason); const x = holdBy.get(k) ?? { reason: h.reason, hours: 0, n: 0 }; x.hours = r1(x.hours + h.hours); x.n++; holdBy.set(k, x); }
-  for (const x of [...holdBy.values()].sort((a, b) => b.hours - a.hours).slice(0, 3)) if (x.hours >= ON_PLAN_H) improve.push(`On hold ${x.n === 1 ? "once" : `${x.n} times`} for “${x.reason}” — ${x.hours} h in all.`);
+  for (const x of [...holdBy.values()].sort((a, b) => b.hours - a.hours).slice(0, 3)) if (x.hours >= ON_PLAN_H) improve.push(`On hold ${x.n === 1 ? "once" : `${x.n} times`} for “${x.reason}” - ${x.hours} h in all.`);
   // Late starts with nothing holding them, by crew.
   const lateBy = new Map<string, { h: number; n: number }>();
   for (const s of steps) if ((s.lost["late-start"] ?? 0) > 0 && s.crew) { const x = lateBy.get(s.crew) ?? { h: 0, n: 0 }; x.h = r1(x.h + s.lost["late-start"]!); x.n++; lateBy.set(s.crew, x); }
-  for (const [crew, x] of [...lateBy].sort((a, b) => b[1].h - a[1].h).slice(0, 2)) if (x.n >= 2 && x.h >= 4) improve.push(`${crew} started ${x.n} steps late with no hold or earlier work recorded to explain it (${x.h} h) — check crew availability and hand-offs, or put the reason on the steps.`);
+  for (const [crew, x] of [...lateBy].sort((a, b) => b[1].h - a[1].h).slice(0, 2)) if (x.n >= 2 && x.h >= 4) improve.push(`${crew} started ${x.n} steps late with no hold or earlier work recorded to explain it (${x.h} h) - check crew availability and hand-offs, or put the reason on the steps.`);
   // What set the finish.
   const drove = new Map<string, number>();
   for (const l of chain) if (l.addedH > 0) drove.set(l.step.task || l.step.name, r1((drove.get(l.step.task || l.step.name) ?? 0) + l.addedH));
@@ -283,7 +283,7 @@ export function buildLookBack(input: {
   if (disc.length) {
     const hrs = r1(disc.reduce((a, d) => a + d.record.impact.hours, 0));
     const moved = disc.filter((d) => d.record.impact.finish[1] - d.record.impact.finish[0] > 6 * 60_000).length;
-    (moved ? improve : keep).push(`Discovery added ${hrs} h of work (${disc.length} found)${moved ? ` — ${moved} moved the finish` : " — all of it fit in the float"}.`);
+    (moved ? improve : keep).push(`Discovery added ${hrs} h of work (${disc.length} found)${moved ? ` - ${moved} moved the finish` : " - all of it fit in the float"}.`);
   }
   if (ahead.length) keep.push(`${ahead.length} step${ahead.length === 1 ? "" : "s"} finished ahead of plan${ahead.length > 1 ? ` (up to ${-ahead[0].finishH} h early)` : ` (${-ahead[0].finishH} h early)`}.`);
   for (const c of crews.filter((c) => c.done >= 3 && c.onPlan === c.done).slice(0, 3)) keep.push(`${c.crew} finished all ${c.done} of their steps on plan.`);

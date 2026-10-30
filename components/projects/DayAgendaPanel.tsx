@@ -356,10 +356,10 @@ export default function DayAgendaPanel({
   };
   const spanNote = (r: Row) => {
     const planned = r.plannedStart != null && Number.isFinite(r.plannedStart) ? `planned ${fmtInTz(r.plannedStart, tz, { weekday: "short", month: "short", day: "numeric" })} ${clockLabel(r.plannedStart, tz)}` : "planned later";
-    if (r.live === "done-ahead") return `${planned} — done ahead of plan`;
+    if (r.live === "done-ahead") return `${planned} - done ahead of plan`;
     if (r.leaf.status === "completed") return null;
-    if (r.live === "overdue") return `was due ${fmtInTz(r.finishMs, tz, { month: "short", day: "numeric" })} ${clockLabel(r.finishMs, tz)} — carry-over, finish or re-plan it`;
-    if (r.live === "started-early") return `${planned} — started ahead of plan`;
+    if (r.live === "overdue") return `was due ${fmtInTz(r.finishMs, tz, { month: "short", day: "numeric" })} ${clockLabel(r.finishMs, tz)} - carry-over, finish or re-plan it`;
+    if (r.live === "started-early") return `${planned} - started ahead of plan`;
     if (r.startsToday && r.endsToday) return null;
     const parts: string[] = [];
     if (!r.startsToday) parts.push(`started ${fmtInTz(r.startMs, tz, { month: "short", day: "numeric" })}`);
@@ -406,7 +406,7 @@ export default function DayAgendaPanel({
               <input value={query} onChange={(e) => setQuery(e.target.value)}
                 // A keyboard popping up on a tablet hides half the list: focus only with a mouse.
                 autoFocus={typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches}
-                placeholder="Find equipment, WO # or step — e.g. E-606, 4410037"
+                placeholder="Find equipment, WO # or step - e.g. E-606, 4410037"
                 className="w-full h-8 pl-8 pr-8 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent-ring)]" />
               {query && <button onClick={() => setQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="Clear"><XIcon className="w-3.5 h-3.5" /></button>}
             </div>
@@ -493,7 +493,7 @@ export default function DayAgendaPanel({
                           />
                         </span>
                         <button onClick={() => setOpenId(openId === r.leaf.id ? null : r.leaf.id ?? null)} className="flex-1 min-w-0 text-left" aria-expanded={openId === r.leaf.id}
-                          title={canEdit ? "Update this step here — % done, status, what's blocking it, a note" : "Show this step"}>
+                          title={canEdit ? "Update this step here - % done, status, what's blocking it, a note" : "Show this step"}>
                           <span className={`block text-[12px] leading-snug break-words font-semibold ${r.leaf.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{r.leaf.name} <PathTag id={r.leaf.id} marks={pathMarks} /> <DiscoveryTag m={r.leaf} tz={tz} /></span>
                           <span className="block text-[9.5px] text-[var(--color-text-faint)] truncate">
                             {[note, r.leaf.responsibleParty, woOf(r.leaf) ? `WO ${woOf(r.leaf)}` : null].filter(Boolean).join(" · ")}
@@ -583,7 +583,7 @@ export default function DayAgendaPanel({
           )}
           {otherDays.length > 0 && (
             <section className="border-t border-[var(--color-border)]">
-              <div className="px-4 py-2 text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] bg-[var(--color-surface-2)]">On other days — click to go to its day</div>
+              <div className="px-4 py-2 text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] bg-[var(--color-surface-2)]">On other days - click to go to its day</div>
               <ul className="divide-y divide-[var(--color-border)]">
                 {otherDays.map((m) => {
                   const d = dayKey(startMsOf(m), tz);
@@ -727,7 +727,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
   const saveHold = async (): Promise<boolean> => {
     if (ro || !onSetStatus || !hold) return false;
     if (timed) {
-      if (!reason.trim()) { setNeedMsg(hold === "blocked" ? "Say what's blocking it — it goes on the report." : "Say why it's on hold — it goes on the report."); return false; }
+      if (!reason.trim()) { setNeedMsg(hold === "blocked" ? "Say what's blocking it - it goes on the report." : "Say why it's on hold - it goes on the report."); return false; }
       if (whenAt == null) { setNeedMsg(when && "error" in when ? when.error : "Put in the time it happened."); clockRef.current?.focus(); return false; }
       savedHold.current = `${hold}|${reason.trim()}`;
       const ok = await onUpdateStep!(id, { status: hold, pct: null, note: reason.trim(), at: whenAt });
@@ -737,7 +737,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
       return ok;
     }
     savedHold.current = `${hold}|${reason.trim()}`;
-    report(await onSetStatus(id, hold, reason.trim() || undefined), hold === "blocked" ? "Blocked — reason saved" : "On hold — reason saved");
+    report(await onSetStatus(id, hold, reason.trim() || undefined), hold === "blocked" ? "Blocked - reason saved" : "On hold - reason saved");
     return true;
   };
   const sentNote = useRef<string | null>(own ? latest!.body.trim() : null);
@@ -757,7 +757,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
   const commit = async (): Promise<boolean> => {
     if (ro) return false;
     if (!progressPending()) { await saveNote(); return true; }
-    if (needsNote()) { setNeedMsg(`Say what got done to save ${stagedPct ?? 0}% — it goes on the shift report.`); noteRef.current?.focus(); return false; }
+    if (needsNote()) { setNeedMsg(`Say what got done to save ${stagedPct ?? 0}% - it goes on the shift report.`); noteRef.current?.focus(); return false; }
     if (timed) {
       if (whenAt == null) { setNeedMsg(when && "error" in when ? when.error : "Put in the time it happened."); clockRef.current?.focus(); return false; }
       const v = stagedPct ?? 0;
@@ -775,7 +775,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
     if (starting && onSetStatus) {
       const v = stagedPct ?? 0;
       ok = (await onSetStatus(id, v >= 100 ? "completed" : "in_progress", undefined, v)) !== false;
-      report(ok, v >= 100 ? "Marked done" : `Working — ${v}% saved`);
+      report(ok, v >= 100 ? "Marked done" : `Working - ${v}% saved`);
     } else if (stage != null) ok = await setPct(stage);
     if (!ok) return false;
     setStage(null); setStarting(false); setNeedMsg(null);
@@ -856,7 +856,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
           </span>
           <input value={reason} disabled={ro} autoFocus onChange={(e) => { setReason(e.target.value); setHoldTouched(true); setNeedMsg(null); }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void saveHold(); } }}
-            placeholder="What's stopping it — permit, scaffold, ops release, parts…"
+            placeholder="What's stopping it - permit, scaffold, ops release, parts…"
             className="flex-1 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] focus:outline-none focus:border-[var(--color-accent-ring)]" />
           <button disabled={ro} onClick={() => void saveHold()} className={`h-7 px-2.5 rounded-md font-bold text-white ${hold === "blocked" ? "bg-rose-600 hover:bg-rose-700" : "bg-amber-500 hover:bg-amber-600"} disabled:opacity-40`}>
             Save {hold === "blocked" ? "blocked" : "on hold"}{timed && holdTouched && whenAt != null ? ` at ${clock}` : ""}
@@ -894,12 +894,12 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
         </div>
       )}
       {timed && choice.ahead && (progressPending() || (holdTouched && !!hold)) && (
-        <div className="ml-[70px] text-emerald-800 dark:text-emerald-300">Planned later than now — put in when it was really done; it shows on that day as worked ahead.</div>
+        <div className="ml-[70px] text-emerald-800 dark:text-emerald-300">Planned later than now - put in when it was really done; it shows on that day as worked ahead.</div>
       )}
       {onAddNote && latest && noteMode === "new" && (
         <div className="flex items-start gap-1.5">
           <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] text-[var(--color-text-muted)]">Latest</span>
-          <span className="flex-1 italic text-[var(--color-text-muted)]">&ldquo;{latest.body}&rdquo; — {latest.by ?? "someone"}{latest.at ? `, ${new Date(latest.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</span>
+          <span className="flex-1 italic text-[var(--color-text-muted)]">&ldquo;{latest.body}&rdquo; - {latest.by ?? "someone"}{latest.at ? `, ${new Date(latest.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</span>
         </div>
       )}
       {onAddNote && (
@@ -910,7 +910,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
           </span>
           <input ref={noteRef} value={note} disabled={ro} onChange={(e) => { setNote(e.target.value); setNeedMsg(null); }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void commit(); } }}
-            placeholder={progressPending() ? "e.g. bundle half out · or why it's corrected" : "Comment — shows on the shift report (e.g. sent out for calibration)"}
+            placeholder={progressPending() ? "e.g. bundle half out · or why it's corrected" : "Comment - shows on the shift report (e.g. sent out for calibration)"}
             aria-required={needsNote()}
             className={`flex-1 min-w-[180px] h-7 px-2 rounded-md bg-[var(--color-surface)] pointer-coarse:h-9 focus:outline-none focus:border-[var(--color-accent-ring)] ${needMsg && needsNote() ? "border-2 border-rose-500" : needsNote() ? "border-2 border-amber-400 bg-amber-50/60 dark:bg-amber-950/30" : "border border-[var(--color-border-strong)]"}`} />
           {progressPending() && (

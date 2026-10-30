@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   if (!archiveId) return NextResponse.json({ error: "archiveId is required" }, { status: 400 });
   if (body.confirm !== true) {
-    return NextResponse.json({ error: "Confirmation required — only reclaim after the archive is safely saved." }, { status: 400 });
+    return NextResponse.json({ error: "Confirmation required - only reclaim after the archive is safely saved." }, { status: 400 });
   }
   const sb = actor.admin;
 
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No such archive for this workspace (already discarded, or never produced)." }, { status: 404 });
   }
   if ((cat as { note?: string }).note === "producing…") {
-    return NextResponse.json({ error: "That archive never finished producing — re-produce or discard it. Nothing was freed." }, { status: 409 });
+    return NextResponse.json({ error: "That archive never finished producing - re-produce or discard it. Nothing was freed." }, { status: 409 });
   }
 
   // ALL rows linked to this archive — both not-yet-stamped (first commit) and

@@ -122,7 +122,7 @@ function MembershipErrorScreen() {
         <h1 className="text-lg font-black text-[var(--color-text)]">Couldn&apos;t load your workspace</h1>
         <p className="text-sm text-[var(--color-text-muted)] mt-2">
           The connection dropped while looking up your membership. Your access is
-          unchanged — this is a network hiccup, not a permissions change.
+          unchanged - this is a network hiccup, not a permissions change.
         </p>
         <button
           onClick={() => window.location.reload()}

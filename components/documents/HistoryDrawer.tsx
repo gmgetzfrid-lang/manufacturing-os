@@ -168,7 +168,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
               <History className="w-5 h-5 mr-2 text-blue-600" />
               Audit Trail
               <HelpTooltip>
-                <b>Timeline</b> shows everything that happened to this document — release / revert / supersede / hold / view / download — newest first.
+                <b>Timeline</b> shows everything that happened to this document - release / revert / supersede / hold / view / download - newest first.
                 <b className="block mt-1">Revision History</b> is just the version-release events with their files and signoffs.
                 <b className="block mt-1">Checkout Log</b> is who&apos;s held the file and when.
                 <b className="block mt-1">Audit Log</b> is the raw audit_logs rows for forensic inspection.

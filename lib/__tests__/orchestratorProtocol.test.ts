@@ -77,7 +77,7 @@ describe("parseTurn", () => {
   });
 
   it("treats prose that merely quotes JSON as an answer", () => {
-    const raw = 'The config we store looks like {"tool_name": broken} — that\'s why the import failed, '
+    const raw = 'The config we store looks like {"tool_name": broken} - that\'s why the import failed, '
       + 'and you should fix the exporter before re-running the load.';
     expect(parseTurn(raw, TOOLS).kind).toBe("answer");
   });
@@ -162,7 +162,7 @@ describe("isRepeatCall", () => {
     expect(isRepeatCall(history, call("search_documents", { query: "hangers" }))).toBe(false);
   });
 
-  it("allows a repeat that isn't consecutive — that's a real refinement loop", () => {
+  it("allows a repeat that isn't consecutive - that's a real refinement loop", () => {
     const history = [
       call("search_documents", { query: "pipe supports" }),
       call("trace_pid_lines", { start_tag: "E-101" }),

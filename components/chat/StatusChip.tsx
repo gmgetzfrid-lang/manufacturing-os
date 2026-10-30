@@ -56,7 +56,7 @@ export default function StatusChip({ orgId, bump }: { orgId: string; /** Change 
   return (
     <Link href="/intelligence/setup"
       title={!snap.known ? "Checking AI status…"
-        : !snap.keyOk ? "No API key saved — questions can't run. Open AI setup."
+        : !snap.keyOk ? "No API key saved - questions can't run. Open AI setup."
           : `${snap.model ?? "model"} · $${snap.spentUsd.toFixed(2)}${snap.capUsd > 0 ? ` of $${snap.capUsd.toFixed(2)}` : ""} this month`}
       className="inline-flex items-center gap-2 h-7 pl-2 pr-2.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] transition-colors max-w-[220px]">
       <span className={`w-2 h-2 rounded-full shrink-0 ${tone} ${!snap.known ? "animate-pulse" : ""}`} />

@@ -148,7 +148,7 @@ export default function BackfillVersionModal({
             <div>
               <h2 className="font-black text-[var(--color-text)]">Backfill Older Revision</h2>
               <div className="text-[11px] text-[var(--color-text-muted)] font-mono">
-                {doc.documentNumber || doc.title || doc.name} — current is Rev {doc.rev || "—"}
+                {doc.documentNumber || doc.title || doc.name} - current is Rev {doc.rev || "-"}
               </div>
             </div>
           </div>
@@ -275,13 +275,13 @@ export default function BackfillVersionModal({
 
           {/* Supersedes picker — only shows if there are existing versions */}
           {existingVersions.length > 0 && (
-            <Field label="Supersedes (optional — slot into the chain)">
+            <Field label="Supersedes (optional - slot into the chain)">
               <select
                 value={supersedesVersionId}
                 onChange={(e) => setSupersedesVersionId(e.target.value)}
                 className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm bg-[var(--color-surface)]"
               >
-                <option value="">— Free-floating (no chain link)</option>
+                <option value="">- Free-floating (no chain link)</option>
                 {existingVersions.map((v) => (
                   <option key={v.id} value={v.id}>
                     Rev {v.revisionLabel}{v.releasedAt ? ` (${new Date(v.releasedAt as string).toLocaleDateString()})` : ""}

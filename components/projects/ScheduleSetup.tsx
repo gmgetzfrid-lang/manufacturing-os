@@ -79,7 +79,7 @@ export function ScheduleSetup(p: Props) {
         <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border-2 border-rose-400 dark:border-rose-700 bg-rose-50 dark:bg-rose-950/50 px-3.5 py-3 text-rose-900 dark:text-rose-100">
           <AlertTriangle className="w-5 h-5 shrink-0 text-rose-600 dark:text-rose-400" />
           <div className="flex-1 min-w-[220px] text-[13px] leading-snug">
-            <b>Finish setting up this schedule — the reports can&apos;t be trusted yet.</b>{" "}
+            <b>Finish setting up this schedule - the reports can&apos;t be trusted yet.</b>{" "}
             Missing: {missing.map((i) => i.label.toLowerCase()).join(" and ")}.
             <span className="block text-[12px] text-rose-800/90 dark:text-rose-200/80">{missing[0].why}</span>
           </div>
@@ -144,7 +144,7 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
   const allDone = counted.every((i) => i.done);
   return (
     <Modal onClose={onClose} size={at === "night" ? "full" : at === "print" ? "xl" : "lg"}>
-      <ModalHeader icon={Settings2} title="Schedule setup" subtitle="What the schedule's reports hang on — set once for everyone on the project." onClose={onClose} />
+      <ModalHeader icon={Settings2} title="Schedule setup" subtitle="What the schedule's reports hang on - set once for everyone on the project." onClose={onClose} />
       <ModalBody className="p-0">
         <div className="flex flex-col sm:flex-row">
           {/* Steps */}
@@ -198,7 +198,7 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
             </button>
           ) : (
             <button onClick={onClose} className={`text-[12px] font-bold px-3 py-1.5 rounded-lg ${allDone ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "text-[var(--color-text)]"}`}>
-              {allDone ? "All set — close" : "Close"}
+              {allDone ? "All set - close" : "Close"}
             </button>
           )}
         </div>
@@ -243,7 +243,7 @@ function TimeZoneStep({ projectId, timezone, canManage, userId, done, onSaved }:
           <optgroup label="All">{all.filter((z) => !US_ZONES.includes(z)).map((z) => <option key={z} value={z}>{z}</option>)}</optgroup>
         </select>
       </label>
-      <p className="text-[12px] text-[var(--color-text-muted)]">Times on the schedule stay as written — 8:00 stays 8:00.</p>
+      <p className="text-[12px] text-[var(--color-text-muted)]">Times on the schedule stay as written - 8:00 stays 8:00.</p>
       <Msg err={err} />
       <button onClick={() => void save()} disabled={busy || (done && tz === timezone)} className={btn}>
         {busy && <Loader2 className="w-4 h-4 animate-spin" />} {done && tz === timezone ? "Saved" : timezone && tz === timezone ? "Confirm" : "Save time zone"}
@@ -282,7 +282,7 @@ function ShiftsStep({ projectId, canManage, done, checking, onSaved }: Props & {
       <Msg err={err} />
       {canManage && (
         <button onClick={() => void save()} disabled={busy || (done && !draft) || (checking && !draft)} className={btn}>
-          {busy && <Loader2 className="w-4 h-4 animate-spin" />} {checking && !draft ? "Reading the saved times…" : done && !draft ? "Saved" : draft ? "Save shift times" : "These are right — confirm"}
+          {busy && <Loader2 className="w-4 h-4 animate-spin" />} {checking && !draft ? "Reading the saved times…" : done && !draft ? "Saved" : draft ? "Save shift times" : "These are right - confirm"}
         </button>
       )}
     </div>
@@ -384,7 +384,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
   return (
     <div className="space-y-3">
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-3 text-[13px] leading-relaxed text-[var(--color-text)]">
-        <b>Everyone works days.</b> Put a crew on nights — on <b>all its work</b>, or only on <b>the jobs you pick</b>.
+        <b>Everyone works days.</b> Put a crew on nights - on <b>all its work</b>, or only on <b>the jobs you pick</b>.
         A night crew takes its steps the schedule has in night hours; round-the-clock jobs (the tower) run both shifts.
         The nights on the right change as you choose.
       </div>
@@ -394,7 +394,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
         <div className="space-y-2 min-w-0">
           <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Who works nights</div>
           <div className={`rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] ${fileMode ? "opacity-50 pointer-events-none" : ""}`}>
-            {choices.length === 0 && <div className="px-3 py-3 text-[13px] text-[var(--color-text-muted)]">No steps yet — import the schedule first.</div>}
+            {choices.length === 0 && <div className="px-3 py-3 text-[13px] text-[var(--color-text-muted)]">No steps yet - import the schedule first.</div>}
             {order.map((c) => {
               const mode = modeOf(c.crew);
               const p = pickOf(c.crew);
@@ -434,9 +434,9 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
                           );
                         })}
                       </div>
-                      {p && p.jobs.size === 0 && <div className="text-[11.5px] font-semibold text-amber-700 dark:text-amber-300">None picked yet — still days only.</div>}
+                      {p && p.jobs.size === 0 && <div className="text-[11.5px] font-semibold text-amber-700 dark:text-amber-300">None picked yet - still days only.</div>}
                       {p && c.jobs.length > 1 && c.jobs.every((j) => p.jobs.has(j.id)) && (
-                        <div className="text-[11.5px] text-[var(--color-text-muted)]">That&apos;s all its jobs — <button type="button" disabled={!canManage} onClick={() => update(c.crew, () => ({ all: true, jobs: new Set() }))} className="font-bold text-violet-700 dark:text-violet-300 underline">Nights: all its work</button> also covers jobs added later.</div>
+                        <div className="text-[11.5px] text-[var(--color-text-muted)]">That&apos;s all its jobs - <button type="button" disabled={!canManage} onClick={() => update(c.crew, () => ({ all: true, jobs: new Set() }))} className="font-bold text-violet-700 dark:text-violet-300 underline">Nights: all its work</button> also covers jobs added later.</div>
                       )}
                     </div>
                   )}
@@ -446,7 +446,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
           </div>
           <label className="flex items-start gap-2 text-[12px] text-[var(--color-text-muted)] cursor-pointer">
             <input type="checkbox" className="mt-0.5" disabled={!canManage} checked={fileMode} onChange={(e) => { setFileMode(e.target.checked); setSavedNow(false); setTouched(true); }} />
-            <span>Skip the crews — anything the schedule file puts in night hours is night work.</span>
+            <span>Skip the crews - anything the schedule file puts in night hours is night work.</span>
           </label>
         </div>
 
@@ -470,7 +470,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
               <div key={k} className="rounded-lg border border-violet-200 dark:border-violet-900 overflow-hidden">
                 <div className="px-3 py-1.5 flex items-center gap-2 bg-violet-800 text-white">
                   <Moon className="w-3.5 h-3.5 text-violet-200" aria-hidden />
-                  <span className="text-[12.5px] font-black">{k === tonight ? "Tonight — " : ""}{dayF.format(w.start)}</span>
+                  <span className="text-[12.5px] font-black">{k === tonight ? "Tonight - " : ""}{dayF.format(w.start)}</span>
                   <span className="text-[11px] text-violet-200">{clockF.format(w.start)} → {dayF.format(w.end).split(",")[0]} {clockF.format(w.end)}</span>
                   <span className="ml-auto text-[11px] font-semibold text-violet-200">{open.length} step{open.length === 1 ? "" : "s"}{rows.length > open.length ? ` · ${rows.length - open.length} done` : ""}</span>
                 </div>
@@ -501,7 +501,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
           {waiting.length > 0 && (
             <details className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/30">
               <summary className="cursor-pointer px-3 py-2 text-[12.5px] font-bold text-amber-900 dark:text-amber-200">
-                {waiting.length} night step{waiting.length === 1 ? "" : "s"} nobody&apos;s on — they wait for the day shift
+                {waiting.length} night step{waiting.length === 1 ? "" : "s"} nobody&apos;s on - they wait for the day shift
               </summary>
               <ul className="px-3 pb-2 space-y-0.5">
                 {waiting.sort((a, b) => startMsOf(a.m) - startMsOf(b.m)).map(({ m }) => (
@@ -518,7 +518,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
 
       {/* The whole choice, in a line */}
       <div className="rounded-lg border-2 border-violet-200 dark:border-violet-900 bg-violet-50/60 dark:bg-violet-950/30 px-4 py-2.5 text-[13px] text-[var(--color-text)]">
-        <b>On nights:</b> {fileMode ? "whatever the schedule file puts in night hours." : onCrews.length === 0 ? "nobody — all work is day work." : onCrews.map((c) => {
+        <b>On nights:</b> {fileMode ? "whatever the schedule file puts in night hours." : onCrews.length === 0 ? "nobody - all work is day work." : onCrews.map((c) => {
           const p = pickOf(c.crew)!;
           return `${crewName(c.crew)} (${p.all ? "all its work" : c.jobs.filter((j) => p.jobs.has(j.id)).map((j) => j.name.split(" - ")[0]).join(", ")})`;
         }).join("; ")}
@@ -527,7 +527,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
       <div className="rounded-lg border border-[var(--color-border)]">
         <button type="button" onClick={() => setShowHelpers((v) => !v)} className="w-full flex items-center gap-1.5 px-3 py-2 text-left text-[12.5px] font-bold text-[var(--color-text)]">
           <ChevronRight className={`w-3.5 h-3.5 transition-transform ${showHelpers ? "rotate-90" : ""}`} />
-          Extra hands for work pulled forward <span className="font-normal text-[12px] text-[var(--color-text-muted)]">— optional{chosen ? `: ${chosen.crew ?? "crew not set"}, ${chosen.hands} × ${chosen.hours} h` : ""}</span>
+          Extra hands for work pulled forward <span className="font-normal text-[12px] text-[var(--color-text-muted)]">- optional{chosen ? `: ${chosen.crew ?? "crew not set"}, ${chosen.hands} × ${chosen.hours} h` : ""}</span>
         </button>
         {showHelpers && (
           <div className="px-3 pb-2.5 space-y-1.5">
@@ -552,7 +552,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
           <button onClick={() => void save()} disabled={busy || !loaded || (done && same)} className={btn}>
             {(busy || !loaded) && <Loader2 className="w-4 h-4 animate-spin" />} {!loaded ? "Reading your saved night crews…" : done && same ? "Saved" : "Save night crews"}
           </button>
-          {savedNow && <span className="text-[12px] font-semibold text-emerald-700 dark:text-emerald-400">Saved — the calendar and the turnover follow it now.</span>}
+          {savedNow && <span className="text-[12px] font-semibold text-emerald-700 dark:text-emerald-400">Saved - the calendar and the turnover follow it now.</span>}
         </div>
       ) : <NoRights />}
     </div>
@@ -605,7 +605,7 @@ function CriticalStep({ projectId, milestones, canManage, critical, onSaved }: P
           <span className="shrink-0 text-[12px] font-mono text-[var(--color-text-muted)]">{counts.of[o.value]} of {counts.steps} open steps</span>
         </label>
       ))}
-      <p className="text-[12px] text-[var(--color-text-muted)]">Mark any task Critical / Not critical on its card afterwards — that wins over this.</p>
+      <p className="text-[12px] text-[var(--color-text-muted)]">Mark any task Critical / Not critical on its card afterwards - that wins over this.</p>
       <Msg err={err} />
       {canManage ? (
         <button onClick={() => void save()} disabled={busy || !loaded || critical === pick} className={btn}>
@@ -627,7 +627,7 @@ function BaselineStep({ milestones, canEdit, done, onSetBaseline }: Props & { do
     return <div className="text-[13px] text-[var(--color-text)]">Progress is measured against the plan captured {when ? <b>{when.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</b> : "earlier"}. Re-baseline from the schedule toolbar only if the plan was formally changed.</div>;
   }
   if (!canEdit) return <NoRights />;
-  if (milestones.length === 0) return <div className="text-[12.5px] text-[var(--color-text-muted)]">Import the schedule first — then capture it here.</div>;
+  if (milestones.length === 0) return <div className="text-[12.5px] text-[var(--color-text-muted)]">Import the schedule first - then capture it here.</div>;
   return (
     <div className="space-y-2.5">
       <p className="text-[12.5px] text-[var(--color-text)]">Capture the plan as it stands now. From then on, a step moved later still counts as late against it.</p>

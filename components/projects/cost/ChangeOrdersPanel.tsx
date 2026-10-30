@@ -110,7 +110,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
 
       {(cos ?? []).length === 0 ? (
         <div className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">
-          No change orders. When scope grows (or shrinks), propose it here with a reason —
+          No change orders. When scope grows (or shrinks), propose it here with a reason -
           the budget only ever changes on the record.
         </div>
       ) : (
@@ -118,7 +118,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
           {summary.byReason.length > 0 && (
             <div className="px-4 py-3 border-b border-[var(--color-border)]">
               <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-2">
-                Approved changes by reason — who owns the growth
+                Approved changes by reason - who owns the growth
               </div>
               <Donut
                 segments={summary.byReason.map((r) => ({ label: CO_REASON_LABEL[r.reason], value: Math.abs(r.amount) }))}
@@ -171,7 +171,7 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide 
             {!co.costAccountId && (
               <select value={accountPick} onChange={(e) => setAccountPick(e.target.value)}
                 className="h-6 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[10px] max-w-40"
-                title="Approval posts money — pick where it lands.">
+                title="Approval posts money - pick where it lands.">
                 <option value="">Posts to budget line…</option>
                 {accounts.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} ` : ""}{a.name}</option>)}
               </select>

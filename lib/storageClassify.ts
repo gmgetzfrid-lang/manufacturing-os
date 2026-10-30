@@ -24,7 +24,7 @@ const TABLE_CLASS: Record<string, TableClass> = {
   // ── Purge worry-free — disposable, not records ───────────────────────────
   notifications: {
     category: "purge", grower: true,
-    reason: "In-app bell alerts. Disposable — once read and older than ~90 days they have no value. Safe to purge.",
+    reason: "In-app bell alerts. Disposable - once read and older than ~90 days they have no value. Safe to purge.",
   },
   email_notifications: {
     category: "purge", grower: true,
@@ -36,23 +36,23 @@ const TABLE_CLASS: Record<string, TableClass> = {
   },
   knowledge_chunks: {
     category: "purge", grower: true,
-    reason: "The AI search index — extracted text + tsvector, typically the biggest DB table. REBUILDABLE: dropping chunks loses nothing permanent, re-ingesting the PDFs recreates them. If the database runs hot, this is the first place to reclaim.",
+    reason: "The AI search index - extracted text + tsvector, typically the biggest DB table. REBUILDABLE: dropping chunks loses nothing permanent, re-ingesting the PDFs recreates them. If the database runs hot, this is the first place to reclaim.",
   },
 
   // ── Knowledge library records ────────────────────────────────────────────
   knowledge_questions: {
     category: "archive", grower: true,
-    reason: "Every AI question and its cited answer — the library's own audit trail. Keep; archive old rows if it ever grows large.",
+    reason: "Every AI question and its cited answer - the library's own audit trail. Keep; archive old rows if it ever grows large.",
   },
   ai_key_agreements: {
     category: "archive",
-    reason: "Signed acceptable-use agreements (who, version, when, IP). Compliance records — never delete.",
+    reason: "Signed acceptable-use agreements (who, version, when, IP). Compliance records - never delete.",
   },
 
   // ── Archive — records: keep, never delete; archive old/cold ──────────────
   audit_logs: {
     category: "archive", grower: true,
-    reason: "Compliance audit trail. Grows fastest of all (one row per view/download/action) and is legally retained — keep, but archive the high-volume VIEW/DOWNLOAD noise off the hot DB after 90 days.",
+    reason: "Compliance audit trail. Grows fastest of all (one row per view/download/action) and is legally retained - keep, but archive the high-volume VIEW/DOWNLOAD noise off the hot DB after 90 days.",
   },
   download_audits: {
     category: "archive", grower: true,
@@ -88,11 +88,11 @@ const TABLE_CLASS: Record<string, TableClass> = {
   },
   transmittals: {
     category: "archive",
-    reason: "Formal document-distribution records — contractual/regulatory evidence. Keep.",
+    reason: "Formal document-distribution records - contractual/regulatory evidence. Keep.",
   },
   e_signatures: {
     category: "archive",
-    reason: "Approval signatures — immutable compliance proof. Keep forever.",
+    reason: "Approval signatures - immutable compliance proof. Keep forever.",
   },
   document_holds: {
     category: "archive",
@@ -108,11 +108,11 @@ const TABLE_CLASS: Record<string, TableClass> = {
   },
   milestone_progress_log: {
     category: "archive",
-    reason: "Every change to a task's % and status — rebuilds past shift reports. Archive with the project.",
+    reason: "Every change to a task's % and status - rebuilds past shift reports. Archive with the project.",
   },
   shift_handovers: {
     category: "archive",
-    reason: "Each turnover as shipped — what was handed over and asked. Archive with the project.",
+    reason: "Each turnover as shipped - what was handed over and asked. Archive with the project.",
   },
   notes: {
     category: "archive",
@@ -124,7 +124,7 @@ const TABLE_CLASS: Record<string, TableClass> = {
   },
   asset_photos: {
     category: "archive", grower: true,
-    reason: "Equipment photo gallery. Superseded photos accumulate — the binaries in R2 are the real cost; archive superseded.",
+    reason: "Equipment photo gallery. Superseded photos accumulate - the binaries in R2 are the real cost; archive superseded.",
   },
   project_documents: {
     category: "archive",
@@ -149,7 +149,7 @@ export function classifyTable(name: string): TableClass {
   return (
     TABLE_CLASS[name] ?? {
       category: "reference",
-      reason: "Configuration / reference / lookup data. Small and bounded — keep hot; not a cost concern.",
+      reason: "Configuration / reference / lookup data. Small and bounded - keep hot; not a cost concern.",
     }
   );
 }

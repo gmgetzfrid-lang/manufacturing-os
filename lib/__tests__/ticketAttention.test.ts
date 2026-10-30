@@ -45,7 +45,7 @@ describe("role predicates", () => {
   });
 });
 
-describe("supervisor / admin attention — the gap this closes", () => {
+describe("supervisor / admin attention - the gap this closes", () => {
   it("flags PENDING_IFC for a supervisor, matching ticketRouting", () => {
     const t = mk({ status: "PENDING_IFC", assignedDrafterId: "someone-else" });
     expect(isActionRequired(t, ctx(["DraftingSupervisor"]))).toBe(true);
@@ -60,7 +60,7 @@ describe("supervisor / admin attention — the gap this closes", () => {
       expect(isActionRequired(mk({ status }), ctx(["Admin"]))).toBe(true);
     }
   });
-  it("does NOT flag DRAFTING — that's the drafter's bench, not the supervisor's", () => {
+  it("does NOT flag DRAFTING - that's the drafter's bench, not the supervisor's", () => {
     expect(isActionRequired(mk({ status: "DRAFTING", assignedDrafterId: "d1" }), ctx(["Admin"]))).toBe(false);
   });
 });

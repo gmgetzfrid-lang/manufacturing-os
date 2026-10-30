@@ -103,21 +103,21 @@ describe("discovery on the turnover and in the time log", () => {
     mk({ id: "w", parentId: "v7", name: "Weld repair tray 14", responsibleParty: "Ancon", durationHours: 8, plannedStartAt: at("2026-10-27", "19:00"), plannedAt: at("2026-10-28", "03:00"), attributes: { discovery: discoveryAttr(rec) } })];
   const day = shiftWindow("2026-10-27", "day", LA, times);
   const report = buildShiftReport({ milestones: ms, tz: LA, times, shift: day, now: day.end });
-  it("its own section at the end of the email, with what it did — and a tag on its step", () => {
+  it("its own section at the end of the email, with what it did - and a tag on its step", () => {
     const sections = turnoverUpdate(report, f, { pctOf: () => 0, finishOf: () => undefined, discovery: discoveries(ms) });
     expect(sections[sections.length - 1].id).toBe("discovery");
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections });
-    expect(text).toMatch(/DISCOVERY WORK — DAY SHIFT 10-27 — 1 added this shift · 8 h added · turnaround \+6 h · 1 on the critical path · so far 1 \(8 h, finish \+6 h\)/);
+    expect(text).toMatch(/DISCOVERY WORK - DAY SHIFT 10-27 - 1 added this shift · 8 h added · turnaround \+6 h · 1 on the critical path · so far 1 \(8 h, finish \+6 h\)/);
     expect(text).toMatch(/Tray 14 cracked at the weld/);
-    expect(text).toMatch(/Weld repair tray 14 — Ancon, 8 h · not started/);
+    expect(text).toMatch(/Weld repair tray 14 - Ancon, 8 h · not started/);
     expect(text).toMatch(/8 h of work · task finish \+8 h · turnaround finish \+6 h · on the critical path/);
-    expect(text).toMatch(/Discovery — Tray 14 cracked at the weld/);
+    expect(text).toMatch(/Discovery - Tray 14 cracked at the weld/);
   });
-  it("added scope reads as added scope — the section, the step's tag, the time log", () => {
+  it("added scope reads as added scope - the section, the step's tag, the time log", () => {
     const asAdded = ms.map((m) => { const d = discoveryOf(m); return d ? { ...m, attributes: { ...(m.attributes ?? {}), discovery: discoveryAttr({ ...d, kind: "added" }) } } as Milestone : m; });
     const sections = turnoverUpdate(report, f, { pctOf: () => 0, finishOf: () => undefined, discovery: discoveries(asAdded) });
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections });
-    expect(text).toMatch(/ADDED SCOPE — DAY SHIFT 10-27 — 1 added this shift/);
+    expect(text).toMatch(/ADDED SCOPE - DAY SHIFT 10-27 - 1 added this shift/);
     expect(text).not.toMatch(/DISCOVERY WORK/);
     const rows = buildTimeLog({ milestones: asAdded, log: [], notes: [], tz: LA, times });
     expect(rows.find((r) => r.what === "Added scope raised")).toMatchObject({ at: found, step: "Weld repair tray 14" });
@@ -143,7 +143,7 @@ describe("a comment typed without a time, in the time log", () => {
   const times = { dayStart: "06:00", nightStart: "18:00" };
   const ms = [mk({ id: "v7", name: "V-7 Tower" }), mk({ id: "s", parentId: "v7", name: "Clean trays" })];
   const note = (createdAt: string, happenedAt?: string) => ({ id: createdAt, orgId: "o", milestoneId: "s", kind: "note", body: "Trays 1–10 cleaned", createdBy: "u", createdAt, ...(happenedAt ? { happenedAt } : {}) }) as never;
-  it("written at the turnover (just after the shift ended) is the shift that ended — as the report files it", () => {
+  it("written at the turnover (just after the shift ended) is the shift that ended - as the report files it", () => {
     const rows = buildTimeLog({ milestones: ms, log: [], notes: [note("2026-10-27T18:20:00-07:00")], tz: LA, times });
     expect(rows[0].shift).toMatch(/Oct 27 · Day/);
   });
@@ -153,7 +153,7 @@ describe("a comment typed without a time, in the time log", () => {
   });
 });
 
-describe("relinkWithout — deleting a discovery keeps the chain", () => {
+describe("relinkWithout - deleting a discovery keeps the chain", () => {
   it("a step that waited on the removed steps waits on what they waited on", () => {
     // A → D1 → D2 → X (D1, D2 the discovery's steps); Y waits on D2 and B.
     const rows = [

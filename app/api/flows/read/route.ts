@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
   const assets = (assetRows as Array<{ id: string; tag: string }>) ?? [];
   const units = book?.units ?? [];
   if (assets.length === 0 && units.length === 0) {
-    return bad("Nothing to connect yet — add equipment to the registry (or units to the Site Codebook) first, so the reader has real entities to ground on.", 412);
+    return bad("Nothing to connect yet - add equipment to the registry (or units to the Site Codebook) first, so the reader has real entities to ground on.", 412);
   }
 
   const roster: Array<{ ref: string; kind: "asset" | "unit"; id: string; label: string }> = [];
@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
     if (!conn) throw new GovernedCallError("Add your Claude or OpenAI key in AI settings first.", 412);
     const { ALLOWED_PROVIDERS } = await import("@/lib/ai/pricing");
     if (!ALLOWED_PROVIDERS.includes(conn.provider as AiProviderId)) {
-      throw new GovernedCallError("Your saved key uses a blocked provider — save a Claude or OpenAI key.", 412);
+      throw new GovernedCallError("Your saved key uses a blocked provider - save a Claude or OpenAI key.", 412);
     }
     const { getMonthUsage, getCapUsd, recordAskUsage } = await import("@/lib/ai/usageServer");
     const [monthSoFar, capUsd] = await Promise.all([getMonthUsage(orgId, userId), getCapUsd(orgId, userId)]);
@@ -179,7 +179,7 @@ export async function POST(req: NextRequest) {
     skippedSettled,
     pagesRead: images.map((i) => i.page),
     note: proposed === 0
-      ? "No new flows found — the drawing may not print flow arrows between known tags, or everything visible was already decided."
+      ? "No new flows found - the drawing may not print flow arrows between known tags, or everything visible was already decided."
       : undefined,
   });
 }

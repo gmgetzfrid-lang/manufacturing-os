@@ -10,6 +10,8 @@
 // The talk-track parts of a meeting (prompts, sign-off lines) aren't data
 // and aren't written: an update to management is the facts.
 
+import { noEmDash } from "@/lib/noEmDash";
+
 export type Tone = "rose" | "amber" | "emerald" | "slate" | "muted";
 
 export interface ExportTag { t: string; tone: Tone }
@@ -128,14 +130,19 @@ export function groupRows(rows: ExportStepRow[], flat?: boolean): Array<{ group?
 
 const tagText = (tags?: ExportTag[]) => (tags?.length ? ` [${tags.map((t) => t.t).join(", ")}]` : "");
 
+/** The update as plain text: no em dash in it, whatever the text came from. */
 export function toPlainText(d: ExportDoc): string {
+  return noEmDash(plainText(d));
+}
+
+function plainText(d: ExportDoc): string {
   const out: string[] = [];
-  out.push(`${d.kind.toUpperCase()} — ${d.project}`);
+  out.push(`${d.kind.toUpperCase()} - ${d.project}`);
   out.push(`${d.when} · as of ${d.asOf}`);
-  if (d.status) out.push(`Status: ${d.status.label}${d.status.detail ? ` — ${d.status.detail}` : ""}`);
+  if (d.status) out.push(`Status: ${d.status.label}${d.status.detail ? ` - ${d.status.detail}` : ""}`);
   for (const s of d.sections) {
     out.push("");
-    out.push(`${s.title.toUpperCase()}${s.sub ? ` — ${s.sub}` : ""}`);
+    out.push(`${s.title.toUpperCase()}${s.sub ? ` - ${s.sub}` : ""}`);
     for (const b of s.blocks) {
       switch (b.k) {
         case "stats":
@@ -159,7 +166,7 @@ export function toPlainText(d: ExportDoc): string {
         case "lines":
           if (b.title) out.push(`   ${b.title}`);
           for (const x of b.items) {
-            out.push(`   • ${x.lead} — ${x.text}${x.aside ? ` · ${x.aside}` : ""}`);
+            out.push(`   • ${x.lead} - ${x.text}${x.aside ? ` · ${x.aside}` : ""}`);
             if (x.note) out.push(`       "${x.note}"`);
           }
           break;
@@ -180,7 +187,7 @@ export function toPlainText(d: ExportDoc): string {
         case "columns":
           for (const c of b.cols) {
             if (c.title) out.push(`   ${c.title.toUpperCase()}`);
-            for (const r of c.rows) out.push(`   • ${r.title}${r.value ? ` — ${r.value}` : ""}${r.text ? ` — ${r.text}` : ""}${r.note ? ` (${r.note})` : ""}`);
+            for (const r of c.rows) out.push(`   • ${r.title}${r.value ? ` - ${r.value}` : ""}${r.text ? ` - ${r.text}` : ""}${r.note ? ` (${r.note})` : ""}`);
           }
           break;
         case "table": {
@@ -197,7 +204,7 @@ export function toPlainText(d: ExportDoc): string {
               const sub = typeof c !== "string" && c.sub?.length ? ` (${c.sub.map((x) => x.t).join("; ")})` : "";
               return (label && (typeof c === "string" || (!c.tone && !c.bold)) ? `${label} ${v}` : v) + lines + note + sub;
             }).filter(Boolean).join(" · ");
-            if (first) out.push(`   • ${first}${tail ? ` — ${tail}` : ""}`);
+            if (first) out.push(`   • ${first}${tail ? ` - ${tail}` : ""}`);
             else if (tail) out.push(`       ${tail}`);
           }
           break;
@@ -217,7 +224,7 @@ export function toPlainText(d: ExportDoc): string {
                 r.who ? `who: ${r.who}` : null,
                 r.wo ? `WO ${r.wo}` : null,
               ].filter(Boolean);
-              out.push(`${indent}${bits.join(" — ")}`);
+              out.push(`${indent}${bits.join(" - ")}`);
               if (r.note) out.push(`${indent}  ${r.note}`);
             }
           }
@@ -276,7 +283,7 @@ function blockHtml(b: ExportBlock): string {
       return (b.title ? `<p style="${FONT}font-size:12px;font-weight:bold;margin:10px 0 3px;color:${b.tone ? TONE[b.tone].fg : INK};">${esc(b.title)}</p>` : "") +
         `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;">${b.items.map((x) =>
           `<tr>${td(`font-size:13px;color:${MUTED};padding:3px 6px 3px 2px;vertical-align:top;width:10px;`, "&bull;")}${td(`font-size:13px;color:${INK};padding:3px 0;vertical-align:top;line-height:1.4;`,
-            `<b style="color:${INK};">${esc(x.lead)}</b> — <span style="color:${x.tone ? (x.tone === "muted" ? MUTED : TONE[x.tone].fg) : INK};">${esc(x.text)}</span>` +
+            `<b style="color:${INK};">${esc(x.lead)}</b> - <span style="color:${x.tone ? (x.tone === "muted" ? MUTED : TONE[x.tone].fg) : INK};">${esc(x.text)}</span>` +
             (x.aside ? `<span style="color:${MUTED};"> · ${esc(x.aside)}</span>` : "") +
             (x.note ? `<div style="${FONT}font-size:11px;font-style:italic;color:${MUTED};">“${esc(x.note)}”</div>` : ""))}</tr>`).join("")}</table>`;
     case "bullets":
@@ -363,7 +370,7 @@ function blockHtml(b: ExportBlock): string {
       for (const { group, rows } of groupRows(b.rows, b.flat)) {
         if (group) {
           html += `<tr>${td(`font-size:12px;color:${INK};background-color:#f1f5f9;padding:4px 6px;border-top:1px solid ${LINE};`,
-            `<b>${esc(group.title)}</b>${group.crumbs ? ` <span style="color:${MUTED};">· ${esc(group.crumbs)}</span>` : ""}${group.meta ? ` <span style="color:#475569;font-size:11px;">— ${esc(group.meta)}</span>` : ""}`,
+            `<b>${esc(group.title)}</b>${group.crumbs ? ` <span style="color:${MUTED};">· ${esc(group.crumbs)}</span>` : ""}${group.meta ? ` <span style="color:#475569;font-size:11px;">- ${esc(group.meta)}</span>` : ""}`,
             `colspan="${cols}" bgcolor="#f1f5f9" `)}</tr>`;
         }
         for (const r of rows) {
@@ -383,7 +390,12 @@ function blockHtml(b: ExportBlock): string {
   }
 }
 
+/** The update as email HTML: no em dash in it, whatever the text came from. */
 export function toEmailHtml(d: ExportDoc): string {
+  return noEmDash(emailHtml(d));
+}
+
+function emailHtml(d: ExportDoc): string {
   // No dark blocks with light text anywhere: phone mail apps switching
   // light / dark mode recolor text and backgrounds separately, and white
   // text on a kept-dark background comes out black on navy. Light panels

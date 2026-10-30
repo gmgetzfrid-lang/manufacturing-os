@@ -23,7 +23,7 @@ export const maxDuration = 120;
 const UUID = /^[0-9a-f-]{36}$/i;
 const bad = (msg: string, status = 400) => NextResponse.json({ error: msg }, { status });
 const missingTables = (m?: string) => /knowledge_eval|does not exist|schema cache/i.test(m ?? "");
-const MIGRATION = "Answer tests need migration 20261025_answer_tests.sql — run it in Supabase.";
+const MIGRATION = "Answer tests need migration 20261025_answer_tests.sql - run it in Supabase.";
 
 async function authController(req: NextRequest, orgId: string) {
   const authHeader = req.headers.get("authorization");

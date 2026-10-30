@@ -32,7 +32,7 @@ export default function CrewPicker({ value, onChange, crews, className = "", lab
     <select value={value.trim()} aria-label={label} disabled={disabled}
       onChange={(e) => { if (e.target.value === OTHER) { setTyping(true); onChange(""); } else onChange(e.target.value); }}
       className={`h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12.5px] text-[var(--color-text)] ${className}`}>
-      <option value="">— Crew —</option>
+      <option value="">- Crew -</option>
       {list.map((c) => <option key={c} value={c}>{c}</option>)}
       <option value={OTHER}>Other…</option>
     </select>

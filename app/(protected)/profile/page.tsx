@@ -132,7 +132,7 @@ export default function ProfilePage() {
                 )}
               </div>
               <div className="text-[10px] text-[var(--color-text-muted)]">
-                No photo? Your initials are shown instead — set your display name below so they&apos;re right.
+                No photo? Your initials are shown instead - set your display name below so they&apos;re right.
               </div>
               <input
                 ref={avatarInputRef}
@@ -153,7 +153,7 @@ export default function ProfilePage() {
             </div>
           </div>
 
-          <Row icon={Mail} label="Email" value={userEmail ?? "—"} mono />
+          <Row icon={Mail} label="Email" value={userEmail ?? "-"} mono />
           <div className="mt-3">
             <label className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest inline-flex items-center gap-1">
               <Edit3 className="w-2.5 h-2.5" /> Display name
@@ -198,7 +198,7 @@ export default function ProfilePage() {
         {/* Current session */}
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
           <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Current session</div>
-          <Row icon={Shield} label="Role" value={activeRole || "—"} />
+          <Row icon={Shield} label="Role" value={activeRole || "-"} />
         </div>
 
         {/* Quick links */}

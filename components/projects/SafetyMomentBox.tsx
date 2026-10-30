@@ -47,7 +47,7 @@ export function SafetyMomentBox({ jobs, shift, T, print, project, recent, label 
     <div className={print ? "space-y-[6pt]" : "keep space-y-1.5"}>
       <div className="flex flex-wrap items-baseline gap-x-2">
         <span className={`inline-flex items-center gap-1 font-semibold text-orange-800 dark:text-orange-300 ${print ? "text-[10pt]" : "text-[12px]"}`}>
-          <ShieldAlert className="w-3.5 h-3.5 self-center" aria-hidden="true" /> Safety topics{label ? ` — ${label}` : ""}
+          <ShieldAlert className="w-3.5 h-3.5 self-center" aria-hidden="true" /> Safety topics{label ? ` - ${label}` : ""}
         </span>
         {!print && <span className="text-[11px] text-[var(--color-text-muted)]">Tap one to present it full screen</span>}
       </div>
@@ -121,7 +121,7 @@ function Presenter({ topics, at, label, onMove, onClose }: { topics: SafetyTopic
     <div className="fixed inset-0 z-[400] bg-slate-950 text-white flex flex-col" role="dialog" aria-modal="true" aria-label={`Safety topic ${at + 1} of ${topics.length}`}>
       <div className="flex items-center gap-3 px-5 py-3 border-b border-white/10">
         <ShieldAlert className="w-5 h-5 text-orange-400" aria-hidden />
-        <span className="text-[13px] font-black uppercase tracking-widest text-white/70">Safety{label ? ` — ${label}` : ""}</span>
+        <span className="text-[13px] font-black uppercase tracking-widest text-white/70">Safety{label ? ` - ${label}` : ""}</span>
         <span className="ml-auto text-[13px] font-bold text-white/60 tabular-nums">{at + 1} / {topics.length}</span>
         <button type="button" onClick={onClose} aria-label="Close" className="p-1.5 rounded-md hover:bg-white/10"><X className="w-5 h-5" /></button>
       </div>

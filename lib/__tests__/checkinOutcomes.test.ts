@@ -33,7 +33,7 @@ describe("purposeGroup", () => {
   });
 });
 
-describe("mocRequirementFor — the PSM gate", () => {
+describe("mocRequirementFor - the PSM gate", () => {
   it("requires an MOC position only for real changes to declared drawings", () => {
     expect(mocRequirementFor("drawing", "discrepancy")).toBe("required");
     expect(mocRequirementFor("drawing", "revision_requested")).toBe("required");
@@ -48,7 +48,7 @@ describe("mocRequirementFor — the PSM gate", () => {
   });
 });
 
-describe("checkInCardsFor — purpose-tuned card sets", () => {
+describe("checkInCardsFor - purpose-tuned card sets", () => {
   it("as-built walkdown gets exactly the walkdown question, attestation recommended", () => {
     const cards = checkInCardsFor(ctx({ purpose: "As-Built Verification", docClass: "drawing" }));
     expect(ids(cards)).toEqual(["field_verified", "discrepancy"]);
@@ -132,7 +132,7 @@ describe("checkInCardsFor — purpose-tuned card sets", () => {
     }
   });
 
-  it("no card ever offers canned text — claim branches all demand a typed note", () => {
+  it("no card ever offers canned text - claim branches all demand a typed note", () => {
     const purposes = ["As-Built Verification", "Field Reference", "Review / Approval", "Revision / Update", "Other"];
     for (const purpose of purposes) {
       for (const card of checkInCardsFor(ctx({ purpose, docClass: "drawing", othersRemain: true }))) {
@@ -144,7 +144,7 @@ describe("checkInCardsFor — purpose-tuned card sets", () => {
   });
 });
 
-describe("validateCheckIn — everything stated up front", () => {
+describe("validateCheckIn - everything stated up front", () => {
   const drawingRevision = checkInCardsFor(ctx({ docClass: "drawing" }))
     .find((c) => c.id === "revision")!;
 
@@ -183,7 +183,7 @@ describe("docClass resolution + suggestion", () => {
     expect(resolveEffectiveDocClass("p&id", null, null)).toBeNull();
   });
 
-  it("suggests from CAD source custody and file type — evidence, not guesswork", () => {
+  it("suggests from CAD source custody and file type - evidence, not guesswork", () => {
     expect(suggestDocClass({ sourceFileName: "U300-PID-001.dwg" })).toBe("drawing");
     expect(suggestDocClass({ fileType: "dxf" })).toBe("drawing");
     expect(suggestDocClass({ fileType: ".docx" })).toBe("procedure");

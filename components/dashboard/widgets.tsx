@@ -215,7 +215,7 @@ function InboxBody() {
         </div>
         {sum(buckets.counts) > 0
           ? <MiniBars values={buckets.counts} labels={buckets.labels} height={36} />
-          : <Quiet label="Nothing has pinged you in 14 days — enjoy it." />}
+          : <Quiet label="Nothing has pinged you in 14 days - enjoy it." />}
       </div>
       <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
         <DeckLink href="/requests" label="Requests" sub="Open portal" />
@@ -357,7 +357,7 @@ function SuggestedActionsBody() {
   if (!snap) return <BodyShell>Couldn&apos;t load suggestions right now.</BodyShell>;
   const nudges = computeNudges(snap);
   if (nudges.length === 0) {
-    return <BodyShell>Nothing to suggest — you&apos;re ahead of the work. Nice.</BodyShell>;
+    return <BodyShell>Nothing to suggest - you&apos;re ahead of the work. Nice.</BodyShell>;
   }
   return (
     <div className={`${FILL}`}>
@@ -460,7 +460,7 @@ function OutstandingBody() {
     + snap.myOpenHolds.length + snap.transmittalsAwaitingAck.length + snap.milestonesUpcoming.length;
 
   if (total === 0) {
-    return <BodyShell>Nothing outstanding — no markups, checkouts, holds, transmittals or milestones pending.</BodyShell>;
+    return <BodyShell>Nothing outstanding - no markups, checkouts, holds, transmittals or milestones pending.</BodyShell>;
   }
 
   return (
@@ -503,7 +503,7 @@ function OutstandingBody() {
             {snap.myStaleCheckouts.length > 0 && (
               <div className="mb-2 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded px-2 py-1">
                 <AlertTriangle className="inline w-3 h-3 mr-1" />
-                {snap.myStaleCheckouts.length} past expected release — please check in or extend
+                {snap.myStaleCheckouts.length} past expected release - please check in or extend
               </div>
             )}
             <ul className="space-y-1.5">
@@ -516,7 +516,7 @@ function OutstandingBody() {
                   <Link href={`/documents/${s.libraryId ?? ""}?doc=${s.documentId}`} className="text-blue-700 hover:underline font-bold">
                     {s.documentId.slice(0, 8)}
                   </Link>
-                  {s.purpose && <span className="text-[var(--color-text-faint)] truncate">— {s.purpose}</span>}
+                  {s.purpose && <span className="text-[var(--color-text-faint)] truncate">- {s.purpose}</span>}
                   <span className="ml-auto text-[10px] text-[var(--color-text-muted)]">{formatAgo(typeof s.startedAt === "string" ? s.startedAt : undefined)}</span>
                 </li>
               ))}
@@ -767,18 +767,18 @@ function CommandDeckBody() {
 // ─── catalog ─────────────────────────────────────────────────────
 export const WIDGET_CATALOG: Record<WidgetType, WidgetMeta> = {
   commandDeck: {
-    type: "commandDeck", title: "Command Deck", description: "Mission-control hero — greeting, live status & the three pillars.",
+    type: "commandDeck", title: "Command Deck", description: "Mission-control hero - greeting, live status & the three pillars.",
     icon: LayoutDashboard, tone: "indigo", href: "/inbox", cta: "Open command deck", category: "You",
     defaultW: 12, defaultH: 4, minW: 6, minH: 3, maxW: 12, bare: true, Body: CommandDeckBody,
   },
   askKnowledge: {
-    type: "askKnowledge", title: "Ask Knowledge", description: "Ask a library — answer first, proof to the page.",
+    type: "askKnowledge", title: "Ask Knowledge", description: "Ask a library - answer first, proof to the page.",
     icon: Sparkles, tone: "orange", href: "/assistant", cta: "Open the Assistant", category: "Knowledge", isNew: true,
     defaultW: 6, defaultH: 5, minW: 4, minH: 4, multi: true,
     settings: [
       { key: "libraryId", type: "knowledgeLibrary", label: "Library", help: "Which knowledge library this widget asks. You can also switch it inside the widget." },
       { key: "mode", type: "select", label: "Default answer style", default: "auto", options: [
-        { value: "auto", label: "Auto — the AI picks" }, { value: "answer", label: "Direct answer" },
+        { value: "auto", label: "Auto - the AI picks" }, { value: "answer", label: "Direct answer" },
         { value: "compliance", label: "Compliance check" }, { value: "explore", label: "Explore" },
       ] },
     ],
@@ -794,7 +794,7 @@ export const WIDGET_CATALOG: Record<WidgetType, WidgetMeta> = {
     Body: DocBrowserBody,
   },
   draftingRequests: {
-    type: "draftingRequests", title: "Drafting Requests", description: "Open requests — yours, assigned, unassigned.",
+    type: "draftingRequests", title: "Drafting Requests", description: "Open requests - yours, assigned, unassigned.",
     icon: MailPlus, tone: "orange", href: "/requests", cta: "Open request portal", category: "Work",
     defaultW: 6, defaultH: 5, minW: 4, minH: 3, multi: true,
     settings: [
@@ -833,7 +833,7 @@ export const WIDGET_CATALOG: Record<WidgetType, WidgetMeta> = {
     defaultW: 6, defaultH: 6, minW: 4, minH: 4, Body: AttentionBody,
   },
   suggestedActions: {
-    type: "suggestedActions", title: "Suggested Actions", description: "Proactive nudges — what to do next.",
+    type: "suggestedActions", title: "Suggested Actions", description: "Proactive nudges - what to do next.",
     icon: Zap, tone: "amber", href: "/inbox", cta: "Open command deck", category: "You",
     defaultW: 6, defaultH: 4, minW: 3, minH: 3, Body: SuggestedActionsBody,
   },
@@ -855,7 +855,7 @@ export const WIDGET_CATALOG: Record<WidgetType, WidgetMeta> = {
     Body: ProjectsBody,
   },
   activity: {
-    type: "activity", title: "Activity", description: "Who changed what — linked to the item.",
+    type: "activity", title: "Activity", description: "Who changed what - linked to the item.",
     icon: ActivityIcon, tone: "emerald", href: "/activity", cta: "Open activity", category: "Work",
     defaultW: 6, defaultH: 4, minW: 3, minH: 3, multi: true,
     settings: [{ key: "onlyMine", type: "toggle", label: "Only my activity", default: false }],

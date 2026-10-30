@@ -34,7 +34,7 @@ const TARGETS: PurgeTarget[] = [
   {
     table: "notifications",
     label: "Read in-app notifications",
-    reason: "Bell items the recipient has already read. Disposable once read and aged — the lasting record of any action lives in the audit log.",
+    reason: "Bell items the recipient has already read. Disposable once read and aged - the lasting record of any action lives in the audit log.",
   },
   {
     table: "email_notifications",
@@ -120,7 +120,7 @@ export async function GET(req: NextRequest) {
     totalEstBytes,
     note:
       "Counts are exact for your workspace; byte figures are estimates from average row size " +
-      "(actual reclaim depends on Postgres VACUUM). Only disposable byproducts are listed — records are never eligible.",
+      "(actual reclaim depends on Postgres VACUUM). Only disposable byproducts are listed - records are never eligible.",
   });
 }
 

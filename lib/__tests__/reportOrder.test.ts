@@ -31,7 +31,7 @@ describe("dragged order", () => {
     expect(inOrder(["a", "b", "c", "d"], (x) => x, ["c", "a"])).toEqual(["c", "a", "b", "d"]);
     expect(inOrder(["a", "b"], (x) => x, undefined)).toEqual(["a", "b"]);
   });
-  it("the next crew's list follows it — its numbers too", () => {
+  it("the next crew's list follows it - its numbers too", () => {
     const usual = turnoverPlan(report, () => false).items.filter((x) => x.kind === "next").map((x) => x.r.leaf.id);
     expect(usual).toEqual(["a", "b", "c"]);
     const mine = turnoverPlan(report, () => false, { next: ["c", "b", "a"] }).items.filter((x) => x.kind === "next").map((x) => x.r.leaf.id);

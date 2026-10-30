@@ -92,9 +92,9 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
           </div>
           <div className="text-xs text-[var(--color-text-muted)]">
             {cases.length === 0
-              ? "No tests yet — under any answer, “Make this a test case” marks what a right answer must do."
+              ? "No tests yet - under any answer, “Make this a test case” marks what a right answer must do."
               : shownRun
-                ? <>{cases.length} test{cases.length === 1 ? "" : "s"} · last run {when(shownRun.created_at)}: <b className={shownRun.failed ? "text-rose-600" : "text-emerald-600"}>{shownRun.passed} of {shownRun.total} passed</b>{shownRun.status === "stopped" ? ` · stopped — ${shownRun.stop_reason ?? ""}` : ""} · ${Number(shownRun.cost_usd).toFixed(2)}</>
+                ? <>{cases.length} test{cases.length === 1 ? "" : "s"} · last run {when(shownRun.created_at)}: <b className={shownRun.failed ? "text-rose-600" : "text-emerald-600"}>{shownRun.passed} of {shownRun.total} passed</b>{shownRun.status === "stopped" ? ` · stopped - ${shownRun.stop_reason ?? ""}` : ""} · ${Number(shownRun.cost_usd).toFixed(2)}</>
                 : <>{cases.length} test{cases.length === 1 ? "" : "s"} · never run</>}
           </div>
         </button>
@@ -121,7 +121,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
           </div>
           <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
             <Loader2 className="w-3 h-3 animate-spin inline mr-1" />
-            Asking test {Math.min(running.done + 1, running.total)} of {running.total} — each is a full question, about a minute · {running.run.passed} passed, {running.run.failed} failed so far · ${Number(running.run.cost_usd).toFixed(2)} of ${Number(running.run.cost_cap_usd).toFixed(2)}
+            Asking test {Math.min(running.done + 1, running.total)} of {running.total} - each is a full question, about a minute · {running.run.passed} passed, {running.run.failed} failed so far · ${Number(running.run.cost_usd).toFixed(2)} of ${Number(running.run.cost_cap_usd).toFixed(2)}
           </div>
         </div>
       )}
@@ -151,7 +151,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
               <span>Showing run</span>
               <select value={state.runId ?? ""} onChange={(e) => void load(e.target.value)} className="rounded border border-[var(--color-border)] bg-transparent px-1.5 py-0.5">
                 {state.runs.map((r) => (
-                  <option key={r.id} value={r.id}>{when(r.created_at)} — {r.passed}/{r.total}{r.is_baseline ? " (baseline)" : ""} · version {r.engine_version ?? "?"}</option>
+                  <option key={r.id} value={r.id}>{when(r.created_at)} - {r.passed}/{r.total}{r.is_baseline ? " (baseline)" : ""} · version {r.engine_version ?? "?"}</option>
                 ))}
               </select>
               {shownRun && !shownRun.is_baseline && shownRun.status !== "running" && (

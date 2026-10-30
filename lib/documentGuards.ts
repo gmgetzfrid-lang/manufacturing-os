@@ -131,7 +131,7 @@ export function evaluatePublishGuard(
     return {
       ok: false,
       code: "locked_by_other",
-      message: `This document is checked out by ${who}. Ask them to check in — or force-unlock it — before publishing a new revision.`,
+      message: `This document is checked out by ${who}. Ask them to check in - or force-unlock it - before publishing a new revision.`,
     };
   }
 

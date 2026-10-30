@@ -29,7 +29,7 @@ export default function RetentionPill({ retentionUntil, dispositionState, legalH
   const Icon = cfg.Icon;
   return (
     <span
-      title={legalHold ? "Under legal hold — can't be deleted or disposed" : retentionUntil ? `Retention until ${retentionUntil.slice(0, 10)}` : undefined}
+      title={legalHold ? "Under legal hold - can't be deleted or disposed" : retentionUntil ? `Retention until ${retentionUntil.slice(0, 10)}` : undefined}
       className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold whitespace-nowrap ${cfg.cls} ${className}`}
     >
       <Icon className="w-3 h-3 shrink-0" /> {compact ? cfg.short : cfg.full}

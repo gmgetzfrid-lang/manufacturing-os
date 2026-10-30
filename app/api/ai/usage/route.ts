@@ -144,7 +144,7 @@ export async function POST(req: NextRequest) {
     const missing = readError.code === "42P01" || /does not exist/i.test(readError.message);
     return bad(
       missing
-        ? "The ai_usage_limits table doesn't exist yet — run migration 20260916 in Supabase first."
+        ? "The ai_usage_limits table doesn't exist yet - run migration 20260916 in Supabase first."
         : `Couldn't read the current cap: ${readError.message}`,
       missing ? 424 : 500,
     );

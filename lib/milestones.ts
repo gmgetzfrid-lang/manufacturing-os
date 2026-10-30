@@ -16,6 +16,7 @@
 // milestones complete deliberately. Future automation can wire in
 // as a separate enhancement.
 
+import { noEmDash } from "@/lib/noEmDash";
 import { supabase } from "@/lib/supabase";
 import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
 import { reflowAllAncestors, type ReflowNode } from "@/lib/scheduleReflow";
@@ -453,7 +454,7 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
     status: input.status,
     // A hold keeps the reason on record unless a new one is given; leaving
     // the hold clears it (a stale "waiting on crane" would read as current).
-    status_reason: HOLDS.includes(input.status) ? (input.statusReason?.trim() || curRow?.status_reason || null) : null,
+    status_reason: HOLDS.includes(input.status) ? (noEmDash(input.statusReason?.trim() ?? "") || curRow?.status_reason || null) : null,
     updated_at: now,
     updated_by: input.actorUserId,
   };
@@ -716,7 +717,7 @@ export async function setActualTimes(input: {
   const m = rowToMilestone(data as MilestoneRow);
   await addMilestoneNote({
     orgId: m.orgId, milestoneId: m.id!, kind: "status", statusAt: m.status,
-    body: `Actual times corrected${input.actualStartAt !== undefined ? ` · started ${input.actualStartAt ? new Date(input.actualStartAt).toISOString() : "—"}` : ""}${input.actualAt !== undefined ? ` · finished ${input.actualAt ? new Date(input.actualAt).toISOString() : "—"}` : ""}`,
+    body: `Actual times corrected${input.actualStartAt !== undefined ? ` · started ${input.actualStartAt ? new Date(input.actualStartAt).toISOString() : "-"}` : ""}${input.actualAt !== undefined ? ` · finished ${input.actualAt ? new Date(input.actualAt).toISOString() : "-"}` : ""}`,
     createdBy: input.actorUserId, createdByName: input.actorUserName,
   }).catch(() => undefined);
   return m;
@@ -754,7 +755,8 @@ export async function addMilestoneNote(input: {
   const row: Record<string, unknown> = {
     org_id: input.orgId, milestone_id: input.milestoneId,
     kind: input.kind, status_at: input.statusAt ?? null,
-    body: input.body?.trim() || null,
+    // What's typed: no em dash (a phone makes one of "--").
+    body: noEmDash(input.body?.trim() ?? "") || null,
     created_by: input.createdBy, created_by_name: input.createdByName ?? null,
   };
   if (input.happenedAt) row.happened_at = input.happenedAt;
@@ -905,11 +907,11 @@ export async function latestNotes(milestoneIds: string[], kind: "note" | "behind
 
 /** Fix a comment's wording. */
 export async function updateMilestoneNote(id: string, body: string): Promise<void> {
-  const text = body.trim();
-  if (!text) throw new Error("A comment can't be empty — delete it instead.");
+  const text = noEmDash(body.trim());
+  if (!text) throw new Error("A comment can't be empty - delete it instead.");
   const { data, error } = await supabase.from("milestone_notes").update({ body: text }).eq("id", id).select("id");
   if (error) throw new Error(error.message);
-  if (!data || data.length === 0) throw new Error("That comment couldn't be changed — only the person who wrote it can.");
+  if (!data || data.length === 0) throw new Error("That comment couldn't be changed - only the person who wrote it can.");
   if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("milestone-notes:changed"));
 }
 
@@ -951,7 +953,7 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
 
   const { data: gone, error: delErr } = await supabase.from("milestones").delete().eq("id", id).select("id");
   if (delErr) throw new Error(delErr.message);
-  if (!gone || gone.length === 0) throw new Error("This task wasn't deleted — you may not have permission to delete it on this project.");
+  if (!gone || gone.length === 0) throw new Error("This task wasn't deleted - you may not have permission to delete it on this project.");
 
   const res = pickResource(m);
   await logMilestoneEvent({
@@ -981,7 +983,7 @@ export async function cancelMilestone(input: {
     ...stamp, cancel_note: input.note.trim() || null, moved_to: input.movedTo.trim() || null,
   }).eq("id", row.id).select("id");
   if (error) throw new Error(missingCancelColumns(error.message) ?? error.message);
-  if (!data || data.length === 0) throw new Error("This job wasn't cancelled — you may not have permission to change it on this project.");
+  if (!data || data.length === 0) throw new Error("This job wasn't cancelled - you may not have permission to change it on this project.");
   // Its steps, unless one was already cancelled on its own (keeps its note).
   const steps = under.filter((r) => !r.cancelled_at).map((r) => r.id);
   for (let i = 0; i < steps.length; i += 200) {
@@ -1006,7 +1008,7 @@ export async function restoreCancelledMilestone(input: { id: string; actorUserId
   for (let i = 0; i < ids.length; i += 200) {
     const { data, error } = await supabase.from("milestones").update(clear).in("id", ids.slice(i, i + 200)).select("id");
     if (error) throw new Error(missingCancelColumns(error.message) ?? error.message);
-    if (i === 0 && (!data || data.length === 0)) throw new Error("This job wasn't put back — you may not have permission to change it on this project.");
+    if (i === 0 && (!data || data.length === 0)) throw new Error("This job wasn't put back - you may not have permission to change it on this project.");
   }
   await refitParents(row.project_id, input.actorUserId);
   await logAuditAction({
@@ -1074,7 +1076,7 @@ export async function reapplyCancellations(orgId: string, projectId: string, bef
 /** Saving before the columns exist says what to run, not a raw error. */
 function missingCancelColumns(msg: string): string | null {
   return /cancelled_at|cancel_note|moved_to|cancelled_by/.test(msg)
-    ? "Cancelling jobs needs a one-time database update (20261102_cancelled_jobs.sql) — ask your admin to run it."
+    ? "Cancelling jobs needs a one-time database update (20261102_cancelled_jobs.sql) - ask your admin to run it."
     : null;
 }
 
@@ -1137,7 +1139,7 @@ export async function deleteMilestones(input: {
     if (!gone.has(o.parentId)) await supabase.from("milestones").update({ parent_id: o.parentId }).eq("id", o.id);
   }
   if (gone.size === 0) {
-    throw new Error(failure ?? "Nothing was deleted — you may not have permission to delete tasks on this project.");
+    throw new Error(failure ?? "Nothing was deleted - you may not have permission to delete tasks on this project.");
   }
   await logAuditAction({
     action: "MILESTONES_DELETED", resourceType: "project", resourceId: input.projectId,
@@ -2140,7 +2142,7 @@ export async function rebaseSchedule(input: RebaseScheduleInput): Promise<Rebase
       shiftedCount: 0, shiftDays: 0,
       oldAnchor: new Date(earliestMs).toISOString(),
       newAnchor: input.newStartIso,
-      errors: ["Schedule already starts on that date — no shift needed."],
+      errors: ["Schedule already starts on that date - no shift needed."],
     };
   }
 
@@ -2169,7 +2171,7 @@ export async function rebaseSchedule(input: RebaseScheduleInput): Promise<Rebase
     else shifted++;
   }
   if (skipped > 0) {
-    errors.push(`${skipped} task${skipped === 1 ? "" : "s"} were edited by someone else during the rebase and were left unchanged — re-check those dates.`);
+    errors.push(`${skipped} task${skipped === 1 ? "" : "s"} were edited by someone else during the rebase and were left unchanged - re-check those dates.`);
   }
 
   await logAuditAction({

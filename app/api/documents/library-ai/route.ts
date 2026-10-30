@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   const { error } = await supabaseAdmin.from("libraries").update({ ai_excluded: excluded }).eq("id", libraryId).eq("org_id", orgId);
   if (error) {
     const missing = error.code === "42703" || /ai_excluded|column/i.test(error.message);
-    return NextResponse.json({ error: missing ? "This needs migration 20261021_ai_boundary_runs.sql — apply it in Supabase, then try again." : error.message }, { status: missing ? 424 : 500 });
+    return NextResponse.json({ error: missing ? "This needs migration 20261021_ai_boundary_runs.sql - apply it in Supabase, then try again." : error.message }, { status: missing ? 424 : 500 });
   }
   let purged = 0;
   if (excluded) {

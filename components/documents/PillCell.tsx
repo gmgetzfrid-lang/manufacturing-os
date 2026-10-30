@@ -75,7 +75,7 @@ export default function PillCell({
         {/* Pills wrap into multiple rows AND scroll vertically within fixed height */}
         <div className="flex flex-wrap gap-1 max-h-[52px] overflow-y-auto overflow-x-hidden flex-1 min-w-0 custom-scrollbar pr-1">
           {pills.length === 0 ? (
-            <span className="text-[11px] text-[var(--color-text-faint)] italic select-none leading-5">—</span>
+            <span className="text-[11px] text-[var(--color-text-faint)] italic select-none leading-5">-</span>
           ) : (
             pills.map((tag) => (
               <AssetTagChip

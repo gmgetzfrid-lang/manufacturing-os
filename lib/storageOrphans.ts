@@ -93,7 +93,7 @@ export async function collectReferencedKeys(sb: SupabaseClient): Promise<Set<str
     for (;;) {
       const { data, error } = await sb.from(table).select(select).range(from, from + 999);
       if (error) {
-        throw new Error(`reference scan failed at ${label}: ${error.message} — aborting (fail-closed)`);
+        throw new Error(`reference scan failed at ${label}: ${error.message} - aborting (fail-closed)`);
       }
       const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
       extract(rows);

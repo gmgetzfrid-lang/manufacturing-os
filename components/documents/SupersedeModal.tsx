@@ -102,7 +102,7 @@ export default function SupersedeModal({
         <div className="px-6 py-5 space-y-4">
           <div className="text-sm text-[var(--color-text)]">
             <p>
-              Marks this drawing as <b>Superseded</b> — no longer the authoritative document. This is for retirement
+              Marks this drawing as <b>Superseded</b> - no longer the authoritative document. This is for retirement
               or splits (e.g. P-101 is replaced by P-101A and P-101B). For a new revision of the same drawing,
               use <b>Publish New Revision</b> instead.
             </p>
@@ -124,7 +124,7 @@ export default function SupersedeModal({
               Replacement Document Numbers
             </label>
             <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-              Optional. Add by document number — they must already exist in this library.
+              Optional. Add by document number - they must already exist in this library.
             </div>
             <div className="mt-1.5 flex gap-1.5">
               <input

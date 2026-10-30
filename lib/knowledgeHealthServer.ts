@@ -164,7 +164,7 @@ export async function knowledgeHealthReport(orgId: string, libraryId: string, bu
     // A busy database (usually: the meaning index is being written) is said
     // once, plainly; other failures keep their reason.
     errors: Array.from(new Set(errors.map((e) => isBusyDbError(e)
-      ? "The database was busy (the meaning index is being written) — Re-check in a few minutes."
+      ? "The database was busy (the meaning index is being written) - Re-check in a few minutes."
       : e))),
   };
 }

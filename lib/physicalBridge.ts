@@ -147,7 +147,7 @@ export async function printHoldCard(input: HoldCardInput): Promise<void> {
   page.drawRectangle({ x: 0, y: 0, width: 612, height: 396, color: rgb(1, 1, 1) });
   page.drawRectangle({ x: 10, y: 10, width: 592, height: 376, borderColor: RED, borderWidth: 6 });
   page.drawRectangle({ x: 10, y: 316, width: 592, height: 70, color: RED });
-  page.drawText("HOLD — DO NOT ADVANCE", { x: 32, y: 338, size: 30, font: bold, color: rgb(1, 1, 1) });
+  page.drawText("HOLD - DO NOT ADVANCE", { x: 32, y: 338, size: 30, font: bold, color: rgb(1, 1, 1) });
 
   page.drawText(fit(`${input.docLabel}${input.docRev ? `  ·  Rev ${input.docRev}` : ""}`, bold, 18, 380), {
     x: 32, y: 280, size: 18, font: bold, color: INK,
@@ -167,7 +167,7 @@ export async function printHoldCard(input: HoldCardInput): Promise<void> {
     page.drawText("SCAN: is this hold", { x: 452, y: 46, size: 9, font: bold, color: INK });
     page.drawText("still active?", { x: 452, y: 35, size: 9, font: bold, color: INK });
   }
-  page.drawText("A released hold shows GREEN when scanned — then this tag comes down.", {
+  page.drawText("A released hold shows GREEN when scanned - then this tag comes down.", {
     x: 32, y: 40, size: 9, font: regular, color: MUTED,
   });
 
@@ -202,17 +202,17 @@ export async function printTicketTraveler(input: TravelerInput): Promise<void> {
   page.drawText(fit(input.title, bold, 15, 400), { x: 52, y: 660, size: 15, font: bold, color: INK });
   const lines: Array<[string, string]> = [
     ["Status at printing", input.status.replace(/_/g, " ")],
-    ["Deliverable rev", input.deliverableRev ? `Rev ${input.deliverableRev}` : "— (none issued yet)"],
-    ["Requested by", input.requesterName || "—"],
-    ["Drafter", input.drafterName || "—"],
-    ["Opened", input.createdAt ? new Date(input.createdAt).toLocaleDateString() : "—"],
+    ["Deliverable rev", input.deliverableRev ? `Rev ${input.deliverableRev}` : "- (none issued yet)"],
+    ["Requested by", input.requesterName || "-"],
+    ["Drafter", input.drafterName || "-"],
+    ["Opened", input.createdAt ? new Date(input.createdAt).toLocaleDateString() : "-"],
   ];
   lines.forEach(([k, v], i) => {
     const y = 620 - i * 22;
     page.drawText(`${k}:`, { x: 52, y, size: 10, font: bold, color: MUTED });
     page.drawText(fit(v, regular, 10, 280), { x: 170, y, size: 10, font: regular, color: INK });
   });
-  page.drawText("Paper goes stale — the QR doesn't. Anyone can scan it, no", { x: 52, y: 500, size: 10, font: regular, color: MUTED });
+  page.drawText("Paper goes stale - the QR doesn't. Anyone can scan it, no", { x: 52, y: 500, size: 10, font: regular, color: MUTED });
   page.drawText("login: it answers whether this ticket's deliverable is still", { x: 52, y: 487, size: 10, font: regular, color: MUTED });
   page.drawText("the latest issued revision.", { x: 52, y: 474, size: 10, font: regular, color: MUTED });
 
@@ -255,15 +255,15 @@ export async function buildPackageCover(input: PackageCoverInput): Promise<PDFDo
     page.drawText(fit(input.description, regular, 11, 520), { x: 52, y: 662, size: 11, font: regular, color: INK });
   }
   page.drawText(
-    `Owner: ${input.ownerName || "—"}   ·   Printed ${new Date().toLocaleDateString()}${input.printedByName ? ` by ${input.printedByName}` : ""}`,
+    `Owner: ${input.ownerName || "-"}   ·   Printed ${new Date().toLocaleDateString()}${input.printedByName ? ` by ${input.printedByName}` : ""}`,
     { x: 52, y: 640, size: 9, font: regular, color: MUTED },
   );
 
-  page.drawText("CONTENTS — revisions as printed", { x: 52, y: 600, size: 10, font: bold, color: MUTED });
+  page.drawText("CONTENTS - revisions as printed", { x: 52, y: 600, size: 10, font: bold, color: MUTED });
   input.docs.slice(0, 24).forEach((d, i) => {
     const y = 580 - i * 16;
     page.drawText(fit(`${i + 1}.  ${d.label}`, regular, 10, 380), { x: 52, y, size: 10, font: regular, color: INK });
-    page.drawText(`Rev ${d.rev ?? "—"}`, { x: 460, y, size: 10, font: bold, color: INK });
+    page.drawText(`Rev ${d.rev ?? "-"}`, { x: 460, y, size: 10, font: bold, color: INK });
   });
   if (input.docs.length > 24) {
     page.drawText(`…and ${input.docs.length - 24} more sheets`, { x: 52, y: 580 - 24 * 16, size: 9, font: regular, color: MUTED });
@@ -277,7 +277,7 @@ export async function buildPackageCover(input: PackageCoverInput): Promise<PDFDo
     page.drawImage(qr, { x: 440, y: 80, width: 130, height: 130 });
     page.drawText("SCAN BEFORE STARTING WORK", { x: 428, y: 66, size: 9, font: bold, color: AMBER });
     page.drawText("No login needed. Green = this pack is current.", { x: 428, y: 54, size: 8, font: regular, color: MUTED });
-    page.drawText("Red = a sheet changed since printing — get the new one.", { x: 428, y: 44, size: 8, font: regular, color: MUTED });
+    page.drawText("Red = a sheet changed since printing - get the new one.", { x: 428, y: 44, size: 8, font: regular, color: MUTED });
   }
   return doc;
 }

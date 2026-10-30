@@ -72,7 +72,7 @@ export default function RegisterPage() {
       <PageHeaderBar
         icon={ClipboardList}
         title="Control Register"
-        subtitle={<>Every controlled document with its owner, review status, acknowledgment, and pending sign-offs — the master register for an audit.</>}
+        subtitle={<>Every controlled document with its owner, review status, acknowledgment, and pending sign-offs - the master register for an audit.</>}
         actions={
           <>
             <Button variant="secondary" size="sm" onClick={exportCsv} disabled={loading || filtered.length === 0}>
@@ -158,21 +158,21 @@ export default function RegisterPage() {
                       <User2 className="w-3 h-3" /> {r.ownerName || "Admin/DocCtrl"}
                     </span>
                   </td>
-                  <td className="px-3 py-2 text-[var(--color-text-muted)]">{r.rev || "—"}</td>
-                  <td className="px-3 py-2">{r.effectivePending ? <EffectivePill effectiveDate={r.effectiveDate} compact /> : <span className="text-[var(--color-text-faint)]">—</span>}</td>
-                  <td className="px-3 py-2">{r.reviewStatus === "none" ? <span className="text-[var(--color-text-faint)]">—</span> : <ReviewPill nextReviewDate={r.nextReviewDate} compact />}</td>
-                  <td className="px-3 py-2">{r.ack ? <AckPill summary={r.ack} compact /> : <span className="text-[var(--color-text-faint)]">—</span>}</td>
+                  <td className="px-3 py-2 text-[var(--color-text-muted)]">{r.rev || "-"}</td>
+                  <td className="px-3 py-2">{r.effectivePending ? <EffectivePill effectiveDate={r.effectiveDate} compact /> : <span className="text-[var(--color-text-faint)]">-</span>}</td>
+                  <td className="px-3 py-2">{r.reviewStatus === "none" ? <span className="text-[var(--color-text-faint)]">-</span> : <ReviewPill nextReviewDate={r.nextReviewDate} compact />}</td>
+                  <td className="px-3 py-2">{r.ack ? <AckPill summary={r.ack} compact /> : <span className="text-[var(--color-text-faint)]">-</span>}</td>
                   <td className="px-3 py-2 hidden lg:table-cell">
                     {r.distributionAcksOutstanding > 0
                       ? <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700" title={`${r.distributionAcksOutstanding} distribution confirmation${r.distributionAcksOutstanding === 1 ? "" : "s"} outstanding`}>{r.distributionAcksOutstanding} unconfirmed</span>
-                      : <span className="text-[var(--color-text-faint)]">—</span>}
+                      : <span className="text-[var(--color-text-faint)]">-</span>}
                   </td>
                   <td className="px-3 py-2">
                     {r.review?.inReview
                       ? <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${r.review.ready ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-violet-50 text-violet-700 border-violet-200"}`}><ShieldCheck className="w-3 h-3" /> {r.review.revisionLabel || "in review"} · {r.review.signed}/{r.review.requiredPrimaries}</span>
-                      : <span className="text-[var(--color-text-faint)]">—</span>}
+                      : <span className="text-[var(--color-text-faint)]">-</span>}
                   </td>
-                  <td className="px-3 py-2">{(r.legalHold || r.dispositionEligible) ? <RetentionPill retentionUntil={r.retentionUntil} dispositionState={r.dispositionEligible ? "eligible" : null} legalHold={r.legalHold} compact /> : <span className="text-[var(--color-text-faint)]">—</span>}</td>
+                  <td className="px-3 py-2">{(r.legalHold || r.dispositionEligible) ? <RetentionPill retentionUntil={r.retentionUntil} dispositionState={r.dispositionEligible ? "eligible" : null} legalHold={r.legalHold} compact /> : <span className="text-[var(--color-text-faint)]">-</span>}</td>
                 </tr>
               ))}
             </tbody>

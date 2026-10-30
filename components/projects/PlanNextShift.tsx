@@ -65,7 +65,7 @@ export default function PlanNextShift({ milestones, next, now, tz, times, mode, 
   return (
     <Modal onClose={onClose} size="xl">
       <ModalHeader icon={CalendarClock} title={`Plan the ${shiftName(next)} shift`}
-        subtitle={`${D(next.start)} ${T(next.start)}–${T(next.end)} · changes move the schedule (the baseline stays) — the calendar, the report and the email follow`} onClose={onClose} />
+        subtitle={`${D(next.start)} ${T(next.start)}–${T(next.end)} · changes move the schedule (the baseline stays) - the calendar, the report and the email follow`} onClose={onClose} />
       <ModalBody className="p-0">
         {view.v === "list" && (
           <div>
@@ -189,12 +189,12 @@ function Picker({ items, out, next, span, onBack, onPick }: {
         <BackLink onClick={onBack} />
         {out && (
           <div className="text-[12.5px]"><span className="text-[var(--color-text-muted)]">Swapping out:</span> <b className="text-[var(--color-text)]">{out.leaf.name}</b>
-            <span className="text-[var(--color-text-muted)]">{[out.parentName, out.leaf.workOrderRef?.trim() ? `WO ${out.leaf.workOrderRef.trim()}` : null, out.leaf.responsibleParty].filter(Boolean).map((x) => ` · ${x}`).join("")} — pick what the {next.kind} shift does instead</span></div>
+            <span className="text-[var(--color-text-muted)]">{[out.parentName, out.leaf.workOrderRef?.trim() ? `WO ${out.leaf.workOrderRef.trim()}` : null, out.leaf.responsibleParty].filter(Boolean).map((x) => ` · ${x}`).join("")} - pick what the {next.kind} shift does instead</span></div>
         )}
         <label className="relative block">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
           <input autoFocus value={query} onChange={(e) => { setQuery(e.target.value); setMore(false); }} aria-label="Search the job for a work order"
-            placeholder="Search a work order #, equipment (E-17), step or crew — the whole job"
+            placeholder="Search a work order #, equipment (E-17), step or crew - the whole job"
             className="w-full h-10 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-8 text-[13.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40" />
           {query && <button type="button" onClick={() => setQuery("")} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>}
         </label>
@@ -215,7 +215,7 @@ function Picker({ items, out, next, span, onBack, onPick }: {
           )}
         </div>
       </div>
-      {shown.length === 0 && <div className="px-4 py-10 text-center text-[13px] text-[var(--color-text-muted)]">{query ? <>No work order matches &ldquo;{query}&rdquo;.</> : `Nothing ${readyOnly ? "ready to start " : ""}in this window — widen it${readyOnly ? " or turn off Ready to start" : ""}.`}</div>}
+      {shown.length === 0 && <div className="px-4 py-10 text-center text-[13px] text-[var(--color-text-muted)]">{query ? <>No work order matches &ldquo;{query}&rdquo;.</> : `Nothing ${readyOnly ? "ready to start " : ""}in this window - widen it${readyOnly ? " or turn off Ready to start" : ""}.`}</div>}
       <div className="divide-y divide-[var(--color-border)]">
         {rows.map((x) => {
           const r = x.row, offShift = r.work !== "both" && r.work !== next.kind;
@@ -223,7 +223,7 @@ function Picker({ items, out, next, span, onBack, onPick }: {
           return (
             <div key={r.leaf.id} className="flex items-start gap-3 px-4 py-2.5">
               <button type="button" disabled={cant} onClick={() => onPick(x)} aria-label={`Pick ${r.leaf.name}${r.parentName ? ` (${r.parentName})` : ""}`}
-                title={cant ? (x.blockedBy ? `Can't start — it waits on ${x.blockedBy}, which is blocked or on hold` : "Blocked or on hold") : offShift ? `${r.work === "day" ? "Day" : "Night"}-crew work — you'll say who does it on the ${next.kind} shift` : "Pick this one"}
+                title={cant ? (x.blockedBy ? `Can't start - it waits on ${x.blockedBy}, which is blocked or on hold` : "Blocked or on hold") : offShift ? `${r.work === "day" ? "Day" : "Night"}-crew work - you'll say who does it on the ${next.kind} shift` : "Pick this one"}
                 className="shrink-0 mt-0.5 rounded-lg border border-[var(--color-border-strong)] px-3 py-1.5 text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40">Pick</button>
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -268,11 +268,11 @@ function Confirm({ milestones, action, next, now, tz, times, mode, crews, when, 
   const moved = Number.isFinite(dh) && Math.abs(dh) >= 0.1;
   const wo = (n: string | null) => (n ? ` · WO ${n}` : "");
   const save = async () => {
-    if (!reason.trim()) { setMsg("Put in why — it goes on each step moved."); return; }
+    if (!reason.trim()) { setMsg("Put in why - it goes on each step moved."); return; }
     setBusy(true);
     const ok = await onSave(plan, reason.trim());
     setBusy(false);
-    if (!ok) setMsg("Not saved — try again.");
+    if (!ok) setMsg("Not saved - try again.");
   };
   return (
     <div className="px-4 py-3 space-y-3 text-[12.5px] text-[var(--color-text)]">
@@ -302,22 +302,22 @@ function Confirm({ milestones, action, next, now, tz, times, mode, crews, when, 
       </div>
       {(plan.waits.length > 0 || plan.crewHours.length > 0) && (
         <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 space-y-0.5 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-          {plan.waits.map((w) => <div key={w.name}>It waits on <b>{w.name}</b> — planned to finish {when(w.until)}. Make sure it can start.</div>)}
-          {plan.crewHours.map((x) => <div key={x}>{x} — saving puts it on the {next.kind} shift&apos;s hours{crew ? ` for ${crew}` : ""}. Check they&apos;re on.</div>)}
+          {plan.waits.map((w) => <div key={w.name}>It waits on <b>{w.name}</b> - planned to finish {when(w.until)}. Make sure it can start.</div>)}
+          {plan.crewHours.map((x) => <div key={x}>{x} - saving puts it on the {next.kind} shift&apos;s hours{crew ? ` for ${crew}` : ""}. Check they&apos;re on.</div>)}
         </div>
       )}
       <div className={`rounded-lg border px-3 py-2 space-y-1 ${plan.impact.critical || (moved && dh > 0) ? "border-rose-300 bg-rose-50 dark:border-rose-900 dark:bg-rose-950/30" : "border-[var(--color-border)] bg-[var(--color-surface-2)]"}`}>
         <div className="font-black text-[11px] uppercase tracking-wider text-[var(--color-text-muted)]">What it does to the schedule</div>
-        <div>Turnaround (forecast): {Number.isFinite(f0) ? `${when(f0)} → ` : ""}<b className={moved && dh > 0 ? "text-rose-700 dark:text-rose-400" : ""}>{Number.isFinite(f1) ? when(f1) : "—"}</b>{!moved ? " — unchanged" : dh > 0 ? ` — ${dh} h later` : ` — ${-dh} h sooner`}</div>
+        <div>Turnaround (forecast): {Number.isFinite(f0) ? `${when(f0)} → ` : ""}<b className={moved && dh > 0 ? "text-rose-700 dark:text-rose-400" : ""}>{Number.isFinite(f1) ? when(f1) : "-"}</b>{!moved ? " - unchanged" : dh > 0 ? ` - ${dh} h later` : ` - ${-dh} h sooner`}</div>
         {plan.impact.critical && <div className="font-bold text-rose-700 dark:text-rose-400">Touches the critical path.</div>}
         {plan.pushed.length > 0
           ? <div>Moves {plan.pushed.length} linked step{plan.pushed.length === 1 ? "" : "s"} later: {plan.pushed.slice(0, 5).map((p) => `${p.name} +${p.hours} h`).join(", ")}{plan.pushed.length > 5 ? ` + ${plan.pushed.length - 5} more` : ""}</div>
           : <div className="text-[var(--color-text-muted)]">No other work moves.</div>}
       </div>
       <label className="block">
-        <span className="block font-bold mb-1">Why <span className="font-black text-amber-700 dark:text-amber-400">— required</span></span>
+        <span className="block font-bold mb-1">Why <span className="font-black text-amber-700 dark:text-amber-400">- required</span></span>
         <textarea value={reason} onChange={(e) => { setReason(e.target.value); setMsg(null); }} rows={2} disabled={busy}
-          placeholder="e.g. Crew's already in the area — faster to do it now than wait till Wednesday"
+          placeholder="e.g. Crew's already in the area - faster to do it now than wait till Wednesday"
           className="w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1.5 text-[12.5px] focus:outline-none focus:border-[var(--color-accent-ring)]" />
       </label>
       {msg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{msg}</div>}
@@ -360,7 +360,7 @@ function Tag({ tone, children }: { tone: "rose" | "amber" | "emerald" | "slate";
 function Ready({ x }: { x: LookAheadItem }) {
   const w = x.waits.length ? `${x.waits[0]}${x.waits.length > 1 ? ` +${x.waits.length - 1}` : ""}` : "";
   if (x.readiness === "ready") return <Tag tone="emerald">ready</Tag>;
-  if (x.blockedBy) return <Tag tone="rose">can&apos;t start — {x.blockedBy} is blocked</Tag>;
+  if (x.blockedBy) return <Tag tone="rose">can&apos;t start - {x.blockedBy} is blocked</Tag>;
   if (x.readiness === "after-tonight") return <Tag tone="amber">after {w}</Tag>;
   if (x.readiness === "held") return <Tag tone="rose">{x.row.status === "blocked" ? "blocked" : "on hold"}</Tag>;
   return <Tag tone="slate">waits on {w}</Tag>;

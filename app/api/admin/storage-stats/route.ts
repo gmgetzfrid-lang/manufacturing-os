@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
   const { data: statRows, error: statErr } = await sb.rpc("mfg_table_stats");
   if (statErr) {
     return NextResponse.json(
-      { error: `Storage stats unavailable — apply migration 20260805. (${statErr.message})` },
+      { error: `Storage stats unavailable - apply migration 20260805. (${statErr.message})` },
       { status: 503 },
     );
   }
@@ -146,7 +146,7 @@ export async function GET(req: NextRequest) {
     note:
       "Table sizes on disk are exact; row counts are Postgres planner estimates (refresh with ANALYZE). " +
       "The measured R2 figure walks the actual bucket; the estimate breaks it down by what records sizes " +
-      "(revisions, photos) — the gap is ticket attachments, knowledge PDFs, and orphans.",
+      "(revisions, photos) - the gap is ticket attachments, knowledge PDFs, and orphans.",
   });
 }
 
@@ -181,7 +181,7 @@ export async function POST(req: NextRequest) {
     const missing = error.code === "42P01" || /does not exist/i.test(error.message);
     return NextResponse.json({
       error: missing
-        ? "The platform_settings table doesn't exist yet — run migration 20260920 in Supabase first."
+        ? "The platform_settings table doesn't exist yet - run migration 20260920 in Supabase first."
         : `Couldn't save the limits: ${error.message}`,
     }, { status: missing ? 424 : 500 });
   }

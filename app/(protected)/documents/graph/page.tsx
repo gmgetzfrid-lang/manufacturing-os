@@ -140,7 +140,7 @@ function GraphPageInner() {
     setResolving(true); setResolveNote(null);
     try {
       const r = await estatePost<{ folders: number; documents: number; applied: number; pending: number; unchanged: number; notes: string[] }>("/api/estate/resolve", { orgId: activeOrgId, all: true });
-      setResolveNote(`${r.folders} folders and ${r.documents} documents looked at — ${r.applied} new links applied, ${r.pending} new waiting in Review, ${r.unchanged} links already in place. See the Links tab.${r.notes.length ? " " + r.notes.join(" ") : ""}`);
+      setResolveNote(`${r.folders} folders and ${r.documents} documents looked at - ${r.applied} new links applied, ${r.pending} new waiting in Review, ${r.unchanged} links already in place. See the Links tab.${r.notes.length ? " " + r.notes.join(" ") : ""}`);
       await refresh();
     } catch (e) { setResolveNote((e as Error).message); }
     finally { setResolving(false); }
@@ -166,7 +166,7 @@ function GraphPageInner() {
       const msg = (e as Error).message;
       // A dropped connection ("Failed to fetch") mid-refresh must not take a
       // working map away: keep what is on screen and say so quietly.
-      setError(dataRef.current ? `Couldn't refresh the map (${msg}). Showing the last good one — reload the page to try again.` : msg);
+      setError(dataRef.current ? `Couldn't refresh the map (${msg}). Showing the last good one - reload the page to try again.` : msg);
     }
     finally { setLoading(false); }
   }, [activeOrgId, activeRole, controller]);
@@ -481,14 +481,14 @@ function GraphPageInner() {
   const askToRead = async (f: FindCoverage["unreadFolders"][number]) => {
     if (!activeOrgId) return;
     const libs = await listKnowledgeLibraries(activeOrgId).catch(() => [] as KnowledgeLibrary[]);
-    setReadAsk({ folder: f, libs, pick: libs[0]?.id ?? "", busy: false, note: libs.length ? null : "No knowledge library yet — create one under Intelligence › Knowledge first." });
+    setReadAsk({ folder: f, libs, pick: libs[0]?.id ?? "", busy: false, note: libs.length ? null : "No knowledge library yet - create one under Intelligence › Knowledge first." });
   };
   const linkAndRead = async () => {
     if (!readAsk || !activeOrgId || !readAsk.pick) return;
     setReadAsk({ ...readAsk, busy: true, note: null });
     try {
       await estatePost("/api/knowledge/sources", { orgId: activeOrgId, libraryId: readAsk.pick, add: [{ type: readAsk.folder.folderId ? "folder" : "library", id: readAsk.folder.folderId ?? readAsk.folder.libraryId }] });
-      setReadAsk({ ...readAsk, busy: false, note: `Linked. Text pages read for free; pages with no text use vision on the cheap tier within your cap. Indexing runs in the background — or open the knowledge library to watch it.` });
+      setReadAsk({ ...readAsk, busy: false, note: `Linked. Text pages read for free; pages with no text use vision on the cheap tier within your cap. Indexing runs in the background - or open the knowledge library to watch it.` });
     } catch (e) { setReadAsk({ ...readAsk, busy: false, note: (e as Error).message }); }
   };
 
@@ -643,7 +643,7 @@ function GraphPageInner() {
                           <button onClick={() => removeChip(c)} className="opacity-50 hover:opacity-100"><X className="w-3 h-3" /></button>
                         </span>
                       ))}
-                      {parsed.chips.length === 0 && <span className="text-xs text-[var(--color-text-muted)]">Nothing to search on — add a tag, a word or a year.</span>}
+                      {parsed.chips.length === 0 && <span className="text-xs text-[var(--color-text-muted)]">Nothing to search on - add a tag, a word or a year.</span>}
                     </div>
                     {parsed.identifiers.length > 0 && (
                       <div className="text-[11px] text-[var(--color-text-muted)]">
@@ -713,7 +713,7 @@ function GraphPageInner() {
                 <div className="basis-full"><FolderMarkBar orgId={activeOrgId} folderId={focusId.slice(7)} onChanged={() => void refresh()} /></div>
               )}
               {controller && activeOrgId && focusId?.startsWith("lib:") && !selectedEntry && (
-                <button onClick={() => setSetupLib(focusId.slice(4))} title="Say what each level of folders is — operating area, equipment type, equipment — and everything filed underneath inherits it"
+                <button onClick={() => setSetupLib(focusId.slice(4))} title="Say what each level of folders is - operating area, equipment type, equipment - and everything filed underneath inherits it"
                   className="ml-1 rounded-md border border-purple-300 bg-purple-50 text-purple-800 px-2 py-1 font-semibold inline-flex items-center gap-1"><Factory className="w-3 h-3" /> Set up as equipment library</button>
               )}
               {selectedEntry && (
@@ -737,7 +737,7 @@ function GraphPageInner() {
               </button>
               {focusId && <button onClick={up} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Minus className="w-3 h-3" /> Up</button>}
               <button onClick={() => graphRef.current?.fit()} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Maximize2 className="w-3 h-3" /> Fit</button>
-              <Link href={globalGraphHref(selectedId ?? focusId ?? "")} title="The same node on the Intelligence graph — equipment, units, projects and documents in one web"
+              <Link href={globalGraphHref(selectedId ?? focusId ?? "")} title="The same node on the Intelligence graph - equipment, units, projects and documents in one web"
                 className={`rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1 ${selectedId || focusId ? "" : "opacity-50 pointer-events-none"}`}><Globe className="w-3 h-3" /> Global view</Link>
               <span className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1">
                 {data ? `${data.libraries.length} libraries · ${data.folders.size} folders · ${data.entries.length} files` : "…"}
@@ -816,7 +816,7 @@ function GraphPageInner() {
                 </div>
                 {hiddenHits > 0 && (
                   <button onClick={() => drill(null)} className="mb-2 w-full text-left rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800">
-                    {hiddenHits} more candidate{hiddenHits === 1 ? "" : "s"} outside {crumbs[crumbs.length - 1]?.label ?? "this folder"} — show the whole estate
+                    {hiddenHits} more candidate{hiddenHits === 1 ? "" : "s"} outside {crumbs[crumbs.length - 1]?.label ?? "this folder"} - show the whole estate
                   </button>
                 )}
                 {serverFind && serverFind.entities.length > 0 && <div className="mb-2"><EntityStrip entities={serverFind.entities} /></div>}
@@ -1244,7 +1244,7 @@ function LinksPanel({ orgId, edges, units, estateMissing, onReveal, onConnect, c
       {onConnect && <SuspectEquipment orgId={orgId} refreshKey={readinessKey} />}
       {onConnect && <RunsPanel key={readinessKey} orgId={orgId} />}
       <EstateReadiness key={readinessKey} orgId={orgId} onConnect={onConnect} connecting={connecting} />
-      <div className="text-xs text-[var(--color-text-muted)]">What the estate knows about where things belong — every link with its reason. Provable ones came from the codebook, drawing numbers and ancestry; the rest were approved in Review.</div>
+      <div className="text-xs text-[var(--color-text-muted)]">What the estate knows about where things belong - every link with its reason. Provable ones came from the codebook, drawing numbers and ancestry; the rest were approved in Review.</div>
       <div className="flex flex-wrap gap-1">
         <button onClick={() => setFilter("all")} className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${filter === "all" ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-transparent" : "border-[var(--color-border)]"}`}>all {edges.length}</button>
         {[...counts.entries()].sort((a, b) => b[1] - a[1]).map(([t, n]) => (
@@ -1302,7 +1302,7 @@ function DrivesPanel({ orgId, controller, listings, uid, userEmail, systemHashes
   return (
     <div className="space-y-3">
       <div className="text-xs text-[var(--color-text-muted)]">
-        A drive the system doesn&apos;t hold. Paste the output of <code>tree /f</code>, <code>dir /s</code>, <code>tree</code>, one path per line — or the JSON from <code>node scripts/thor-scan.mjs</code>, which adds sizes, dates and hashes so files already in the system are identified by their bytes. Names and paths only — nothing is copied.
+        A drive the system doesn&apos;t hold. Paste the output of <code>tree /f</code>, <code>dir /s</code>, <code>tree</code>, one path per line - or the JSON from <code>node scripts/thor-scan.mjs</code>, which adds sizes, dates and hashes so files already in the system are identified by their bytes. Names and paths only - nothing is copied.
       </div>
       {storeState.listingsLocal && <div className="text-[11px] text-amber-700 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> Saved in this browser only until the finder migration is applied.</div>}
       {listings.map((l) => (
@@ -1329,7 +1329,7 @@ function DrivesPanel({ orgId, controller, listings, uid, userEmail, systemHashes
                 return (
                   <ul className="rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-2 space-y-0.5">
                     {t.hashed > 0 && <li><b>{t.knownInSystem}</b> already in the system by bytes · <b>{t.duplicateFiles}</b> are copies of another file on the drive ({t.duplicateGroups} groups)</li>}
-                    {t.hashed === 0 && <li className="text-amber-700">No hashes — paste the scanner&apos;s JSON (<code>node scripts/thor-scan.mjs</code>) to see what is already in the system and what is a copy.</li>}
+                    {t.hashed === 0 && <li className="text-amber-700">No hashes - paste the scanner&apos;s JSON (<code>node scripts/thor-scan.mjs</code>) to see what is already in the system and what is a copy.</li>}
                     <li><b>{t.drawingLike}</b> look like drawings by name · <b>{t.copierLike}</b> are copier-named (worth reading first) · <b>{t.empty}</b> empty</li>
                     {t.personalFolders.length > 0 && <li>{t.personalFolders.length} folder{t.personalFolders.length === 1 ? "" : "s"} look personal or temporary: {t.personalFolders.slice(0, 4).join(", ")}{t.personalFolders.length > 4 ? "…" : ""}</li>}
                     <li>Busiest: {t.topFolders.slice(0, 3).map((f) => `${f.path} (${f.count})`).join(" · ")}</li>
@@ -1391,7 +1391,7 @@ function AliasesPanel({ orgId, controller, aliases, uid, userEmail, units, onCha
       {aliases.length === 0 && <div className="text-[11px] text-[var(--color-text-muted)]">No aliases taught yet.</div>}
       {controller ? (
         <div className="space-y-2 pt-2 border-t border-[var(--color-border)]">
-          <input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="What people say — born"
+          <input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="What people say - born"
             className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
           <select value={kind} onChange={(e) => setKind(e.target.value as FinderAliasKind)} className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5">
             <option value="unit">…is a unit</option>
@@ -1404,7 +1404,7 @@ function AliasesPanel({ orgId, controller, aliases, uid, userEmail, units, onCha
               {units.map((u) => <option key={u.code} value={u.label}>{u.label} ({u.code})</option>)}
             </select>
           ) : (
-            <input value={means} onChange={(e) => setMeans(e.target.value)} placeholder={kind === "equipment" ? "The tag — F-101" : "What the files say — crude"}
+            <input value={means} onChange={(e) => setMeans(e.target.value)} placeholder={kind === "equipment" ? "The tag - F-101" : "What the files say - crude"}
               className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
           )}
           {err && <div className="text-[11px] text-red-700">{err}</div>}

@@ -133,12 +133,12 @@ export default function ScheduleProgress({ milestones, metrics, projectId }: Pro
         }`}>
           <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Forecast end</div>
           <div className="text-lg font-black text-[var(--color-text)] mt-1">
-            {forecastEndAt ? humanDate(forecastEndAt, tz) : plannedEndAt ? humanDate(plannedEndAt, tz) : "—"}
+            {forecastEndAt ? humanDate(forecastEndAt, tz) : plannedEndAt ? humanDate(plannedEndAt, tz) : "-"}
           </div>
           {/* Follows the verdict on the left — never "on track" while behind. */}
           <div className={`text-[11px] mt-1 inline-flex items-center gap-1 ${verdict === "behind" || slipDays > 0 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}`}>
             {verdict === "behind" || slipDays > 0
-              ? <><AlertTriangle className="w-3 h-3" /> {!forecastEndAt ? "Behind — no work recorded yet to forecast from" : slipDays > 0 ? `${slipDays}d slip vs plan` : "Behind plan — under a day of slip so far"}</>
+              ? <><AlertTriangle className="w-3 h-3" /> {!forecastEndAt ? "Behind - no work recorded yet to forecast from" : slipDays > 0 ? `${slipDays}d slip vs plan` : "Behind plan - under a day of slip so far"}</>
               : plannedEndAt ? <><CheckCircle2 className="w-3 h-3" /> On track</> : "Plan not yet set"
             }
           </div>

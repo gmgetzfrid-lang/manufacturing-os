@@ -190,7 +190,7 @@ export default function AssetCsvImportModal({
                       onChange={(e) => setMapping({ ...mapping, [f.key]: e.target.value })}
                       className="flex-1 px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-xs"
                     >
-                      <option value="">— skip —</option>
+                      <option value="">- skip -</option>
                       {headers.map((h, i) => <option key={i} value={h}>{h}</option>)}
                     </select>
                   </div>

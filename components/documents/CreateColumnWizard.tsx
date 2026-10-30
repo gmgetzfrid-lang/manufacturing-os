@@ -222,7 +222,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
                       <Tags className="w-4 h-4 text-purple-700" />
                     </div>
                     <h4 className="text-sm font-black text-[var(--color-text)]">
-                      This isn&apos;t just a tag column — it&apos;s connected to your Asset Registry
+                      This isn&apos;t just a tag column - it&apos;s connected to your Asset Registry
                     </h4>
                   </div>
 
@@ -281,11 +281,11 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <button type="button" onClick={() => setReferenceKind("photos")} className={`text-left p-3 rounded-lg border-2 transition-all ${referenceKind === "photos" ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] ring-1 ring-[var(--color-accent)]' : 'border-[var(--color-border)] hover:border-[var(--color-accent)]/40'}`}>
                       <div className="flex items-center gap-2 mb-1"><Camera className="w-4 h-4 text-blue-600" /><span className="text-sm font-bold text-[var(--color-text)]">Photos</span><span className="ml-auto text-[9px] font-bold text-[var(--color-text-faint)] uppercase">Default</span></div>
-                      <p className="text-[11px] text-[var(--color-text-muted)] leading-snug">Asset Registry photo gallery — site photos of the equipment.</p>
+                      <p className="text-[11px] text-[var(--color-text-muted)] leading-snug">Asset Registry photo gallery - site photos of the equipment.</p>
                     </button>
                     <button type="button" onClick={() => setReferenceKind("files")} className={`text-left p-3 rounded-lg border-2 transition-all ${referenceKind === "files" ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] ring-1 ring-[var(--color-accent)]' : 'border-[var(--color-border)] hover:border-[var(--color-accent)]/40'}`}>
                       <div className="flex items-center gap-2 mb-1"><FileText className="w-4 h-4 text-orange-600" /><span className="text-sm font-bold text-[var(--color-text)]">Linked drawings</span></div>
-                      <p className="text-[11px] text-[var(--color-text-muted)] leading-snug">Reference another document in the system — e.g. a circuit id → its isometric. Opens in a drawing viewer.</p>
+                      <p className="text-[11px] text-[var(--color-text-muted)] leading-snug">Reference another document in the system - e.g. a circuit id → its isometric. Opens in a drawing viewer.</p>
                     </button>
                   </div>
                 </div>
@@ -315,7 +315,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
             <button
               onClick={() => { onOpenColumnManager(); onClose(); }}
               className="text-xs font-bold text-[var(--color-text-muted)] hover:text-blue-700 flex items-center gap-1 hover:underline"
-              title="Manage existing columns — rename, reorder, hide, or delete"
+              title="Manage existing columns - rename, reorder, hide, or delete"
             >
               <Settings2 className="w-3.5 h-3.5" /> Manage existing columns
             </button>

@@ -201,7 +201,7 @@ export default function AuditLogPage() {
           <div>
             <h1 className="text-xl font-black text-[var(--color-text)]">Audit Log</h1>
             <p className="text-sm text-[var(--color-text-muted)] mt-1">Admin-class roles only. Ask your workspace admin if you need access.</p>
-            <div className="text-xs text-[var(--color-text-faint)] mt-2">Signed in as {userEmail || "—"} ({activeRole || "—"})</div>
+            <div className="text-xs text-[var(--color-text-faint)] mt-2">Signed in as {userEmail || "-"} ({activeRole || "-"})</div>
           </div>
         </div>
       </div>
@@ -245,13 +245,13 @@ export default function AuditLogPage() {
           <Kpi label="Deletes / undo / force" value={kpis.deletes.toString()} tone={kpis.deletes > 0 ? "rose" : "slate"} />
           <Kpi
             label="Top action"
-            value={kpis.topAction ? prettyAction(kpis.topAction[0]) : "—"}
+            value={kpis.topAction ? prettyAction(kpis.topAction[0]) : "-"}
             sub={kpis.topAction ? `${kpis.topAction[1]} occurrence${kpis.topAction[1] === 1 ? "" : "s"}` : undefined}
             tone="indigo"
           />
           <Kpi
             label="Top user"
-            value={kpis.topUser ? kpis.topUser[0] : "—"}
+            value={kpis.topUser ? kpis.topUser[0] : "-"}
             sub={kpis.topUser ? `${kpis.topUser[1]} event${kpis.topUser[1] === 1 ? "" : "s"}` : undefined}
             tone="emerald"
           />

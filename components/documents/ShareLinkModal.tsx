@@ -106,7 +106,7 @@ export default function ShareLinkModal({
             <input
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="Optional note — e.g. &quot;for John at the vendor&quot;"
+              placeholder="Optional note - e.g. &quot;for John at the vendor&quot;"
               className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] text-sm"
               disabled={busy}
             />
@@ -172,7 +172,7 @@ export default function ShareLinkModal({
                             <button
                               onClick={() => setQrFor(qrFor === s.id ? null : s.id)}
                               className={`p-1.5 rounded-md ${qrFor === s.id ? "bg-slate-800 text-white" : "bg-[var(--color-surface-2)] hover:bg-slate-200 text-[var(--color-text)]"}`}
-                              title="Show QR — hand the link to the person next to you"
+                              title="Show QR - hand the link to the person next to you"
                             >
                               <QrCode className="w-3.5 h-3.5" />
                             </button>

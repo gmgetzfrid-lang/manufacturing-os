@@ -62,7 +62,7 @@ describe("catalog entries", () => {
 
   it("renders trusted facts with the catalog's name, document and page", () => {
     const facts = entryFacts([{ code: "1S4", catalog: "Valve sheets", service: "Sour water", rating: "Class 150", attrs: { Body: "WCB" }, documentName: "PS-100", page: 12 }]);
-    expect(facts).toContain("VALVE SHEETS ENTRY 1S4 — PS-100 p.12; for: Sour water; rating: Class 150; Body: WCB");
+    expect(facts).toContain("VALVE SHEETS ENTRY 1S4 - PS-100 p.12; for: Sour water; rating: Class 150; Body: WCB");
   });
 });
 
@@ -76,7 +76,7 @@ describe("catalog", () => {
   it("lists forms and checklists first", () => {
     const block = buildCatalogBlock(entries);
     expect(block.indexOf("Forms (1)")).toBeLessThan(block.indexOf("Engineering standards (1)"));
-    expect(block).toContain('"Deviation Request Form": Engineering Deviation Request — Deviation / waiver request, fillable PDF');
+    expect(block).toContain('"Deviation Request Form": Engineering Deviation Request - Deviation / waiver request, fillable PDF');
     expect(block).toContain("for hydrotest of piping");
   });
 
@@ -93,9 +93,9 @@ describe("goal detection in answers", () => {
   it("reads Heading toward and Use this lines and strips them", () => {
     const m = extractAnswerMeta([
       "**Mode:** deviation",
-      "**Heading toward:** deviation — wants slip-on flanges on elbows despite EP 5-2-2 §4.3",
-      "**Use this:** \"Deviation Request Form\" — to request the exception formally",
-      "**Answer:** NOT SETTLED — the reason for the rule depends on cyclic service [2].",
+      "**Heading toward:** deviation - wants slip-on flanges on elbows despite EP 5-2-2 §4.3",
+      "**Use this:** \"Deviation Request Form\" - to request the exception formally",
+      "**Answer:** NOT SETTLED - the reason for the rule depends on cyclic service [2].",
     ].join("\n"));
     expect(m.mode).toBe("deviation");
     expect(m.goal).toEqual({ kind: "deviation", why: "wants slip-on flanges on elbows despite EP 5-2-2 §4.3" });
@@ -104,7 +104,7 @@ describe("goal detection in answers", () => {
   });
 
   it("ignores a goal it doesn't know", () => {
-    expect(extractAnswerMeta("**Heading toward:** vacation — sure\n**Answer:** YES — ok [1].").goal).toBeNull();
+    expect(extractAnswerMeta("**Heading toward:** vacation - sure\n**Answer:** YES - ok [1].").goal).toBeNull();
   });
 });
 

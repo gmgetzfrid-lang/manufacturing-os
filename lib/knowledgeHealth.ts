@@ -41,7 +41,7 @@ export const STATUS_LABEL: Record<HealthStatus, string> = {
   outdated: "Newer revision not indexed",
   failed: "Failed",
   missing: "Not in the index",
-  retired: "Set aside — restores on sync",
+  retired: "Set aside - restores on sync",
   notPdf: "Not a PDF",
   noFile: "No file attached",
   heldBack: "Held back from AI",

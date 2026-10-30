@@ -122,7 +122,7 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
             <label className="block text-xs font-black text-[var(--color-text)] mb-1">Title</label>
             <input value={(draft.title as string) ?? ""} onChange={(e) => set("title", e.target.value.slice(0, 60))}
               placeholder={meta.title} className={input} />
-            <p className="text-[11px] text-[var(--color-text-muted)] mt-1">Name this one — useful when you have two (e.g. “Ask — Piping”).</p>
+            <p className="text-[11px] text-[var(--color-text-muted)] mt-1">Name this one - useful when you have two (e.g. “Ask - Piping”).</p>
           </div>
           {fields.map((f) => (
             <div key={f.key}>

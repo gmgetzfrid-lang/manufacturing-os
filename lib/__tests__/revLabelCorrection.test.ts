@@ -33,7 +33,7 @@ describe("checkRevLabelCorrection", () => {
     if (!r.ok) expect(r.reason).toMatch(/too long/i);
   });
 
-  it("rejects renaming an in-review draft — the review flow owns those labels", () => {
+  it("rejects renaming an in-review draft - the review flow owns those labels", () => {
     const r = checkRevLabelCorrection({ ...base, newLabel: "38", reviewState: "in_review" });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/review/i);

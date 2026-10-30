@@ -97,9 +97,9 @@ export async function buildAndDownloadDocPack(input: {
         userLabel: input.userEmail?.split("@")[0] ?? undefined,
         email: input.userEmail ?? undefined,
         timestamp: new Date(),
-        watermarkText: "UNCONTROLLED — FIELD PACK",
+        watermarkText: "UNCONTROLLED - FIELD PACK",
         footerNotice:
-          `${label} Rev ${(d.rev as string) ?? "?"} at time of issue — verify current revision before use.` +
+          `${label} Rev ${(d.rev as string) ?? "?"} at time of issue - verify current revision before use.` +
           (holderWarning || ""),
         verifyUrl: versionId && publicOrigin()
           ? `${publicOrigin()}/verify/${String(d.id)}?v=${versionId}`

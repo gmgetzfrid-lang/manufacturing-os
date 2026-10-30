@@ -59,7 +59,7 @@ export default function FirstRunHint({ storageKey, children, tone = "info" }: Fi
       <div className="flex-1">{children}</div>
       <button
         onClick={dismiss}
-        title="Dismiss — won't show again"
+        title="Dismiss - won't show again"
         className="p-0.5 rounded hover:bg-black/5 opacity-70 hover:opacity-100"
       >
         <X className="w-3 h-3" />

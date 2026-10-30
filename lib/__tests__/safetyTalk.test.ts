@@ -35,8 +35,8 @@ describe("three topics", () => {
     expect(ts).toHaveLength(3);
     expect(ts.map((t) => t.kind)).toEqual(["general", "risk", "risk"]);
     expect(ts[0].kicker).toBe("Turnaround · Transmix-1");
-    expect(ts[0].why).toBe("Day 2 of 5 — live units and other crews all around the work today.");
-    expect(ts[1]).toMatchObject({ title: "Hydroblasting", kicker: "Top risk today · 1", why: "Ancon blasting E-20 today — next to Schultz." });
+    expect(ts[0].why).toBe("Day 2 of 5 - live units and other crews all around the work today.");
+    expect(ts[1]).toMatchObject({ title: "Hydroblasting", kicker: "Top risk today · 1", why: "Ancon blasting E-20 today - next to Schultz." });
     expect(ts[2].kicker).toBe("Top risk today · 2");
   });
   it("a crew doing the work is never listed as 'next to' itself", () => {
@@ -52,7 +52,7 @@ describe("three topics", () => {
     const night = { start: S + 12 * H, end: S + 24 * H, kind: "night" as const };
     const late = jobs.map((j) => ({ ...j, start: j.start! + 12 * H, end: j.end! + 12 * H }));
     const ts = brief(night, late);
-    expect(ts[1].why).toBe("Ancon blasting E-20 tonight — next to Schultz.");
+    expect(ts[1].why).toBe("Ancon blasting E-20 tonight - next to Schultz.");
     expect(ts[1].kicker).toBe("Top risk tonight · 1");
   });
   it("three short lines each, never the schedule's steps, no repeats", () => {
@@ -76,7 +76,7 @@ describe("three topics", () => {
     const v = ts.find((t) => t.hazard === "confined_space")!;
     expect(v.points[0].say).toMatch(/^Hole watch at the manway the whole entry, in constant contact with every entrant\. Air monitored the whole time/);
   });
-  it("every core control is short, starts with the thing to do, and says evacuate — not 'get out'", () => {
+  it("every core control is short, starts with the thing to do, and says evacuate - not 'get out'", () => {
     for (const c of Object.values(CORE)) for (const p of [c.always, ...c.more]) {
       expect(words(p.say)).toBeLessThanOrEqual(30);
       expect(p.say).not.toMatch(/get out|leave first|stop and go/i);
@@ -89,11 +89,11 @@ describe("three topics", () => {
     // …and the same all shift, on every screen.
     expect(brief()).toEqual(brief());
   });
-  it("a quiet shift: a toolbox topic of its own fills the row — never one of the job's themes", () => {
+  it("a quiet shift: a toolbox topic of its own fills the row - never one of the job's themes", () => {
     const ts = brief(DAY, [job("pb", "Pull Bundle", "e17", "E-17 - Exchanger", 0, 4, "Schultz")]);
     expect(ts.map((t) => t.kind)).toEqual(["general", "risk", "general"]);
     expect(QUIET_THEMES.map((q) => q.title)).toContain(ts[2].title);
-    expect(ts[2].why).toBe("Quiet day on the schedule — a good one to talk through.");
+    expect(ts[2].why).toBe("Quiet day on the schedule - a good one to talk through.");
     // No risky work at all: the job's topic and the toolbox topic.
     expect(brief(DAY, [job("i", "Inspect for Cleanliness", "e20", "E-20 - Overhead Trim Cooler", 0, 2, "QA")]).map((t) => t.kind)).toEqual(["general", "general"]);
   });
@@ -105,7 +105,7 @@ describe("three topics", () => {
     expect(projectFacts(ta, DAY, ["Shutdown-Required Inspection on Burner Auto S/O"]).phase).toBeUndefined();
     expect(projectFacts(ta, DAY, ["Shutdown Unit and De-inventory"]).phase).toBe("shutdown");
   });
-  it("late in the job, the job's topic says so — a different way each day", () => {
+  it("late in the job, the job's topic says so - a different way each day", () => {
     const late: ProjectBase = { ...ta, start: Date.parse("2026-10-19T05:00:00Z"), finish: Date.parse("2026-11-20T05:00:00Z") };
     const said = [0, 1, 2, 3, 4].map((d) => {
       const sh = { start: S + d * 24 * H, end: S + d * 24 * H + 12 * H, kind: "day" as const };
@@ -153,7 +153,7 @@ describe("three topics", () => {
   it("goes out in the email as three topics: heading, why, bullets, sources", () => {
     const ts = brief();
     const doc: ExportDoc = { kind: "Shift turnover", project: "Unit", when: "", asOf: "", sections: [
-      { title: "Safety topics", blocks: ts.map((t, i) => ({ k: "bullets" as const, title: `${i + 1}. ${t.title}`, lead: `${t.kicker} — ${t.why}`, items: t.points.map((p) => p.say), sources: talkSources(t) })) },
+      { title: "Safety topics", blocks: ts.map((t, i) => ({ k: "bullets" as const, title: `${i + 1}. ${t.title}`, lead: `${t.kicker} - ${t.why}`, items: t.points.map((p) => p.say), sources: talkSources(t) })) },
     ] };
     const text = toPlainText(doc);
     expect(text).toContain("2. HYDROBLASTING");
@@ -163,7 +163,7 @@ describe("three topics", () => {
 });
 
 describe("the job around the work", () => {
-  it("reads a turnaround from the project or the schedule's groups — TA in capitals only", () => {
+  it("reads a turnaround from the project or the schedule's groups - TA in capitals only", () => {
     expect(projectFacts(ta, DAY, names).turnaround).toBe(true);
     expect(projectFacts({ ...ta, names: ["Unit 2", "Shutdown"] }, DAY, names).turnaround).toBe(true);
     expect(projectFacts({ ...ta, names: ["Unit 2 TA 2026"] }, DAY, names).turnaround).toBe(true);
@@ -230,7 +230,7 @@ describe("no repeats", () => {
     ["day shifts only", shifts(20, 24, () => "day")],
     ["night shifts only", shifts(20, 24, () => "night")],
   ] as const) {
-    it(`whatever the work, no line comes back within four shifts — ${label}`, () => {
+    it(`whatever the work, no line comes back within four shifts - ${label}`, () => {
       const briefs = run([...list]);
       const lines = briefs.map((b) => new Set(b.flatMap((t) => t.points.map((p) => p.say)).filter((x) => !exempt.has(x))));
       for (let i = 0; i < lines.length; i++) for (let j = i + 1; j <= i + 4 && j < lines.length; j++)
@@ -278,7 +278,7 @@ describe("a kind of work that's led two shifts running", () => {
     expect(ts.filter((t) => t.kind === "risk").map((t) => t.hazard)).toEqual(["line_break", "bundle_pull"]);
     expect(ts[1].kicker).toBe("Top risk today · 1");
   });
-  it("stays when it's still clearly the top risk — and says how long it's run", () => {
+  it("stays when it's still clearly the top risk - and says how long it's run", () => {
     const hs = ranked();
     hs[0] = { ...hs[0], score: hs[1].score + 15 };
     const ts = safetyBrief(hs, DAY, { recentRisks: twice });
@@ -304,7 +304,7 @@ describe("the risk cards of the shifts before, from the schedule", () => {
     ]),
   ];
   const dayOf = (d: number) => shiftAt(Date.parse(at(d, "10:00")), tzLA, DEFAULT_SHIFT_TIMES);
-  it("each shift's cards as they were shown — the same whichever shift you look from", () => {
+  it("each shift's cards as they were shown - the same whichever shift you look from", () => {
     const h29 = riskHistory(sched, dayOf(29), tzLA, DEFAULT_SHIFT_TIMES);
     const h30 = riskHistory(sched, dayOf(30), tzLA, DEFAULT_SHIFT_TIMES);
     // Nights had no work, no brief: the last three briefs are the 28th, 27th, 26th.

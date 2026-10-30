@@ -109,8 +109,8 @@ export async function GET(req: NextRequest) {
     await applyStampToPdfDoc(pdfDoc, {
       userLabel: "shared-link",
       timestamp: new Date(),
-      watermarkText: "UNCONTROLLED — SHARED COPY",
-      footerNotice: `${label} Rev ${rev ?? "?"} at time of download — scan the QR to confirm it is still current.`,
+      watermarkText: "UNCONTROLLED - SHARED COPY",
+      footerNotice: `${label} Rev ${rev ?? "?"} at time of download - scan the QR to confirm it is still current.`,
       verifyUrl: versionId && publicOrigin()
         ? `${publicOrigin()}/verify/${doc.id as string}?v=${versionId}`
         : undefined,
@@ -121,7 +121,7 @@ export async function GET(req: NextRequest) {
     // Not a stampable PDF (encrypted / corrupt / scanned oddity). Deliver it
     // anyway — but through this route, never a raw bucket URL, and the audit
     // row below records that it went out unmarked.
-    console.warn("[share/file] stamping failed — delivering unstamped", (e as Error).message);
+    console.warn("[share/file] stamping failed - delivering unstamped", (e as Error).message);
   }
 
   // The distribution record: this is the actual download (resolve only counts

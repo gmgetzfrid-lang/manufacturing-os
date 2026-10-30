@@ -78,23 +78,23 @@ describe("checked against the hour's entries", () => {
     expect(flagsFor("Pulling E-17 bundle, 3 of 5 out.", [rows[2]])).toEqual(["number not in the entries: 3"]);
     expect(flagsFor("UIT-013 back on 10/29, done by 11:30.", [rows[3]]).join(" | ")).toMatch(/date not in the entries: 10\/29.*time not in the entries: 11:30/);
   });
-  it("wording that says what the entries don't — or no wording — is said plainly", () => {
+  it("wording that says what the entries don't - or no wording - is said plainly", () => {
     const w = wordHours([
       { time: "08:00", text: "Schultz setting blinds on V-7 and E-12." },
       { time: "14:00", text: "Pulling E-17 bundle, 3 of 5 out." },
     ], hours, tz);
     expect(w.get(key("08:00"))).toEqual({ text: "Schultz setting blinds on V-7 and E-12.", plain: false });
-    expect(w.get(key("14:00"))).toEqual({ text: "Schultz: E-17 Pull Bundle to 20% — Pulled 2/5 bundles.", plain: true });
+    expect(w.get(key("14:00"))).toEqual({ text: "Schultz: E-17 Pull Bundle to 20% - Pulled 2/5 bundles.", plain: true });
     expect(w.get(key("16:00"))?.plain).toBe(true);
   });
   it("says a step's entry, or the shift's own note, plainly", () => {
-    expect(plainHour(rows.slice(0, 2))).toBe("Schultz: V-7 Set Blinds; Verify LOTO started — Majority of Schultz was going through site safety orientation (6am-7:15am); E-12 Set Blinds; Verify LOTO started.");
+    expect(plainHour(rows.slice(0, 2))).toBe("Schultz: V-7 Set Blinds; Verify LOTO started - Majority of Schultz was going through site safety orientation (6am-7:15am); E-12 Set Blinds; Verify LOTO started.");
     expect(plainHour([row("09:00", { task: "Notes & actions", what: "Note", comment: "Crane on site" })])).toBe("Note: Crane on site.");
     expect(plainHour([
       row("10:00", { task: "V-7 - Piping", step: "Inspect", crew: "Schultz", what: "Comment", comment: "Discovery: low TML" }),
-      row("10:00", { task: "V-7 - Piping", step: "Welded pipe", crew: "Schultz", what: "Discovery found", comment: "low TML — 32 h of work · task finish +24 h" }),
+      row("10:00", { task: "V-7 - Piping", step: "Welded pipe", crew: "Schultz", what: "Discovery found", comment: "low TML - 32 h of work · task finish +24 h" }),
       row("10:30", { task: "E-14 - Cooler", step: "LV-009B", crew: "Maintenance", what: "Off hold, in progress", comment: "Putting the valve back in" }),
-    ])).toBe("Schultz: V-7 Welded pipe discovery — low TML. Maintenance: E-14 LV-009B back in progress — Putting the valve back in.");
+    ])).toBe("Schultz: V-7 Welded pipe discovery - low TML. Maintenance: E-14 LV-009B back in progress - Putting the valve back in.");
   });
   it("asks for each hour with its entries", () => {
     const p = hourlyPrompt(hours, { tz, shiftTitle: "Day shift Mon Oct 26", window: "6:00–18:00" });

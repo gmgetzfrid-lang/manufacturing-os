@@ -27,7 +27,7 @@ export function buildBriefSentences(d: InboxSnapshot): string[] {
   if (assigned > 0) s.push(`${assigned} request${assigned === 1 ? "" : "s"} assigned to you`);
   if (markups > 0) s.push(`${markups} markup request${markups === 1 ? "" : "s"} waiting on you`);
   if (unread > 0) s.push(`${unread} ticket${unread === 1 ? "" : "s"} with new activity`);
-  if (checkouts > 0) s.push(`${checkouts} document${checkouts === 1 ? "" : "s"} checked out${stale > 0 ? ` (${stale} aging — worth releasing)` : ""}`);
+  if (checkouts > 0) s.push(`${checkouts} document${checkouts === 1 ? "" : "s"} checked out${stale > 0 ? ` (${stale} aging - worth releasing)` : ""}`);
   if (holds > 0) s.push(`${holds} hold${holds === 1 ? "" : "s"} you opened still blocking work`);
   if (acks > 0) s.push(`${acks} transmittal${acks === 1 ? "" : "s"} awaiting the recipient's acknowledgement`);
   const overdueCount = (d.milestonesOverdue ?? []).length;
@@ -50,7 +50,7 @@ export function topAction(d: InboxSnapshot): { label: string; href: string } | n
     return { label: `Respond to ${d.markupRequestsToMe.length} markup request${d.markupRequestsToMe.length === 1 ? "" : "s"}`, href: "/inbox" };
   if (d.ticketsAssigned.length > 0) {
     const t = d.ticketsAssigned[0];
-    return { label: `Open your next request${t.ticketId ? ` — ${t.ticketId}` : ""}`, href: t.id ? `/requests/${t.id}` : "/requests" };
+    return { label: `Open your next request${t.ticketId ? ` - ${t.ticketId}` : ""}`, href: t.id ? `/requests/${t.id}` : "/requests" };
   }
   if (d.myOpenHolds.length > 0)
     return { label: `Clear an open hold (${d.myOpenHolds.length})`, href: "/admin/holds" };
@@ -94,7 +94,7 @@ export function DailyBrief({ data }: { data: InboxSnapshot }) {
   const next = topAction(data);
 
   const narrative = sentences.length === 0
-    ? "Your queue is clear — nothing needs you right now. Good time to get ahead on something."
+    ? "Your queue is clear - nothing needs you right now. Good time to get ahead on something."
     : `You have ${sentences[0]}${sentences.length > 1 ? `, plus ${sentences.length - 1} more thing${sentences.length - 1 === 1 ? "" : "s"} below` : ""}.`;
 
   return (

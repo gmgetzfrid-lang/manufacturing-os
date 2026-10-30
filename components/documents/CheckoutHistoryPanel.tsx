@@ -284,7 +284,7 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
                 <div className="min-w-0">
                   <span className="font-bold text-[var(--color-text)]">{s.userName || "Unknown"}</span>
                   {s.purpose && <span className="text-violet-700"> · {s.purpose}</span>}
-                  {s.note && <span className="text-[var(--color-text-muted)] italic"> — &ldquo;{s.note}&rdquo;</span>}
+                  {s.note && <span className="text-[var(--color-text-muted)] italic"> - &ldquo;{s.note}&rdquo;</span>}
                   <span className="text-[var(--color-text-faint)]"> · {fmtRange(s.startedAt, s.endedAt)}</span>
                   {(() => {
                     // The outcome is the register's verdict. Legacy rows
@@ -294,7 +294,7 @@ function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; 
                     if (oc) {
                       return (
                         <span className={`font-bold ${oc.cls}`}> · {oc.label}
-                          {s.outcomeNote && <span className="font-normal text-[var(--color-text-muted)] italic"> — &ldquo;{s.outcomeNote}&rdquo;</span>}
+                          {s.outcomeNote && <span className="font-normal text-[var(--color-text-muted)] italic"> - &ldquo;{s.outcomeNote}&rdquo;</span>}
                         </span>
                       );
                     }
@@ -378,5 +378,5 @@ function fmtRange(start: string | null, end: string | null): string {
     return sameDay ? fmt(s) : `${fmt(s)} – ${fmt(e)}`;
   }
   if (s) return `${fmt(s)} – open`;
-  return "—";
+  return "-";
 }

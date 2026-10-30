@@ -107,7 +107,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
         <ScanSearch className="w-4 h-4 text-[var(--color-accent)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Quotes &amp; bid tabulation</span>
         <span className="text-[10px] text-[var(--color-text-muted)]">
-          Drop vendor quote PDFs — the system reads them and compares price, manpower, and scope.
+          Drop vendor quote PDFs - the system reads them and compares price, manpower, and scope.
         </span>
         {canManage && (
           <button onClick={() => setShowLinks((v) => !v)}
@@ -203,7 +203,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
           {ready.map((r) => (
             <li key={r.doc.id}>
               <span className="font-bold text-[var(--color-text)]">{r.doc.vendorName ?? "Vendor"}</span>
-              {r.doc.docNumber ? ` ${r.doc.docNumber}` : ""} — {fmtMoney(r.doc.totalAmount ?? 0)} → {accountName(r.suggestion!.accountId)}
+              {r.doc.docNumber ? ` ${r.doc.docNumber}` : ""} - {fmtMoney(r.doc.totalAmount ?? 0)} → {accountName(r.suggestion!.accountId)}
             </li>
           ))}
         </ul>
@@ -216,7 +216,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
       if (!res.ok) failed++;
     }
     setBatch(null);
-    if (failed) setErr(`${failed} invoice${failed === 1 ? "" : "s"} couldn't post — someone may have acted on them already. Refreshed.`);
+    if (failed) setErr(`${failed} invoice${failed === 1 ? "" : "s"} couldn't post - someone may have acted on them already. Refreshed.`);
     onChanged();
   };
 
@@ -225,7 +225,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
       <div className="px-4 py-2.5 flex items-center gap-2 flex-wrap">
         <Receipt className="w-4 h-4 text-[var(--color-accent)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Invoices</span>
-        <span className="text-[10px] text-[var(--color-text-muted)]">Drop them in — each is read, matched to its vendor&apos;s budget line, and checked for duplicates. You confirm before money posts.</span>
+        <span className="text-[10px] text-[var(--color-text-muted)]">Drop them in - each is read, matched to its vendor&apos;s budget line, and checked for duplicates. You confirm before money posts.</span>
         {canManage && ready.length > 0 && (
           <button onClick={() => void postReady()} disabled={!!batch}
             className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
@@ -286,7 +286,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                 {isOpen && (
                   <div className="mt-2 ml-6 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-2 space-y-1">
                     <div className="text-[10px] text-[var(--color-text-muted)] flex flex-wrap gap-x-3">
-                      <span>File: {doc.fileName ?? "—"}</span>
+                      <span>File: {doc.fileName ?? "-"}</span>
                       {typeof p.poNumber === "string" && p.poNumber && <span>PO {p.poNumber}</span>}
                       {typeof p.dueDate === "string" && p.dueDate && <span>Due {p.dueDate}</span>}
                       {typeof p.subtotal === "number" && <span>Subtotal {fmtMoney(p.subtotal)}</span>}
@@ -334,7 +334,7 @@ function InvoiceDrop({ orgId, projectId, actor, onDone, setErr }: {
       if (!up.ok || !up.doc) { problems.push(`${file.name}: ${up.error ?? "upload failed"}`); continue; }
       setProgress(`${files.length > 1 ? `${i + 1} of ${files.length}: ` : ""}reading ${file.name}…`);
       try { await readCostDoc(orgId, projectId, up.doc.id); }
-      catch (e) { problems.push(`${file.name}: uploaded, but not read — ${(e as Error).message}`); }
+      catch (e) { problems.push(`${file.name}: uploaded, but not read - ${(e as Error).message}`); }
     }
     setProgress(null);
     if (problems.length) setErr(problems.join(" · "));
@@ -354,7 +354,7 @@ function InvoiceDrop({ orgId, projectId, actor, onDone, setErr }: {
           over ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]/60" : "border-[var(--color-border-strong)] hover:border-[var(--color-accent-ring)] bg-[var(--color-surface-2)]/30"}`}>
         {progress ? <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-accent)]" /> : <UploadCloud className="w-3.5 h-3.5 text-[var(--color-accent)]" />}
         <span className="text-[var(--color-text-muted)] truncate">
-          {progress ?? "Drop invoices here (PDF or photo — several at once is fine), or click to choose"}
+          {progress ?? "Drop invoices here (PDF or photo - several at once is fine), or click to choose"}
         </span>
         <input ref={input} type="file" multiple accept={INVOICE_ACCEPT} className="hidden"
           onChange={(e) => { void run([...(e.target.files ?? [])]); e.target.value = ""; }} />
@@ -397,7 +397,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
   // whose name matches the RFQ group / priced scope ("Scaffolding").
   const suggestFor = (doc: CostDocument) => suggestAccountForInvoice({
     vendorName: doc.vendorName, partyId: doc.partyId,
-    lineDescriptions: [group.replace(/^Ungrouped — /, ""), ...(parsedQuoteFrom(doc)?.lineItems.map((l) => l.description) ?? [])],
+    lineDescriptions: [group.replace(/^Ungrouped - /, ""), ...(parsedQuoteFrom(doc)?.lineItems.map((l) => l.description) ?? [])],
   }, accounts, parties);
 
   const award = async (doc: CostDocument, accountId: string) => {
@@ -449,7 +449,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                     <th className="px-3 py-2">Bidder</th>
                     <th className="px-3 py-2 text-right">Price</th>
                     <th className="px-3 py-2 text-right" title="Labor hours the bid offers">Labor hrs</th>
-                    <th className="px-3 py-2 text-right" title="Total price ÷ labor hours — lower buys more hands">$ / hr</th>
+                    <th className="px-3 py-2 text-right" title="Total price ÷ labor hours - lower buys more hands">$ / hr</th>
                     <th className="px-3 py-2 text-right" title="Largest crew size stated">Peak crew</th>
                     <th className="px-3 py-2 text-right" title={`Best value = ${Math.round(DEFAULT_WEIGHTS.price * 100)}% price + ${Math.round(DEFAULT_WEIGHTS.manpower * 100)}% manpower + ${Math.round(DEFAULT_WEIGHTS.coverage * 100)}% scope coverage`}>Value score</th>
                     {canManage && !awarded && <th className="px-3 py-2" />}
@@ -470,7 +470,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                             {known && (
                               <Link href={`/companies/${known.id}`}
                                 className="ml-1.5 inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent-ring)] transition-colors"
-                                title="In your Known Companies registry — open their full record"
+                                title="In your Known Companies registry - open their full record"
                                 onClick={(ev) => ev.stopPropagation()}>
                                 known{known.qualityManualScore != null ? ` · QM ${Math.round(known.qualityManualScore)}%` : ""}
                               </Link>
@@ -479,15 +479,15 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                               <span className="ml-1.5 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300">do not use</span>
                             )}
                             {s?.best && !awarded && (
-                              <span className="ml-1.5 text-[9px] font-black uppercase text-[var(--color-accent)]" title="Highest weighted value score — not automatically the winner; you decide.">best value</span>
+                              <span className="ml-1.5 text-[9px] font-black uppercase text-[var(--color-accent)]" title="Highest weighted value score - not automatically the winner; you decide.">best value</span>
                             )}
                             {isAwarded && <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] font-black uppercase text-emerald-700 dark:text-emerald-300"><Trophy className="w-2.5 h-2.5" /> awarded</span>}
                             {isDeclined && <span className="ml-1.5 text-[9px] font-bold uppercase text-[var(--color-text-faint)]">not selected</span>}
                           </td>
                           <td className="px-3 py-2 text-right font-black tabular-nums text-[var(--color-text)]">{fmtMoney(e.total)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{e.laborHours > 0 ? e.laborHours.toLocaleString() : <span className="text-[var(--color-text-faint)]" title="This bid doesn't state labor hours — undisclosed manpower scores at the field's floor.">not stated</span>}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{e.dollarsPerHour != null ? fmtMoney(e.dollarsPerHour) : "—"}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{e.peakHeadcount ?? "—"}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{e.laborHours > 0 ? e.laborHours.toLocaleString() : <span className="text-[var(--color-text-faint)]" title="This bid doesn't state labor hours - undisclosed manpower scores at the field's floor.">not stated</span>}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{e.dollarsPerHour != null ? fmtMoney(e.dollarsPerHour) : "-"}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{e.peakHeadcount ?? "-"}</td>
                           <td className="px-3 py-2 text-right">
                             {s && (
                               <span className="font-black tabular-nums text-[var(--color-text)]" title={`Price ${s.parts.price} · Manpower ${s.parts.manpower} · Coverage ${s.parts.coverage} (each 0–100 vs the field)`}>
@@ -514,7 +514,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                                   </span>
                                 ))}
                                 {e.missingScope.slice(0, 4).map((x) => (
-                                  <span key={x} className="text-[9px] font-bold px-1.5 py-0.5 rounded border border-rose-500/40 bg-rose-500/[0.06] text-rose-700 dark:text-rose-300" title="Other bidders priced this — this bid neither priced nor excluded it">
+                                  <span key={x} className="text-[9px] font-bold px-1.5 py-0.5 rounded border border-rose-500/40 bg-rose-500/[0.06] text-rose-700 dark:text-rose-300" title="Other bidders priced this - this bid neither priced nor excluded it">
                                     silent gap: {x}
                                   </span>
                                 ))}
@@ -538,8 +538,8 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                 <li key={d.id} className={`px-3 py-2 flex items-center gap-2 flex-wrap text-xs ${d.status === "declined" ? "opacity-55" : ""}`}>
                   <span className="font-bold text-[var(--color-text)]">{d.vendorName ?? d.fileName ?? "Bid"}</span>
                   <span className="font-black tabular-nums text-[var(--color-text)]">{fmtMoney(d.totalAmount ?? 0)}</span>
-                  <span className="text-[10px] text-[var(--color-text-muted)]" title="The AI couldn't read line detail from this file — it competes on price only, with no manpower or coverage score.">
-                    typed total — price only
+                  <span className="text-[10px] text-[var(--color-text-muted)]" title="The AI couldn't read line detail from this file - it competes on price only, with no manpower or coverage score.">
+                    typed total - price only
                   </span>
                   <StatusChip status={d.status} />
                   {canManage && !awarded && d.status === "parsed" && (
@@ -556,7 +556,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
           {econ.length > 1 && (
             <div className="text-[10px] text-[var(--color-text-muted)]">
               Value score = {Math.round(DEFAULT_WEIGHTS.price * 100)}% price + {Math.round(DEFAULT_WEIGHTS.manpower * 100)}% manpower-for-the-money + {Math.round(DEFAULT_WEIGHTS.coverage * 100)}% scope coverage, each measured against this field.
-              The cheapest bid doesn&apos;t automatically win — exclusions and silent gaps are why. You make the call.
+              The cheapest bid doesn&apos;t automatically win - exclusions and silent gaps are why. You make the call.
             </div>
           )}
         </div>
@@ -584,7 +584,7 @@ function ReadButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
   return (
     <button onClick={onClick} disabled={busy}
       className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[10px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
-      title="AI reads the printed pages into numbers — on your own AI key. You review before anything posts.">
+      title="AI reads the printed pages into numbers - on your own AI key. You review before anything posts.">
       {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Read
     </button>
   );
@@ -598,7 +598,7 @@ function PostControls({ accounts, busy, onPost, label, suggested }: {
 }) {
   const [accountId, setAccountId] = useState(suggested?.accountId ?? (accounts.length === 1 ? accounts[0].id : ""));
   if (accounts.length === 0) {
-    return <span className="text-[10px] text-[var(--color-text-muted)]" title="Create a budget line first — money always posts somewhere.">needs a budget line</span>;
+    return <span className="text-[10px] text-[var(--color-text-muted)]" title="Create a budget line first - money always posts somewhere.">needs a budget line</span>;
   }
   return (
     <span className="inline-flex items-center gap-1">
@@ -679,7 +679,7 @@ function UploadRow({ orgId, projectId, actor, kind, existingGroups, onDone, setE
         className="h-8 w-52 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
       {kind === "quote" && (
         <>
-          <input value={group} onChange={(e) => setGroup(e.target.value)} placeholder="RFQ group — the scope being bid" list="rfq-groups"
+          <input value={group} onChange={(e) => setGroup(e.target.value)} placeholder="RFQ group - the scope being bid" list="rfq-groups"
             className="h-8 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs"
             title="Quotes sharing a group name tabulate side by side." />
           <datalist id="rfq-groups">
@@ -755,7 +755,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
   const copy = async (l: QuoteLink) => {
     const url = `${window.location.origin}/submit/${l.token}`;
     try { await navigator.clipboard.writeText(url); setCopied(l.id); setTimeout(() => setCopied(null), 1500); }
-    catch { setErr("Couldn't copy — your browser blocked clipboard access."); }
+    catch { setErr("Couldn't copy - your browser blocked clipboard access."); }
   };
 
   // Starter RFQ: a real .docx assembled from the project's own data — the
@@ -793,7 +793,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
   return (
     <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)]/30 space-y-2">
       <div className="text-[11px] text-[var(--color-text-muted)]">
-        Send a contractor their own tokened link — no account needed. Their quote PDF lands here, the
+        Send a contractor their own tokened link - no account needed. Their quote PDF lands here, the
         system reads it, and it joins the tabulation on its own.
       </div>
       <div className="flex items-center gap-2 flex-wrap">
@@ -818,7 +818,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
               <span className="text-[10px] text-[var(--color-text-faint)]">{l.submissionCount} submission{l.submissionCount === 1 ? "" : "s"}</span>
               <span className="ml-auto flex items-center gap-1">
                 <button onClick={() => void makeRfq(l)}
-                  title="Download a ready-to-send Request For Quote (.docx) built from this project's scope, purpose, and turnover requirements — with this company's submission link inside."
+                  title="Download a ready-to-send Request For Quote (.docx) built from this project's scope, purpose, and turnover requirements - with this company's submission link inside."
                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
                   <FileText className="w-3 h-3" /> RFQ (.docx)
                 </button>

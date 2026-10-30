@@ -89,11 +89,11 @@ function subfolder(root: string, sub: string): string {
 const CATEGORY_META: Record<DataClass, { icon: typeof Recycle; tint: string; bar: string; blurb: string }> = {
   purge: {
     icon: Recycle, tint: "text-emerald-600", bar: "bg-emerald-500",
-    blurb: "Disposable byproducts. Safe to delete once aged — no records lost.",
+    blurb: "Disposable byproducts. Safe to delete once aged - no records lost.",
   },
   archive: {
     icon: Archive, tint: "text-amber-600", bar: "bg-amber-500",
-    blurb: "Real records. Never deleted — kept hot, then archived off-box (saved locally) when cold.",
+    blurb: "Real records. Never deleted - kept hot, then archived off-box (saved locally) when cold.",
   },
   reference: {
     icon: ShieldCheck, tint: "text-sky-600", bar: "bg-sky-500",
@@ -340,7 +340,7 @@ export default function StorageBackupPage() {
     if (!activeOrgId) return;
     const r2Gb = Number(r2LimitDraft);
     const dbMb = Number(dbLimitDraft);
-    if (!(r2Gb > 0) || !(dbMb > 0)) { setError("Enter both ceilings — R2 in GB, database in MB."); return; }
+    if (!(r2Gb > 0) || !(dbMb > 0)) { setError("Enter both ceilings - R2 in GB, database in MB."); return; }
     setSavingLimits(true); setError(null);
     try {
       const token = await authToken();
@@ -385,7 +385,7 @@ export default function StorageBackupPage() {
       title: "Delete orphaned files?",
       message:
         `Permanently delete ${fmtNum(orphanScan.orphans.length)} file(s) (≈${fmtBytes(orphanScan.orphanBytes)}) that nothing in the ` +
-        "database references — old knowledge uploads you deleted, stranded leftovers. The server re-verifies every file is " +
+        "database references - old knowledge uploads you deleted, stranded leftovers. The server re-verifies every file is " +
         "still unreferenced at delete time, and files newer than 7 days are never touched. This cannot be undone.",
       tone: "danger",
       confirmLabel: "Delete orphans",
@@ -402,7 +402,7 @@ export default function StorageBackupPage() {
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
       setOrphanMsg({
-        text: `Reclaimed ${fmtBytes(body.freedBytes ?? 0)} — ${fmtNum(body.deleted ?? 0)} orphaned file(s) deleted.`,
+        text: `Reclaimed ${fmtBytes(body.freedBytes ?? 0)} - ${fmtNum(body.deleted ?? 0)} orphaned file(s) deleted.`,
         warn: (body.errors?.length ?? 0) > 0,
       });
       setOrphanScan(null);
@@ -443,7 +443,7 @@ export default function StorageBackupPage() {
     if (!activeOrgId || !shedPreview || shedPreview.selectedCount === 0) return;
     const ok = await appConfirm({
       title: "Archive superseded revisions",
-      message: `Bundle ${fmtNum(shedPreview.selectedCount)} superseded revision file(s) (≈${fmtBytes(shedPreview.reclaimableBytes)}) into one offline archive zip? Nothing is deleted yet — you confirm the reclaim after saving it.`,
+      message: `Bundle ${fmtNum(shedPreview.selectedCount)} superseded revision file(s) (≈${fmtBytes(shedPreview.reclaimableBytes)}) into one offline archive zip? Nothing is deleted yet - you confirm the reclaim after saving it.`,
       confirmLabel: "Build & download",
     });
     if (!ok) return;
@@ -504,7 +504,7 @@ export default function StorageBackupPage() {
       if (keysDeleted < reclaimed || (Array.isArray(body?.errors) && body.errors.length > 0)) {
         setCatalogMsg({
           warn: true,
-          text: `${pendingArchive.archiveId}: ${fmtNum(reclaimed)} revision(s) marked archived, but ${fmtNum(Math.max(0, reclaimed - keysDeleted))} cloud object(s) failed to delete and are still billed. Run Reclaim on it again from the catalog below — re-running retries the deletes safely.`,
+          text: `${pendingArchive.archiveId}: ${fmtNum(reclaimed)} revision(s) marked archived, but ${fmtNum(Math.max(0, reclaimed - keysDeleted))} cloud object(s) failed to delete and are still billed. Run Reclaim on it again from the catalog below - re-running retries the deletes safely.`,
         });
       }
       await Promise.all([load(), loadShedPreview(shedKeep), loadCatalog()]);
@@ -519,7 +519,7 @@ export default function StorageBackupPage() {
     if (!activeOrgId || !ticketPreview || ticketPreview.selectedCount === 0) return;
     const ok = await appConfirm({
       title: "Archive closed tickets",
-      message: `Bundle ${fmtNum(ticketPreview.selectedCount)} closed ticket(s) — comments, history and attachments (≈${fmtBytes(ticketPreview.reclaimableBytes)}) — into one offline archive zip? Each leaves a lightweight stub in the list. Nothing is deleted yet — you confirm the reclaim after saving it.`,
+      message: `Bundle ${fmtNum(ticketPreview.selectedCount)} closed ticket(s) - comments, history and attachments (≈${fmtBytes(ticketPreview.reclaimableBytes)}) - into one offline archive zip? Each leaves a lightweight stub in the list. Nothing is deleted yet - you confirm the reclaim after saving it.`,
       confirmLabel: "Build & download",
     });
     if (!ok) return;
@@ -589,7 +589,7 @@ export default function StorageBackupPage() {
     if (!activeOrgId) return;
     const ok = await appConfirm({
       title: "Discard pending archive",
-      message: `Discard ${archiveId}? The ${which === "ticket" ? "ticket(s)" : "revision(s)"} it bundled stay live and become eligible to archive again. The ${archiveId}.zip you downloaded won't be used — delete it. Nothing in live storage is removed.`,
+      message: `Discard ${archiveId}? The ${which === "ticket" ? "ticket(s)" : "revision(s)"} it bundled stay live and become eligible to archive again. The ${archiveId}.zip you downloaded won't be used - delete it. Nothing in live storage is removed.`,
       confirmLabel: "Discard",
     });
     if (!ok) return;
@@ -624,9 +624,9 @@ export default function StorageBackupPage() {
       : `${fmtNum(row.ticketPending)} closed ticket(s)`;
     const ok = await appConfirm({
       title: "Reclaim space",
-      message: `Permanently remove ${what} from live storage now that ${row.archiveId}.zip is saved offline (≈${fmtBytes(row.totalBytes)})? Only do this if you actually saved the zip when it was produced — it becomes the only copy. This cannot be undone.`,
+      message: `Permanently remove ${what} from live storage now that ${row.archiveId}.zip is saved offline (≈${fmtBytes(row.totalBytes)})? Only do this if you actually saved the zip when it was produced - it becomes the only copy. This cannot be undone.`,
       tone: "danger",
-      confirmLabel: "I saved it — reclaim",
+      confirmLabel: "I saved it - reclaim",
     });
     if (!ok) return;
     setCatalogBusyId(row.archiveId); setError(null); setCatalogMsg(null);
@@ -646,7 +646,7 @@ export default function StorageBackupPage() {
       if (which === "doc" && (keysDeleted < reclaimed || errCount > 0)) {
         setCatalogMsg({
           warn: true,
-          text: `${row.archiveId}: ${fmtNum(reclaimed)} revision(s) marked archived, but ${fmtNum(Math.max(0, reclaimed - keysDeleted))} cloud object(s) failed to delete and are still billed. Run Reclaim on it again — re-running retries the deletes safely.`,
+          text: `${row.archiveId}: ${fmtNum(reclaimed)} revision(s) marked archived, but ${fmtNum(Math.max(0, reclaimed - keysDeleted))} cloud object(s) failed to delete and are still billed. Run Reclaim on it again - re-running retries the deletes safely.`,
         });
       } else {
         setCatalogMsg({ warn: false, text: `${row.archiveId}: space reclaimed.` });
@@ -694,7 +694,7 @@ export default function StorageBackupPage() {
       if (r.skippedForeignKey) parts.push(`${r.skippedForeignKey} foreign file key(s) ignored`);
       const warn = restored === 0 && ((r.partial || 0) + (r.skippedForeign || 0) + (r.notArchived || 0) + (r.filesMissing || 0)) > 0;
       setTicketRestoreMsg({
-        text: parts.join(" · ") + "." + (warn ? " — matched 0 tickets in this workspace; is it the right org's archive?" : ""),
+        text: parts.join(" · ") + "." + (warn ? " - matched 0 tickets in this workspace; is it the right org's archive?" : ""),
         warn,
       });
       await Promise.all([load(), loadTicketShedPreview(ticketDays)]);
@@ -902,7 +902,7 @@ export default function StorageBackupPage() {
             <div className="rounded-2xl border border-red-300 bg-red-50 p-4 mb-5 text-xs text-red-800 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
               <div>
-                <b>This file total is NOT measured — don&apos;t trust it.</b> The bucket walk failed, so
+                <b>This file total is NOT measured - don&apos;t trust it.</b> The bucket walk failed, so
                 the figure above is summed from database rows that happen to record a size:
                 document revisions and asset photos only. Knowledge-library PDFs, ticket attachments,
                 output templates and orphaned files are <b>not counted at all</b>, which is why it
@@ -915,7 +915,7 @@ export default function StorageBackupPage() {
             <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 mb-5 text-xs text-amber-900 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
               <div>
-                <b>Partial walk — the real total is higher.</b> The bucket has more than 500,000
+                <b>Partial walk - the real total is higher.</b> The bucket has more than 500,000
                 objects, so measuring stopped early. Treat {fmtBytes(stats.r2Real.bytes)} as a floor,
                 not a total.
               </div>
@@ -928,7 +928,7 @@ export default function StorageBackupPage() {
           {stats.r2Real && (stats.r2Real.segments?.length ?? 0) > 0 && (
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
               <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] mb-2.5">
-                Where the files are — measured from the bucket
+                Where the files are - measured from the bucket
               </div>
               <div className="space-y-2">
                 {stats.r2Real.segments!.map((s) => {
@@ -953,7 +953,7 @@ export default function StorageBackupPage() {
               <p className="mt-2.5 text-[10px] text-[var(--color-text-faint)]">
                 Every object in the bucket is counted exactly once here, so these add up to the
                 measured total above. If a batch you just uploaded is missing, check its row&apos;s
-                newest-file date — that tells you whether the files landed or the upload failed.
+                newest-file date - that tells you whether the files landed or the upload failed.
               </p>
             </div>
           )}
@@ -962,7 +962,7 @@ export default function StorageBackupPage() {
           {stats.freeTier && (
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
               <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] mb-2.5">
-                Plan headroom — free-tier ceilings
+                Plan headroom - free-tier ceilings
               </div>
               <div className="space-y-3">
                 {stats.r2Real && (
@@ -1011,7 +1011,7 @@ export default function StorageBackupPage() {
                   Usage is MEASURED; the ceilings are your hosting plan&apos;s limits
                   {stats.freeTier.source === "settings"
                     ? " (set by an admin here)"
-                    : " (defaulting to the FREE tiers — R2 10 GB, Supabase 500 MB)"}.
+                    : " (defaulting to the FREE tiers - R2 10 GB, Supabase 500 MB)"}.
                   Admins get an in-app notification at 70% and 90%.{" "}
                   <button onClick={() => {
                     setR2LimitDraft(String(Math.round((stats.freeTier!.r2LimitBytes / 1024 ** 3) * 10) / 10));
@@ -1031,7 +1031,7 @@ export default function StorageBackupPage() {
               <div>
                 <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">Orphaned files</div>
                 <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-                  Files still in storage that nothing references — e.g. knowledge PDFs you deleted (the old
+                  Files still in storage that nothing references - e.g. knowledge PDFs you deleted (the old
                   uploader removed the index but left the file). Scan is read-only; deleting re-verifies
                   every file server-side and never touches anything newer than 7 days.
                 </p>
@@ -1047,7 +1047,7 @@ export default function StorageBackupPage() {
             {orphanScan && (
               orphanScan.orphans.length === 0 ? (
                 <div className="mt-2 text-xs font-bold text-emerald-700">
-                  Clean — every one of {fmtNum(orphanScan.totalObjects)} files in storage is referenced.
+                  Clean - every one of {fmtNum(orphanScan.totalObjects)} files in storage is referenced.
                   {orphanScan.skippedYoung > 0 && ` (${orphanScan.skippedYoung} too new to judge yet.)`}
                 </div>
               ) : (
@@ -1063,7 +1063,7 @@ export default function StorageBackupPage() {
                     <button onClick={() => void purgeOrphanFiles()} disabled={orphanBusy !== null}
                       className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 transition-all">
                       {orphanBusy === "delete" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                      Delete orphans — free {fmtBytes(orphanScan.orphanBytes)}
+                      Delete orphans - free {fmtBytes(orphanScan.orphanBytes)}
                     </button>
                   </div>
                   <ul className="max-h-40 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] text-[11px]">
@@ -1146,7 +1146,7 @@ export default function StorageBackupPage() {
                 <div className="text-[11px] text-[var(--color-text-muted)] max-w-md">
                   {preview && preview.totalRows > 0
                     ? <>Reclaims ≈<b className="text-[var(--color-text)]">{fmtBytes(preview.totalEstBytes)}</b> across {fmtNum(preview.totalRows)} rows. The action is written to the audit log.</>
-                    : "Nothing to purge in this window — your disposable data is already lean."}
+                    : "Nothing to purge in this window - your disposable data is already lean."}
                 </div>
                 <button
                   onClick={() => void runPurge()}
@@ -1180,14 +1180,14 @@ export default function StorageBackupPage() {
                 </div>
               </div>
               <p className="text-[11px] text-[var(--color-text-muted)] mb-3 max-w-2xl">
-                Keeps the <b>last {shedKeep} revisions</b> of every document instantly available and moves the heavy binaries of older history into one offline archive. The revision, its checksum and its change reason stay forever — only the file moves. The current revision is never touched.
+                Keeps the <b>last {shedKeep} revisions</b> of every document instantly available and moves the heavy binaries of older history into one offline archive. The revision, its checksum and its change reason stay forever - only the file moves. The current revision is never touched.
               </p>
 
               {shedPreview && shedPreview.selectedCount > 0 ? (
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <div className="text-[11px] text-[var(--color-text-muted)]">
                     <b className="text-[var(--color-text)]">{fmtNum(shedPreview.selectedCount)}</b> superseded file(s) · reclaim ≈<b className="text-[var(--color-text)]">{fmtBytes(shedPreview.reclaimableBytes)}</b>
-                    {(shedPreview.remainingCount ?? 0) > 0 && <> · <b className="text-amber-700">{fmtNum(shedPreview.remainingCount!)} more</b> beyond this archive&apos;s size cap — produce again after committing</>}
+                    {(shedPreview.remainingCount ?? 0) > 0 && <> · <b className="text-amber-700">{fmtNum(shedPreview.remainingCount!)} more</b> beyond this archive&apos;s size cap - produce again after committing</>}
                     {archiveRoot && <> → save to <span className="font-mono break-all">{subfolder(archiveRoot, "data")}&lt;id&gt;.zip</span></>}
                   </div>
                   <button onClick={() => void produceArchive()} disabled={shedBusy}
@@ -1196,19 +1196,19 @@ export default function StorageBackupPage() {
                   </button>
                 </div>
               ) : (
-                <div className="text-[11px] text-[var(--color-text-muted)]">No document has more than {shedKeep} revisions — nothing older to archive yet.</div>
+                <div className="text-[11px] text-[var(--color-text-muted)]">No document has more than {shedKeep} revisions - nothing older to archive yet.</div>
               )}
 
               {pendingArchive && (
                 <div className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3">
-                  <div className="text-[11px] text-amber-900 font-bold mb-1 flex items-center gap-1.5"><FolderArchive className="w-3.5 h-3.5" /> Step 2 — reclaim the space</div>
+                  <div className="text-[11px] text-amber-900 font-bold mb-1 flex items-center gap-1.5"><FolderArchive className="w-3.5 h-3.5" /> Step 2 - reclaim the space</div>
                   <div className="text-[11px] text-amber-900 mb-2">
-                    Save <span className="font-mono">{pendingArchive.archiveId}.zip</span> to <span className="font-mono break-all">{archiveRoot ? subfolder(archiveRoot, "data") : "<root>/data/"}</span> first. Then reclaim ≈{fmtBytes(pendingArchive.bytes)} from live storage. Until you do, the files stay online — nothing is lost.
+                    Save <span className="font-mono">{pendingArchive.archiveId}.zip</span> to <span className="font-mono break-all">{archiveRoot ? subfolder(archiveRoot, "data") : "<root>/data/"}</span> first. Then reclaim ≈{fmtBytes(pendingArchive.bytes)} from live storage. Until you do, the files stay online - nothing is lost.
                   </div>
                   <div className="flex items-center gap-2">
                     <button onClick={() => void commitArchive()} disabled={committing}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-red-600 hover:bg-red-500 disabled:opacity-40">
-                      {committing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} I saved it — reclaim {fmtBytes(pendingArchive.bytes)}
+                      {committing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} I saved it - reclaim {fmtBytes(pendingArchive.bytes)}
                     </button>
                     <button onClick={() => void cancelPending(pendingArchive.archiveId, "doc")} disabled={committing} className="text-[11px] font-bold text-[var(--color-text-muted)] hover:text-red-600">Discard</button>
                   </div>
@@ -1233,7 +1233,7 @@ export default function StorageBackupPage() {
                 </div>
               </div>
               <p className="text-[11px] text-[var(--color-text-muted)] mb-3 max-w-2xl">
-                Moves the <b>whole of long-closed tickets</b> — comment thread, history and attachment files — into one offline archive and leaves a lightweight stub in the list. Nothing is tossed; opening a stub prompts for the archive, and one restore brings it all back. Only <b>CLOSED/CANCELED</b> tickets are eligible — open requests are never touched.
+                Moves the <b>whole of long-closed tickets</b> - comment thread, history and attachment files - into one offline archive and leaves a lightweight stub in the list. Nothing is tossed; opening a stub prompts for the archive, and one restore brings it all back. Only <b>CLOSED/CANCELED</b> tickets are eligible - open requests are never touched.
               </p>
 
               {ticketPreview && ticketPreview.selectedCount > 0 ? (
@@ -1248,19 +1248,19 @@ export default function StorageBackupPage() {
                   </button>
                 </div>
               ) : (
-                <div className="text-[11px] text-[var(--color-text-muted)]">No closed ticket has been quiet longer than {ticketDays} days — nothing to archive yet.</div>
+                <div className="text-[11px] text-[var(--color-text-muted)]">No closed ticket has been quiet longer than {ticketDays} days - nothing to archive yet.</div>
               )}
 
               {pendingTicketArchive && (
                 <div className="mt-3 rounded-xl border border-sky-300 bg-sky-50 p-3">
-                  <div className="text-[11px] text-sky-900 font-bold mb-1 flex items-center gap-1.5"><FolderArchive className="w-3.5 h-3.5" /> Step 2 — reclaim the space</div>
+                  <div className="text-[11px] text-sky-900 font-bold mb-1 flex items-center gap-1.5"><FolderArchive className="w-3.5 h-3.5" /> Step 2 - reclaim the space</div>
                   <div className="text-[11px] text-sky-900 mb-2">
-                    Save <span className="font-mono">{pendingTicketArchive.archiveId}.zip</span> to <span className="font-mono break-all">{archiveRoot ? subfolder(archiveRoot, "data") : "<root>/data/"}</span> first. Then move {pendingTicketArchive.tickets} ticket(s) to the archive and reclaim ≈{fmtBytes(pendingTicketArchive.bytes)}. Until you do, everything stays online — nothing is lost.
+                    Save <span className="font-mono">{pendingTicketArchive.archiveId}.zip</span> to <span className="font-mono break-all">{archiveRoot ? subfolder(archiveRoot, "data") : "<root>/data/"}</span> first. Then move {pendingTicketArchive.tickets} ticket(s) to the archive and reclaim ≈{fmtBytes(pendingTicketArchive.bytes)}. Until you do, everything stays online - nothing is lost.
                   </div>
                   <div className="flex items-center gap-2">
                     <button onClick={() => void commitTicketArchive()} disabled={ticketCommitting}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-red-600 hover:bg-red-500 disabled:opacity-40">
-                      {ticketCommitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} I saved it — reclaim {fmtBytes(pendingTicketArchive.bytes)}
+                      {ticketCommitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} I saved it - reclaim {fmtBytes(pendingTicketArchive.bytes)}
                     </button>
                     <button onClick={() => void cancelPending(pendingTicketArchive.archiveId, "ticket")} disabled={ticketCommitting} className="text-[11px] font-bold text-[var(--color-text-muted)] hover:text-red-600">Discard</button>
                   </div>
@@ -1269,7 +1269,7 @@ export default function StorageBackupPage() {
 
               <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex items-center justify-between gap-3 flex-wrap">
                 <div className="text-[11px] text-[var(--color-text-muted)]">
-                  Bringing a closed ticket back? Restore its whole content — comments, history and files — from the saved archive.
+                  Bringing a closed ticket back? Restore its whole content - comments, history and files - from the saved archive.
                 </div>
                 <label className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border border-sky-300 text-sky-700 hover:bg-sky-50 cursor-pointer ${ticketRestoreBusy ? "opacity-40 pointer-events-none" : ""}`}>
                   {ticketRestoreBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FolderArchive className="w-3.5 h-3.5" />} Restore from archive…
@@ -1295,7 +1295,7 @@ export default function StorageBackupPage() {
               </div>
               <p className="text-[11px] text-[var(--color-text-muted)] mb-3 max-w-2xl">
                 Every archive this workspace ever produced, with its live state. If a produce was interrupted before
-                <b> “I saved it — reclaim”</b> (closed tab, crash), it shows here as <b>awaiting reclaim</b> — nothing is
+                <b> “I saved it - reclaim”</b> (closed tab, crash), it shows here as <b>awaiting reclaim</b> - nothing is
                 stranded invisibly. Re-running Reclaim is safe: it retries any cloud deletes that failed.
               </p>
 
@@ -1312,8 +1312,8 @@ export default function StorageBackupPage() {
                   const isTicket = row.ticketPending + row.ticketCommitted > 0;
                   const chip =
                     row.status === "producing" ? { cls: "bg-red-50 text-red-700 border-red-200", label: "never finished producing" } :
-                    row.status === "pending" ? { cls: "bg-amber-50 text-amber-800 border-amber-200", label: "awaiting reclaim — cloud bytes still billed" } :
-                    row.status === "committed" ? { cls: "bg-emerald-50 text-emerald-700 border-emerald-200", label: "reclaimed — the zip is the only copy" } :
+                    row.status === "pending" ? { cls: "bg-amber-50 text-amber-800 border-amber-200", label: "awaiting reclaim - cloud bytes still billed" } :
+                    row.status === "committed" ? { cls: "bg-emerald-50 text-emerald-700 border-emerald-200", label: "reclaimed - the zip is the only copy" } :
                     row.status === "full" ? { cls: "bg-slate-100 text-slate-600 border-slate-200", label: "full backup" } :
                     { cls: "bg-slate-100 text-slate-500 border-slate-200", label: "no linked rows" };
                   return (
@@ -1325,7 +1325,7 @@ export default function StorageBackupPage() {
                           <span className="text-[10px] text-[var(--color-text-faint)]">{row.kind === "full" ? "full backup" : isTicket ? "closed tickets" : "revision history"}</span>
                         </div>
                         <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-                          {row.createdAt ? new Date(row.createdAt).toLocaleString() : "—"}
+                          {row.createdAt ? new Date(row.createdAt).toLocaleString() : "-"}
                           {row.createdByEmail ? <> · by {row.createdByEmail}</> : null}
                           {row.fileCount > 0 && <> · {fmtNum(row.fileCount)} file(s), {fmtBytes(row.totalBytes)}</>}
                           {row.status === "pending" && (
@@ -1341,7 +1341,7 @@ export default function StorageBackupPage() {
                         {row.status === "pending" && (
                           <button onClick={() => void commitFromCatalog(row)} disabled={busy}
                             className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold text-white bg-red-600 hover:bg-red-500 disabled:opacity-40">
-                            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} I saved it — reclaim
+                            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} I saved it - reclaim
                           </button>
                         )}
                         {(row.status === "pending" || row.status === "producing" || row.status === "empty") && (
@@ -1364,7 +1364,7 @@ export default function StorageBackupPage() {
               <ShieldCheck className="w-4 h-4 text-emerald-600" /> Backup &amp; restore-from-scratch
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mb-3 max-w-2xl">
-              A full ZIP is a self-contained, org-wide snapshot — every record <b>and</b> every binary (PDF/DWG/photo) inline —
+              A full ZIP is a self-contained, org-wide snapshot - every record <b>and</b> every binary (PDF/DWG/photo) inline -
               so you can come back from scratch. Recommended quarterly. Files are pulled straight from R2.
             </p>
 
@@ -1391,7 +1391,7 @@ export default function StorageBackupPage() {
                       <FolderArchive className="w-4 h-4 shrink-0" /> Set your archive root folder
                     </div>
                     <div className="text-[10.5px] text-amber-900/80 mb-2 leading-relaxed">
-                      One folder, shared with your team. Full backups go in <span className="font-mono">/full-backups</span>, periodic space-saver exports in <span className="font-mono">/data</span> — it&apos;s the path users are told to fetch from.
+                      One folder, shared with your team. Full backups go in <span className="font-mono">/full-backups</span>, periodic space-saver exports in <span className="font-mono">/data</span> - it&apos;s the path users are told to fetch from.
                     </div>
                     <div className="space-y-2">
                       <input value={locDraft} onChange={(e) => setLocDraft(e.target.value)} placeholder="e.g.  \\fileserver\drafting\mos-archives   or   /Volumes/Backups/MOS"
@@ -1436,11 +1436,11 @@ export default function StorageBackupPage() {
             {lastArchiveId && (
               <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-900 flex items-start gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                <span>Saved as archive <b className="font-mono">{lastArchiveId}</b> — store it at <span className="font-mono break-all">{archiveRoot ? subfolder(archiveRoot, "full-backups") : "<root>/full-backups/"}{lastArchiveId}.zip</span>. Quote this id if anyone needs a file it holds.</span>
+                <span>Saved as archive <b className="font-mono">{lastArchiveId}</b> - store it at <span className="font-mono break-all">{archiveRoot ? subfolder(archiveRoot, "full-backups") : "<root>/full-backups/"}{lastArchiveId}.zip</span>. Quote this id if anyone needs a file it holds.</span>
               </div>
             )}
             <div className="mt-3 space-y-2 text-[11px]">
-              <span className="inline-flex items-center gap-1.5 text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5" /> Binaries now sign against R2 — the ZIP really contains your files.</span>
+              <span className="inline-flex items-center gap-1.5 text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5" /> Binaries now sign against R2 - the ZIP really contains your files.</span>
               <div className="flex items-center gap-4 flex-wrap">
                 <Link href="/admin/archive-view" className="inline-flex items-center gap-1.5 font-bold text-[var(--color-accent)] hover:underline">
                   <Archive className="w-3.5 h-3.5" /> View from a backup →
@@ -1472,7 +1472,7 @@ export default function StorageBackupPage() {
                 </div>
                 <div className="flex-1 min-w-[12rem] text-[11px] text-[var(--color-text-faint)] leading-relaxed">
                   Identical files already carry a SHA-256 fingerprint but are stored separately. Content-addressed storage
-                  would keep one copy and reclaim the above — measured here before any change to the upload path.
+                  would keep one copy and reclaim the above - measured here before any change to the upload path.
                 </div>
               </div>
             </div>
@@ -1500,7 +1500,7 @@ export default function StorageBackupPage() {
               </div>
             ) : (
               <div className="text-xs text-[var(--color-text-muted)]">
-                AI metering isn&apos;t recording yet — apply migration <span className="font-mono">20260806</span>.
+                AI metering isn&apos;t recording yet - apply migration <span className="font-mono">20260806</span>.
               </div>
             )}
           </div>
@@ -1511,8 +1511,8 @@ export default function StorageBackupPage() {
               <div className="flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
                 <div className="text-[11px] text-amber-900 leading-relaxed">
-                  <b>Why “{ticketRow.name}” is heavy per row — and that it&apos;s fixable.</b> {ticketRow.reason}
-                  {" "}It&apos;s a <b>design</b> issue (in-row JSONB rewritten on every action), not an inherent cost —
+                  <b>Why “{ticketRow.name}” is heavy per row - and that it&apos;s fixable.</b> {ticketRow.reason}
+                  {" "}It&apos;s a <b>design</b> issue (in-row JSONB rewritten on every action), not an inherent cost -
                   flattening history/comments/attachments into child rows removes the bloat.
                 </div>
               </div>
@@ -1536,7 +1536,7 @@ export default function StorageBackupPage() {
                 const M = CATEGORY_META[t.category];
                 const Icon = M.icon;
                 return (
-                  <div key={t.name} className="px-4 py-2 flex items-center gap-3 cursor-help" title={`${CATEGORY_LABEL[t.category]} — ${t.reason}`}>
+                  <div key={t.name} className="px-4 py-2 flex items-center gap-3 cursor-help" title={`${CATEGORY_LABEL[t.category]} - ${t.reason}`}>
                     <div className="w-40 sm:w-56 min-w-0 flex items-center gap-1.5">
                       <Icon className={`w-3.5 h-3.5 shrink-0 ${M.tint}`} />
                       {t.grower && <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />}

@@ -134,7 +134,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
   };
   const commit = () => {
     if (!reasonFor) return;
-    if (!reason.trim()) { setWhyMsg("Add a few words — it goes on the report."); return; }
+    if (!reason.trim()) { setWhyMsg("Add a few words - it goes on the report."); return; }
     let forShift: ShiftCredit | undefined;
     if (clockCtx && choices.length) {
       const r = resolveWhen(pickOf(choices, whenIdx, otherDay, clockCtx.tz, clockCtx.times), when, clockCtx.tz, clockCtx.times);
@@ -161,7 +161,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
   if (readOnly) {
     return (
       <span
-        title={title ?? `${meta.label} — rolls up from sub-tasks`}
+        title={title ?? `${meta.label} - rolls up from sub-tasks`}
         className={
           variant === "dot"
             ? `inline-flex items-center justify-center rounded-full border ${dotSize} ${meta.dot} opacity-90`
@@ -181,7 +181,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
         ref={btnRef}
         onClick={(e) => { e.stopPropagation(); if (disabled) { onDisabledClick?.(); return; } openMenu(); }}
         aria-disabled={disabled}
-        title={disabled ? (onDisabledClick ? `${meta.label} — view only` : meta.label) : `${meta.label} — click to change`}
+        title={disabled ? (onDisabledClick ? `${meta.label} - view only` : meta.label) : `${meta.label} - click to change`}
         className={
           variant === "dot"
             ? `relative inline-flex items-center justify-center rounded-full border ${dotSize} ${meta.dot} after:absolute after:-inset-1.5 pointer-coarse:after:-inset-3 after:content-[''] ${disabled ? `opacity-70 ${onDisabledClick ? "cursor-pointer" : "cursor-default"}` : "cursor-pointer hover:scale-110 transition-transform"}`
@@ -231,7 +231,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                   {STATUS_META[reasonFor].label}
                 </div>
                 <div>
-                  <div className="font-bold text-[var(--color-text)] mb-1">{askFor(reasonFor)} <span className="font-black text-amber-700 dark:text-amber-400">— required</span></div>
+                  <div className="font-bold text-[var(--color-text)] mb-1">{askFor(reasonFor)} <span className="font-black text-amber-700 dark:text-amber-400">- required</span></div>
                   <input
                     autoFocus
                     value={reason}

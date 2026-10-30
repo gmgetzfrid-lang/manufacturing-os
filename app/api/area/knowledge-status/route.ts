@@ -310,6 +310,6 @@ export async function POST(req: NextRequest) {
     .eq("id", unitRow.id as string)
     .select("id");
   if (upErr) return bad(upErr.message, 500);
-  if (!updated || updated.length === 0) return bad("The binding didn't save — try again.", 500);
+  if (!updated || updated.length === 0) return bad("The binding didn't save - try again.", 500);
   return NextResponse.json({ ok: true });
 }

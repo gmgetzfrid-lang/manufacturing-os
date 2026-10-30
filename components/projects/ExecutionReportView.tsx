@@ -116,7 +116,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
             <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Driving the finish</span>
             <span className="text-sm font-bold text-[var(--color-text)]">{critical.ids.size} task{critical.ids.size === 1 ? "" : "s"} on the critical path</span>
             {critical.remainingHours > 0 && <span className="text-[11px] text-[var(--color-text-muted)]">· {Math.round(critical.remainingHours)}h remaining on the chain</span>}
-            <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">{criticalSource ? `${criticalSource} · change it on the Timeline` : "estimate — based on schedule shape, not dependency links"}</span>
+            <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">{criticalSource ? `${criticalSource} · change it on the Timeline` : "estimate - based on schedule shape, not dependency links"}</span>
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {criticalNames.slice(0, 10).map((n, i) => (
@@ -307,6 +307,6 @@ function Health({ icon, tone, label, value }: { icon: React.ReactNode; tone: "em
 }
 
 function fmtDate(iso: string | null | undefined, tz: string): string {
-  if (!iso) return "—";
-  return fmtInTz(iso, tz, { month: "short", day: "numeric", year: "numeric" }) || "—";
+  if (!iso) return "-";
+  return fmtInTz(iso, tz, { month: "short", day: "numeric", year: "numeric" }) || "-";
 }

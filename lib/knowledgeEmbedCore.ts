@@ -143,7 +143,7 @@ export async function embedLibrarySlice(opts: {
         provider: connection.provider, model: connection.model, apiKey: connection.apiKey,
         passages: batch.map((c) => {
           const head = [docNames.get(c.document_id), c.section, `p.${c.page}`]
-            .filter(Boolean).join(" — ");
+            .filter(Boolean).join(" - ");
           return head ? `${head}\n${c.content}` : c.content;
         }),
         kind: "document",             // corpus side of the asymmetric pair

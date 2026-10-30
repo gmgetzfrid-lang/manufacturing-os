@@ -29,7 +29,7 @@ export function computeNudges(snap: InboxSnapshot): Nudge[] {
     nudges.push({
       id: "stale-checkouts",
       severity: "high",
-      message: `${n} of your checkouts ${n === 1 ? "has" : "have"} been out a while — check in or extend so others aren't blocked.`,
+      message: `${n} of your checkouts ${n === 1 ? "has" : "have"} been out a while - check in or extend so others aren't blocked.`,
       actionLabel: "Review checkouts",
       href: "/checkouts",
     });
@@ -44,7 +44,7 @@ export function computeNudges(snap: InboxSnapshot): Nudge[] {
     nudges.push({
       id: "stale-holds",
       severity: "medium",
-      message: `A hold you opened${oldest?.reason ? ` ("${oldest.reason}")` : ""} has been open over ${HOLD_STALE_DAYS} days${staleHolds.length > 1 ? ` (and ${staleHolds.length - 1} more)` : ""} — release it or escalate.`,
+      message: `A hold you opened${oldest?.reason ? ` ("${oldest.reason}")` : ""} has been open over ${HOLD_STALE_DAYS} days${staleHolds.length > 1 ? ` (and ${staleHolds.length - 1} more)` : ""} - release it or escalate.`,
       actionLabel: "Open hold queue",
       href: "/admin/holds",
     });
@@ -56,7 +56,7 @@ export function computeNudges(snap: InboxSnapshot): Nudge[] {
     nudges.push({
       id: "overdue-milestones",
       severity: "high",
-      message: `${overdue.length} milestone${overdue.length === 1 ? " is" : "s are"} overdue${oldest?.__overdueDays ? ` (oldest ${oldest.__overdueDays}d late)` : ""} — update status or reschedule.`,
+      message: `${overdue.length} milestone${overdue.length === 1 ? " is" : "s are"} overdue${oldest?.__overdueDays ? ` (oldest ${oldest.__overdueDays}d late)` : ""} - update status or reschedule.`,
       actionLabel: "Go to projects",
       href: "/projects",
     });
@@ -72,7 +72,7 @@ export function computeNudges(snap: InboxSnapshot): Nudge[] {
     nudges.push({
       id: "transmittals-unacknowledged",
       severity: "medium",
-      message: `${aging.length} transmittal${aging.length === 1 ? "" : "s"} you issued ${aging.length === 1 ? "is" : "are"} still unacknowledged${oldest?.number ? ` (oldest ${oldest.number}, ${oldest.__ageDays}d)` : ""} — chase the recipient for a receipt.`,
+      message: `${aging.length} transmittal${aging.length === 1 ? "" : "s"} you issued ${aging.length === 1 ? "is" : "are"} still unacknowledged${oldest?.number ? ` (oldest ${oldest.number}, ${oldest.__ageDays}d)` : ""} - chase the recipient for a receipt.`,
       actionLabel: "Open transmittals",
       href: "/transmittals",
     });
@@ -83,7 +83,7 @@ export function computeNudges(snap: InboxSnapshot): Nudge[] {
     nudges.push({
       id: "markup-requests",
       severity: "medium",
-      message: `${n} markup request${n === 1 ? "" : "s"} ${n === 1 ? "is" : "are"} waiting on you — share or decline below.`,
+      message: `${n} markup request${n === 1 ? "" : "s"} ${n === 1 ? "is" : "are"} waiting on you - share or decline below.`,
       actionLabel: "",
     });
   }
@@ -103,7 +103,7 @@ export function computeNudges(snap: InboxSnapshot): Nudge[] {
     nudges.push({
       id: "stalled-assigned-tickets",
       severity: "medium",
-      message: `${n} drafting request${n === 1 ? "" : "s"} assigned to you ${n === 1 ? "hasn't" : "haven't"} moved in over ${TICKET_STALE_DAYS} days — pick ${n === 1 ? "it" : "one"} back up or update status.`,
+      message: `${n} drafting request${n === 1 ? "" : "s"} assigned to you ${n === 1 ? "hasn't" : "haven't"} moved in over ${TICKET_STALE_DAYS} days - pick ${n === 1 ? "it" : "one"} back up or update status.`,
       actionLabel: "Open requests",
       href: "/requests",
     });

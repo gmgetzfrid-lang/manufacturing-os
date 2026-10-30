@@ -160,7 +160,7 @@ export default function HoldsPage() {
         <div className="text-sm text-[var(--color-text-muted)] py-12 text-center border border-dashed border-[var(--color-border-strong)] rounded-xl px-6 space-y-2">
           <div className="font-bold text-[var(--color-text)]">No active holds.</div>
           <div className="text-xs text-[var(--color-text-muted)] max-w-md mx-auto">
-            Holds appear here when a document is blocked — waiting on engineering signoff, vendor data, field verification, or client review.
+            Holds appear here when a document is blocked - waiting on engineering signoff, vendor data, field verification, or client review.
             Place a hold from the document inspector. Duration tracks automatically; metrics show the queue&apos;s bottlenecks at a glance.
           </div>
         </div>
@@ -180,7 +180,7 @@ export default function HoldsPage() {
                       {meta ? (
                         <Link href={`/documents/${meta.libraryId}`} className="text-sm font-bold text-[var(--color-text)] hover:text-blue-700 inline-flex items-center gap-1">
                           {meta.documentNumber && <span className="font-mono">{meta.documentNumber}</span>}
-                          {meta.title && <span className="text-[var(--color-text)]">— {meta.title}</span>}
+                          {meta.title && <span className="text-[var(--color-text)]">- {meta.title}</span>}
                           <ChevronRight className="w-3 h-3" />
                         </Link>
                       ) : (

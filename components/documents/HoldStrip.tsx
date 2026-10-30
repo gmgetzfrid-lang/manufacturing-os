@@ -31,7 +31,7 @@ import IsoGuidance from "@/components/ui/IsoGuidance";
 
 const REASON_HELP: Record<string, string> = {
   "Awaiting Engineering":      "Drafting can't advance until an engineer signs off on a design decision.",
-  "Field Verification Needed": "Drawing reflects assumed conditions — someone needs to walk down the unit and confirm.",
+  "Field Verification Needed": "Drawing reflects assumed conditions - someone needs to walk down the unit and confirm.",
   "Missing Vendor Data":       "Waiting on a datasheet, drawing, or spec from a vendor or contractor.",
   "Client Review":             "Drawing is in the client's hands; can't proceed until they return comments or approval.",
 };
@@ -126,7 +126,7 @@ export default function HoldStrip({
         <span className="flex items-center gap-1.5">
           <AlertOctagon className="w-3 h-3" /> Holds
           <HelpTooltip>
-            A <b>hold</b> is an explicit block on this document — it can&apos;t be advanced until cleared. Multiple holds can be active at once. Duration is tracked automatically.
+            A <b>hold</b> is an explicit block on this document - it can&apos;t be advanced until cleared. Multiple holds can be active at once. Duration is tracked automatically.
           </HelpTooltip>
           <IsoGuidance topic="hold" />
         </span>
@@ -295,7 +295,7 @@ function ActiveHoldRow({
           <button
             onClick={() => void printCard()}
             disabled={busy}
-            title="Print a HOLD card for the field — scanning its QR shows whether this hold is still active"
+            title="Print a HOLD card for the field - scanning its QR shows whether this hold is still active"
             className="text-[10px] font-bold text-red-700 hover:text-red-800 bg-red-50 hover:bg-red-100 border border-red-200 px-1.5 py-1 rounded inline-flex items-center gap-1 transition-colors disabled:opacity-40"
           >
             <Printer className="w-3 h-3" /> Card

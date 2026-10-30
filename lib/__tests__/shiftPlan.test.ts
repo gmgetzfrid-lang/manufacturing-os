@@ -46,7 +46,7 @@ describe("plan the next shift", () => {
     // The next shift's list is what was decided.
     expect(nextList(applied(base(), c.moves))).toEqual(["pull"]);
   });
-  it("push out: off tonight, to the shift picked — and linked work after it moves too", () => {
+  it("push out: off tonight, to the shift picked - and linked work after it moves too", () => {
     const ms = base().map((m) => (m.id === "reinstall" ? { ...m, plannedStartAt: iso("2026-10-27", "02:00"), plannedAt: iso("2026-10-27", "04:00"), dependsOn: ["clean"] } : m));
     const to = laterShifts(night, (w) => nextShift(w, LA, times))[0];       // Tue day
     const c = planShiftChange(ms, { kind: "push", outId: "clean", to: to.start }, o)!;
@@ -68,14 +68,14 @@ describe("plan the next shift", () => {
     const c = planShiftChange(base(), { kind: "swap", inId: "pull", outId: "clean" }, o)!;
     const lines = planNote(c, "crew's already in the area", () => "Mon night");
     expect(lines).toEqual([
-      { id: "pull", body: "Re-planned to Mon night in place of WO 301240 Clean bundle — crew's already in the area" },
-      { id: "clean", body: "Re-planned to Mon night — WO 301235 Pull bundle done first — crew's already in the area" },
+      { id: "pull", body: "Re-planned to Mon night in place of WO 301240 Clean bundle - crew's already in the area" },
+      { id: "clean", body: "Re-planned to Mon night - WO 301235 Pull bundle done first - crew's already in the area" },
     ]);
   });
 });
 
 describe("the crew that's there does it", () => {
-  it("day-crew work pulled onto a night: worked on either crew's hours, by the crew named — and it's on the night's list", () => {
+  it("day-crew work pulled onto a night: worked on either crew's hours, by the crew named - and it's on the night's list", () => {
     const ms = base().map((m) => (m.id === "pull" ? { ...m, staffedShift: "day" as const, responsibleParty: "Schultz" } : m));
     const c = planShiftChange(ms, { kind: "swap", inId: "pull", outId: "clean" }, { ...o, crew: "Ancon" })!;
     expect(c.crewHours).toEqual(["Pull bundle is day-crew work"]);

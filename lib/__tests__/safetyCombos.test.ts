@@ -63,7 +63,7 @@ describe("why it's here, and what's specific to these steps", () => {
     expect(top[0].kind).toBe("hydroblast");
     expect(top[0].tonight[0]).toMatch(/E-20/);
   });
-  it("a quiet shift still gives plain reasons — never empty", () => {
+  it("a quiet shift still gives plain reasons - never empty", () => {
     const top = rankHazards([job("b", "Set Blinds; Verify LOTO", "e16", "E-16 - Cooler", 0, 2, { who: "Schultz" })], { T });
     expect(top[0].why).toEqual(["can kill"]);
     expect(top[0].tonight).toEqual([]);

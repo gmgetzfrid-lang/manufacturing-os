@@ -16,6 +16,8 @@
 // flag falls back to the model's built-in knowledge; the response marks
 // which of the two actually happened so the UI never overclaims.
 
+import { noEmDash } from "@/lib/noEmDash";
+
 export type AiProviderId = "anthropic" | "openai" | "gemini";
 
 export const PROVIDER_LABELS: Record<AiProviderId, string> = {
@@ -42,23 +44,23 @@ export class AiCallError extends Error {
 function friendly(provider: AiProviderId, status: number, detail: string): AiCallError {
   const who = PROVIDER_LABELS[provider];
   if (status === 401 || status === 403) {
-    return new AiCallError(`${who} rejected the API key — check it in AI settings.`, 401);
+    return new AiCallError(`${who} rejected the API key - check it in AI settings.`, 401);
   }
   if (status === 429) {
     return new AiCallError(
-      `${who} rate/credit limit hit — the key's owner may need to add credits or wait a moment.`,
+      `${who} rate/credit limit hit - the key's owner may need to add credits or wait a moment.`,
       429,
     );
   }
   if (status === 404) {
-    return new AiCallError(`${who} doesn't recognize that model — check the model name in AI settings.`, 400);
+    return new AiCallError(`${who} doesn't recognize that model - check the model name in AI settings.`, 400);
   }
   if (status === 529 || status === 503) {
     // Anthropic's documented "overloaded_error" and generic service
     // unavailability: their side, not the request. Reached only after the
     // automatic retries below already failed.
     return new AiCallError(
-      `${who} is overloaded right now — this is on their side, not yours. Wait a few seconds and ask again.`,
+      `${who} is overloaded right now - this is on their side, not yours. Wait a few seconds and ask again.`,
       503,
     );
   }
@@ -217,8 +219,15 @@ async function claudeFetch(apiKey: string, body: Record<string, unknown>, signal
 }
 
 /** Run one system+user prompt, return the model's text (+ web sources when
- *  webSearch ran). Throws AiCallError. */
+ *  webSearch ran). Throws AiCallError. The text, streamed or whole, never
+ *  carries an em dash (lib/noEmDash). */
 export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
+  const onDelta = input.onDelta;
+  const out = await callModel(onDelta ? { ...input, onDelta: (t: string) => onDelta(noEmDash(t)) } : input);
+  return { ...out, text: noEmDash(out.text) };
+}
+
+async function callModel(input: AiCallInput): Promise<AiCallResult> {
   const { provider, model, apiKey, system, user, webSearch } = input;
   const maxTokens = input.maxTokens ?? 2048;
   const images = input.images ?? [];
@@ -283,7 +292,7 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
         const why = stopReason === "max_tokens"
           ? "the answer-length budget ran out before any text was produced"
           : `no text in the response (stop_reason: ${stopReason ?? "unknown"})`;
-        throw new AiCallError(`The model returned an empty answer — ${why}. Try again.`, 502);
+        throw new AiCallError(`The model returned an empty answer - ${why}. Try again.`, 502);
       }
       return { text, webSources: [], liveWeb: false, usage };
     }
@@ -358,7 +367,7 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
       const why = data.stop_reason === "max_tokens"
         ? "the answer-length budget ran out before any text was produced"
         : `no text in the response (stop_reason: ${data.stop_reason ?? "unknown"})`;
-      throw new AiCallError(`The model returned an empty answer — ${why}. Try again.`, 502);
+      throw new AiCallError(`The model returned an empty answer - ${why}. Try again.`, 502);
     }
     const webSources = sourceOrder.length > 0 ? sourceOrder : dedupeSources(
       blocks.flatMap((b) => b.citations ?? [])
@@ -411,7 +420,7 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
           usage.outputTokens = ev.usage.completion_tokens ?? usage.outputTokens;
         }
       }
-      if (!text.trim()) throw new AiCallError("The model returned an empty answer — try again.", 502);
+      if (!text.trim()) throw new AiCallError("The model returned an empty answer - try again.", 502);
       return { text, webSources: [], liveWeb: false, usage };
     }
     const res = await fetchWithRetry("https://api.openai.com/v1/chat/completions", {
@@ -430,7 +439,7 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
     const text = data.choices?.[0]?.message?.content ?? "";
-    if (!text.trim()) throw new AiCallError("The model returned an empty answer — try again.", 502);
+    if (!text.trim()) throw new AiCallError("The model returned an empty answer - try again.", 502);
     // No live web tool on chat completions — model knowledge only.
     return {
       text, webSources: [], liveWeb: false,
@@ -466,7 +475,7 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
   };
   const candidate = data.candidates?.[0];
   const text = (candidate?.content?.parts ?? []).map((p) => p.text ?? "").join("");
-  if (!text.trim()) throw new AiCallError("The model returned an empty answer — try again.", 502);
+  if (!text.trim()) throw new AiCallError("The model returned an empty answer - try again.", 502);
   const webSources = dedupeSources(
     (candidate?.groundingMetadata?.groundingChunks ?? [])
       .map((g) => ({ url: g.web?.uri ?? "", title: g.web?.title ?? null })),

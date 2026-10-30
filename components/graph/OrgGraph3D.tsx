@@ -468,7 +468,7 @@ export default function OrgGraph3D({
           if (edge?.why) {
             const la = live.current.nodes.find((v) => v.id === edge.a)?.label ?? "", lb = live.current.nodes.find((v) => v.id === edge.b)?.label ?? "";
             el.style.cursor = "help";
-            live.current.setHover({ x, y, title: `${la.replace(/ · \d+ docs?$/, "")} — ${lb.replace(/ · \d+ docs?$/, "")}`, lines: [edge.why], hint: "Click the line to keep this" });
+            live.current.setHover({ x, y, title: `${la.replace(/ · \d+ docs?$/, "")} - ${lb.replace(/ · \d+ docs?$/, "")}`, lines: [edge.why], hint: "Click the line to keep this" });
           } else live.current.setHover(null);
           return;
         }

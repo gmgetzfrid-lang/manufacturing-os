@@ -719,8 +719,8 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           email: currentUserEmail ?? undefined,
           timestamp: now,
           expiresAt,
-          watermarkText: `UNCONTROLLED — ${entry.doc.documentNumber || "DOC"} Rev ${entry.doc.rev || "-"}`,
-          footerNotice: `${entry.doc.documentNumber || entry.doc.title || "Document"} Rev ${entry.doc.rev ?? "?"} at time of issue — verify current revision before use.`,
+          watermarkText: `UNCONTROLLED - ${entry.doc.documentNumber || "DOC"} Rev ${entry.doc.rev || "-"}`,
+          footerNotice: `${entry.doc.documentNumber || entry.doc.title || "Document"} Rev ${entry.doc.rev ?? "?"} at time of issue - verify current revision before use.`,
           verifyUrl: entry.doc.id && entry.doc.currentVersionId && publicOrigin()
             ? `${publicOrigin()}/verify/${entry.doc.id}?v=${entry.doc.currentVersionId}`
             : undefined,
@@ -865,7 +865,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
       const unit = units.length === 1 ? units[0] : "";
       const lines = docsForFiles.map((d) => {
         const sheet = sheetOf(d);
-        return `• ${d.documentNumber || d.title || "Document"}${d.rev ? ` Rev ${d.rev}` : ""}${sheet ? ` · Sheet ${sheet}` : ""}${d.title ? ` — ${d.title}` : ""}`;
+        return `• ${d.documentNumber || d.title || "Document"}${d.rev ? ` Rev ${d.rev}` : ""}${sheet ? ` · Sheet ${sheet}` : ""}${d.title ? ` - ${d.title}` : ""}`;
       });
       const description = [
         "Marked-up sheets, attached as Source files:",
@@ -969,17 +969,17 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                 shown, slides to the very top when the toolbar hides. */}
             <div className="sticky z-10 bg-slate-900/80 backdrop-blur-sm border-y border-slate-800/80 px-4 py-1.5 flex items-center gap-3 transition-[top] duration-200" style={{ top: showChrome ? 52 : 0 }}>
               <div className="w-5 h-5 rounded-full bg-orange-500 flex items-center justify-center text-[9px] font-black text-white shrink-0">{idx + 1}</div>
-              <span className="text-[11px] font-mono font-bold text-orange-400 shrink-0">{entry.doc.documentNumber || "—"}</span>
+              <span className="text-[11px] font-mono font-bold text-orange-400 shrink-0">{entry.doc.documentNumber || "-"}</span>
               <span className="text-[11px] text-slate-300 font-medium truncate">{entry.doc.title || entry.doc.name}</span>
               <div className="ml-auto flex items-center gap-2 shrink-0">
-                <span className="text-[10px] text-slate-500 hidden sm:inline">Rev {entry.doc.rev || "—"}</span>
-                <span className="text-[10px] text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded hidden md:inline">{entry.doc.status || "—"}</span>
+                <span className="text-[10px] text-slate-500 hidden sm:inline">Rev {entry.doc.rev || "-"}</span>
+                <span className="text-[10px] text-slate-600 bg-slate-800 px-1.5 py-0.5 rounded hidden md:inline">{entry.doc.status || "-"}</span>
                 {isMarkedUp(entry.doc.id) && (
                   <span className="text-[10px] font-bold text-emerald-300 inline-flex items-center gap-1"><Pen className="w-3 h-3" /> Marked up</span>
                 )}
                 <button
                   onClick={() => togglePick(idx)}
-                  title={picked.has(entry.doc.id ?? "") ? "Remove from focus set" : "Add to focus set — review just the sheets you need"}
+                  title={picked.has(entry.doc.id ?? "") ? "Remove from focus set" : "Add to focus set - review just the sheets you need"}
                   className={`text-[10px] font-bold inline-flex items-center gap-1 px-2 py-0.5 rounded-md border transition-colors ${picked.has(entry.doc.id ?? "") ? "bg-orange-500/20 border-orange-500/50 text-orange-300" : "bg-slate-800 border-slate-700 text-slate-300 hover:text-white"}`}
                 >
                   <Pin className={`w-3 h-3 ${picked.has(entry.doc.id ?? "") ? "fill-orange-400" : ""}`} /> {picked.has(entry.doc.id ?? "") ? "Focused" : "Focus"}
@@ -1110,7 +1110,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                 }}
                 placeholder="Find a sheet, tag, #…"
                 className="bg-transparent text-xs font-medium text-white placeholder:text-slate-400 outline-none w-full min-w-0"
-                title="Search anything — equipment tag, sheet #, document name or any metadata. Typo-tolerant (P-34 = p34). Enter jumps; + pins a sheet to your focus set."
+                title="Search anything - equipment tag, sheet #, document name or any metadata. Typo-tolerant (P-34 = p34). Enter jumps; + pins a sheet to your focus set."
               />
               {searchMsg && <span className={`text-[10px] font-bold shrink-0 ${searchMsg === "No match" ? "text-rose-400" : "text-emerald-400"}`}>{searchMsg}</span>}
               {search ? (
@@ -1155,12 +1155,12 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           {/* Zoom / fit-width / rotate cluster */}
           <div className="hidden md:flex items-center gap-0.5 bg-slate-800/80 rounded-lg px-1 py-0.5 shrink-0">
             <button onClick={() => setZoom((z) => Math.max(0.4, Math.round((z - 0.15) * 100) / 100))} className={iconBtn} title="Zoom out"><ZoomOut className="w-4 h-4" /></button>
-            <button onClick={() => setZoom(1)} className={`${iconBtn} ${zoom === 1 ? "text-orange-300" : ""}`} title="Fit to width — reset zoom to 100%"><span className="text-[11px] font-mono w-9 text-center inline-block">{Math.round(zoom * 100)}%</span></button>
+            <button onClick={() => setZoom(1)} className={`${iconBtn} ${zoom === 1 ? "text-orange-300" : ""}`} title="Fit to width - reset zoom to 100%"><span className="text-[11px] font-mono w-9 text-center inline-block">{Math.round(zoom * 100)}%</span></button>
             <button onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.15) * 100) / 100))} className={iconBtn} title="Zoom in (or Ctrl + scroll)"><ZoomIn className="w-4 h-4" /></button>
             <div className="w-px h-4 bg-slate-700 mx-0.5" />
             <button onClick={() => setRotation((r) => r + 90)} className={iconBtn} title="Rotate 90°"><RotateCw className="w-4 h-4" /></button>
             {!markupMode && (
-              <button onClick={() => panZoom.setPanMode((v) => !v)} className={`${iconBtn} ${panZoom.panMode ? "bg-white/10 text-orange-300" : ""}`} title={panZoom.panMode ? "Pan tool (drag to move the page) — click for the normal cursor" : "Cursor — click to switch back to the pan/grab hand"}>
+              <button onClick={() => panZoom.setPanMode((v) => !v)} className={`${iconBtn} ${panZoom.panMode ? "bg-white/10 text-orange-300" : ""}`} title={panZoom.panMode ? "Pan tool (drag to move the page) - click for the normal cursor" : "Cursor - click to switch back to the pan/grab hand"}>
                 {panZoom.panMode ? <Hand className="w-4 h-4" /> : <MousePointer2 className="w-4 h-4" />}
               </button>
             )}
@@ -1195,7 +1195,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
           )}
 
           {/* Markup toggle — reveals the compact tools sub-bar. */}
-          <button onClick={() => setMarkupMode((v) => !v)} title="Markup — draw on the page. Discarded on close unless you download the sheet or send it to drafting." className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold shrink-0 transition-colors ${markupMode ? "bg-orange-600 text-white" : "bg-slate-800 text-slate-200 hover:bg-slate-700"}`}>
+          <button onClick={() => setMarkupMode((v) => !v)} title="Markup - draw on the page. Discarded on close unless you download the sheet or send it to drafting." className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold shrink-0 transition-colors ${markupMode ? "bg-orange-600 text-white" : "bg-slate-800 text-slate-200 hover:bg-slate-700"}`}>
             <Pen className="w-3.5 h-3.5" /> <span className="hidden lg:inline">Markup</span>
           </button>
 
@@ -1288,7 +1288,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             ["rect", "Rectangle", Square],
             ["arrow", "Arrow", ArrowUpRight],
             ["text", "Text", Type],
-            ["eraser", "Eraser — click an object to delete", Eraser],
+            ["eraser", "Eraser - click an object to delete", Eraser],
           ] as [MarkTool, string, typeof Pen][]).map(([t, label, Icon]) => (
             <button key={t} onClick={() => setMarkTool(t)} title={label} className={`${iconBtn} ${markTool === t ? "bg-orange-600 text-white hover:bg-orange-600" : ""}`}>
               <Icon className="w-4 h-4" />
@@ -1353,9 +1353,9 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             <div className="px-6 py-4 text-sm text-slate-700 space-y-3">
               <p>
                 {downloadConfirm.type === "book" || downloadConfirm.type === "book-print" ? (
-                  <>Every page of {downloadConfirm.scope === "pinned" ? "your" : "all"} {entriesForScope(downloadConfirm.scope ?? "all").length} {downloadConfirm.scope === "pinned" ? "pinned " : ""}sheet{entriesForScope(downloadConfirm.scope ?? "all").length === 1 ? "" : "s"} will be merged into one PDF and stamped with a diagonal &quot;UNCONTROLLED — FOR REVIEW ONLY&quot; watermark plus a footer with your email and the timestamp. Every document is logged to the audit trail.</>
+                  <>Every page of {downloadConfirm.scope === "pinned" ? "your" : "all"} {entriesForScope(downloadConfirm.scope ?? "all").length} {downloadConfirm.scope === "pinned" ? "pinned " : ""}sheet{entriesForScope(downloadConfirm.scope ?? "all").length === 1 ? "" : "s"} will be merged into one PDF and stamped with a diagonal &quot;UNCONTROLLED - FOR REVIEW ONLY&quot; watermark plus a footer with your email and the timestamp. Every document is logged to the audit trail.</>
                 ) : (
-                  <>Every page will be stamped with a diagonal &quot;UNCONTROLLED — FOR REVIEW ONLY&quot; watermark plus a footer with your email and the timestamp. The action will be logged.</>
+                  <>Every page will be stamped with a diagonal &quot;UNCONTROLLED - FOR REVIEW ONLY&quot; watermark plus a footer with your email and the timestamp. The action will be logged.</>
                 )}
               </p>
               {actionError && <p className="text-xs text-red-600 font-mono bg-red-50 border border-red-200 rounded-lg p-2">{actionError}</p>}

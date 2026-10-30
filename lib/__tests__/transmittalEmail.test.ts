@@ -5,7 +5,7 @@ import { renderTransmittalEmail, type Transmittal } from "@/lib/transmittals";
 
 const base: Transmittal = {
   id: "t1", orgId: "o1", seq: 7, number: "TR-0007",
-  subject: "IFC set — Area 200",
+  subject: "IFC set - Area 200",
   recipientName: "Jane Doe", recipientCompany: "BuildCo",
   recipientEmail: "jane@buildco.com",
   purpose: "For Construction", status: "issued",
@@ -20,13 +20,13 @@ const PORTAL = "https://app.example.com/transmittal/tok123";
 describe("renderTransmittalEmail", () => {
   it("subject carries the number, subject line, and purpose", () => {
     const { subject } = renderTransmittalEmail(base, PORTAL);
-    expect(subject).toBe("Transmittal TR-0007 — IFC set — Area 200 (For Construction)");
+    expect(subject).toBe("Transmittal TR-0007 - IFC set - Area 200 (For Construction)");
   });
 
   it("text body lists every document and the portal link", () => {
     const { text } = renderTransmittalEmail(base, PORTAL);
     expect(text).toContain("Hello Jane Doe,");
-    expect(text).toContain("P-200-001 (Rev C) — P&ID Area 200");
+    expect(text).toContain("P-200-001 (Rev C) - P&ID Area 200");
     expect(text).toContain("P-200-002");
     expect(text).toContain(PORTAL);
     expect(text).toContain("Supersedes TR-0004.");

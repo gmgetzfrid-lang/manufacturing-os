@@ -80,7 +80,7 @@ describe("addUsage", () => {
 });
 
 describe("ALLOWED_PROVIDERS", () => {
-  it("is exactly the no-training pair — nothing else, any scope", () => {
+  it("is exactly the no-training pair - nothing else, any scope", () => {
     expect([...ALLOWED_PROVIDERS].sort()).toEqual(["anthropic", "openai"]);
   });
 });

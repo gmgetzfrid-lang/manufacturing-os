@@ -107,7 +107,7 @@ function isUnknownColumnError(message: string | undefined, column: string): bool
 
 export async function createProject(input: CreateProjectInput): Promise<Project> {
   if (!input.name.trim()) throw new Error("Project name is required");
-  if (!input.description?.trim()) throw new Error("Project description is required — explain what the team will be doing");
+  if (!input.description?.trim()) throw new Error("Project description is required - explain what the team will be doing");
   const now = new Date().toISOString();
   const timezone = isValidTimeZone(input.timezone) && input.timezone !== DEFAULT_SCHEDULE_TZ ? input.timezone : null;
   const row: Record<string, unknown> = {
@@ -774,7 +774,7 @@ export async function updateProjectMeta(input: {
   const { error } = await supabase.from("projects").update(update).eq("id", input.projectId);
   if (error) {
     if ("timezone" in update && isUnknownColumnError(error.message, "timezone")) {
-      throw new Error("This database doesn't have the project timezone column yet — run migration 20261018_project_timezone.sql, then try again.");
+      throw new Error("This database doesn't have the project timezone column yet - run migration 20261018_project_timezone.sql, then try again.");
     }
     throw new Error(error.message);
   }
@@ -787,7 +787,7 @@ export async function updateProjectMeta(input: {
     projectId: input.projectId, orgId: proj.orgId,
     userId: input.actorUserId, userName: input.actorEmail,
     type: "comment",
-    body: `Project details updated${input.patch.name && input.patch.name !== (beforeRow?.name as string) ? ` — renamed to "${input.patch.name.trim()}"` : ""}`,
+    body: `Project details updated${input.patch.name && input.patch.name !== (beforeRow?.name as string) ? ` - renamed to "${input.patch.name.trim()}"` : ""}`,
     metadata: { edited: Object.keys(input.patch) },
   });
   await logAuditAction({
@@ -1028,7 +1028,7 @@ export async function bulkCheckoutToProject(input: BulkCheckoutInput): Promise<B
       orgId: input.orgId,
       documentId: doc.id,
       episodeId,
-      text: `${userName} checked out (${mode})${input.purpose ? ` — ${input.purpose}` : ""}${project ? ` · Project: ${project.name}` : ""}.`,
+      text: `${userName} checked out (${mode})${input.purpose ? ` - ${input.purpose}` : ""}${project ? ` · Project: ${project.name}` : ""}.`,
     });
 
     checkedOutCount += 1;
@@ -1149,7 +1149,7 @@ export async function autoReleaseExpiredAdHoc(
       user_id: r.user_id,
       kind: "checkout_released",
       title: "Your ad-hoc checkout auto-released",
-      body: "The time window you picked ran out, so the checkout closed on its own. If you're still working on this document, check it out again — otherwise nothing to do.",
+      body: "The time window you picked ran out, so the checkout closed on its own. If you're still working on this document, check it out again - otherwise nothing to do.",
       link: r.library_id ? `/documents/${r.library_id}?doc=${r.document_id}` : "/checkouts",
       resource_type: "document",
       resource_id: r.document_id,

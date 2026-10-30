@@ -159,7 +159,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
           <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
           <span className="text-xs font-black uppercase tracking-wider text-[var(--color-text-muted)]">Pre-publish review</span>
         </div>
-        <div className="text-[11px] text-[var(--color-text-muted)] mt-1.5">A new revision is in review by the assigned reviewers. The current Rev {doc.rev || "—"} remains the controlled copy.</div>
+        <div className="text-[11px] text-[var(--color-text-muted)] mt-1.5">A new revision is in review by the assigned reviewers. The current Rev {doc.rev || "-"} remains the controlled copy.</div>
       </div>
     );
   }
@@ -207,7 +207,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
             // RESCUE, not a dead end: a zero-person roster can never complete,
             // so the disabled button would strand this draft forever.
             <div className="rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-[11px] text-rose-800">
-              <b>No reviewers are configured for this library</b> — this draft can never complete review as-is.
+              <b>No reviewers are configured for this library</b> - this draft can never complete review as-is.
               Set reviewers in the library&apos;s review policy, or lower the review mode, then resubmit.
               <a href="/admin/libraries" className="block mt-1 font-black underline">Open library settings →</a>
             </div>
@@ -221,7 +221,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUpFromLine className="w-3.5 h-3.5" />} Publish approved revision
             </button>
           )}
-          <div className="text-[10px] text-[var(--color-text-muted)]">The current Rev {doc.rev || "—"} stays the controlled copy until this draft is approved &amp; published.</div>
+          <div className="text-[10px] text-[var(--color-text-muted)]">The current Rev {doc.rev || "-"} stays the controlled copy until this draft is approved &amp; published.</div>
         </>
       )}
 

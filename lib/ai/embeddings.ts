@@ -39,7 +39,7 @@ export const EMBEDDING_PROVIDERS: ReadonlyArray<{
     id: "voyage",
     label: "Voyage AI",
     models: ["voyage-3.5-lite", "voyage-3.5", "voyage-3-large"],
-    hint: "Anthropic's recommended embeddings provider — pairs with a Claude key.",
+    hint: "Anthropic's recommended embeddings provider - pairs with a Claude key.",
   },
   {
     id: "openai",
@@ -97,7 +97,7 @@ function friendly(provider: EmbeddingProviderId, status: number, detail: string)
     return new AiCallError(`${who} rejected the embeddings key.${suffix || " Check the key in AI settings."}`, 401);
   }
   if (status === 429) {
-    return new AiCallError(`${who} rate/credit limit hit — add credits or wait a moment.${suffix}`, 429);
+    return new AiCallError(`${who} rate/credit limit hit - add credits or wait a moment.${suffix}`, 429);
   }
   if (status === 404) {
     return new AiCallError(`${who} doesn't recognise that embedding model.${suffix}`, 400);
@@ -259,6 +259,6 @@ export function embeddingConnectionFrom(row: {
 
 export const NO_EMBEDDING_KEY_MESSAGE =
   "Meaning-based search needs an embeddings key, which is separate from your chat key. "
-  + "Anthropic doesn't make an embeddings model, so a Claude key can't build this index — "
+  + "Anthropic doesn't make an embeddings model, so a Claude key can't build this index - "
   + "add a Voyage AI key (Anthropic's recommended embeddings provider) in AI settings and "
   + "keep using Claude for answers. Keyword search works either way.";

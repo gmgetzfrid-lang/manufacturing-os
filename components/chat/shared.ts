@@ -14,19 +14,19 @@ export const SCOPE_META: Record<ChatScope, {
     label: "Library",
     icon: BookOpen,
     hint: "Answers come only from the indexed documents, cited to the page.",
-    placeholder: 'Ask the library — e.g. "What is the minimum hydrotest pressure for Class 300 piping?"',
+    placeholder: 'Ask the library - e.g. "What is the minimum hydrotest pressure for Class 300 piping?"',
   },
   tools: {
     label: "System tools",
     icon: Bot,
-    hint: "Asks the system, not the internet — looks up documents, equipment, audit history; writes are proposed, never done on its own.",
-    placeholder: 'Ask the system — e.g. "What documents mention E-101?" or "What connects P-101 to T-201?"',
+    hint: "Asks the system, not the internet - looks up documents, equipment, audit history; writes are proposed, never done on its own.",
+    placeholder: 'Ask the system - e.g. "What documents mention E-101?" or "What connects P-101 to T-201?"',
   },
   internet: {
     label: "Internet",
     icon: Globe,
-    hint: "Answers come from the internet / general knowledge — not your controlled documents.",
-    placeholder: 'Ask the web — e.g. "What is the latest edition of API 653 and what changed?"',
+    hint: "Answers come from the internet / general knowledge - not your controlled documents.",
+    placeholder: 'Ask the web - e.g. "What is the latest edition of API 653 and what changed?"',
   },
 };
 

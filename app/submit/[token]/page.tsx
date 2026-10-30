@@ -124,7 +124,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
   if (state !== "ok" || !data) {
     const text = state === "revoked" ? "This link has been revoked. Contact your project contact for a fresh one."
       : state === "expired" ? "This link has expired. Contact your project contact for a fresh one."
-      : state === "notfound" ? "This link doesn't exist — it may have been mistyped."
+      : state === "notfound" ? "This link doesn't exist - it may have been mistyped."
       : "Something went wrong opening this link. Try again shortly.";
     return <Shell><div className="text-center"><AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-2" /><p className="text-sm text-[var(--color-text-muted)]">{text}</p></div></Shell>;
   }
@@ -165,7 +165,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
         <div className="mt-4 rounded-xl border border-[var(--color-border-strong)] p-4 space-y-2">
           <div className="text-xs text-[var(--color-text-muted)]">
             Upload your quote as a PDF. Include your <b>price breakdown</b>, <b>labor hours and crew size</b>,
-            and any <b>exclusions</b> — bids are compared on all three, so what you state is what gets credited.
+            and any <b>exclusions</b> - bids are compared on all three, so what you state is what gets credited.
           </div>
           <label className="flex items-center gap-2 rounded-lg border border-dashed border-[var(--color-border-strong)] px-3 py-2.5 cursor-pointer hover:border-[var(--color-accent-ring)]">
             <UploadCloud className="w-4 h-4 text-[var(--color-accent)]" />
@@ -185,7 +185,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
 
         <div className="mt-4">
           <div className="text-xs font-bold text-[var(--color-text-muted)] mb-1.5">Your submitted quotes</div>
-          {(data.quotes?.length ?? 0) === 0 && <div className="text-xs italic text-[var(--color-text-faint)]">Nothing yet — your first quote will appear here with its status.</div>}
+          {(data.quotes?.length ?? 0) === 0 && <div className="text-xs italic text-[var(--color-text-faint)]">Nothing yet - your first quote will appear here with its status.</div>}
           <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] overflow-hidden">
             {(data.quotes ?? []).map((q) => (
               <li key={q.id} className="flex items-center gap-2 px-3 py-2 text-sm">
@@ -233,7 +233,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <select value={targetDoc} onChange={(e) => setTargetDoc(e.target.value)} className="h-9 rounded-lg border border-[var(--color-border-strong)] px-2 text-sm bg-[var(--color-surface)]">
                 <option value="">Pick your document…</option>
-                {data.items.map((i) => <option key={i.docId} value={i.docId}>{i.label} (Rev {i.rev ?? "—"})</option>)}
+                {data.items.map((i) => <option key={i.docId} value={i.docId}>{i.label} (Rev {i.rev ?? "-"})</option>)}
               </select>
               <input value={revLabel} onChange={(e) => setRevLabel(e.target.value)} placeholder="New revision label, e.g. B" className="h-9 rounded-lg border border-[var(--color-border-strong)] px-2.5 text-sm bg-[var(--color-surface)]" />
             </div>
@@ -261,7 +261,7 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
             <span className="text-sm font-black text-[var(--color-text)]">Redlines requested</span>
           </div>
           <p className="text-xs text-[var(--color-text-muted)] mb-2">
-            One of your submitted sheets conflicts with existing drawings. Upload your markups here — they attach straight to the drafting ticket.
+            One of your submitted sheets conflicts with existing drawings. Upload your markups here - they attach straight to the drafting ticket.
           </p>
           <ul className="space-y-1.5">
             {(data.redlineRequests ?? []).map((r) => (
@@ -282,17 +282,17 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
       {/* Their register */}
       <div className="mt-4">
         <div className="text-xs font-bold text-[var(--color-text-muted)] mb-1.5">Your submissions on this project</div>
-        {data.items.length === 0 && <div className="text-xs italic text-[var(--color-text-faint)]">Nothing yet — your first submission will appear here.</div>}
+        {data.items.length === 0 && <div className="text-xs italic text-[var(--color-text-faint)]">Nothing yet - your first submission will appear here.</div>}
         <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] overflow-hidden">
           {data.items.map((i) => (
             <li key={i.docId} className="flex items-center gap-2 px-3 py-2 text-sm">
               <FileText className="w-4 h-4 text-blue-500 shrink-0" />
               <span className="font-bold text-[var(--color-text)] truncate">{i.label}</span>
-              <span className="text-xs text-[var(--color-text-muted)]">Rev {i.rev ?? "—"}</span>
+              <span className="text-xs text-[var(--color-text-muted)]">Rev {i.rev ?? "-"}</span>
               {i.pendingReview
                 ? <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-amber-700"><Clock className="w-3 h-3" /> in review</span>
                 : i.lastOutcome === "rejected"
-                  ? <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-rose-700"><AlertTriangle className="w-3 h-3" /> not accepted — resubmit</span>
+                  ? <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-rose-700"><AlertTriangle className="w-3 h-3" /> not accepted - resubmit</span>
                   : <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700"><CheckCircle2 className="w-3 h-3" /> current</span>}
             </li>
           ))}

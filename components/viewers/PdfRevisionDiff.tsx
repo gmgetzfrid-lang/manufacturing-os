@@ -524,7 +524,7 @@ export default function PdfRevisionDiff({
               ? "bg-amber-500/20 border-amber-400/60 text-amber-300"
               : "border-slate-600 text-slate-300 hover:text-white hover:border-slate-400"}`}
             title={changesOnly
-              ? "Showing changes only — unchanged linework is hidden. Click to show everything."
+              ? "Showing changes only - unchanged linework is hidden. Click to show everything."
               : "Hide unchanged (grey) linework and see only what changed"}
           >
             {changesOnly ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
@@ -573,7 +573,7 @@ export default function PdfRevisionDiff({
             <button
               onClick={() => panZoom.setPanMode((v) => !v)}
               className={`p-1 hover:text-orange-400 ${panZoom.panMode ? "text-orange-400" : ""}`}
-              title={panZoom.panMode ? "Pan tool (drag to move) — click for cursor" : "Cursor — click for the pan/grab hand"}
+              title={panZoom.panMode ? "Pan tool (drag to move) - click for cursor" : "Cursor - click for the pan/grab hand"}
             >{panZoom.panMode ? <Hand className="w-3.5 h-3.5" /> : <MousePointer2 className="w-3.5 h-3.5" />}</button>
           </div>
         </div>

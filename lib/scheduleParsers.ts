@@ -159,7 +159,7 @@ function xmlDemand(filename: string, format: "msproject-mpp" | "msproject-mpx"):
   const kind = format === "msproject-mpp"
     ? "a Microsoft Project binary file (.mpp)"
     : "a legacy Microsoft Project interchange file (.mpx)";
-  return `"${filename}" is ${kind}. This format is not accepted — export the XML instead: open the schedule in Microsoft Project, File → Save As → choose "XML Format (*.xml)", then drop that file here. The XML import is a true 1:1 copy (every date, dependency, resource, and the full hierarchy).`;
+  return `"${filename}" is ${kind}. This format is not accepted - export the XML instead: open the schedule in Microsoft Project, File → Save As → choose "XML Format (*.xml)", then drop that file here. The XML import is a true 1:1 copy (every date, dependency, resource, and the full hierarchy).`;
 }
 
 function runParser(format: ScheduleFormat, filename: string, text: string, tz: string): ParseResult {
@@ -428,9 +428,9 @@ function parseMsProjectXml(text: string, tz: string): { rows: ParsedMilestone[];
       attributes: Object.keys(attributes).length > 0 ? attributes : undefined,
     });
   }
-  if (calendarTasks > 0) warnings.push(`Working hours read from the schedule's calendars for ${calendarTasks} task${calendarTasks === 1 ? "" : "s"} — they set which crew works each one.`);
+  if (calendarTasks > 0) warnings.push(`Working hours read from the schedule's calendars for ${calendarTasks} task${calendarTasks === 1 ? "" : "s"} - they set which crew works each one.`);
   if (resourcesFound > 0) warnings.push(`Resources mapped onto ${resourcesFound} task${resourcesFound === 1 ? "" : "s"}.`);
-  if (nonFsLinks > 0) warnings.push(`${nonFsLinks} link${nonFsLinks === 1 ? " is" : "s are"} start-to-start, finish-to-finish or carry a lag — kept as they are.`);
+  if (nonFsLinks > 0) warnings.push(`${nonFsLinks} link${nonFsLinks === 1 ? " is" : "s are"} start-to-start, finish-to-finish or carry a lag - kept as they are.`);
   if (dropped > 0) warnings.push(`${dropped} task${dropped === 1 ? "" : "s"} skipped (missing name or date).`);
   if (projectSummarySkipped) warnings.push("The file's project summary row (its title) was not imported as a task.");
   const cleaned = dropPlaceholderLeaves(rows);
@@ -539,7 +539,7 @@ function parseP6Xml(text: string, tz: string): { rows: ParsedMilestone[]; warnin
     });
   }
   if (relationCount > 0) warnings.push(`${relationCount} dependency link${relationCount === 1 ? "" : "s"} mapped from relationships.`);
-  if (p6NonFs > 0) warnings.push(`${p6NonFs} link${p6NonFs === 1 ? " is" : "s are"} start-to-start, finish-to-finish or carry a lag — kept as they are.`);
+  if (p6NonFs > 0) warnings.push(`${p6NonFs} link${p6NonFs === 1 ? " is" : "s are"} start-to-start, finish-to-finish or carry a lag - kept as they are.`);
 
   // Roll WBS spans up from activities, then compute outline depth and
   // drop any WBS branch that ended up with no dated descendants.
@@ -700,7 +700,7 @@ function parseP6Xer(text: string, tz: string): { rows: ParsedMilestone[]; warnin
     });
   }
   if (relationCount > 0) warnings.push(`${relationCount} dependency link${relationCount === 1 ? "" : "s"} mapped from TASKPRED.`);
-  if (xerNonFs > 0) warnings.push(`${xerNonFs} link${xerNonFs === 1 ? " is" : "s are"} start-to-start, finish-to-finish or carry a lag — kept as they are.`);
+  if (xerNonFs > 0) warnings.push(`${xerNonFs} link${xerNonFs === 1 ? " is" : "s are"} start-to-start, finish-to-finish or carry a lag - kept as they are.`);
 
   rollUpSummaryDates(rows);
   computeOutlineLevels(rows);
@@ -793,7 +793,7 @@ function parseCsvLikeWithSynonyms(text: string, tz: string, syn: SynonymSpec, re
   const iPred    = syn.pred    ? findCol(syn.pred)    : -1;
 
   if (iName < 0 || iPlanned < 0) {
-    warnings.push(`Couldn't find required columns. Expected something like "${syn.name[0]}" and "${syn.planned[0]}" — got: ${header.join(", ")}`);
+    warnings.push(`Couldn't find required columns. Expected something like "${syn.name[0]}" and "${syn.planned[0]}" - got: ${header.join(", ")}`);
     return { rows, warnings };
   }
 
@@ -810,7 +810,7 @@ function parseCsvLikeWithSynonyms(text: string, tz: string, syn: SynonymSpec, re
   const dateCells = (idx: number) => idx < 0 ? [] : lines.slice(1).map((l) => (csvSplit(l, delim)[idx] ?? "").trim().replace(/^"|"$/g, ""));
   const order = dayFirstColumn([...dateCells(iPlanned), ...dateCells(iStart)]);
   if (order.dayFirst) warnings.push("Dates read as day/month/year (the file has dates like 15/08 that only work that way).");
-  if (order.ambiguous) warnings.push("Some dates only work as day/month and others only as month/day — check the dates after import.");
+  if (order.ambiguous) warnings.push("Some dates only work as day/month and others only as month/day - check the dates after import.");
   let badDates = 0;
   let roughLinks = 0;
 
@@ -898,8 +898,8 @@ function parseCsvLikeWithSynonyms(text: string, tz: string, syn: SynonymSpec, re
   // slide every later row's progress and comments onto the wrong task.
   if (iId < 0) stableRowKeys(rows, refTag);
 
-  if (roughLinks > 0) warnings.push(`${roughLinks} predecessor link${roughLinks === 1 ? "" : "s"} had a lag that can't be kept (like a % of the other task) or text that couldn't be read — kept as plain finish-to-start. Check ${roughLinks === 1 ? "it" : "them"} on the task.`);
-  if (badDates > 0) warnings.push(`${badDates} date${badDates === 1 ? "" : "s"} couldn't be read (like a month 13 or Feb 30) — ${badDates === 1 ? "that row was" : "those rows were"} skipped or left without a start.`);
+  if (roughLinks > 0) warnings.push(`${roughLinks} predecessor link${roughLinks === 1 ? "" : "s"} had a lag that can't be kept (like a % of the other task) or text that couldn't be read - kept as plain finish-to-start. Check ${roughLinks === 1 ? "it" : "them"} on the task.`);
+  if (badDates > 0) warnings.push(`${badDates} date${badDates === 1 ? "" : "s"} couldn't be read (like a month 13 or Feb 30) - ${badDates === 1 ? "that row was" : "those rows were"} skipped or left without a start.`);
   if (dropped - badDates > 0) warnings.push(`${dropped - badDates} row${dropped - badDates === 1 ? "" : "s"} skipped (missing name or date).`);
   return { rows, warnings };
 }

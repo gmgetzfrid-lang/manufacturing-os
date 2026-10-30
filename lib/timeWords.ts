@@ -5,7 +5,7 @@ import { fmtInTz, dayKey } from "@/lib/scheduleTz";
 
 /** "Mon, Oct 26, 10:00 AM". */
 export function whenDated(t: number, tz: string): string {
-  return Number.isFinite(t) ? fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) : "—";
+  return Number.isFinite(t) ? fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) : "-";
 }
 
 /** "Mon, Oct 26, 8:00 AM → 10:00 AM" — the finish's date only when it's another day. */

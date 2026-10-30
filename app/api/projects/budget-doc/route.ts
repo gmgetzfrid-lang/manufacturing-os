@@ -37,7 +37,7 @@ const MAX_BYTES = 25 * 1024 * 1024;
 const BLANK_PAGE_BYTES = 20_000;
 
 const SYSTEM =
-  "You read project budget and authorization documents — AFEs (Authorization for Expenditure), capital requests, cost estimates, budget spreadsheets, cost breakdowns — for industrial maintenance and capital projects. Every company uses its own form; find the facts wherever they are printed. Extract what is PRINTED — never invent.\n" +
+  "You read project budget and authorization documents - AFEs (Authorization for Expenditure), capital requests, cost estimates, budget spreadsheets, cost breakdowns - for industrial maintenance and capital projects. Every company uses its own form; find the facts wherever they are printed. Extract what is PRINTED - never invent.\n" +
   "Fields:\n" +
   "- docType: what the document calls itself (\"AFE\", \"Capital Request\", \"Estimate\"…). docNumber: its number. chargeAccount: the account/GL/cost-center/WBS code the spend books to, verbatim.\n" +
   "- docDate, targetCompletionDate, milestone dates: YYYY-MM-DD. When a date omits the year, use the document's own year. targetCompletionDate only when the paper states an end/completion/in-service date or one is a direct sum the paper states (start date + stated duration).\n" +
@@ -132,8 +132,8 @@ export async function POST(req: NextRequest) {
   }
 
   let bytes: Buffer;
-  try { bytes = await fetchBytes(fileKey); } catch { return bad("The uploaded file couldn't be found — upload it again.", 404); }
-  if (bytes.length > MAX_BYTES) return bad("That file is over 25 MB — export just the budget pages.", 413);
+  try { bytes = await fetchBytes(fileKey); } catch { return bad("The uploaded file couldn't be found - upload it again.", 404); }
+  if (bytes.length > MAX_BYTES) return bad("That file is over 25 MB - export just the budget pages.", 413);
 
   let images: AiCallImage[] = [];
   let text = "";
@@ -151,7 +151,7 @@ export async function POST(req: NextRequest) {
       blankPages = rendered.filter((r) => (r.base64.length * 3) / 4 < BLANK_PAGE_BYTES).map((r) => r.page);
       text = layer;
       if (images.length === 0 && text.length < 40) {
-        return bad("The PDF couldn't be read — it may be corrupt or password-protected.", 502);
+        return bad("The PDF couldn't be read - it may be corrupt or password-protected.", 502);
       }
     } else if (format === "image") {
       const mt = (body.mimeType ?? "").startsWith("image/") ? body.mimeType! : /\.png$/i.test(fileName) ? "image/png" : "image/jpeg";
@@ -177,7 +177,7 @@ export async function POST(req: NextRequest) {
       user: [
         `File: ${fileName}`,
         images.length ? `Pages attached as images in order${pagesRead.length ? `: ${pagesRead.join(", ")}` : ""}.` : null,
-        text ? `Document text${format === "pdf" ? " (PDF text layer — the images are authoritative where they differ)" : ""}:\n${text.slice(0, MAX_TEXT)}` : null,
+        text ? `Document text${format === "pdf" ? " (PDF text layer - the images are authoritative where they differ)" : ""}:\n${text.slice(0, MAX_TEXT)}` : null,
       ].filter(Boolean).join("\n\n"),
       images: images.length ? images : undefined,
       maxTokens: 4000,
@@ -190,7 +190,7 @@ export async function POST(req: NextRequest) {
   }
 
   const block = extractJsonBlock(out);
-  if (!block) return bad("The model returned nothing readable — try again.", 502);
+  if (!block) return bad("The model returned nothing readable - try again.", 502);
   let parsed;
   try { parsed = validateParsedBudgetDoc(JSON.parse(block)); } catch (e) { return bad((e as Error).message, 422); }
 

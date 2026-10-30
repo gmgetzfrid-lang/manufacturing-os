@@ -173,7 +173,7 @@ export default function RelatedPanel({
               {r.origin && r.origin !== "human" && (
                 <span
                   title={[
-                    r.origin === "system" ? "Applied automatically — provable connection" : "Approved from a proposal",
+                    r.origin === "system" ? "Applied automatically - provable connection" : "Approved from a proposal",
                     r.evidence?.summary,
                     r.approved_by_name ? `Approved by ${r.approved_by_name}` : null,
                   ].filter(Boolean).join(" · ")}
@@ -183,7 +183,7 @@ export default function RelatedPanel({
                 </span>
               )}
               {r.evidence_lost_at && (
-                <span title="A later revision removed the evidence this link was based on — still linked, worth a look."
+                <span title="A later revision removed the evidence this link was based on - still linked, worth a look."
                   className="shrink-0 text-amber-600"><AlertTriangle className="w-3 h-3" /></span>
               )}
               {canManage && (

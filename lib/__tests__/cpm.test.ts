@@ -79,7 +79,7 @@ describe("critical path from the links", () => {
   });
 });
 
-describe("the project's critical path — one answer", () => {
+describe("the project's critical path - one answer", () => {
   it("is calculated from the links when the schedule is linked and nothing was chosen", () => {
     expect(isLinked(base())).toBe(true);
     expect(effectiveCriticalMode(base(), null)).toBe("links");
@@ -92,7 +92,7 @@ describe("the project's critical path — one answer", () => {
     const r = resolveCriticalPath(ms, "links", { now: T0, tz: UTC });
     expect([...r.ids].sort()).toEqual(["A", "B", "C"]);
   });
-  it("only what's marked, when that's the choice — the float is still known", () => {
+  it("only what's marked, when that's the choice - the float is still known", () => {
     const r = resolveCriticalPath(base(), "none", { now: T0, tz: UTC });
     expect(r.ids.size).toBe(0);
     expect(r.cpm?.criticalIds.size).toBe(3);
@@ -101,7 +101,7 @@ describe("the project's critical path — one answer", () => {
 
 import { floatsOf } from "@/lib/criticalPath";
 
-describe("hand marks win — the whole job Not critical, one task Critical", () => {
+describe("hand marks win - the whole job Not critical, one task Critical", () => {
   // Like the Transmix-1 schedule: the turnaround marked Not critical, V-7
   // marked Critical. Whatever the setting, only V-7's work is flagged, and
   // nothing marked off the path is called near or trending to critical.

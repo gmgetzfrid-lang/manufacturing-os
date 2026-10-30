@@ -38,7 +38,7 @@ async function docx(o: { titlePg?: boolean; footer?: boolean } = {}) {
 }
 
 describe("a Word letterhead", () => {
-  it("takes Word's page and margins — the report goes where Word's text would", async () => {
+  it("takes Word's page and margins - the report goes where Word's text would", async () => {
     const lh = await letterheadFromDocx(await docx({ titlePg: true }), "Kern.docx");
     expect(lh.page).toEqual(LETTER);
     expect(lh.margins).toEqual({ top: 1.71, bottom: 0.8, left: 1, right: 1 });
@@ -69,7 +69,7 @@ describe("a Word letterhead", () => {
     // Past the bar (it ends 0.4" up from the bottom … 0.5" + 0.15 clear).
     expect(lh.margins.bottom).toBeGreaterThanOrEqual(0.8);
   });
-  it("text is escaped when drawn — a letterhead can't put markup on the page", async () => {
+  it("text is escaped when drawn - a letterhead can't put markup on the page", async () => {
     const lh = cleanLetterhead(await letterheadFromDocx(await docx({ titlePg: true }), "Kern.docx"))!;
     const html = layerHtml(lh.first!, lh.page);
     expect(html).toContain("&lt;b&gt;www.example.com&lt;/b&gt;");
@@ -84,7 +84,7 @@ describe("a Word letterhead", () => {
 describe("a saved letterhead is checked when it's read back", () => {
   const ok = { v: 1, name: "L", kind: "pdf", page: LETTER, margins: { top: 1.5, bottom: 0.8, left: 0.9, right: 0.9 }, layer: { image: "data:image/jpeg;base64,AAAA" } };
   it("a good one passes", () => expect(cleanLetterhead(ok)).toMatchObject({ kind: "pdf", pages: "all" }));
-  it("pictures must be pictures — no scripts, no links", () => {
+  it("pictures must be pictures - no scripts, no links", () => {
     expect(cleanLetterhead({ ...ok, layer: { image: "javascript:alert(1)" } })!.layer.image).toBeUndefined();
     const f = cleanLetterhead({ ...ok, layer: { floats: [{ x: 0, y: 0, w: 1, h: 1, src: "https://evil.example/x.png" }, { x: 0, y: 0, w: 1, h: 1, src: "data:image/svg+xml;base64,AAAA" }] } });
     expect(f!.layer.floats).toBeUndefined();
@@ -148,7 +148,8 @@ describe("the printed page", () => {
     const x = parseXml(`<?xml version="1.0"?><a x="1 &amp; 2"><b/><c>Tom &amp; Jerry &#8212; ok</c></a>`);
     expect(x.kids[0].attrs.x).toBe("1 & 2");
     expect(x.kids[0].kids.map((k) => k.name)).toEqual(["b", "c"]);
-    expect(x.kids[0].kids[1].text).toBe("Tom & Jerry — ok");
+    // The Word file as written (its em dash); the printed page drops it (letterheadLayersHtml).
+    expect(x.kids[0].kids[1].text).toBe("Tom & Jerry \u2014 ok");
   });
 });
 
@@ -165,9 +166,9 @@ describe("what to watch on the next shift", () => {
   const num = (id: string | null | undefined) => ({ h17: 1, h12: 2, om: 3, ct: 4 } as Record<string, number>)[id ?? ""];
   it("badly behind (and what waits on it), carried over (and what it waits on), how much is critical", () => {
     expect(watchLines(rows, report, { hrs: (h) => `${h} h` }, num)).toEqual([
-      { tone: "rose", strong: "V-7 Open Internal Manways is 20.3 h behind", rest: " — Clean Tower (Orbijet Internals) can't start until it's done, and it's on the critical path." },
-      { tone: "amber", strong: "2 carried over from earlier shifts", rest: " — both wait on steps not on this list (Pull Bundle, Complete 100% Tube and Shell Inspection)." },
-      { tone: "slate", strong: "2 of 4 steps are critical", rest: " — #3, #4." },
+      { tone: "rose", strong: "V-7 Open Internal Manways is 20.3 h behind", rest: " - Clean Tower (Orbijet Internals) can't start until it's done, and it's on the critical path." },
+      { tone: "amber", strong: "2 carried over from earlier shifts", rest: " - both wait on steps not on this list (Pull Bundle, Complete 100% Tube and Shell Inspection)." },
+      { tone: "slate", strong: "2 of 4 steps are critical", rest: " - #3, #4." },
     ]);
   });
   it("a quiet list: nothing to watch", () => {

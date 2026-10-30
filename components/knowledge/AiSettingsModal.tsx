@@ -43,14 +43,14 @@ const providerAllowed = (p: string) => (ALLOWED_PROVIDERS as readonly string[]).
 // What each offered model is for, in the picker.
 const MODEL_BLURB: Record<string, string> = {
   "claude-opus-5-5": "most capable",
-  "claude-sonnet-5-5": "balanced — about half the cost",
+  "claude-sonnet-5-5": "balanced - about half the cost",
   "claude-haiku-5-5": "fastest, lowest cost",
   "gpt-5.1": "most capable",
   "gpt-4o": "balanced",
   "gpt-4o-mini": "fastest, lowest cost",
 };
 const modelLabel = (m: string, offered: string[]) =>
-  `${modelName(m)}${MODEL_BLURB[m] ? ` — ${MODEL_BLURB[m]}` : offered.includes(m) ? "" : " — older model, your current setting"}`;
+  `${modelName(m)}${MODEL_BLURB[m] ? ` - ${MODEL_BLURB[m]}` : offered.includes(m) ? "" : " - older model, your current setting"}`;
 
 // Persistent inline status line — toasts vanish; this stays until the next
 // action, so "did that work?" always has a visible answer.
@@ -126,11 +126,11 @@ export function KeyEditor({ orgId, current, onChanged }: {
       const proceed = await appConfirm({
         title: "Know what this key carries",
         message:
-          "Every question you ask — and text pulled from indexed documents to answer it — is sent to " +
+          "Every question you ask - and text pulled from indexed documents to answer it - is sent to " +
           `${providerMeta.label} under THIS key's account.\n\n` +
-          "Use a key you pay for and control. Anthropic and OpenAI do not train on API traffic — " +
+          "Use a key you pay for and control. Anthropic and OpenAI do not train on API traffic - " +
           "that's why they're the only providers allowed here.",
-        confirmLabel: "Understood — save key",
+        confirmLabel: "Understood - save key",
       });
       if (!proceed) return;
     }
@@ -147,7 +147,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
       setNotice({
         tone: "ok",
         text: hadNewKey
-          ? `Key verified and saved — ends in ····${last4}. You're set for questions.`
+          ? `Key verified and saved - ends in ····${last4}. You're set for questions.`
           : `Main model set to ${modelName(m)} (your key is unchanged).`,
       });
       showToast({ type: "success", title: hadNewKey ? "Key verified and saved." : `Main model set to ${modelName(m)}.` });
@@ -168,8 +168,8 @@ export function KeyEditor({ orgId, current, onChanged }: {
       setNotice({
         tone: "ok",
         text: apiKey.trim()
-          ? "The key works — now press Save to store it. Testing alone does NOT save."
-          : "Your saved key works — the model answered.",
+          ? "The key works - now press Save to store it. Testing alone does NOT save."
+          : "Your saved key works - the model answered.",
       });
     } catch (e) {
       setNotice({ tone: "err", text: (e as Error).message });
@@ -210,7 +210,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
 
       {grandfatheredBlocked && (
         <div className="rounded-lg border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-[11px] font-bold text-rose-700 dark:text-rose-300">
-          Your saved {current?.provider} key is BLOCKED — that provider can train on submitted data.
+          Your saved {current?.provider} key is BLOCKED - that provider can train on submitted data.
           Save a Claude or OpenAI key to ask questions again.
         </div>
       )}
@@ -256,7 +256,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
       </div>
       <Notice notice={notice} />
       <p className="text-[10px] text-[var(--color-text-muted)]">
-        <b>Verify &amp; save</b> makes a live call with the key first — a key that saves is a key that
+        <b>Verify &amp; save</b> makes a live call with the key first - a key that saves is a key that
         works. <b>Test only</b> never saves anything. Saving again replaces your key; if your provider
         runs out of credits it simply stops answering until you top up.
       </p>
@@ -418,7 +418,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
       setNotice({
         tone: "ok",
         text: hadNewKey
-          ? `Embeddings key verified and saved — ends in ····${last4}. You can now build the meaning index.`
+          ? `Embeddings key verified and saved - ends in ····${last4}. You can now build the meaning index.`
           : "Embeddings settings saved (your existing key is unchanged).",
       });
       showToast({ type: "success", title: hadNewKey ? "Embeddings key verified and saved." : "Settings saved." });
@@ -440,7 +440,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
       setNotice({
         tone: "ok",
         text: apiKey.trim()
-          ? "The key works — now press Verify & save to store it. Testing alone does NOT save."
+          ? "The key works - now press Verify & save to store it. Testing alone does NOT save."
           : "Your saved embeddings key works.",
       });
     } catch (e) {
@@ -484,14 +484,14 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
 
       <p className="text-[11px] text-[var(--color-text-muted)]">
         Finds &ldquo;pipe supports&rdquo; in a standard that says &ldquo;hanger and support details&rdquo;.
-        This is a <b>separate service from your chat key</b> — Anthropic doesn&apos;t make an
+        This is a <b>separate service from your chat key</b> - Anthropic doesn&apos;t make an
         embeddings model, so Claude answers the questions and this key builds the index.
         Without it, search stays keyword-only, which is what it has always been.
       </p>
 
       {reusingChatKey && !saved && (
         <div className="rounded-lg border border-cyan-300 dark:border-cyan-800 bg-cyan-50 dark:bg-cyan-950/30 px-3 py-2 text-[11px] text-cyan-900 dark:text-cyan-200">
-          Your OpenAI chat key already works for embeddings — nothing to add here unless you
+          Your OpenAI chat key already works for embeddings - nothing to add here unless you
           want to use a different provider.
         </div>
       )}
@@ -539,7 +539,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
       </div>
       <Notice notice={notice} />
       <p className="text-[10px] text-[var(--color-text-muted)]">
-        <b>Verify &amp; save</b> makes a real embed call with the key first — a key that saves is a key
+        <b>Verify &amp; save</b> makes a real embed call with the key first - a key that saves is a key
         that works. Embedding spend bills to <b>your own account with that provider</b>; the meter&apos;s
         figure is an estimate, your provider&apos;s invoice is the real number.
       </p>
@@ -630,7 +630,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
     <div className="rounded-xl border border-[var(--color-border)] px-3.5 py-3 space-y-3">
       <div className="flex items-center justify-between gap-2">
         <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
-          <Gauge className="w-3.5 h-3.5" /> Your AI usage — {usage.monthLabel}
+          <Gauge className="w-3.5 h-3.5" /> Your AI usage - {usage.monthLabel}
         </div>
         <span className={`text-xs font-black ${capped ? "text-rose-600" : hot ? "text-amber-600" : "text-[var(--color-text)]"}`}>
           {fmtUsd(usage.spentUsd)} of {fmtUsd(usage.capUsd)} · {usage.percent}%
@@ -656,15 +656,15 @@ export function UsagePanel({ orgId }: { orgId: string }) {
       <p className="text-[10px] text-[var(--color-text-muted)]">
         These numbers are YOURS alone: every question you ask, and every indexing or drawing-reading run
         your key pays for, writes a metering row under your user id with the token counts your provider
-        reported — nobody else&apos;s work is mixed in. All of it counts toward the cap.
+        reported - nobody else&apos;s work is mixed in. All of it counts toward the cap.
       </p>
       {capped ? (
         <p className="text-[11px] font-bold text-rose-600">
-          Cap reached — questions are locked until the 1st, unless an Admin raises the cap.
+          Cap reached - questions are locked until the 1st, unless an Admin raises the cap.
         </p>
       ) : hot ? (
         <p className="text-[11px] font-bold text-amber-600">
-          Over 80% of your monthly budget — questions lock at 100% until the 1st.
+          Over 80% of your monthly budget - questions lock at 100% until the 1st.
         </p>
       ) : null}
 
@@ -719,7 +719,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
             })}
           </ul>
           <p className="text-[10px] text-[var(--color-text-muted)]">
-            Each person meters against their own cap — the dropdown sets it (highlighted = personal
+            Each person meters against their own cap - the dropdown sets it (highlighted = personal
             override, &ldquo;def&rdquo; = the workspace default). Estimated from exact provider token counts ×
             published rates; questions lock server-side at 100% and reset on the 1st (UTC).
           </p>
@@ -754,7 +754,7 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
           <div>
             <h2 className="text-base font-black text-[var(--color-text)]">AI settings</h2>
             <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-              Everyone brings their own API key — your questions run on YOUR key, your money, your
+              Everyone brings their own API key - your questions run on YOUR key, your money, your
               monthly cap. Keys are stored server-side and never shown again.
             </p>
           </div>

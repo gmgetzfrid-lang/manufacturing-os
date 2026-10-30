@@ -28,7 +28,7 @@ const acl = (rules: AccessRule[], opts: Partial<AccessControl> = {}): AccessCont
 
 const ROLE = (r: Role) => r;
 
-describe("evaluateAcl — single node", () => {
+describe("evaluateAcl - single node", () => {
   it("returns null for no ACL", () => {
     expect(evaluateAcl(undefined, { uid: "u1" })).toBeNull();
   });
@@ -61,7 +61,7 @@ describe("evaluateAcl — single node", () => {
     expect(d?.can("write")).toBe(true);
   });
 
-  it("an admin grant is only revoked by denying 'admin' itself — NOT a specific action", () => {
+  it("an admin grant is only revoked by denying 'admin' itself - NOT a specific action", () => {
     // SHARP EDGE (flagged for the security-review slice): denying a specific
     // action does NOT override a blanket admin grant. The current contract is
     // "to strip an admin, deny 'admin'." Frozen here so any future change to
@@ -122,7 +122,7 @@ describe("discoverability", () => {
   });
 });
 
-describe("evaluateAclChain — inheritance", () => {
+describe("evaluateAclChain - inheritance", () => {
   it("a child inherits a parent's grants", () => {
     const parent = acl([rule("allow", "role", ROLE("Drafter"), ["read"])]);
     const child = acl([]);

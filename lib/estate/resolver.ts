@@ -149,7 +149,7 @@ export function resolveTarget(t: ResolveTarget, ctx: ResolveContext): ProposedEd
   if (own && above && own.code !== above.code) {
     const u = unitByCode(ctx.units, own.code), a = unitByCode(ctx.units, above.code);
     if (u && a) out.push({ a: self, b: nid.cbunit(a.code), type: "belongs_to_unit", origin: "resolver", tier: "inferred", confidence: 0.3,
-      summary: `${label} names ${u.label} but is filed under ${a.label} — one of them is wrong`, evidence: { named: u.code, filedUnder: a.code } });
+      summary: `${label} names ${u.label} but is filed under ${a.label} - one of them is wrong`, evidence: { named: u.code, filedUnder: a.code } });
   }
 
   // ── Alias proposal ──────────────────────────────────────────────────────
@@ -166,7 +166,7 @@ export function resolveTarget(t: ResolveTarget, ctx: ResolveContext): ProposedEd
       const term = ws.join(" ");
       const known = ctx.aliases.some((a) => a.kind === "unit" && a.termCanonical === canonicalForm(term));
       if (!known) out.push({ a: `term:${canonicalForm(term)}`, b: nid.cbunit(u.code), type: "alias_of", origin: "resolver", tier: "inferred", confidence: 0.4,
-        summary: `People may say "${term}" for ${u.label} (${u.code}) — folder "${t.name}" sits under it`, evidence: { term, folder: nid.folder(t.id), unit: u.code } });
+        summary: `People may say "${term}" for ${u.label} (${u.code}) - folder "${t.name}" sits under it`, evidence: { term, folder: nid.folder(t.id), unit: u.code } });
     }
   }
 

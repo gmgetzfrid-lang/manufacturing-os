@@ -23,7 +23,7 @@ const ticket = (over: Partial<Ticket>): Ticket => ({
 const actionsFor = (t: Ticket, role: Role, uid?: string, policy?: CapabilityPolicy) =>
   WorkflowEngine.getActions(t, role, uid, policy).map((a) => a.action);
 
-describe("capability policy — defaults reproduce legacy behavior", () => {
+describe("capability policy - defaults reproduce legacy behavior", () => {
   it("assignment queue: management + DraftingSupervisor assign; Drafter self-assigns; Requester gets nothing", () => {
     const t = ticket({ status: "PENDING_ASSIGNMENT" });
     for (const r of ["Admin", "Manager", "Supervisor", "DraftingSupervisor"] as Role[]) {
@@ -61,7 +61,7 @@ describe("capability policy — defaults reproduce legacy behavior", () => {
   });
 });
 
-describe("capability policy — custom policies rewire authority", () => {
+describe("capability policy - custom policies rewire authority", () => {
   it("granting DocCtrl assignment authority works; revoking Drafter self-assign works", () => {
     const t = ticket({ status: "PENDING_ASSIGNMENT" });
     const policy: CapabilityPolicy = {
@@ -83,7 +83,7 @@ describe("capability policy — custom policies rewire authority", () => {
   });
 });
 
-describe("capability policy — rails and matching", () => {
+describe("capability policy - rails and matching", () => {
   it("critical capabilities can never lose Admin", () => {
     expect(validateCapabilityPolicy({ caps: { "ticket.force_close": ["Manager"] } })).toMatch(/Admin/);
     expect(validateCapabilityPolicy({ caps: { "ticket.force_close": ["Admin", "Manager"] } })).toBeNull();

@@ -43,7 +43,7 @@ function statusReq(extra: Record<string, unknown> = {}) {
 }
 
 describe("embed status response mirrors SemanticProgress", () => {
-  it("carries coveredNow — the field the panel actually renders", async () => {
+  it("carries coveredNow - the field the panel actually renders", async () => {
     const { POST } = await import("@/app/api/knowledge/embed/route");
     const res = await POST(statusReq());
     expect(res.status).toBe(200);

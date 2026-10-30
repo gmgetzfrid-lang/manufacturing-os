@@ -23,8 +23,8 @@ export type CostDocKind = "quote" | "invoice" | "po" | "budget";
 export type CostDocStatus = "draft" | "parsed" | "awarded" | "declined" | "posted" | "void";
 
 export const COST_DOC_STATUS_LABEL: Record<CostDocStatus, string> = {
-  draft: "Uploaded — not read yet",
-  parsed: "Read — awaiting your review",
+  draft: "Uploaded - not read yet",
+  parsed: "Read - awaiting your review",
   awarded: "Awarded",
   declined: "Not selected",
   posted: "Posted to budget",
@@ -156,7 +156,7 @@ export function quoteGroups(docs: CostDocument[]): Array<{ group: string; docs: 
   const live = docs.filter((d) => d.kind === "quote" && d.status !== "void");
   const by = new Map<string, CostDocument[]>();
   for (const d of live) {
-    const g = d.rfqGroup?.trim() || `Ungrouped — ${d.vendorName ?? d.fileName ?? "quote"}`;
+    const g = d.rfqGroup?.trim() || `Ungrouped - ${d.vendorName ?? d.fileName ?? "quote"}`;
     by.set(g, [...(by.get(g) ?? []), d]);
   }
   return [...by.entries()].map(([group, ds]) => ({ group, docs: ds }));
@@ -177,10 +177,10 @@ async function claimDocTransition(
 ): Promise<{ ok: true; fresh: CostDocument } | { ok: false; error: string }> {
   const { data: row, error: readErr } = await supabase
     .from("cost_documents").select("*").eq("id", docId).maybeSingle();
-  if (readErr || !row) return { ok: false, error: readErr?.message ?? "Document not found — it may have been removed." };
+  if (readErr || !row) return { ok: false, error: readErr?.message ?? "Document not found - it may have been removed." };
   const fresh = mapDoc(row as Record<string, unknown>);
   if (!fromStatuses.includes(fresh.status)) {
-    return { ok: false, error: `This document is already ${COST_DOC_STATUS_LABEL[fresh.status].toLowerCase()} — refresh to see the latest.` };
+    return { ok: false, error: `This document is already ${COST_DOC_STATUS_LABEL[fresh.status].toLowerCase()} - refresh to see the latest.` };
   }
   const { data: claimed, error } = await supabase.from("cost_documents")
     .update({ status: to, posted_at: new Date().toISOString(), posted_by: actorUid })
@@ -188,7 +188,7 @@ async function claimDocTransition(
     .select("id");
   if (error) return { ok: false, error: error.message };
   if (!claimed || claimed.length === 0) {
-    return { ok: false, error: "Someone else just decided this document — refresh to see the latest." };
+    return { ok: false, error: "Someone else just decided this document - refresh to see the latest." };
   }
   return { ok: true, fresh };
 }
@@ -228,7 +228,7 @@ export async function awardQuote(input: {
   const total = fresh.totalAmount ?? parsedQuoteFrom(fresh)?.total;
   if (total == null || !(total > 0)) {
     await revertDocTransition(doc.id, fresh.status);
-    return { ok: false, error: "No readable total on this quote yet — run the AI read (or type the total) first." };
+    return { ok: false, error: "No readable total on this quote yet - run the AI read (or type the total) first." };
   }
 
   const posted = await addEntry({
@@ -238,7 +238,7 @@ export async function awardQuote(input: {
     entryType: "commitment",
     amount: total,
     entryDate: new Date().toISOString().slice(0, 10),
-    description: `Award — ${fresh.vendorName ?? "vendor"}${fresh.rfqGroup ? ` (${fresh.rfqGroup})` : ""}`,
+    description: `Award - ${fresh.vendorName ?? "vendor"}${fresh.rfqGroup ? ` (${fresh.rfqGroup})` : ""}`,
     reference: fresh.docNumber ?? fresh.fileName ?? undefined,
     actor: input.actor,
   });
@@ -273,8 +273,8 @@ export async function postInvoice(input: {
   actor: Actor;
 }): Promise<{ ok: boolean; error?: string }> {
   const { doc } = input;
-  if (doc.kind === "quote") return { ok: false, error: "Quotes are awarded, not posted — use Award." };
-  if (doc.kind === "budget") return { ok: false, error: "A budget document sets the plan — it isn't spend to post." };
+  if (doc.kind === "quote") return { ok: false, error: "Quotes are awarded, not posted - use Award." };
+  if (doc.kind === "budget") return { ok: false, error: "A budget document sets the plan - it isn't spend to post." };
 
   const claim = await claimDocTransition(doc.id, ["draft", "parsed"], "posted", input.actor.uid);
   if (!claim.ok) return { ok: false, error: claim.error };
@@ -283,7 +283,7 @@ export async function postInvoice(input: {
   const total = fresh.totalAmount ?? (fresh.parsed as { total?: number } | null)?.total ?? null;
   if (total == null || !(total > 0)) {
     await revertDocTransition(doc.id, fresh.status);
-    return { ok: false, error: "No readable total on this invoice yet — run the AI read (or type the total) first." };
+    return { ok: false, error: "No readable total on this invoice yet - run the AI read (or type the total) first." };
   }
 
   const posted = await addEntry({
@@ -293,7 +293,7 @@ export async function postInvoice(input: {
     entryType: "actual",
     amount: total,
     entryDate: fresh.docDate ?? new Date().toISOString().slice(0, 10),
-    description: `Invoice — ${fresh.vendorName ?? "vendor"}`,
+    description: `Invoice - ${fresh.vendorName ?? "vendor"}`,
     reference: fresh.docNumber ?? fresh.fileName ?? undefined,
     actor: input.actor,
   });
@@ -313,7 +313,7 @@ export async function postInvoice(input: {
 export async function voidCostDoc(input: { doc: CostDocument; actor: Actor }): Promise<{ ok: boolean; error?: string }> {
   const { doc } = input;
   if (doc.status === "awarded" || doc.status === "posted") {
-    return { ok: false, error: "This document already moved money — void the cost entry itself if the amount is wrong." };
+    return { ok: false, error: "This document already moved money - void the cost entry itself if the amount is wrong." };
   }
   const { error } = await supabase.from("cost_documents").update({ status: "void" }).eq("id", doc.id);
   if (error) return { ok: false, error: error.message };

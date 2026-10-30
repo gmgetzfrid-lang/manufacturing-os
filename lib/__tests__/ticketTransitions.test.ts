@@ -33,7 +33,7 @@ function mk(over: Partial<Ticket> = {}): Ticket {
 
 const actor = { uid: "u-admin", email: "admin@x.com", role: "Admin" };
 
-describe("computeTransition — core behaviors", () => {
+describe("computeTransition - core behaviors", () => {
   it("assign: sets drafter, moves to DRAFTING, notifies exactly the assignee", () => {
     const { updates, newStatus, recipients } = computeTransition(mk(), {
       actionType: "assign", actionLabel: "Assign Drafter",
@@ -81,7 +81,7 @@ describe("computeTransition — core behaviors", () => {
     // revisionCount 2 → third cycle, first submission of it → 3A
     expect(updates.deliverable_rev).toBe("3A");
     expect(updates.draft_iteration).toBe(1);
-    expect(historyEntry.action).toBe("Submitted for review — Rev 3A");
+    expect(historyEntry.action).toBe("Submitted for review - Rev 3A");
   });
 
   it("revision actions bump revision_count and record the round in history", () => {
@@ -119,7 +119,7 @@ describe("computeTransition — core behaviors", () => {
   });
 });
 
-describe("computeTransition — comments, watchers, fan-out", () => {
+describe("computeTransition - comments, watchers, fan-out", () => {
   it("a comment is appended once (and not when it equals the pre-filled text)", () => {
     const withComment = computeTransition(mk(), {
       actionType: "approve_initial", actionLabel: "Approve", comment: "looks good", actor, now: NOW,
@@ -189,7 +189,7 @@ describe("computeTransition — comments, watchers, fan-out", () => {
   });
 });
 
-describe("deliverable revision scheme — 1A → 1 → 2A → 2", () => {
+describe("deliverable revision scheme - 1A → 1 → 2A → 2", () => {
   it("draftRevLabel: cycle from revisionCount, letter from iteration (AA-wrap)", () => {
     expect(draftRevLabel(undefined, 1)).toBe("1A");
     expect(draftRevLabel(0, 2)).toBe("1B");
@@ -263,7 +263,7 @@ describe("deliverable revision scheme — 1A → 1 → 2A → 2", () => {
     });
     expect(newStatus).toBe("PENDING_IFC");
     expect(updates.deliverable_rev).toBe("1");
-    expect(historyEntry.action).toBe("Approved with minor correction — issued Rev 1");
+    expect(historyEntry.action).toBe("Approved with minor correction - issued Rev 1");
     expect(recipients).toContain("u-draft");
     expect((updates.comments as Array<{ text: string }>)[0].text).toContain("U-200");
     expect(

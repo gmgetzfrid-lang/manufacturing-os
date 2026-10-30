@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
       const missing = error?.code === "42P01" || /does not exist/i.test(error?.message ?? "");
       return Response.json({
         error: missing
-          ? "The chat tables are missing — run migration 20261019_chat_shell.sql in Supabase."
+          ? "The chat tables are missing - run migration 20261019_chat_shell.sql in Supabase."
           : (error?.message ?? "Couldn't start the conversation."),
       }, { status: missing ? 409 : 500 });
     }
@@ -143,10 +143,10 @@ export async function POST(req: NextRequest) {
   const instructions = String(thread.instructions ?? "").trim().slice(0, 2000);
   const extraSystem =
     (profileLines.length > 0
-      ? "\n\nABOUT THE ASKER (their own standing profile — tailor units, depth and vocabulary to it):\n" + profileLines.join("\n")
+      ? "\n\nABOUT THE ASKER (their own standing profile - tailor units, depth and vocabulary to it):\n" + profileLines.join("\n")
       : "") +
     (instructions
-      ? "\n\nINSTRUCTIONS FOR THIS CONVERSATION (from the asker — follow them for every answer in it):\n" + instructions
+      ? "\n\nINSTRUCTIONS FOR THIS CONVERSATION (from the asker - follow them for every answer in it):\n" + instructions
       : "");
 
   // Prior turns, oldest first, paired question → answer.

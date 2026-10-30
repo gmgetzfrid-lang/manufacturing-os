@@ -14,7 +14,7 @@ describe("parseModelJson", () => {
     expect(parseModelJson("```json\n" + JSON.stringify(FULL) + "\n```")).toEqual(FULL);
     expect(parseModelJson("Here is the extraction:\n" + JSON.stringify(FULL))).toEqual(FULL);
   });
-  it("salvages a reply truncated mid-array — complete rows survive", () => {
+  it("salvages a reply truncated mid-array - complete rows survive", () => {
     const truncated = `{"units":[{"code":"20","label":"Crude Unit"},{"code":"25","label":"DHT"},{"code":"30","lab`;
     const out = parseModelJson(truncated) as { units: Array<{ code: string }> };
     expect(out).not.toBeNull();

@@ -10,19 +10,19 @@ const base = (over: Partial<AnswerUnderTest>): AnswerUnderTest => ({
 });
 const code = (r: ReturnType<typeof runChecks>, c: string) => r.find((x) => x.code === c);
 
-describe("answer checks — the failures that started this", () => {
+describe("answer checks - the failures that started this", () => {
   const bad = base({
     answer: [
       "**Answer:** Use FAAA1G, the Class 1500 sour spec [1].",
       "Sour gas is wet H2S service [2].",
       "**To settle this:**",
-      "- **EP 5-2-3 class index** — please provide it",
+      "- **EP 5-2-3 class index** - please provide it",
       "**Why:**",
       "- Class 1500 spec lists NACE trim [1].",
     ].join("\n"),
     citations: [
       { n: 1, documentName: "E2G Piping Specs (All)", page: 812, quote: "FAAA1G Class 1500 sour hydrocarbon", role: "decides", highlight: "FAAA1G" },
-      { n: 2, documentName: "EP 10-2-1 - Material Requirements", page: 12, quote: "3.20 Wet H2S service — free water with H2S above 50 ppmw", role: "context" },
+      { n: 2, documentName: "EP 10-2-1 - Material Requirements", page: 12, quote: "3.20 Wet H2S service - free water with H2S above 50 ppmw", role: "context" },
     ],
   });
   const r = runChecks(bad, { mustCite: [{ document: "EP 5-2-3", page: 7 }] });
@@ -43,13 +43,13 @@ describe("answer checks — the failures that started this", () => {
   });
 });
 
-describe("answer checks — what a good answer looks like passes", () => {
+describe("answer checks - what a good answer looks like passes", () => {
   const good = base({
     answer: [
       "**Answer:** Use AAAA2HN, the Class 150 class the index lists for wet H2S service [1], if the gas carries free water [2].",
       "Sour gas becomes wet H2S service only if free water is present [2].",
       "**To settle this:**",
-      "- **Free water in the stream** — only you know the process conditions",
+      "- **Free water in the stream** - only you know the process conditions",
     ].join("\n"),
     citations: [
       { n: 1, documentName: "EP 5-2-3 - Kern Engineering Piping Standards", page: 7, quote: "AAAA2HN – Wet H2S per EP 10-2-1 (200 BHN max) Class 150", role: "decides", highlight: "AAAA2HN" },
@@ -98,7 +98,7 @@ describe("research record: where did the expected page drop out?", () => {
 describe("two classes named: a Class 300 part in a Class 150 line", () => {
   it("naming Class 300 in the answer is not a mix-up; naming 1500 is", () => {
     const q = "can I use 300 class flanges in a 150 class line bolting to a vessel nozzle";
-    const ok = runChecks({ question: q, answer: "**Answer:** YES, WITH CONDITIONS — the Class 150 line class carries Class 300 flanges for Class 300 equipment nozzles [1].", citations: [{ n: 1, documentName: "Spec", page: 3, quote: "Class 300 flanged equipment nozzles", role: "decides", highlight: "x" }], libraryDocNames: [] }, {});
+    const ok = runChecks({ question: q, answer: "**Answer:** YES, WITH CONDITIONS - the Class 150 line class carries Class 300 flanges for Class 300 equipment nozzles [1].", citations: [{ n: 1, documentName: "Spec", page: 3, quote: "Class 300 flanged equipment nozzles", role: "decides", highlight: "x" }], libraryDocNames: [] }, {});
     expect(ok.find((r) => r.code === "class_mixup")?.pass).toBe(true);
     const bad = runChecks({ question: q, answer: "**Answer:** Use the Class 1500 flange [1].", citations: [], libraryDocNames: [] }, {});
     expect(bad.find((r) => r.code === "class_mixup")?.pass).toBe(false);
@@ -109,7 +109,7 @@ describe("documents named by title, not number", () => {
   it("'E2G Piping Specs (All)' is recognised as a held document", async () => {
     const { docsTitledIn } = await import("@/lib/ask/designations");
     const held = [{ name: "E2G Piping Specs (All).pdf" }, { name: "Index.pdf" }];
-    expect(docsTitledIn("- **E2G Piping Specs (All)** — the Class 150 sections", held, 1).map((d) => d.name)).toEqual(["E2G Piping Specs (All).pdf"]);
+    expect(docsTitledIn("- **E2G Piping Specs (All)** - the Class 150 sections", held, 1).map((d) => d.name)).toEqual(["E2G Piping Specs (All).pdf"]);
     expect(docsTitledIn("see the index of classes", held, 1)).toEqual([]);
   });
 });

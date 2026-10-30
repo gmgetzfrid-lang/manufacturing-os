@@ -475,21 +475,21 @@ export default function ChatShell() {
     if (needsAgreement) {
       setMessages((ms) => ms.filter((m) => m.id !== tmpId));
       const agreed = await appConfirm({
-        title: "Before your first question — the ground rules",
+        title: "Before your first question - the ground rules",
         message: (needsAgreement as { text: string }).text ||
-          "Everything you type is sent to the workspace's AI provider. Never enter passwords, financial details, or personal identity information — work questions only.",
+          "Everything you type is sent to the workspace's AI provider. Never enter passwords, financial details, or personal identity information - work questions only.",
         confirmLabel: "I agree",
       });
       if (!agreed) return;
       await acceptAiAgreement(orgId);
       setValue(q);
-      showToast({ type: "success", title: "Thanks — send your question again." });
+      showToast({ type: "success", title: "Thanks - send your question again." });
       return;
     }
     if (overloaded) {
       overloadRetried.current = true;
       setMessages((ms) => ms.filter((m) => m.id !== tmpId));
-      showToast({ type: "info", title: "The AI provider is briefly overloaded — retrying in a few seconds…" });
+      showToast({ type: "info", title: "The AI provider is briefly overloaded - retrying in a few seconds…" });
       setTimeout(() => { void send(q, { ...opts, retry: true }); }, 6_000);
       return;
     }
@@ -603,7 +603,7 @@ export default function ChatShell() {
     if (!uid) return;
     await saveAiInstruction(orgId, { scope: "knowledge", title: `From a conversation${active?.title ? `: ${active.title.slice(0, 60)}` : ""}`, body: text }, uid, userName ?? undefined);
     setStandingCount((c) => c + 1);
-    showToast({ type: "success", title: "Added to the org playbook — applies to every library answer from now on." });
+    showToast({ type: "success", title: "Added to the org playbook - applies to every library answer from now on." });
   };
 
   // ── Thumbs-up settles the conversation (the answered-questions shelf) ──
@@ -617,7 +617,7 @@ export default function ChatShell() {
 
   const readyDocs = scope === "library" ? docs.filter((d) => d.libraryId === libraryId && d.status === "ready").length : 1;
   const disabledReason = scope === "library" && libraryId && docsFor === libraryId && readyDocs === 0
-    ? "Nothing indexed in this library yet — add PDFs on its page, or pick another source."
+    ? "Nothing indexed in this library yet - add PDFs on its page, or pick another source."
     : scope !== "tools" && !libraryId ? "Pick a library to ask." : null;
   const libraryFilter = libraryFilterId ? { id: libraryFilterId, name: libraryNames.get(libraryFilterId) ?? "This library" } : null;
   const panelOpen = panel !== null;
@@ -720,7 +720,7 @@ export default function ChatShell() {
             />
             <p className="mt-1.5 px-1 text-[10px] text-[var(--color-text-faint)] truncate">
               {scope === "library" && useWeb
-                ? "Documents first — they govern. Web is on: every web statement links to the page it came from."
+                ? "Documents first - they govern. Web is on: every web statement links to the page it came from."
                 : SCOPE_META[scope].hint}
             </p>
           </div>

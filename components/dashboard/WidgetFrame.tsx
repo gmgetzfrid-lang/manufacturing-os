@@ -120,14 +120,14 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings,
       {!editing && (
         <div className="shrink-0 flex items-center gap-0.5 opacity-70 group-hover/widget:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
           <button type="button" onClick={refresh} className={iconBtn}
-            title={loadedAt ? `Refresh — updated ${timeAgo(loadedAt) === "now" ? "just now" : `${timeAgo(loadedAt)} ago`}` : "Refresh"}>
+            title={loadedAt ? `Refresh - updated ${timeAgo(loadedAt) === "now" ? "just now" : `${timeAgo(loadedAt)} ago`}` : "Refresh"}>
             <RotateCw className={`w-3.5 h-3.5 ${spinning ? "animate-spin" : ""}`} />
           </button>
-          <button type="button" onClick={onOpenSettings} className={iconBtn} title="Widget settings — rename, filters…">
+          <button type="button" onClick={onOpenSettings} className={iconBtn} title="Widget settings - rename, filters…">
             <Settings2 className="w-3.5 h-3.5" />
           </button>
           <button type="button" onClick={() => setExpanded((v) => !v)} className={iconBtn}
-            title={isExpanded ? "Back to the dashboard (Esc)" : "Expand — work in it full-size"}>
+            title={isExpanded ? "Back to the dashboard (Esc)" : "Expand - work in it full-size"}>
             {isExpanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           </button>
           <Link href={meta.href} title={meta.cta}
@@ -180,7 +180,7 @@ export default function WidgetFrame({ widget, editing, onRemove, onOpenSettings,
           {expanded ? (
             <button type="button" onClick={() => setExpanded(false)}
               className="mt-3 flex-1 min-h-0 grid place-items-center rounded-xl border border-dashed border-[var(--color-border)] text-[12px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)]">
-              Open in the expanded view — click to bring it back here
+              Open in the expanded view - click to bring it back here
             </button>
           ) : (
             <div className={`flex-1 min-h-0 flex flex-col ${editing ? "pointer-events-none opacity-90" : ""}`}>

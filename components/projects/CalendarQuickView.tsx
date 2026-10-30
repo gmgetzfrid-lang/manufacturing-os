@@ -186,10 +186,10 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
             </span>
             {held && (
               <span className="block text-[11px] font-semibold text-amber-800 dark:text-amber-300">
-                {WORD[m.status]}{Number.isFinite(info.since) ? ` since ${fmt(info.since)}` : ""}{m.statusReason ? ` — “${m.statusReason}”` : " — no reason given"}
+                {WORD[m.status]}{Number.isFinite(info.since) ? ` since ${fmt(info.since)}` : ""}{m.statusReason ? ` - “${m.statusReason}”` : " - no reason given"}
               </span>
             )}
-            {info.comment && <span className="block text-[11px] italic text-[var(--color-text-muted)] break-words">“{info.comment.body}” — {fmt(ms(info.comment.happenedAt ?? info.comment.createdAt))}</span>}
+            {info.comment && <span className="block text-[11px] italic text-[var(--color-text-muted)] break-words">“{info.comment.body}” - {fmt(ms(info.comment.happenedAt ?? info.comment.createdAt))}</span>}
             {info.why && h < 0 && <span className="block text-[11px] italic font-medium text-amber-800 dark:text-amber-300 break-words">Why behind: {info.why.body}</span>}</>}
           </span>
           <span className="shrink-0 flex flex-col items-end gap-0.5">

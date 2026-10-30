@@ -201,7 +201,7 @@ function ScopeChip({ label, tone }: { label: string; tone: "blue" | "purple" | "
 function formatTime(ts: string): string {
   try {
     const d = new Date(ts);
-    if (isNaN(d.getTime())) return "—";
+    if (isNaN(d.getTime())) return "-";
     return d.toLocaleString();
-  } catch { return "—"; }
+  } catch { return "-"; }
 }

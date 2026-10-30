@@ -29,9 +29,9 @@ describe("segmentForKey", () => {
   // Unrecognized bytes are the ones worth seeing — folding them into a mute
   // "other" is how an unexplained bucket of storage stays unexplained.
   it("surfaces unknown prefixes by name rather than hiding them", () => {
-    expect(segmentForKey("orgs/o1/mystery/file.bin")).toBe("Other — mystery/");
-    expect(segmentForKey("stray-file.bin")).toBe("Other — stray-file.bin/");
-    expect(segmentForKey("")).toBe("Other — bucket root");
+    expect(segmentForKey("orgs/o1/mystery/file.bin")).toBe("Other - mystery/");
+    expect(segmentForKey("stray-file.bin")).toBe("Other - stray-file.bin/");
+    expect(segmentForKey("")).toBe("Other - bucket root");
   });
 });
 
@@ -53,7 +53,7 @@ describe("attachmentSizeBytes", () => {
     expect(attachmentSizeBytes(undefined)).toBe(0);
   });
 
-  it("sums a ticket's attachments — the case that used to total zero", () => {
+  it("sums a ticket's attachments - the case that used to total zero", () => {
     expect(ticketAttachmentBytes([
       { size: "1 MB" }, { size: "512 KB" }, { size: 1024 },
     ] as Array<{ size: unknown }> as never)).toBe(1024 ** 2 + 512 * 1024 + 1024);

@@ -195,7 +195,7 @@ function parseScanJson(text: string): ParsedListing | null {
     }
     const folders = new Set<string>(Array.isArray(j.folders) ? (j.folders as unknown[]).map(String) : []);
     for (const f of files) for (let i = 1; i <= f.path.length; i++) folders.add(f.path.slice(0, i).join("/"));
-    return { files, folders: [...folders], format: "scan", warnings: j.format === "thor-scan/1" ? [] : ["JSON listing without a thor-scan format marker — read anyway."] };
+    return { files, folders: [...folders], format: "scan", warnings: j.format === "thor-scan/1" ? [] : ["JSON listing without a thor-scan format marker - read anyway."] };
   } catch { return null; }
 }
 

@@ -133,7 +133,7 @@ export async function runFullBackup(orgId: string, opts: {
         bytesPacked,
         errors: progress.errors,
         note: progress.errors.length > 0
-          ? "Files listed under errors are NOT in this backup — re-run, or fetch them via data.json's presigned URLs (valid 24h)."
+          ? "Files listed under errors are NOT in this backup - re-run, or fetch them via data.json's presigned URLs (valid 24h)."
           : "Every file verified by SHA-256 in files-manifest.json.",
       }, null, 2));
     }
@@ -210,7 +210,7 @@ const publish = (p: BackupProgress | null) => {
 
 const warnUnload = (e: BeforeUnloadEvent) => {
   e.preventDefault();
-  e.returnValue = "A backup is still running — leaving this tab will stop it.";
+  e.returnValue = "A backup is still running - leaving this tab will stop it.";
 };
 
 export function subscribeBackup(fn: Listener): () => void {

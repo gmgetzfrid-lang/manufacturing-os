@@ -31,7 +31,7 @@ describe("workOrdersHtml", () => {
   });
   it("with history: every change under its step instead", () => {
     const h = workOrdersHtml({ project: "TA", scope: "All", printedAt: at("17:00"), tz, orders: [order], format: "history" });
-    expect(h).toContain("Progress 0% → 20% — Pulled 2/5");
+    expect(h).toContain("Progress 0% → 20% - Pulled 2/5");
     expect(h).not.toContain("Latest comment");
   });
   it("field tracker: lines to write on, spare rows, what should have happened marked", () => {
@@ -52,6 +52,6 @@ describe("workOrdersHtml", () => {
   });
   it("times in plant time", () => {
     expect(printTime(at("13:30"), tz)).toBe("Oct 26, 1:30 PM");
-    expect(printTime(NaN, tz)).toBe("—");
+    expect(printTime(NaN, tz)).toBe("-");
   });
 });

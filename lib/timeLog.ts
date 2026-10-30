@@ -115,7 +115,7 @@ export function buildTimeLog(input: {
       at, id: r.milestone_id, shift: shiftOf(at), ...base(r.milestone_id),
       what: describeChange(r.old_status, r.old_percent, r.new_status, r.new_percent),
       pct: o !== n ? `${o}% → ${n}%` : `${n}%`,
-      comment: [reason, comment?.body?.trim()].filter(Boolean).join(" — "),
+      comment: [reason, comment?.body?.trim()].filter(Boolean).join(" - "),
       enteredBy: comment?.createdByName ?? status?.createdByName ?? "",
       enteredAt: Number.isFinite(entered) && entered - at > 5 * 60_000 ? entered : null,
     });
@@ -144,7 +144,7 @@ export function buildTimeLog(input: {
       at, shift: shiftOf(at), task: d.task?.name ?? "", step: d.steps.map((s) => s.name).join("; "),
       wo: woFor(d.task) || woFor(d.steps[0]) || "", crew: [...new Set(d.steps.map((s) => s.responsibleParty?.trim()).filter(Boolean))].join(", "),
       what: `${ADDED[kindOf(d.record)].word} ${ADDED[kindOf(d.record)].found}`, pct: "",
-      comment: `${d.record.what} — ${impactLine(d.record.impact, (h) => `${h} h`)}${d.record.approvedBy ? ` · approved by ${d.record.approvedBy}` : ""}`,
+      comment: `${d.record.what} - ${impactLine(d.record.impact, (h) => `${h} h`)}${d.record.approvedBy ? ` · approved by ${d.record.approvedBy}` : ""}`,
       enteredBy: d.record.addedBy ?? d.record.foundBy ?? "", enteredAt: d.record.addedAt - at > 5 * 60_000 ? d.record.addedAt : null,
     });
   }
@@ -152,7 +152,7 @@ export function buildTimeLog(input: {
   for (const [, rec] of input.records ?? new Map<string, ShiftRecord>()) {
     for (const x of rec.incidents?.items ?? []) {
       if (!inRange(x.at)) continue;
-      out.push({ at: x.at, shift: shiftOf(x.at), task: "Safety", wo: "", step: "", crew: "", what: `Safety incident — ${x.kind}`, pct: "", comment: x.text, enteredBy: x.by ?? "", enteredAt: null });
+      out.push({ at: x.at, shift: shiftOf(x.at), task: "Safety", wo: "", step: "", crew: "", what: `Safety incident - ${x.kind}`, pct: "", comment: x.text, enteredBy: x.by ?? "", enteredAt: null });
     }
     for (const x of rec.notes ?? []) {
       if (!inRange(x.at)) continue;
@@ -169,7 +169,7 @@ export async function downloadTimeLog(rows: TimeLogRow[], o: { project: string; 
   const time = (at: number) => new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: o.tz });
   const head = ["Date", "Time", "Shift", "Task / equipment", "WO", "Step", "Crew", "What happened", "%", "Comment", "Entered by", "Entered at"];
   const aoa: (string | number)[][] = [
-    [`${o.project} — ${o.title}`],
+    [`${o.project} - ${o.title}`],
     [`Times are when the work was done, as entered. Exported ${date(Date.now())} ${time(Date.now())}.`],
     [],
     head,

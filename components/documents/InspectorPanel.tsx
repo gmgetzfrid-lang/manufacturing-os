@@ -84,7 +84,7 @@ interface InspectorPanelProps {
 }
 
 function formatBytes(bytes?: number): string {
-  if (!bytes && bytes !== 0) return "—";
+  if (!bytes && bytes !== 0) return "-";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -92,13 +92,13 @@ function formatBytes(bytes?: number): string {
 }
 
 function formatTs(value: unknown): string {
-  if (!value) return "—";
+  if (!value) return "-";
   try {
     const d = typeof value === "string" ? new Date(value) : value instanceof Date ? value : null;
-    if (!d) return "—";
+    if (!d) return "-";
     return d.toLocaleString();
   } catch {
-    return "—";
+    return "-";
   }
 }
 
@@ -330,7 +330,7 @@ export default function InspectorPanel({
   const title = selectedDoc.title || selectedDoc.name || "Untitled";
   const meta = (selectedDoc.metadata ?? {}) as Record<string, unknown>;
   const sizeBytes = selectedVersion?.size ?? (typeof meta.size_bytes === "string" ? Number(meta.size_bytes) : undefined);
-  const fileType = selectedVersion?.fileType || (typeof meta.mime_type === "string" ? meta.mime_type : undefined) || "—";
+  const fileType = selectedVersion?.fileType || (typeof meta.mime_type === "string" ? meta.mime_type : undefined) || "-";
   const ext = (typeof meta.extension === "string" ? meta.extension : "") || (selectedDoc.name?.split(".").pop() ?? "");
 
   return (
@@ -345,21 +345,21 @@ export default function InspectorPanel({
           )}
           <span className="text-slate-300">•</span>
           <span className="text-[var(--color-text-muted)] inline-flex items-center gap-0.5">
-            Rev <span className="font-bold text-[var(--color-text)]">{selectedDoc.rev || "—"}</span>
+            Rev <span className="font-bold text-[var(--color-text)]">{selectedDoc.rev || "-"}</span>
             <HelpTooltip>
-              The current revision label — what authorized copies of this document say at the bottom right.
+              The current revision label - what authorized copies of this document say at the bottom right.
               Every Rev-Up creates a new revision and immutable version row with file hash + signoffs.
             </HelpTooltip>
           </span>
           <span className="text-slate-300">•</span>
           <span className="inline-flex items-center text-[10px] font-bold border px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] gap-0.5">
-            {selectedDoc.status || "—"}
+            {selectedDoc.status || "-"}
             <HelpTooltip>
-              <b>Draft</b> — not yet released.
-              <b className="block mt-1">Issued</b> — current authoritative revision.
-              <b className="block mt-1">Superseded</b> — replaced by a newer doc (split / merge / supersede). Audit history is preserved.
-              <b className="block mt-1">Archived</b> — retired with no replacement.
-              <b className="block mt-1">Void</b> — explicitly nullified.
+              <b>Draft</b> - not yet released.
+              <b className="block mt-1">Issued</b> - current authoritative revision.
+              <b className="block mt-1">Superseded</b> - replaced by a newer doc (split / merge / supersede). Audit history is preserved.
+              <b className="block mt-1">Archived</b> - retired with no replacement.
+              <b className="block mt-1">Void</b> - explicitly nullified.
             </HelpTooltip>
           </span>
           {selectedDoc.effectiveDate && <EffectivePill effectiveDate={selectedDoc.effectiveDate} />}
@@ -399,7 +399,7 @@ export default function InspectorPanel({
               {openBranches.map((b) => (
                 <span key={b.id} className="block mt-1 text-[11px]">
                   {b.createdByName || b.createdBy} published parallel work on{" "}
-                  {new Date(b.createdAt).toLocaleDateString()} — &ldquo;{b.reason}&rdquo;
+                  {new Date(b.createdAt).toLocaleDateString()} - &ldquo;{b.reason}&rdquo;
                 </span>
               ))}
               <span className="block mt-1.5 text-[10px] text-purple-700">
@@ -431,7 +431,7 @@ export default function InspectorPanel({
         <div className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 flex items-start gap-2">
           <Send className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-600" />
           <span>
-            <b>{staleHolderCount} {staleHolderCount === 1 ? "person" : "people"} may be working from a superseded copy</b> —
+            <b>{staleHolderCount} {staleHolderCount === 1 ? "person" : "people"} may be working from a superseded copy</b> -
             they pulled an older revision in the last 60 days and haven&apos;t pulled the current one.
             Open <b>Distribution &amp; sharing</b> below to see who and send a recall nudge.
           </span>
@@ -445,7 +445,7 @@ export default function InspectorPanel({
             url={selectedVersion.fileUrl}
             title={title}
             docNumber={selectedDoc.documentNumber || selectedDoc.id || ""}
-            rev={selectedDoc.rev || "—"}
+            rev={selectedDoc.rev || "-"}
             zoomLevel={75}
             watermarkText="PREVIEW"
           />
@@ -518,7 +518,7 @@ export default function InspectorPanel({
           onClick={onRevUp}
           disabled={selectedDoc.status === "Archived" || (isCheckedOut && !checkedOutByMe)}
           title={isCheckedOut && !checkedOutByMe
-            ? `Locked: ${selectedDoc.checkedOutByName || "another user"} has this checked out. Publishing over their work is blocked — coordinate or ask them to check in.`
+            ? `Locked: ${selectedDoc.checkedOutByName || "another user"} has this checked out. Publishing over their work is blocked - coordinate or ask them to check in.`
             : "Publish a new revision"}
           className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-black shadow transition-all disabled:opacity-40 disabled:cursor-not-allowed"
         >
@@ -581,7 +581,7 @@ export default function InspectorPanel({
             </button>
             <NextLink
               href={`/transmittals?compose=1&doc=${selectedDoc.id}`}
-              title="Issue this document on a transmittal — a tracked cover sheet to a recipient"
+              title="Issue this document on a transmittal - a tracked cover sheet to a recipient"
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
             >
               <Send className="w-3 h-3" /> Transmit
@@ -807,7 +807,7 @@ export default function InspectorPanel({
           <button
             onClick={() => setCompareOpen(true)}
             disabled={!selectedDoc.id}
-            title="Overlay any two revisions — grey unchanged, red removed, green added"
+            title="Overlay any two revisions - grey unchanged, red removed, green added"
             className="flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl border border-violet-200 bg-violet-50 text-xs font-bold text-violet-800 hover:bg-violet-100 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <GitCompare className="w-3.5 h-3.5" /> Compare revisions
@@ -950,7 +950,7 @@ export default function InspectorPanel({
                 try { await openEvidencePack(selectedDoc.id!, selectedDoc.orgId); }
                 catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
               }}
-              title="Assemble the full chain-of-custody — revision lineage, holds, and audit trail — into a print-to-PDF report"
+              title="Assemble the full chain-of-custody - revision lineage, holds, and audit trail - into a print-to-PDF report"
               className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border border-indigo-200 bg-indigo-50 text-xs font-bold text-indigo-800 hover:bg-indigo-100 transition-all"
             >
               <Shield className="w-3.5 h-3.5" /> Evidence pack
@@ -1049,7 +1049,7 @@ function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; do
           rev: t.items.find((i) => i.documentId === documentId)?.rev ?? null,
           purpose: t.purpose ?? null,
           status: t.status,
-          recipient: t.recipientCompany || t.recipientName || "—",
+          recipient: t.recipientCompany || t.recipientName || "-",
           issuedAt: t.issuedAt ?? null,
         })));
     })();
@@ -1067,7 +1067,7 @@ function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; do
             <li key={r.id} className="flex items-center gap-2 text-[11px] flex-wrap">
               <NextLink href="/transmittals" className="font-mono font-black text-[var(--color-accent)] hover:underline">{r.number}</NextLink>
               <span className="text-[var(--color-text-muted)]">
-                Rev {r.rev ?? "—"} · {r.purpose ?? "—"} · to {r.recipient}
+                Rev {r.rev ?? "-"} · {r.purpose ?? "-"} · to {r.recipient}
                 {r.issuedAt ? ` · ${new Date(r.issuedAt).toLocaleDateString()}` : ""}
               </span>
               {r.status === "acknowledged"

@@ -102,7 +102,7 @@ export function AttachmentCard({ a, onOpen, large }: { a: ChatAttachment; onOpen
     return () => { cancelled = true; };
   }, [a.kind, a.path]);
   return (
-    <button onClick={onOpen} title={`${a.name} · ${fmtBytes(a.size)} — context for this question only`}
+    <button onClick={onOpen} title={`${a.name} · ${fmtBytes(a.size)} - context for this question only`}
       className={`group relative overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-accent-ring)] transition-colors ${large ? "w-full" : ""}`}>
       {a.kind === "image" && url ? (
         // eslint-disable-next-line @next/next/no-img-element
@@ -196,12 +196,12 @@ export function AssistantTurn({
       <div className="rounded-2xl border border-sky-200 dark:border-sky-900 bg-sky-50/40 dark:bg-sky-950/10 p-4">
         <div className="mb-3 flex items-center gap-2 text-[11px] font-bold text-sky-800 dark:text-sky-300">
           <Globe className="w-3.5 h-3.5 shrink-0" />
-          Internet answer — {answer.liveWeb ? "from a live web search" : "from the model's general knowledge"}, not your controlled documents.
+          Internet answer - {answer.liveWeb ? "from a live web search" : "from the model's general knowledge"}, not your controlled documents.
         </div>
         <AnswerView answer={answer.answer} citations={answer.citations} onCite={onCite} />
         <CitationChips citations={answer.citations} onOpen={onCite} />
         <p className="mt-3 pt-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">
-          {answer.provider} · {answer.model} · carries no doc-control weight — cross-check before relying on it.
+          {answer.provider} · {answer.model} · carries no doc-control weight - cross-check before relying on it.
         </p>
       </div>
     );
@@ -212,7 +212,7 @@ export function AssistantTurn({
       {replayed && (
         <div className="mb-2 flex items-center gap-2 rounded-xl border border-violet-300 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30 px-3 py-2 text-[11px] font-bold text-violet-800 dark:text-violet-300">
           <History className="w-3.5 h-3.5 shrink-0" />
-          Reused from the team&apos;s record — answered {relativeTime(replayed.createdAt)} ago for {(replayed.userName ?? "someone").split("@")[0]}. No new AI run.
+          Reused from the team&apos;s record - answered {relativeTime(replayed.createdAt)} ago for {(replayed.userName ?? "someone").split("@")[0]}. No new AI run.
         </div>
       )}
       <AnswerExperience question={question} answer={answer} showQuestion={false}
@@ -271,9 +271,9 @@ function ToolsTurn({ m, payload, actions, onConfirm }: {
           >
             {showTrace ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
             <Wrench className="h-3.5 w-3.5" />
-            {steps.length} {steps.length === 1 ? "step" : "steps"} — what it actually did
+            {steps.length} {steps.length === 1 ? "step" : "steps"} - what it actually did
             {payload.stoppedBecause && (
-              <span className="ml-auto text-amber-700 dark:text-amber-400">stopped early — {payload.stoppedBecause}</span>
+              <span className="ml-auto text-amber-700 dark:text-amber-400">stopped early - {payload.stoppedBecause}</span>
             )}
             <span className={`text-[var(--color-text-faint)] ${payload.stoppedBecause ? "" : "ml-auto"}`}>{payload.model}</span>
           </button>
@@ -296,7 +296,7 @@ function StepView({ step }: { step: RunStep }) {
     <div className="text-xs">
       <button onClick={() => setOpen((o) => !o)} className="text-left font-bold text-[var(--color-text)] hover:underline">
         {describeTool(step.tool)}
-        {params && <span className="font-normal text-[var(--color-text-muted)]"> — {params}</span>}
+        {params && <span className="font-normal text-[var(--color-text-muted)]"> - {params}</span>}
       </button>
       {step.error
         ? <p className="mt-0.5 text-rose-600">{step.error}</p>
@@ -327,7 +327,7 @@ function PendingCard({ action, done, outcome, busy, onConfirm }: {
           <div className="mt-2 flex items-center gap-2">
             {done ? (
               <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-400">
-                <Check className="h-3.5 w-3.5" /> Done{outcome?.note && outcome.note !== "done" ? ` — ${outcome.note}` : ""}
+                <Check className="h-3.5 w-3.5" /> Done{outcome?.note && outcome.note !== "done" ? ` - ${outcome.note}` : ""}
               </span>
             ) : action.href ? (
               // Handed off rather than executed: the real flow enforces guards

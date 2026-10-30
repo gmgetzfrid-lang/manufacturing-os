@@ -34,13 +34,13 @@ export async function gatherEvidence(documentId: string, orgId?: string): Promis
 const esc = (v: unknown): string =>
   String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 const date = (v: unknown): string => {
-  if (!v) return "—";
+  if (!v) return "-";
   try { return new Date(String(v)).toLocaleString(); } catch { return esc(v); }
 };
 const dur = (a: unknown, b: unknown): string => {
-  if (!a || !b) return "—";
+  if (!a || !b) return "-";
   const ms = new Date(String(b)).getTime() - new Date(String(a)).getTime();
-  if (!Number.isFinite(ms) || ms < 0) return "—";
+  if (!Number.isFinite(ms) || ms < 0) return "-";
   const d = Math.floor(ms / 86400000), h = Math.floor((ms % 86400000) / 3600000);
   return d > 0 ? `${d}d ${h}h` : `${h}h`;
 };
@@ -53,24 +53,24 @@ export function renderEvidenceHtml(data: EvidenceData): string {
   const versionRows = data.versions.map((v) => `
     <tr>
       <td><b>${esc(v.revision_label)}</b></td>
-      <td>${esc(v.issue_type || "—")}</td>
-      <td>${esc(v.change_type || "—")}</td>
+      <td>${esc(v.issue_type || "-")}</td>
+      <td>${esc(v.change_type || "-")}</td>
       <td>${date(v.released_at || v.created_at)}</td>
-      <td>${esc(v.drawn_by_name || "—")}</td>
-      <td>${esc(v.checked_by_name || "—")}</td>
-      <td>${esc(v.approved_by_name || "—")}</td>
-      <td>${esc(v.moc_reference || "—")}</td>
-      <td class="mono">${esc(v.file_hash ? String(v.file_hash).slice(0, 16) + "…" : "—")}</td>
+      <td>${esc(v.drawn_by_name || "-")}</td>
+      <td>${esc(v.checked_by_name || "-")}</td>
+      <td>${esc(v.approved_by_name || "-")}</td>
+      <td>${esc(v.moc_reference || "-")}</td>
+      <td class="mono">${esc(v.file_hash ? String(v.file_hash).slice(0, 16) + "…" : "-")}</td>
     </tr>
-    <tr class="narr"><td colspan="9"><span class="lbl">Change narrative:</span> ${esc(v.change_log || "—")}${v.superseded_at ? ` <span class="sup">· superseded ${date(v.superseded_at)}</span>` : ""}</td></tr>
+    <tr class="narr"><td colspan="9"><span class="lbl">Change narrative:</span> ${esc(v.change_log || "-")}${v.superseded_at ? ` <span class="sup">· superseded ${date(v.superseded_at)}</span>` : ""}</td></tr>
   `);
 
   const holdRows = data.holds.map((h) => `
     <tr>
       <td><b>${esc(h.reason)}</b></td>
-      <td>${esc(h.notes || "—")}</td>
-      <td>${date(h.opened_at)} <span class="muted">by ${esc(h.opened_by_name || "—")}</span></td>
-      <td>${h.released_at ? `${date(h.released_at)} <span class="muted">by ${esc(h.released_by_name || "—")}</span>` : '<span class="open">OPEN</span>'}</td>
+      <td>${esc(h.notes || "-")}</td>
+      <td>${date(h.opened_at)} <span class="muted">by ${esc(h.opened_by_name || "-")}</span></td>
+      <td>${h.released_at ? `${date(h.released_at)} <span class="muted">by ${esc(h.released_by_name || "-")}</span>` : '<span class="open">OPEN</span>'}</td>
       <td>${dur(h.opened_at, h.released_at)}</td>
     </tr>`);
 
@@ -78,11 +78,11 @@ export function renderEvidenceHtml(data: EvidenceData): string {
     <tr>
       <td>${date(a.timestamp)}</td>
       <td><b>${esc(a.action)}</b></td>
-      <td>${esc(a.user_email || a.user_id || "—")}${a.user_role ? ` <span class="muted">(${esc(a.user_role)})</span>` : ""}</td>
+      <td>${esc(a.user_email || a.user_id || "-")}${a.user_role ? ` <span class="muted">(${esc(a.user_role)})</span>` : ""}</td>
       <td class="mono small">${esc(a.details ? JSON.stringify(a.details) : "")}</td>
     </tr>`);
 
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Evidence Pack — ${number}</title>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Evidence Pack - ${number}</title>
 <style>
   * { box-sizing: border-box; }
   body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; color: #0f172a; margin: 0; padding: 32px; font-size: 12px; }
@@ -100,12 +100,12 @@ export function renderEvidenceHtml(data: EvidenceData): string {
 </style></head><body>
   <div class="toolbar"><button class="btn" onclick="window.print()">Print / Save as PDF</button></div>
   <h1>Compliance Evidence Pack</h1>
-  <div class="sub">${number}${d.title && d.title !== d.document_number ? ` — ${esc(d.title)}` : ""}</div>
+  <div class="sub">${number}${d.title && d.title !== d.document_number ? ` - ${esc(d.title)}` : ""}</div>
   <div class="meta">
-    <span><b>Current rev:</b> ${esc(d.rev || "—")}</span>
-    <span><b>Status:</b> ${esc(d.status || "—")}</span>
+    <span><b>Current rev:</b> ${esc(d.rev || "-")}</span>
+    <span><b>Status:</b> ${esc(d.status || "-")}</span>
     <span><b>Created:</b> ${date(d.created_at)}</span>
-    <span><b>By:</b> ${esc(d.created_by_name || "—")}</span>
+    <span><b>By:</b> ${esc(d.created_by_name || "-")}</span>
   </div>
 
   <h2>Revision lineage (${data.versions.length})</h2>
@@ -167,7 +167,7 @@ export function renderProjectEvidenceHtml(data: ProjectEvidence): string {
   const join = (a: string[]) => a.join("");
 
   const memberRows = data.members.map((m) => `
-    <tr><td><b>${esc(m.user_name || m.user_email || m.user_id)}</b></td><td>${esc(m.role)}</td><td>${esc(m.responsibility || "—")}</td><td>${date(m.joined_at)}</td></tr>`);
+    <tr><td><b>${esc(m.user_name || m.user_email || m.user_id)}</b></td><td>${esc(m.role)}</td><td>${esc(m.responsibility || "-")}</td><td>${date(m.joined_at)}</td></tr>`);
 
   const msRows = data.milestones.map((m) => {
     const deps = Array.isArray(m.depends_on) ? (m.depends_on as unknown[]).length : 0;
@@ -175,9 +175,9 @@ export function renderProjectEvidenceHtml(data: ProjectEvidence): string {
       <td style="padding-left:${(Number(m.outline_level || 1) - 1) * 14 + 7}px">${m.is_summary ? "<b>" : ""}${esc(m.name)}${m.is_summary ? "</b>" : ""}</td>
       <td>${date(m.planned_start_at || m.planned_at)}</td>
       <td>${date(m.planned_at)}</td>
-      <td>${esc(m.status || "—")}</td>
-      <td>${esc(m.responsible_user_name || m.responsible_party || "—")}</td>
-      <td>${deps > 0 ? `${deps} pred.` : "—"}</td>
+      <td>${esc(m.status || "-")}</td>
+      <td>${esc(m.responsible_user_name || m.responsible_party || "-")}</td>
+      <td>${deps > 0 ? `${deps} pred.` : "-"}</td>
     </tr>`;
   });
 
@@ -185,15 +185,15 @@ export function renderProjectEvidenceHtml(data: ProjectEvidence): string {
     const items = Array.isArray(t.items) ? (t.items as Array<Record<string, unknown>>) : [];
     const docList = items.map((i) => `${esc(i.number)}${i.rev ? ` R${esc(i.rev)}` : ""}`).join(", ");
     const ack = t.status === "acknowledged"
-      ? `${esc(t.acknowledged_by_name || "—")} · ${date(t.acknowledged_at)}${t.acknowledged_via === "portal" ? " (portal)" : ""}`
-      : esc(t.status || "—");
-    return `<tr><td class="mono"><b>${esc(t.number)}</b></td><td>${esc(t.recipient_company || t.recipient_name || "—")}</td><td>${esc(t.purpose || "—")}</td><td>${date(t.issued_at)}</td><td>${ack}</td><td class="small">${docList || "—"}</td></tr>`;
+      ? `${esc(t.acknowledged_by_name || "-")} · ${date(t.acknowledged_at)}${t.acknowledged_via === "portal" ? " (portal)" : ""}`
+      : esc(t.status || "-");
+    return `<tr><td class="mono"><b>${esc(t.number)}</b></td><td>${esc(t.recipient_company || t.recipient_name || "-")}</td><td>${esc(t.purpose || "-")}</td><td>${date(t.issued_at)}</td><td>${ack}</td><td class="small">${docList || "-"}</td></tr>`;
   });
 
   const auditRows = data.audit.map((a) => `
-    <tr><td>${date(a.timestamp)}</td><td><b>${esc(a.action)}</b></td><td>${esc(a.user_email || a.user_id || "—")}</td><td class="mono small">${esc(a.details ? JSON.stringify(a.details) : "")}</td></tr>`);
+    <tr><td>${date(a.timestamp)}</td><td><b>${esc(a.action)}</b></td><td>${esc(a.user_email || a.user_id || "-")}</td><td class="mono small">${esc(a.details ? JSON.stringify(a.details) : "")}</td></tr>`);
 
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Project Evidence Pack — ${name}</title>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Project Evidence Pack - ${name}</title>
 <style>
   * { box-sizing: border-box; } body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; color: #0f172a; margin: 0; padding: 32px; font-size: 12px; }
   h1 { font-size: 20px; margin: 0 0 2px; } h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #475569; margin: 28px 0 8px; border-bottom: 2px solid #e2e8f0; padding-bottom: 4px; }
@@ -209,8 +209,8 @@ export function renderProjectEvidenceHtml(data: ProjectEvidence): string {
   <h1>Project Evidence Pack</h1>
   <div class="sub">${name}</div>
   <div class="meta">
-    <span><b>Status:</b> ${esc(p.status || "—")}</span>
-    <span><b>Owner:</b> ${esc(p.owner_user_name || "—")}</span>
+    <span><b>Status:</b> ${esc(p.status || "-")}</span>
+    <span><b>Owner:</b> ${esc(p.owner_user_name || "-")}</span>
     <span><b>Started:</b> ${date(p.started_at)}</span>
     <span><b>Target:</b> ${date(p.target_completion_date)}</span>
   </div>
@@ -221,7 +221,7 @@ export function renderProjectEvidenceHtml(data: ProjectEvidence): string {
   <h2>Schedule (${data.milestones.length})</h2>
   ${data.milestones.length === 0 ? '<div class="empty">No milestones.</div>' : `<table><thead><tr><th>Task</th><th>Start</th><th>Finish</th><th>Status</th><th>Responsible</th><th>Deps</th></tr></thead><tbody>${join(msRows)}</tbody></table>`}
 
-  <h2>Transmittals — formal document issues (${data.transmittals.length})</h2>
+  <h2>Transmittals - formal document issues (${data.transmittals.length})</h2>
   ${data.transmittals.length === 0 ? '<div class="empty">No transmittals tied to this project.</div>' : `<table><thead><tr><th>Number</th><th>To</th><th>Purpose</th><th>Issued</th><th>Receipt</th><th>Documents</th></tr></thead><tbody>${join(trRows)}</tbody></table>`}
 
   <h2>Audit trail (${data.audit.length})</h2>
@@ -238,7 +238,7 @@ export async function openProjectEvidencePack(projectId: string): Promise<void> 
 
 export function openPrintWindow(html: string): void {
   const w = window.open("", "_blank");
-  if (!w) throw new Error("Pop-up blocked — allow pop-ups to open the evidence pack.");
+  if (!w) throw new Error("Pop-up blocked - allow pop-ups to open the evidence pack.");
   w.document.open();
   w.document.write(html);
   w.document.close();

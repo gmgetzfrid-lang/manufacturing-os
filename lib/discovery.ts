@@ -25,8 +25,8 @@ export interface DiscoveryStepInput { name: string; crew?: string; hours: number
  *  words every view, report and email use for each (one place). */
 export type AddedKind = "discovery" | "added";
 export const ADDED: Record<AddedKind, { word: string; lower: string; found: string; what: string; tip: string }> = {
-  discovery: { word: "Discovery", lower: "discovery", found: "found", what: "What was found", tip: "found when it was opened — not in the original schedule" },
-  added: { word: "Added scope", lower: "added scope", found: "raised", what: "What's being added", tip: "known work that wasn't on the schedule — not in the original plan" },
+  discovery: { word: "Discovery", lower: "discovery", found: "found", what: "What was found", tip: "found when it was opened - not in the original schedule" },
+  added: { word: "Added scope", lower: "added scope", found: "raised", what: "What's being added", tip: "known work that wasn't on the schedule - not in the original plan" },
 };
 /** Its kind; one saved before there were two is discovery. */
 export const kindOf = (r?: { kind?: AddedKind | null } | null): AddedKind => (r?.kind === "added" ? "added" : "discovery");
@@ -271,7 +271,7 @@ export function discoveryStepLine(m: Milestone, hrs: (h: number) => string): str
   const pct = m.status === "completed" ? 100 : Math.round(Number(m.percentComplete ?? 0));
   const state = m.status === "completed" ? "done" : m.status === "on_hold" ? "on hold" : m.status === "blocked" ? "blocked" : pct > 0 ? `${pct}%` : "not started";
   const h = Number(m.durationHours);
-  return `${m.name} — ${[m.responsibleParty?.trim(), Number.isFinite(h) && h > 0 ? hrs(h) : null].filter(Boolean).join(", ")} · ${state}`;
+  return `${m.name} - ${[m.responsibleParty?.trim(), Number.isFinite(h) && h > 0 ? hrs(h) : null].filter(Boolean).join(", ")} · ${state}`;
 }
 
 /** Links once some steps are gone: a step that waited on a removed one

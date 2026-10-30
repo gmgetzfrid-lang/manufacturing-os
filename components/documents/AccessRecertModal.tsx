@@ -133,10 +133,10 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
 
             {/* Attest */}
             <div className="space-y-2 pt-1 border-t border-[var(--color-border)]">
-              <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional) — e.g. removed 2 contractors" className={`${inp} w-full`} />
+              <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional) - e.g. removed 2 contractors" className={`${inp} w-full`} />
               <div className="flex justify-end gap-2">
                 <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text-muted)]">Close</button>
-                <button onClick={() => void recertify()} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-50">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Recertify — access reviewed</button>
+                <button onClick={() => void recertify()} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-50">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Recertify - access reviewed</button>
               </div>
             </div>
           </div>

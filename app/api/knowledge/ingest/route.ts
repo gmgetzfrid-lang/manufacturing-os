@@ -112,7 +112,7 @@ export async function POST(req: NextRequest) {
         getCapUsd(orgId, user.id),
       ]);
       if (cap > 0 && spent.spentUsd >= cap) {
-        visionSkipReason = `Monthly AI budget reached ($${spent.spentUsd.toFixed(2)} of $${cap.toFixed(2)}) — ` +
+        visionSkipReason = `Monthly AI budget reached ($${spent.spentUsd.toFixed(2)} of $${cap.toFixed(2)}) - ` +
           "pages without a text layer were skipped. They index automatically once the cap resets or is raised.";
       } else {
         vision = {

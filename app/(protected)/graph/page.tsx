@@ -383,7 +383,7 @@ function GraphPageInner() {
     if (!docDoc && !docAsset && !assetAsset && !unitUnit) {
       setConnect((c) => c && ({
         ...c, status: "picking",
-        error: "Draw a link between two documents or a document and equipment — or a FLOW between two equipment items or two units (the first one feeds the second). Library and project ties are derived from filing.",
+        error: "Draw a link between two documents or a document and equipment - or a FLOW between two equipment items or two units (the first one feeds the second). Library and project ties are derived from filing.",
       }));
       return;
     }
@@ -509,9 +509,9 @@ function GraphPageInner() {
   // the plant as flow, the paper as a web, or everything at once.
   const LENSES: Array<{ key: string; label: string; hidden: GraphNodeType[]; libEdges: boolean; title: string }> = [
     { key: "all", label: "Everything", hidden: [], libEdges: false, title: "Every entity and relationship the org knows" },
-    { key: "process", label: "Process", hidden: ["document", "library", "project", "plot"], libEdges: false, title: "Units and equipment only — the plant as flow. Draw flows with Connect; read them off a PFD in the unit hub." },
+    { key: "process", label: "Process", hidden: ["document", "library", "project", "plot"], libEdges: false, title: "Units and equipment only - the plant as flow. Draw flows with Connect; read them off a PFD in the unit hub." },
     { key: "equipment", label: "Equipment ↔ Docs", hidden: ["unit", "plant", "project", "library"], libEdges: false, title: "Equipment and the documents that govern it" },
-    { key: "documents", label: "Documents", hidden: ["asset", "unit", "plant", "plot"], libEdges: true, title: "The paper web — documents, libraries, projects" },
+    { key: "documents", label: "Documents", hidden: ["asset", "unit", "plant", "plot"], libEdges: true, title: "The paper web - documents, libraries, projects" },
   ];
   const activeLens = LENSES.find((l) =>
     l.hidden.length === settings.hiddenTypes.length &&
@@ -588,7 +588,7 @@ function GraphPageInner() {
 
         {view && !layered && (view.foldedTotal > 0 || openHubs.size > 0) && (
           <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-[var(--color-text-muted)]">
-            {view.foldedTotal > 0 && <>{view.foldedTotal} documents folded into {view.folded.size} hub{view.folded.size === 1 ? "" : "s"} — click a hub to open it</>}
+            {view.foldedTotal > 0 && <>{view.foldedTotal} documents folded into {view.folded.size} hub{view.folded.size === 1 ? "" : "s"} - click a hub to open it</>}
             {openHubs.size > 0 && <button onClick={() => setOpenHubs(new Set())} className="rounded-full border border-[var(--color-border-strong)] px-2 py-0.5 hover:bg-[var(--color-surface-2)]">Fold again</button>}
             {view.foldedTotal > 0 && <button onClick={() => patchSettings({ foldLeaves: false })} className="rounded-full border border-[var(--color-border-strong)] px-2 py-0.5 hover:bg-[var(--color-surface-2)]">Unfold all</button>}
           </span>
@@ -702,12 +702,12 @@ function GraphPageInner() {
                     {insightTab === "orphans" && (
                       insights.orphans.length === 0 ? (
                         <div className="text-[11px] text-[var(--color-text-muted)] p-2">
-                          No orphans — everything shown is tied into the web.
+                          No orphans - everything shown is tied into the web.
                         </div>
                       ) : (
                         <>
                           <div className="text-[10px] text-[var(--color-text-muted)] px-1.5 pb-1">
-                            Floating with no equipment, unit, project or link — no context yet.
+                            Floating with no equipment, unit, project or link - no context yet.
                           </div>
                           {insights.orphans.slice(0, 100).map((n) => (
                             <button key={n.id} onClick={() => spotlight([n.id], n)}
@@ -747,7 +747,7 @@ function GraphPageInner() {
                     {insightTab === "bridges" && (
                       insights.bridges.length === 0 ? (
                         <div className="text-[11px] text-[var(--color-text-muted)] p-2">
-                          No single-thread bridges — every big neighbourhood has redundant connections.
+                          No single-thread bridges - every big neighbourhood has redundant connections.
                         </div>
                       ) : (
                         <>
@@ -792,7 +792,7 @@ function GraphPageInner() {
                   <div className="text-[11px] text-[var(--color-text-muted)]">Click the first node on the map.</div>
                 ) : !pathEnds.to ? (
                   <div className="text-[11px] text-[var(--color-text-muted)]">
-                    From <b className="text-[var(--color-text)]">{pathEnds.from.label}</b> — now click the second node.
+                    From <b className="text-[var(--color-text)]">{pathEnds.from.label}</b> - now click the second node.
                   </div>
                 ) : path && path.ids.length === 0 ? (
                   <div className="text-[11px] text-amber-700">
@@ -940,12 +940,12 @@ function GraphPageInner() {
                   </div>
                 ) : (
                   <div className="text-[11px] text-[var(--color-text-muted)]">
-                    From <b className="text-[var(--color-text)]">{connect.from.label}</b> — click the node to connect it to.
+                    From <b className="text-[var(--color-text)]">{connect.from.label}</b> - click the node to connect it to.
                   </div>
                 )}
                 <div className="text-[10px] text-[var(--color-text-faint)]">
                   Document ↔ document or document ↔ equipment makes a LINK. Equipment ↔ equipment or
-                  unit ↔ unit makes a FLOW — the first feeds the second, drawn on the Process lens.
+                  unit ↔ unit makes a FLOW - the first feeds the second, drawn on the Process lens.
                 </div>
               </div>
             )}

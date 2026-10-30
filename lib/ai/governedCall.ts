@@ -46,7 +46,7 @@ export async function governedAiCall(input: {
     .eq("org_id", orgId).eq("user_id", userId).maybeSingle();
   if (!conn || !ALLOWED_PROVIDERS.includes(conn.provider as AiProviderId)) {
     throw new GovernedCallError(
-      "Add your Claude or OpenAI key in AI settings first — AI features run on your own key.", 412);
+      "Add your Claude or OpenAI key in AI settings first - AI features run on your own key.", 412);
   }
 
   {

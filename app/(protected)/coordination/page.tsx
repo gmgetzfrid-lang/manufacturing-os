@@ -144,7 +144,7 @@ function CoordinationInner() {
       <div className="min-h-full bg-[var(--color-canvas)] flex flex-col items-center justify-center text-center p-6">
         <Network className="w-10 h-10 text-[var(--color-accent)] mb-3" />
         <h1 className="text-lg font-black text-[var(--color-text)]">Coordination</h1>
-        <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-sm">Couldn&apos;t load the operational picture. Try refresh — if this persists, the database migrations may not be applied yet.</p>
+        <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-sm">Couldn&apos;t load the operational picture. Try refresh - if this persists, the database migrations may not be applied yet.</p>
         <button onClick={() => void load()} className="mt-4 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-bold">Refresh</button>
       </div>
     );
@@ -164,7 +164,7 @@ function CoordinationInner() {
             <h1 className="text-2xl font-black text-[var(--color-text)] flex items-center gap-3">
               <Network className="w-7 h-7 text-[var(--color-accent)]" /> Coordination
             </h1>
-            <p className="text-sm text-[var(--color-text-muted)] mt-1">Where work overlaps, what&apos;s blocking it, and how the floor is tracking — org-wide and live.</p>
+            <p className="text-sm text-[var(--color-text-muted)] mt-1">Where work overlaps, what&apos;s blocking it, and how the floor is tracking - org-wide and live.</p>
           </div>
           {view === "collisions" && (
             <button onClick={() => void load()} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
@@ -236,7 +236,7 @@ function CoordinationInner() {
           {/* Equipment state distribution */}
           <Panel title="Equipment state" icon={Boxes} accent="text-cyan-600 dark:text-cyan-400" span={2}>
             {totalEquip === 0 ? (
-              <div className="text-xs text-[var(--color-text-muted)]">No equipment tracked yet — <Link href="/admin/assets" className="text-cyan-600 dark:text-cyan-400 font-bold">register assets</Link> to see the turnaround distribution.</div>
+              <div className="text-xs text-[var(--color-text-muted)]">No equipment tracked yet - <Link href="/admin/assets" className="text-cyan-600 dark:text-cyan-400 font-bold">register assets</Link> to see the turnaround distribution.</div>
             ) : (
               <>
                 <div className="flex items-end gap-4 mb-3">
@@ -294,7 +294,7 @@ function CoordinationInner() {
           {/* Plot plans */}
           <Panel title="Spatial boards" icon={MapIcon} accent="text-cyan-600 dark:text-cyan-400" span={3}>
             {snap.plotPlans.length === 0 ? (
-              <div className="text-xs text-[var(--color-text-muted)]">No plot plans yet — <Link href="/plot-plans" className="text-cyan-600 dark:text-cyan-400 font-bold">create one</Link> to navigate equipment spatially.</div>
+              <div className="text-xs text-[var(--color-text-muted)]">No plot plans yet - <Link href="/plot-plans" className="text-cyan-600 dark:text-cyan-400 font-bold">create one</Link> to navigate equipment spatially.</div>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {snap.plotPlans.slice(0, 8).map((p) => (
@@ -348,7 +348,7 @@ function CoordinationRadar({
       </div>
       <p className="text-xs text-[var(--color-text-muted)] mt-1.5 leading-relaxed">
         Flags when two people have <span className="text-[var(--color-text)] font-semibold">different documents</span> checked out that touch the
-        <span className="text-[var(--color-text)] font-semibold"> same equipment tag, unit, or system</span> — so duplicate or conflicting revisions get caught before they land. This is the one thing your personal inbox can&apos;t tell you.
+        <span className="text-[var(--color-text)] font-semibold"> same equipment tag, unit, or system</span> - so duplicate or conflicting revisions get caught before they land. This is the one thing your personal inbox can&apos;t tell you.
       </p>
       {/* Coverage readout — proof of what it actually examined. */}
       <div className="mt-3 flex flex-wrap gap-1.5">
@@ -418,7 +418,7 @@ function CoordinationRadar({
             <ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
           </div>
           <div>
-            <div className="text-sm font-black text-[var(--color-text)]">All clear — no scope collisions</div>
+            <div className="text-sm font-black text-[var(--color-text)]">All clear - no scope collisions</div>
             <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
               Compared {comparableDocuments} scope-linked document{comparableDocuments === 1 ? "" : "s"} across {activeCheckouts} active checkout{activeCheckouts === 1 ? "" : "s"}. No two crews are working overlapping asset, unit, or system scope.
             </div>
@@ -439,11 +439,11 @@ function CoordinationRadar({
             <Info className="w-5 h-5 text-sky-700 dark:text-sky-300" />
           </div>
           <div className="min-w-0">
-            <div className="text-sm font-black text-[var(--color-text)]">Radar is standing by — nothing to compare yet</div>
+            <div className="text-sm font-black text-[var(--color-text)]">Radar is standing by - nothing to compare yet</div>
             <div className="text-xs text-[var(--color-text-muted)] mt-1 leading-relaxed">
               {documents === 0
                 ? "No documents are checked out, so there's nothing to compare. Collisions appear once two checked-out documents share an equipment tag, unit, or system."
-                : <>Of the {documents} checked-out document{documents === 1 ? "" : "s"}, only <span className="text-[var(--color-text)] font-bold">{comparableDocuments}</span> {comparableDocuments === 1 ? "is" : "are"} linked to an asset or a unit/system — the detector needs at least two comparable documents. Link documents to equipment tags or set their unit/system to light this up.</>}
+                : <>Of the {documents} checked-out document{documents === 1 ? "" : "s"}, only <span className="text-[var(--color-text)] font-bold">{comparableDocuments}</span> {comparableDocuments === 1 ? "is" : "are"} linked to an asset or a unit/system - the detector needs at least two comparable documents. Link documents to equipment tags or set their unit/system to light this up.</>}
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <Link href="/documents" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)] text-xs font-bold hover:bg-[var(--color-border-strong)]">

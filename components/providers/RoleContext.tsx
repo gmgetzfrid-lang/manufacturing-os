@@ -83,7 +83,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!loading) return;
     const t = window.setTimeout(() => {
-      console.warn("[RoleContext] loading watchdog tripped — force-clearing spinner");
+      console.warn("[RoleContext] loading watchdog tripped - force-clearing spinner");
       setLoading(false);
     }, 6000);
     return () => window.clearTimeout(t);
@@ -321,7 +321,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
                 ),
               ]);
             } catch (err) {
-              console.warn("[RoleContext] role resolve timed out — proceeding", err);
+              console.warn("[RoleContext] role resolve timed out - proceeding", err);
             } finally {
               setLoading(false);
             }

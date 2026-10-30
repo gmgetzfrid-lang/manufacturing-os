@@ -133,7 +133,7 @@ export async function setDocClass(input: {
   if (error) {
     if (isMissingDocClassSchema(error)) {
       docClassSchemaMissing = true;
-      throw new Error("Document classes need the 20261012 migration — run it in Supabase first.");
+      throw new Error("Document classes need the 20261012 migration - run it in Supabase first.");
     }
     throw new Error(error.message);
   }

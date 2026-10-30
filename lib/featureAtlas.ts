@@ -27,7 +27,7 @@ export const FEATURE_ATLAS: AtlasEntry[] = [
   // ── Work ────────────────────────────────────────────────────────────────
   {
     label: "Home", href: "/dashboard", area: "work",
-    blurb: "Your dashboard — widgets, attention feed, live coordination.",
+    blurb: "Your dashboard - widgets, attention feed, live coordination.",
     aliases: ["dashboard", "home", "widgets", "my desk", "attention"],
   },
   {
@@ -42,7 +42,7 @@ export const FEATURE_ATLAS: AtlasEntry[] = [
   },
   {
     label: "Plot plans", href: "/plot-plans", area: "work",
-    blurb: "Spatial maps — plot plans and layouts with clickable equipment markers.",
+    blurb: "Spatial maps - plot plans and layouts with clickable equipment markers.",
     aliases: ["plot map", "plot plan", "layout", "map", "spatial", "site map"],
   },
   {
@@ -73,17 +73,17 @@ export const FEATURE_ATLAS: AtlasEntry[] = [
   // ── Intelligence ───────────────────────────────────────────────────────
   {
     label: "Intelligence overview", href: "/intelligence", area: "intelligence",
-    blurb: "The AI status board — what's indexed, what's connected, what needs attention.",
+    blurb: "The AI status board - what's indexed, what's connected, what needs attention.",
     aliases: ["ai", "intelligence", "overview", "status"],
   },
   {
     label: "Ask the assistant", href: "/assistant", area: "intelligence",
-    blurb: "Talk to the whole workspace — the assistant searches, reads, and proposes actions you approve.",
+    blurb: "Talk to the whole workspace - the assistant searches, reads, and proposes actions you approve.",
     aliases: ["assistant", "ask", "chat", "orchestrator", "agent"],
   },
   {
     label: "Knowledge libraries", href: "/knowledge", area: "intelligence",
-    blurb: "Indexed PDFs you can question — answers cite the exact page, with proof highlighting and shape-the-graph for admins.",
+    blurb: "Indexed PDFs you can question - answers cite the exact page, with proof highlighting and shape-the-graph for admins.",
     aliases: ["knowledge", "ask a document", "questions", "citations", "indexed", "pdf", "standards", "shape the graph"],
   },
   {
@@ -98,7 +98,7 @@ export const FEATURE_ATLAS: AtlasEntry[] = [
   },
   {
     label: "Skill library", href: "/intelligence/skills", area: "intelligence",
-    blurb: "Connection Skills (how links are discovered) and Reasoning Skills (how the AI answers) — built-ins and your own, org-wide or private, with the AI-assisted Skill Studio.",
+    blurb: "Connection Skills (how links are discovered) and Reasoning Skills (how the AI answers) - built-ins and your own, org-wide or private, with the AI-assisted Skill Studio.",
     aliases: ["skills", "skill studio", "reasoning skills", "connection skills", "detectors", "basis of design", "shift handover", "plain language"],
   },
   {
@@ -109,7 +109,7 @@ export const FEATURE_ATLAS: AtlasEntry[] = [
   // ── Admin ──────────────────────────────────────────────────────────────
   {
     label: "Facility setup", href: "/setup", area: "admin",
-    blurb: "The resumable setup navigator — live counts across every subsystem, flagged where to continue. Launch it any time; it knows where you left off.",
+    blurb: "The resumable setup navigator - live counts across every subsystem, flagged where to continue. Launch it any time; it knows where you left off.",
     aliases: ["setup", "onboarding", "getting started", "wizard", "continue setup", "what now", "next step"],
   },
   {
@@ -119,7 +119,7 @@ export const FEATURE_ATLAS: AtlasEntry[] = [
   },
   {
     label: "Operational scope", href: "/admin/scope", area: "admin",
-    blurb: "Plants, units, and systems — the operational hierarchy behind filing.",
+    blurb: "Plants, units, and systems - the operational hierarchy behind filing.",
     aliases: ["plants", "scope", "hierarchy", "systems"],
   },
   {
@@ -134,7 +134,7 @@ export const FEATURE_ATLAS: AtlasEntry[] = [
   },
   {
     label: "Library config", href: "/admin/libraries", area: "admin",
-    blurb: "Create and configure document libraries — numbering rules, review controls, columns.",
+    blurb: "Create and configure document libraries - numbering rules, review controls, columns.",
     aliases: ["library settings", "library config", "columns", "auto numbering", "review control"],
   },
   {
@@ -164,7 +164,7 @@ export const FEATURE_ATLAS: AtlasEntry[] = [
   },
   {
     label: "Data export", href: "/admin/data-export", area: "admin",
-    blurb: "Export the workspace — every table and file, for portability.",
+    blurb: "Export the workspace - every table and file, for portability.",
     aliases: ["export", "download everything", "portability"],
   },
   {
@@ -218,7 +218,7 @@ export function searchAtlas(query: string, limit = 5): AtlasEntry[] {
 export function atlasForPrompt(): string {
   const lines = FEATURE_ATLAS.map((e) => `- ${e.label} (${e.href}): ${e.blurb}`);
   return (
-    "\n\nAPP MAP — where everything in this application lives. When the user asks where a " +
+    "\n\nAPP MAP - where everything in this application lives. When the user asks where a " +
     "feature, setting, or piece of imported knowledge is, or how to do something in the app, " +
     "answer from this map: name the place, give its path, and say what to do there. Never " +
     "invent destinations that are not on this map.\n" + lines.join("\n")

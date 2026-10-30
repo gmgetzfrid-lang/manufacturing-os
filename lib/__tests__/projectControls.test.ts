@@ -280,7 +280,7 @@ describe("companyScore", () => {
     expect(clean.dimensions.find((d) => d.key === "cost")!.detail).toContain("20% cost growth");
   });
 
-  it("responsiveness shows OUR review clock in the detail — honest both ways", () => {
+  it("responsiveness shows OUR review clock in the detail - honest both ways", () => {
     const card = computeCompanyScorecard(evidence({ submissionCount: 5, avgAssignToSubmitDays: 3, avgSubmitToReviewDays: 9 }));
     const dim = card.dimensions.find((d) => d.key === "responsiveness")!;
     expect(dim.score).toBeGreaterThan(60);
@@ -334,7 +334,7 @@ describe("review regressions", () => {
     expect(over.score!).toBeLessThan(at.score!);
   });
 
-  it("short-abbreviation scope (NDE / RT) is judgeable — a bid that neither prices nor excludes it is flagged", () => {
+  it("short-abbreviation scope (NDE / RT) is judgeable - a bid that neither prices nor excludes it is flagged", () => {
     const withNde: ParsedQuote = {
       id: "a", vendorName: "A", total: 150_000, exclusions: [],
       lineItems: [
@@ -357,7 +357,7 @@ describe("review regressions", () => {
     expect(econ2.find((e) => e.quoteId === "c")!.missingScope).toContain("NDE (RT 10%)");
   });
 
-  it("evidence rules match whole words only — no false green from 'grounded' or 'Rapid'", () => {
+  it("evidence rules match whole words only - no false green from 'grounded' or 'Rapid'", () => {
     const state: ProjectEvidenceState = {
       turnoverAcceptedNames: [], miChecklistComplete: false,
       documentTitles: ["NDE Report Pkg 4", "Rapid Response Plan Rev 2"],

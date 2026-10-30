@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
   if (error) {
     return bad(
       missingTable(error.message, error.code)
-        ? "Output templates need migration 20260923 — run it in Supabase, then reload."
+        ? "Output templates need migration 20260923 - run it in Supabase, then reload."
         : `Couldn't load templates: ${error.message}`,
       missingTable(error.message, error.code) ? 424 : 500,
     );
@@ -148,7 +148,7 @@ export async function POST(req: NextRequest) {
   if (error) {
     return bad(
       missingTable(error.message, error.code)
-        ? "Output templates need migration 20260923 — run it in Supabase first."
+        ? "Output templates need migration 20260923 - run it in Supabase first."
         : `Couldn't save the template: ${error.message}`,
       missingTable(error.message, error.code) ? 424 : 500,
     );

@@ -21,7 +21,7 @@ interface CheckoutBody {
 
 export async function POST(req: NextRequest) {
   if (!isStripeConfigured()) {
-    return NextResponse.json({ error: "Billing is not configured yet — ask your administrator to set STRIPE_SECRET_KEY." }, { status: 503 });
+    return NextResponse.json({ error: "Billing is not configured yet - ask your administrator to set STRIPE_SECRET_KEY." }, { status: 503 });
   }
 
   let body: CheckoutBody;

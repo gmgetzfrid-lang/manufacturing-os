@@ -221,7 +221,7 @@ export async function addEntry(input: {
   // be signed (a change-order CREDIT reduces the promised side, the same
   // side the original award lives on) and adjustments are signed by nature.
   if (input.entryType === "actual" && input.amount < 0) {
-    return { ok: false, error: "Actuals can't be negative — post a credit as an adjustment (or a commitment credit for descoped awards)." };
+    return { ok: false, error: "Actuals can't be negative - post a credit as an adjustment (or a commitment credit for descoped awards)." };
   }
   const { data, error } = await supabase.from("cost_entries").insert({
     org_id: input.orgId, project_id: input.projectId,

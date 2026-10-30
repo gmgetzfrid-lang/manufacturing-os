@@ -48,8 +48,8 @@ export default function NameReadingStrip({ readings, onChange }: {
         {unsure ? <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" /> : <Wand2 className="w-3.5 h-3.5 shrink-0" />}
         <span className="flex-1">
           {unsure
-            ? <><b className="text-amber-900 dark:text-amber-200">Part of {unsure} file name{unsure === 1 ? "" : "s"} could be read two ways.</b> Pick what the highlighted piece is — it applies to every file named the same way, and is remembered for this library.</>
-            : <>File names read as{groups.length > 1 ? ` (${groups.length} naming patterns)` : ""} — click a piece to change what it is.</>}
+            ? <><b className="text-amber-900 dark:text-amber-200">Part of {unsure} file name{unsure === 1 ? "" : "s"} could be read two ways.</b> Pick what the highlighted piece is - it applies to every file named the same way, and is remembered for this library.</>
+            : <>File names read as{groups.length > 1 ? ` (${groups.length} naming patterns)` : ""} - click a piece to change what it is.</>}
         </span>
         {groups.length > 1 && (
           <button onClick={() => setOpen((v) => !v)} className="inline-flex items-center gap-0.5 font-bold hover:text-[var(--color-text)]">

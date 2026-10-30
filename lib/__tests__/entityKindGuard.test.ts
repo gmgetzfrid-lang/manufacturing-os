@@ -24,12 +24,12 @@ const TABLE = 'from("knowledge_page_entities")';
  *  than pattern-matched so a new one is a deliberate decision. */
 const EXEMPT: Record<string, string> = {
   "app/api/knowledge/locate/route.ts":
-    "narrowed to one document+page+tag list — bounded by the caller's tags, never a slab",
+    "narrowed to one document+page+tag list - bounded by the caller's tags, never a slab",
   "lib/equipmentBridgeServer.ts": 'already filters .eq("kind", "equipment")',
   "lib/linkProposerServer.ts": 'already filters .in("kind", ["opc", "ref"])',
   "lib/knowledgeIngest.ts": "writes rows (insert/delete), never bulk-reads them",
   "app/api/knowledge/drawing/route.ts#delete":
-    "delete by document_id during re-index — removes every kind on purpose",
+    "delete by document_id during re-index - removes every kind on purpose",
 };
 
 function walk(dir: string, out: string[] = []): string[] {

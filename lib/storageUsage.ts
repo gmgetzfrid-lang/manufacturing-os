@@ -122,7 +122,7 @@ export function segmentForKey(key: string): string {
     case "avatars": return "Avatars";
     case "data": return "Offline archives";
     case "exports": return "Export artifacts";
-    default: return feature ? `Other — ${feature}/` : "Other — bucket root";
+    default: return feature ? `Other - ${feature}/` : "Other - bucket root";
   }
 }
 
@@ -218,11 +218,11 @@ export async function runPlatformStorageAlerts(sb: SupabaseClient): Promise<{
     hot.push({
       key: "platform_r2",
       title: status.r2.band === "crit"
-        ? `File storage critical — ${status.r2.pct}% of plan`
-        : `File storage high — ${status.r2.pct}% of plan`,
+        ? `File storage critical - ${status.r2.pct}% of plan`
+        : `File storage high - ${status.r2.pct}% of plan`,
       body:
         `Cloudflare R2 holds ${fmtGb(status.r2.bytes)} GB of ${fmtGb(status.r2.limitBytes)} GB ` +
-        `(${status.r2.objects.toLocaleString()} files). Approaching the plan ceiling — upgrade the R2 plan ` +
+        `(${status.r2.objects.toLocaleString()} files). Approaching the plan ceiling - upgrade the R2 plan ` +
         "or archive old revisions from Admin → Storage before uploads start failing.",
     });
   }
@@ -230,11 +230,11 @@ export async function runPlatformStorageAlerts(sb: SupabaseClient): Promise<{
     hot.push({
       key: "platform_db",
       title: status.db.band === "crit"
-        ? `Database critical — ${status.db.pct}% of plan`
-        : `Database high — ${status.db.pct}% of plan`,
+        ? `Database critical - ${status.db.pct}% of plan`
+        : `Database high - ${status.db.pct}% of plan`,
       body:
         `The Supabase database holds ${fmtMb(status.db.bytes)} MB of ${fmtMb(status.db.limitBytes)} MB. ` +
-        "Approaching the plan ceiling — upgrade the Supabase plan or purge disposable rows from Admin → Storage.",
+        "Approaching the plan ceiling - upgrade the Supabase plan or purge disposable rows from Admin → Storage.",
     });
   }
   if (hot.length === 0) return { status, alerts };

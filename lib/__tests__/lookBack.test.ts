@@ -45,7 +45,7 @@ describe("the look back", () => {
     // Close started the moment it could: its slip was passed on, not its own.
     expect(s("close")).toMatchObject({ startH: 6, inheritedH: 6, finishH: 6, lostH: 0 });
   });
-  it("what set it back, worst first — and the hours by cause", () => {
+  it("what set it back, worst first - and the hours by cause", () => {
     expect(lb.setbacks.map((x) => x.id)).toEqual(["clean", "hb16", "hb17"]);
     expect(lb.byCause).toEqual([{ cause: "longer", hours: 9, steps: 3 }, { cause: "hold", hours: 4, steps: 1 }]);
     // E-17's hydroblast started 2 h early and ran 4 h long: it lost 2 h, not 4.
@@ -62,8 +62,8 @@ describe("the look back", () => {
   });
   it("where to do better, in plain words", () => {
     expect(lb.improve).toEqual([
-      "“Hydroblast tubes” ran long on 2 of 2 (+4.5 h on average) — plan more time for it next turnaround.",
-      "On hold once for “Hot work permit” — 4 h in all.",
+      "“Hydroblast tubes” ran long on 2 of 2 (+4.5 h on average) - plan more time for it next turnaround.",
+      "On hold once for “Hot work permit” - 4 h in all.",
       "The finish slipped 6 h; it traces back to V-7 Tower, which lost 6 h on the chain into the finish.",
     ]);
   });

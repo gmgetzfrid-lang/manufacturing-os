@@ -103,7 +103,7 @@ export default function ProtectionRecord({ orgId }: { orgId: string }) {
       <div className="flex items-center gap-1.5 mb-1.5">
         <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
         <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">
-          Protection record — last {WINDOW_DAYS} days
+          Protection record - last {WINDOW_DAYS} days
         </span>
       </div>
       <div className="flex flex-wrap gap-2">

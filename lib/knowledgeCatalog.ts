@@ -234,11 +234,11 @@ export function buildCatalogBlock(entries: CatalogEntry[], budget = 6000): strin
     for (const e of group) {
       const p = e.profile;
       const extra = p.checklistFor
-        ? ` — for ${p.checklistFor}${p.form?.fillable ? ", fillable PDF" : ""}`
+        ? ` - for ${p.checklistFor}${p.form?.fillable ? ", fillable PDF" : ""}`
         : p.form
-        ? ` — ${FORM_PURPOSE_LABEL[p.form.purpose]}${p.form.fillable ? ", fillable PDF" : ""}, ${p.form.fields.length} fields`
-        : p.catalog ? ` — marked as "${p.catalog.name}", ${p.catalog.entries} entries indexed`
-        : p.purpose ? ` — ${p.purpose.slice(0, 110)}` : "";
+        ? ` - ${FORM_PURPOSE_LABEL[p.form.purpose]}${p.form.fillable ? ", fillable PDF" : ""}, ${p.form.fields.length} fields`
+        : p.catalog ? ` - marked as "${p.catalog.name}", ${p.catalog.entries} entries indexed`
+        : p.purpose ? ` - ${p.purpose.slice(0, 110)}` : "";
       const line = `- "${e.name.replace(/\.pdf$/i, "")}"${p.designation && !e.name.includes(p.designation) ? ` (${p.designation})` : ""}: ${p.title}${extra}`;
       if (used + line.length > budget) { dropped += 1; continue; }
       lines.push(line);
@@ -309,13 +309,13 @@ export function entryFacts(
 ): string {
   if (records.length === 0) return "";
   return records.map((r) => {
-    const head = `${r.catalog ? `${r.catalog.toUpperCase()} ` : ""}ENTRY ${r.code} — ${r.documentName} p.${r.page}` +
+    const head = `${r.catalog ? `${r.catalog.toUpperCase()} ` : ""}ENTRY ${r.code} - ${r.documentName} p.${r.page}` +
       [r.service && `for: ${r.service}`, r.rating && `rating: ${r.rating}`,
         ...Object.entries(r.attrs ?? {}).slice(0, 6).map(([k, v]) => `${k}: ${v}`)].filter(Boolean).map((x) => `; ${x}`).join("");
     const m = r.matched;
     const why = !m ? []
       : m.literal.length > 0 ? [`  found because: its printed service/notes use the asker's words (${m.literal.join(", ")})`]
-      : m.leads.length > 0 ? [`  found because: it mentions a RELATED term (${m.leads.join(", ")}) — a lead only. Do not treat it as the asker's service unless a passage ties the two together.`]
+      : m.leads.length > 0 ? [`  found because: it mentions a RELATED term (${m.leads.join(", ")}) - a lead only. Do not treat it as the asker's service unless a passage ties the two together.`]
       : [`  found because: it has the asked rating; its printed service does not name the asker's service`];
     const notes = (r.notes ?? []).map((n) => `  note: ${n}`);
     return [head, ...why, ...notes].join("\n");

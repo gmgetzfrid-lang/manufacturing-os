@@ -212,7 +212,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       const iteration = (ticket.draftIteration ?? 0) + 1;
       updates.draft_iteration = iteration;
       updates.deliverable_rev = draftRevLabel(ticket.revisionCount, iteration);
-      historyEntry.action = `Submitted for review — Rev ${updates.deliverable_rev}`;
+      historyEntry.action = `Submitted for review - Rev ${updates.deliverable_rev}`;
       currentAttachments = currentAttachments.map((a) =>
         a.status === "staged" ? { ...a, status: "submitted" as const } : a,
       );
@@ -221,7 +221,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
     case "approve_draft_ifc":
       updates.status = "PENDING_IFC";
       updates.deliverable_rev = issuedRevLabel(ticket.revisionCount);
-      historyEntry.action = `${input.actionLabel} — issued Rev ${updates.deliverable_rev}`;
+      historyEntry.action = `${input.actionLabel} - issued Rev ${updates.deliverable_rev}`;
       break;
     // "Fix this typo and it's approved" — the minor-correction fast path.
     // Approves the deliverable NOW (rev letter drops) with the correction
@@ -230,7 +230,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
     case "approve_minor_correction":
       updates.status = "PENDING_IFC";
       updates.deliverable_rev = issuedRevLabel(ticket.revisionCount);
-      historyEntry.action = `Approved with minor correction — issued Rev ${updates.deliverable_rev}`;
+      historyEntry.action = `Approved with minor correction - issued Rev ${updates.deliverable_rev}`;
       if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
       break;
     case "request_final_engineer_approval":
@@ -248,7 +248,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       updates.status = "PENDING_IFC";
       updates.engineer_approved_at = now;
       updates.deliverable_rev = issuedRevLabel(ticket.revisionCount);
-      historyEntry.action = `${input.actionLabel} — issued Rev ${updates.deliverable_rev}`;
+      historyEntry.action = `${input.actionLabel} - issued Rev ${updates.deliverable_rev}`;
       if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
       break;
     case "engineer_request_revision":
@@ -367,7 +367,7 @@ export function classifyTransitionNotification(params: {
     ? `Engineer review requested: ${ticketLabel}`
     : isAssignment
       ? `You were assigned to ${ticketLabel}`
-      : `${actionLabel} — ${ticketLabel}`;
+      : `${actionLabel} - ${ticketLabel}`;
 
   const inAppKind = isAssignment ? ("ticket_assigned" as const) : ("ticket_status" as const);
   const inAppTitle = isAssignment ? `You were assigned · ${ticketLabel}` : `${actionLabel} · ${ticketLabel}`;

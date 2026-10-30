@@ -44,8 +44,8 @@ type CostView = "overview" | "budget" | "quotes" | "invoices" | "changes";
 interface BudgetBasis { afeNumber: string | null; chargeAccount: string | null; authorized: number | null; docId: string | null }
 
 const ENTRY_TYPES: Array<{ v: CostEntryType; label: string; hint: string }> = [
-  { v: "commitment", label: "Quote / PO", hint: "Awarded quote, PO or contract value — money promised. Type it here when the quote was a phone call or email." },
-  { v: "actual", label: "Actual", hint: "Invoice / timesheet — money really spent" },
+  { v: "commitment", label: "Quote / PO", hint: "Awarded quote, PO or contract value - money promised. Type it here when the quote was a phone call or email." },
+  { v: "actual", label: "Actual", hint: "Invoice / timesheet - money really spent" },
   { v: "adjustment", label: "Adjustment", hint: "Signed correction (can be negative to credit back)" },
 ];
 
@@ -239,7 +239,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       {mixedCurrency && (
         <div className="flex items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/[0.06] px-3 py-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-          Accounts use mixed currencies ({rollup.currencies.join(", ")}) — the totals above sum raw numbers. Keep one currency per project for honest rollups.
+          Accounts use mixed currencies ({rollup.currencies.join(", ")}) - the totals above sum raw numbers. Keep one currency per project for honest rollups.
         </div>
       )}
 
@@ -293,7 +293,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         ) : canManage && (accounts.length === 0 || showDrop) ? (
           <div className="p-4">
             <BudgetDocDrop orgId={orgId} projectId={projectId} onRead={setImporting}
-              label={accounts.length === 0 ? "Drop the AFE, estimate, or budget sheet — the cost model builds itself" : undefined} />
+              label={accounts.length === 0 ? "Drop the AFE, estimate, or budget sheet - the cost model builds itself" : undefined} />
           </div>
         ) : !basis?.afeNumber && basis?.authorized == null ? (
           <div className="px-4 py-3 text-[11px] text-[var(--color-text-muted)]">
@@ -329,7 +329,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
             <CircleDollarSign className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
             <div className="text-sm font-bold text-[var(--color-text)]">No cost accounts yet</div>
             <div className="text-xs text-[var(--color-text-muted)] mt-1 max-w-md mx-auto">
-              An account is a budget line — &ldquo;Piping subcontract&rdquo;, &ldquo;Scaffolding&rdquo;, &ldquo;Engineering hours&rdquo;. Post commitments and actuals against it and the burn tracks itself.
+              An account is a budget line - &ldquo;Piping subcontract&rdquo;, &ldquo;Scaffolding&rdquo;, &ldquo;Engineering hours&rdquo;. Post commitments and actuals against it and the burn tracks itself.
               {canManage ? " Create the first one above." : " Document Control sets these up."}
             </div>
           </div>
@@ -433,15 +433,15 @@ export function OutlookCard({ outlook: o, rollup, cur, authorized, onQuotes }: {
       <div className="flex items-center gap-2">
         <Gauge className="w-4 h-4 text-[var(--color-accent)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Where this job lands</span>
-        <span className="text-[10px] text-[var(--color-text-muted)]">from awarded quotes and schedule progress — no invoices needed</span>
+        <span className="text-[10px] text-[var(--color-text-muted)]">from awarded quotes and schedule progress - no invoices needed</span>
       </div>
       <ul className="text-xs text-[var(--color-text)] space-y-1">
         <li>
           {o.quoted > 0
             ? <>Awarded quotes plus the budget for unquoted lines put the finish at <b className="tabular-nums">{fmtMoney(o.forecast, cur)}</b>
                 {Math.abs(o.variance) >= 1
-                  ? <> — <b className={o.variance > 0 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}>{fmtMoney(Math.abs(o.variance), cur)} {o.variance > 0 ? "over" : "under"} budget</b></>
-                  : " — on budget"}
+                  ? <> - <b className={o.variance > 0 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}>{fmtMoney(Math.abs(o.variance), cur)} {o.variance > 0 ? "over" : "under"} budget</b></>
+                  : " - on budget"}
                 {vsAuth != null && vsAuth > 0.5 && <>, <b className="text-rose-700 dark:text-rose-300">{fmtMoney(vsAuth, cur)} over the authorization</b> (a supplement may be needed)</>}.</>
             : <>No quotes awarded yet, so the forecast is just the budget. <button onClick={onQuotes} className="font-bold text-[var(--color-accent)] hover:underline">Award quotes</button> and this becomes a real forecast.</>}
         </li>
@@ -454,7 +454,7 @@ export function OutlookCard({ outlook: o, rollup, cur, authorized, onQuotes }: {
           <li>
             The schedule is <b>{o.projectPct}% complete</b>, so about <b className="tabular-nums">{fmtMoney(o.estimatedToDate, cur)}</b> of work has been done.
             {" "}{fmtMoney(o.invoiced, cur)} has been invoiced
-            {o.unbilled >= 1 ? <> — about <b className="tabular-nums">{fmtMoney(o.unbilled, cur)}</b> is done but not billed yet (your accrual).</> : "."}
+            {o.unbilled >= 1 ? <> - about <b className="tabular-nums">{fmtMoney(o.unbilled, cur)}</b> is done but not billed yet (your accrual).</> : "."}
           </li>
         ) : (
           <li className="text-[var(--color-text-muted)]">
@@ -463,7 +463,7 @@ export function OutlookCard({ outlook: o, rollup, cur, authorized, onQuotes }: {
         )}
         {o.quoted > 0 && unquoted > 0 && (
           <li className="text-[10px] text-[var(--color-text-muted)]">
-            {unquoted} budget line{unquoted === 1 ? " has" : "s have"} no awarded quote — {unquoted === 1 ? "it's" : "they're"} forecast at budget.
+            {unquoted} budget line{unquoted === 1 ? " has" : "s have"} no awarded quote - {unquoted === 1 ? "it's" : "they're"} forecast at budget.
           </li>
         )}
       </ul>
@@ -596,7 +596,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
       {canManage && <EntryForm orgId={orgId} projectId={projectId} accountId={a.id} parties={parties} actor={actor} onDone={onChanged} setErr={setErr} />}
 
       {entries.length === 0 ? (
-        <div className="text-[11px] italic text-[var(--color-text-faint)]">No entries yet — enter the awarded quote or PO (Quote / PO), then invoices as actuals.</div>
+        <div className="text-[11px] italic text-[var(--color-text-faint)]">No entries yet - enter the awarded quote or PO (Quote / PO), then invoices as actuals.</div>
       ) : (
         <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
           {entries.map((e) => (
@@ -609,7 +609,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
               </span>
               <span className={`font-black tabular-nums ${e.status === "void" ? "line-through" : ""} text-[var(--color-text)]`}>{fmtMoney(e.amount, cur)}</span>
               <span className="text-[var(--color-text-muted)] truncate">
-                {e.entryDate ? new Date(e.entryDate).toLocaleDateString() : "—"}
+                {e.entryDate ? new Date(e.entryDate).toLocaleDateString() : "-"}
                 {e.reference ? ` · ${e.reference}` : ""}
                 {e.description ? ` · ${e.description}` : ""}
                 {e.createdByName ? ` · ${e.createdByName}` : ""}
@@ -800,7 +800,7 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
                 {p.status === "inactive" && <span className="text-[9px] font-bold text-[var(--color-text-faint)]">inactive</span>}
               </div>
               <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-                {[p.trade, p.contractValue != null ? `contract ${fmtMoney(p.contractValue)}` : null].filter(Boolean).join(" · ") || "—"}
+                {[p.trade, p.contractValue != null ? `contract ${fmtMoney(p.contractValue)}` : null].filter(Boolean).join(" · ") || "-"}
               </div>
             </li>
           ))}

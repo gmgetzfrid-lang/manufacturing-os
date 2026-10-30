@@ -322,7 +322,7 @@ function EmptyState({ canUpload, onUpload }: { canUpload: boolean; onUpload?: ()
       <h3 className="text-base font-black text-white mb-1">No photos yet</h3>
       <p className="text-xs text-white/60 leading-relaxed mb-4">
         Once photos are uploaded for this asset they&apos;ll appear here. Field workers, engineers, and
-        operators all see the same gallery — wherever this tag appears in your library.
+        operators all see the same gallery - wherever this tag appears in your library.
       </p>
       {canUpload && onUpload && (
         <button

@@ -71,7 +71,7 @@ export async function connectPlan(admin: SupabaseClient, orgId: string, userId: 
       for (const r of (data as Array<{ document_id: string }> | null) ?? []) censused.add(r.document_id);
     }
     for (const d of list) {
-      const name = [d.document_number, d.title ?? d.name].filter(Boolean).join(" — ") || "Document";
+      const name = [d.document_number, d.title ?? d.name].filter(Boolean).join(" - ") || "Document";
       const v = d.current_version_id ? versions.get(d.current_version_id) : undefined;
       const m = mirrors.get(d.id);
       let state: PlanFileState;

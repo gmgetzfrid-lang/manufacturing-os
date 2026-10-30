@@ -172,7 +172,7 @@ describe("the management email judges a crew on its own work", () => {
     expect(text).toMatch(/Day step · was due .* · done 90%/);
     expect(text).not.toMatch(/Day step · .*Blocked/);
     // (What it waits on, under its name — as the screen says it.)
-    expect(text).toMatch(/Night step \(Starts after Day step\) · Blocked — permit/);
+    expect(text).toMatch(/Night step \(Starts after Day step\) · Blocked - permit/);
     expect(text.match(/Night step \(Starts after Day step\) ·/g)?.length).toBe(1);
   });
   it("comments fold line breaks and carry their date when older than the shift", () => {
@@ -425,7 +425,7 @@ describe("the crew comes from the schedule's calendar, not a guess", () => {
   it("without a calendar it falls back to the dates (day)", () => {
     expect(workShiftOf(mk(base), CHI)).toBe("day");
   });
-  it("a 24-hour calendar is round the clock — on the night crew's list", () => {
+  it("a 24-hour calendar is round the clock - on the night crew's list", () => {
     const mw = mk({ ...base, attributes: { work_calendar: "Schultz - Tower", work_hours: "00:00-24:00" } });
     expect(workShiftOf(mw, CHI)).toBe("both");
     const d = shiftWindow("2026-10-26", "day", CHI);
@@ -454,7 +454,7 @@ describe("the next shift sees the other crew's unfinished and paused work", () =
     expect(r.goals.otherShift.map((x) => x.leaf.id)).toEqual(["x"]);
     expect(r.goals.paused.map((x) => x.leaf.id)).toEqual(["l"]);
   });
-  it("the email says so — waiting for its own crew, never 'pick up if you can'", () => {
+  it("the email says so - waiting for its own crew, never 'pick up if you can'", () => {
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r, f, { pctOf: () => 40, finishOf: () => undefined }) });
     // In its own table — not on the night shift's list.
     expect(text).toMatch(/CARRIES OVER TO DAY SHIFT/);

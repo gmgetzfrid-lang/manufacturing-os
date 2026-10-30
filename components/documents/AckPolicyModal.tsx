@@ -160,7 +160,7 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
 
                 <label className="flex items-start gap-2 text-[11px] text-[var(--color-text)] pt-1">
                   <input type="checkbox" checked={hardGate} onChange={(e) => setHardGate(e.target.checked)} className="mt-0.5" />
-                  <span>Hard-gate: mark a revision <b>&ldquo;pending acknowledgment&rdquo;</b> until everyone has signed (default is soft — effective immediately, outstanding tracked &amp; escalated).</span>
+                  <span>Hard-gate: mark a revision <b>&ldquo;pending acknowledgment&rdquo;</b> until everyone has signed (default is soft - effective immediately, outstanding tracked &amp; escalated).</span>
                 </label>
 
                 {nobody && <div className="text-[11px] text-amber-600">Add at least one person, role, or department, or nobody will be asked to sign.</div>}

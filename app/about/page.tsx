@@ -31,9 +31,9 @@ import { RoleDayTabs } from "@/components/marketing/RoleDayTabs";
 import { TourTabs } from "@/components/marketing/TourTabs";
 
 export const metadata = {
-  title: "Manufacturing OS — Document control your facility can audit",
+  title: "Manufacturing OS - Document control your facility can audit",
   description:
-    "Document control, drafting workflow, AI that has read your library, and a living map of your site — for any facility that runs on drawings. Designed to support OSHA PSM 1910.119 and ISO 9001 documentation, with a one-click export of every byte you put in. No lock-in, ever.",
+    "Document control, drafting workflow, AI that has read your library, and a living map of your site - for any facility that runs on drawings. Designed to support OSHA PSM 1910.119 and ISO 9001 documentation, with a one-click export of every byte you put in. No lock-in, ever.",
 };
 
 export const revalidate = 86400;
@@ -123,7 +123,7 @@ function Hero() {
           <p className="text-lg md:text-xl text-slate-300 leading-relaxed mb-8 max-w-2xl"
             style={{ animation: "rise 0.6s var(--ease-fluid) 160ms both" }}>
             Manufacturing OS replaces shared drives, scattered email threads, and three-binders-deep
-            revision tracking with a single source of truth — <b className="text-white">plus an AI that
+            revision tracking with a single source of truth - <b className="text-white">plus an AI that
             has actually read your documents</b>. Designed to support OSHA PSM 1910.119 and ISO 9001
             documentation, and engineered so you own your data, every byte, end-to-end.
           </p>
@@ -193,7 +193,7 @@ function DaySection() {
           <div className="text-xs font-black uppercase tracking-widest text-orange-600 mb-3">Your day, easier</div>
           <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-4">Pick your job. Watch it get lighter.</h2>
           <p className="text-base text-slate-600 leading-relaxed">
-            Software pitches love feature lists. Your team lives in moments — the fifth &quot;FINAL_rev3&quot;
+            Software pitches love feature lists. Your team lives in moments - the fifth &quot;FINAL_rev3&quot;
             PDF, the audit question nobody can answer, the walk across the site to see what a vessel looks
             like. Here&apos;s what those moments become.
           </p>
@@ -257,7 +257,7 @@ function PillarsSection() {
           <div className="text-xs font-black uppercase tracking-widest text-orange-600 mb-3">What&apos;s inside</div>
           <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-4">Six pillars, in the order they matter to your business.</h2>
           <p className="text-base text-slate-600 leading-relaxed">
-            Each one is deep — tap <b>&quot;+ more&quot;</b> on any pillar for the full inventory. None of it
+            Each one is deep - tap <b>&quot;+ more&quot;</b> on any pillar for the full inventory. None of it
             assumes what your facility makes.
           </p>
         </Reveal>
@@ -271,7 +271,7 @@ function PillarsSection() {
             title="One source of truth for every document"
             tagline="The current revision is unambiguous, provable, and the only one anyone can print. That single fact ends most of the chaos."
             bullets={[
-              "Full revision history — superseded copies visibly marked and recalled from everyone who downloaded them",
+              "Full revision history - superseded copies visibly marked and recalled from everyone who downloaded them",
               "Every issued PDF stamped with status, watermark, and a QR anyone can verify by phone",
               "Bulk-import legacy files: metadata parses from filenames, AI reads the title blocks, you confirm one staging grid",
             ]}
@@ -289,10 +289,10 @@ function PillarsSection() {
             iconBg="bg-orange-100"
             accent="orange"
             title="An AI that has read your library"
-            tagline="Ask in plain language; the answer comes back cited to the exact page with the highlighted proof one click away. It can only reference documents you gave it — nothing invented."
+            tagline="Ask in plain language; the answer comes back cited to the exact page with the highlighted proof one click away. It can only reference documents you gave it - nothing invented."
             bullets={[
-              "Reads scanned and CAD-exported drawings with vision — extracts equipment tags, audits cross-references, even traces lines",
-              "Runs on your own AI key (Claude or OpenAI — providers that never train on your data) with per-user spend caps and full usage metering",
+              "Reads scanned and CAD-exported drawings with vision - extracts equipment tags, audits cross-references, even traces lines",
+              "Runs on your own AI key (Claude or OpenAI - providers that never train on your data) with per-user spend caps and full usage metering",
               "You draw the boundary: exclude any document from AI reading with one switch; sources sync from document control with your ACLs intact",
             ]}
             chips={[
@@ -310,11 +310,11 @@ function PillarsSection() {
             iconBg="bg-emerald-100"
             accent="emerald"
             title="Workflow with authority built in"
-            tagline="Requests route through review, drafting, and approval — and the system enforces who is allowed to sign. A non-engineer cannot approve engineering work, period."
+            tagline="Requests route through review, drafting, and approval - and the system enforces who is allowed to sign. A non-engineer cannot approve engineering work, period."
             bullets={[
               "MOC, RFI, as-built, and inspection tickets with SLA targets and past-due chips that keep nothing lost",
               "Distribution that proves receipt: acknowledgments tracked per person, transmittals with a recipient portal",
-              "External teams work through a tokened intake portal and scoped projects — never inside your library",
+              "External teams work through a tokened intake portal and scoped projects - never inside your library",
             ]}
             chips={[
               "MOC / RFI / As-built / Inspection tickets", "Engineer-routed sign-off", "Redline markup",
@@ -333,8 +333,8 @@ function PillarsSection() {
             title="A living map of your site"
             tagline="Teach it your numbering system once, and imports categorize and file themselves. Documents, equipment, and operating areas become one navigable graph."
             bullets={[
-              "Equipment registry with date-stamped photo galleries — tap any tag, anywhere, and see the physical thing",
-              "Interactive 2D/3D graph with lenses: process flow, equipment, documents — or everything at once",
+              "Equipment registry with date-stamped photo galleries - tap any tag, anywhere, and see the physical thing",
+              "Interactive 2D/3D graph with lenses: process flow, equipment, documents - or everything at once",
               "The AI reads process flows straight off your flow diagrams and proposes them for human confirmation",
             ]}
             chips={[
@@ -352,9 +352,9 @@ function PillarsSection() {
             iconBg="bg-cyan-100"
             accent="cyan"
             title="The paper-to-plant bridge"
-            tagline="Paper doesn't disappear from industrial sites — so every print carries a QR that answers the only question that matters: is this still current?"
+            tagline="Paper doesn't disappear from industrial sites - so every print carries a QR that answers the only question that matters: is this still current?"
             bullets={[
-              "Anyone scans a stamped print and gets current-or-superseded instantly — no login, no app install",
+              "Anyone scans a stamped print and gets current-or-superseded instantly - no login, no app install",
               "Equipment labels, hold cards, and job travelers printed straight from the system, each with live status",
               "Start on a workstation, continue on your phone with one scan",
             ]}
@@ -371,7 +371,7 @@ function PillarsSection() {
             iconBg="bg-rose-100"
             accent="rose"
             title="A team that stays in sync"
-            tagline="Mentions, watching, and dashboards replace the reply-all thread — and a command palette that knows every feature means nobody hunts for anything."
+            tagline="Mentions, watching, and dashboards replace the reply-all thread - and a command palette that knows every feature means nobody hunts for anything."
             bullets={[
               "@-mention a teammate and they're notified in-app and by email, with per-user preferences",
               "Watch any document, ticket, or library and hear about every change",
@@ -400,7 +400,7 @@ function TourSection() {
           <div className="text-xs font-black uppercase tracking-widest text-orange-600 mb-3">See it in action</div>
           <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-4">Six stations. One screen. Click around.</h2>
           <p className="text-base text-slate-600 leading-relaxed">
-            Built with the same design language as the live app — these aren&apos;t marketing renders,
+            Built with the same design language as the live app - these aren&apos;t marketing renders,
             they&apos;re the real UI with generic industrial data dropped in.
           </p>
         </Reveal>
@@ -426,7 +426,7 @@ function TrustSection() {
           <p className="text-base md:text-lg text-slate-700 leading-relaxed mb-8">
             Industrial document control is critical infrastructure. You can&apos;t afford to wonder whether a
             vendor outage or a contract dispute will cost you years of engineering work. So we built three
-            independent paths off this platform — and your administrators can use any of them, any time,
+            independent paths off this platform - and your administrators can use any of them, any time,
             with no special tooling, no support ticket, and no per-export cost.
           </p>
         </Reveal>
@@ -458,7 +458,7 @@ function TrustSection() {
                 <p className="text-sm text-slate-600 leading-relaxed mb-3">
                   The export is a portable ZIP: manifest, README, the database schema DDL, one JSON file per
                   table, and every binary file path-preserved. Unzip it, point a fresh Postgres at the schema, apply the included migrations in order,
-                  bulk-load the JSON, and you&apos;re back online — with any document-control vendor, or none.
+                  bulk-load the JSON, and you&apos;re back online - with any document-control vendor, or none.
                 </p>
                 <div className="flex flex-wrap gap-2 text-[11px] text-slate-500 font-mono">
                   <Chip>/manifest.json</Chip>
@@ -503,7 +503,7 @@ function ComplianceHonestySection() {
             Manufacturing OS is <b>software that supports compliance documentation</b>. It is not a
             certification. Running this product does not, by itself, make your organization compliant with
             any standard. Your QMS coordinator, PSM officer, or compliance lead remains responsible for the
-            overall program. We&apos;re the system of record they rely on — not a substitute for their
+            overall program. We&apos;re the system of record they rely on - not a substitute for their
             judgment. Here&apos;s the line, drawn explicitly.
           </p>
         </Reveal>
@@ -516,7 +516,7 @@ function ComplianceHonestySection() {
                 <h3 className="text-base font-black text-emerald-900">What we do support</h3>
               </div>
               <ul className="space-y-2.5 text-sm text-slate-700">
-                <Honesty title="Document control infrastructure" body="Revision history, current-vs-superseded clarity, status stamping — the documentation backbone called for by ISO 9001 §7.5 and OSHA PSM §(d)." />
+                <Honesty title="Document control infrastructure" body="Revision history, current-vs-superseded clarity, status stamping - the documentation backbone called for by ISO 9001 §7.5 and OSHA PSM §(d)." />
                 <Honesty title="Management of Change (MOC) tickets" body="Dedicated MOC ticket type with engineer-routed sign-off, addressing the documentation OSHA PSM §(l) requires when modifying covered processes." />
                 <Honesty title="Immutable audit trail" body="Every login, download, approval, status change written to an append-only log that nothing in the app can edit or delete. Exportable as evidence for internal or external audits." />
                 <Honesty title="Engineer-routed approval enforcement" body="Non-engineer requesters cannot self-approve engineering work; the system enforces routing to a qualified engineer." />
@@ -534,7 +534,7 @@ function ComplianceHonestySection() {
               <ul className="space-y-2.5 text-sm text-slate-700">
                 <Honesty title="Certification" body="We are not auditors and we do not certify your organization. ISO 9001 certification and PSM compliance audits are conducted by independent third parties, not by us." />
                 <Honesty title="Process Hazard Analysis (PHA)" body="OSHA PSM §(e) requires PHA studies (HAZOP, what-if, etc.). We don't run them; your safety team does. We store the resulting documents." />
-                <Honesty title="Mechanical Integrity programs" body="PM schedules, inspection records, RBI — outside this product's scope. We're a complement to your CMMS / inspection tool, not a replacement." />
+                <Honesty title="Mechanical Integrity programs" body="PM schedules, inspection records, RBI - outside this product's scope. We're a complement to your CMMS / inspection tool, not a replacement." />
                 <Honesty title="Training records & competency" body="Personnel training matrices and competency assessments are managed in your HR or LMS system, not here." />
                 <Honesty title="Operating procedures, incident investigation, emergency planning" body="PSM elements §(f), §(m), §(n). We can store the documents; your team produces and maintains them." />
               </ul>
@@ -571,10 +571,10 @@ function SecuritySection() {
     { icon: <Lock className="w-5 h-5 text-blue-300" />, title: "HTTPS-only transport", body: "All traffic over TLS. No HTTP fallback." },
     { icon: <Database className="w-5 h-5 text-blue-300" />, title: "Encryption at rest", body: "Postgres encrypted at rest by Supabase. File storage encrypted at rest by Cloudflare R2." },
     { icon: <Server className="w-5 h-5 text-blue-300" />, title: "Row-level isolation", body: "Postgres RLS scopes every query to its org. No cross-tenant leakage possible at the database layer." },
-    { icon: <KeyRound className="w-5 h-5 text-blue-300" />, title: "AES-256-GCM for secrets", body: "Customer S3 credentials and personal AI provider keys encrypted at rest — never stored in the clear." },
-    { icon: <Users className="w-5 h-5 text-blue-300" />, title: "Roles + per-node access control", body: "Eighteen roles — from Admin and Doc Control to Contractor, Auditor, and four Engineer tiers — plus ACLs on libraries, folders, and documents, evaluated as one chain." },
-    { icon: <PenLine className="w-5 h-5 text-blue-300" />, title: "Signature ceremony", body: "Approvals that matter require fresh authentication at the moment of signing — password re-entry, or a recent sign-in for SSO accounts — recorded with the signature." },
-    { icon: <GitBranch className="w-5 h-5 text-blue-300" />, title: "Configurable authority policies", body: "What each role may do — approve, issue, hold, export — is policy your admins set, enforced server-side, with a view-as simulator to preview it." },
+    { icon: <KeyRound className="w-5 h-5 text-blue-300" />, title: "AES-256-GCM for secrets", body: "Customer S3 credentials and personal AI provider keys encrypted at rest - never stored in the clear." },
+    { icon: <Users className="w-5 h-5 text-blue-300" />, title: "Roles + per-node access control", body: "Eighteen roles - from Admin and Doc Control to Contractor, Auditor, and four Engineer tiers - plus ACLs on libraries, folders, and documents, evaluated as one chain." },
+    { icon: <PenLine className="w-5 h-5 text-blue-300" />, title: "Signature ceremony", body: "Approvals that matter require fresh authentication at the moment of signing - password re-entry, or a recent sign-in for SSO accounts - recorded with the signature." },
+    { icon: <GitBranch className="w-5 h-5 text-blue-300" />, title: "Configurable authority policies", body: "What each role may do - approve, issue, hold, export - is policy your admins set, enforced server-side, with a view-as simulator to preview it." },
     { icon: <Factory className="w-5 h-5 text-blue-300" />, title: "Governed AI boundary", body: "AI reads only what document-control ACLs allow for the person asking. Excluded documents are never indexed, retrieved, or cited." },
     { icon: <ClipboardCheck className="w-5 h-5 text-blue-300" />, title: "Server-side privileged access", body: "Browser clients never hold keys that bypass RLS. Privileged server routes re-check membership and role on every call, and data exports log themselves to your audit trail." },
   ];
@@ -615,15 +615,15 @@ function AudienceSection() {
           <div className="text-xs font-black uppercase tracking-widest text-orange-600 mb-3">Who runs on it</div>
           <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-4">Built for sites where the drawings matter.</h2>
           <p className="text-base text-slate-600 leading-relaxed">
-            If your facility runs on controlled documents — whatever it makes — this is for you.
+            If your facility runs on controlled documents - whatever it makes - this is for you.
           </p>
         </Reveal>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
           {[
-            { icon: <Factory className="w-6 h-6 text-orange-700" />, title: "Process industries", body: "Refineries, chemical plants, power generation, water treatment. Captures the documentation OSHA PSM 1910.119 §(l) calls for in Management of Change — engineer-routed approvals and revision lineage that survives audits." },
-            { icon: <ClipboardCheck className="w-6 h-6 text-orange-700" />, title: "Manufacturing & batch plants", body: "Mills, food & beverage, pharma, discrete manufacturing. One system for the drawings, procedures, and change records ISO 9001 surveillance keeps asking about — that the floor actually uses." },
-            { icon: <Wrench className="w-6 h-6 text-orange-700" />, title: "EPC & engineering teams", body: "Project containers scope work per client. Contractors submit through a tokened portal without ever touching the rest of your library — and redlines round-trip cleanly." },
+            { icon: <Factory className="w-6 h-6 text-orange-700" />, title: "Process industries", body: "Refineries, chemical plants, power generation, water treatment. Captures the documentation OSHA PSM 1910.119 §(l) calls for in Management of Change - engineer-routed approvals and revision lineage that survives audits." },
+            { icon: <ClipboardCheck className="w-6 h-6 text-orange-700" />, title: "Manufacturing & batch plants", body: "Mills, food & beverage, pharma, discrete manufacturing. One system for the drawings, procedures, and change records ISO 9001 surveillance keeps asking about - that the floor actually uses." },
+            { icon: <Wrench className="w-6 h-6 text-orange-700" />, title: "EPC & engineering teams", body: "Project containers scope work per client. Contractors submit through a tokened portal without ever touching the rest of your library - and redlines round-trip cleanly." },
           ].map((a, i) => (
             <Reveal key={a.title} delay={i * 90}>
               <div className="bg-gradient-to-b from-orange-50 to-white border border-orange-200 rounded-2xl p-6 h-full">

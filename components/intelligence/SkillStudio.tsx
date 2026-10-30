@@ -125,11 +125,11 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
             <div className="text-[11px] text-[var(--color-text-muted)]">
               {phase === "describe"
                 ? (kind === "reasoning"
-                  ? "Teach the AI a discipline for HOW it answers — when it applies, and what it must do."
+                  ? "Teach the AI a discipline for HOW it answers - when it applies, and what it must do."
                   : "Teach the engine how YOUR facility's documents reference each other.")
                 : (kind === "reasoning"
-                  ? "The pack must open with APPLIES WHEN — it rides every question and gates itself."
-                  : "The tester runs the exact compiler the engine runs — what matches here is what it will match.")}
+                  ? "The pack must open with APPLIES WHEN - it rides every question and gates itself."
+                  : "The tester runs the exact compiler the engine runs - what matches here is what it will match.")}
             </div>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
@@ -165,7 +165,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
               </button>
             </div>
             <p className="text-[10px] text-[var(--color-text-faint)]">
-              Drafting runs on your own AI key and lands in an editor — you publish, never the model.
+              Drafting runs on your own AI key and lands in an editor - you publish, never the model.
             </p>
           </div>
         ) : (
@@ -193,7 +193,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
             {kind === "reasoning" && (
               <div>
                 <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
-                  The discipline — must open with when it applies
+                  The discipline - must open with when it applies
                 </label>
                 <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)}
                   placeholder={"APPLIES WHEN the question asks about torque values. Otherwise ignore this skill.\n- State the lubrication condition the value assumes.\n- Warn when the passage does not say."}
@@ -201,7 +201,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
                   className="mt-1 w-full px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm leading-relaxed" />
                 {instructions.trim().length > 0 && !/applies when/i.test(instructions) && (
                   <div className="mt-1 text-[11px] text-amber-700">
-                    Start with &ldquo;APPLIES WHEN …&rdquo; — the pack rides every question and must gate itself.
+                    Start with &ldquo;APPLIES WHEN …&rdquo; - the pack rides every question and must gate itself.
                   </div>
                 )}
               </div>
@@ -210,7 +210,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
             {kind === "connection" && (
             <div>
               <label className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
-                Patterns — one per line (regular expressions)
+                Patterns - one per line (regular expressions)
               </label>
               <textarea value={patternsRaw} onChange={(e) => setPatternsRaw(e.target.value)}
                 placeholder={"\\bWO-\\d{5}\\b\n\\bPERMIT-\\d{4}\\b"}
@@ -264,8 +264,8 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
               </div>
               <p className="mt-1 text-[10px] text-[var(--color-text-faint)]">
                 {kind === "reasoning"
-                  ? "Org-wide rides every member's questions; private rides only yours. It shapes reasoning and reporting — never the citation or safety rules."
-                  : "Either way its findings only ever QUEUE for review — custom skills never apply links by themselves."}
+                  ? "Org-wide rides every member's questions; private rides only yours. It shapes reasoning and reporting - never the citation or safety rules."
+                  : "Either way its findings only ever QUEUE for review - custom skills never apply links by themselves."}
               </p>
             </div>
 

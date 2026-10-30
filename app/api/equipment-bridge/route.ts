@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
     .from("libraries").select("equipment_bridge, custom_columns").eq("id", libraryId).maybeSingle();
 
   return NextResponse.json({
-    suggestions: rows.map((r) => ({ ...r, documentLabel: nameById.get(String(r.document_id)) ?? "—" })),
+    suggestions: rows.map((r) => ({ ...r, documentLabel: nameById.get(String(r.document_id)) ?? "-" })),
     linkedDocs: ((twins ?? []) as Array<{ source_document_id: string; status: string }>)
       .map((t) => ({ documentId: t.source_document_id, status: t.status })),
     bridge: (lib?.equipment_bridge ?? null) as BridgeConfig | null,

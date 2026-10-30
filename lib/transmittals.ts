@@ -93,7 +93,7 @@ export function isTransmittalIssuable(t: Pick<Transmittal, "items" | "recipientN
 const esc = (v: unknown): string =>
   String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 const fmtDate = (v: unknown): string => {
-  if (!v) return "—";
+  if (!v) return "-";
   try { return new Date(String(v)).toLocaleString(); } catch { return esc(v); }
 };
 
@@ -106,8 +106,8 @@ export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: stri
     <tr>
       <td class="muted">${i + 1}</td>
       <td class="mono"><b>${esc(it.number)}</b></td>
-      <td>${esc(it.title || "—")}</td>
-      <td class="mono">${esc(it.rev || "—")}</td>
+      <td>${esc(it.title || "-")}</td>
+      <td class="mono">${esc(it.rev || "-")}</td>
     </tr>`).join("");
 
   const meta = (label: string, value: string) =>
@@ -150,7 +150,7 @@ export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: stri
     <table class="meta" style="width:auto">
       ${meta("Status", esc(transmittalStatusMeta(t.status).label))}
       ${meta("Issued", fmtDate(t.issuedAt || t.createdAt))}
-      ${meta("From", esc(t.createdByName || "—"))}
+      ${meta("From", esc(t.createdByName || "-"))}
     </table>
   </div>
 
@@ -158,16 +158,16 @@ export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: stri
     <div>
       <h2>To</h2>
       <table class="meta">
-        ${meta("Name", esc(t.recipientName || "—"))}
-        ${meta("Company", esc(t.recipientCompany || "—"))}
-        ${meta("Email", esc(t.recipientEmail || "—"))}
+        ${meta("Name", esc(t.recipientName || "-"))}
+        ${meta("Company", esc(t.recipientCompany || "-"))}
+        ${meta("Email", esc(t.recipientEmail || "-"))}
       </table>
     </div>
     <div>
       <h2>Transmittal</h2>
       <table class="meta">
         ${meta("Number", esc(t.number))}
-        ${meta("Purpose", esc(t.purpose || "—"))}
+        ${meta("Purpose", esc(t.purpose || "-"))}
         ${meta("Documents", String(t.items?.length ?? 0))}
       </table>
     </div>
@@ -189,7 +189,7 @@ export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: stri
   <div style="margin-top:24px;display:flex;gap:16px;align-items:center;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;background:#fafafa">
     ${opts.qrDataUrl ? `<img src="${opts.qrDataUrl}" alt="Portal QR" style="width:92px;height:92px" />` : ""}
     <div>
-      <div style="font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#475569">Recipient portal — download &amp; acknowledge online</div>
+      <div style="font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#475569">Recipient portal - download &amp; acknowledge online</div>
       <div class="mono" style="font-size:10px;color:#334155;margin-top:4px;word-break:break-all">${esc(opts.portalUrl)}</div>
       <div style="font-size:10px;color:#94a3b8;margin-top:4px">Scan or open the link to download the transmitted files at their as-issued revisions and record receipt. The link is unique to this transmittal.</div>
     </div>
@@ -207,16 +207,16 @@ export function renderTransmittalSheet(t: Transmittal, opts?: { portalUrl?: stri
  */
 export function renderTransmittalEmail(t: Transmittal, portalUrl: string): { subject: string; text: string; html: string } {
   const docLinesText = (t.items ?? [])
-    .map((it, i) => `  ${i + 1}. ${it.number}${it.rev ? ` (Rev ${it.rev})` : ""}${it.title ? ` — ${it.title}` : ""}`)
+    .map((it, i) => `  ${i + 1}. ${it.number}${it.rev ? ` (Rev ${it.rev})` : ""}${it.title ? ` - ${it.title}` : ""}`)
     .join("\n");
-  const subject = `Transmittal ${t.number}${t.subject ? ` — ${t.subject}` : ""}${t.purpose ? ` (${t.purpose})` : ""}`;
+  const subject = `Transmittal ${t.number}${t.subject ? ` - ${t.subject}` : ""}${t.purpose ? ` (${t.purpose})` : ""}`;
   const greeting = t.recipientName?.trim() ? `Hello ${t.recipientName.trim()},` : "Hello,";
   const from = t.createdByName?.trim() || "Document control";
 
   const text = [
     greeting,
     "",
-    `You have been issued transmittal ${t.number}${t.purpose ? ` — ${t.purpose}` : ""} covering ${t.items?.length ?? 0} document(s):`,
+    `You have been issued transmittal ${t.number}${t.purpose ? ` - ${t.purpose}` : ""} covering ${t.items?.length ?? 0} document(s):`,
     "",
     docLinesText || "  (no documents listed)",
     "",
@@ -224,17 +224,17 @@ export function renderTransmittalEmail(t: Transmittal, portalUrl: string): { sub
     "Download the documents at their as-issued revisions and acknowledge receipt here:",
     portalUrl,
     "",
-    "The link is unique to this transmittal — please don't forward it.",
+    "The link is unique to this transmittal - please don't forward it.",
     "",
-    `— ${from}`,
+    `- ${from}`,
   ].filter((l) => l !== "").join("\n");
 
   const docRowsHtml = (t.items ?? []).map((it, i) => `
     <tr>
       <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;color:#94a3b8">${i + 1}</td>
       <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-family:ui-monospace,Menlo,monospace"><b>${esc(it.number)}</b></td>
-      <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0">${esc(it.title || "—")}</td>
-      <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-family:ui-monospace,Menlo,monospace">${esc(it.rev || "—")}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0">${esc(it.title || "-")}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-family:ui-monospace,Menlo,monospace">${esc(it.rev || "-")}</td>
     </tr>`).join("");
 
   const html = `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a;font-size:14px;max-width:640px">
@@ -259,8 +259,8 @@ export function renderTransmittalEmail(t: Transmittal, portalUrl: string): { sub
     <a href="${esc(portalUrl)}" style="background:#ea580c;color:#ffffff;text-decoration:none;font-weight:700;padding:10px 18px;border-radius:8px;display:inline-block">Download &amp; acknowledge receipt</a>
   </p>
   <p style="color:#64748b;font-size:12px">Or open this link: <span style="font-family:ui-monospace,Menlo,monospace;word-break:break-all">${esc(portalUrl)}</span><br/>
-  The link is unique to this transmittal — please don't forward it.</p>
-  <p>— ${esc(from)}</p>
+  The link is unique to this transmittal - please don't forward it.</p>
+  <p>- ${esc(from)}</p>
 </div>`;
 
   return { subject, text, html };
@@ -325,7 +325,7 @@ export async function openTransmittalSheet(t: Transmittal): Promise<void> {
 // ─── Data layer (resilient to the table not being migrated yet) ─────────────
 
 const MIGRATION_HINT =
-  "Transmittals aren't set up yet — run supabase/migrations/20260717_transmittals.sql, then reload.";
+  "Transmittals aren't set up yet - run supabase/migrations/20260717_transmittals.sql, then reload.";
 
 function isMissingTable(error: { code?: string; message?: string } | null | undefined): boolean {
   if (!error) return false;

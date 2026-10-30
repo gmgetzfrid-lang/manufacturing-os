@@ -64,7 +64,7 @@ describe("normalizeTag / splitTag", () => {
   });
 });
 
-describe("typeForTag — longest prefix wins", () => {
+describe("typeForTag - longest prefix wins", () => {
   it("EA beats E for air coolers", () => {
     expect(typeForTag("EA-101", BOOK)?.label).toBe("Air Coolers");
     expect(typeForTag("E-22", BOOK)?.label).toBe("Exchangers");
@@ -74,7 +74,7 @@ describe("typeForTag — longest prefix wins", () => {
   });
 });
 
-describe("tagToCode — the user's worked example", () => {
+describe("tagToCode - the user's worked example", () => {
   it("E-22 in the crude unit is 2030.22", () => {
     expect(tagToCode("E-22", "20", BOOK)).toBe("2030.22");
   });
@@ -95,7 +95,7 @@ describe("tagToCode — the user's worked example", () => {
   });
 });
 
-describe("codeToTag — the inverse", () => {
+describe("codeToTag - the inverse", () => {
   it("2030.22 → E-22 in unit 20", () => {
     expect(codeToTag("2030.22", BOOK)).toEqual({ tag: "E-22", unitCode: "20", typeCode: "30" });
   });
@@ -115,7 +115,7 @@ describe("codeToTag — the inverse", () => {
   });
 });
 
-describe("parseDrawingNumber — tolerant of real-world formatting", () => {
+describe("parseDrawingNumber - tolerant of real-world formatting", () => {
   const parse = (s: string) => parseDrawingNumber(s, BOOK);
 
   it("the canonical form decodes fully", () => {
@@ -150,7 +150,7 @@ describe("parseDrawingNumber — tolerant of real-world formatting", () => {
     expect(parse("20")).toBeNull();      // drawing_type required but absent
     expect(parse("ABCD-D-1")).toBeNull(); // unit must be digits
   });
-  it("unknown codes still parse — labels just come back null", () => {
+  it("unknown codes still parse - labels just come back null", () => {
     expect(parse("9902-D-1")).toMatchObject({ unitCode: "99", unitLabel: null, drawingTypeLabel: "P&ID" });
   });
   it("no decoder configured → null, never a guess", () => {
@@ -158,7 +158,7 @@ describe("parseDrawingNumber — tolerant of real-world formatting", () => {
   });
 });
 
-describe("diffImport — AI proposals never steamroll manual work", () => {
+describe("diffImport - AI proposals never steamroll manual work", () => {
   const existing = [entry("unit", "20", "Crude Unit"), entry("equipment_type", "30", "Exchangers", ["E"])];
 
   it("classifies adds / changes / unchanged", () => {

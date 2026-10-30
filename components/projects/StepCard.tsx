@@ -136,7 +136,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     const n = Math.max(1, found.of ?? 1);
     if (!(await appConfirm({
       title: `Delete this ${k.lower}?`,
-      message: `“${found.what}” comes off the schedule: ${n === 1 ? "its step is" : `all ${n} of its steps are`} deleted, with any progress and comments on ${n === 1 ? "it" : "them"}. Steps that waited on it wait on what it waited on instead. Planned dates it pushed later stay where they are — move them back if they should.`,
+      message: `“${found.what}” comes off the schedule: ${n === 1 ? "its step is" : `all ${n} of its steps are`} deleted, with any progress and comments on ${n === 1 ? "it" : "them"}. Steps that waited on it wait on what it waited on instead. Planned dates it pushed later stay where they are - move them back if they should.`,
       confirmLabel: `Delete ${k.lower}`,
     }))) return;
     setFoundBusy(true); setFoundMsg(null);
@@ -207,7 +207,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     if (!startOwned && Number.isFinite(as)) {
       const off = ev.find((e) => e.logId != null && !e.unsure && Math.abs(e.at - as) <= 2 * 60_000 && /^(Block lifted|Off hold)/.test(e.text));
       if (off) {
-        off.text = off.text.replace(/^Block lifted/, "Started — block lifted").replace(/^Off hold/, "Started — off hold");
+        off.text = off.text.replace(/^Block lifted/, "Started - block lifted").replace(/^Off hold/, "Started - off hold");
         off.fix = "start";
         ev.splice(ev.findIndex((e) => e.key === "start"), 1);
       }
@@ -254,7 +254,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     return best;
   }, [rows, history]);
   const beforeLast = (t: number) => (lastEntry && t < lastEntry.at - 60_000
-    ? `That's before the last entry on this step — “${lastEntry.text}” at ${when(lastEntry.at)}. Pick a later time, or change that one with Fix times (or Take back in History).`
+    ? `That's before the last entry on this step - “${lastEntry.text}” at ${when(lastEntry.at)}. Pick a later time, or change that one with Fix times (or Take back in History).`
     : null);
   // Fixing the time of something in the history.
   const [fixing, setFixing] = useState<string | null>(null);
@@ -283,12 +283,12 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     // No comment on it yet: what's typed is added to it, at its time.
     const textAdded = !x.comment && !!text;
     const pctChanged = x.pct != null && fixPct != null && fixPct !== x.pct;
-    if (pctChanged && (fixPct! < 0 || fixPct! > 99)) { setFixMsg("A progress entry is 0–99%. 100% is finished — use Finish."); return; }
+    if (pctChanged && (fixPct! < 0 || fixPct! > 99)) { setFixMsg("A progress entry is 0–99%. 100% is finished - use Finish."); return; }
     if (!timeChanged && !textChanged && !textAdded && !pctChanged) { setFixing(null); return; }
     if (timeChanged) {
       if (t > Date.now() + 60_000) { setFixMsg("That time is in the future."); return; }
-      if (x.fix === "start" && Number.isFinite(af) && t > af) { setFixMsg(`It finished ${when(af)} — it can't start after that.`); return; }
-      if (x.fix === "finish" && Number.isFinite(as) && t < as) { setFixMsg(`It started ${when(as)} — it can't finish before that.`); return; }
+      if (x.fix === "start" && Number.isFinite(af) && t > af) { setFixMsg(`It finished ${when(af)} - it can't start after that.`); return; }
+      if (x.fix === "finish" && Number.isFinite(as) && t < as) { setFixMsg(`It started ${when(as)} - it can't finish before that.`); return; }
       // It stays between what came before it and what came after (ones
       // whose time wasn't saved don't count — theirs is the time typed).
       if (x.logId != null) {
@@ -298,8 +298,8 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         let prev: ProgressLogRow | null = null, next: ProgressLogRow | null = null;
         for (let j = k - 1; j >= 0 && !prev; j--) if (!unsaved(j)) prev = seq[j];
         for (let j = k + 1; k >= 0 && j < seq.length && !next; j++) if (!unsaved(j)) next = seq[j];
-        if (prev && t < Date.parse(prev.at)) { setFixMsg(`That's before “${logWords(prev)}” at ${when(Date.parse(prev.at))}, which came first. To move both, use Fix times — it changes every time on the step at once.`); return; }
-        if (next && t > Date.parse(next.at)) { setFixMsg(`That's after “${logWords(next)}” at ${when(Date.parse(next.at))}, which came next. To move both, use Fix times — it changes every time on the step at once.`); return; }
+        if (prev && t < Date.parse(prev.at)) { setFixMsg(`That's before “${logWords(prev)}” at ${when(Date.parse(prev.at))}, which came first. To move both, use Fix times - it changes every time on the step at once.`); return; }
+        if (next && t > Date.parse(next.at)) { setFixMsg(`That's after “${logWords(next)}” at ${when(Date.parse(next.at))}, which came next. To move both, use Fix times - it changes every time on the step at once.`); return; }
       }
     }
     setFixBusy(true); setFixMsg(null);
@@ -368,7 +368,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   const toMs = (v: string) => { const iso = fromDateTimeInput(v, tz); return iso ? Date.parse(iso) : NaN; };
   const need = (v: string, what: string): number | string => {
     const t = v.length >= 16 ? toMs(v) : NaN;
-    if (!Number.isFinite(t)) return `Pick ${what}${v ? " — the time" : ""}.`;
+    if (!Number.isFinite(t)) return `Pick ${what}${v ? " - the time" : ""}.`;
     if (t > Date.now() + 60_000) return "That time is in the future.";
     return t;
   };
@@ -400,7 +400,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         const late = beforeLast(t); if (late) { setMsg(late); return; }
         // 100% is finished.
         if (p >= 100) {
-          if (Number.isFinite(as) && t < as) { setMsg(`It started ${when(as)} — it can't finish before that.`); return; }
+          if (Number.isFinite(as) && t < as) { setMsg(`It started ${when(as)} - it can't finish before that.`); return; }
           ok = await run({ status: "completed", pct: null, note: note.trim(), at: t, ...extra });
           said = `Finished ${when(t)}`;
         } else {
@@ -417,7 +417,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
           if (t > f) { setMsg("It can't finish before it started."); return; }
           s = t;
         }
-        if (Number.isFinite(as) && f < as) { setMsg(`It started ${when(as)} — it can't finish before that.`); return; }
+        if (Number.isFinite(as) && f < as) { setMsg(`It started ${when(as)} - it can't finish before that.`); return; }
         const late = beforeLast(s ?? f); if (late) { setMsg(late); return; }
         // Not started yet: its start goes in first.
         if (s != null && !(await run({ status: "in_progress", pct: null, note: "", at: s }))) { setMsg("Not saved."); return; }
@@ -531,7 +531,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       const r = await resetStepProgress(m.id);
       if (r !== "ok") { setResetMsg(r === "missing" ? "Starting over needs the database update (20261109_history_remove.sql) run first." : "Not reset."); return; }
       changed([m.id]);
-      setAction(null); setSaved("Started over — not started, nothing recorded");
+      setAction(null); setSaved("Started over - not started, nothing recorded");
     } catch (e) { setResetMsg((e as Error).message || "Not reset."); }
     finally { setBusy(false); }
   };
@@ -589,7 +589,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
             </div>
           ) : (
             <>
-              <b>{ADDED[kindOf(found)].word}</b>{Number.isFinite(found.foundAt) ? ` · ${ADDED[kindOf(found)].found} ${when(found.foundAt)}` : ""} — “{found.what}”. Not in the original schedule.
+              <b>{ADDED[kindOf(found)].word}</b>{Number.isFinite(found.foundAt) ? ` · ${ADDED[kindOf(found)].found} ${when(found.foundAt)}` : ""} - “{found.what}”. Not in the original schedule.
               {canEdit && m.projectId && <button type="button" onClick={() => { setFoundEdit({ kind: kindOf(found), what: found.what, at: toDateTimeInput(found.foundAt, tz) }); setFoundMsg(null); }} className="ml-1.5 text-[11px] font-semibold text-[var(--color-accent)] hover:underline">Edit</button>}
               {canEdit && m.projectId && <button type="button" onClick={() => void removeFound()} disabled={foundBusy} className="ml-2 text-[11px] font-semibold text-rose-700 dark:text-rose-400 hover:underline disabled:opacity-50">{foundBusy ? "Deleting…" : "Delete"}</button>}
               {foundMsg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{foundMsg}</div>}
@@ -602,8 +602,8 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       <table className="text-[12.5px]">
         <thead><tr className="text-[11px] text-[var(--color-text-muted)]"><th /><th className={`${cell} text-left font-medium`}>Start</th><th className={`${cell} text-left font-medium`}>Finish</th></tr></thead>
         <tbody>
-          <tr><td className={`${cell} text-[var(--color-text-muted)]`}>Plan</td><td className={cell}>{Number.isFinite(ps) ? when(ps) : "—"}</td><td className={cell}>{Number.isFinite(pf) ? when(pf) : "—"}</td></tr>
-          <tr className="font-semibold"><td className={`${cell} font-normal text-[var(--color-text-muted)]`}>Actual</td><td className={cell}>{Number.isFinite(as) ? when(as) : "—"}</td><td className={cell}>{Number.isFinite(af) ? when(af) : held ? (m.status === "blocked" ? "blocked" : "on hold") : started ? `${pct}%` : "—"}</td></tr>
+          <tr><td className={`${cell} text-[var(--color-text-muted)]`}>Plan</td><td className={cell}>{Number.isFinite(ps) ? when(ps) : "-"}</td><td className={cell}>{Number.isFinite(pf) ? when(pf) : "-"}</td></tr>
+          <tr className="font-semibold"><td className={`${cell} font-normal text-[var(--color-text-muted)]`}>Actual</td><td className={cell}>{Number.isFinite(as) ? when(as) : "-"}</td><td className={cell}>{Number.isFinite(af) ? when(af) : held ? (m.status === "blocked" ? "blocked" : "on hold") : started ? `${pct}%` : "-"}</td></tr>
         </tbody>
       </table>
       {tag && <span className={`inline-block rounded px-1.5 py-0.5 text-[11.5px] font-bold ${tag.tone}`}>{tag.t}</span>}
@@ -638,7 +638,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
             <div className="space-y-2.5">
               <div className="text-[11.5px] text-[var(--color-text-muted)]">Every time on this step, in the order it happened. Change any of them, then Save once.</div>
               {timed.map((e) => (
-                <DateTimePicker key={e.key} label={`${e.text}${e.said[0] ? ` — ${e.said[0].text}` : ""}`} value={fixAll[e.key] ?? ""}
+                <DateTimePicker key={e.key} label={`${e.text}${e.said[0] ? ` - ${e.said[0].text}` : ""}`} value={fixAll[e.key] ?? ""}
                   onChange={(v) => { setFixAll((x) => ({ ...x, [e.key]: v })); setMsg(null); }} tz={tz} times={times} showNow={false}
                   planned={e.fix === "start" ? ps : e.fix === "finish" ? pf : undefined} />
               ))}
@@ -692,7 +692,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                 const time = x.unsure === "unset" ? "set time" : x.unsure === "order" ? `⚠ ${when(x.at)}` : clock(x.at);
                 const timeCls = x.unsure === "unset" ? "rounded px-1 text-[11px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300"
                   : x.unsure === "order" ? "font-semibold text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]";
-                const tip = x.unsure === "unset" ? "When it happened wasn't saved — tap to set it" : x.unsure === "order" ? "This time is after what came next — check it" : undefined;
+                const tip = x.unsure === "unset" ? "When it happened wasn't saved - tap to set it" : x.unsure === "order" ? "This time is after what came next - check it" : undefined;
                 return (
                   <li key={x.key} className="text-[12px] break-words">
                     {head && <div className={`mt-1.5 text-[10.5px] font-bold uppercase tracking-wide ${sh.night ? "text-violet-700 dark:text-violet-300" : "text-sky-700 dark:text-sky-300"}`}>{sh.label}</div>}
@@ -701,7 +701,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                         ? <button type="button" onClick={() => openFix(x)} title={tip} className={`mr-1.5 whitespace-nowrap ${timeCls}`}>{time}</button>
                         : <span title={tip} className={`mr-1.5 whitespace-nowrap ${timeCls}`}>{time}</span>}
                       {x.text && <b className="text-[var(--color-text)]">{x.text}</b>}
-                      {x.said.map((c, k) => <span key={k} className="text-[var(--color-text)]">{x.text || k > 0 ? " — " : ""}{c.text}</span>)}
+                      {x.said.map((c, k) => <span key={k} className="text-[var(--color-text)]">{x.text || k > 0 ? " - " : ""}{c.text}</span>)}
                       {editable && fixing !== x.key && <button type="button" onClick={() => openFix(x)} className="ml-1.5 text-[11px] font-semibold text-[var(--color-accent)] hover:underline">Edit</button>}
                     </div>
                     {fixing === x.key && (
@@ -723,7 +723,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                               {removable(x) === "change" ? "Take back" : "Remove"}
                             </button>
                           ) : x.logId != null && (
-                            <span className="ml-auto text-[11px] text-[var(--color-text-muted)]">Only the latest entry can be taken back — or Start over.</span>
+                            <span className="ml-auto text-[11px] text-[var(--color-text-muted)]">Only the latest entry can be taken back - or Start over.</span>
                           )}
                         </div>
                       </div>

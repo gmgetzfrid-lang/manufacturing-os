@@ -47,7 +47,7 @@ export default function VerifyHoldPage() {
   useEffect(() => { void check(); }, [check]);
 
   const fmt = (iso: string | null) =>
-    iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—";
+    iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "-";
 
   return (
     <div className={`min-h-dvh flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
@@ -84,7 +84,7 @@ export default function VerifyHoldPage() {
             <p className="text-white/90 text-sm font-bold mb-6">
               {result.active
                 ? "Do not advance this document or the work it covers."
-                : "This hold has been released — this tag can come down."}
+                : "This hold has been released - this tag can come down."}
             </p>
 
             <div className="bg-white/95 rounded-2xl shadow-2xl p-5 text-left space-y-3">
@@ -98,7 +98,7 @@ export default function VerifyHoldPage() {
               )}
               <div className="pt-2 border-t border-slate-100">
                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Reason</div>
-                <div className={`text-sm font-bold ${result.active ? "text-red-600" : "text-slate-700"}`}>{result.reason ?? "—"}</div>
+                <div className={`text-sm font-bold ${result.active ? "text-red-600" : "text-slate-700"}`}>{result.reason ?? "-"}</div>
               </div>
               <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100 text-xs">
                 <div>

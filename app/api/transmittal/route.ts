@@ -67,7 +67,7 @@ export async function GET(req: NextRequest) {
     const item = items.find((i) => i.documentId === fileDoc);
     if (!item) return bad("That document is not on this transmittal.", 403);
     const file = await fileKeyForItem(item);
-    if (!file) return bad("The as-sent file for this document isn't available — contact the issuer.", 404);
+    if (!file) return bad("The as-sent file for this document isn't available - contact the issuer.", 404);
     const url = await getSignedUrl(r2, new GetObjectCommand({
       Bucket: R2_BUCKET, Key: file.key,
       ResponseContentDisposition: `attachment; filename="${file.name.replace(/[^\w.\- ]+/g, "_")}"`,

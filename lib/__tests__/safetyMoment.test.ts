@@ -79,7 +79,7 @@ describe("equipmentTag / hazardContext", () => {
   });
 });
 describe("veteran checks", () => {
-  it("every kind has four short checks — two show per shift, in turn", () => {
+  it("every kind has four short checks - two show per shift, in turn", () => {
     for (const def of Object.values(HAZARD_KINDS)) {
       expect(def.checks.length).toBe(4);
       for (const c of def.checks) { const t = typeof c === "string" ? c : c.t; expect(t.split(/\s+/).length, t).toBeLessThanOrEqual(20); }
@@ -89,7 +89,7 @@ describe("veteran checks", () => {
     expect(a).toHaveLength(2);
     expect(a).not.toEqual(b);
   });
-  it("no rookie basics — the checks aren't the permit-and-PPE list", () => {
+  it("no rookie basics - the checks aren't the permit-and-PPE list", () => {
     for (const def of Object.values(HAZARD_KINDS)) for (const c of def.checks) { const t = typeof c === "string" ? c : c.t; expect(t, t).not.toMatch(/^(wear|ppe|permit (signed|posted)|toolbox talk)/i); }
   });
   it("a check about a particular thing shows only when a step is about it", () => {
@@ -103,7 +103,7 @@ describe("veteran checks", () => {
 
 describe("the lesson library", () => {
   const words = (t: string) => t.trim().split(/\s+/).length;
-  it("every lesson is a short takeaway with a real source — never the story", () => {
+  it("every lesson is a short takeaway with a real source - never the story", () => {
     expect(SAFETY_LESSONS.length).toBeGreaterThan(0);
     for (const l of SAFETY_LESSONS) {
       expect(HAZARD_KINDS[l.kind], l.watch).toBeTruthy();

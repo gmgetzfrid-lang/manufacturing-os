@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import { setRecords, codeFromName, sectionRecords } from "@/lib/catalogBooks";
 import { catalogsNamedIn } from "@/lib/specSelect";
 
-describe("a library marked as a catalog — one entry per document", () => {
+describe("a library marked as a catalog - one entry per document", () => {
   const sheet = (tag: string, body: string, size: string) =>
     `Valve Data Sheet Rev: 2 Date: 2024-01-01 Tag: ${tag} Body Material: ${body} Size: ${size} Service: Cooling water Approved By: J. Smith`;
   const docs = [
@@ -36,7 +36,7 @@ describe("a library marked as a catalog — one entry per document", () => {
   });
 });
 
-describe("a document marked as a catalog — one entry per section", () => {
+describe("a document marked as a catalog - one entry per section", () => {
   it("keeps the catalog's name on every entry", () => {
     const byPage = new Map([[1, ["Coating System CS-1 Use: Buried steel Primer: Epoxy"]], [2, ["more"]], [3, ["Coating System CS-2 Use: Atmospheric Primer: Zinc"]]]);
     const recs = sectionRecords([{ key: "CS-1", first: 1, last: 2 }, { key: "CS-2", first: 3, last: 3 }], byPage, "Coating systems");

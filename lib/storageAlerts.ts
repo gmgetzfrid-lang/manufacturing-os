@@ -59,7 +59,7 @@ export async function runStorageAlerts(sb: SupabaseClient): Promise<{ alerts: nu
       if ((count ?? 0) > 0) continue;
       await sb.from("notifications").insert({
         org_id: s.org_id, user_id: a.uid, kind: "storage_alert",
-        title: band === "crit" ? `Storage critical — ${pct}% full` : `Storage high — ${pct}% full`,
+        title: band === "crit" ? `Storage critical - ${pct}% full` : `Storage high - ${pct}% full`,
         body: `This workspace is at ${pct}% of its storage limit. Take a full backup and free up space (archive superseded revisions, purge disposable rows).`,
         link: "/admin/storage",
       });

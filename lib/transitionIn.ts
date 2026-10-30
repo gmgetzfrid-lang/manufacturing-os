@@ -288,14 +288,14 @@ export async function flagCollisionToDrafting(
   } catch { /* optional */ }
 
   const lines: string[] = [
-    `Intake sheet "${candidate.label}" (Rev ${candidate.rev ?? "—"}${candidate.company ? `, submitted by ${candidate.company}` : ""}) conflicts with the existing register:`,
+    `Intake sheet "${candidate.label}" (Rev ${candidate.rev ?? "-"}${candidate.company ? `, submitted by ${candidate.company}` : ""}) conflicts with the existing register:`,
     "",
   ];
   if (impact.numberCollision) {
-    lines.push(`• NUMBER COLLISION — ${impact.numberCollision.label} (Rev ${impact.numberCollision.rev ?? "—"}) already carries this number. Decide the single source of truth (adopt-and-supersede, renumber, or reject the intake sheet).`);
+    lines.push(`• NUMBER COLLISION - ${impact.numberCollision.label} (Rev ${impact.numberCollision.rev ?? "-"}) already carries this number. Decide the single source of truth (adopt-and-supersede, renumber, or reject the intake sheet).`);
   }
   for (const o of impact.overlapDocs) {
-    lines.push(`• OVERLAP — ${o.label} (Rev ${o.rev ?? "—"}) shares equipment ${o.sharedTags.join(", ")}; it likely needs a tie-in revision.`);
+    lines.push(`• OVERLAP - ${o.label} (Rev ${o.rev ?? "-"}) shares equipment ${o.sharedTags.join(", ")}; it likely needs a tie-in revision.`);
   }
   lines.push("", "Resolution paths: draft the tie-in on our border, or request redline markups from the submitting company through their intake portal (attachments land on this ticket).");
 
@@ -342,8 +342,8 @@ export async function flagCollisionToDrafting(
           kind: "request_pending_approval",
           title: `Intake collision flagged: ${candidate.label}`,
           body: impact.numberCollision
-            ? "A submitted sheet collides with an existing document number — needs a drafter and a source-of-truth decision."
-            : "A submitted sheet overlaps existing drawings — tie-in revision work to assign.",
+            ? "A submitted sheet collides with an existing document number - needs a drafter and a source-of-truth decision."
+            : "A submitted sheet overlaps existing drawings - tie-in revision work to assign.",
           link: `/requests/${row.id}`,
           resource: { type: "ticket", id: String(row.id) },
           actorUserId: input.actorId,

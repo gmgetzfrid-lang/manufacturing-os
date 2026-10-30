@@ -208,7 +208,7 @@ const OPTIONAL_BUILTIN_COLUMNS = [
 ];
 
 function formatBytesShort(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "—";
+  if (!Number.isFinite(bytes) || bytes <= 0) return "-";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -372,7 +372,7 @@ export default function LibraryExplorerPage() {
     try {
       const isFolder = !documents.some((d) => d.id === sug.targetId) && !!folderMapRef.current?.get(sug.targetId);
       await declareEdge({ orgId: activeOrgId, a: isFolder ? nid.folder(sug.targetId) : nid.doc(sug.targetId), b: nid.folder(sug.home.id), type: "filed_under",
-        summary: `Also filed under ${[sug.home.libraryName, ...sug.home.chain].join(" / ")} — ${sug.reason}`, evidence: { unit: sug.unitCode, docType: sug.docType }, actor: { userId: uid, name: userEmail } });
+        summary: `Also filed under ${[sug.home.libraryName, ...sug.home.chain].join(" / ")} - ${sug.reason}`, evidence: { unit: sug.unitCode, docType: sug.docType }, actor: { userId: uid, name: userEmail } });
       setWatchdog((prev) => prev.filter((p) => p.targetId !== sug.targetId));
     } catch (e) { setError((e as Error).message); }
     finally { setWatchdogBusy(null); }
@@ -477,7 +477,7 @@ export default function LibraryExplorerPage() {
     } catch (e) {
       console.error("Failed to save uniqueness keys", e);
       const f = translatePostgresError(e, { entity: "library" });
-      setError(`${f.heading} — ${f.message}`);
+      setError(`${f.heading} - ${f.message}`);
     }
   };
 
@@ -503,7 +503,7 @@ export default function LibraryExplorerPage() {
     } catch (e) {
       console.error("Failed to add Sheet column + uniqueness", e);
       const f = translatePostgresError(e, { entity: "library" });
-      setError(`${f.heading} — ${f.message}`);
+      setError(`${f.heading} - ${f.message}`);
     }
   };
 
@@ -1125,7 +1125,7 @@ export default function LibraryExplorerPage() {
       dropFromView(gone);
       setSelectedDocIds(new Set(r.held.map((h) => h.id)));
       if (selectedDoc?.id && gone.has(selectedDoc.id)) setSelectedDoc(null);
-      if (r.held.length) setError(`${r.deleted.length} deleted. ${r.held.length} kept — under a legal hold (e.g. ${r.held[0].label}).`);
+      if (r.held.length) setError(`${r.deleted.length} deleted. ${r.held.length} kept - under a legal hold (e.g. ${r.held[0].label}).`);
       nudgeKnowledgeSources(activeOrgId, libraryId);
     } catch (e) {
       // Loud: a banner at the top of a long list is easy to miss, and a
@@ -2930,12 +2930,12 @@ export default function LibraryExplorerPage() {
         uploadFolderPlanRef.current = null;
         setFolderStaged(false);
         landedFilesRef.current = new WeakSet();
-        setNotice(`Upload complete — ${landed.toLocaleString()} file${landed === 1 ? "" : "s"} uploaded${alreadyHere.length ? `, ${alreadyHere.length.toLocaleString()} already there` : ""}, all now in ${currentFolder ? `"${currentFolder.name}"` : library.name}.${notes.length ? " " + notes.join(" ") : ""}`);
+        setNotice(`Upload complete - ${landed.toLocaleString()} file${landed === 1 ? "" : "s"} uploaded${alreadyHere.length ? `, ${alreadyHere.length.toLocaleString()} already there` : ""}, all now in ${currentFolder ? `"${currentFolder.name}"` : library.name}.${notes.length ? " " + notes.join(" ") : ""}`);
       }
     } catch (e) {
       console.error(e);
       const f = translatePostgresError(e, { entity: "document", field: "document_number" });
-      setError(`${f.heading} — ${f.message}`);
+      setError(`${f.heading} - ${f.message}`);
       throw e;
     } finally {
       endUpload();
@@ -3160,7 +3160,7 @@ export default function LibraryExplorerPage() {
       const ext = docFileExt(docRecord);
       if (ext) return `.${ext}`;
       const mime = (docRecord.metadata ?? {})["mime_type"];
-      return typeof mime === "string" && mime ? mime : "—";
+      return typeof mime === "string" && mime ? mime : "-";
     }
 
     const def = columnMap.get(key);
@@ -3172,7 +3172,7 @@ export default function LibraryExplorerPage() {
       return <ReviewPill nextReviewDate={docRecord.nextReviewDate} compact />;
     }
     if (def.type === "owner") {
-      return docRecord.ownerName || <span className="text-[var(--color-text-faint)]">—</span>;
+      return docRecord.ownerName || <span className="text-[var(--color-text-faint)]">-</span>;
     }
     if (def.type === "ack") {
       return <AckPill summary={docRecord.id ? ackSummaries.get(docRecord.id) : undefined} compact />;
@@ -4038,7 +4038,7 @@ export default function LibraryExplorerPage() {
                   </div>
                   <p className="text-lg font-bold text-blue-700">Drop files or folders to upload</p>
                   <p className="text-sm text-blue-500 mt-1">
-                    Release to add to {currentFolder ? `"${currentFolder.name}"` : "this library"} — a dropped folder keeps its subfolder structure
+                    Release to add to {currentFolder ? `"${currentFolder.name}"` : "this library"} - a dropped folder keeps its subfolder structure
                   </p>
                 </div>
               )}
@@ -4095,7 +4095,7 @@ export default function LibraryExplorerPage() {
                 )}
                 {docFetchHitCap && !loadingDocs && docStreamProgress === null && (
                   <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-[11px] text-amber-900">
-                    Showing the first <b>10,000</b> documents (newest first) — this folder holds more. Use the filter box or subfolders to narrow it.
+                    Showing the first <b>10,000</b> documents (newest first) - this folder holds more. Use the filter box or subfolders to narrow it.
                   </div>
                 )}
                 <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3 bg-[var(--color-surface)]">
@@ -4123,7 +4123,7 @@ export default function LibraryExplorerPage() {
                     <input
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
-                      placeholder="Filter this folder — number, title, sheet #, any field…"
+                      placeholder="Filter this folder - number, title, sheet #, any field…"
                       className="w-full pl-8 pr-7 py-1.5 text-base sm:text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40 focus:border-[var(--color-accent)] transition-shadow"
                     />
                     {search && (
@@ -4208,7 +4208,7 @@ export default function LibraryExplorerPage() {
                               <Pin className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                               <span className="flex-1">
                                 Set as <b>my</b> default here
-                                <span className="block text-[10px] font-normal text-[var(--color-text-muted)]">Only you — wins over the org default</span>
+                                <span className="block text-[10px] font-normal text-[var(--color-text-muted)]">Only you - wins over the org default</span>
                               </span>
                               {viewDefaults.hasUserRow && <Check className="w-3.5 h-3.5 text-emerald-600" />}
                             </button>
@@ -4244,7 +4244,7 @@ export default function LibraryExplorerPage() {
                     {isController && (
                       <button
                         onClick={() => setShowEquipmentSweep(true)}
-                        title="Equipment sweep — pull AI-extracted equipment tags from indexed drawings into your equipment column and the registry"
+                        title="Equipment sweep - pull AI-extracted equipment tags from indexed drawings into your equipment column and the registry"
                         className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-orange-200 bg-orange-50/60 text-orange-700 hover:bg-orange-100 hover:border-orange-300 transition-all"
                       >
                         <ScanSearch className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Equipment</span>
@@ -4253,7 +4253,7 @@ export default function LibraryExplorerPage() {
                     {isController && (
                       <button
                         onClick={() => setShowColumnManager(true)}
-                        title="Configure columns — hide, rename, or reorder"
+                        title="Configure columns - hide, rename, or reorder"
                         className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] transition-all"
                       >
                         <Columns className="w-3.5 h-3.5" /> Columns
@@ -4311,7 +4311,7 @@ export default function LibraryExplorerPage() {
                         <DocThumb documentId={doc.id} width={40} className="mt-0.5" />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="font-mono text-xs font-bold text-[var(--color-text)] truncate flex-1">{doc.documentNumber || doc.title || doc.name || "—"}</span>
+                            <span className="font-mono text-xs font-bold text-[var(--color-text)] truncate flex-1">{doc.documentNumber || doc.title || doc.name || "-"}</span>
                             {doc.rev && <span className="text-[10px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">Rev {doc.rev}</span>}
                           </div>
                           {doc.title && doc.documentNumber && <div className="text-xs text-[var(--color-text-muted)] truncate mt-0.5">{doc.title}</div>}
@@ -4554,7 +4554,7 @@ export default function LibraryExplorerPage() {
 
                                   // Status pill rendering
                                   if (colKey === "status") {
-                                    const s = docRecord.status || "—";
+                                    const s = docRecord.status || "-";
                                     const tone =
                                       s === "Issued" ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                                       : s === "Draft" ? "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"
@@ -4817,7 +4817,7 @@ export default function LibraryExplorerPage() {
           <button
             onClick={() => setShowBulkCheckout(true)}
             className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold bg-indigo-500 hover:bg-indigo-600 rounded-lg transition-all active:scale-95"
-            title="Bulk-check-out selected docs — ad-hoc or to a project"
+            title="Bulk-check-out selected docs - ad-hoc or to a project"
           >
             <Briefcase className="w-3 h-3" /> Bulk Checkout
           </button>
@@ -5226,7 +5226,7 @@ export default function LibraryExplorerPage() {
           visibility={library.visibility as NodeVisibility}
           aclChain={[library.acl].filter(Boolean) as AccessControl[]}
           canEdit={isController}
-          title={`${library.name} — library access`}
+          title={`${library.name} - library access`}
         />
       )}
 
@@ -5299,7 +5299,7 @@ export default function LibraryExplorerPage() {
               <div>
                 <div className="text-sm font-bold text-[var(--color-text)]">Recently deleted folders</div>
                 <div className="text-xs text-[var(--color-text-muted)]">
-                  Held for 30 days, then removed for good. Restoring brings the folder back empty at its old spot — its former contents moved up a level when it was deleted.
+                  Held for 30 days, then removed for good. Restoring brings the folder back empty at its old spot - its former contents moved up a level when it was deleted.
                 </div>
               </div>
               <button onClick={() => setTrashFolders(null)} className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface)]">
@@ -5476,11 +5476,11 @@ function ReadingHint({ startedAt }: { startedAt: number }) {
   const secs = Math.max(0, Math.round((now - startedAt) / 1000));
   return (
     <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
-      <div>{secs}s — the upload window opens as soon as every file is found.</div>
+      <div>{secs}s - the upload window opens as soon as every file is found.</div>
       {secs >= 15 && (
         <div className="mt-2 text-left rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-2.5 py-2 text-amber-900 dark:text-amber-200">
           Taking a while? If this folder is in OneDrive or SharePoint, files that are &quot;online-only&quot; have to download to
-          your computer first. Right-click the folder → <b>Always keep on this device</b>, wait for it to sync, then drop it again —
+          your computer first. Right-click the folder → <b>Always keep on this device</b>, wait for it to sync, then drop it again -
           or use <b>Upload → A whole folder…</b>.
         </div>
       )}

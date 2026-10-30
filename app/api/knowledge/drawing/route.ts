@@ -115,7 +115,7 @@ export async function GET(req: NextRequest) {
 
   const { docs, entities, error } = await loadVisibleEntities(orgId, user.id, libraryId);
   if (error === "migration-missing") {
-    return bad("Drawing intelligence needs migration 20260921 — run it in Supabase, then Rebuild index.", 424);
+    return bad("Drawing intelligence needs migration 20260921 - run it in Supabase, then Rebuild index.", 424);
   }
   if (error) return bad(error, 500);
 
@@ -192,7 +192,7 @@ export async function GET(req: NextRequest) {
 
   if (textlessCount > 0) {
     suggestions.push(
-      `${textlessCount} of ${readyDocs} document(s) have no machine-readable text — typical of scans ` +
+      `${textlessCount} of ${readyDocs} document(s) have no machine-readable text - typical of scans ` +
       "and of AutoCAD exports that use SHX fonts (text plots as line-work). Hit \"Rebuild index\" with " +
       "your AI key saved: pages without text are READ BY AI VISION during indexing, which makes their " +
       "tags, connectors, and notes fully searchable. (Vision indexing bills to your key and counts " +
@@ -201,15 +201,15 @@ export async function GET(req: NextRequest) {
   }
   if (readyDocs > 0 && entities.length === 0 && textlessCount < readyDocs) {
     suggestions.push(
-      "These documents have text but no drawing tags were extracted — normal for prose documents. " +
+      "These documents have text but no drawing tags were extracted - normal for prose documents. " +
       "If these ARE drawings and were indexed before drawing intelligence existed, hit " +
-      "\"Rebuild index\" — it re-reads every page.",
+      "\"Rebuild index\" - it re-reads every page.",
     );
   }
   const declaredCount = docs.filter((d) => selfByDoc.has(d.id)).length;
   if (readyDocs > 0 && declaredCount === 0 && entities.length > 0) {
     suggestions.push(
-      "No sheet declared its own drawing number — I couldn't read a \"DRAWING NO\" field from any " +
+      "No sheet declared its own drawing number - I couldn't read a \"DRAWING NO\" field from any " +
       "title block, so the reference audit is falling back to filenames. If these sheets were " +
       "indexed before title-block reading existed, hit \"Rebuild index\"; if their borders use " +
       "line-work text, turn on \"Index every page with AI vision\" first.",
@@ -225,7 +225,7 @@ export async function GET(req: NextRequest) {
   if (audit.missingInSeries.length > 0) {
     suggestions.push(
       `${audit.missingInSeries.length} sheet(s) from a series you DID load are referenced but absent ` +
-      `(${audit.missingInSeries.slice(0, 6).map((m) => m.ref).join(", ")}). Those are gaps in the set — ` +
+      `(${audit.missingInSeries.slice(0, 6).map((m) => m.ref).join(", ")}). Those are gaps in the set - ` +
       "link the folders that hold them and cross-sheet questions stop dead-ending.",
     );
   }
@@ -233,8 +233,8 @@ export async function GET(req: NextRequest) {
     const total = audit.outOfScope.reduce((a, o) => a + o.count, 0);
     suggestions.push(
       `${total} connector(s) point to other drawing series (${audit.outOfScope.slice(0, 6)
-        .map((o) => `${o.series}${o.unitName ? ` — ${o.unitName}` : ""} ×${o.count}`).join(", ")}). ` +
-      "That's normal — this set ends at its battery limits and those units weren't loaded. Nothing " +
+        .map((o) => `${o.series}${o.unitName ? ` - ${o.unitName}` : ""} ×${o.count}`).join(", ")}). ` +
+      "That's normal - this set ends at its battery limits and those units weren't loaded. Nothing " +
       "is broken. To audit those connectors too, add the sheets in those series (highest count = " +
       "biggest payoff); I'll then audit whatever the widened set covers and tell you what the NEXT " +
       "ring of connectors needs.",
@@ -249,19 +249,19 @@ export async function GET(req: NextRequest) {
   }
   if (opcUnreturned.length > 0) {
     suggestions.push(
-      `${opcUnreturned.length} connector box number(s) don't reappear on their continuation sheet — ` +
+      `${opcUnreturned.length} connector box number(s) don't reappear on their continuation sheet - ` +
       "the box number is how a connector pairs, so these are worth a manual look (listed below).",
     );
   }
   if (opcNoRef.length > 0) {
     suggestions.push(
-      `${opcNoRef.length} off-page connector(s) carry NO drawing number at all — broken by ` +
+      `${opcNoRef.length} off-page connector(s) carry NO drawing number at all - broken by ` +
       "definition: nothing tells the reader where to continue. Listed below with sheet and page.",
     );
   }
   if (audit.oneWay.length > 0) {
     suggestions.push(
-      `${audit.oneWay.length} connector(s) run one way between sheets that are BOTH loaded — ` +
+      `${audit.oneWay.length} connector(s) run one way between sheets that are BOTH loaded - ` +
       "sheet A points at sheet B and B never points back. Some continuation notes are legitimately " +
       "one-way, but this is where real drafting misses hide.",
     );
@@ -389,7 +389,7 @@ export async function POST(req: NextRequest) {
 async function recordAudit(orgId: string, libraryId: string, userId: string) {
   const { docs, entities, error } = await loadVisibleEntities(orgId, userId, libraryId);
   if (error === "migration-missing") {
-    return bad("Drawing intelligence needs migration 20260921 — run it, then rebuild the index.", 424);
+    return bad("Drawing intelligence needs migration 20260921 - run it, then rebuild the index.", 424);
   }
   if (error) return bad(error, 500);
   if (docs.length === 0) return NextResponse.json({ recorded: 0, sheets: [] });
@@ -461,7 +461,7 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
     const missing = writeError.code === "42P01" || /does not exist/i.test(writeError.message);
     return bad(
       missing
-        ? "Audit memory needs migration 20260929 — run it in Supabase, then record the audit again."
+        ? "Audit memory needs migration 20260929 - run it in Supabase, then record the audit again."
         : writeError.message,
       missing ? 424 : 500,
     );

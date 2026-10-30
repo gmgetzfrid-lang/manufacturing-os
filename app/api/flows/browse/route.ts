@@ -31,7 +31,7 @@ const MAX_DOCS = 5000;
 const displayName = (d: { name: string | null; title: string | null; document_number: string | null }): string => {
   const number = (d.document_number ?? "").trim();
   const title = (d.title ?? d.name ?? "").trim();
-  if (number && title && number !== title) return `${number} — ${title}`;
+  if (number && title && number !== title) return `${number} - ${title}`;
   return title || number || "Document";
 };
 

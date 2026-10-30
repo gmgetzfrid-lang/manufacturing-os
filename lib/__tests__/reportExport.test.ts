@@ -17,11 +17,11 @@ const doc: ExportDoc = {
 describe("a report copied for an update", () => {
   it("plain text keeps the order, groups and tags", () => {
     const t = toPlainText(doc);
-    expect(t.split("\n")[0]).toBe("SHIFT TURNOVER — Unit 6 Turnaround");
-    expect(t).toContain("Status: BEHIND — 42% vs 48% plan");
+    expect(t.split("\n")[0]).toBe("SHIFT TURNOVER - Unit 6 Turnaround");
+    expect(t).toContain("Status: BEHIND - 42% vs 48% plan");
     expect(t).toContain("\nNEEDS A DECISION");
     expect(t).not.toMatch(/^\d+\. /m); // no section numbers
-    expect(t).toMatch(/E-606 Reboiler \(3\/5 steps · 60%\)\n\s+• Pull blinds \[on hold\] — 90% — due Oct 23 7:00 — who: Acme <Mech> — WO 123456\n\s+Reason: waiting on Ops/);
+    expect(t).toMatch(/E-606 Reboiler \(3\/5 steps · 60%\)\n\s+• Pull blinds \[on hold\] - 90% - due Oct 23 7:00 - who: Acme <Mech> - WO 123456\n\s+Reason: waiting on Ops/);
     expect(t).toContain("✓ E-607 › Pull blinds (on time)");
   });
 

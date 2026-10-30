@@ -66,7 +66,7 @@ describe("applyBudgetToProject", () => {
     expect(db.updates.find((u) => u.table === "projects")?.patch).toMatchObject({ afe_number: "25008", authorized_amount: 192000 });
   });
 
-  it("still builds the model when the document itself can't be attached — and says so", async () => {
+  it("still builds the model when the document itself can't be attached - and says so", async () => {
     db.rejectKindBudget = true;
     const res = await applyBudgetToProject({ orgId: "o", projectId: "p", parsed, source, actor });
     expect(res.ok).toBe(true);

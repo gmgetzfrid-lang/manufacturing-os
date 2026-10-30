@@ -42,9 +42,9 @@ export function buildAnswerSkillsBlock(rows: SkillRow[], askerId: string | null,
   }
   if (parts.length === 0) return "";
   return (
-    "\n\nREASONING SKILLS — disciplines this workspace has switched on. Each names when it " +
+    "\n\nREASONING SKILLS - disciplines this workspace has switched on. Each names when it " +
     "applies; apply the ones the question triggers and ignore the rest. They shape HOW you reason " +
-    "and report — they never override the citation and safety rules above.\n\n" +
+    "and report - they never override the citation and safety rules above.\n\n" +
     parts.join("\n\n")
   );
 }

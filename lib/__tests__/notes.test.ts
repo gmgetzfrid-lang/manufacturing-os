@@ -118,7 +118,7 @@ import {
 // 2026-06-12 is a Friday.
 const FRI = new Date("2026-06-12T08:00:00");
 
-describe("extractTasks — completion markers & recurrence", () => {
+describe("extractTasks - completion markers & recurrence", () => {
   it("parses a ✓date completion marker with outcome", () => {
     const [t] = extractTasks(stubNote("- [x] call Joe ✓2026-06-10: spec confirmed 85 ft-lb"));
     expect(t.completed).toBe(true);
@@ -330,7 +330,7 @@ const RPT_NOTES = [
     body: "- [ ] zombie task in a closed note" },
 ];
 
-describe("getFlightLog — tookDays", () => {
+describe("getFlightLog - tookDays", () => {
   it("computes how long each achievement took from note creation", () => {
     const log = flightLog2(RPT_NOTES);
     const joe = log.find((e) => e.text.startsWith("Call Joe"))!;
@@ -405,7 +405,7 @@ describe("reportToMarkdown", () => {
 
 import { splitConjoinedTasks, splitCaptureSentence } from "@/lib/notes";
 
-describe("splitConjoinedTasks — people lists", () => {
+describe("splitConjoinedTasks - people lists", () => {
   it("splits a name list into one task per person, sharing trailing context", () => {
     expect(splitConjoinedTasks("follow up with Steve and Dave and Hector on the gaskets")).toEqual([
       "Follow up with Steve on the gaskets",
@@ -437,7 +437,7 @@ describe("splitConjoinedTasks — people lists", () => {
   });
 });
 
-describe("splitConjoinedTasks — coordinated actions", () => {
+describe("splitConjoinedTasks - coordinated actions", () => {
   it("splits two different actions joined by 'and'", () => {
     expect(splitConjoinedTasks("order 2 spare gaskets and check P-101A vibration")).toEqual([
       "Order 2 spare gaskets",
@@ -455,7 +455,7 @@ describe("splitConjoinedTasks — coordinated actions", () => {
   });
 });
 
-describe("splitCaptureSentence — findings vs tasks", () => {
+describe("splitCaptureSentence - findings vs tasks", () => {
   it("keeps a leading observation as a finding, not a task", () => {
     const r = splitCaptureSentence("E-204 flange is weeping, need to call Joe about the gasket spec");
     expect(r.findings).toEqual(["E-204 flange is weeping"]);
@@ -469,7 +469,7 @@ describe("splitCaptureSentence — findings vs tasks", () => {
   });
 });
 
-describe("organizeCapture — end to end", () => {
+describe("organizeCapture - end to end", () => {
   it("turns a messy multi-person capture into atomic, checkable tasks", () => {
     const org = organizeCapture(
       "walked unit 3. e-204 flange weeping. follow up with steve and dave and hector on the gasket order. also order new stud bolts and check p-101a vibration"
@@ -500,13 +500,13 @@ describe("deriveCaptureTitle", () => {
       ["Walked the overheads this morning"],
       ["Call Joe re: E-204 gasket spec", "Order E-204 spares"],
     );
-    expect(t.startsWith("E-204 — ")).toBe(true);
+    expect(t.startsWith("E-204 - ")).toBe(true);
     expect(t).toContain("(2 tasks)");
   });
 
   it("does not repeat a subject the gist already contains", () => {
     const t = deriveCaptureTitle(["E-204 flange weeping"], ["Call Joe about e-204"]);
-    expect(t.startsWith("E-204 — E-204")).toBe(false);
+    expect(t.startsWith("E-204 - E-204")).toBe(false);
   });
 
   it("falls back to the first task when there are no findings", () => {
@@ -535,7 +535,7 @@ const RB_NOTES = [
     body: "- [ ] chase the vendor\n- [ ] very old thing @2026-06-01" },
 ];
 
-describe("buildReport — roadblocks", () => {
+describe("buildReport - roadblocks", () => {
   const r = buildReport(RB_NOTES, { period: "week", now: RPT_NOW });
 
   it("flags blocker-worded tasks and prose", () => {
@@ -555,7 +555,7 @@ describe("buildReport — roadblocks", () => {
   });
 });
 
-describe("buildReport — daily activity", () => {
+describe("buildReport - daily activity", () => {
   it("groups notes written in the window by day, with title + findings", () => {
     const r = buildReport(RB_NOTES, { period: "week", now: RPT_NOW });
     expect(r.activity).toHaveLength(1); // r2 (Jun 1) is outside the 7d window
@@ -600,7 +600,7 @@ describe("suggestReportPeriod", () => {
   });
 });
 
-describe("reportToMarkdown — new sections", () => {
+describe("reportToMarkdown - new sections", () => {
   it("includes Roadblocks and Daily activity", () => {
     const md = reportToMarkdown(buildReport(RB_NOTES, { period: "week", now: RPT_NOW }));
     expect(md).toContain("## Roadblocks");

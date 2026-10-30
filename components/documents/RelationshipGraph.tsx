@@ -113,7 +113,7 @@ export default function RelationshipGraph({
             <div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-faint)]" /></div>
           ) : nodes.length === 0 ? (
             <div className="text-center text-sm text-[var(--color-text-muted)] py-16">
-              No related documents found — this drawing stands alone (no supersession lineage or shared scope).
+              No related documents found - this drawing stands alone (no supersession lineage or shared scope).
             </div>
           ) : (
             <>

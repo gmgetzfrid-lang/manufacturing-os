@@ -108,7 +108,7 @@ export async function drainEmbedBacklog(opts: {
       });
       if (!connection) {
         await setEmbedBuildMarker(lib.id, null);
-        drained.push({ libraryId: lib.id, embedded: 0, remaining: remainingBefore ?? -1, note: "no embedding key — stamp cleared" });
+        drained.push({ libraryId: lib.id, embedded: 0, remaining: remainingBefore ?? -1, note: "no embedding key - stamp cleared" });
         continue;
       }
 

@@ -53,7 +53,7 @@ const mk = (userId: string, kind: "view" | "reference" | "edit", opts?: {
   source: (opts?.source ?? "checkout") as "viewer" | "checkout" | "ticket" | "download",
 });
 
-describe("findEditOverlaps — the false-positive firewall", () => {
+describe("findEditOverlaps - the false-positive firewall", () => {
   it("two live edits from different users overlap", () => {
     const out = findEditOverlaps([mk("dave", "edit"), mk("sarah", "edit")], NOW, "dave");
     expect(out).toHaveLength(1);

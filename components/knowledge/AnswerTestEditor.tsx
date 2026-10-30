@@ -80,7 +80,7 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
       } : {}),
     };
     if (!expect.mustCite && !expect.mustContain && !expect.mustNot && !expect.termRules) {
-      setError("Mark at least one thing a right answer must do — a page, a fact, or something it must not say.");
+      setError("Mark at least one thing a right answer must do - a page, a fact, or something it must not say.");
       return;
     }
     setSaving(true); setError(null);
@@ -171,7 +171,7 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
 
       <label className="flex items-center gap-2 text-[11px] text-[var(--color-text)]">
         <input type="checkbox" checked={critical} onChange={(e) => setCritical(e.target.checked)} />
-        Critical — a version that fails this is flagged as a regression
+        Critical - a version that fails this is flagged as a regression
       </label>
 
       {error && <div className="text-[11px] font-bold text-rose-600">{error}</div>}

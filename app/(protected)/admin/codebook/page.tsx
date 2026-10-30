@@ -70,7 +70,7 @@ export default function CodebookPage() {
       <PageHeaderBar
         icon={BookMarked}
         title="Site Codebook"
-        subtitle="Your site's numbering language — units, equipment codes, drawing conventions — taught once, used by every feature. Everything is optional; empty means no opinion."
+        subtitle="Your site's numbering language - units, equipment codes, drawing conventions - taught once, used by every feature. Everything is optional; empty means no opinion."
         actions={canWrite ? (
           <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
             <Sparkles className="w-3.5 h-3.5" /> Build from a document
@@ -80,7 +80,7 @@ export default function CodebookPage() {
 
       {!canWrite && (
         <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-          Read-only — only Admins and Document Controllers edit the codebook.
+          Read-only - only Admins and Document Controllers edit the codebook.
         </div>
       )}
 
@@ -88,19 +88,19 @@ export default function CodebookPage() {
           This page is step 1-4; step 5 happens on the P&ID library. */}
       {canWrite && (
         <div className="mb-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-          <div className="text-xs font-black text-[var(--color-text)] mb-2">Setup path — do these once, in order</div>
+          <div className="text-xs font-black text-[var(--color-text)] mb-2">Setup path - do these once, in order</div>
           <ol className="space-y-1.5 text-xs">
             <SetupStep done={book.units.length > 0} n={1}
-              label={<>Add your <b>units</b> (20 = Crude, 25 = DHT…) — type them in the Units tab, or hit “Build from a document” and let AI read your standard.</>}
+              label={<>Add your <b>units</b> (20 = Crude, 25 = DHT…) - type them in the Units tab, or hit “Build from a document” and let AI read your standard.</>}
               onGo={() => setTab("units")} goLabel="Units tab" />
             <SetupStep done={book.equipmentTypes.length > 0} n={2}
-              label={<>Add <b>equipment type codes</b> with their tag prefixes (30 = Exchangers, prefix E — that&apos;s how E-22 becomes 2030.22).</>}
+              label={<>Add <b>equipment type codes</b> with their tag prefixes (30 = Exchangers, prefix E - that&apos;s how E-22 becomes 2030.22).</>}
               onGo={() => setTab("equipment")} goLabel="Equipment tab" />
             <SetupStep done={!!book.drawingNumber} n={3}
               label={<>Describe your <b>drawing numbers</b> as segments and check the live preview with a real number like 2002-D-10001 SHT.4.</>}
               onGo={() => setTab("numbering")} goLabel="Numbering tab" />
             <SetupStep done={book.legendDocIds.length > 0} n={4} optional
-              label={<>Attach your P&amp;ID <b>legend</b> sheets (optional but recommended — the AI reads them on every question).</>}
+              label={<>Attach your P&amp;ID <b>legend</b> sheets (optional but recommended - the AI reads them on every question).</>}
               onGo={() => setTab("legend")} goLabel="Legend tab" />
             <li className="flex items-start gap-2 text-[var(--color-text-muted)]">
               <span className="shrink-0 w-4 h-4 rounded-full border border-[var(--color-border-strong)] text-[9px] font-black flex items-center justify-center mt-0.5">5</span>
@@ -131,17 +131,17 @@ export default function CodebookPage() {
 
       {tab === "units" && (
         <EntryTable kind="unit" title="Operating areas / units" entries={book.units} canWrite={canWrite}
-          codeHint='Unit number — "20"' labelHint='Name — "Crude Unit"'
+          codeHint='Unit number - "20"' labelHint='Name - "Crude Unit"'
           orgId={activeOrgId!} uid={uid!} onChanged={refresh} onError={setError} />
       )}
       {tab === "equipment" && (
         <EntryTable kind="equipment_type" title="Equipment type codes" entries={book.equipmentTypes} canWrite={canWrite}
-          codeHint='Type code — "30"' labelHint='Label — "Exchangers"' withPrefixes
+          codeHint='Type code - "30"' labelHint='Label - "Exchangers"' withPrefixes
           orgId={activeOrgId!} uid={uid!} onChanged={refresh} onError={setError} />
       )}
       {tab === "drawings" && (
         <EntryTable kind="drawing_type" title="Drawing / document type codes" entries={book.drawingTypes} canWrite={canWrite}
-          codeHint='Type code — "02"' labelHint='Label — "P&ID"'
+          codeHint='Type code - "02"' labelHint='Label - "P&ID"'
           orgId={activeOrgId!} uid={uid!} onChanged={refresh} onError={setError} />
       )}
       {tab === "numbering" && (
@@ -207,7 +207,7 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
 
   const remove = async (e: CodebookEntry) => {
     const ok = await appConfirm({
-      title: `Remove ${e.code} — ${e.label}?`,
+      title: `Remove ${e.code} - ${e.label}?`,
       message: "Features stop recognizing this code. Nothing else is deleted.",
       confirmLabel: "Remove",
     });
@@ -236,7 +236,7 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
             ))}
             {entries.length === 0 && (
               <tr><td colSpan={5} className="px-4 py-4 text-[var(--color-text-muted)] italic">
-                Nothing defined yet — add rows below, or use “Build from a document” to import your written standard.
+                Nothing defined yet - add rows below, or use “Build from a document” to import your written standard.
               </td></tr>
             )}
           </tbody>
@@ -247,7 +247,7 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
           <Input value={draft.code} onChange={(e) => setDraft({ ...draft, code: e.target.value })} placeholder={codeHint} className="w-32 font-mono" />
           <Input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} placeholder={labelHint} className="w-56" />
           {withPrefixes && (
-            <Input value={draft.prefixes} onChange={(e) => setDraft({ ...draft, prefixes: e.target.value })} placeholder='Prefixes — "E" or "EA, E"' className="w-40 font-mono" />
+            <Input value={draft.prefixes} onChange={(e) => setDraft({ ...draft, prefixes: e.target.value })} placeholder='Prefixes - "E" or "EA, E"' className="w-40 font-mono" />
           )}
           <Button size="sm" onClick={() => void add()} disabled={busy || !draft.code.trim() || !draft.label.trim()}>
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add
@@ -354,7 +354,7 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
   return (
     <div className="space-y-4">
       <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-        <div className="text-xs font-black text-[var(--color-text)] mb-1">Drawing number segments — in order</div>
+        <div className="text-xs font-black text-[var(--color-text)] mb-1">Drawing number segments - in order</div>
         <p className="text-[11px] text-[var(--color-text-muted)] mb-3">
           Describe your convention piece by piece; separators (dashes, dots, “SHT”) are handled automatically.
           Example: Unit (2) → Drawing type (2) → Paper size (1) → Number → Sheet reads <span className="font-mono">2002-D-10001 SHT.4</span>.
@@ -400,13 +400,13 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
       </div>
 
       <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-        <div className="text-xs font-black text-[var(--color-text)] mb-2">Live preview — paste one of your real drawing numbers</div>
+        <div className="text-xs font-black text-[var(--color-text)] mb-2">Live preview - paste one of your real drawing numbers</div>
         <Input value={sample} onChange={(e) => setSample(e.target.value)} className="font-mono max-w-md" placeholder="2002-D-10001 SHT.4" />
         <div className="mt-2.5 flex flex-wrap gap-1.5 text-[11px]">
           {segments.length === 0 ? (
             <span className="text-[var(--color-text-muted)] italic">Add segments above to see the decode.</span>
           ) : !parsed ? (
-            <span className="inline-flex items-center gap-1 text-rose-700 font-bold"><AlertTriangle className="w-3.5 h-3.5" /> Doesn&apos;t match the segments — adjust the map or the sample.</span>
+            <span className="inline-flex items-center gap-1 text-rose-700 font-bold"><AlertTriangle className="w-3.5 h-3.5" /> Doesn&apos;t match the segments - adjust the map or the sample.</span>
           ) : (
             <>
               <PreviewChip label="Unit" value={parsed.unitCode} extra={parsed.unitLabel} />
@@ -443,7 +443,7 @@ function PreviewChip({ label, value, extra }: { label: string; value: string | n
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border font-bold ${value ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text-faint)]"}`}>
       <span className="text-[9px] uppercase tracking-wider opacity-70">{label}</span>
-      <span className="font-mono">{value ?? "—"}</span>
+      <span className="font-mono">{value ?? "-"}</span>
       {extra && <span className="opacity-80">· {extra}</span>}
     </span>
   );
@@ -544,7 +544,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
   const handleFile = async (file: File) => {
     setError(null);
     if (file.size > 3_000_000) {
-      setError(`"${file.name}" is over the 3 MB upload limit — index it in a knowledge library instead, then pick it from the search below.`);
+      setError(`"${file.name}" is over the 3 MB upload limit - index it in a knowledge library instead, then pick it from the search below.`);
       return;
     }
     const buf = await file.arrayBuffer();
@@ -623,7 +623,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
           visionPages = Math.min(pageCount, MAX_VISION_PAGES);
         }
       }
-      if (!sourceText && visionPages === 0) throw new Error("Nothing to read — upload a file, paste text, or pick a document.");
+      if (!sourceText && visionPages === 0) throw new Error("Nothing to read - upload a file, paste text, or pick a document.");
 
       // 2. Propose in bounded parts, sequentially, one retry each. A slow or
       //    flaky part degrades to a warning — never a wasted run.
@@ -654,12 +654,12 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
           }
         }
         if (pageCount > visionPages) {
-          allNotes.push(`Only the first ${visionPages} of ${pageCount} pages were read visually — split the PDF and re-run for the rest.`);
+          allNotes.push(`Only the first ${visionPages} of ${pageCount} pages were read visually - split the PDF and re-run for the rest.`);
         }
       } else {
         const chunks = chunkText(sourceText);
         for (let i = 0; i < chunks.length; i++) {
-          setProgress(chunks.length > 1 ? `Extracting codes — part ${i + 1} of ${chunks.length}…` : "Extracting codes…");
+          setProgress(chunks.length > 1 ? `Extracting codes - part ${i + 1} of ${chunks.length}…` : "Extracting codes…");
           const payload = {
             orgId, text: chunks[i],
             partLabel: chunks.length > 1 ? `part ${i + 1} of ${chunks.length}` : undefined,
@@ -674,15 +674,15 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
         }
       }
       if (allProposals.length === 0 && failedParts.length > 0) {
-        throw new Error(`Every part failed (${failedParts.length}) — check your AI key in AI settings and try again.`);
+        throw new Error(`Every part failed (${failedParts.length}) - check your AI key in AI settings and try again.`);
       }
 
       const existing = [...book.units, ...book.equipmentTypes, ...book.drawingTypes];
       const d = diffImport(existing, allProposals);
       setDiff(d);
-      setNotes([...new Set(allNotes)].slice(0, 2).join(" — "));
+      setNotes([...new Set(allNotes)].slice(0, 2).join(" - "));
       if (failedParts.length > 0) {
-        setError(`${failedParts.join(", ")} of the document couldn't be read — the proposal below may be incomplete. Apply what's here and re-run for the rest.`);
+        setError(`${failedParts.join(", ")} of the document couldn't be read - the proposal below may be incomplete. Apply what's here and re-run for the rest.`);
       }
       // Adds + changes start accepted; unchanged needs no action.
       setAccepted(new Set([...d.adds.map(keyOf), ...d.changes.map((c) => keyOf(c.proposed))]));
@@ -786,7 +786,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
           {diff && (
             <>
               <div className="text-xs text-[var(--color-text-muted)]">
-                <b className="text-[var(--color-text)]">{diff.adds.length}</b> new · <b className="text-[var(--color-text)]">{diff.changes.length}</b> changed · {diff.unchanged.length} already match — check what to apply.
+                <b className="text-[var(--color-text)]">{diff.adds.length}</b> new · <b className="text-[var(--color-text)]">{diff.changes.length}</b> changed · {diff.unchanged.length} already match - check what to apply.
               </div>
               {notes && (
                 <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-[11px] text-sky-900">
@@ -817,7 +817,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                   );
                 })}
                 {diff.adds.length === 0 && diff.changes.length === 0 && (
-                  <div className="px-3 py-4 text-xs text-[var(--color-text-muted)] italic">Nothing new — the codebook already matches this document.</div>
+                  <div className="px-3 py-4 text-xs text-[var(--color-text-muted)] italic">Nothing new - the codebook already matches this document.</div>
                 )}
               </div>
             </>

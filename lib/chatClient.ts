@@ -88,7 +88,7 @@ export const mapMessage = (r: Record<string, unknown>): ChatMessage => ({
  *  shell says so in one place instead of failing everywhere. */
 export class ChatTablesMissingError extends Error {
   constructor() {
-    super("The chat tables are missing — run migration 20261019_chat_shell.sql in Supabase.");
+    super("The chat tables are missing - run migration 20261019_chat_shell.sql in Supabase.");
     this.name = "ChatTablesMissingError";
   }
 }
@@ -280,10 +280,10 @@ export async function citedSourcesChanged(payload: AssistantPayload): Promise<st
   for (const id of ids) {
     const d = now.get(id);
     const name = cites.find((c) => c.documentId === id)?.documentName ?? "a cited document";
-    if (!d) { changed.push(`${name} — no longer in the library`); continue; }
-    if (d.status !== "ready") { changed.push(`${d.name} — re-indexing`); continue; }
+    if (!d) { changed.push(`${name} - no longer in the library`); continue; }
+    if (d.status !== "ready") { changed.push(`${d.name} - re-indexing`); continue; }
     const then = payload.citedRevs?.[id];
-    if (then !== undefined && (d.source_rev ?? "") !== then) changed.push(`${d.name} — now Rev ${d.source_rev ?? "?"}`);
+    if (then !== undefined && (d.source_rev ?? "") !== then) changed.push(`${d.name} - now Rev ${d.source_rev ?? "?"}`);
   }
   return changed;
 }

@@ -137,7 +137,7 @@ export default function PermissionsConsolePage() {
       <PageHeaderBar
         icon={Shield}
         title="Permissions"
-        subtitle={<>The enforced model: per-node visibility + allow/deny rules (user, team, role) with inheritance and expiry — grant one person one nested folder without exposing anything else.</>}
+        subtitle={<>The enforced model: per-node visibility + allow/deny rules (user, team, role) with inheritance and expiry - grant one person one nested folder without exposing anything else.</>}
         actions={
           <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh

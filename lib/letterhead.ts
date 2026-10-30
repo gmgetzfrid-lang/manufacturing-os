@@ -12,6 +12,7 @@
 // Kept as data (never as markup): drawn by letterheadHtml with every piece
 // of text escaped and every picture checked to be an image.
 
+import { noEmDash } from "@/lib/noEmDash";
 import JSZip from "jszip";
 
 /** A picture: a data: URL, and its size on the page in inches. */
@@ -340,7 +341,7 @@ export async function letterheadFromDocx(data: ArrayBuffer | Uint8Array, name: s
   const zip = await JSZip.loadAsync(data);
   const text = async (p: string) => (await zip.file(p)?.async("string")) ?? null;
   const docXml = await text("word/document.xml");
-  if (!docXml) throw new Error("That isn't a Word file (.docx) — no document inside.");
+  if (!docXml) throw new Error("That isn't a Word file (.docx) - no document inside.");
   const doc = parseXml(docXml);
   const body = find(doc, "w:body");
   // The last section's settings: page size, margins, which header goes where.
@@ -662,10 +663,11 @@ export function letterheadLayersHtml(lh: Letterhead): { every: string; first: st
   const firstOnly = lh.pages === "first";
   const pageOne = lh.first ?? lh.layer;
   return {
-    // Every page — none when it's the first page only.
-    every: firstOnly ? "" : layerHtml(lh.layer, lh.page),
+    // Every page — none when it's the first page only. No em dash on paper
+    // either, whatever the Word file had.
+    every: firstOnly ? "" : noEmDash(layerHtml(lh.layer, lh.page)),
     // Page 1: its own letterhead over the repeating one (blanking it where they differ).
-    first: lh.first || firstOnly ? layerHtml(pageOne, lh.page, { blank: !firstOnly && !!lh.first }) : "",
+    first: lh.first || firstOnly ? noEmDash(layerHtml(pageOne, lh.page, { blank: !firstOnly && !!lh.first })) : "",
   };
 }
 

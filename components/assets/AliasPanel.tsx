@@ -63,7 +63,7 @@ export default function AliasPanel({
       </div>
       <p className="text-[11px] text-[var(--color-text-muted)]">
         Nicknames, old tags before a renumber, vendor names. Spelling and punctuation are already
-        handled — this is for what a rule can&apos;t guess.
+        handled - this is for what a rule can&apos;t guess.
       </p>
 
       {rows.length > 0 && (

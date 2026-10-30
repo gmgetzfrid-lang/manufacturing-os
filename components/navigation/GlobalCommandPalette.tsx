@@ -277,7 +277,7 @@ export default function GlobalCommandPalette() {
           href: r.href, kind: "document", badge: r.verdict === "strong" ? "Strong" : r.verdict === "possible" ? "Possible" : undefined,
         });
       }
-      items.push({ key: "find-explore", label: `Explore “${trimmed}” on the map`, subtitle: "Documents › Graph — every match lit, with reasons", href: `/documents/graph?q=${encodeURIComponent(trimmed)}`, isAction: true, badge: "Find" });
+      items.push({ key: "find-explore", label: `Explore “${trimmed}” on the map`, subtitle: "Documents › Graph - every match lit, with reasons", href: `/documents/graph?q=${encodeURIComponent(trimmed)}`, isAction: true, badge: "Find" });
       for (const h of hits) {
         if (h.kind === "document" && seenDocs.has(h.id)) continue;
         items.push({
@@ -328,7 +328,7 @@ export default function GlobalCommandPalette() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKey}
-            placeholder="Search or run an action — docs, tickets, 'new request', 'export data'… · 'g i' to go · '?' shortcuts"
+            placeholder="Search or run an action - docs, tickets, 'new request', 'export data'… · 'g i' to go · '?' shortcuts"
             className="flex-1 outline-none text-base sm:text-sm placeholder:text-slate-400"
           />
           {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />}

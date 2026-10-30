@@ -68,7 +68,7 @@ const ENTRIES: Record<IsoTopic, Entry> = {
       <>
         Every revision (Rev 0, 1, A, B…) is preserved with the file hash, the
         engineer + drafter + checker on the signoff chain, the change narrative,
-        and the MOC reference. You can&apos;t overwrite history — only add to it.
+        and the MOC reference. You can&apos;t overwrite history - only add to it.
       </>
     ),
     refs: ["ISO 9001 §7.5.3.c", "ISO 19650-2 §5.7"],
@@ -89,7 +89,7 @@ const ENTRIES: Record<IsoTopic, Entry> = {
     title: "Supersede vs replace",
     body: (
       <>
-        Supersede means a new document <i>replaces</i> an older controlled one —
+        Supersede means a new document <i>replaces</i> an older controlled one -
         the old version stays in the archive, but every downstream reference
         points at the new one. Use supersede when the doc number changes (split,
         merge, renumber). Use a new revision when the number stays the same.
@@ -113,7 +113,7 @@ const ENTRIES: Record<IsoTopic, Entry> = {
     body: (
       <>
         A hold blocks a controlled document from being acted on (no new revisions,
-        no IFC release) while an open question is resolved — vendor data missing,
+        no IFC release) while an open question is resolved - vendor data missing,
         engineering review pending, MOC not closed out, etc. Opening a hold is a
         public, audited event with a reason.
       </>
@@ -136,8 +136,8 @@ const ENTRIES: Record<IsoTopic, Entry> = {
     title: "Audit log",
     body: (
       <>
-        Every meaningful action — open, view, download, checkout, checkin,
-        approve, supersede, archive — is captured in the audit log with who,
+        Every meaningful action - open, view, download, checkout, checkin,
+        approve, supersede, archive - is captured in the audit log with who,
         when, and the resource it touched. The log is append-only.
       </>
     ),
@@ -155,7 +155,7 @@ const ENTRIES: Record<IsoTopic, Entry> = {
     refs: ["ISO 9001 §7.5.3.b"],
   },
   drafting_request_intent: {
-    title: "Drafting request — captured intent",
+    title: "Drafting request - captured intent",
     body: (
       <>
         The drafting request is the controlled-document equivalent of a work

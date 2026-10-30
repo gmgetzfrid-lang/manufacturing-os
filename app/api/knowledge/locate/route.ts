@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
     const missing = entErr.code === "42P01" || /does not exist|nx/i.test(entErr.message);
     return bad(
       missing
-        ? "Locating tags on drawings needs migration 20260924 — run it in Supabase, then try again."
+        ? "Locating tags on drawings needs migration 20260924 - run it in Supabase, then try again."
         : entErr.message,
       missing ? 424 : 500,
     );
@@ -188,7 +188,7 @@ export async function POST(req: NextRequest) {
       positions: [...found.values()],
       notOnPage: trulyAbsent,
       elsewhere,
-      skipped: `Monthly AI budget reached ($${spent.spentUsd.toFixed(2)} of $${cap.toFixed(2)}) — ` +
+      skipped: `Monthly AI budget reached ($${spent.spentUsd.toFixed(2)} of $${cap.toFixed(2)}) - ` +
         "the sheet still opens at the right page.",
     });
   }

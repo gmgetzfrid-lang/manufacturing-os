@@ -30,7 +30,7 @@ export async function loadCollectionTree(
   // A truncated tree would silently rewrite SHORTENED paths for nodes whose
   // ancestors fell past the cap — corrupting data instead of erroring.
   if (rows.length >= 10000) {
-    throw new Error("This library has 10,000+ folders — tree operations need a larger read window. Contact support.");
+    throw new Error("This library has 10,000+ folders - tree operations need a larger read window. Contact support.");
   }
   const byId = new Map(rows.map((r) => [r.id, r]));
   const childrenOf = new Map<string | null, CollectionTreeRow[]>();

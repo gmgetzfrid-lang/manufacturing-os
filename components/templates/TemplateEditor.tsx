@@ -63,11 +63,11 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
         setAnalysisNote(
           `Found ${analysis.placeholders.length} fill point${analysis.placeholders.length === 1 ? "" : "s"}` +
           (analysis.loops.length ? ` and ${analysis.loops.length} repeating block(s)` : "") +
-          " — check what each one should be filled with below.",
+          " - check what each one should be filled with below.",
         );
       } else {
         setAnalysisNote(
-          "No {placeholders} found in that file. Add tags where content belongs — type " +
+          "No {placeholders} found in that file. Add tags where content belongs - type " +
           "{project_name}, {scope_description} etc. into the template in Word, re-upload, and " +
           "they'll appear here. (Repeating tables use {#rows}…{/rows}.)",
         );
@@ -131,7 +131,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
               {template ? "Edit template" : "New output template"}
             </h2>
             <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-              Your file supplies every pixel of formatting — the AI only writes the words that go in
+              Your file supplies every pixel of formatting - the AI only writes the words that go in
               the blanks.
             </p>
           </div>
@@ -147,9 +147,9 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
             <label className="block">
               <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">One document per…</span>
               <Select value={mode} onChange={(e) => setMode(e.target.value as OutputTemplate["mode"])}>
-                <option value="per_row">Row — one document per spreadsheet row</option>
-                <option value="summary">Summary — one document covering all rows</option>
-                <option value="both">Both — choose at generate time</option>
+                <option value="per_row">Row - one document per spreadsheet row</option>
+                <option value="summary">Summary - one document covering all rows</option>
+                <option value="both">Both - choose at generate time</option>
               </Select>
             </label>
           </div>
@@ -162,7 +162,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
           {/* ── Blank template ─────────────────────────────────────────── */}
           <div className="rounded-xl border border-[var(--color-border)] p-3.5">
             <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">
-              Blank template — owns all formatting
+              Blank template - owns all formatting
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <label className="inline-flex">
@@ -193,7 +193,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
             )}
             {loops.length > 0 && (
               <p className="mt-1.5 text-[10px] text-[var(--color-text-muted)]">
-                Repeating blocks detected: {loops.map((l) => `{#${l}}`).join(", ")} — these fill from
+                Repeating blocks detected: {loops.map((l) => `{#${l}}`).join(", ")} - these fill from
                 the data rows automatically.
               </p>
             )}
@@ -203,7 +203,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
           {placeholders.length > 0 && (
             <div className="rounded-xl border border-[var(--color-border)] p-3.5">
               <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-2">
-                Fill points — what goes in each blank
+                Fill points - what goes in each blank
               </div>
               <ul className="space-y-2">
                 {placeholders.map((p) => (
@@ -236,7 +236,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
                     )}
                     {p.kind === "data" && (
                       <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
-                        Filled from the spreadsheet — the column is matched automatically at generate
+                        Filled from the spreadsheet - the column is matched automatically at generate
                         time (you can correct it there).
                       </p>
                     )}
@@ -249,11 +249,11 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
           {/* ── Examples ───────────────────────────────────────────────── */}
           <div className="rounded-xl border border-[var(--color-border)] p-3.5">
             <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">
-              Example documents — the voice to copy
+              Example documents - the voice to copy
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
-              Attach one or two finished documents. The AI reads them as a style guide — your phrasing,
-              nomenclature, and level of detail — never as formatting (the template owns that).
+              Attach one or two finished documents. The AI reads them as a style guide - your phrasing,
+              nomenclature, and level of detail - never as formatting (the template owns that).
             </p>
             <div className="flex items-center gap-2 flex-wrap">
               <label className="inline-flex">
@@ -278,7 +278,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
             <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Standing instructions</span>
             <Textarea rows={3} value={instructions} onChange={(e) => setInstructions(e.target.value)}
               className="text-xs"
-              placeholder="e.g. Written for contractors — never assume tools or scaffolding are provided. Always name the unit and equipment tag in the first sentence. Use our abbreviations (T/A, PSV, MOC)." />
+              placeholder="e.g. Written for contractors - never assume tools or scaffolding are provided. Always name the unit and equipment tag in the first sentence. Use our abbreviations (T/A, PSV, MOC)." />
           </label>
 
           <label className="block">

@@ -70,7 +70,7 @@ async function coverage(orgId: string, libraryId: string, budgetMs = COUNT_BUDGE
   }
 }
 
-const MIGRATION_MESSAGE = "Semantic search needs migration 20260930 — run it in Supabase, then try again.";
+const MIGRATION_MESSAGE = "Semantic search needs migration 20260930 - run it in Supabase, then try again.";
 
 export async function POST(req: NextRequest) {
   const arrived = Date.now();
@@ -143,7 +143,7 @@ export async function POST(req: NextRequest) {
       .not("embedding", "is", null);
     if (error) {
       return bad(isBusyDbError(error.message)
-        ? "The database is busy right now (the index is still being written). Nothing was cleared — try the rebuild again in a few minutes."
+        ? "The database is busy right now (the index is still being written). Nothing was cleared - try the rebuild again in a few minutes."
         : `Couldn't clear the existing vectors: ${error.message}`, isBusyDbError(error.message) ? 503 : 500);
     }
     const after = await coverage(orgId, libraryId);
@@ -176,7 +176,7 @@ export async function POST(req: NextRequest) {
   ]);
   if (capUsd > 0 && monthSoFar.spentUsd >= capUsd) {
     return bad(
-      `Monthly AI budget reached — $${monthSoFar.spentUsd.toFixed(2)} of $${capUsd.toFixed(2)}. `
+      `Monthly AI budget reached - $${monthSoFar.spentUsd.toFixed(2)} of $${capUsd.toFixed(2)}. `
       + "It resets on the 1st; an Admin can raise the cap in AI settings.",
       402,
     );
@@ -226,7 +226,7 @@ export async function POST(req: NextRequest) {
     // embedding column was rebuilt. Say so; silence here reads as "done".
     // (Only on a fresh count: a remembered one can simply be out of date.)
     lastError =
-      `${stats.total - stats.embedded} passages lack vectors but none could be fetched — ` +
+      `${stats.total - stats.embedded} passages lack vectors but none could be fetched - ` +
       "the API schema cache is likely stale after a column rebuild. In the Supabase SQL " +
       "editor run:  NOTIFY pgrst, 'reload schema';  wait ~10 seconds, then build again.";
   }
@@ -253,7 +253,7 @@ export async function POST(req: NextRequest) {
   // that's a bug worth naming, never a success.
   if (exact && stats && !known && embedded > 0 && after!.embedded < stats.embedded + embedded && !lastError) {
     lastError =
-      `Wrote ${embedded} vector(s) but the library's count only shows ${after!.embedded} — ` +
+      `Wrote ${embedded} vector(s) but the library's count only shows ${after!.embedded} - ` +
       "writes are not landing. Tell your admin: verify library_id/org_id on knowledge_chunks.";
   }
   const remaining = exhausted ? 0 : after ? Math.max(0, after.total - after.embedded) : 0;

@@ -90,12 +90,12 @@ export interface UpdateLookups {
  *  stands lands the finish (lib/cpm). The screen and the email say it alike. */
 export function forecastText(fc: { finish: number; slipH: number }, f: { D: (ms: number) => string; T: (ms: number) => string; hrs: (h: number) => string }): string {
   const at = `${f.D(fc.finish)} ${f.T(fc.finish)}`;
-  return Math.abs(fc.slipH) < 0.5 ? `forecast finish ${at}, on plan` : `forecast finish ${at} — ${f.hrs(Math.abs(fc.slipH))} ${fc.slipH > 0 ? "late" : "early"}`;
+  return Math.abs(fc.slipH) < 0.5 ? `forecast finish ${at}, on plan` : `forecast finish ${at} - ${f.hrs(Math.abs(fc.slipH))} ${fc.slipH > 0 ? "late" : "early"}`;
 }
 
 /** "Mike Leonard · 14 on site" — what was entered, "—" when nothing was. */
 export function crewLine(c?: { supervisor?: string; headcount?: number | null }): string {
-  return [c?.supervisor?.trim() || null, c?.headcount != null ? `${c.headcount} on site` : null].filter(Boolean).join(" · ") || "—";
+  return [c?.supervisor?.trim() || null, c?.headcount != null ? `${c.headcount} on site` : null].filter(Boolean).join(" · ") || "-";
 }
 
 /** The next shift's steps as the safety moment ranks them: their hours
@@ -188,7 +188,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   const standTone = overall.standing === "behind" ? "rose" as const : overall.standing === "ahead" ? "emerald" as const : "slate" as const;
   out.push({
     id: "stand", title: "Where we stand",
-    sub: overall.plannedFinish ? `Day ${overall.daysElapsed} of ${overall.daysTotal} · planned finish ${f.D(overall.plannedFinish)}${finishPassed ? " — passed" : ""}${look.forecast ? ` · ${forecastText(look.forecast, f)}` : ""}` : undefined,
+    sub: overall.plannedFinish ? `Day ${overall.daysElapsed} of ${overall.daysTotal} · planned finish ${f.D(overall.plannedFinish)}${finishPassed ? " - passed" : ""}${look.forecast ? ` · ${forecastText(look.forecast, f)}` : ""}` : undefined,
     flag: overall.standing === "behind" ? "rose" : null,
     blocks: [
       {
@@ -219,7 +219,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   const taskSub = (r: ShiftRow) => (r.parentId ? pctText(look.taskPct?.(r.parentId)) : undefined);
   if (doneRows.length || asked.length) {
     out.push({
-      id: "done", title: `Done — ${shiftName(shift)} ${f.D(shift.start)}`,
+      id: "done", title: `Done - ${shiftName(shift)} ${f.D(shift.start)}`,
       sub: [`${plan.done.length} finished`, plan.moved.length ? `${plan.moved.length} moved forward` : null].filter(Boolean).join(" · "),
       blocks: [
         ...(byTaskDone.length ? [{
@@ -257,14 +257,14 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     const x = nextOf(report, r, kind, f, { pulled, crew: d ? d.crew ?? (pulled ? look.pull?.crew ?? null : null) : null });
     // The table is the next shift's: its hours, or "Continues" / "Carried over".
     const label = x.label;
-    const text = x.detail ? `${label} — ${x.detail}` : label;
+    const text = x.detail ? `${label} - ${x.detail}` : label;
     return x.tone && x.tone !== "muted" ? { t: text, tone: x.tone, bold: kind === "held" } : text;
   };
   // Where it is now, and where it should be by the end of the shift — two
   // columns, no arrows.
   const goalCell = (r: ShiftRow): ExportCell => {
     const goal = kindOf.get(r) === "next" ? r.goalPct ?? r.percent : r.percent;
-    return goal > r.percent ? `${goal}%` : { t: "—", tone: "muted" };
+    return goal > r.percent ? `${goal}%` : { t: "-", tone: "muted" };
   };
   // The next crew's table holds only its own work (and what it could try);
   // the other crew's carried work and anything blocked get their own.
@@ -283,7 +283,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       ...(r.critical ? [{ t: "Critical path", tone: "rose" as const }] : []),
       ...(pn ? [{ t: pn[0].toUpperCase() + pn.slice(1), tone: "amber" as const }] : []),
       ...(c ? [{ t: `Same crew as critical work (${c.crew}): ${c.critical.slice(0, 2).map((x) => x.leaf.name).join(", ")} goes first`, tone: "amber" as const }] : []),
-      ...(discoveryOf(r.leaf) ? [{ t: `${ADDED[addedKind(discoveryOf(r.leaf))].word} — ${discoveryOf(r.leaf)!.what}`, tone: "slate" as const }] : []),
+      ...(discoveryOf(r.leaf) ? [{ t: `${ADDED[addedKind(discoveryOf(r.leaf))].word} - ${discoveryOf(r.leaf)!.what}`, tone: "slate" as const }] : []),
     ];
   };
   // What it waits on, as the screen says it: after steps on this list, or
@@ -303,7 +303,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     const shown = tonight.slice(0, MAX_ROWS * 3);
     const ps = look.pull;
     out.push({
-      id: "next", title: `Next — ${shiftName(next)} ${f.D(next.start)} ${f.win(next)}`,
+      id: "next", title: `Next - ${shiftName(next)} ${f.D(next.start)} ${f.win(next)}`,
       sub: [
         `${nextList.length} step${nextList.length === 1 ? "" : "s"} for the ${next.kind} crew (${f.hrs(nextHrs)})`,
         tried.length ? `${tried.length} could try` : null,
@@ -314,7 +314,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
           textLabels: ["", "", "WO", "by", "", "done", "goal", "vs plan"], nowrap: [2, 5, 6, 7],
           rows: [...byTask(shown, (r) => [stepCell(r), wo(r), who(r), planCell(r), `${r.percent}%`, goalCell(r), vsCell(r)], taskSub, !!look.order?.next?.length), ...more(tonight.length - shown.length, 8)],
         } as ExportBlock : { k: "note", text: `Nothing planned for the ${shiftName(next).toLowerCase()}.` } as ExportBlock,
-        ...(tried.length ? [{ k: "note", text: `Could try if there's time: ${tried.length} step${tried.length === 1 ? "" : "s"}, ${f.hrs(capa.used)}${capa.hours > 0 && ps ? ` of ${f.hrs(capa.hours)}${capa.over ? " — over" : ""} (${ps.crew ? `${ps.crew}, ` : ""}${ps.hands} × ${Math.min(ps.hours, shiftHrs)} h)` : ""}.`, tone: "amber" } as ExportBlock] : []),
+        ...(tried.length ? [{ k: "note", text: `Could try if there's time: ${tried.length} step${tried.length === 1 ? "" : "s"}, ${f.hrs(capa.used)}${capa.hours > 0 && ps ? ` of ${f.hrs(capa.hours)}${capa.over ? " - over" : ""} (${ps.crew ? `${ps.crew}, ` : ""}${ps.hands} × ${Math.min(ps.hours, shiftHrs)} h)` : ""}.`, tone: "amber" } as ExportBlock] : []),
         ...(finishing.length ? [{ k: "note", text: `Planned to finish on the ${shiftName(next).toLowerCase()}: ${finishing.slice(0, 4).map((x) => `${x.name} (${f.T(x.at)})`).join(", ")}${finishing.length > 4 ? ` + ${finishing.length - 4} more` : ""}.` } as ExportBlock] : []),
       ],
     });
@@ -323,14 +323,14 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     const shown = later.slice(0, MAX_ROWS * 3);
     const why = (r: ShiftRow): ExportCell => {
       const x = nextOf(report, r, kindOf.get(r)!, f);
-      const text = kindOf.get(r) === "held" ? `${x.label} — ${x.detail}` : x.detail ?? "";
+      const text = kindOf.get(r) === "held" ? `${x.label} - ${x.detail}` : x.detail ?? "";
       return x.tone && x.tone !== "muted" ? { t: text, tone: x.tone, bold: kindOf.get(r) === "held" } : text;
     };
     const doneCell = (r: ShiftRow): ExportCell => `${r.percent}%`;
     out.push({
       // The other crew's next shift starts when the next shift ends.
-      id: "carries", title: `Carries over to ${other} shift — ${f.D(next.end)}`,
-      sub: [carries.length ? `${carries.length} for the ${other} crew` : null, held.length ? `${held.length} blocked or on hold` : null].filter(Boolean).join(" · ") + ` — not the ${next.kind} shift's work`,
+      id: "carries", title: `Carries over to ${other} shift - ${f.D(next.end)}`,
+      sub: [carries.length ? `${carries.length} for the ${other} crew` : null, held.length ? `${held.length} blocked or on hold` : null].filter(Boolean).join(" · ") + ` - not the ${next.kind} shift's work`,
       flag: held.some((r) => r.status === "blocked") ? "rose" : null,
       blocks: [{
         k: "table", head: ["Task", "Step", "WO", "Who", "Why it carries", "Done", "vs plan"], align: ["left", "left", "left", "left", "left", "right", "right"],
@@ -357,8 +357,8 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   const topics = hj.length ? safetyBrief(rankHazards(hj, { shift: next, T: f.T, max: RISKS_RANKED }), next, { project: projectFacts(look.safetyProject, next, hj.map((j) => j.name)), recentRisks: look.safetyRecent }) : [];
   if (topics.length) {
     out.push({
-      id: "safety", title: `Safety topics — ${shiftName(next).toLowerCase()}`, offByDefault: true,
-      blocks: topics.map((t, i) => ({ k: "bullets", title: `${i + 1}. ${t.title}`, lead: `${t.kicker} — ${t.why}`, tone: i === 0 ? "slate" : i === 1 ? "rose" : "amber", items: t.points.map((p) => p.say), sources: talkSources(t) } as ExportBlock)),
+      id: "safety", title: `Safety topics - ${shiftName(next).toLowerCase()}`, offByDefault: true,
+      blocks: topics.map((t, i) => ({ k: "bullets", title: `${i + 1}. ${t.title}`, lead: `${t.kicker} - ${t.why}`, tone: i === 0 ? "slate" : i === 1 ? "rose" : "amber", items: t.points.map((p) => p.say), sources: talkSources(t) } as ExportBlock)),
     });
   }
 
@@ -366,7 +366,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   // the safety topics.
   const inc = look.incidents;
   out.push({
-    id: "incidents", title: `Safety incidents — ${shiftName(shift)} ${f.D(shift.start)}`,
+    id: "incidents", title: `Safety incidents - ${shiftName(shift)} ${f.D(shift.start)}`,
     blocks: !inc ? [{ k: "note", text: "Not recorded.", tone: "muted" }]
       : inc.items.length ? [{ k: "table", head: ["Time", "Kind", "What happened"], align: ["left", "left", "left"], nowrap: [0],
         rows: [...inc.items].sort((a, b) => a.at - b.at).map((x) => [f.T(x.at), { t: x.kind, bold: true }, x.text] as ExportCell[]) }]
@@ -379,11 +379,11 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   if (hl.length) {
     const attended = crewRows(cr.worked, look.crewsThis).filter((x) => x.title !== "No work planned").map((x) => `${x.title}: ${x.value}`).join("; ");
     out.push({
-      id: "hourly", title: `Shift notes — ${shiftName(shift)} ${f.D(shift.start)}`, sub: "hour by hour",
+      id: "hourly", title: `Shift notes - ${shiftName(shift)} ${f.D(shift.start)}`, sub: "hour by hour",
       blocks: [{ k: "table", head: ["Time", "What happened"], align: ["left", "left"], textLabels: ["", ""], nowrap: [0], rows: hl.map((x) => [{ t: x.clock, bold: true },
-        x.kind === "meeting" ? `Shift meeting — ${[attended, x.text].filter(Boolean).join(". ") || "—"}`
-          : x.kind === "permit" ? `Start of shift — permitting${x.text ? `. ${x.text}` : ""}`
-            : x.text || { t: "—", tone: "muted" as const }] as ExportCell[]) }],
+        x.kind === "meeting" ? `Shift meeting - ${[attended, x.text].filter(Boolean).join(". ") || "-"}`
+          : x.kind === "permit" ? `Start of shift - permitting${x.text ? `. ${x.text}` : ""}`
+            : x.text || { t: "-", tone: "muted" as const }] as ExportCell[]) }],
     });
   }
 
@@ -393,7 +393,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     out.push({
       id: "notes", title: "Notes & actions", sub: "follow-ups and anything else that happened",
       blocks: [{ k: "table", head: ["Time", "Note"], align: ["left", "left"], nowrap: [0],
-        rows: [...sn].sort((a, b) => a.at - b.at).map((x) => [x.from ? `${f.D(x.at)} ${f.T(x.at)}` : f.T(x.at), { t: x.text, ...(x.followUp ? { sub: [{ t: x.from ? `Follow-up, open since ${x.from}` : "Follow-up — stays until cleared", tone: "amber" as const }] } : {}) }] as ExportCell[]) }],
+        rows: [...sn].sort((a, b) => a.at - b.at).map((x) => [x.from ? `${f.D(x.at)} ${f.T(x.at)}` : f.T(x.at), { t: x.text, ...(x.followUp ? { sub: [{ t: x.from ? `Follow-up, open since ${x.from}` : "Follow-up - stays until cleared", tone: "amber" as const }] } : {}) }] as ExportCell[]) }],
     });
   }
   // ── Discovery work: found on the shift — what it added and did to the
@@ -401,10 +401,10 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   const ds = discoverySummary(look.discovery ?? [], shift.start, shift.end);
   if (ds.inShift.length || ds.open.length) {
     out.push({
-      id: "discovery", title: `${addedTitle([...ds.inShift, ...ds.open].map((d) => addedKind(d.record)))} — ${shiftName(shift)} ${f.D(shift.start)}`, sub: discoverySub(ds, f.hrs),
+      id: "discovery", title: `${addedTitle([...ds.inShift, ...ds.open].map((d) => addedKind(d.record)))} - ${shiftName(shift)} ${f.D(shift.start)}`, sub: discoverySub(ds, f.hrs),
       blocks: [
         ...(ds.inShift.length ? [discoveryBlock(ds.inShift, f)] : [{ k: "note", text: "Nothing found this shift.", tone: "muted" } as ExportBlock]),
-        ...(ds.open.length ? [{ k: "note", text: `Still open from earlier: ${ds.open.map((d) => `${d.task?.name ?? ""} — ${d.record.what} (${d.steps.filter((x) => x.status !== "completed").length} of ${d.steps.length} steps open)`).join("; ")}.`, tone: "amber" } as ExportBlock] : []),
+        ...(ds.open.length ? [{ k: "note", text: `Still open from earlier: ${ds.open.map((d) => `${d.task?.name ?? ""} - ${d.record.what} (${d.steps.filter((x) => x.status !== "completed").length} of ${d.steps.length} steps open)`).join("; ")}.`, tone: "amber" } as ExportBlock] : []),
       ],
     });
   }

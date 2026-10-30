@@ -238,7 +238,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   }, [crit, milestones, pathAt, tz, canEdit, projectId, pathMsg]);
   const historyNote = !pastShift ? null
     : history?.complete ? `progress as recorded by ${clockLabel(recordedBy, tz)} ${fmtInTz(recordedBy, tz, { month: "short", day: "numeric" })}`
-      : `progress as entered by now — the record doesn't reach back to this shift`;
+      : `progress as entered by now - the record doesn't reach back to this shift`;
 
   // ── The turnover as decided and shipped (lib/shiftHandover) ──
   // Decisions are about the next shift (key = the shift handed to); the
@@ -464,7 +464,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       const name = (projectName ?? "Schedule").replace(/[\\/:*?"<>|]/g, "").trim() || "Schedule";
       await downloadTimeLog(out, {
         project: projectName ?? "Schedule", tz,
-        title: scope === "shift" ? `Time log — ${shiftName(shift)} ${ctx.D(shift.start)}` : "Time log — whole job to date",
+        title: scope === "shift" ? `Time log - ${shiftName(shift)} ${ctx.D(shift.start)}` : "Time log - whole job to date",
         fileName: `${name} - time log${scope === "shift" ? ` ${shift.dayKey} ${shift.kind}` : ""}.xlsx`,
       });
       setLogMsg(`${out.length} entr${out.length === 1 ? "y" : "ies"} exported.`);
@@ -587,7 +587,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   // The report as data — for Copy (text / email).
   const exportDoc = (): ExportDoc => {
     const { overall, shift: sh, next } = report;
-    const kind = meeting === "kickoff" ? "Kick-off meeting" : meeting === "closeout" ? "Close-out meeting" : `Shift turnover${crew ? ` — ${crew}` : ""}`;
+    const kind = meeting === "kickoff" ? "Kick-off meeting" : meeting === "closeout" ? "Close-out meeting" : `Shift turnover${crew ? ` - ${crew}` : ""}`;
     const when = meeting === "turnover"
       ? `${shiftName(sh)} ${ctx.D(sh.start)} ${ctx.win(sh)} → ${shiftName(next)} ${ctx.D(next.start)} ${ctx.win(next)}`
       : meeting === "kickoff"
@@ -601,7 +601,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           detail: `${overall.actualPct}% vs ${overall.plannedPct}% plan` };
     return {
       kind, project: projectName ?? "Schedule", when,
-      asOf: `${ctx.DT(meeting === "turnover" ? asOf : now)} ${tzAbbrev(ctx.tz, now)}${meeting === "turnover" && rehearsal ? " · rehearsal — shift not started" : meeting === "turnover" && historyNote ? ` · ${historyNote}` : ""}`,
+      asOf: `${ctx.DT(meeting === "turnover" ? asOf : now)} ${tzAbbrev(ctx.tz, now)}${meeting === "turnover" && rehearsal ? " · rehearsal - shift not started" : meeting === "turnover" && historyNote ? ` · ${historyNote}` : ""}`,
       status,
       // The update management reads, not the meeting's agenda: short
       // tables, one line per main task, and nothing that's empty.
@@ -711,7 +711,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                 {!timesDraft && timesSaved === false && (
                   <div className="flex justify-end pt-0.5">
                     <button onClick={() => { void saveProjectShiftTimes(projectId, times).then(() => setTimesMsg("Saved for everyone on this project.")).catch((e: Error) => setTimesMsg(e.message)); }}
-                      className="px-2.5 py-1 rounded-md font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]">These are right — confirm</button>
+                      className="px-2.5 py-1 rounded-md font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]">These are right - confirm</button>
                   </div>
                 )}
                 {timesDraft && (
@@ -727,7 +727,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           <div className="relative">
             <button type="button" onClick={() => setShowSecs((v) => !v)} aria-expanded={showSecs}
               className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border ${hiddenSecs.length ? "border-[var(--color-accent)] text-[var(--color-accent)]" : "border-[var(--color-border-strong)] text-[var(--color-text)]"} hover:bg-[var(--color-surface-2)]`}
-              title="Choose what shows on the report — on screen and in print">
+              title="Choose what shows on the report - on screen and in print">
               <EyeOff className="w-3.5 h-3.5" /> Hide{hiddenSecs.length ? ` (${hiddenSecs.length})` : ""}
             </button>
             {showSecs && (
@@ -739,7 +739,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                     {allSections.map((x) => (
                       <label key={x.id} className="flex items-center gap-2 cursor-pointer select-none py-0.5">
                         <input type="checkbox" className="accent-[var(--color-accent)] w-4 h-4" checked={!hiddenSecs.includes(x)} onChange={(e) => setHidden(x.id, !e.target.checked)} />
-                        <span className="font-semibold text-[var(--color-text)]">{x.title.split(" — ")[0]}</span>
+                        <span className="font-semibold text-[var(--color-text)]">{x.title.split(" - ")[0]}</span>
                       </label>
                     ))}
                   </div>
@@ -759,7 +759,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           {meeting === "turnover" && (
             <>
               <button type="button" onClick={() => setStamps(!stamps)} aria-pressed={stamps}
-                title="Show the time each step was done in Done — off keeps the update short (the times are always in the time log)"
+                title="Show the time each step was done in Done - off keeps the update short (the times are always in the time log)"
                 className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border ${stamps ? "bg-slate-900 text-white border-slate-900" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                 <Clock className="w-3.5 h-3.5" /> Times {stamps ? "on" : "off"}
               </button>
@@ -779,7 +779,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             ...report.goals.all.map((row) => ({ row, where: `on the ${report.next.kind} shift's list` })),
             ...report.goals.otherShift.map((row) => ({ row, where: `carries to the ${report.next.kind === "day" ? "night" : "day"} shift` })),
             ...report.goals.movedOff.map((row) => ({ row, where: `carries to the ${report.next.kind === "day" ? "night" : "day"} shift` })),
-            ...report.goals.paused.map((row) => ({ row, where: "under way — the other crew's" })),
+            ...report.goals.paused.map((row) => ({ row, where: "under way - the other crew's" })),
           ]}
           picked={report.goals.pulled}
           counted={[...carried.filter((r) => r.leaf.id && decisions[r.leaf.id]?.tryIt && !report.goals.pulled.includes(r)), ...report.goals.pulled]}
@@ -873,7 +873,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
               {hiddenSecs.map((x) => (
                 <button key={x.id} type="button" onClick={() => setHidden(x.id, false)} title="Show it again"
                   className="rounded-full border border-[var(--color-border)] px-2 py-0.5 font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-                  {x.title.split(" — ")[0]} <Eye className="inline w-3 h-3 -mt-px" />
+                  {x.title.split(" - ")[0]} <Eye className="inline w-3 h-3 -mt-px" />
                 </button>
               ))}
               <button type="button" onClick={() => setHidden(null, false)} className="ml-auto font-bold text-[var(--color-accent)] hover:underline">Show all</button>
@@ -1066,7 +1066,7 @@ function CopyUpdate({ doc, meeting, lh, stamps }: { doc: () => ExportDoc; meetin
   const idOf = (s: ExportDoc["sections"][number]) => s.id ?? s.title;
   const picked = d ? { ...d, sections: d.sections.filter((s) => !off.has(idOf(s))) } : null;
   const html = picked ? toEmailHtml(picked) : "";
-  const subject = d ? `${d.project} — ${d.kind} — ${d.when.split(" → ").pop()}` : "";
+  const subject = d ? `${d.project} - ${d.kind} - ${d.when.split(" → ").pop()}` : "";
 
   // Print what goes in the email — the safety topics on a page of their
   // own at the end, on the company letterhead when there is one.
@@ -1093,23 +1093,23 @@ function CopyUpdate({ doc, meeting, lh, stamps }: { doc: () => ExportDoc; meetin
     <>
       <button onClick={open}
         className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-        title="The short update: copy it into an email, or print it — see it first">
+        title="The short update: copy it into an email, or print it - see it first">
         <Mail className="w-3.5 h-3.5" /> Email / Print
       </button>
       {d && picked && (
         <Modal onClose={() => setIsOpen(false)} size="xl">
-          <ModalHeader icon={Mail} title="Email or print the update" subtitle="What you'll send or print — leave out any section for today." onClose={() => setIsOpen(false)} />
+          <ModalHeader icon={Mail} title="Email or print the update" subtitle="What you'll send or print - leave out any section for today." onClose={() => setIsOpen(false)} />
           <ModalBody className="space-y-3">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px]">
               <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Include</span>
               {d.sections.map((s) => (
                 <label key={idOf(s)} className="inline-flex items-center gap-1.5 cursor-pointer select-none">
                   <input type="checkbox" className="accent-[var(--color-accent)]" checked={!off.has(idOf(s))} onChange={() => toggle(idOf(s))} />
-                  <span className="font-semibold text-[var(--color-text)]">{s.title.split(" — ")[0]}</span>
+                  <span className="font-semibold text-[var(--color-text)]">{s.title.split(" - ")[0]}</span>
                 </label>
               ))}
               {stamps && (
-                <label className="inline-flex items-center gap-1.5 cursor-pointer select-none border-l border-[var(--color-border)] pl-3" title="The time each step was done, in Done — the time log has them all">
+                <label className="inline-flex items-center gap-1.5 cursor-pointer select-none border-l border-[var(--color-border)] pl-3" title="The time each step was done, in Done - the time log has them all">
                   <input type="checkbox" className="accent-[var(--color-accent)]" checked={stamps.on} onChange={() => stamps.set(!stamps.on)} />
                   <span className="font-semibold text-[var(--color-text)]">Times in Done</span>
                 </label>
@@ -1123,9 +1123,9 @@ function CopyUpdate({ doc, meeting, lh, stamps }: { doc: () => ExportDoc; meetin
           <ModalFooter>
             {done && (
               <span role="status" className={`mr-auto text-[12px] font-bold ${done.ok ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700"}`}>
-                {!done.ok ? "Your browser blocked the copy — try again." : done.what === "email"
-                  ? <>Copied — paste into your email (Ctrl+V). <a className="underline" href={`mailto:?subject=${encodeURIComponent(subject)}`}>New email with subject</a></>
-                  : "Copied as text — paste anywhere (Ctrl+V)."}
+                {!done.ok ? "Your browser blocked the copy - try again." : done.what === "email"
+                  ? <>Copied - paste into your email (Ctrl+V). <a className="underline" href={`mailto:?subject=${encodeURIComponent(subject)}`}>New email with subject</a></>
+                  : "Copied as text - paste anywhere (Ctrl+V)."}
               </span>
             )}
             <button onClick={printIt} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
@@ -1187,7 +1187,7 @@ function makeCtx(tz: string, byId: Map<string, Milestone>, progress?: Map<string
   const day = (ms: number) => fmtInTz(ms, tz, { year: "numeric", month: "numeric", day: "numeric" });
   const DS = (ms: number) => fmtInTz(ms, tz, { month: "short", day: "numeric" });
   const DTs = (ms: number) => `${DS(ms)} ${T(ms)}`;
-  const span = (a: number, b: number) => (!Number.isFinite(a) || !Number.isFinite(b) ? "—" : day(a) === day(b) ? `${DS(a)} ${T(a)}–${T(b)}` : `${DTs(a)} → ${DTs(b)}`);
+  const span = (a: number, b: number) => (!Number.isFinite(a) || !Number.isFinite(b) ? "-" : day(a) === day(b) ? `${DS(a)} ${T(a)}–${T(b)}` : `${DTs(a)} → ${DTs(b)}`);
   return {
     tz, D, DL, T, DT, DTs, span,
     hrs: (h: number) => `${Math.round(h * 10) / 10} h`,
@@ -1417,7 +1417,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           // amber (the hours say how bad) — red is for blocked.
           const detail = x.detail && !(vs && /^behind plan/.test(x.detail))
             ? { t: x.detail, tone: (x.tone === "rose" && kind !== "held" ? "amber" : x.tone ?? "muted") as TagTone } : null;
-          return [vs, detail, kind === "next" || pulled ? waitTag(r) : null, scope ? { t: `${scope}'s scope — coordinate`, tone: "amber" as const } : null, ...pathTags(r)];
+          return [vs, detail, kind === "next" || pulled ? waitTag(r) : null, scope ? { t: `${scope}'s scope - coordinate`, tone: "amber" as const } : null, ...pathTags(r)];
         })(),
       }),
       // The meeting's call on it (never printed): could the next crew try
@@ -1451,14 +1451,14 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   const askedText = asked.length ? `Asked last turnover: ${askedLine(asked, askedResult)}` : null;
   const otherKind = next.kind === "day" ? "night" : "day";
   const tryLine = tryList.length
-    ? `Could try if possible: ${tryList.length} step${tryList.length === 1 ? "" : "s"}, ${c.hrs(capa.used)}${capa.hours > 0 && ho?.pullSet ? ` of ${c.hrs(capa.hours)}${capa.over ? " — over" : ""} (${ho.pullSet.crew ? `${ho.pullSet.crew}, ` : ""}${ho.pullSet.hands} × ${Math.min(ho.pullSet.hours, shiftHrs)} h)` : ""}.`
+    ? `Could try if possible: ${tryList.length} step${tryList.length === 1 ? "" : "s"}, ${c.hrs(capa.used)}${capa.hours > 0 && ho?.pullSet ? ` of ${c.hrs(capa.hours)}${capa.over ? " - over" : ""} (${ho.pullSet.crew ? `${ho.pullSet.crew}, ` : ""}${ho.pullSet.hands} × ${Math.min(ho.pullSet.hours, shiftHrs)} h)` : ""}.`
     : null;
   const nextSub = [
     `${planList.length} step${planList.length === 1 ? "" : "s"} · ${c.hrs(planHrs)}`,
     tryList.length ? `${tryList.length} could try` : null,
   ].filter(Boolean).join(" · ");
   const laterCount = plan.carries.length + plan.held.length;
-  const laterSub = [plan.carries.length ? `${plan.carries.length} for the ${otherKind} crew` : null, plan.held.length ? `${plan.held.length} blocked or on hold` : null].filter(Boolean).join(" · ") + ` — not the ${next.kind} shift's work`;
+  const laterSub = [plan.carries.length ? `${plan.carries.length} for the ${otherKind} crew` : null, plan.held.length ? `${plan.held.length} blocked or on hold` : null].filter(Boolean).join(" · ") + ` - not the ${next.kind} shift's work`;
   const pastDueAll = (o.whole ?? report).review.carryOver.filter((r) => !isHeld(r)).length;
   const forCrew = o.crew ? ` for ${o.crew}` : "";
   const standStats = [
@@ -1517,7 +1517,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           {o.why && o.why.total >= 0.5 && <WhyBehind why={o.why} c={c} print={print} />}
           {!print && o.pathSource && (
             <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-[var(--color-text-muted)] print:hidden">
-              <span>Critical path: <b className="text-[var(--color-text)]">{o.pathSource.label}</b> ({o.pathSource.theirs} step{o.pathSource.theirs === 1 ? "" : "s"}). From the schedule&apos;s links it&apos;s {o.pathSource.calculated}, recalculated as work moves — near-critical and float come with it.</span>
+              <span>Critical path: <b className="text-[var(--color-text)]">{o.pathSource.label}</b> ({o.pathSource.theirs} step{o.pathSource.theirs === 1 ? "" : "s"}). From the schedule&apos;s links it&apos;s {o.pathSource.calculated}, recalculated as work moves - near-critical and float come with it.</span>
               {o.pathSource.onUse && <button type="button" onClick={o.pathSource.onUse} className="font-bold text-[var(--color-accent)] hover:underline">Use the calculated path</button>}
               {o.pathSource.msg && <span className="font-semibold text-amber-700 dark:text-amber-400">{o.pathSource.msg}</span>}
             </div>
@@ -1530,7 +1530,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     },
     {
       id: "safety", title: "Safety & people", short: "Safety",
-      sub: "Open every turnover here — then the work.",
+      sub: "Open every turnover here - then the work.",
       body: (print) => (
         <div className="space-y-2">
           <SafetyMomentBox jobs={hazardJobs} shift={next} T={c.T} print={print} project={o.safety?.project} recent={o.safety?.recent} label={`${shiftName(next)} ${c.D(next.start)}`} />
@@ -1538,13 +1538,13 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
             // The incidents line takes the place of its tick-box.
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-1 keep">
               <IncidentsLine incidents={sh.incidents} edit={sh.edit} print={print} shift={shift} tz={sh.tz} T={c.T} onNone={sh.setNone} onAdd={sh.addIncident} onRemove={sh.removeIncident} />
-              <div className="sm:col-span-2"><Prompts print={print} items={["Permits and lock-outs open across the change", "Manpower and equipment — short, down, arriving"]} /></div>
+              <div className="sm:col-span-2"><Prompts print={print} items={["Permits and lock-outs open across the change", "Manpower and equipment - short, down, arriving"]} /></div>
             </div>
           ) : (
             <Prompts print={print} cols={3} items={[
               "Incidents, near misses, first aid since last turnover",
               "Permits and lock-outs open across the change",
-              "Manpower and equipment — short, down, arriving",
+              "Manpower and equipment - short, down, arriving",
             ]} />
           )}
         </div>
@@ -1552,7 +1552,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     },
     {
       // ── Done — what the shift finished, and what it moved forward.
-      id: "done", title: `Done — ${shiftName(shift)} ${c.D(shift.start)} ${c.win(shift)}`, short: "Done",
+      id: "done", title: `Done - ${shiftName(shift)} ${c.D(shift.start)} ${c.win(shift)}`, short: "Done",
       sub: [`${plan.done.length} finished`, plan.moved.length ? `${plan.moved.length} moved forward` : null].filter(Boolean).join(" · "),
       count: plan.done.length,
       flag: null,
@@ -1583,7 +1583,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     },
     {
       // ── Next — one list, each step once, with what happens to it.
-      id: "next", title: `Next — ${shiftName(next)} ${c.D(next.start)} ${c.win(next)}`, short: "Next",
+      id: "next", title: `Next - ${shiftName(next)} ${c.D(next.start)} ${c.win(next)}`, short: "Next",
       sub: nextSub,
       count: planList.length,
       flag: null,
@@ -1592,7 +1592,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           {next.kind === "night" && o.times.nightJobs === undefined && (
             // Not decided: the list follows the schedule file's hours.
             <div role="alert" className="rounded-md border-2 border-rose-400 dark:border-rose-700 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-[12px] text-rose-900 dark:text-rose-100">
-              <b>Night crews aren&apos;t set</b> — this list follows the schedule file&apos;s hours, which can hand day work to nights. Set them once in <b>Schedule setup → Night crews</b>.
+              <b>Night crews aren&apos;t set</b> - this list follows the schedule file&apos;s hours, which can hand day work to nights. Set them once in <b>Schedule setup → Night crews</b>.
             </div>
           )}
           <WatchBox lines={watch} label={`Watch ${next.kind === "night" ? "tonight" : "today"}`} print={print} />
@@ -1603,14 +1603,14 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           {tryLine && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{tryLine}</div>}
           {goals.pulledHeld.length > 0 && (
             <div className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-300">
-              Blocked since it was added — not on the list: {goals.pulledHeld.map((r) => `${r.leaf.name}${r.reason ? ` (${r.reason})` : ""}`).join("; ")}.
+              Blocked since it was added - not on the list: {goals.pulledHeld.map((r) => `${r.leaf.name}${r.reason ? ` (${r.reason})` : ""}`).join("; ")}.
             </div>
           )}
           {!print && addButton}
           {!print && o.onPlanNext && (
             <button type="button" onClick={o.onPlanNext}
               className="ml-2 inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-accent)] px-3 py-1.5 text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] print:hidden">
-              <CalendarClock className="w-3.5 h-3.5" /> Plan the {next.kind} shift — swap, pull in, push out
+              <CalendarClock className="w-3.5 h-3.5" /> Plan the {next.kind} shift - swap, pull in, push out
             </button>
           )}
         </div>
@@ -1623,7 +1623,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     ...(laterCount ? [{
       // ── Carries to the other shift: its crew's unfinished and ongoing
       // work, and anything blocked — not the next shift's list.
-      id: "carries", title: `Carries over to ${otherKind} shift — ${c.D(next.end)}`, short: `To ${otherKind} shift`,
+      id: "carries", title: `Carries over to ${otherKind} shift - ${c.D(next.end)}`, short: `To ${otherKind} shift`,
       sub: laterSub, count: laterCount,
       flag: plan.held.some((r) => r.status === "blocked") ? "rose" : null,
       body: (print: boolean) => (
@@ -1649,16 +1649,16 @@ function hourlySection(sh: SheetCtx, h: HourlyCtx, meeting?: MeetingCrews): Sec 
   const clocks = hourlyClocks(rows.map((r) => r.slot.start), sh.tz);
   const said = rows.filter((r) => r.slot.kind !== "meeting" && r.text).length;
   return {
-    id: "hourly", title: "Shift notes — hour by hour", short: "Hour by hour",
+    id: "hourly", title: "Shift notes - hour by hour", short: "Hour by hour",
     sub: "The meeting, then what happened each hour",
     count: said || undefined,
     flag: null,
     body: (print) => <ShiftHourlyBox h={h} edit={sh.edit} print={print} tz={sh.tz} meeting={meeting} />,
     data: () => [{ k: "table", head: ["Time", "What happened"], align: ["left", "left"], textLabels: ["", ""], nowrap: [0], rows: rows.map((r, i) => [
       { t: clocks[i], bold: true },
-      r.slot.kind === "meeting" ? `Shift meeting — ${meetingLine(meeting, r.text) || "—"}`
-        : r.slot.kind === "permit" ? `Start of shift — permitting${r.text ? `. ${r.text}` : ""}`
-          : r.text || { t: "—", tone: "muted" },
+      r.slot.kind === "meeting" ? `Shift meeting - ${meetingLine(meeting, r.text) || "-"}`
+        : r.slot.kind === "permit" ? `Start of shift - permitting${r.text ? `. ${r.text}` : ""}`
+          : r.text || { t: "-", tone: "muted" },
     ] as ExportCell[]) }],
   };
 }
@@ -1678,7 +1678,7 @@ function discoverySection(shift: ShiftWindow, c: Ctx, list: Discovery[], onAdd?:
         {ds.inShift.length === 0 ? <Empty>Nothing added this shift.</Empty> : <DiscoveryList list={ds.inShift} c={c} print={print} />}
         {ds.open.length > 0 && (
           <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">
-            Still open from earlier: {ds.open.map((d) => `${d.task?.name ?? ""} — ${d.record.what} (${d.steps.filter((x) => x.status !== "completed").length} of ${d.steps.length} steps open)`).join("; ")}.
+            Still open from earlier: {ds.open.map((d) => `${d.task?.name ?? ""} - ${d.record.what} (${d.steps.filter((x) => x.status !== "completed").length} of ${d.steps.length} steps open)`).join("; ")}.
           </div>
         )}
         {!print && onAdd && (
@@ -1748,7 +1748,7 @@ function kickoffSections(k: ReturnType<typeof buildKickoff>, c: Ctx): Sec[] {
     { label: "Equipment / areas", value: `${k.groups.length}`, tone: "slate" as const },
     { label: "On critical path", value: `${k.critical.length}`, tone: (k.critical.length ? "rose" : "slate") as "rose" | "slate" },
   ];
-  const unscheduledMsg = k.unscheduled > 0 ? `${k.unscheduled} step${k.unscheduled === 1 ? " has" : "s have"} no planned dates yet — not in the numbers above.` : null;
+  const unscheduledMsg = k.unscheduled > 0 ? `${k.unscheduled} step${k.unscheduled === 1 ? " has" : "s have"} no planned dates yet - not in the numbers above.` : null;
   const notReadyRows = k.notReady.map((r) => rowFromPlan(r, c, {
     extraTags: [r.leaf.status === "blocked" ? { t: "blocked", tone: "rose" } : { t: "on hold", tone: "amber" }],
     note: r.leaf.statusReason ? `Reason: ${r.leaf.statusReason}` : "No reason recorded.",
@@ -1781,10 +1781,10 @@ function kickoffSections(k: ReturnType<typeof buildKickoff>, c: Ctx): Sec[] {
       body: (print) => (
         <div className="space-y-2">
           <Prompts print={print} items={[
-            "Job safety plan reviewed — hazards, permits, rescue plans, emergency muster",
+            "Job safety plan reviewed - hazards, permits, rescue plans, emergency muster",
             "Isolations, blinds and lock-out list agreed with operations",
             "Materials, tools, cranes and scaffold on site or dated",
-            "Contacts — operations, safety, QA/QC, each contractor's lead",
+            "Contacts - operations, safety, QA/QC, each contractor's lead",
           ]} />
           {k.notReady.length > 0 && <StepTable print={print} rightHead="Hours" ownerLine rows={notReadyRows} />}
         </div>
@@ -1793,7 +1793,7 @@ function kickoffSections(k: ReturnType<typeof buildKickoff>, c: Ctx): Sec[] {
     },
     {
       id: "equip", title: "Equipment & windows", short: "Equipment",
-      sub: "Each piece of work, its window, and who does it — in start order",
+      sub: "Each piece of work, its window, and who does it - in start order",
       count: k.groups.length,
       body: (print) => k.groups.length === 0 ? <Empty>No dated work yet.</Empty> : (
         <SimpleTable print={print} head={["Equipment / area", "Window", "Steps", "Hours", "Who"]}
@@ -1801,20 +1801,20 @@ function kickoffSections(k: ReturnType<typeof buildKickoff>, c: Ctx): Sec[] {
             id: g.id,
             cells: [
               <span key="n"><b>{g.name}</b>{g.crumbs.length ? <span className="text-[var(--color-text-faint)]"> · {g.crumbs.join(" › ")}</span> : null}{g.critical ? <> <TagChip t={`${g.critical} critical`} tone="rose" /></> : null}</span>,
-              c.span(g.start, g.finish), `${g.steps}`, c.hrs(g.hours), g.who.join(", ") || "—",
+              c.span(g.start, g.finish), `${g.steps}`, c.hrs(g.hours), g.who.join(", ") || "-",
             ],
           }))} />
       ),
       data: () => [k.groups.length === 0 ? { k: "empty", text: "No dated work yet." } : {
         k: "table", head: ["Equipment / area", "Window", "Steps", "Hours", "Who"],
-        rows: k.groups.map((g) => [`${g.name}${g.critical ? ` (${g.critical} critical)` : ""}`, c.span(g.start, g.finish), `${g.steps}`, c.hrs(g.hours), g.who.join(", ") || "—"]),
+        rows: k.groups.map((g) => [`${g.name}${g.critical ? ` (${g.critical} critical)` : ""}`, c.span(g.start, g.finish), `${g.steps}`, c.hrs(g.hours), g.who.join(", ") || "-"]),
       }],
     },
     {
-      id: "crit", title: "Critical path — what drives the finish date", short: "Critical path",
+      id: "crit", title: "Critical path - what drives the finish date", short: "Critical path",
       sub: k.critical.length ? `${k.critical.length} steps · any slip here moves the end date` : "No critical chain computed",
       count: k.critical.length,
-      body: (print) => k.critical.length === 0 ? <Empty>No critical chain — check the step links.</Empty> : (
+      body: (print) => k.critical.length === 0 ? <Empty>No critical chain - check the step links.</Empty> : (
         <StepTable print={print} flat rightHead="Hours" rows={critRows} />
       ),
       data: () => [k.critical.length === 0 ? { k: "empty", text: "No critical chain computed." } : stepsBlock(critRows, "Hours", "When", true)],
@@ -1892,10 +1892,10 @@ function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftRep
     {
       id: "lessons", title: "Hand-back & lessons", short: "Lessons",
       body: (print) => <Prompts print={print} lines={2} items={[
-        "Equipment handed back to operations — isolations removed, blinds out, permits closed",
-        "Punch list and turnover documents — what's outstanding and who owns it",
-        "What went well — keep doing",
-        "What didn't — change next time",
+        "Equipment handed back to operations - isolations removed, blinds out, permits closed",
+        "Punch list and turnover documents - what's outstanding and who owns it",
+        "What went well - keep doing",
+        "What didn't - change next time",
       ]} />,
     },
     // Discovery over the whole job: what was found, the work it added, and
@@ -1927,12 +1927,12 @@ function whyLost(s: StepLook, c: Ctx): string[] {
   const out: string[] = [];
   if (s.lost.hold) {
     const said = s.holds.filter((h) => h.reason);
-    out.push(said.length ? said.map((h) => `On hold${h.hours > 0 ? ` ${c.hrs(h.hours)}` : " now"} — “${h.reason}”`).join("; ") : `On hold / blocked ${c.hrs(s.lost.hold)}`);
+    out.push(said.length ? said.map((h) => `On hold${h.hours > 0 ? ` ${c.hrs(h.hours)}` : " now"} - “${h.reason}”`).join("; ") : `On hold / blocked ${c.hrs(s.lost.hold)}`);
   }
   if (s.lost.longer) out.push(`Ran ${c.hrs(s.lost.longer)} longer than planned`);
-  if (s.lost["late-start"]) out.push(`Started ${c.hrs(s.lost["late-start"])} late — no hold or earlier work recorded`);
-  if (s.lost.replanned) out.push(`Re-planned (${c.hrs(s.lost.replanned)})${s.replans[0] ? ` — “${s.replans[0]}”` : ""}`);
-  if (s.discovery) out.push(`${ADDED[s.addedKind ?? "discovery"].word} — “${s.discovery}”`);
+  if (s.lost["late-start"]) out.push(`Started ${c.hrs(s.lost["late-start"])} late - no hold or earlier work recorded`);
+  if (s.lost.replanned) out.push(`Re-planned (${c.hrs(s.lost.replanned)})${s.replans[0] ? ` - “${s.replans[0]}”` : ""}`);
+  if (s.discovery) out.push(`${ADDED[s.addedKind ?? "discovery"].word} - “${s.discovery}”`);
   for (const w of s.why.slice(-2)) out.push(`Said: “${w}”`);
   return out;
 }
@@ -1975,7 +1975,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx, lessons?: L
   };
   return [
     {
-      id: "lookback", title: "Look back — where the time went", short: "Look back",
+      id: "lookback", title: "Look back - where the time went", short: "Look back",
       sub: basis,
       flag: f.slipH >= 1 ? "amber" : null,
       body: (print) => (
@@ -1993,7 +1993,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx, lessons?: L
                   <span className="tabular-nums text-[var(--color-text-muted)]"><b className="text-[var(--color-text)]">{c.hrs(x.hours)}</b> · {x.steps} step{x.steps === 1 ? "" : "s"}</span>
                 </div>
               ))}
-              <div className="text-[11px] text-[var(--color-text-faint)]">Hours each step lost on its own, added up — work runs side by side, so this is more than the finish moved. What moved the finish is under The chain of events.</div>
+              <div className="text-[11px] text-[var(--color-text-faint)]">Hours each step lost on its own, added up - work runs side by side, so this is more than the finish moved. What moved the finish is under The chain of events.</div>
             </div>
           )}
         </div>
@@ -2002,7 +2002,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx, lessons?: L
     },
     {
       id: "setbacks", title: "What set us back", short: "Set back", count: lb.setbacks.length, flag: lb.setbacks.length ? "amber" : null,
-      sub: "Steps that lost the most time on their own — time handed on from the work before isn't counted again",
+      sub: "Steps that lost the most time on their own - time handed on from the work before isn't counted again",
       body: (print) => setbacks.length === 0 ? <Empty>No step lost an hour or more on its own.</Empty> : (
         <div className={`rounded-md border border-[var(--color-border)] divide-y divide-[var(--color-border)] ${txt(print)}`}>
           {setbacks.map((s) => (
@@ -2025,7 +2025,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx, lessons?: L
     },
     {
       id: "chain", title: "The chain of events", short: "Chain",
-      sub: lb.chain.length ? `The work that set the finish, first to last — ${first ? `the slip starts at ${name(first.step)}` : "no step on it lost time"}` : undefined,
+      sub: lb.chain.length ? `The work that set the finish, first to last - ${first ? `the slip starts at ${name(first.step)}` : "no step on it lost time"}` : undefined,
       body: (print) => lb.chain.length === 0 ? <Empty>The schedule&apos;s links don&apos;t show a chain into the finish.</Empty> : (
         <ol className={`relative space-y-0 ${txt(print)}`}>
           {chainRows.map((r, k) => r.kind === "fold" ? (
@@ -2054,7 +2054,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx, lessons?: L
       data: () => [lb.chain.length === 0 ? { k: "empty", text: "The schedule's links don't show a chain into the finish." } : {
         k: "table", head: ["Step", "Planned finish", f.done ? "Finished" : "Finish (forecast)", "Added", "Why"], align: ["left", "left", "left", "right", "left"], nowrap: [1, 2, 3],
         rows: lb.chain.filter((l, i) => Math.abs(l.addedH) >= 1 || i === 0 || i === lb.chain.length - 1).map((l) => [{ t: l.step.name, note: l.step.task || undefined }, c.DTs(l.step.bf), c.DTs(l.step.af),
-          { t: l.addedH >= 1 ? signed(l.addedH) : l.addedH <= -1 ? `made up ${c.hrs(-l.addedH)}` : "—", tone: l.addedH >= 1 ? "rose" : l.addedH <= -1 ? "emerald" : "muted", bold: true }, l.addedH >= 1 ? whyLost(l.step, c).join(" · ") : ""]),
+          { t: l.addedH >= 1 ? signed(l.addedH) : l.addedH <= -1 ? `made up ${c.hrs(-l.addedH)}` : "-", tone: l.addedH >= 1 ? "rose" : l.addedH <= -1 ? "emerald" : "muted", bold: true }, l.addedH >= 1 ? whyLost(l.step, c).join(" · ") : ""]),
       }],
     },
     {
@@ -2077,7 +2077,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx, lessons?: L
           {lb.absorbed.length > 0 && <div className={`text-[var(--color-text)] ${txt(print)}`}>Discovery that fit in the float: {lb.absorbed.map((d) => `“${d.record.what}” (${c.hrs(d.record.impact.hours)})`).join("; ")}.</div>}
           {lb.crews.length > 0 && (
             <div className={`keep rounded-md border border-[var(--color-border)] ${txt(print)}`}>
-              <div className="px-2.5 py-1 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Crews — steps done on plan</div>
+              <div className="px-2.5 py-1 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Crews - steps done on plan</div>
               {lb.crews.map((x) => (
                 <div key={x.crew} className="px-2.5 py-0.5 grid grid-cols-[1fr_auto_auto] gap-x-3 tabular-nums">
                   <span className="text-[var(--color-text)] truncate">{x.crew}</span>
@@ -2119,10 +2119,10 @@ function LessonNotes({ kind, ctx, print, c }: { kind: Lesson["kind"]; ctx?: Less
   if (print && !items.length) return null;
   return (
     <div className={`keep rounded-md border border-[var(--color-border)] px-2.5 py-1.5 space-y-1 ${print ? "text-[8.5pt]" : "text-[12.5px]"}`}>
-      <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">{kind === "keep" ? "Keep doing — from the team" : "Do better — from the team"}</div>
+      <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">{kind === "keep" ? "Keep doing - from the team" : "Do better - from the team"}</div>
       {items.map((l) => (
         <div key={l.id} className="flex items-start gap-2">
-          <span className="flex-1 min-w-0 break-words text-[var(--color-text)]">{l.text}<span className="text-[11px] text-[var(--color-text-faint)]">{l.by ? ` — ${l.by}` : ""} · {c.D(l.at)}</span></span>
+          <span className="flex-1 min-w-0 break-words text-[var(--color-text)]">{l.text}<span className="text-[11px] text-[var(--color-text-faint)]">{l.by ? ` - ${l.by}` : ""} · {c.D(l.at)}</span></span>
           {!print && ctx?.remove && <button type="button" onClick={() => ctx.remove!(l.id)} aria-label="Remove" className="text-[var(--color-text-faint)] hover:text-rose-600 print:hidden"><X className="w-3.5 h-3.5" /></button>}
         </div>
       ))}
@@ -2144,10 +2144,10 @@ function LessonNotes({ kind, ctx, print, c }: { kind: Lesson["kind"]; ctx?: Less
  *  with the note and where they went, so none is forgotten. */
 function cancelledSection(jobs: CancelledJob[], c: Ctx): Sec {
   const when = (j: CancelledJob) => [j.at != null && Number.isFinite(j.at) ? c.D(j.at) : null, j.m.cancelledByName].filter(Boolean).join(" · ");
-  const title = (j: CancelledJob) => (j.crumbs.length ? `${j.crumbs[j.crumbs.length - 1]} — ${j.m.name}` : j.m.name);
+  const title = (j: CancelledJob) => (j.crumbs.length ? `${j.crumbs[j.crumbs.length - 1]} - ${j.m.name}` : j.m.name);
   return {
     id: "cancelled", title: "Cancelled from this schedule", short: "Cancelled", count: jobs.length, flag: "amber",
-    sub: "Still to be done — moved off this schedule",
+    sub: "Still to be done - moved off this schedule",
     body: (print) => (
       <div className={`rounded-md border border-amber-300 dark:border-amber-800/70 divide-y divide-amber-200 dark:divide-amber-900/60 ${print ? "text-[8.5pt]" : "text-[12.5px]"}`}>
         {jobs.map((j) => (
@@ -2169,7 +2169,7 @@ function cancelledSection(jobs: CancelledJob[], c: Ctx): Sec {
     ),
     data: () => [{
       k: "table", head: ["Job", "Moved to", "Note", "Cancelled"],
-      rows: jobs.map((j) => [title(j), j.m.movedTo || "—", j.m.cancelNote || "", when(j)]),
+      rows: jobs.map((j) => [title(j), j.m.movedTo || "-", j.m.cancelNote || "", when(j)]),
     }],
   };
 }
@@ -2233,8 +2233,8 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
           <div className={`text-[11px] ${print ? "text-slate-700" : "text-slate-300"}`}>
             {when} · as of {c.T(meeting === "turnover" ? asOf : now)} {tzAbbrev(c.tz, now)}
             {crew && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-slate-700 text-slate-900" : "bg-white text-slate-900"}`}>{crew} only</span>}
-            {rehearsal && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-amber-700 text-amber-800" : "bg-amber-400 text-slate-900"}`}>Rehearsal — shift not started</span>}
-            {historyNote && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold ${print ? "border border-slate-500 text-slate-700" : "bg-slate-700 text-slate-100"}`}>Earlier shift — {historyNote}</span>}
+            {rehearsal && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-amber-700 text-amber-800" : "bg-amber-400 text-slate-900"}`}>Rehearsal - shift not started</span>}
+            {historyNote && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold ${print ? "border border-slate-500 text-slate-700" : "bg-slate-700 text-slate-100"}`}>Earlier shift - {historyNote}</span>}
           </div>
         </div>
         {pill && (
@@ -2335,7 +2335,7 @@ function WhyBehind({ why, c, print }: { why: BehindWhy; c: Ctx; print: boolean }
   return (
     <div className={`mt-2 rounded-lg border border-slate-200 dark:border-slate-700 ${print ? "px-2 py-1.5" : "px-3 py-2.5"} keep`}>
       <div className={`font-bold ${print ? "text-[9pt]" : "text-[13px]"}`}>
-        Why we&apos;re behind — {h(why.total)} of work behind plan
+        Why we&apos;re behind - {h(why.total)} of work behind plan
         {why.ahead >= 0.5 && <span className="font-medium text-[var(--color-text-muted)]">, {h(why.ahead)} ahead elsewhere</span>}
       </div>
       <div className={`mt-1.5 flex flex-wrap gap-1.5 ${small}`}>
@@ -2352,7 +2352,7 @@ function WhyBehind({ why, c, print }: { why: BehindWhy; c: Ctx; print: boolean }
             <li key={ch.head.id} className="py-1.5 flex items-start gap-2">
               <span className={`shrink-0 mt-px rounded border px-1.5 font-bold ${small} ${CAUSE_TONE[ch.cause]}`}>{CAUSE_WORD[ch.cause].short}</span>
               <div className="min-w-0 flex-1">
-                <div className="font-semibold text-[var(--color-text)] break-words">{t.title} <span className="font-normal text-[var(--color-text-muted)]">— {t.state}</span></div>
+                <div className="font-semibold text-[var(--color-text)] break-words">{t.title} <span className="font-normal text-[var(--color-text-muted)]">- {t.state}</span></div>
                 {t.facts && <div className="text-[var(--color-text-muted)] break-words">{t.facts}</div>}
                 {t.waiting && <div className="text-[var(--color-text-muted)] break-words">{t.waiting}</div>}
                 {t.split && <div className={`${small} text-[var(--color-text-faint)]`}>{t.split}</div>}
@@ -2685,7 +2685,7 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
 /** A quiet pencil on a row: update the step right here. */
 function EditBtn({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <button type="button" onClick={onClick} aria-label={`Update ${label}`} title="Update this step — status, %, time, comment"
+    <button type="button" onClick={onClick} aria-label={`Update ${label}`} title="Update this step - status, %, time, comment"
       className="ml-1 inline-flex items-center justify-center w-5 h-5 align-middle rounded text-slate-400 opacity-50 group-hover/sort:opacity-100 pointer-coarse:opacity-100 hover:bg-slate-200/70 hover:text-slate-700 dark:hover:bg-slate-700/60 dark:hover:text-slate-200 focus:opacity-100 print:hidden">
       <Pencil className="w-3 h-3" />
     </button>

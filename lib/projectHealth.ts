@@ -71,7 +71,7 @@ export function computeProjectHealth(s: ProjectStateSnapshot): ProjectHealth {
   if (s.cpi != null && s.cpi > 0) {
     parts.push({
       label: "Cost", score: clamp(s.cpi * 100, 0, 120) > 100 ? 100 : clamp(s.cpi * 100),
-      detail: s.cpi >= 1 ? `CPI ${s.cpi.toFixed(2)} — getting more done per dollar than planned` : `CPI ${s.cpi.toFixed(2)} — spending faster than earning`,
+      detail: s.cpi >= 1 ? `CPI ${s.cpi.toFixed(2)} - getting more done per dollar than planned` : `CPI ${s.cpi.toFixed(2)} - spending faster than earning`,
     });
   } else if (s.budget > 0) {
     const burned = s.spent / s.budget;
@@ -80,7 +80,7 @@ export function computeProjectHealth(s: ProjectStateSnapshot): ProjectHealth {
     // from there — going over must never score higher than staying under.
     parts.push({
       label: "Cost", score: burned <= 1 ? 100 - clamp((burned - 0.85) * 400, 0, 40) : clamp(60 - (burned - 1) * 200),
-      detail: `${Math.round(burned * 100)}% of budget spent${burned > 1 ? " — over budget" : ""}`,
+      detail: `${Math.round(burned * 100)}% of budget spent${burned > 1 ? " - over budget" : ""}`,
     });
   } else {
     parts.push({ label: "Cost", score: null, detail: "No budget set yet" });
@@ -173,7 +173,7 @@ export function buildCoachItems(s: ProjectStateSnapshot, projectId: string): Coa
   });
   if (s.milestoneCount === 0) add({
     id: "schedule", kind: "schedule", weight: 95,
-    title: "Add a schedule — import a file or type a few milestones",
+    title: "Add a schedule - import a file or type a few milestones",
     payoff: "Unlocks the execution board, overdue alerts, and schedule health (SPI).",
     href: `${base}?tab=schedule`,
   });
@@ -192,13 +192,13 @@ export function buildCoachItems(s: ProjectStateSnapshot, projectId: string): Coa
   if (s.budget > 0 && s.accountCount > 0 && s.accountsPinned === 0 && s.milestoneCount > 0) add({
     id: "pin-ev", kind: "cost", weight: 80,
     title: "Pin budget lines to schedule tasks",
-    payoff: "Unlocks Cost health (CPI) — earned value against real progress.",
+    payoff: "Unlocks Cost health (CPI) - earned value against real progress.",
     href: `${base}?tab=costs`,
   });
   if (s.milestoneCount > 0 && !s.hasBaseline) add({
     id: "baseline", kind: "schedule", weight: 72,
     title: "Set a schedule baseline",
-    payoff: "Drift becomes visible — you'll see slips against the original plan.",
+    payoff: "Drift becomes visible - you'll see slips against the original plan.",
     href: `${base}?tab=schedule`,
   });
   if (!s.hasSow) add({
@@ -227,7 +227,7 @@ export function buildCoachItems(s: ProjectStateSnapshot, projectId: string): Coa
   });
   if (s.turnoverRequired > 0 && s.turnoverAccepted < s.turnoverRequired) add({
     id: "turnover", kind: "quality", weight: 68,
-    title: `Chase the turnover package — ${s.turnoverRequired - s.turnoverAccepted} item${s.turnoverRequired - s.turnoverAccepted === 1 ? "" : "s"} outstanding`,
+    title: `Chase the turnover package - ${s.turnoverRequired - s.turnoverAccepted} item${s.turnoverRequired - s.turnoverAccepted === 1 ? "" : "s"} outstanding`,
     payoff: "Closeout is gated on acceptance; contractors are scored on it.",
     href: `${base}?tab=quality`,
   });

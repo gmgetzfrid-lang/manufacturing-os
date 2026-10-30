@@ -157,8 +157,8 @@ export function ShiftHourlyBox({ h, edit, print, tz, meeting }: {
             <tr key={r.slot.key} className="align-top">
               <td className="w-16 pr-2 py-0.5 font-semibold whitespace-nowrap">{clocks[i]}</td>
               <td className="py-0.5">
-                {SLOT_LABEL[r.slot.kind] && <b>{SLOT_LABEL[r.slot.kind]}{r.slot.kind === "meeting" ? " — " : r.text ? ". " : ""}</b>}
-                {r.slot.kind === "meeting" ? meetingLine(meeting, r.text) || "—" : r.text || (r.slot.kind === "work" ? "—" : "")}
+                {SLOT_LABEL[r.slot.kind] && <b>{SLOT_LABEL[r.slot.kind]}{r.slot.kind === "meeting" ? " - " : r.text ? ". " : ""}</b>}
+                {r.slot.kind === "meeting" ? meetingLine(meeting, r.text) || "-" : r.text || (r.slot.kind === "work" ? "-" : "")}
               </td>
             </tr>
           ))}
@@ -190,7 +190,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meeting }: {
                 ) : r.text ? (
                   <div className="break-words text-[var(--color-text)]">{r.text}</div>
                 ) : r.slot.kind === "work" ? (
-                  <div className="text-[var(--color-text-faint)]">—</div>
+                  <div className="text-[var(--color-text-faint)]">-</div>
                 ) : null}
                 {edit && typed && editing !== r.slot.key && r.slot.kind !== "meeting" && (
                   <button type="button" onClick={() => void setHour(r.slot, null)}

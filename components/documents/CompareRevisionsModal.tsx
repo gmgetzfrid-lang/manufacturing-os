@@ -65,7 +65,7 @@ export default function CompareRevisionsModal({
           .filter((r) => !!r.file_url && !r.archived_at)
           .map((r) => ({
             id: r.id as string,
-            revisionLabel: `${(r.revision_label as string) || "—"}${r.is_branch ? " (side copy — never issued)" : ""}`,
+            revisionLabel: `${(r.revision_label as string) || "-"}${r.is_branch ? " (side copy - never issued)" : ""}`,
             createdAt: (r.created_at as string) ?? null,
             fileUrl: r.file_url as string,
           }));
@@ -206,7 +206,7 @@ export default function CompareRevisionsModal({
               <span className="text-sm font-bold text-slate-300">Need two revisions on the server to compare</span>
               <span className="text-xs mt-1 max-w-md">
                 {versions.length === 1 ? "Only one revision is available. " : "No revisions with files are available. "}
-                {offloadedCount > 0 && `${offloadedCount} older revision${offloadedCount === 1 ? " was" : "s were"} archived off the server for space — restore from the offline archive to compare against them.`}
+                {offloadedCount > 0 && `${offloadedCount} older revision${offloadedCount === 1 ? " was" : "s were"} archived off the server for space - restore from the offline archive to compare against them.`}
               </span>
             </div>
           ) : !baseVersion || !compareVersion || !urls ? (

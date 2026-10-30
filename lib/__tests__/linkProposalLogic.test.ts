@@ -107,7 +107,7 @@ describe("proposeSharedEquipment", () => {
     expect(many[0].evidence.tags).toHaveLength(3);
   });
 
-  it("never marks shared equipment provable — relating is a human call", () => {
+  it("never marks shared equipment provable - relating is a human call", () => {
     const out = proposeSharedEquipment(
       Array.from({ length: 10 }, (_, i) => `t${i}`).flatMap((tag) => [
         { documentId: "a", tag }, { documentId: "b", tag },
@@ -203,7 +203,7 @@ describe("mergeDrafts / filterDrafts / splitByAutoApply", () => {
   });
 });
 
-describe("Connection Skills — custom cross-reference patterns", () => {
+describe("Connection Skills - custom cross-reference patterns", () => {
   const idx = new Map<string, string[]>([
     [refKey2("WO-10023"), ["doc-wo"]],
     [refKey2("SOP-771"), ["doc-sop-a", "doc-sop-b"]],
@@ -218,7 +218,7 @@ describe("Connection Skills — custom cross-reference patterns", () => {
     expect(errors.some((e) => e.includes("empty"))).toBe(true);
   });
 
-  it("resolves a matched identifier to the owning document — queue tier, never provable", () => {
+  it("resolves a matched identifier to the owning document - queue tier, never provable", () => {
     const { regexes } = compileSkillPatterns(["\\bWO-\\d{5}\\b"]);
     const out = proposeCustomReferences(
       { id: "r1", name: "Work orders", regexes },
@@ -257,7 +257,7 @@ describe("Connection Skills — custom cross-reference patterns", () => {
   });
 });
 
-describe("Connection Skills — co-citation", () => {
+describe("Connection Skills - co-citation", () => {
   it("proposes pairs cited together at least the minimum number of times", () => {
     const out = proposeCoCitations([
       { question: "What preheat applies to P-101 suction?", docIds: ["a", "b"] },
@@ -287,7 +287,7 @@ describe("Connection Skills — co-citation", () => {
   });
 });
 
-describe("Reasoning Skills — built-ins and prompt block", () => {
+describe("Reasoning Skills - built-ins and prompt block", () => {
   it("built-in packs are well-formed: unique keys, self-gating, non-trivial", async () => {
     const { BUILTIN_ANSWER_SKILLS } = await import("@/lib/answerSkillsData");
     const keys = new Set(BUILTIN_ANSWER_SKILLS.map((b) => b.builtin_key));

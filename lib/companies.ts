@@ -170,7 +170,7 @@ export async function addCompanyEvent(input: {
   actorId: string;
   actorName?: string | null;
 }): Promise<void> {
-  if (!input.description.trim()) throw new Error("Describe what happened — this lands on the company's permanent record.");
+  if (!input.description.trim()) throw new Error("Describe what happened - this lands on the company's permanent record.");
   const { error } = await supabase.from("company_events").insert({
     org_id: input.orgId,
     company_id: input.companyId,

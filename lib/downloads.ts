@@ -50,15 +50,15 @@ export function viewerStatusBadge(
   doc: { status?: string | null; rev?: string | null },
   viewingCurrentVersion = true,
 ): { label: string; tone: ViewBadgeTone } {
-  if (!viewingCurrentVersion) return { label: "Old revision — not current", tone: "caution" };
+  if (!viewingCurrentVersion) return { label: "Old revision - not current", tone: "caution" };
   switch (doc.status) {
     case "Issued":
     case "Locked":
       return { label: doc.rev ? `Controlled · Rev ${doc.rev}` : "Controlled", tone: "controlled" };
     case "Draft":
-      return { label: "Draft — not issued", tone: "caution" };
+      return { label: "Draft - not issued", tone: "caution" };
     case "Superseded":
-      return { label: "Superseded — not current", tone: "danger" };
+      return { label: "Superseded - not current", tone: "danger" };
     case "Void":
       return { label: "Void", tone: "danger" };
     case "Archived":
@@ -79,7 +79,7 @@ function defaultFilename(doc: DocumentRecord, suffix: string): string {
  *  an active-change warning, so a stale print on a desk announces itself. */
 export function buildFooterNotice(doc: DocumentRecord, userId: string): string {
   const parts: string[] = [];
-  parts.push(`Rev ${doc.rev ?? "?"} at time of issue — verify current revision before use.`);
+  parts.push(`Rev ${doc.rev ?? "?"} at time of issue - verify current revision before use.`);
   if (doc.checkedOutBy && doc.checkedOutBy !== userId) {
     const who = doc.checkedOutByName || "another user";
     parts.push(`ACTIVE CHANGE IN PROGRESS: checked out by ${who} at time of issue.`);
@@ -233,7 +233,7 @@ export async function downloadDocumentPdf(ctx: DownloadContext): Promise<Control
         email: ctx.userEmail ?? undefined,
         timestamp: new Date(),
         expiresAt,
-        watermarkText: "UNCONTROLLED — FOR REVIEW ONLY",
+        watermarkText: "UNCONTROLLED - FOR REVIEW ONLY",
         footerNotice: buildFooterNotice(ctx.doc, ctx.userId),
         verifyUrl: buildVerifyUrl(ctx),
       },
@@ -273,7 +273,7 @@ export async function printDocumentPdf(ctx: DownloadContext): Promise<ControlSta
       email: ctx.userEmail ?? undefined,
       timestamp: new Date(),
       expiresAt,
-      watermarkText: "UNCONTROLLED — FOR REVIEW ONLY",
+      watermarkText: "UNCONTROLLED - FOR REVIEW ONLY",
       footerNotice: buildFooterNotice(ctx.doc, ctx.userId),
       verifyUrl: buildVerifyUrl(ctx),
     });

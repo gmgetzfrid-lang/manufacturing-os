@@ -161,7 +161,7 @@ export default function DistributionAcks({
             <span className="text-xs font-bold text-[var(--color-text)]">Distribution confirmations</span>
             <span className="ml-auto">
               {acks.length === 0 ? (
-                <span className="text-[10px] font-bold text-[var(--color-text-faint)]">none requested for Rev {currentRev ?? "—"}</span>
+                <span className="text-[10px] font-bold text-[var(--color-text-faint)]">none requested for Rev {currentRev ?? "-"}</span>
               ) : (
                 <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
                   confirmed === acks.length ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-blue-700"

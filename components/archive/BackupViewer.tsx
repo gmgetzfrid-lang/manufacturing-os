@@ -153,13 +153,13 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
       }
       setZip(z);
       setEntries(all);
-      if (all.length === 0) setError("This backup has no /files folder — it may be a JSON-only export (no binaries).");
+      if (all.length === 0) setError("This backup has no /files folder - it may be a JSON-only export (no binaries).");
 
       // Targeted flow: jump straight to the one file the user came to view.
       if (target?.storageKey) {
         const hit = findInBackup(all.map((e) => e.path), target.storageKey);
         if (hit) await openEntry(z, hit, target.fileName || hit.split("/").pop() || hit);
-        else setError(`This backup doesn't contain ${target.fileName || "that file"}${target.archiveId ? ` — is it archive ${target.archiveId}?` : "."}`);
+        else setError(`This backup doesn't contain ${target.fileName || "that file"}${target.archiveId ? ` - is it archive ${target.archiveId}?` : "."}`);
       }
     } catch (e) {
       setError(`Couldn't read that archive: ${(e as Error).message}`);
@@ -210,7 +210,7 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
               <UploadCloud className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
               <div className="text-sm font-bold text-[var(--color-text)]">Drop the backup .zip here, or click to choose</div>
               <div className="text-[11px] text-[var(--color-text-muted)] mt-1 inline-flex items-center gap-1.5">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" /> Opened in your browser only — never uploaded or re-saved.
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" /> Opened in your browser only - never uploaded or re-saved.
               </div>
             </>
           )}
@@ -256,13 +256,13 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
                   )}
                   {verify?.status === "verified" && (
                     <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded"
-                      title={verify.source === "record" ? "SHA-256 matches the hash recorded on this revision at upload — these are the authentic bytes." : "SHA-256 matches the archive's own manifest."}>
+                      title={verify.source === "record" ? "SHA-256 matches the hash recorded on this revision at upload - these are the authentic bytes." : "SHA-256 matches the archive's own manifest."}>
                       <ShieldCheck className="w-3 h-3" /> {verify.source === "record" ? "Matches recorded hash" : "Matches manifest"}
                     </span>
                   )}
                   {verify?.status === "mismatch" && (
                     <span className="inline-flex items-center gap-1 text-[10px] font-black text-red-700 bg-red-50 border border-red-300 px-1.5 py-0.5 rounded"
-                      title="The bytes in this zip do NOT match the recorded SHA-256 — the file was altered or this is the wrong archive. Do not rely on this copy.">
+                      title="The bytes in this zip do NOT match the recorded SHA-256 - the file was altered or this is the wrong archive. Do not rely on this copy.">
                       <ShieldAlert className="w-3 h-3" /> HASH MISMATCH
                     </span>
                   )}

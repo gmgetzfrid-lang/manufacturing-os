@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
       const name = String(body.name ?? "").trim();
-      if (!name) return NextResponse.json({ error: "Give the catalog a name — what your team calls it." }, { status: 400 });
+      if (!name) return NextResponse.json({ error: "Give the catalog a name - what your team calls it." }, { status: 400 });
       const mark = await markCatalog(supabaseAdmin, { orgId, libraryId, documentId: body.documentId || undefined, name, by: user.id });
       return NextResponse.json({ mark });
     } catch (e) {

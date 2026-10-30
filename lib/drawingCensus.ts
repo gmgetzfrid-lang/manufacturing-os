@@ -80,25 +80,25 @@ const SYSTEM =
   '"offSheet":[{"tag":"X-45","direction":"from","drawing":"2002-D 2001","sheet":"12"}],' +
   '"title":{"drawingNumber":"2002-D 2001","sheet":"5","rev":"42"}}\n' +
   "Rules:\n" +
-  "- equipment: process equipment whose CALLOUT is printed on this sheet — the tag stacked with its " +
+  "- equipment: process equipment whose CALLOUT is printed on this sheet - the tag stacked with its " +
   "description, often with a site code in parentheses and design data (e.g. \"V-14 / (6110.14) / 35# STEAM " +
   "DRUM / 4'-0\\\" I.D. x 10'-0\\\" T/T\"). Vessels, drums, columns, exchangers, pumps, compressors, tanks, " +
   "fired heaters and furnaces, boilers, filters, packages. One entry per item. code = the parenthesised site code " +
   "if printed, else null. name = the service description if printed, else null. details = the rest of the " +
-  "callout as printed on one line — size, design pressure and temperature, capacity, head, duty, materials — " +
+  "callout as printed on one line - size, design pressure and temperature, capacity, head, duty, materials - " +
   "separated by \"; \", else null.\n" +
   "- One callout for several items (\"P-101A/B\", \"H-1 & H-2\", \"E-5A,B,C\") is several entries: one per " +
   "item, each with its full tag.\n" +
-  "- instruments: instrument bubbles (function letters over a loop number — PIT over 130 is \"PIT-130\"), " +
+  "- instruments: instrument bubbles (function letters over a loop number - PIT over 130 is \"PIT-130\"), " +
   "relief valves (PSV, PRV), control valves (PV, LV, FV, TV), gauges and switches. Join letters and number " +
   "with one dash.\n" +
-  "- offSheet: tags that appear ONLY in off-page connector arrows or FROM / TO notes at the sheet edges — " +
+  "- offSheet: tags that appear ONLY in off-page connector arrows or FROM / TO notes at the sheet edges - " +
   "they are drawn on other sheets. Never put them in equipment. direction = \"from\" or \"to\" as printed.\n" +
   "- Line numbers, pipe sizes and specs, valve sizes, notes, steam pressures and the sheet's own drawing " +
   "number are none of these. Nor are nozzle marks on a vessel (T1, T2, S1, N3), pipe spec / line class " +
   "codes (BA1, CA1, CU6, A-1, B-1), flange ratings (150#, 300#), reducer sizes (6x4, 4x3), or valve " +
   "states (NC, NO, FC, FO).\n" +
-  "- The same piece of equipment is often labelled twice — its callout (\"P-04 (3524.04) CHLORIDE " +
+  "- The same piece of equipment is often labelled twice - its callout (\"P-04 (3524.04) CHLORIDE " +
   "INJECTION PUMP\") and a short label on the symbol (\"P-4 3524.04\"). That is ONE item: report it once, " +
   "with the tag as the callout prints it.\n" +
   "- Copy every character exactly as printed. If you cannot read a character with certainty, leave that " +
@@ -115,18 +115,18 @@ export const TILE_SYSTEM = SYSTEM.replace(
   "Work tile by tile and do not stop early: a sheet often carries two or more of the same kind of " +
   "equipment side by side (two heaters, a pump and its spare), and every one of them counts. ",
   "You get two images: a small OVERVIEW of the whole sheet, for orientation only, then ONE zoomed TILE " +
-  "of it. Report ONLY what is printed inside the TILE — never items you can only see in the overview. " +
+  "of it. Report ONLY what is printed inside the TILE - never items you can only see in the overview. " +
   "An item cut by the tile's edge: report it only if its whole tag is legible in the tile (the tiles " +
   "overlap, so a neighbouring tile has it whole). Go through the tile systematically, left to right and " +
-  "top to bottom, and list EVERY instrument bubble — a busy area can hold dozens, and each one counts. " +
+  "top to bottom, and list EVERY instrument bubble - a busy area can hold dozens, and each one counts. " +
   "Two items of the same kind side by side (a pump and its spare) are two entries. " +
   "The title block is in one corner tile only; elsewhere return title fields as null. ",
 );
 
 const TRANSCRIPT_SYSTEM =
   "You transcribe ONE sheet of an engineering drawing so it can be searched. You get an overview and the " +
-  "four quadrants of the sheet. Write every legible line of text on the sheet in reading order — equipment " +
-  "callouts, notes, connector text, the title block (as DRAWING NO: …, SHEET: n OF m, REV: …, TITLE: …) — " +
+  "four quadrants of the sheet. Write every legible line of text on the sheet in reading order - equipment " +
+  "callouts, notes, connector text, the title block (as DRAWING NO: …, SHEET: n OF m, REV: …, TITLE: …) - " +
   "one per line, as plain text. Copy characters exactly; skip what you cannot read. No commentary.";
 
 /** Pull the JSON object out of a reply, even one cut off by a length limit:
@@ -301,7 +301,7 @@ export async function readDrawingSheet(pdf: PdfProxy, page: number, name: string
       try {
         const text = await call({
           system: TILE_SYSTEM,
-          user: `Sheet: "${name}", page ${page} of ${pageCount}. Image 1: the whole sheet, small. Image 2: the tile at ${where(i)} — report only what is printed in it.`,
+          user: `Sheet: "${name}", page ${page} of ${pageCount}. Image 1: the whole sheet, small. Image 2: the tile at ${where(i)} - report only what is printed in it.`,
           images: [small, tiles[i]], maxTokens: 6_000,
         });
         readings[i] = parseCensus(text);
@@ -525,7 +525,7 @@ export async function correctDocument(orgId: string, knowledgeDocId: string, doc
  *  and into the registry, and journaled so it can be undone. */
 export async function addEquipmentByHand(input: { orgId: string; userId: string; userName: string | null; knowledgeDocId: string; page: number; tag: string; name?: string | null; run: RunCtx }): Promise<{ tag: string; correction: NonNullable<CensusPageResult["correction"]> | null; journaled: boolean }> {
   const tag = normTag(input.tag);
-  if (!tag) throw new DrawingReadError(`"${input.tag}" is not shaped like an equipment tag (letters, a dash, a number — like H-2 or P-101A).`);
+  if (!tag) throw new DrawingReadError(`"${input.tag}" is not shaped like an equipment tag (letters, a dash, a number - like H-2 or P-101A).`);
   const { data: kdoc } = await supabaseAdmin.from("knowledge_documents").select("id, library_id, name, page_count, source_document_id").eq("id", input.knowledgeDocId).eq("org_id", input.orgId).maybeSingle();
   if (!kdoc) throw new DrawingReadError("That drawing has no read copy.");
   const k = kdoc as { id: string; library_id: string; name: string; page_count: number | null; source_document_id: string | null };

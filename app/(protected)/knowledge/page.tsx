@@ -60,7 +60,7 @@ export default function KnowledgePage() {
         userId: uid, userName: userEmail ?? "Member",
       });
       setShowCreate(false); setName(""); setDescription("");
-      showToast({ type: "success", title: "Library created — add PDFs to start indexing." });
+      showToast({ type: "success", title: "Library created - add PDFs to start indexing." });
       await refresh();
     } catch (e) {
       showToast({ type: "error", title: (e as Error).message });
@@ -72,7 +72,7 @@ export default function KnowledgePage() {
       <ViewTabs title="Intelligence" tabs={INTELLIGENCE_VIEWS} />
       <PageHeaderBar
         title="Knowledge"
-        subtitle="AI-searchable reference libraries — ask questions, get answers cited to the page"
+        subtitle="AI-searchable reference libraries - ask questions, get answers cited to the page"
         icon={BookOpen}
         actions={
           <div className="flex items-center gap-2">
@@ -92,16 +92,16 @@ export default function KnowledgePage() {
         <div className="mb-4 rounded-xl border-2 border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-4 py-3 flex items-start gap-2.5">
           <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
           <div className="text-xs text-amber-800 dark:text-amber-300">
-            <b>No AI provider connected yet.</b> Libraries can be built and indexed, but questions need an API key —
+            <b>No AI provider connected yet.</b> Libraries can be built and indexed, but questions need an API key -
             open <button className="underline font-bold" onClick={() => setShowSettings(true)}>AI settings</button> and
-            add one (Anthropic or OpenAI — providers that never train on your data). The key owner pays the provider directly; this app adds no cost.
+            add one (Anthropic or OpenAI - providers that never train on your data). The key owner pays the provider directly; this app adds no cost.
           </div>
         </div>
       )}
 
       {error && (
         <div className="mb-4 rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/40 px-4 py-3 text-xs font-bold text-rose-700 dark:text-rose-300">
-          {error} — if the knowledge tables haven&apos;t been migrated yet, run migration 20260911.
+          {error} - if the knowledge tables haven&apos;t been migrated yet, run migration 20260911.
         </div>
       )}
 

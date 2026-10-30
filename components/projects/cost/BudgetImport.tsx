@@ -66,8 +66,8 @@ export function BudgetDocDrop({ orgId, projectId, onRead, compact, label }: {
           </span>
           <span className="block text-[10px] text-[var(--color-text-muted)]">
             {reading
-              ? "The AI is reading the pages — usually 20–60 seconds. Nothing is saved until you review it."
-              : "PDF (scanned is fine), photo, Excel/CSV, Word, or text — any company's form. Read on your own AI key; you review before anything is created."}
+              ? "The AI is reading the pages - usually 20–60 seconds. Nothing is saved until you review it."
+              : "PDF (scanned is fine), photo, Excel/CSV, Word, or text - any company's form. Read on your own AI key; you review before anything is created."}
           </span>
         </span>
         <input ref={input} type="file" accept={BUDGET_DOC_ACCEPT} className="hidden"
@@ -129,7 +129,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
         <span className="p-1.5 rounded-lg bg-[var(--color-accent-soft)] text-[var(--color-accent)]"><Sparkles className="w-4 h-4" /></span>
         <div className="min-w-0 flex-1">
           <div className="text-sm font-black text-[var(--color-text)]">
-            {[p.docType, p.docNumber].filter(Boolean).join(" ") || "Budget document"}{p.title ? ` — ${p.title}` : ""}
+            {[p.docType, p.docNumber].filter(Boolean).join(" ") || "Budget document"}{p.title ? ` - ${p.title}` : ""}
           </div>
           <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5 flex flex-wrap gap-x-3">
             <span>{result.source.fileName}</span>
@@ -146,14 +146,14 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
 
       {/* Reconciliation — the three numbers that have to agree */}
       <div className="px-4 pb-2 grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <Fact label="Authorized" value={recon.authorized != null ? fmtMoney(recon.authorized, cur) : "—"} />
+        <Fact label="Authorized" value={recon.authorized != null ? fmtMoney(recon.authorized, cur) : "-"} />
         <Fact label={`Lines (${included.length})`} value={fmtMoney(recon.linesTotal, cur)}
           tone={recon.balanced ? "ok" : "warn"}
           sub={recon.unallocated != null && !recon.balanced
             ? `${fmtMoney(Math.abs(recon.unallocated), cur)} ${recon.unallocated > 0 ? "not in any line" : "more than authorized"}`
             : recon.authorized != null ? "match the authorized total" : undefined} />
         <Fact label="Against approved budget"
-          value={recon.budgeted != null ? fmtMoney(recon.budgeted, cur) : "—"}
+          value={recon.budgeted != null ? fmtMoney(recon.budgeted, cur) : "-"}
           tone={recon.overBudgetBy != null && recon.overBudgetBy > 0 ? "warn" : undefined}
           sub={recon.overBudgetBy != null && recon.overBudgetBy !== 0
             ? `${fmtMoney(Math.abs(recon.overBudgetBy), cur)} ${recon.overBudgetBy > 0 ? "over" : "under"} budget`
@@ -194,7 +194,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                       className="w-full h-7 rounded-md border border-transparent hover:border-[var(--color-border)] focus:border-[var(--color-border-strong)] bg-transparent px-1.5 text-xs font-bold text-[var(--color-text)]" />
                     {(exists || l.note) && (
                       <div className="px-1.5 text-[10px] text-[var(--color-text-muted)]">
-                        {exists && <span className="font-bold text-amber-700 dark:text-amber-300">Already a budget line — left as is. </span>}
+                        {exists && <span className="font-bold text-amber-700 dark:text-amber-300">Already a budget line - left as is. </span>}
                         {l.note}
                       </div>
                     )}
@@ -208,9 +208,9 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                   <td className="py-1.5 pr-2">
                     <div className="flex items-center gap-1">
                       <input value={l.supplier ?? ""} onChange={(e) => patch(l.key, { supplier: e.target.value.trim() ? e.target.value : null })}
-                        placeholder="—" className="w-36 h-7 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-[11px]" />
+                        placeholder="-" className="w-36 h-7 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-[11px]" />
                       {l.supplier && !exists && (
-                        <span title={known ? `Matches ${known.name} on this project` : "New company — will be added"}
+                        <span title={known ? `Matches ${known.name} on this project` : "New company - will be added"}
                           className={`text-[9px] font-black uppercase ${known ? "text-emerald-600" : "text-[var(--color-text-faint)]"}`}>
                           {known ? <Check className="w-3 h-3" /> : "new"}
                         </span>
@@ -240,7 +240,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
           <Building2 className="w-3 h-3" />
           Creates {plan.accountsToCreate.length} budget line{plan.accountsToCreate.length === 1 ? "" : "s"}
           {plan.partiesToCreate.length > 0 ? ` and ${plan.partiesToCreate.length} compan${plan.partiesToCreate.length === 1 ? "y" : "ies"} (${plan.partiesToCreate.join(", ")})` : ""}.
-          {" "}No money is posted — quotes and invoices do that.
+          {" "}No money is posted - quotes and invoices do that.
         </span>
         {error && <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
         <span className="ml-auto flex items-center gap-2">
@@ -271,7 +271,7 @@ export function BlankPagesNote({ pages }: { pages: number[] }) {
     <div className="mx-4 mb-2 flex items-start gap-2 rounded-lg border border-amber-500/50 bg-amber-500/[0.07] px-3 py-2 text-[11px] font-bold text-amber-800 dark:text-amber-300">
       <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
       <span>
-        Page{pages.length === 1 ? "" : "s"} {pages.join(", ")} came through blank — usually a scanner compression the reader can&apos;t decode yet.
+        Page{pages.length === 1 ? "" : "s"} {pages.join(", ")} came through blank - usually a scanner compression the reader can&apos;t decode yet.
         Anything only on {pages.length === 1 ? "that page" : "those pages"} was not read; check it against the paper.
       </span>
     </div>

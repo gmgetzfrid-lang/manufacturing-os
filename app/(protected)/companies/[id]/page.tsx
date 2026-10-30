@@ -143,7 +143,7 @@ export default function CompanyProfilePage() {
             </div>
             {sc && (
               <div className="mt-2 text-[10px] text-[var(--color-text-faint)]">
-                Score computed from {sc.evidenceCount} recorded evidence point{sc.evidenceCount === 1 ? "" : "s"} — never from typed-in ratings. Dimensions without evidence stay Unrated and don&apos;t count.
+                Score computed from {sc.evidenceCount} recorded evidence point{sc.evidenceCount === 1 ? "" : "s"} - never from typed-in ratings. Dimensions without evidence stay Unrated and don&apos;t count.
               </div>
             )}
           </div>
@@ -242,7 +242,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
             {Math.round(company.qualityManualScore)}% coverage
           </span>
         ) : (
-          <span className="text-[10px] text-[var(--color-text-muted)]">Not evaluated — the score gauges how much of a real quality program their manual covers.</span>
+          <span className="text-[10px] text-[var(--color-text-muted)]">Not evaluated - the score gauges how much of a real quality program their manual covers.</span>
         )}
         {company.qualityManualReviewedAt && (
           <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">confirmed {new Date(company.qualityManualReviewedAt).toLocaleDateString()}</span>
@@ -299,7 +299,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
             <>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-black text-[var(--color-text)]">Proposed: {proposal.score}% coverage</span>
-                <span className="text-[10px] text-[var(--color-text-muted)]">Review the findings — nothing lands on the record until you confirm.</span>
+                <span className="text-[10px] text-[var(--color-text-muted)]">Review the findings - nothing lands on the record until you confirm.</span>
                 <span className="ml-auto flex items-center gap-2">
                   <button onClick={() => setProposal(null)} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Discard</button>
                   <button onClick={() => void confirm()} disabled={confirming}
@@ -351,7 +351,7 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
         <ShieldAlert className="w-4 h-4 text-[var(--color-accent)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Safety &amp; performance log</span>
-        <span className="text-[10px] text-[var(--color-text-muted)]">Dated facts, attributed — these feed the safety score. Near-miss REPORTING barely costs points; it&apos;s healthy culture.</span>
+        <span className="text-[10px] text-[var(--color-text-muted)]">Dated facts, attributed - these feed the safety score. Near-miss REPORTING barely costs points; it&apos;s healthy culture.</span>
       </div>
       {canManage && (
         <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
@@ -416,7 +416,7 @@ function HistoryPanels({ profile, scorecard }: { profile: CompanyProfileData | n
               <li key={p.projectId} className="px-4 py-2 text-xs">
                 <Link href={`/projects/${p.projectId}`} className="font-bold text-[var(--color-text)] hover:text-[var(--color-accent)]">{p.projectName}</Link>
                 <div className="text-[10px] text-[var(--color-text-muted)]">
-                  {[p.trade, p.contractValue != null ? `contract ${fmtMoney(p.contractValue)}` : null].filter(Boolean).join(" · ") || "—"}
+                  {[p.trade, p.contractValue != null ? `contract ${fmtMoney(p.contractValue)}` : null].filter(Boolean).join(" · ") || "-"}
                 </div>
               </li>
             ))}
@@ -453,7 +453,7 @@ function HistoryPanels({ profile, scorecard }: { profile: CompanyProfileData | n
                 <span className="text-[var(--color-text)]">{co.title}</span>
                 <span className="font-black tabular-nums">{fmtMoney(co.amount)}</span>
                 <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${co.reasonCode === "scope_gap" ? "border-rose-500/40 bg-rose-500/[0.06] text-rose-700 dark:text-rose-300" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}
-                  title={co.reasonCode === "scope_gap" ? "Their bid missed this scope — counts against their cost discipline" : undefined}>
+                  title={co.reasonCode === "scope_gap" ? "Their bid missed this scope - counts against their cost discipline" : undefined}>
                   {CO_REASON_LABEL[co.reasonCode as CoReason] ?? co.reasonCode}
                 </span>
                 <span className="ml-auto text-[9px] font-bold uppercase text-[var(--color-text-faint)]">{co.status}</span>

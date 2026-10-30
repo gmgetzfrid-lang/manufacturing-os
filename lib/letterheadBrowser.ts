@@ -108,9 +108,9 @@ export async function readLetterheadFile(file: File): Promise<Letterhead> {
     await shrinkLayer(lh.layer);
     await shrinkLayer(lh.first);
     const empty = (l?: LhLayer) => !l || (!l.header && !l.footer && !(l.floats ?? []).length);
-    if (empty(lh.layer) && empty(lh.first)) throw new Error("That Word file has no header or footer — put the letterhead in the header (Insert › Header), or upload it as a PDF.");
+    if (empty(lh.layer) && empty(lh.first)) throw new Error("That Word file has no header or footer - put the letterhead in the header (Insert › Header), or upload it as a PDF.");
   } else if (name.endsWith(".doc")) {
-    throw new Error("That's an old Word file (.doc). Open it in Word and Save As .docx — or save it as a PDF.");
+    throw new Error("That's an old Word file (.doc). Open it in Word and Save As .docx - or save it as a PDF.");
   } else if (name.endsWith(".pdf") || file.type === "application/pdf") {
     lh = await fromPdf(file);
   } else if (/\.(png|jpe?g|webp)$/.test(name) || /^image\//.test(file.type)) {
@@ -118,6 +118,6 @@ export async function readLetterheadFile(file: File): Promise<Letterhead> {
   } else {
     throw new Error("Upload the letterhead as a Word file (.docx), a PDF, or a picture (PNG or JPG).");
   }
-  if (JSON.stringify(lh).length > MAX_BYTES * 1.4) throw new Error("That letterhead is too big to share — try a PDF of just the one page, or a smaller picture.");
+  if (JSON.stringify(lh).length > MAX_BYTES * 1.4) throw new Error("That letterhead is too big to share - try a PDF of just the one page, or a smaller picture.");
   return lh;
 }

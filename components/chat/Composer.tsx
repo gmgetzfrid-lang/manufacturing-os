@@ -115,7 +115,7 @@ export default function Composer({
     >
       {dragging && (
         <div className="absolute inset-0 z-10 rounded-2xl bg-[var(--color-accent-soft)]/80 flex items-center justify-center text-sm font-black text-[var(--color-accent)] pointer-events-none">
-          Drop an image or PDF — context for this question only
+          Drop an image or PDF - context for this question only
         </div>
       )}
 

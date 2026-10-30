@@ -59,7 +59,7 @@ export default function AssetHubPage() {
       if (de) throw new Error(de.message);
       const mapped: HubDoc[] = (docRows ?? []).map((r) => ({
         id: String((r as Record<string, unknown>).id),
-        number: String((r as Record<string, unknown>).document_number || (r as Record<string, unknown>).title || (r as Record<string, unknown>).name || "—"),
+        number: String((r as Record<string, unknown>).document_number || (r as Record<string, unknown>).title || (r as Record<string, unknown>).name || "-"),
         title: String((r as Record<string, unknown>).title || ""),
         rev: ((r as Record<string, unknown>).rev as string) ?? null,
         status: ((r as Record<string, unknown>).status as string) ?? null,
@@ -106,7 +106,7 @@ export default function AssetHubPage() {
           title={<span className="font-mono">{tag}</span>}
           subtitle={
             <>
-              {asset?.description || (asset ? "Registered asset" : "Unregistered tag — showing tagged documents")}
+              {asset?.description || (asset ? "Registered asset" : "Unregistered tag - showing tagged documents")}
               {asset?.location && (
                 <span className="mt-1 flex items-center gap-1 text-xs text-[var(--color-text-muted)]">
                   <MapPin className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> {asset.location}
@@ -138,8 +138,8 @@ export default function AssetHubPage() {
                       });
                       setPackNote(
                         result.skipped.length === 0
-                          ? `Pack ready — ${result.included} drawing${result.included === 1 ? "" : "s"}, all current, all stamped.`
-                          : `Pack ready — ${result.included} included, ${result.skipped.length} skipped (${result.skipped.map((s) => s.label).join(", ")}).`,
+                          ? `Pack ready - ${result.included} drawing${result.included === 1 ? "" : "s"}, all current, all stamped.`
+                          : `Pack ready - ${result.included} included, ${result.skipped.length} skipped (${result.skipped.map((s) => s.label).join(", ")}).`,
                       );
                     } catch (e) {
                       setPackNote(`Pack failed: ${(e as Error).message}`);
@@ -210,7 +210,7 @@ export default function AssetHubPage() {
               {docs.map((d) => (
                 <li key={d.id}>
                   <Link href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.id}` : "/documents"} className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors">
-                    <span className="font-mono text-xs font-bold text-[var(--color-text)] truncate flex-1">{d.number}{d.title && d.title !== d.number ? <span className="font-sans font-normal text-[var(--color-text-muted)]"> — {d.title}</span> : ""}</span>
+                    <span className="font-mono text-xs font-bold text-[var(--color-text)] truncate flex-1">{d.number}{d.title && d.title !== d.number ? <span className="font-sans font-normal text-[var(--color-text-muted)]"> - {d.title}</span> : ""}</span>
                     {d.rev && <span className="text-[10px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">Rev {d.rev}</span>}
                     {d.status && <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border shrink-0 ${stateStyle(documentState(d.status)).pill}`}>{d.status}</span>}
                     {(holdsByDoc.get(d.id) ?? 0) > 0 && <span className="text-[10px] font-bold text-rose-700 inline-flex items-center gap-0.5 shrink-0"><AlertOctagon className="w-3 h-3" /> hold</span>}

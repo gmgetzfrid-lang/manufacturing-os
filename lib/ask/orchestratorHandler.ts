@@ -69,9 +69,9 @@ export async function handleOrchestrator(input: AskHandlerInput): Promise<AskHan
   if (!usable) {
     return bad(
       conn
-        ? "Your saved key uses a blocked provider — only Anthropic (Claude) and OpenAI are allowed. "
+        ? "Your saved key uses a blocked provider - only Anthropic (Claude) and OpenAI are allowed. "
           + "Save a Claude or OpenAI key in AI settings."
-        : "You haven't added your API key yet — every member uses their own. Add a Claude or "
+        : "You haven't added your API key yet - every member uses their own. Add a Claude or "
           + "OpenAI key in AI settings first.",
       412,
     );
@@ -107,7 +107,7 @@ export async function handleOrchestrator(input: AskHandlerInput): Promise<AskHan
   ]);
   if (capUsd > 0 && monthSoFar.spentUsd >= capUsd) {
     return bad(
-      `Monthly AI budget reached — you've used $${monthSoFar.spentUsd.toFixed(2)} of your `
+      `Monthly AI budget reached - you've used $${monthSoFar.spentUsd.toFixed(2)} of your `
       + `$${capUsd.toFixed(2)} cap. It resets on the 1st; an Admin can raise the cap in AI settings.`,
       402,
     );
@@ -121,7 +121,7 @@ export async function handleOrchestrator(input: AskHandlerInput): Promise<AskHan
     (userImages.length > 0
       ? `\n\nASKER ATTACHMENTS: ${userImages.length} image${userImages.length === 1 ? "" : "s"} attached ` +
         "by the asker for this question (a photo, a marked-up drawing, a screenshot, or PDF pages). " +
-        "Read them as context — e.g. a tag on a nameplate photo is the tag to look up."
+        "Read them as context - e.g. a tag on a nameplate photo is the tag to look up."
       : "");
 
   // The conversation so far rides on the question, so "what about the other
@@ -259,8 +259,8 @@ export async function handleOrchestrator(input: AskHandlerInput): Promise<AskHan
 function describeStep(tool: string, parameters: Record<string, unknown>): string {
   const p = (k: string) => (parameters[k] !== undefined ? String(parameters[k]) : "");
   switch (tool) {
-    case "find_documents": return `Looking up documents — "${p("query")}"`;
-    case "search_documents": return `Searching document text — "${p("query")}"`;
+    case "find_documents": return `Looking up documents - "${p("query")}"`;
+    case "search_documents": return `Searching document text - "${p("query")}"`;
     case "query_equipment_by_unit": return `Listing equipment in ${p("unit_name")}`;
     case "equipment_mentions": return `Finding where ${p("tag")} is mentioned`;
     case "check_permissions": return "Checking your access";

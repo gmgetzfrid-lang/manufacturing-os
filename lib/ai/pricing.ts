@@ -22,7 +22,7 @@ import type { AiProviderId } from "./providerCall";
 export const ALLOWED_PROVIDERS: readonly AiProviderId[] = ["anthropic", "openai"];
 
 export const PROVIDER_BLOCK_MESSAGE =
-  "Only Anthropic (Claude) and OpenAI keys are allowed — their API traffic is never used for " +
+  "Only Anthropic (Claude) and OpenAI keys are allowed - their API traffic is never used for " +
   "model training. Providers that can train on what you send (like Google AI Studio keys) are " +
   "blocked entirely, for every scope. No exceptions.";
 
@@ -33,8 +33,8 @@ export const PROVIDER_BLOCK_MESSAGE =
 export const AGREEMENT_VERSION = "2026-07-v2";
 
 const AGREEMENT_CORE =
-  "Before you use the AI assistant, understand what it does: everything you type — and " +
-  "excerpts from the indexed documents used to answer you — is sent to the workspace's AI " +
+  "Before you use the AI assistant, understand what it does: everything you type - and " +
+  "excerpts from the indexed documents used to answer you - is sent to the workspace's AI " +
   "provider.\n\n" +
   "NEVER enter any of the following, in any form:\n" +
   "• passwords, login credentials, API keys, or access codes\n" +
@@ -47,12 +47,12 @@ const PROVIDER_AGREEMENT_NOTES: Partial<Record<AiProviderId, string>> = {
   anthropic:
     "This workspace runs on Claude (Anthropic). Anthropic does not train models on API " +
     "traffic, so your questions and document excerpts stay out of their training data. That " +
-    "protects the company — it is not a reason to get careless. The rules above still apply " +
+    "protects the company - it is not a reason to get careless. The rules above still apply " +
     "to every prompt.",
   openai:
     "This workspace runs on OpenAI. OpenAI does not train models on API traffic, so your " +
     "questions and document excerpts stay out of their training data. That protects the " +
-    "company — it is not a reason to get careless. The rules above still apply to every prompt.",
+    "company - it is not a reason to get careless. The rules above still apply to every prompt.",
 };
 
 /** The full agreement text a user signs, flavored for the provider that

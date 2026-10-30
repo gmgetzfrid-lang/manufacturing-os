@@ -83,7 +83,7 @@ export async function scanEffectiveDates(orgId: string): Promise<number> {
       notify({
         orgId, userId: uid, kind: "effective_now",
         title: `Now in effect: ${label}${d.rev ? ` Rev ${d.rev}` : ""}`,
-        body: `This revision's effective date (${(d.effective_date as string).slice(0, 10)}) has arrived — it is now the in-force controlled copy.`,
+        body: `This revision's effective date (${(d.effective_date as string).slice(0, 10)}) has arrived - it is now the in-force controlled copy.`,
         link, resourceType: "document", resourceId: docId,
       })
     ));

@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
   // A handoff action (href) never executes server-side; the tool re-proposes
   // it no matter what. Tell the client to use the link instead.
   if (out.pending) {
-    return bad("This action completes in the app, not here — use its link.", 409);
+    return bad("This action completes in the app, not here - use its link.", 409);
   }
   const result = (out.data ?? {}) as Record<string, unknown>;
   if (typeof result.error === "string" && result.error) {

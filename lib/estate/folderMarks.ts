@@ -71,7 +71,7 @@ export function planStructure(
     if (meaning === "area") {
       const u = find.unit(f.name);
       rows.push(u ? { folderId: f.id, path, depth, kind: "area", value: u.label, ref: u.code, status: "match" }
-        : { folderId: f.id, path, depth, kind: "area", value: null, ref: null, status: "unmatched", note: "No Site Codebook unit matches this name — add it under Intelligence › Setup, or mark it by hand." });
+        : { folderId: f.id, path, depth, kind: "area", value: null, ref: null, status: "unmatched", note: "No Site Codebook unit matches this name - add it under Intelligence › Setup, or mark it by hand." });
     } else if (meaning === "type") {
       rows.push({ folderId: f.id, path, depth, kind: "type", value: f.name.trim(), ref: null, status: "match" });
     } else {

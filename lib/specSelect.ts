@@ -164,20 +164,20 @@ export function selectionBlock(cands: Candidate[], o: {
   ratings: string[]; askerTerms: string[]; companyTerms: string[]; total: number; cite: (c: Candidate) => number | null;
 }): string {
   if (cands.length === 0) {
-    return `\n\nCATALOG FILTERED — the catalog of ${o.total} classes was filtered by ${o.ratings.length ? `rating ${o.ratings.join("/")}` : "no rating"} ` +
+    return `\n\nCATALOG FILTERED - the catalog of ${o.total} classes was filtered by ${o.ratings.length ? `rating ${o.ratings.join("/")}` : "no rating"} ` +
       `and the words ${[...o.askerTerms, ...o.companyTerms].map((t) => `"${t}"`).join(", ")}: NO entry matched.`;
   }
   const strong = cands.filter((c) => c.matched.some((m) => m.how !== "lead"));
   const shown = (strong.length ? strong : cands).slice(0, 24);
   const lines = shown.map((c) => {
     const why = c.matched.map((m) => (m.how === "asker" ? `"${m.term}" (asker's word)` : m.how === "company" ? `"${m.term}" (company's word for it)` : `"${m.term}" (related only)`)).join(", ");
-    const fields = [c.rating ? `rating ${c.rating}` : "rating not recorded — read it on the page or from the code's legend",
+    const fields = [c.rating ? `rating ${c.rating}` : "rating not recorded - read it on the page or from the code's legend",
       ...Object.entries(c.attrs ?? {}).filter(([k]) => !/^services?$/i.test(k)).slice(0, 4).map(([k, v]) => `${k} ${v}`)].filter(Boolean).join(" · ");
     const n = o.cite(c);
-    return `- ${c.code}${n ? ` [${n}]` : ""} — ${c.catalog ? `${c.catalog}, ` : ""}${c.documentName.replace(/\.pdf$/i, "")} p.${c.page} — for: "${(c.service ?? "").slice(0, 160)}"${fields ? ` — ${fields}` : ""} — matched ${why}`;
+    return `- ${c.code}${n ? ` [${n}]` : ""} - ${c.catalog ? `${c.catalog}, ` : ""}${c.documentName.replace(/\.pdf$/i, "")} p.${c.page} - for: "${(c.service ?? "").slice(0, 160)}"${fields ? ` - ${fields}` : ""} - matched ${why}`;
   });
   const split = distinguishers(shown);
-  return "\n\nCATALOG FILTERED — every catalog entry in the libraries " +
+  return "\n\nCATALOG FILTERED - every catalog entry in the libraries " +
     `(${o.total}) was filtered by ${o.ratings.length ? `rating ${o.ratings.map((r) => `Class ${r}`).join(" or ")}` : "use only (no rating given)"} ` +
     `and by the words ${[...o.askerTerms.map((t) => `"${t}"`), ...o.companyTerms.map((t) => `"${t}" (the company's word for it)`)].join(", ")}. ` +
     `${strong.length || cands.length} matched${strong.length && strong.length < cands.length ? ` (${cands.length - strong.length} more only on a related word)` : ""}:\n` +

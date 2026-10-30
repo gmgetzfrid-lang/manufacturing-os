@@ -44,7 +44,7 @@ export function TryControl({ kind, decision, suggestions, crews, disabled, onCha
             <option value="">{inherit ? `${inherit} (crew for extra work)` : "No crew named"}</option>
             {suggestions.length > 0 && (
               <optgroup label={`On the ${kind} shift`}>
-                {suggestions.map((s) => <option key={s.crew} value={s.crew}>{s.crew} — {s.why}</option>)}
+                {suggestions.map((s) => <option key={s.crew} value={s.crew}>{s.crew} - {s.why}</option>)}
               </optgroup>
             )}
             {others.length > 0 && <optgroup label="Other crews">{others.map((c) => <option key={c} value={c}>{c}</option>)}</optgroup>}
@@ -66,7 +66,7 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
     return (
       <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-[12px] text-emerald-900 dark:text-emerald-100 print:hidden">
         <Lock className="w-4 h-4 shrink-0" />
-        <span className="flex-1 min-w-[200px]"><b>Shipped</b> {when(shippedAt)}{shippedBy ? ` by ${shippedBy}` : ""}{tries ? ` · ${tries} step${tries === 1 ? "" : "s"} asked to try` : ""}. Locked — this is what was handed over.</span>
+        <span className="flex-1 min-w-[200px]"><b>Shipped</b> {when(shippedAt)}{shippedBy ? ` by ${shippedBy}` : ""}{tries ? ` · ${tries} step${tries === 1 ? "" : "s"} asked to try` : ""}. Locked - this is what was handed over.</span>
         {canShip && (
           <button onClick={onUnship} disabled={busy} className="inline-flex items-center gap-1 rounded-md border border-emerald-400 dark:border-emerald-700 px-2 py-1 text-[11px] font-bold hover:bg-emerald-100 dark:hover:bg-emerald-900/40 disabled:opacity-50">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Unlock className="w-3.5 h-3.5" />} Edit &amp; re-ship

@@ -182,7 +182,7 @@ export default function NodePeek({
             <Crosshair className="w-3.5 h-3.5" />
           </button>
           {onConnect && (
-            <button onClick={onConnect} title="Draw a connection from this node — click it, then click the other node"
+            <button onClick={onConnect} title="Draw a connection from this node - click it, then click the other node"
               className="inline-flex items-center justify-center gap-1 text-[11px] font-black text-emerald-700 border border-emerald-300 dark:border-emerald-800 rounded-lg px-2 py-1.5 hover:bg-emerald-50 dark:hover:bg-emerald-950/40">
               <Link2 className="w-3.5 h-3.5" />
             </button>

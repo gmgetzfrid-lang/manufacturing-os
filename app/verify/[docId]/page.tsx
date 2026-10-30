@@ -58,7 +58,7 @@ export default function VerifyPage() {
   useEffect(() => { void check(); }, [check]);
 
   const fmt = (iso: string | null) =>
-    iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—";
+    iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "-";
 
   return (
     <div className={`min-h-dvh flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
@@ -100,19 +100,19 @@ export default function VerifyPage() {
             </h1>
             <p className="text-white/90 text-sm font-bold mb-6">
               {result.notYetEffective
-                ? `This is the latest revision, but it comes into force ${result.effectiveDate ? new Date(result.effectiveDate).toLocaleDateString() : "later"} — until then, keep working to the prior in-force revision.`
+                ? `This is the latest revision, but it comes into force ${result.effectiveDate ? new Date(result.effectiveDate).toLocaleDateString() : "later"} - until then, keep working to the prior in-force revision.`
                 : result.isCurrent
                 ? "This print matches the current revision."
                 : result.docStatus === "Superseded" || result.docStatus === "Archived"
                   ? `This document has been ${result.docStatus?.toLowerCase()}.`
-                  : `This print is Rev ${result.printedRev ?? "?"} — the current revision is Rev ${result.currentRev ?? "?"}.`}
+                  : `This print is Rev ${result.printedRev ?? "?"} - the current revision is Rev ${result.currentRev ?? "?"}.`}
             </p>
 
             {/* The facts card */}
             <div className="bg-white/95 rounded-2xl shadow-2xl p-5 text-left space-y-3">
               <div>
                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Document</div>
-                <div className="text-sm font-bold text-slate-900">{result.docNumber ?? "—"}</div>
+                <div className="text-sm font-bold text-slate-900">{result.docNumber ?? "-"}</div>
                 {result.title && <div className="text-xs text-slate-500 mt-0.5">{result.title}</div>}
               </div>
               <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100">

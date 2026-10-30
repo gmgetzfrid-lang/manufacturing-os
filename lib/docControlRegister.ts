@@ -166,10 +166,10 @@ export async function loadDocControlRegister(orgId: string, opts?: { limit?: num
     const review = reviewMap.get(d.id as string) ?? null;
     return {
       id: d.id as string,
-      number: (d.document_number as string) || (d.title as string) || (d.name as string) || "—",
+      number: (d.document_number as string) || (d.title as string) || (d.name as string) || "-",
       title: (d.title as string) || (d.name as string) || "",
       libraryId,
-      libraryName: (lib?.name as string) || "—",
+      libraryName: (lib?.name as string) || "-",
       status: (d.status as string | null) ?? null,
       rev: (d.rev as string | null) ?? null,
       updatedAt: (d.updated_at as string | null) ?? null,

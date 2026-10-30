@@ -85,7 +85,7 @@ export async function GET(req: NextRequest) {
     .order("created_at", { ascending: true });
   if (error) {
     if (missingTable(error.message, error.code)) {
-      return bad("The knowledge_sources table doesn't exist yet — run migration 20260917 in Supabase.", 424);
+      return bad("The knowledge_sources table doesn't exist yet - run migration 20260917 in Supabase.", 424);
     }
     return bad(`Couldn't load sources: ${error.message}`, 500);
   }
@@ -237,7 +237,7 @@ export async function POST(req: NextRequest) {
     });
     if (error) {
       if (missingTable(error.message, error.code)) {
-        return bad("The knowledge_sources table doesn't exist yet — run migration 20260917 in Supabase.", 424);
+        return bad("The knowledge_sources table doesn't exist yet - run migration 20260917 in Supabase.", 424);
       }
       if (error.code === "23505") continue; // already linked — idempotent
       return bad(`Couldn't link source: ${error.message}`, 500);

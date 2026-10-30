@@ -82,7 +82,7 @@ export async function createAnswerSkill(input: {
 }): Promise<void> {
   const instructions = input.instructions.trim();
   if (instructions.length < 40) {
-    throw new Error("Write the discipline out — a reasoning skill needs real instructions, including when it applies.");
+    throw new Error("Write the discipline out - a reasoning skill needs real instructions, including when it applies.");
   }
   const { error } = await supabase.from("answer_skills").insert({
     org_id: input.orgId,

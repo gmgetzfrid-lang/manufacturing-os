@@ -424,7 +424,7 @@ export default function ExecutionView({
 
   // Shown when a non-member taps a disabled status dot.
   const notifyViewOnly = useCallback(() => {
-    notify("You're not a member of this project — ask the project owner to add you to update status or reschedule.", "warning");
+    notify("You're not a member of this project - ask the project owner to add you to update status or reschedule.", "warning");
   }, [notify]);
 
   // Build the forest. Roots = rows whose parent is missing/absent.
@@ -591,9 +591,9 @@ export default function ExecutionView({
     if (Math.abs(w.at - Date.now()) < 120_000) return;
     const res = await creditProgressTo(id, w.at);
     if (res === "ok" || res === "late") return;
-    notify(res === "missing" ? `Saved, but logged at the time you typed it in — putting it at ${w.label} needs the database update (20261107_progress_times.sql) run first.`
-      : res === "changed" ? `Saved, but logged at the time you typed it in — the step has a later entry than ${w.label}. Fix that entry's time in the step's History first.`
-        : `Saved, but logged at the time you typed it in — it couldn't be put at ${w.label}.`, "warning");
+    notify(res === "missing" ? `Saved, but logged at the time you typed it in - putting it at ${w.label} needs the database update (20261107_progress_times.sql) run first.`
+      : res === "changed" ? `Saved, but logged at the time you typed it in - the step has a later entry than ${w.label}. Fix that entry's time in the step's History first.`
+        : `Saved, but logged at the time you typed it in - it couldn't be put at ${w.label}.`, "warning");
   }, [notify]);
   const setStatus = useCallback(async (id: string, next: MilestoneStatus, reason?: string, percent?: number, forShift?: ShiftCredit): Promise<boolean> => {
     if (!canEdit || !onSetStatus) return false;
@@ -846,7 +846,7 @@ export default function ExecutionView({
     const ok = await appConfirm({
       title: `Delete ${n} task${n === 1 ? "" : "s"}?`,
       message: withKids
-        ? "Some of these have steps under them — those are deleted too, with their comments. Undo right after brings everything back."
+        ? "Some of these have steps under them - those are deleted too, with their comments. Undo right after brings everything back."
         : "Their comments go with them. Undo right after brings them back.",
       tone: "danger", confirmLabel: "Delete",
     });
@@ -855,7 +855,7 @@ export default function ExecutionView({
       const removed = await deleteMilestones({ orgId, projectId, ids, withChildren: true, actorUserId: userId, actorUserEmail: userEmail });
       setSelectedIds(new Set());
       onRefresh();
-      if (removed.notDeleted) notify(`${removed.notDeleted} task${removed.notDeleted === 1 ? " wasn't" : "s weren't"} deleted — you may not have permission for ${removed.notDeleted === 1 ? "it" : "them"}.`, "warning");
+      if (removed.notDeleted) notify(`${removed.notDeleted} task${removed.notDeleted === 1 ? " wasn't" : "s weren't"} deleted - you may not have permission for ${removed.notDeleted === 1 ? "it" : "them"}.`, "warning");
       announce(`Deleted ${removed.rows.length} task${removed.rows.length === 1 ? "" : "s"}`, async () => {
         try { await restoreDeletedMilestones(removed); } catch (e) { notify(`Undo failed: ${(e as Error).message}`, "warning"); }
         onRefresh();
@@ -1242,7 +1242,7 @@ export default function ExecutionView({
           <button
             onClick={() => setShowCritical((v) => !v)}
             aria-pressed={showCritical}
-            title="Show the critical path — and mark tasks on or off it"
+            title="Show the critical path - and mark tasks on or off it"
             className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors ${showCritical ? "bg-rose-600 text-white border-rose-600" : "bg-[var(--color-surface)] text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800 hover:border-rose-400"}`}
           >
             <Zap className="w-3.5 h-3.5" /> Critical path <span className="font-mono opacity-80">{critical.ids.size}</span>
@@ -1778,7 +1778,7 @@ function OutlineRow({
       )}
       {criticalMark && (
         <button onClick={criticalMark.onToggle} aria-pressed={criticalMark.on}
-          title={`${criticalMark.on ? "On the critical path — tap to take it off" : "Not critical — tap to mark it critical"}${hasChildren ? " (with everything under it)" : ""}${criticalMark.own ? " · marked by hand" : ""}`}
+          title={`${criticalMark.on ? "On the critical path - tap to take it off" : "Not critical - tap to mark it critical"}${hasChildren ? " (with everything under it)" : ""}${criticalMark.own ? " · marked by hand" : ""}`}
           className={`shrink-0 w-5 h-5 inline-flex items-center justify-center rounded ${criticalMark.on ? "bg-rose-600 text-white" : "text-slate-300 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"} ${criticalMark.own ? "ring-1 ring-offset-1 ring-rose-400 dark:ring-offset-slate-900" : ""}`}>
           <Zap className="w-3 h-3" />
         </button>
@@ -1792,7 +1792,7 @@ function OutlineRow({
       )}
 
       {hasChildren ? (
-        <StatusControl status={derivedStatus} variant="dot" size="md" readOnly title="Phase status — rolls up from sub-tasks" onPick={() => {}} />
+        <StatusControl status={derivedStatus} variant="dot" size="md" readOnly title="Phase status - rolls up from sub-tasks" onPick={() => {}} />
       ) : (
         <StatusControl status={ms.status} busy={busy} disabled={!canEdit} onDisabledClick={onViewOnly} variant="dot" size="md" onPick={onSetStatus} percent={pct} onSetProgress={onSetProgress} onStartWithNote={onStartNote} />
       )}
@@ -1800,7 +1800,7 @@ function OutlineRow({
       <button
         onClick={onOpenDetail}
         className="flex-1 min-w-0 text-left"
-        title={`${ms.name} — open details`}
+        title={`${ms.name} - open details`}
       >
         <div className={`truncate text-[13px] leading-tight ${checked ? "line-through text-[var(--color-text-faint)]" : ms.isSummary ? "font-bold text-[var(--color-text)]" : "font-medium text-[var(--color-text)]"}`}>
           {ms.name}
@@ -1811,7 +1811,7 @@ function OutlineRow({
           {ms.wbs && <span className="text-[var(--color-text-faint)] shrink-0">{ms.wbs}</span>}
           <span className="truncate" title={spanLabel(span.start, span.finish, tz)}>{spanLabel(span.start, span.finish, tz)}</span>
           {(ms.dependsOn?.length ?? 0) > 0 && (
-            <span className="inline-flex items-center gap-0.5 text-[var(--color-accent)] font-bold shrink-0" title={`Depends on ${ms.dependsOn!.length} task${ms.dependsOn!.length === 1 ? "" : "s"} — can't start until they finish`}>
+            <span className="inline-flex items-center gap-0.5 text-[var(--color-accent)] font-bold shrink-0" title={`Depends on ${ms.dependsOn!.length} task${ms.dependsOn!.length === 1 ? "" : "s"} - can't start until they finish`}>
               <Link2 className="w-2.5 h-2.5" />{ms.dependsOn!.length}
             </span>
           )}
@@ -1923,7 +1923,7 @@ function Bar({
       <div
         className={`absolute group/bar flex items-center transition-opacity ${dimmed ? "opacity-25" : ""} ${resize ? "z-20" : ""}`}
         style={{ top, left, width, height: ROW_H }}
-        title={summaryResizable ? `${ms.name} — drag an end to extend/shorten the whole phase` : `${ms.name} — open details`}
+        title={summaryResizable ? `${ms.name} - drag an end to extend/shorten the whole phase` : `${ms.name} - open details`}
       >
         <div className="relative w-full h-2 self-center mt-0 cursor-pointer" onClick={onOpenDetail}>
           {/* Phase bracket in the GROUP hue (caps mark its span). */}
@@ -1963,7 +1963,7 @@ function Bar({
   // Milestone marker — a diamond at the point date, with the label beside it.
   if (isMilestonePoint) {
     return (
-      <div className={`absolute group/bar flex items-center gap-1.5 transition-opacity ${dimmed ? "opacity-25" : ""} ${onPath ? "z-10" : ""}`} style={{ top, left: left - 6, height: ROW_H }} title={`${ms.name} — milestone · ${fmtDateUTC(finish, tz)}`}>
+      <div className={`absolute group/bar flex items-center gap-1.5 transition-opacity ${dimmed ? "opacity-25" : ""} ${onPath ? "z-10" : ""}`} style={{ top, left: left - 6, height: ROW_H }} title={`${ms.name} - milestone · ${fmtDateUTC(finish, tz)}`}>
         <button onClick={onOpenDetail} className="relative shrink-0" aria-label={`Milestone ${ms.name}`}>
           <span className={`block w-3 h-3 rotate-45 border-2 border-white shadow ${ms.status === "completed" ? "bg-emerald-500" : onPath ? "bg-rose-500" : "bg-slate-700"}`} />
         </button>
@@ -2258,10 +2258,10 @@ function Legend() {
         <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A summary / phase that rolls up its children">
           <span className="relative w-7 flex items-center"><span className="h-1 w-full rounded-full bg-slate-400" /><span className="absolute -left-px w-[3px] h-3 rounded-sm bg-slate-400" /><span className="absolute -right-px w-[3px] h-3 rounded-sm bg-slate-400" /></span> Phase / summary
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A milestone — a zero-duration marker">
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A milestone - a zero-duration marker">
           <span className="w-2.5 h-2.5 rotate-45 bg-slate-700 border border-white" /> Milestone
         </span>
-        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="On the critical path — drives the finish date">
+        <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="On the critical path - drives the finish date">
           <span className="w-3 h-2.5 rounded-sm bg-slate-300 ring-2 ring-rose-500 ring-offset-1" /> Critical path
         </span>
         <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="Finish-to-start dependency between linked tasks">
@@ -2331,12 +2331,12 @@ function GroupTasksModal({
             ))}
           </div>
           {mode === "new" ? (
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder='e.g. "Phase 2 — Tear Down"' autoFocus className="w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30 focus:border-[var(--color-accent-ring)]" />
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder='e.g. "Phase 2 - Tear Down"' autoFocus className="w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30 focus:border-[var(--color-accent-ring)]" />
           ) : existingParents.length === 0 ? (
-            <div className="text-xs text-[var(--color-text-muted)] italic">No existing parents — create a new one.</div>
+            <div className="text-xs text-[var(--color-text-muted)] italic">No existing parents - create a new one.</div>
           ) : (
             <Select value={existingId} onChange={(e) => setExistingId(e.target.value)}>
-              <option value="">— pick a parent —</option>
+              <option value="">- pick a parent -</option>
               {existingParents.map((p) => <option key={p.id} value={p.id ?? ""}>{p.name}</option>)}
             </Select>
           )}

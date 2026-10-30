@@ -228,7 +228,7 @@ export default function KnowledgeLibraryPage() {
     const pdfs = all.filter((f) => /\.pdf$/i.test(f.name));
     const skipped = all.length - pdfs.length;
     if (pdfs.length === 0) {
-      showToast({ type: "error", title: skipped ? `Only PDF files can be indexed — ${skipped} other file(s) skipped.` : "No files." });
+      showToast({ type: "error", title: skipped ? `Only PDF files can be indexed - ${skipped} other file(s) skipped.` : "No files." });
       return;
     }
     if (pdfs.length === 1) {
@@ -269,9 +269,9 @@ export default function KnowledgeLibraryPage() {
       await Promise.all(Array.from({ length: 3 }, () => worker()));
       showToast(failed.length
         ? { type: "error", title: `${pdfs.length - failed.length} uploaded; ${failed.length} failed: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}` }
-        : { type: "success", title: `${pdfs.length} PDFs uploaded — indexing them now.` });
+        : { type: "success", title: `${pdfs.length} PDFs uploaded - indexing them now.` });
     }
-    if (skipped > 0) showToast({ type: "info", title: `${skipped} non-PDF file(s) skipped — only PDFs can be indexed.` });
+    if (skipped > 0) showToast({ type: "info", title: `${skipped} non-PDF file(s) skipped - only PDFs can be indexed.` });
     setUploadState(null);
     await refresh();
   };
@@ -307,7 +307,7 @@ export default function KnowledgeLibraryPage() {
     const ok = await appConfirm({
       title: ids.length === 1 ? "Remove document?" : `Remove ${ids.length} documents?`,
       message: (ids.length === 1 ? `"${names[0]}"` : `${ids.length} documents`) +
-        " — the PDF" + (ids.length === 1 ? "" : "s") + " and the search index — will be deleted from this library. " +
+        " - the PDF" + (ids.length === 1 ? "" : "s") + " and the search index - will be deleted from this library. " +
         "Answers they already contributed to stay in the history.",
       confirmLabel: ids.length === 1 ? "Remove" : `Remove ${ids.length}`,
     });
@@ -428,7 +428,7 @@ export default function KnowledgeLibraryPage() {
               {l.linkedLibraryName} · REFERENCE
             </span>
           ))}
-          <span className="italic">— this library governs; answers say which document won.</span>
+          <span className="italic">- this library governs; answers say which document won.</span>
         </div>
       )}
 
@@ -496,7 +496,7 @@ export default function KnowledgeLibraryPage() {
                   const ok = await appConfirm({
                     title: "Re-index all documents?",
                     message:
-                      "Every document re-reads from scratch — text, tables, tags, and anchors. "
+                      "Every document re-reads from scratch - text, tables, tags, and anchors. "
                       + "Do this after an ingestion upgrade or when indexing missed things. "
                       + "Runs in the background; you can leave this page.",
                     confirmLabel: "Re-index",
@@ -504,7 +504,7 @@ export default function KnowledgeLibraryPage() {
                   if (!ok || !activeOrgId) return;
                   try {
                     const res = await rebuildDrawingIndex(activeOrgId, libraryId);
-                    showToast({ type: "success", title: `${res.docs} document(s) queued — indexing starts now.` });
+                    showToast({ type: "success", title: `${res.docs} document(s) queued - indexing starts now.` });
                     void refresh();
                   } catch (e) {
                     showToast({ type: "error", title: (e as Error).message });
@@ -531,7 +531,7 @@ export default function KnowledgeLibraryPage() {
                   }} />
                 <div className="flex items-center gap-1.5">
                   <Button size="sm" variant="secondary" onClick={() => folderInput.current?.click()} disabled={uploadState !== null}
-                    title="Pick a folder — every PDF inside it, in any subfolder, is added">
+                    title="Pick a folder - every PDF inside it, in any subfolder, is added">
                     <FolderUp className="w-3.5 h-3.5" /> Add folder
                   </Button>
                   <Button size="sm" onClick={() => fileInput.current?.click()} disabled={uploadState !== null}>
@@ -555,14 +555,14 @@ export default function KnowledgeLibraryPage() {
                 <Loader2 className="w-4 h-4 animate-spin text-orange-600 shrink-0" />
                 <span className="font-bold truncate">Indexing {autoIndexing.name}</span>
                 <span className="text-[var(--color-text-muted)] shrink-0 ml-auto">
-                  {autoIndexing.remaining} in queue — continues anywhere in the app
+                  {autoIndexing.remaining} in queue - continues anywhere in the app
                 </span>
               </div>
               {(autoIndexing.visionPages ?? 0) > 0 && (
                 <div className="mt-1 flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
                   <Eye className="w-3 h-3 text-sky-600 shrink-0" />
                   <b className="text-[var(--color-text)]">{autoIndexing.visionPages}</b> page(s) had no text
-                  layer — read by AI vision (billed to your key, slower per page).
+                  layer - read by AI vision (billed to your key, slower per page).
                 </div>
               )}
               {autoIndexing.visionSkipReason && (
@@ -581,7 +581,7 @@ export default function KnowledgeLibraryPage() {
           {!docsOpen && docs.length > 0 ? null : docs.length === 0 && !uploadState ? (
             <div className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center text-xs text-[var(--color-text-muted)]">
               <FileText className="w-6 h-6 mx-auto mb-2 opacity-50" />
-              {isController ? "Drag PDFs or whole folders here to build the shelf." : "No documents yet — Admin or Doc Control can add PDFs."}
+              {isController ? "Drag PDFs or whole folders here to build the shelf." : "No documents yet - Admin or Doc Control can add PDFs."}
             </div>
           ) : (
             <>
@@ -609,7 +609,7 @@ export default function KnowledgeLibraryPage() {
               <div className="relative flex-1 min-w-[200px]">
                 <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
                 <input id="kdoc-search" value={docQuery} onChange={(e) => { setDocQuery(e.target.value); setDocLimit(200); }}
-                  placeholder={`Search ${docs.length.toLocaleString()} documents — "EP 5-2-3", "piping specs"…`}
+                  placeholder={`Search ${docs.length.toLocaleString()} documents - "EP 5-2-3", "piping specs"…`}
                   className="w-full h-8 pl-8 pr-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-orange-400" />
               </div>
               <div className="flex items-center gap-1 flex-wrap">
@@ -642,7 +642,7 @@ export default function KnowledgeLibraryPage() {
                   {isController && (
                     <input type="checkbox" className="accent-orange-600 shrink-0" aria-label={`Select ${doc.name}`}
                       disabled={!!doc.sourceDocumentId} checked={selected.has(doc.id)}
-                      title={doc.sourceDocumentId ? "Mirrored from Document Control — remove it by unlinking the source" : undefined}
+                      title={doc.sourceDocumentId ? "Mirrored from Document Control - remove it by unlinking the source" : undefined}
                       onChange={() => toggleSelect(doc.id)} />
                   )}
                   <FileText className="w-4 h-4 text-orange-600 shrink-0" />
@@ -651,7 +651,7 @@ export default function KnowledgeLibraryPage() {
                       <span className="truncate">{doc.name}</span>
                       {doc.sourceDocumentId && (
                         <span className="shrink-0 text-[8px] font-black px-1 py-0.5 rounded bg-sky-500/10 border border-sky-300 dark:border-sky-800 text-sky-700 dark:text-sky-400"
-                          title="Mirrors a controlled document — kept current by the source sync">
+                          title="Mirrors a controlled document - kept current by the source sync">
                           DOC CONTROL{doc.sourceRev ? ` · REV ${doc.sourceRev}` : ""}
                         </span>
                       )}
@@ -664,14 +664,14 @@ export default function KnowledgeLibraryPage() {
                         <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400 font-black"><CheckCircle2 className="w-3 h-3" /> All {doc.pageCount} pages indexed</span>
                       )}
                       {doc.status === "ready" && !((doc.pageCount ?? 0) > 0 && doc.pagesIndexed >= (doc.pageCount ?? 0)) && (
-                        <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-400 font-black" title="Reading stopped before the last page. Repair in the Health panel resumes it — pages already read aren't paid for again.">
-                          <AlertTriangle className="w-3 h-3" /> {doc.pagesIndexed} of {doc.pageCount ?? "?"} pages indexed — partly read
+                        <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-400 font-black" title="Reading stopped before the last page. Repair in the Health panel resumes it - pages already read aren't paid for again.">
+                          <AlertTriangle className="w-3 h-3" /> {doc.pagesIndexed} of {doc.pageCount ?? "?"} pages indexed - partly read
                         </span>
                       )}
                       {doc.status === "indexing" && <span className="text-amber-700 dark:text-amber-400 font-black">Indexing {doc.pagesIndexed}{doc.pageCount ? ` / ${doc.pageCount}` : ""} pages…</span>}
                       {doc.status === "pending" && <span>Waiting to index</span>}
-                      {doc.status === "stale" && <span className="text-amber-700 dark:text-amber-400 font-black">New revision published — waiting to re-index</span>}
-                      {doc.status === "error" && <span className="text-rose-700 dark:text-rose-400 font-black" title={doc.error ?? undefined}>Indexing failed — {doc.error?.slice(0, 80)}</span>}
+                      {doc.status === "stale" && <span className="text-amber-700 dark:text-amber-400 font-black">New revision published - waiting to re-index</span>}
+                      {doc.status === "error" && <span className="text-rose-700 dark:text-rose-400 font-black" title={doc.error ?? undefined}>Indexing failed - {doc.error?.slice(0, 80)}</span>}
                     </div>
                     {doc.status === "indexing" && doc.pageCount ? (
                       <div className="mt-1 h-1 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
@@ -698,7 +698,7 @@ export default function KnowledgeLibraryPage() {
             {shownDocs.length > docLimit && (
               <button onClick={() => setDocLimit((n) => n + 500)}
                 className="mt-1.5 w-full h-8 rounded-lg border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-                Showing {docLimit.toLocaleString()} of {shownDocs.length.toLocaleString()} — show more
+                Showing {docLimit.toLocaleString()} of {shownDocs.length.toLocaleString()} - show more
               </button>
             )}
             </>
@@ -808,7 +808,7 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
       <form onSubmit={ask} className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-orange-400">
         <textarea id="library-ask" value={q} onChange={(e) => setQ(e.target.value)} disabled={readyDocs === 0} rows={2}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }}
-          placeholder={readyDocs === 0 ? "Asking unlocks when the first document is indexed" : "Ask this library — e.g. \"What piping spec should I use for 150 class sour gas?\""}
+          placeholder={readyDocs === 0 ? "Asking unlocks when the first document is indexed" : "Ask this library - e.g. \"What piping spec should I use for 150 class sour gas?\""}
           className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none disabled:opacity-60" />
         <div className="px-4 pb-1"><SkillHint skills={skills} picked={picked} question={q} answerMode={mode} /></div>
         <div className="flex items-center gap-1.5 px-2 pb-2">
@@ -824,8 +824,8 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
       {readyDocs === 0 && (
         <p className="mt-3 text-[11px] text-amber-700 dark:text-amber-400 font-bold">
           {docsTotal > 0
-            ? "Documents are indexing below — asking unlocks as soon as the first one finishes."
-            : "Nothing indexed yet — link a source or add PDF documents below first."}
+            ? "Documents are indexing below - asking unlocks as soon as the first one finishes."
+            : "Nothing indexed yet - link a source or add PDF documents below first."}
         </p>
       )}
       {recent && recent.length > 0 && (

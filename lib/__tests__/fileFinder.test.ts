@@ -185,7 +185,7 @@ describe("ranking", () => {
     expect(tmx.evidence.map((e) => e.label)).toContain("Folder says Transmix, a different unit");
     expect(tmx.score).toBeLessThan(top.score);
     expect(dead.verdict).toBe("rejected");
-    expect(dead.evidence.map((e) => e.label)).toContain("0 KB — empty file");
+    expect(dead.evidence.map((e) => e.label)).toContain("0 KB - empty file");
   });
 
   it("reports a drive listing hit as a prospect outside the system", () => {

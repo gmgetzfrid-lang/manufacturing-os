@@ -90,13 +90,13 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
             <TimeZoneSelect value={timezone} onChange={setTimezone} className="mt-1" />
             <div className="mt-1 text-[10px] text-[var(--color-text-faint)]">
               Every schedule date, calendar day and shift is shown and entered in this zone, for everyone on the project.
-              {originalTz === DEFAULT_SCHEDULE_TZ && !tzChanged && " Currently UTC — pick the plant's zone so evening work lands on the right day."}
+              {originalTz === DEFAULT_SCHEDULE_TZ && !tzChanged && " Currently UTC - pick the plant's zone so evening work lands on the right day."}
             </div>
             {tzChanged && (
               <label className="mt-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
                 <input type="checkbox" checked={keepWallClock} onChange={(e) => setKeepWallClock(e.target.checked)} className="mt-0.5" />
                 <span>
-                  <b>Keep the schedule&apos;s times as written</b> — a task at 8:00 ({tzLabel(originalTz)}) becomes 8:00 ({tzLabel(timezone)}).
+                  <b>Keep the schedule&apos;s times as written</b> - a task at 8:00 ({tzLabel(originalTz)}) becomes 8:00 ({tzLabel(timezone)}).
                   Untick to keep the exact instants instead, so the clock readings shift by the zone difference.
                 </span>
               </label>

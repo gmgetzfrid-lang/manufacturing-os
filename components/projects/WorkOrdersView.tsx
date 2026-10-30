@@ -172,7 +172,7 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
     setPrintMenu(false); setPrintMsg(null);
     // Opened at the tap, so the browser doesn't take it for a pop-up.
     const w = window.open("", "_blank");
-    if (!w) { setPrintMsg("Your browser blocked the print window — allow pop-ups for this site and try again."); return; }
+    if (!w) { setPrintMsg("Your browser blocked the print window - allow pop-ups for this site and try again."); return; }
     w.document.write(`<p style="font:14px Arial,sans-serif;padding:24px">Getting ${shown.length} work order${shown.length === 1 ? "" : "s"} ready to print…</p>`);
     try {
       const ids = shown.flatMap((o) => o.steps.map((s) => s.id)).filter((id): id is string => !!id);
@@ -220,7 +220,7 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
       const project = projectName?.trim() || "Schedule";
       const scope = `${SHOW_WORD[show]}${query.trim() ? ` · search “${query.trim()}”` : ""}${history ? " · with each step's history" : ""}`;
       const body = workOrdersHtml({ project, scope, tz, orders, format });
-      const title = `${project} — ${format === "field" ? "Field tracker" : "Work orders"}`;
+      const title = `${project} - ${format === "field" ? "Field tracker" : "Work orders"}`;
       const doc = lh ? letterheadDocument(lh, title, body, PRINT_CSS)
         : `<!doctype html><html><head><meta charset="utf-8"><title>${title.replace(/</g, "&lt;")}</title><style>@page{size:landscape;margin:10mm}body{margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}${PRINT_CSS}</style></head><body>${body}</body></html>`;
       w.document.open(); w.document.write(doc); w.document.close();
@@ -270,7 +270,7 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
                   <span className="block text-[11px] text-[var(--color-text-muted)]">Every start, % update, hold and comment, with its time</span>
                 </button>
                 <button type="button" onClick={() => void printIt("field")} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)]">
-                  <span className="font-semibold">Field tracker — fill in by pen</span>
+                  <span className="font-semibold">Field tracker - fill in by pen</span>
                   <span className="block text-[11px] text-[var(--color-text-muted)]">Lines to write starts, finishes, % and notes; spare rows for steps not on the schedule; what should have happened by now marked</span>
                 </button>
               </span>
@@ -345,7 +345,7 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
                             onClose={() => setCancelling(null)}
                             onDone={() => { setCancelling(null); toggle(o.key); onCancelled?.(); }} />
                         ) : (
-                          <button type="button" onClick={() => setCancelling(o.key)} title="Take it off this schedule — it's still done, somewhere else"
+                          <button type="button" onClick={() => setCancelling(o.key)} title="Take it off this schedule - it's still done, somewhere else"
                             className="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 px-2 py-1 rounded-md">
                             <Ban className="w-3.5 h-3.5" /> Cancel work order
                           </button>

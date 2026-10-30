@@ -157,7 +157,7 @@ export default function KnowledgeIndexIndicator() {
       <CornerPortal>
         <button
           onClick={() => setMinimized(false)}
-          title={working ? `Indexing ${state.docName} — click to expand` : state.heldBack ? `${state.heldBack} couldn't finish — click to expand` : "Indexing caught up — click to expand"}
+          title={working ? `Indexing ${state.docName} - click to expand` : state.heldBack ? `${state.heldBack} couldn't finish - click to expand` : "Indexing caught up - click to expand"}
           className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg px-3 py-1.5 text-[11px] font-black text-[var(--color-text)] hover:shadow-xl transition-shadow"
         >
           {working
@@ -178,7 +178,7 @@ export default function KnowledgeIndexIndicator() {
         <span className="text-xs font-black text-[var(--color-text)] flex-1 truncate">
           {working ? "Indexing knowledge in the background" : state.heldBack ? "Knowledge indexing paused for some files" : "Knowledge indexing caught up"}
         </span>
-        <button onClick={() => setMinimized(true)} className="p-1 rounded hover:bg-[var(--color-surface-2)] shrink-0" title="Minimize — indexing keeps running">
+        <button onClick={() => setMinimized(true)} className="p-1 rounded hover:bg-[var(--color-surface-2)] shrink-0" title="Minimize - indexing keeps running">
           <Minus className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
         </button>
         {working
@@ -193,7 +193,7 @@ export default function KnowledgeIndexIndicator() {
         <div className="mt-1.5 space-y-1">
           <div className="text-[11px] text-[var(--color-text-muted)] truncate" title={state.docName}>
             {state.docName}
-            {state.total ? ` — page ${state.indexed} of ${state.total}` : ""}
+            {state.total ? ` - page ${state.indexed} of ${state.total}` : ""}
             {state.queued > 0 ? ` · ${state.queued} more queued` : ""}
           </div>
           {state.total !== null && state.total > 0 && (
@@ -216,7 +216,7 @@ export default function KnowledgeIndexIndicator() {
             <div role="status" className="text-[10px] text-amber-700 dark:text-amber-300">{state.waiting}</div>
           )}
           <div className="text-[10px] text-[var(--color-text-faint)]">
-            Keeps going anywhere in the app — only closing the tab pauses it.
+            Keeps going anywhere in the app - only closing the tab pauses it.
           </div>
         </div>
       ) : (

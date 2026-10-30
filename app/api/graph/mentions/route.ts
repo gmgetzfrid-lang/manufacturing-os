@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     const msg = (e as Error).message;
     if (/does not exist/i.test(msg)) {
-      return bad("The mention engine isn't installed — run migration 20260929_mention_engine.sql.", 503);
+      return bad("The mention engine isn't installed - run migration 20260929_mention_engine.sql.", 503);
     }
     return bad(msg, 500);
   }

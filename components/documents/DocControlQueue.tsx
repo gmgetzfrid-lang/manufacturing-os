@@ -184,7 +184,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
 
   const handleResolve = async (branch: RevisionBranch, resolution: "merged" | "withdrawn") => {
     if (resolveNote.trim().length < 5) {
-      setError("A resolution note is required (at least 5 characters) — it goes on the record.");
+      setError("A resolution note is required (at least 5 characters) - it goes on the record.");
       return;
     }
     setBusyId(branch.id);
@@ -256,7 +256,7 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
       <div className="px-4 py-2.5 bg-orange-100/60 border-b border-orange-200 flex items-center gap-2">
         <Flag className="w-4 h-4 text-orange-700" />
         <span className="text-xs font-black text-orange-900 uppercase tracking-widest">
-          Document Control — open items ({total})
+          Document Control - open items ({total})
         </span>
         <span className="text-[10px] text-orange-800">resolved on the record, never dismissed</span>
       </div>
@@ -373,10 +373,10 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
               <Link href={docLink(req.documentId, req.libraryId)} className="font-bold text-blue-700 hover:underline">
                 {req.label}
               </Link>{" "}
-              — <b>deletion requested</b> by {req.requestedBy || "the owner"} on {new Date(req.requestedAt).toLocaleDateString()}.
+              - <b>deletion requested</b> by {req.requestedBy || "the owner"} on {new Date(req.requestedAt).toLocaleDateString()}.
               {req.reason && <div className="text-[11px] italic text-[var(--color-text-muted)] mt-0.5">&ldquo;{req.reason}&rdquo;</div>}
               <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-                Review the document, then delete/archive it (or decline) — and mark this request handled.
+                Review the document, then delete/archive it (or decline) - and mark this request handled.
               </div>
             </div>
             <button

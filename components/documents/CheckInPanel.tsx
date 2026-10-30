@@ -183,7 +183,7 @@ export default function CheckInPanel({
       userId: currentUser.uid, userName,
       episodeId: episode?.id ?? null,
       sessionStatus: "checked_in",
-      releasedReason: `Checked in — ${outcome.replace(/_/g, " ")}`,
+      releasedReason: `Checked in - ${outcome.replace(/_/g, " ")}`,
       outcome: { outcome, note: recordNote, ref: ref ?? null },
     });
     await logCheckoutEvent({
@@ -224,7 +224,7 @@ export default function CheckInPanel({
     const undocumented = card.moc === "required" && mocStatus === "none";
     const mocLine = card.moc === "required"
       ? mocStatus === "none"
-        ? "MOC: NONE ON RECORD — flagged as an undocumented field change."
+        ? "MOC: NONE ON RECORD - flagged as an undocumented field change."
         : `MOC ${mocStatus === "completed" ? "completed" : "in progress"}: ${mocNumber.trim()}`
       : null;
     const kindTitle = card.ticketKind === "asbuilt"
@@ -297,7 +297,7 @@ export default function CheckInPanel({
               orgId: doc.orgId!, userIds: controllers,
               actorUserId: currentUser.uid, actorName: userName,
               kind: "request_pending_approval",
-              title: `PSM alert: undocumented field change — ${docLabel}`,
+              title: `PSM alert: undocumented field change - ${docLabel}`,
               body: `${userName} reported the field differs from ${docLabel} with no MOC on record: "${note.trim()}"`,
               link: `/requests/${row.id}`, resourceType: "ticket", resourceId: row.id as string,
             });
@@ -353,7 +353,7 @@ export default function CheckInPanel({
             { rev: doc.rev ?? null, versionId: doc.currentVersionId ?? null },
             `${userName} verified the field matches Rev ${doc.rev || "?"}.`,
           );
-          showToast({ type: "success", title: "Field verification recorded", message: `Walkdown attested against Rev ${doc.rev || "?"} — it's on the document's record.` });
+          showToast({ type: "success", title: "Field verification recorded", message: `Walkdown attested against Rev ${doc.rev || "?"} - it's on the document's record.` });
           break;
         }
         case "draft_ticket": {
@@ -383,8 +383,8 @@ export default function CheckInPanel({
             recordNote,
             { ticketId: ticket.id, ticketNumber: ticket.number, ...(mocRef ? { moc: mocRef } : {}) },
             selected.outcome === "discrepancy"
-              ? `${userName} reported a field discrepancy — ticket ${ticket.number}${mocStatus === "none" ? " (no MOC on record — flagged)" : mocNumber ? ` (${mocNumber.trim()})` : ""}.`
-              : `${userName} requested ${selected.ticketKind === "minor" ? "a minor correction" : "a revision"} — ticket ${ticket.number}.`,
+              ? `${userName} reported a field discrepancy - ticket ${ticket.number}${mocStatus === "none" ? " (no MOC on record - flagged)" : mocNumber ? ` (${mocNumber.trim()})` : ""}.`
+              : `${userName} requested ${selected.ticketKind === "minor" ? "a minor correction" : "a revision"} - ticket ${ticket.number}.`,
           );
           router.push(`/requests/${ticket.id}`);
           break;
@@ -401,7 +401,7 @@ export default function CheckInPanel({
               await emit({
                 orgId: doc.orgId!, category: "assignment", kind: "review_requested",
                 title: `Change proposed to ${docLabel}`,
-                body: `${userName} checked in with a proposed change: "${note.trim()}" — review and release it if it's right.`,
+                body: `${userName} checked in with a proposed change: "${note.trim()}" - review and release it if it's right.`,
                 resource: { type: "document", id: doc.id! },
                 // The owner must be able to CLICK to the document — a durable
                 // notification with no destination is a dead letter.
@@ -531,7 +531,7 @@ export default function CheckInPanel({
             className="w-full p-3 rounded-xl border border-[var(--color-border)] text-sm focus:ring-2 focus:ring-blue-500 outline-none"
           />
           <div className="text-[10px] text-[var(--color-text-muted)] mt-1">
-            Recorded verbatim on the register — this is the record the next person reads.
+            Recorded verbatim on the register - this is the record the next person reads.
           </div>
         </div>
       )}
@@ -558,7 +558,7 @@ export default function CheckInPanel({
             <input
               value={mocNumber}
               onChange={(e) => setMocNumber(e.target.value)}
-              placeholder="MOC number — e.g. MOC-2026-014"
+              placeholder="MOC number - e.g. MOC-2026-014"
               className="w-full px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-xs focus:ring-2 focus:ring-blue-500 outline-none"
             />
           )}
@@ -566,7 +566,7 @@ export default function CheckInPanel({
             <div className="flex items-start gap-1.5 text-[10px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md p-2">
               <ShieldAlert className="w-3.5 h-3.5 shrink-0 mt-0.5" />
               <span>
-                A drawing change with no MOC is an <b>undocumented field change</b> — this report goes to
+                A drawing change with no MOC is an <b>undocumented field change</b> - this report goes to
                 Document Control flagged as a PSM finding. Reporting it is the right move; it will never be blocked.
               </span>
             </div>
@@ -624,7 +624,7 @@ export default function CheckInPanel({
             className="mt-0.5"
           />
           <span>
-            Also place a <b>Field Verification Needed</b> hold — stops new revisions publishing until the
+            Also place a <b>Field Verification Needed</b> hold - stops new revisions publishing until the
             discrepancy is resolved. Use it when the document is unsafe to work from.
           </span>
         </label>

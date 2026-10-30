@@ -11,7 +11,7 @@ import {
   buildProgressIndex, overallPercent, type ProgressNode,
 } from "@/lib/scheduleProgress";
 
-describe("leafPercent — status reconciles the stored value", () => {
+describe("leafPercent - status reconciles the stored value", () => {
   it("completed is always 100, planned always 0", () => {
     expect(leafPercent({ status: "completed", percentComplete: 12 })).toBe(100);
     expect(leafPercent({ status: "planned", percentComplete: 80 })).toBe(0);
@@ -31,7 +31,7 @@ describe("leafPercent — status reconciles the stored value", () => {
   });
 });
 
-describe("effectiveWeight — duration first, then weight, then 1", () => {
+describe("effectiveWeight - duration first, then weight, then 1", () => {
   it("prefers work hours", () => {
     expect(effectiveWeight({ durationHours: 40, weight: 1 })).toBe(40);
   });
@@ -55,7 +55,7 @@ describe("deriveSummaryStatus", () => {
   });
 });
 
-describe("buildProgressIndex — leaves report own %, parents roll up weighted", () => {
+describe("buildProgressIndex - leaves report own %, parents roll up weighted", () => {
   // Phase P with two leaves: a (10h, 100%) and b (30h, 0%).
   // Duration-weighted: (10*100 + 30*0) / 40 = 25%.
   const tree: ProgressNode[] = [
@@ -109,7 +109,7 @@ describe("buildProgressIndex — leaves report own %, parents roll up weighted",
   });
 });
 
-describe("overallPercent — duration-weighted over leaves only", () => {
+describe("overallPercent - duration-weighted over leaves only", () => {
   it("ignores summary rows so they don't double-count", () => {
     const pct = overallPercent([
       { id: "P", parentId: null, status: "in_progress" },          // summary — excluded

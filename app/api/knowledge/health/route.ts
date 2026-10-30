@@ -22,7 +22,7 @@ function bad(msg: string, status = 400) {
 function failed(prefix: string, e: unknown) {
   const m = (e as Error)?.message ?? String(e);
   return isBusyDbError(m)
-    ? bad("The database is busy right now (usually: the meaning index is being written). Nothing was lost — try again in a few minutes.", 503)
+    ? bad("The database is busy right now (usually: the meaning index is being written). Nothing was lost - try again in a few minutes.", 503)
     : bad(`${prefix}: ${m}`, 500);
 }
 
@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(await repairLinkedDocumentNames(orgId, libraryId, p.uid,
         Array.isArray(body.exclude) ? body.exclude.filter((x): x is string => typeof x === "string").slice(0, 20000) : []));
     } catch (e) {
-      return failed("Name correction didn't finish (every name corrected so far is saved — run it again to finish)", e);
+      return failed("Name correction didn't finish (every name corrected so far is saved - run it again to finish)", e);
     }
   }
   try {
@@ -80,6 +80,6 @@ export async function POST(req: NextRequest) {
     }).then(() => undefined, () => undefined);
     return NextResponse.json(result);
   } catch (e) {
-    return failed("Repair didn't finish (what it did is saved — run it again)", e);
+    return failed("Repair didn't finish (what it did is saved - run it again)", e);
   }
 }

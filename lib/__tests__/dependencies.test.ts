@@ -24,7 +24,7 @@ describe("wouldCreateCycle", () => {
   });
 });
 
-describe("cascadeDependents — finish-to-start", () => {
+describe("cascadeDependents - finish-to-start", () => {
   it("pushes a dependent so it starts after its predecessor finishes", () => {
     const nodes: ReflowNode[] = [
       { id: "a", parentId: null, plannedStartAt: d("2026-01-01"), plannedAt: d("2026-01-10") }, // a moved to finish Jan10

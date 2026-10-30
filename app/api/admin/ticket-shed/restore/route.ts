@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
   let zip: JSZip;
   try {
     const buf = await req.arrayBuffer();
-    if (!buf.byteLength) return NextResponse.json({ error: "Empty body — POST the archive zip." }, { status: 400 });
+    if (!buf.byteLength) return NextResponse.json({ error: "Empty body - POST the archive zip." }, { status: 400 });
     if (buf.byteLength > MAX_ZIP_BYTES) {
       return NextResponse.json({ error: `Archive too large (max ${Math.round(MAX_ZIP_BYTES / 1048576)} MB).` }, { status: 413 });
     }

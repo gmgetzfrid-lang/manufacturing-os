@@ -72,7 +72,7 @@ export default function AddWidgetModal({ open, onClose, existingTypes, isAdmin, 
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-bold text-[var(--color-text)]">{m.title}</div>
                           <div className="text-xs text-[var(--color-text-muted)] line-clamp-2">{m.description}</div>
-                          {n > 0 && m.multi && <div className="text-[10px] font-bold text-emerald-600 mt-0.5">{n} on your dashboard — add another</div>}
+                          {n > 0 && m.multi && <div className="text-[10px] font-bold text-emerald-600 mt-0.5">{n} on your dashboard - add another</div>}
                         </div>
                         {blocked ? (
                           <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-600 shrink-0"><Check className="w-4 h-4" /> Added</span>

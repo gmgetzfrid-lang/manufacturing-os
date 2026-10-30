@@ -111,7 +111,7 @@ export default function PackagesPage() {
     const ok = await appConfirm({
       title: "Refresh this pack's pins?",
       message: moving > 0
-        ? `${moving} drawing${moving === 1 ? "" : "s"} will move to the current revision. Review what changed first if you haven't — then re-print the pack so the paper matches.`
+        ? `${moving} drawing${moving === 1 ? "" : "s"} will move to the current revision. Review what changed first if you haven't - then re-print the pack so the paper matches.`
         : "Every pin will be re-checked against the current revisions.",
       confirmLabel: "Refresh pins",
     });
@@ -204,7 +204,7 @@ export default function PackagesPage() {
         subtitle={
           <>
             A job&apos;s document set with revisions pinned at assembly. If any drawing advances before
-            the job closes, the package flags itself{staleTotal > 0 && <> — <b className="text-amber-700">{staleTotal} need attention now</b></>}.
+            the job closes, the package flags itself{staleTotal > 0 && <> - <b className="text-amber-700">{staleTotal} need attention now</b></>}.
           </>
         }
         actions={
@@ -221,7 +221,7 @@ export default function PackagesPage() {
           <Package className="w-10 h-10 mx-auto text-[var(--color-text-faint)] opacity-40 mb-3" />
           <div className="text-sm font-bold text-[var(--color-text)]">No work packages yet</div>
           <p className="text-xs text-[var(--color-text-muted)] mt-1 max-w-sm mx-auto">
-            Bundle the drawings for a job — a pump swap, a tie-in, a turnaround task. The package
+            Bundle the drawings for a job - a pump swap, a tie-in, a turnaround task. The package
             watches every revision so a stale print never reaches the field.
           </p>
           <Button size="sm" className="mt-4" onClick={() => setShowCreate(true)}>
@@ -246,7 +246,7 @@ export default function PackagesPage() {
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-black text-[var(--color-text)] truncate">{pkg.name}</div>
                     <div className="text-[10px] text-[var(--color-text-muted)]">
-                      {pkg.ownerName || "—"} · {new Date(pkg.createdAt).toLocaleDateString()} · {pkg.docs.length} doc{pkg.docs.length === 1 ? "" : "s"}
+                      {pkg.ownerName || "-"} · {new Date(pkg.createdAt).toLocaleDateString()} · {pkg.docs.length} doc{pkg.docs.length === 1 ? "" : "s"}
                     </div>
                   </div>
                   <span className={`shrink-0 text-[10px] font-black uppercase tracking-wide px-2 py-0.5 rounded-full ${
@@ -270,7 +270,7 @@ export default function PackagesPage() {
                           pinned Rev {d.pinnedRevLabel ?? "?"} → now Rev {d.currentRev ?? "?"}
                         </span>
                       ) : (
-                        <span className="text-[10px] text-[var(--color-text-faint)] shrink-0">Rev {d.pinnedRevLabel ?? "—"}</span>
+                        <span className="text-[10px] text-[var(--color-text-faint)] shrink-0">Rev {d.pinnedRevLabel ?? "-"}</span>
                       )}
                       <ChevronRight className="w-3 h-3 text-[var(--color-text-faint)] opacity-60 sm:opacity-0 group-hover:opacity-100 shrink-0" />
                     </Link>
@@ -294,7 +294,7 @@ export default function PackagesPage() {
                       onClick={() => void handleRefresh(pkg)}
                       disabled={busyId === pkg.id}
                       className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-white bg-amber-600 hover:bg-amber-500 disabled:opacity-50"
-                      title="Move every pin to the current revision — do this AFTER reviewing what changed"
+                      title="Move every pin to the current revision - do this AFTER reviewing what changed"
                     >
                       {busyId === pkg.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
                       Refresh pins
@@ -304,7 +304,7 @@ export default function PackagesPage() {
                     onClick={() => void handleClose(pkg)}
                     disabled={busyId === pkg.id}
                     className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-                    title="Job done — stop watching"
+                    title="Job done - stop watching"
                   >
                     <Archive className="w-3 h-3" /> Close
                   </button>
@@ -332,7 +332,7 @@ export default function PackagesPage() {
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder='Job name * — e.g. "E-204 bundle swap"'
+                placeholder='Job name * - e.g. "E-204 bundle swap"'
                 autoFocus
                 className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
               />
@@ -363,7 +363,7 @@ export default function PackagesPage() {
                       >
                         <Plus className="w-3 h-3 text-blue-500" />
                         <span className="font-bold text-[var(--color-text)]">{r.label}</span>
-                        <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">Rev {r.rev ?? "—"}</span>
+                        <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">Rev {r.rev ?? "-"}</span>
                       </button>
                     ))}
                   </div>
@@ -373,7 +373,7 @@ export default function PackagesPage() {
                     {picked.map((p) => (
                       <div key={p.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[var(--color-surface-2)] text-xs">
                         <span className="font-bold text-[var(--color-text)] flex-1 truncate">{p.label}</span>
-                        <span className="text-[10px] text-[var(--color-text-faint)]">pins Rev {p.rev ?? "—"}</span>
+                        <span className="text-[10px] text-[var(--color-text-faint)]">pins Rev {p.rev ?? "-"}</span>
                         <button onClick={() => setPicked((prev) => prev.filter((x) => x.id !== p.id))} className="p-0.5 rounded hover:bg-[var(--color-surface)]">
                           <X className="w-3 h-3 text-[var(--color-text-faint)]" />
                         </button>

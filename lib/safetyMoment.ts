@@ -42,9 +42,9 @@ export const HAZARD_KINDS: Record<HazardKind, KindDef> = {
     label: "Vessel entry", severity: 5, family: "entry",
     re: /\bconfined\b|\bvessel entry\b|\bentry\b|\benter\b|internal (manway|inspection)s?|\binternals\b|\btrays?\b|\bdowncomers?\b|\bdemister\b|\bpacking\b|\bhole ?watch\b/i,
     checks: [
-      "Gas test top, middle and bottom — H2S comes off sludge when it's disturbed, after the test.",
+      "Gas test top, middle and bottom - H2S comes off sludge when it's disturbed, after the test.",
       "Rescue sized for this manway: can the team get a packaged person out of it?",
-      "The attendant's only job is the entrant — no fetching tools, no second opening.",
+      "The attendant's only job is the entrant - no fetching tools, no second opening.",
       "Every air mover traced to its source: a utility station can be nitrogen.",
     ],
   },
@@ -52,10 +52,10 @@ export const HAZARD_KINDS: Record<HazardKind, KindDef> = {
     label: "Nitrogen / inert", severity: 5, family: "entry",
     re: /\bnitrogen\b|\bn2\b|\binert(ed|ing)?\b|\bpurg(e|ed|ing)\b/i,
     checks: [
-      "Nitrogen gives no warning — one or two breaths at the opening can drop you.",
+      "Nitrogen gives no warning - one or two breaths at the opening can drop you.",
       "Purge leaves through the top manway onto the platform: monitor the platform too.",
       "On supplied air, someone watches the air source, not just the entrant.",
-      "Nobody's head crosses the plane of a purged opening — not to look, not to reach.",
+      "Nobody's head crosses the plane of a purged opening - not to look, not to reach.",
     ],
   },
   hydroblast: {
@@ -65,7 +65,7 @@ export const HAZARD_KINDS: Record<HazardKind, KindDef> = {
       "Hoses rated for the pump's top pressure and inspected every shift. A blister or kink takes it out.",
       "Whip-checks on every hose connection, and nobody straddles or stands on a live hose.",
       { t: "Flex lance in tubes: back-out preventer on, and the lance sized to the tube ID.", if: /tube|bundle/i },
-      { t: "Blast zone covers the whole exchanger end and the far tubesheet — nobody at the other end.", if: /tube|bundle|shell|exchanger/i },
+      { t: "Blast zone covers the whole exchanger end and the far tubesheet - nobody at the other end.", if: /tube|bundle|shell|exchanger/i },
     ],
   },
   line_break: {
@@ -73,19 +73,19 @@ export const HAZARD_KINDS: Record<HazardKind, KindDef> = {
     re: /\bblinds?\b|line[\s-]*break|break(ing)? containment|\bunbolt|\bflanges?\b|\bspools?\b|\bpsv\b|\bprv\b|relief valve|remove (the )?(meter|valve|spool|components?|heads?|channel|cover)|\bopen (the )?(line|manways?)\b|\bmanways?\b|\bswap\b.*\bvalve\b|\bdrain(ing)? and vent|\bpull\b.*\bplugs?\b|\bplugs? (pull|removal)/i,
     checks: [
       "Crack the far side a quarter turn and wait: a line that keeps weeping has a passing valve.",
-      "Know what was last in the line — dead legs and low points hold product after draining.",
+      "Know what was last in the line - dead legs and low points hold product after draining.",
       "Bolts that won't turn: no torch or hammer until the line is proven empty and gas-free.",
-      { t: "Air-condenser header plugs are each a pressure boundary — treat every plug as a break.", if: /\bplugs?\b/i },
+      { t: "Air-condenser header plugs are each a pressure boundary - treat every plug as a break.", if: /\bplugs?\b/i },
     ],
   },
   lifting: {
     label: "Crane lift", severity: 5, family: "lifting",
     re: /\bcrane\b|\blifts?\b|\bpicks?\b|\brigging\b|\brig\b|\bhoist|\bfly[\s-]*out\b|\btransport (the )?(exchanger|bundle|vessel)|\bset (the )?(exchanger|vessel|drum)\b|\bheavy haul\b/i,
     checks: [
-      "Fouled equipment weighs more than the nameplate — add deposits and liquid left in the shell.",
+      "Fouled equipment weighs more than the nameplate - add deposits and liquid left in the shell.",
       "Lift from designed points only; a nozzle or a pipe is not a lifting lug.",
       "Pinch points kill more riggers than drops: nobody between the load and steel.",
-      "The load has to be free before it's lifted — the crane never pulls anything loose.",
+      "The load has to be free before it's lifted - the crane never pulls anything loose.",
     ],
   },
   bundle_pull: {
@@ -93,7 +93,7 @@ export const HAZARD_KINDS: Record<HazardKind, KindDef> = {
     re: /\b(pull|extract|install|insert|re-?install|set)( the)? (tube )?bundles?\b|\bbundle (pull|extract|puller)|\bre-?bundle\b/i,
     checks: [
       "Tube ends and baffles are sharp. Cut-resistant gloves when you handle the bundle.",
-      "Once the bundle clears the shell its balance point moves — re-check the extractor as it comes.",
+      "Once the bundle clears the shell its balance point moves - re-check the extractor as it comes.",
       "Exposed deposits can heat as they dry (iron sulfide): keep them wet until blasting.",
       "Weight with fouling: a plugged bundle can be well over its dry weight.",
     ],
@@ -102,9 +102,9 @@ export const HAZARD_KINDS: Record<HazardKind, KindDef> = {
     label: "Start-up", severity: 5, family: "startup",
     re: /\bstart[\s-]*up\b|\bcommission|\breturn to service\b|\bintroduc(e|ing) (feed|hydrocarbon)|\bpressure up\b|\blight (off|the) (heater|burners?)\b|\bbring (it )?(on ?line|online)\b/i,
     checks: [
-      "Walk the blind list in the field — the forgotten blind is in a rack nobody looks at.",
+      "Walk the blind list in the field - the forgotten blind is in a rack nobody looks at.",
       "Low-point drains and bleeders opened during maintenance: closed and plugged before feed.",
-      "Pressure up in steps and walk each step — a torqued flange can still leak hot.",
+      "Pressure up in steps and walk each step - a torqued flange can still leak hot.",
       "Temporary strainers, hoses and gauges from maintenance: out, or on the list.",
     ],
   },
@@ -112,17 +112,17 @@ export const HAZARD_KINDS: Record<HazardKind, KindDef> = {
     label: "Hot work", severity: 4, family: "hot_work",
     re: /\bweld|\bhot work\b|\btorch\b|\bcutting\b|\bgrind|\bpwht\b|\bstress reliev|\bpreheat\b|\bburning\b/i,
     checks: [
-      "Gas test at the work point and down-drain — vapor travels along trenches to the spark.",
+      "Gas test at the work point and down-drain - vapor travels along trenches to the spark.",
       "Drains and sewers within 35 ft sealed, not just covered with a mat.",
-      "Fire watch looks below and behind walls — slag travels where nobody's watching.",
-      "Welding ground clamped right at the work — stray current arcs through pipe, bolts and bearings.",
+      "Fire watch looks below and behind walls - slag travels where nobody's watching.",
+      "Welding ground clamped right at the work - stray current arcs through pipe, bolts and bearings.",
     ],
   },
   heights: {
     label: "Work at height", severity: 4, family: "heights",
     re: /\bscaffold|\bheights?\b|\belevated\b|\bman ?lift\b|\baerial lift\b|\bladders?\b|\broof\b|\btop of (the )?(tower|column|tank)/i,
     checks: [
-      "Anchor above the shoulder — a low anchor doubles the fall.",
+      "Anchor above the shoulder - a low anchor doubles the fall.",
       "Suspended-worker rescue within minutes: who, with what, from where.",
       "Open grating and removed handrail around manways: barricaded at every level.",
       "Scaffold modified since it was tagged? Then it isn't tagged.",
@@ -132,7 +132,7 @@ export const HAZARD_KINDS: Record<HazardKind, KindDef> = {
     label: "Pressure test", severity: 4, family: "pressure_test",
     re: /hydro[\s-]*(static[\s-]*)?test|\bpressure test|\bleak test|\bpneumatic test|\btightness test|\bservice test|\b(ts|tubesheet|shell|tube[\s-]*side) hydro\b/i,
     checks: [
-      "Air left in a hydro makes it act like a pneumatic test — vent the high points first.",
+      "Air left in a hydro makes it act like a pneumatic test - vent the high points first.",
       "Pneumatic tests store far more energy: boundary by distance, not by tape.",
       "Nobody tightens a flange while it's under test pressure.",
       "Test gauge and relief sized for the test, not the operating pressure.",
@@ -143,48 +143,48 @@ export const HAZARD_KINDS: Record<HazardKind, KindDef> = {
     re: /\benergi[sz]|\belectrical\b|\bmcc\b|\bswitchgear\b|\bbreakers?\b|\bterminat|\bmegger|\b(480|4160) ?v\b|\bmotor (pull|swap|change)/i,
     checks: [
       "Try-start after lockout, then return the switch to off.",
-      "VFDs and capacitors hold charge after isolation — wait the time, then test.",
+      "VFDs and capacitors hold charge after isolation - wait the time, then test.",
       "Arc-flash boundary at the cubicle being racked, not only the one being worked.",
-      "Water work nearby (blasting, washdown) and open panels don't mix — cover or stop.",
+      "Water work nearby (blasting, washdown) and open panels don't mix - cover or stop.",
     ],
   },
   catalyst: {
     label: "Catalyst handling", severity: 4, family: "entry",
     re: /\bcatalyst\b|\bcat (load|unload|dump)|\breactor (load|unload)/i,
     checks: [
-      "Spent catalyst can be pyrophoric — keep it blanketed or wet until passivated.",
+      "Spent catalyst can be pyrophoric - keep it blanketed or wet until passivated.",
       "Entry into a bed is inert entry: supplied air and a standby rescue team.",
-      "Unloading a reactor? Bridged catalyst can let go and drop without warning — never stand under it.",
-      "Dust at the dump chute travels — the people below need respirators too.",
+      "Unloading a reactor? Bridged catalyst can let go and drop without warning - never stand under it.",
+      "Dust at the dump chute travels - the people below need respirators too.",
     ],
   },
   chemical: {
     label: "Chemical / sour", severity: 4, family: "chemical",
     re: /\bchemical clean|\bcaustic\b|\bacid\b|\bneutrali[sz]|\bdegas|\bdecon|\bsteam[\s-]*out\b|\bh2s\b|\bpyrophoric\b|\biron sulfide\b/i,
     checks: [
-      "Disturbed sludge releases H2S even in a gas-free vessel — monitor where the scraping is.",
+      "Disturbed sludge releases H2S even in a gas-free vessel - monitor where the scraping is.",
       "Iron sulfide scale: keep it wet; dry scale glows and ignites.",
-      "Acid and caustic residues react — know what the last cleaning left behind.",
-      "Steam-out condensate is hot and sour — where does it drain?",
+      "Acid and caustic residues react - know what the last cleaning left behind.",
+      "Steam-out condensate is hot and sour - where does it drain?",
     ],
   },
   heater: {
     label: "Fired heater", severity: 3, family: "heater",
     re: /\bfire[\s-]*eyes?\b|\bburners?\b|\bfirebox\b|\bfired heater\b|\bpilot light\b/i,
     checks: [
-      "Fuel isolation proven at the burner, not the header — a passing valve fills a firebox overnight.",
-      "Firebox purged before any light-off — no shortcut on the purge time.",
+      "Fuel isolation proven at the burner, not the header - a passing valve fills a firebox overnight.",
+      "Firebox purged before any light-off - no shortcut on the purge time.",
       "Burner management bypassed for the work? Logged, and back in before light-off.",
-      "Refractory dust is silica — respirators inside the firebox.",
+      "Refractory dust is silica - respirators inside the firebox.",
     ],
   },
   radiography: {
     label: "Radiography", severity: 3, family: "radiography",
     re: /\bx-?ray\b|\bradiograph|\brt shot\b|\bgamma\b/i,
     checks: [
-      "Shots shut the area for other crews — agree the times at this meeting, not on the radio.",
+      "Shots shut the area for other crews - agree the times at this meeting, not on the radio.",
       "Survey meter on every time the source moves.",
-      "Barrier covers every level — a scaffold above the shot is inside it.",
+      "Barrier covers every level - a scaffold above the shot is inside it.",
       "Night shots: barricade lights on; tape alone disappears in the dark.",
     ],
   },
@@ -192,20 +192,20 @@ export const HAZARD_KINDS: Record<HazardKind, KindDef> = {
     label: "Excavation", severity: 4, family: "excavation",
     re: /\bexcavat|\btrench|\bdig(ging)?\b|\bhydro[\s-]*vac/i,
     checks: [
-      "Hydro-vac slurry is liquid — keep it contained and out of drains and sewers.",
-      "Equipment, spoil and vibration collapse walls — keep them back from the edge.",
-      "Trenches collect heavy vapors — gas test before entry, every time.",
-      "Water in the trench changes the soil — re-inspect after rain or washdown.",
+      "Hydro-vac slurry is liquid - keep it contained and out of drains and sewers.",
+      "Equipment, spoil and vibration collapse walls - keep them back from the edge.",
+      "Trenches collect heavy vapors - gas test before entry, every time.",
+      "Water in the trench changes the soil - re-inspect after rain or washdown.",
     ],
   },
   machining: {
     label: "Field machining", severity: 3, family: "machining",
     re: /\bmachin(e|ing)\b|\bflange fac(e|ing)\b|\bon[\s-]*site machin|\blapping\b|\bface (the )?flanges?\b/i,
     checks: [
-      "Check the cutter and inserts before every pass — a chipped insert throws pieces.",
-      "Machine bolted to the flange and checked before it spins — not hand-held.",
+      "Check the cutter and inserts before every pass - a chipped insert throws pieces.",
+      "Machine bolted to the flange and checked before it spins - not hand-held.",
       "Chips are sharp and hot; cover open nozzles so they don't fall in.",
-      "Isolations stay on — a flange being faced is still a break in the line.",
+      "Isolations stay on - a flange being faced is still a break in the line.",
     ],
   },
 };
@@ -314,10 +314,10 @@ const MEET: Partial<Record<HazardKind, Partial<Record<HazardKind | "*", Meet>>>>
   hydroblast: {
     line_break: (x) => `Blasting and an open break on ${x.eq} at once: spray in a line that should be drained hides a passing valve, and the pump drowns out a hiss. Finish the break first, or keep it out of the spray.`,
     confined_space: (x) => `Someone inside ${x.eq} while it's blasted: the hole watch can't hear over the pump and the mist fouls the gas monitor. Nobody inside while the pump runs.`,
-    electrical: (x) => `Blasting near open electrical on ${x.eq}: water and open panels — cover them or stop the electrical work while the pump runs.`,
-    "*": (x) => `${x.other} on ${x.eq} (${x.otherStep}) while ${x.crew} blasts it: the blast zone is the whole exchanger end and the far tubesheet. ${x.other} stays clear until the pump is down and locked — not just the gun released.`,
+    electrical: (x) => `Blasting near open electrical on ${x.eq}: water and open panels - cover them or stop the electrical work while the pump runs.`,
+    "*": (x) => `${x.other} on ${x.eq} (${x.otherStep}) while ${x.crew} blasts it: the blast zone is the whole exchanger end and the far tubesheet. ${x.other} stays clear until the pump is down and locked - not just the gun released.`,
   },
-  lifting: { "*": (x) => `${x.other} working ${x.eq} while the load moves: the swing and drop zone is theirs too. Stop their work for the lift — tape around it isn't enough.` },
+  lifting: { "*": (x) => `${x.other} working ${x.eq} while the load moves: the swing and drop zone is theirs too. Stop their work for the lift - tape around it isn't enough.` },
   bundle_pull: {
     hydroblast: (x) => `${x.eq} bundle pull and blasting together: the pull path and the blast pad overlap. One job at a time in that space.`,
     "*": (x) => `${x.other} on ${x.eq} (${x.otherStep}) during the pull: the extractor and the bundle path are a load zone. Stop their work while it moves.`,
@@ -331,30 +331,30 @@ const MEET: Partial<Record<HazardKind, Partial<Record<HazardKind | "*", Meet>>>>
   confined_space: { "*": (x) => `${x.other} working outside ${x.eq} while people are inside: their engines, air movers, purges and welding fumes end up in the vessel. Agree what runs near the manway.` },
   inert: { "*": (x) => `${x.other} near ${x.eq} while it's on nitrogen: the purge vents through the openings onto the platform they're on. O2 monitors on them too.` },
   pressure_test: { "*": (x) => `${x.other} on ${x.eq} during the pressure test: everyone not testing is outside the boundary while it's pressured.` },
-  radiography: { "*": (x) => `Radiography on ${x.eq} stops ${x.other}'s work during shots — agree the shot times at this meeting.` },
+  radiography: { "*": (x) => `Radiography on ${x.eq} stops ${x.other}'s work during shots - agree the shot times at this meeting.` },
   startup: { line_break: (x) => `Start-up on ${x.eq} while a break is still open: reconcile the blind and open-flange list before anything moves.` },
 };
 // One job hands the equipment to the next on the shift.
 const HANDOFF: Partial<Record<HazardKind, Partial<Record<HazardKind | "*", Meet>>>> = {
-  hydroblast: { "*": (x) => `${x.eq} goes from blasting to ${x.otherStep} at ${x.time}: pump down and locked, hoses bled and pulled back before ${x.other} steps in — the gun being off isn't enough.` },
-  bundle_pull: { hydroblast: (x) => `${x.eq} bundle goes from the extractor to blasting at ${x.time}: deposits drying in air can heat (iron sulfide) — keep it wet until the blast starts.` },
-  line_break: { confined_space: (x) => `${x.eq} is blinded, then entered at ${x.time}: entry starts after the blind list is walked with the operator — not because the blinding step shows done.` },
+  hydroblast: { "*": (x) => `${x.eq} goes from blasting to ${x.otherStep} at ${x.time}: pump down and locked, hoses bled and pulled back before ${x.other} steps in - the gun being off isn't enough.` },
+  bundle_pull: { hydroblast: (x) => `${x.eq} bundle goes from the extractor to blasting at ${x.time}: deposits drying in air can heat (iron sulfide) - keep it wet until the blast starts.` },
+  line_break: { confined_space: (x) => `${x.eq} is blinded, then entered at ${x.time}: entry starts after the blind list is walked with the operator - not because the blinding step shows done.` },
 };
 const fallbackMeet: Meet = (x) => `${x.crew} and ${x.other} on ${x.eq} at the same time: one permit owner for the area, and each crew knows what the other's job can do to them.`;
-const fallbackHandoff: Meet = (x) => `${x.eq} changes hands at ${x.time} (${x.crew} → ${x.other}): walk it down together — the next crew inherits whatever's left open, rigged or pressured.`;
+const fallbackHandoff: Meet = (x) => `${x.eq} changes hands at ${x.time} (${x.crew} → ${x.other}): walk it down together - the next crew inherits whatever's left open, rigged or pressured.`;
 
 // A note that changes the job.
 const NOTE_FLAGS: Array<{ re: RegExp; why: string; line: (eq: string, step: string, note: string) => string }> = [
-  { re: /seiz|stuck|froze|won'?t (turn|move|budge|come)|galled/i, why: "stuck parts", line: (eq, step, n) => `“${n}” on ${eq} ${step}: stuck parts are where people reach for a torch, sledge, cheater bar or more pull — a cold job turns into hot work or a stored-energy release. Re-plan; don't force it.` },
+  { re: /seiz|stuck|froze|won'?t (turn|move|budge|come)|galled/i, why: "stuck parts", line: (eq, step, n) => `“${n}” on ${eq} ${step}: stuck parts are where people reach for a torch, sledge, cheater bar or more pull - a cold job turns into hot work or a stored-energy release. Re-plan; don't force it.` },
   { re: /leak|passing|weep|drip/i, why: "a leak noted", line: (eq, step, n) => `“${n}” on ${eq}: a passing or leaking isolation means the line isn't empty. Re-isolate before anyone breaks into it.` },
   { re: /plug|fouled|blocked|choked/i, why: "plugging noted", line: (eq, step, n) => `“${n}” on ${eq}: a plug can hold pressure behind it and make a gauge read zero. Prove it's clear before opening further.` },
-  { re: /smell|odou?r|h2s|fumes?/i, why: "an odor noted", line: (eq, step, n) => `“${n}” on ${eq}: treat it as a live atmosphere — gas test before work restarts.` },
+  { re: /smell|odou?r|h2s|fumes?/i, why: "an odor noted", line: (eq, step, n) => `“${n}” on ${eq}: treat it as a live atmosphere - gas test before work restarts.` },
 ];
 // A job picked up part-way: what's half-done.
 const MIDJOB: Partial<Record<HazardKind, (eq: string, step: string, p: number) => string>> = {
   bundle_pull: (eq, _s, p) => `${eq} bundle is ${p}% out: a bundle part-way out of its shell is a cantilevered load. Confirm how it's supported and re-check the extractor rigging before anyone pulls again.`,
-  line_break: (eq, step, p) => `${eq} ${step} is ${p}% done — some bolts out, some in. Walk which openings are open before restarting; that state isn't on the permit.`,
-  confined_space: (eq) => `${eq} entry picks up mid-job: new gas test and new attendant sign-in — the last crew's test doesn't carry over.`,
+  line_break: (eq, step, p) => `${eq} ${step} is ${p}% done - some bolts out, some in. Walk which openings are open before restarting; that state isn't on the permit.`,
+  confined_space: (eq) => `${eq} entry picks up mid-job: new gas test and new attendant sign-in - the last crew's test doesn't carry over.`,
   hydroblast: (eq, _s, p) => `${eq} blasting picks up at ${p}%: tonight's operator re-tests the dump before the first shot.`,
   lifting: (eq) => `${eq} lift picks up mid-way: re-check the rigging and the ground under the outriggers before taking load again.`,
 };
@@ -450,7 +450,7 @@ export function rankHazards(jobs: HazardJobInput[], opts: RankOptions = {}): Ran
       // Picked up part-way.
       if (j.percent != null && j.percent > 0 && j.percent < 100) {
         const m = MIDJOB[k];
-        lines.push({ text: m ? m(eqOf(j), stepOf(j), j.percent) : `${eqOf(j)} ${stepOf(j)} picks up at ${j.percent}%: walk it with the crew that left it — what's open, rigged or half-done.`, weight: 3 });
+        lines.push({ text: m ? m(eqOf(j), stepOf(j), j.percent) : `${eqOf(j)} ${stepOf(j)} picks up at ${j.percent}%: walk it with the crew that left it - what's open, rigged or half-done.`, weight: 3 });
         whyRank.push({ text: `picked up at ${j.percent}%`, rank: 2 });
         bonus += 2;
       }
@@ -461,7 +461,7 @@ export function rankHazards(jobs: HazardJobInput[], opts: RankOptions = {}): Ran
       }
       if (inLow(j)) {
         const low = `${T(lowStart!)}–${T(lowStart! + 3 * 3600_000)}`;
-        lines.push({ text: `${eqOf(j)} ${stepOf(j)} runs ${j.when}, into the ${low} low of a night shift: do the critical move — the first crack, the lift, the first entry — before it or right after a break.`, weight: 1 });
+        lines.push({ text: `${eqOf(j)} ${stepOf(j)} runs ${j.when}, into the ${low} low of a night shift: do the critical move - the first crack, the lift, the first entry - before it or right after a break.`, weight: 1 });
         whyRank.push({ text: `runs into the ${low} low`, rank: 3 });
         bonus += 1;
       }

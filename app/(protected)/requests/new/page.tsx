@@ -143,7 +143,7 @@ export default function NewTicketPage() {
               cfg.units = {
                 label: cfg.units?.label ?? 'Unit',
                 enabled: cfg.units?.enabled ?? true,
-                options: book.units.map((u) => ({ label: `${u.code} — ${u.label}`, value: u.code })),
+                options: book.units.map((u) => ({ label: `${u.code} - ${u.label}`, value: u.code })),
               };
             }
           } catch { /* codebook optional — free-text unit input remains */ }
@@ -225,7 +225,7 @@ export default function NewTicketPage() {
           url: sourceFileUrl,
           type: 'Source',
           status: 'submitted',
-          size: '—',
+          size: '-',
           uploadedBy: userEmail || 'Unknown',
           uploadedAt: new Date().toISOString(),
         } as TicketAttachment);
@@ -760,7 +760,7 @@ function CustomFieldRenderer({
             onChange={(e) => onChange(e.target.value)}
             className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm bg-[var(--color-surface)]"
           >
-            <option value="">— pick one —</option>
+            <option value="">- pick one -</option>
             {(field.options ?? []).map((o, i) => (
               <option key={i} value={String(o.value)}>{o.label}</option>
             ))}

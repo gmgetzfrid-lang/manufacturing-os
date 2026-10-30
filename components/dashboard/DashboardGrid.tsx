@@ -346,8 +346,8 @@ export default function DashboardGrid() {
           <span className="flex-1 min-w-0">
             {isMobile
               // Phones can't drag or resize — telling them to reads as broken.
-              ? "You’re customizing — ✕ removes a card, ⚙ opens its settings, Tidy compacts. Arrange and resize on a larger screen."
-              : "You’re customizing — grab any card to move it, drag the orange corner to resize, ✕ removes. Everything saves as you go."}
+              ? "You’re customizing - ✕ removes a card, ⚙ opens its settings, Tidy compacts. Arrange and resize on a larger screen."
+              : "You’re customizing - grab any card to move it, drag the orange corner to resize, ✕ removes. Everything saves as you go."}
           </span>
           <button
             type="button"

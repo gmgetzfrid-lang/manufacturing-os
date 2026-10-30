@@ -100,7 +100,7 @@ export default function PermissionsExplorer() {
     const v = r.m[i];
     if (v === "y") return <span className="text-emerald-600 dark:text-emerald-400 font-black">✓</span>;
     if (v === "c") return <span className="text-amber-600 dark:text-amber-400 font-black cursor-help" title={r.cond ?? "Conditional"}>◐</span>;
-    return <span className="text-[var(--color-text-faint)]">—</span>;
+    return <span className="text-[var(--color-text-faint)]">-</span>;
   };
 
   return (
@@ -108,7 +108,7 @@ export default function PermissionsExplorer() {
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <ShieldCheck className="w-4 h-4 text-[var(--color-accent)]" />
         <span className="text-base font-bold text-[var(--color-text)]">App-wide permissions</span>
-        <span className="text-xs text-[var(--color-text-muted)]">✓ can do · ◐ conditional (hover for why) · — cannot · ⚠ known gap</span>
+        <span className="text-xs text-[var(--color-text-muted)]">✓ can do · ◐ conditional (hover for why) · - cannot · ⚠ known gap</span>
         <div className="ml-auto flex items-center gap-2 flex-wrap">
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
@@ -155,7 +155,7 @@ export default function PermissionsExplorer() {
           </tbody>
         </table>
       </div>
-      <div className="px-4 py-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-faint)]">{STAFF_NOTE} · Beyond roles, ownership (document → folder → library → owning team&apos;s supervisor) and per-library grants add ◐ authority — see hover notes.</div>
+      <div className="px-4 py-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-faint)]">{STAFF_NOTE} · Beyond roles, ownership (document → folder → library → owning team&apos;s supervisor) and per-library grants add ◐ authority - see hover notes.</div>
     </div>
   );
 }

@@ -31,7 +31,7 @@ describe("splitCancelled", () => {
     ]);
   });
 
-  it("a task whose every step was cancelled goes too — an empty heading isn't work", () => {
+  it("a task whose every step was cancelled goes too - an empty heading isn't work", () => {
     const tw = mk({ id: "tw", name: "T-605" });
     const tw1 = mk({ id: "tw1", name: "Open manways", parentId: "tw", cancelledAt: AT });
     const { active, cancelled } = splitCancelled([tw, tw1, v7, v7a]);

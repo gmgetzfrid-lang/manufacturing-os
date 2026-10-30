@@ -210,7 +210,7 @@ export async function runOrgExport(params: {
   const notes: string[] = [];
   if (failedTables.length > 0) {
     notes.push(
-      `⚠ INCOMPLETE BACKUP — ${failedTables.length} table(s) could not be exported and their data is NOT included: ` +
+      `⚠ INCOMPLETE BACKUP - ${failedTables.length} table(s) could not be exported and their data is NOT included: ` +
       `${failedTables.map((t) => t.name).join(", ")}. See each table's "error" in tables[] (most likely they aren't org_id-scoped and need parent-keyed export). Resolve before relying on this as a full backup.`,
     );
   } else {
@@ -227,7 +227,7 @@ export async function runOrgExport(params: {
     notes.push(
       `${shedInfo.keys.size} file(s) were previously archived OFFLINE to reclaim cloud storage; they are not in cloud ` +
       `storage or this backup (their records ARE included). Full binary coverage = this backup PLUS the space ` +
-      `archive zip(s): ${shedInfo.archiveIds.join(", ") || "(archive ids unrecorded)"} — kept under <archive root>/data/<id>.zip ` +
+      `archive zip(s): ${shedInfo.archiveIds.join(", ") || "(archive ids unrecorded)"} - kept under <archive root>/data/<id>.zip ` +
       `per your archive settings.`,
     );
   }

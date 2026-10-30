@@ -85,7 +85,7 @@ async function walkEntry(entry: FsEntry, path: string[], out: PathedFile[], onFo
       `That drop contains more than ${MAX_FOLDER_UPLOAD_FILES} files. Upload it in smaller batches.`);
   }
   if (path.length > MAX_FOLDER_DEPTH) {
-    throw new FolderUploadLimitError(`Folder tree deeper than ${MAX_FOLDER_DEPTH} levels — flatten it and retry.`);
+    throw new FolderUploadLimitError(`Folder tree deeper than ${MAX_FOLDER_DEPTH} levels - flatten it and retry.`);
   }
   if (entry.isFile) {
     if (isJunkFile(entry.name)) return;
@@ -162,7 +162,7 @@ export function filesFromDirectoryInput(
   }
   if (out.length > MAX_FOLDER_UPLOAD_FILES) {
     throw new FolderUploadLimitError(
-      `That folder contains ${out.length} files — the limit per upload is ${MAX_FOLDER_UPLOAD_FILES}. Upload subfolders separately.`);
+      `That folder contains ${out.length} files - the limit per upload is ${MAX_FOLDER_UPLOAD_FILES}. Upload subfolders separately.`);
   }
   return out;
 }

@@ -143,7 +143,7 @@ describe("staging modal submit lifecycle", () => {
     expect(m.submitting).toBe(false);
   });
 
-  it("the old shape — no finally — is what wedged the second batch", async () => {
+  it("the old shape - no finally - is what wedged the second batch", async () => {
     // Kept as the counter-example: this is the code that shipped, and it
     // leaves the modal permanently "Uploading…" with a disabled X.
     const state = { submitting: false };
@@ -193,7 +193,7 @@ describe("stopped batch accounting", () => {
     const files = Array.from({ length: 8 }, (_, i) => `f${i}`);
     const ctl = new AbortController();
     const r = await runBatch(files, ctl.signal, async (f) => {
-      if (f === "f1") throw new Error("stalled — no data moved for 90s");
+      if (f === "f1") throw new Error("stalled - no data moved for 90s");
       if (f === "f3") ctl.abort();
     });
     expect(r.failures).toEqual(["f1"]);
@@ -349,7 +349,7 @@ describe("readTitleBlock", () => {
     expect(task.destroy).toHaveBeenCalled();
   });
 
-  it("silences pdf.js warnings — the TT-undefined-function flood", async () => {
+  it("silences pdf.js warnings - the TT-undefined-function flood", async () => {
     const { readTitleBlock } = await import("@/lib/titleBlock");
     getDocumentMock.mockReturnValue(taskWithText("REV A"));
     await readTitleBlock(fakePdf());

@@ -109,7 +109,7 @@ export default function LibraryHomeBoard({
           </span>
           <span className="min-w-0">
             <span className="block text-sm font-bold text-[var(--color-text)]">Set up a custom home</span>
-            <span className="block text-xs text-[var(--color-text-muted)]">Add an about panel, quick folders, recent documents and notices — optional, your library works without it.</span>
+            <span className="block text-xs text-[var(--color-text-muted)]">Add an about panel, quick folders, recent documents and notices - optional, your library works without it.</span>
           </span>
         </button>
       );

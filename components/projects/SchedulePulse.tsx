@@ -44,7 +44,7 @@ export default function SchedulePulse({ milestones, onShowOverdue, onShowBlocked
   if (r.blocked + r.onHold > 0) {
     items.push(
       <Nudge key="blocked" tone="amber" icon={<PauseCircle className="w-4 h-4" />} onClick={onShowBlocked}
-        text={<><b>{r.blocked + r.onHold}</b> stuck — {r.blocked} blocked, {r.onHold} on hold</>} cta="Review" />,
+        text={<><b>{r.blocked + r.onHold}</b> stuck - {r.blocked} blocked, {r.onHold} on hold</>} cta="Review" />,
     );
   }
   if (standingOf(r.pctComplete, r.expectedPct) === "behind") {
@@ -66,7 +66,7 @@ export default function SchedulePulse({ milestones, onShowOverdue, onShowBlocked
     <div className={`rounded-2xl border shadow-sm px-4 py-2.5 flex items-center gap-3 flex-wrap ${calm ? "border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/30" : "border-[var(--color-border)] bg-[var(--color-surface)] ring-1 ring-slate-900/[0.03]"}`}>
       {calm ? (
         <span className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
-          <CheckCircle2 className="w-4 h-4" /> On track — nothing needs attention right now.
+          <CheckCircle2 className="w-4 h-4" /> On track - nothing needs attention right now.
         </span>
       ) : (
         <>

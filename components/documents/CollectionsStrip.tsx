@@ -129,7 +129,7 @@ export default function CollectionsStrip({
         <div className="text-[11px] text-[var(--color-text-muted)] italic py-1">
           No books {folderId && folderName ? <>in <b>{folderName}</b></> : "at the library root"} yet. Use{" "}
           <b>+ New Collection</b> to combine related documents into one named book
-          (e.g., &quot;Crude Unit P&amp;ID Book&quot;) you can open and read end-to-end — it lives in this folder.
+          (e.g., &quot;Crude Unit P&amp;ID Book&quot;) you can open and read end-to-end - it lives in this folder.
         </div>
       ) : (
         <div className="flex gap-2.5 overflow-x-auto pb-1 -mx-1 px-1">

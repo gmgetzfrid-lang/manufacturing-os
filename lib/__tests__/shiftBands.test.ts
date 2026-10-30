@@ -21,7 +21,7 @@ describe("which shift a step is worked on", () => {
   it("after midnight: the night before's shift", () => {
     expect(bands(step(at("27", "01:00"), at("27", "04:00")))).toEqual({ day: [], night: ["2026-10-26"] });
   });
-  it("night hours with no night crew on it: the day crew's next day shift, once — as the shift report has it", () => {
+  it("night hours with no night crew on it: the day crew's next day shift, once - as the shift report has it", () => {
     expect(bands(step(at("26", "18:00"), at("26", "22:00"), { staffedShift: "day" }))).toEqual({ day: ["2026-10-27"], night: [] });
     // Mon 22:00 → Tue 04:00, an inspector with no night crew: Tuesday's day shift only.
     expect(bands(step(at("26", "22:00"), at("27", "04:00"), { staffedShift: "day" }))).toEqual({ day: ["2026-10-27"], night: [] });

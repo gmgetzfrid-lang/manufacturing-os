@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
       }));
     } catch (e) {
       console.error("[intake/upload] R2 put failed (quote)", e);
-      return bad("File storage failed — try again.", 502);
+      return bad("File storage failed - try again.", 502);
     }
 
     const { data: qdoc, error: qErr } = await supabaseAdmin.from("cost_documents").insert({
@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
     await supabaseAdmin.from("notifications").insert(targetsQ.map((uid) => ({
       org_id: orgIdQ, user_id: uid,
       kind: "review_requested",
-      title: `Quote received: ${companyQ}${rfqGroup ? ` — ${rfqGroup}` : ""}`,
+      title: `Quote received: ${companyQ}${rfqGroup ? ` - ${rfqGroup}` : ""}`,
       body: `${companyQ} submitted a quote through their intake link.${noteQ ? ` Note: ${noteQ}` : ""} Run the AI read from the project's Costs tab to tabulate it.`,
       link: `/projects/${projectIdQ}?tab=costs`,
       resource_type: "cost", resource_id: quoteId,
@@ -124,7 +124,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       quoteId,
       status: "quote_received",
-      message: `Your quote is in — ${String(projQ?.name ?? "the project")}'s team has been notified. You'll be contacted about the award decision.`,
+      message: `Your quote is in - ${String(projQ?.name ?? "the project")}'s team has been notified. You'll be contacted about the award decision.`,
     });
   }
 
@@ -166,7 +166,7 @@ export async function POST(req: NextRequest) {
       }));
     } catch (e) {
       console.error("[intake/upload] R2 put failed (redline)", e);
-      return bad("File storage failed — try again.", 502);
+      return bad("File storage failed - try again.", 502);
     }
 
     const attachment = {
@@ -217,7 +217,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       ticketId,
       status: "redline_received",
-      message: `Redlines attached to ${String(ticket.ticket_id ?? "the ticket")} — the drafting team has been notified.`,
+      message: `Redlines attached to ${String(ticket.ticket_id ?? "the ticket")} - the drafting team has been notified.`,
     });
   }
 
@@ -227,12 +227,12 @@ export async function POST(req: NextRequest) {
     .eq("id", projectId).maybeSingle();
   if (!project) return bad("Project not found.", 404);
   const libraryId = (project.intake_library_id as string | null) ?? null;
-  if (!libraryId) return bad("This link isn't fully configured yet — ask your contact to set the intake library.", 409);
+  if (!libraryId) return bad("This link isn't fully configured yet - ask your contact to set the intake library.", 409);
   let collectionId = (project.intake_collection_id as string | null) ?? null;
   if (!collectionId) {
     const { data: col, error: colErr } = await supabaseAdmin
       .from("collections")
-      .insert({ org_id: orgId, library_id: libraryId, name: `Intake — ${String(project.name ?? "Project")}` })
+      .insert({ org_id: orgId, library_id: libraryId, name: `Intake - ${String(project.name ?? "Project")}` })
       .select("id").single();
     if (colErr || !col) return bad("Couldn't prepare the intake folder.", 500);
     collectionId = String(col.id);
@@ -255,7 +255,7 @@ export async function POST(req: NextRequest) {
       .eq("id", docId).maybeSingle();
     if (!d) return bad("Document not found.", 404);
     if (d.pending_version_id && !(link.allow_auto_supersede && linkAuthored)) {
-      return bad("Your previous submission for this document is still in review — it must be approved or rejected first.", 409);
+      return bad("Your previous submission for this document is still in review - it must be approved or rejected first.", 409);
     }
     targetDoc = d as Record<string, unknown>;
   }
@@ -271,7 +271,7 @@ export async function POST(req: NextRequest) {
     }));
   } catch (e) {
     console.error("[intake/upload] R2 put failed", e);
-    return bad("File storage failed — try again.", 502);
+    return bad("File storage failed - try again.", 502);
   }
 
   const label = targetDoc
@@ -345,7 +345,7 @@ export async function POST(req: NextRequest) {
     : `Intake submission awaiting review: ${label} (${company})`;
   const intakeBody = autoNow
     ? `${company} published a new revision through their trusted intake link. It is now current.`
-    : `${company} submitted ${docId ? `Rev ${revLabel}` : "a new document"} on the project — review and approve it from the project's Intake tab.`;
+    : `${company} submitted ${docId ? `Rev ${revLabel}` : "a new document"} on the project - review and approve it from the project's Intake tab.`;
   await supabaseAdmin.from("notifications").insert(targets.map((uid) => ({
     org_id: orgId, user_id: uid,
     kind: autoNow ? "doc_superseded" : "review_requested",
@@ -399,6 +399,6 @@ export async function POST(req: NextRequest) {
     status: autoNow ? "published" : "in_review",
     message: autoNow
       ? `Rev ${revLabel || "A"} of ${label} is now the current revision.`
-      : `Submitted — ${label} is with the project team for review. You'll see it marked approved here once accepted.`,
+      : `Submitted - ${label} is with the project team for review. You'll see it marked approved here once accepted.`,
   });
 }

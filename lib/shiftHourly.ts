@@ -133,12 +133,12 @@ export function plainHour(rows: TimeLogRow[]): string {
     if (!r.step) { out.push(`${r.what}: ${said(r)}`); continue; }
     const where = [shortTask(r.task), r.step].filter(Boolean).join(" ");
     const w = r.what;
-    const what = /^Discovery found|^Added scope raised/.test(w) ? `${w.split(" ")[0] === "Added" ? "added scope" : "discovery"} — ${said(r).split(" — ")[0]}`
+    const what = /^Discovery found|^Added scope raised/.test(w) ? `${w.split(" ")[0] === "Added" ? "added scope" : "discovery"} - ${said(r).split(" - ")[0]}`
       : w === "Progress" ? `to ${r.pct.split("→").pop()?.trim() ?? r.pct}`
         : w.startsWith("Off ") ? "back in progress"
           : w === "Comment" || w === "Why it's behind" ? ""
             : w.toLowerCase();
-    const note = /^Discovery found|^Added scope raised/.test(w) || !said(r) ? "" : `${what ? " — " : ": "}${said(r)}`;
+    const note = /^Discovery found|^Added scope raised/.test(w) || !said(r) ? "" : `${what ? " - " : ": "}${said(r)}`;
     const k = r.crew || "";
     if (!by.has(k)) { by.set(k, []); crews.push(k); }
     by.get(k)!.push(`${where}${what ? ` ${what}` : ""}${note}`);
@@ -157,7 +157,7 @@ export function hourlyRows(n: HourlyNotes | null | undefined, slots: HourSlot[],
 }
 
 /** What each kind of hour is called. */
-export const SLOT_LABEL: Record<SlotKind, string> = { meeting: "Shift meeting", permit: "Start of shift — permitting", work: "" };
+export const SLOT_LABEL: Record<SlotKind, string> = { meeting: "Shift meeting", permit: "Start of shift - permitting", work: "" };
 
 /** "08:00" in plant time — the form times go to and come back from the model in. */
 export function clock24(at: number, tz: string): string {
@@ -224,7 +224,7 @@ export function hourlyPrompt(hours: Array<{ slot: HourSlot; rows: TimeLogRow[] }
     `SHIFT: ${o.shiftTitle} (${o.window})`,
     ...[...hours].sort((a, b) => a.slot.start - b.slot.start).flatMap(({ slot, rows }) => [
       "",
-      `HOUR ${clock24(slot.start, o.tz)}${slot.kind === "permit" ? " — start of shift, permitting" : ""} (${clock24(slot.start, o.tz)}–${clock24(slot.end, o.tz)}), ${rows.length} entr${rows.length === 1 ? "y" : "ies"}, time | what | step | task (WO) | crew | comment:`,
+      `HOUR ${clock24(slot.start, o.tz)}${slot.kind === "permit" ? " - start of shift, permitting" : ""} (${clock24(slot.start, o.tz)}–${clock24(slot.end, o.tz)}), ${rows.length} entr${rows.length === 1 ? "y" : "ies"}, time | what | step | task (WO) | crew | comment:`,
       ...[...rows].sort((a, b) => a.at - b.at).map((r) => factLine(r, o.tz)),
     ]),
   ].join("\n");

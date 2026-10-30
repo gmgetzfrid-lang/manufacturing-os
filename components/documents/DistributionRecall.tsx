@@ -111,7 +111,7 @@ export default function DistributionRecall({
                 className="mt-1.5 w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg text-[11px] font-bold text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition-colors disabled:opacity-50"
               >
                 {nudging ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BellRing className="w-3.5 h-3.5" />}
-                Recall outdated copies — notify {outdated.length} {outdated.length === 1 ? "person" : "people"}
+                Recall outdated copies - notify {outdated.length} {outdated.length === 1 ? "person" : "people"}
               </button>
             )
           )}

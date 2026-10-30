@@ -64,7 +64,7 @@ export default function ScopePage() {
       setTree(t);
     } catch (e) {
       const f = translatePostgresError(e, { entity: "scope row" });
-      setError(`${f.heading} — ${f.message}`);
+      setError(`${f.heading} - ${f.message}`);
     }
     finally { setLoading(false); }
   }, [activeOrgId, showArchived]);
@@ -123,7 +123,7 @@ export default function ScopePage() {
       <PageHeaderBar
         icon={Factory}
         title="Operational Scope"
-        subtitle="Plants, units, and systems used to scope documents and equipment. Existing records continue to work with no scope assigned — attaching scope is per-document and per-asset."
+        subtitle="Plants, units, and systems used to scope documents and equipment. Existing records continue to work with no scope assigned - attaching scope is per-document and per-asset."
         actions={
           <div className="flex items-center gap-2 text-xs">
             <label className="flex items-center gap-1.5 text-[var(--color-text-muted)]">
@@ -146,7 +146,7 @@ export default function ScopePage() {
       {!canEdit && (
         <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
           <Lock className="w-3.5 h-3.5" />
-          Read-only — scope editing requires Admin, Manager, Supervisor, or DocCtrl.
+          Read-only - scope editing requires Admin, Manager, Supervisor, or DocCtrl.
         </div>
       )}
 

@@ -187,17 +187,17 @@ export function buildAnswerExport(question: string, answer: KnowledgeAnswer): An
   if ((answer.answeringFor ?? []).length > 0) {
     rows.push(`<tr><td style="padding-top:6px;${FONT};font-size:12px;color:${MUTED}">Answering for: ${answer.answeringFor!.map(esc).join(" &middot; ")}</td></tr>`);
   }
-  text.push(`${v ? `${v.text} — ` : "ANSWER: "}${inlineText(hero ? hero.text : answer.answer)}`);
+  text.push(`${v ? `${v.text} - ` : "ANSWER: "}${inlineText(hero ? hero.text : answer.answer)}`);
   if ((answer.answeringFor ?? []).length > 0) text.push(`Answering for: ${answer.answeringFor!.join(" · ")}`);
   text.push("");
 
   // THE PROOF — right under the answer
   if (lead.length > 0) {
-    rows.push(heading(compliance ? "The requirement — quoted" : "The proof"));
+    rows.push(heading(compliance ? "The requirement - quoted" : "The proof"));
     for (const c of lead) rows.push(proofCardHtml(c, true));
     text.push("THE PROOF");
     for (const c of lead) {
-      text.push(`[${c.n}] ${c.claim ? `${c.claim} — ` : ""}${where(c)}`);
+      text.push(`[${c.n}] ${c.claim ? `${c.claim} - ` : ""}${where(c)}`);
       const q = c.highlight ?? (c.quote ?? "").slice(0, 400);
       if (q) text.push(`    "${q.trim()}"`);
     }
@@ -240,7 +240,7 @@ export function buildAnswerExport(question: string, answer: KnowledgeAnswer): An
     for (const c of support) rows.push(proofCardHtml(c, false));
     text.push("SUPPORTING PASSAGES");
     for (const c of support) {
-      text.push(`[${c.n}] ${c.claim ? `${c.claim} — ` : ""}${where(c)}`);
+      text.push(`[${c.n}] ${c.claim ? `${c.claim} - ` : ""}${where(c)}`);
       const q = c.highlight ?? (c.quote ?? "").slice(0, 300);
       if (q) text.push(`    "${q.trim()}"`);
     }
@@ -251,16 +251,16 @@ export function buildAnswerExport(question: string, answer: KnowledgeAnswer): An
   // documents, each with its page and the text it relied on.
   const web = answer.citations.filter((c) => !!c.url);
   if (web.length > 0) {
-    rows.push(heading("From the web — not your controlled documents"));
-    rows.push(`<tr><td style="padding-bottom:8px;${FONT};font-size:12px;color:${MUTED}">A web page about a code is not the code — verify against the publication.</td></tr>`);
-    text.push("FROM THE WEB — not your controlled documents; verify against the publication");
+    rows.push(heading("From the web - not your controlled documents"));
+    rows.push(`<tr><td style="padding-bottom:8px;${FONT};font-size:12px;color:${MUTED}">A web page about a code is not the code - verify against the publication.</td></tr>`);
+    text.push("FROM THE WEB - not your controlled documents; verify against the publication");
     for (const c of web) {
       rows.push(`<tr><td style="padding-bottom:10px"><table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border:1px solid ${LINE};border-left:5px solid #0284c7;background:#ffffff">` +
         `<tr><td style="padding:10px 14px 4px;${FONT};font-size:14px;font-weight:bold;color:${INK}"><sup style="color:#0284c7">[${c.n}]</sup> ${esc(c.title ?? c.url ?? "")}</td></tr>` +
         `<tr><td style="padding:0 14px 4px;${FONT};font-size:12px"><a href="${esc(c.url ?? "")}" style="color:#0369a1">${esc(c.url ?? "")}</a></td></tr>` +
         (c.quote ? `<tr><td style="padding:4px 14px 12px"><div style="${FONT};font-size:13px;line-height:1.55;color:#334155;background:#f8fafc;border-left:3px solid #bae6fd;padding:8px 10px;font-style:italic">&ldquo;${esc(c.quote)}&rdquo;</div></td></tr>` : "") +
         `</table></td></tr>`);
-      text.push(`[${c.n}] ${c.title ?? c.url} — ${c.url}`);
+      text.push(`[${c.n}] ${c.title ?? c.url} - ${c.url}`);
       if (c.quote) text.push(`    "${c.quote.trim()}"`);
     }
     text.push("");
@@ -272,12 +272,12 @@ export function buildAnswerExport(question: string, answer: KnowledgeAnswer): An
   const html = `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:720px;${FONT};color:${INK}">${rows.join("")}</table>`;
   const plain = text.join("\n");
   const answerOnly = [
-    `${v ? `${v.text} — ` : ""}${inlineText(hero ? hero.text : answer.answer)}`,
+    `${v ? `${v.text} - ` : ""}${inlineText(hero ? hero.text : answer.answer)}`,
     ...((answer.answeringFor ?? []).length > 0 ? [`Answering for: ${answer.answeringFor!.join(" · ")}`] : []),
   ].join("\n");
   const references = [...byUse, ...web].map((c) => {
     const q = c.url ? c.quote : (c.highlight ?? c.quote ?? "").slice(0, 300);
-    return `[${c.n}] ${c.url ? `${c.title ?? c.url} — ${c.url}` : where(c)}${q ? `\n    "${q.trim()}"` : ""}`;
+    return `[${c.n}] ${c.url ? `${c.title ?? c.url} - ${c.url}` : where(c)}${q ? `\n    "${q.trim()}"` : ""}`;
   }).join("\n");
   return { html, text: plain, markdown: textToMarkdown(plain), answerOnly, references };
 }

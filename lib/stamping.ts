@@ -144,7 +144,7 @@ async function analyzePageInk(source: ArrayBuffer | Uint8Array): Promise<PageInk
       void doc.destroy();
     }
   } catch (e) {
-    console.warn("[stamping] page analysis unavailable — using conventional placements", e);
+    console.warn("[stamping] page analysis unavailable - using conventional placements", e);
     return null;
   }
 }

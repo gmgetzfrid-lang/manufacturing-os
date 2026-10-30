@@ -38,7 +38,7 @@ describe("kick-off agenda", () => {
 describe("close-out", () => {
   const done = (m: Milestone, actual: number): Milestone => ({ ...m, status: "completed", percentComplete: 100, actualAt: new Date(actual).toISOString() } as Milestone);
   const co = buildCloseout({ milestones: [e12, done(a, at("2026-10-26", "07:30")), done(b, at("2026-10-26", "16:00")), c, crane] });
-  it("what's done and what's still open — never 'late' or 'on time' from when it was marked", () => {
+  it("what's done and what's still open - never 'late' or 'on time' from when it was marked", () => {
     expect([co.done, co.steps]).toEqual([2, 4]);
     expect(co).not.toHaveProperty("late");
     expect(co).not.toHaveProperty("onTime");

@@ -331,9 +331,9 @@ export function suggestAccountForInvoice(
       const ranked = theirs.map((a) => ({ a, s: overlap(a.name) })).sort((x, y) => y.s - x.s);
       const best = ranked[0];
       if (best.s > 0 && best.s > (ranked[1]?.s ?? 0)) {
-        return { accountId: best.a.id, confidence: "high", reason: `${party.name} — matches "${best.a.name}"` };
+        return { accountId: best.a.id, confidence: "high", reason: `${party.name} - matches "${best.a.name}"` };
       }
-      return { accountId: best.a.id, confidence: "medium", reason: `${party.name} has ${theirs.length} lines — check this one` };
+      return { accountId: best.a.id, confidence: "medium", reason: `${party.name} has ${theirs.length} lines - check this one` };
     }
   }
 

@@ -33,7 +33,7 @@ describe("shift handover", () => {
     const d = decisionsToShip({ hb: { tryIt: true, crew: "Schultz - Tower", note: "  if trays wait  " }, bl: { tryIt: false } }, carried);
     expect(d).toEqual({ hb: { tryIt: true, crew: "Schultz - Tower", note: "if trays wait", pctAtShip: 0, name: "Hydroblast", why: "other crew's work" } });
   });
-  it("offers the crew already on that job first, then the lightest load — and says why", () => {
+  it("offers the crew already on that job first, then the lightest load - and says why", () => {
     const blindsRow = carried.find((x) => x.leaf.id === "bl")!;
     expect(suggestCrews(blindsRow, r)[0]).toEqual({ crew: "Schultz - Tower", why: "on V-7 this night" });
     const hbRow = carried.find((x) => x.leaf.id === "hb")!;
@@ -43,7 +43,7 @@ describe("shift handover", () => {
     const out = askedOutcomes({ shiftKey: "k", shippedAt: "x", shippedByName: null, decisions: { hb: { tryIt: true, crew: "Schultz - Tower", pctAtShip: 0, name: "Hydroblast" } } }, () => 100);
     expect(out).toEqual([{ id: "hb", name: "Hydroblast", crew: "Schultz - Tower", from: 0, now: 100, pulled: false, why: "carry-over" }]);
   });
-  it("a draft nobody shipped wasn't handed over — nothing to read back", () => {
+  it("a draft nobody shipped wasn't handed over - nothing to read back", () => {
     expect(askedOutcomes({ shiftKey: "k", shippedAt: null, shippedByName: null, decisions: { hb: { tryIt: true, name: "Hydroblast" } } }, () => 100)).toEqual([]);
   });
   it("the email lists it under Next shift as could-try, not under Carries", () => {
@@ -51,7 +51,7 @@ describe("shift handover", () => {
       pctOf: () => 0, finishOf: () => undefined, tryOf: (id) => (id === "hb" ? { crew: "Schultz - Tower", note: null } : undefined),
       asked: [{ id: "x", name: "Old step", crew: null, from: 20, now: 100 }],
     }) });
-    expect(text).toMatch(/Hydroblast · .*Could try \(Schultz - Tower\) — day crew's/);
+    expect(text).toMatch(/Hydroblast · .*Could try \(Schultz - Tower\) - day crew's/);
     expect(text).toMatch(/Asked to try last turnover: 1 of 1 done \(as entered\)/);
     expect(text).toMatch(/Could try if there's time: 1 step, 4 h\./);
     // Once: marked to try, it isn't also "waits for day crew".

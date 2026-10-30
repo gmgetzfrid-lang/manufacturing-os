@@ -93,7 +93,7 @@ export default function BulkCheckoutToProjectModal({
     if (kind === "project") {
       if (choice === "new") {
         if (!name.trim()) return setError("Project name is required");
-        if (!description.trim()) return setError("Project description is required — explain what the team will be doing");
+        if (!description.trim()) return setError("Project description is required - explain what the team will be doing");
       } else {
         if (!selectedProjectId) return setError("Pick a project to attach these checkouts to");
       }
@@ -155,7 +155,7 @@ export default function BulkCheckoutToProjectModal({
             </div>
             <div className="text-xs text-[var(--color-text-muted)]">
               {kind === "adhoc"
-                ? "Quick checkout — no project required. Auto-expires in 24h if you forget to check back in."
+                ? "Quick checkout - no project required. Auto-expires in 24h if you forget to check back in."
                 : "Attach all checkouts to the same project so the team knows they belong together."}
             </div>
           </div>
@@ -194,7 +194,7 @@ export default function BulkCheckoutToProjectModal({
                 return (
                   <div key={d.id} className="px-3 py-2 flex items-center gap-2 text-xs">
                     <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
-                    <span className="font-mono font-bold text-[var(--color-text)] truncate">{d.documentNumber || "—"}</span>
+                    <span className="font-mono font-bold text-[var(--color-text)] truncate">{d.documentNumber || "-"}</span>
                     <span className="text-[var(--color-text-muted)] truncate">{d.title || d.name}</span>
                     {conflict && (
                       <span className="ml-auto inline-flex items-center gap-1 text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
@@ -239,7 +239,7 @@ export default function BulkCheckoutToProjectModal({
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Description * — what's the team going to do with these documents?"
+                  placeholder="Description * - what's the team going to do with these documents?"
                   rows={3}
                   className="w-full px-3 py-2 border border-[var(--color-border)] rounded-md text-sm focus:ring-2 focus:ring-indigo-500 outline-none resize-y"
                 />
@@ -272,7 +272,7 @@ export default function BulkCheckoutToProjectModal({
                 onChange={(e) => setSelectedProjectId(e.target.value)}
                 className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm bg-[var(--color-surface)] focus:ring-2 focus:ring-indigo-500 outline-none"
               >
-                {projects.length === 0 && <option value="">No active projects — switch to New</option>}
+                {projects.length === 0 && <option value="">No active projects - switch to New</option>}
                 {projects.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}{p.visibility === "private" ? " (private)" : ""}

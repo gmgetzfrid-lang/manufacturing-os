@@ -212,7 +212,7 @@ export async function PATCH(req: NextRequest) {
   const { data: casRows, error: updErr } = await casQuery.select("id");
   if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
   if (((casRows as unknown[]) ?? []).length === 0) {
-    return NextResponse.json({ error: "The ticket changed while you were editing — refresh and try again", conflict: true }, { status: 409 });
+    return NextResponse.json({ error: "The ticket changed while you were editing - refresh and try again", conflict: true }, { status: 409 });
   }
 
   // Keep the table in lockstep (best-effort pre-migration).
@@ -239,7 +239,7 @@ export async function DELETE(req: NextRequest) {
   const { data: casRows, error: updErr } = await casQuery.select("id");
   if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
   if (((casRows as unknown[]) ?? []).length === 0) {
-    return NextResponse.json({ error: "The ticket changed while you were editing — refresh and try again", conflict: true }, { status: 409 });
+    return NextResponse.json({ error: "The ticket changed while you were editing - refresh and try again", conflict: true }, { status: 409 });
   }
 
   await supabaseAdmin.from("ticket_comments").update({ deleted_at: new Date().toISOString() }).eq("id", body.commentId!).then(() => {});

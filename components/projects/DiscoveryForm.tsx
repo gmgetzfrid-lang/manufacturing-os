@@ -78,10 +78,10 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
   const foundAt = toMs(foundV);
   const startAt = startMode === "set" ? toMs(startV) : null;
   // What's wrong with the times, if anything.
-  const timeProblem = !Number.isFinite(foundAt) ? `Put in when it was ${k.found} — the day and the time.`
-      : startMode === "set" && !Number.isFinite(startAt as number) ? "Pick when the work starts — the day and the time."
+  const timeProblem = !Number.isFinite(foundAt) ? `Put in when it was ${k.found} - the day and the time.`
+      : startMode === "set" && !Number.isFinite(startAt as number) ? "Pick when the work starts - the day and the time."
         : startAt != null && startAt < foundAt ? `The work can't start before it was ${k.found}.`
-          : startAt != null && follows != null && startAt < follows ? `It starts after “${afterName ?? "the step it follows"}”, planned to be done ${fmt(follows)} — pick that or later, or change what it starts after.`
+          : startAt != null && follows != null && startAt < follows ? `It starts after “${afterName ?? "the step it follows"}”, planned to be done ${fmt(follows)} - pick that or later, or change what it starts after.`
             : null;
 
   const filled = rows.map((r) => ({ name: r.name.trim(), crew: r.crew.trim(), hours: Number(r.hours) })).filter((r) => r.name && Number.isFinite(r.hours) && r.hours > 0);
@@ -91,13 +91,13 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
   // Worked out again only when what's entered changes.
   const draftKey = draft ? JSON.stringify(draft) : "";
   const plan = useMemo(() => (draftKey ? planDiscovery(milestones, JSON.parse(draftKey) as DiscoveryDraft, { now, tz, mode }) : null), [milestones, now, tz, mode, draftKey]);
-  function fmt(t: number) { return Number.isFinite(t) ? fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) : "—"; }
+  function fmt(t: number) { return Number.isFinite(t) ? fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) : "-"; }
   const hrs = (h: number) => `${Math.round(h * 10) / 10} h`;
   const taskName = tasks.find((t) => t.id === taskId)?.name ?? start.name;
 
   const save = async () => {
     if (!what.trim()) { setMsg(kind === "added" ? "Say what's being added." : "Say what was found."); return; }
-    if (!filled.length) { setMsg("Add the work it needs — a step with its hours."); return; }
+    if (!filled.length) { setMsg("Add the work it needs - a step with its hours."); return; }
     if (timeProblem) { setMsg(timeProblem); return; }
     if (foundAt > Date.now() + 60_000) { setMsg(`When it was ${k.found} can't be in the future.`); return; }
     if (!draft) return;
@@ -116,7 +116,7 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
         <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2">
           <div>
             <div className="text-[14px] font-black">{k.word === "Discovery" ? "Discovery work" : "Added scope"}</div>
-            <div className="text-[11px] text-[var(--color-text-muted)]">Work that wasn&apos;t in the plan, into the schedule — and what it does to it.</div>
+            <div className="text-[11px] text-[var(--color-text-muted)]">Work that wasn&apos;t in the plan, into the schedule - and what it does to it.</div>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="w-7 h-7 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
@@ -133,21 +133,21 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
           <label className="block">
             <span className={lbl}>Equipment / task</span>
             <select value={taskId} onChange={(e) => pickTask(e.target.value)} className={`${inp} w-full`}>
-              {tasks.map((t) => <option key={t.id} value={t.id!}>{t.name}{t.workOrderRef ? ` — WO ${t.workOrderRef}` : ""}</option>)}
+              {tasks.map((t) => <option key={t.id} value={t.id!}>{t.name}{t.workOrderRef ? ` - WO ${t.workOrderRef}` : ""}</option>)}
             </select>
           </label>
           <label className="block">
-            <span className={lbl}>{k.what} <span className="font-bold text-amber-700 dark:text-amber-400">— required</span></span>
-            <textarea value={what} onChange={(e) => { setWhat(e.target.value); setMsg(null); }} rows={2} placeholder={kind === "added" ? "e.g. Clean the downcomers while the tower is open" : "e.g. Tray 14 cracked at the weld — needs repair before close-up"}
+            <span className={lbl}>{k.what} <span className="font-bold text-amber-700 dark:text-amber-400">- required</span></span>
+            <textarea value={what} onChange={(e) => { setWhat(e.target.value); setMsg(null); }} rows={2} placeholder={kind === "added" ? "e.g. Clean the downcomers while the tower is open" : "e.g. Tray 14 cracked at the weld - needs repair before close-up"}
               className={`${inp} w-full h-auto py-1.5`} />
           </label>
-          <DateTimePicker label={`When was it ${k.found}?`} hint="— required" value={foundV} onChange={(v) => { setFoundV(v); setMsg(null); }} tz={tz} times={times} />
+          <DateTimePicker label={`When was it ${k.found}?`} hint="- required" value={foundV} onChange={(v) => { setFoundV(v); setMsg(null); }} tz={tz} times={times} />
           <div>
             <span className={lbl}>Work it adds</span>
             <div className="space-y-1.5">
               {rows.map((r, i) => (
                 <div key={i} className="flex flex-wrap items-center gap-1.5">
-                  <input value={r.name} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} placeholder="Step — e.g. Weld repair tray 14" aria-label="Step"
+                  <input value={r.name} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} placeholder="Step - e.g. Weld repair tray 14" aria-label="Step"
                     className={`${inp} flex-1 min-w-[180px]`} />
                   <CrewPicker value={r.crew} onChange={(v) => setRows(rows.map((x, j) => (j === i ? { ...x, crew: v } : x)))} crews={crews} className="w-40" />
                   <span className="inline-flex items-center gap-1">
@@ -165,7 +165,7 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
             <label className="block">
               <span className={lbl}>Starts after</span>
               <select value={afterId ?? ""} onChange={(e) => pickAfter(e.target.value || null)} className={`${inp} w-full`}>
-                <option value="">Nothing — starts now</option>
+                <option value="">Nothing - starts now</option>
                 {steps.map((s) => <option key={s.id} value={s.id!}>{s.name}{s.status === "completed" ? " (done)" : s.status === "in_progress" ? " (under way)" : ""}</option>)}
               </select>
               {/* After work that isn't done: it waits for it — say so, so two
@@ -177,7 +177,7 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
               )}
             </label>
             <div>
-              <span className={lbl}>Holds up <span className="font-normal text-[var(--color-text-muted)]">— can&apos;t start until it&apos;s done</span></span>
+              <span className={lbl}>Holds up <span className="font-normal text-[var(--color-text-muted)]">- can&apos;t start until it&apos;s done</span></span>
               <div className="max-h-28 overflow-y-auto rounded-md border border-[var(--color-border)] px-2 py-1 space-y-0.5">
                 {steps.filter((s) => s.id !== afterId && s.status !== "completed").map((s) => (
                   <label key={s.id} className="flex items-start gap-1.5">
@@ -192,17 +192,17 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
           <div className="space-y-1.5">
             <span className={lbl}>When can the work start?</span>
             <div className="flex flex-wrap gap-1" role="group" aria-label="When the work starts">
-              {([["asap", `As soon as it can — ${fmt(asap)}`], ["set", "At a set time"]] as const).map(([k, l]) => (
+              {([["asap", `As soon as it can - ${fmt(asap)}`], ["set", "At a set time"]] as const).map(([k, l]) => (
                 <button key={k} type="button" aria-pressed={startMode === k} onClick={() => { setStartMode(k); setMsg(null); if (k === "set" && !startV) setStartV(toDateTimeInput(asap, tz)); }}
                   className={`h-8 px-3 rounded-md border text-[12px] font-bold ${startMode === k ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>{l}</button>
               ))}
             </div>
             {startMode === "asap"
-              ? <div className="text-[11px] text-[var(--color-text-muted)]">{afterName && follows != null && follows >= now ? `When “${afterName}” is planned to be done.` : "Now — what it starts after is done or due."}</div>
+              ? <div className="text-[11px] text-[var(--color-text-muted)]">{afterName && follows != null && follows >= now ? `When “${afterName}” is planned to be done.` : "Now - what it starts after is done or due."}</div>
               : <DateTimePicker label="Planned start" value={startV} onChange={(v) => { setStartV(v); setMsg(null); }} tz={tz} times={times} future showNow={false} />}
           </div>
           <label className="block">
-            <span className={lbl}>Approved by <span className="font-normal text-[var(--color-text-muted)]">— optional</span></span>
+            <span className={lbl}>Approved by <span className="font-normal text-[var(--color-text-muted)]">- optional</span></span>
             <input value={approvedBy} onChange={(e) => setApprovedBy(e.target.value)} placeholder="e.g. TA manager / owner rep" className={`${inp} w-full`} />
           </label>
 
@@ -214,7 +214,7 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
                 <div className="font-bold">{impactLine(plan.impact, hrs)}</div>
                 <div>{taskName}: finish {fmt(plan.impact.taskFinish[0])} → <b>{fmt(plan.impact.taskFinish[1])}</b></div>
                 <div>Turnaround (forecast): {fmt(plan.impact.finish[0])} → <b className={plan.impact.finish[1] > plan.impact.finish[0] + 6 * 60_000 ? "text-rose-700 dark:text-rose-400" : ""}>{fmt(plan.impact.finish[1])}</b>
-                  {plan.impact.finish[1] <= plan.impact.finish[0] + 6 * 60_000 && plan.impact.taskFinish[1] > plan.impact.taskFinish[0] ? " — it fits in the float" : ""}</div>
+                  {plan.impact.finish[1] <= plan.impact.finish[0] + 6 * 60_000 && plan.impact.taskFinish[1] > plan.impact.taskFinish[0] ? " - it fits in the float" : ""}</div>
                 <div className="text-[var(--color-text-muted)]">New work: {plan.steps.map((s) => `${s.name} ${fmt(Date.parse(s.plannedStartAt))} → ${fmt(Date.parse(s.plannedAt))}`).join("; ")}</div>
                 {plan.impact.pushed.length > 0 && (
                   <div>Holds up {plan.impact.pushed.length} planned step{plan.impact.pushed.length === 1 ? "" : "s"} (forecast): {plan.impact.pushed.slice(0, 5).map((p) => `${p.name} +${hrs(p.hours)}`).join(", ")}{plan.impact.pushed.length > 5 ? ` + ${plan.impact.pushed.length - 5} more` : ""}. Their planned dates don&apos;t change.</div>
@@ -230,7 +230,7 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
               {busy ? "Adding…" : "Add to the schedule"}
             </button>
           </div>
-          <div className="text-[10.5px] text-[var(--color-text-faint)]">It goes in as steps under {taskName}, marked as {k.lower}, linked after the step it follows; what it holds up waits on it. No other step&apos;s planned dates change — the delay shows as the forecast finish, against the plan.</div>
+          <div className="text-[10.5px] text-[var(--color-text-faint)]">It goes in as steps under {taskName}, marked as {k.lower}, linked after the step it follows; what it holds up waits on it. No other step&apos;s planned dates change - the delay shows as the forecast finish, against the plan.</div>
         </div>
       </div>
     </div>

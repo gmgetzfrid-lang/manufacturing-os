@@ -15,7 +15,7 @@ export default function PctSlider({ value, was, onChange, disabled }: { value: n
         <button type="button" aria-label="1% less" disabled={disabled || value <= 0} onClick={() => set(value - 1)} className={nudge}>−</button>
         <span className="w-16 text-center text-[22px] font-black tabular-nums">{value}%</span>
         <button type="button" aria-label="1% more" disabled={disabled || value >= 100} onClick={() => set(value + 1)} className={nudge}>+</button>
-        <span className="text-[12px] text-[var(--color-text-muted)]">{value === was ? "slide to the new %" : value === 100 ? `was ${was}% — finished` : `was ${was}%`}</span>
+        <span className="text-[12px] text-[var(--color-text-muted)]">{value === was ? "slide to the new %" : value === 100 ? `was ${was}% - finished` : `was ${was}%`}</span>
       </div>
       <input type="range" min={0} max={100} step={1} value={value} onChange={(e) => set(Number(e.target.value))} aria-label="Percent done" disabled={disabled}
         className="w-full h-8 cursor-pointer accent-[var(--color-accent)]" />

@@ -286,7 +286,7 @@ async function noteOverrideOnHolder(opts: {
       orgId: opts.orgId,
       documentId: opts.documentId,
       episodeId: episode?.id ?? null,
-      text: `${who} published Rev ${opts.revisionLabel} while you have this checked out — your checkout stays open. What changed: ${opts.changeNarrative}. Why now: ${reason}`,
+      text: `${who} published Rev ${opts.revisionLabel} while you have this checked out - your checkout stays open. What changed: ${opts.changeNarrative}. Why now: ${reason}`,
     });
   } catch {
     /* best-effort: the notification below is the primary signal */
@@ -296,7 +296,7 @@ async function noteOverrideOnHolder(opts: {
     userId: String(holder),
     kind: "revision_published_over_checkout",
     title: `New Rev ${opts.revisionLabel} published while you're checked out`,
-    body: `What changed: ${opts.changeNarrative} — ${reason}`,
+    body: `What changed: ${opts.changeNarrative} - ${reason}`,
     link: `/documents/${opts.libraryId}?doc=${opts.documentId}`,
     resourceType: "document",
     resourceId: opts.documentId,
@@ -590,7 +590,7 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
         throw new DocumentMutationBlockedError({
           ok: false,
           code: "locked_by_other",
-          message: `This document is checked out by ${(res.holder_name as string) || "another user"}. Ask them to check in — or force-unlock it — before publishing a new revision.`,
+          message: `This document is checked out by ${(res.holder_name as string) || "another user"}. Ask them to check in - or force-unlock it - before publishing a new revision.`,
         });
       }
       if (status === "on_hold") {
@@ -725,7 +725,7 @@ export async function revUpDocument(input: RevUpInput): Promise<RevUpResult> {
       userId: actorUserId,
       kind: "provenance_flag",
       title: `Rev ${revisionLabel.trim()} published without a work trail`,
-      body: "It went through fine — but there was no checkout or recorded download behind it, so Document Control will double-check the base with you. Next time, one click on Quick hold (⚡) before you start covers it.",
+      body: "It went through fine - but there was no checkout or recorded download behind it, so Document Control will double-check the base with you. Next time, one click on Quick hold (⚡) before you start covers it.",
       link: `/documents/${libraryId}?doc=${doc.id}`,
       resourceType: "document",
       resourceId: doc.id,
@@ -914,7 +914,7 @@ export async function submitForReview(input: RevUpInput): Promise<{ versionId: s
   if (((pointerRows as unknown[]) ?? []).length === 0) {
     // Someone else won the race — retire our just-inserted draft and stop.
     await supabase.from("document_versions").update({ superseded_at: now }).eq("id", insertedRow.id);
-    throw new Error("Another submission for review just landed on this document — refresh to see it.");
+    throw new Error("Another submission for review just landed on this document - refresh to see it.");
   }
 
   // Resubmit: supersede the prior draft + void its sign-offs (re-review needed).
@@ -1018,7 +1018,7 @@ export function checkRevLabelCorrection(input: RevLabelCheckInput):
   if (!label) return { ok: false, reason: "Revision label can't be blank." };
   if (label.length > 24) return { ok: false, reason: "Revision label is too long (24 characters max)." };
   if (input.reviewState === "in_review") {
-    return { ok: false, reason: "This revision is an in-review draft — its label is managed by the review workflow." };
+    return { ok: false, reason: "This revision is an in-review draft - its label is managed by the review workflow." };
   }
   if (label === input.currentLabel.trim()) {
     return { ok: false, reason: "That's already this revision's label." };
@@ -1085,7 +1085,7 @@ export async function correctRevisionLabel(input: CorrectRevLabelInput):
     const { data: d } = await supabase
       .from("documents").select("pending_version_id").eq("id", doc.id).maybeSingle();
     if (d?.pending_version_id) {
-      throw new Error("This document has a revision in review. Publish or void that draft first — its review labels are derived from the current rev.");
+      throw new Error("This document has a revision in review. Publish or void that draft first - its review labels are derived from the current rev.");
     }
   }
 
@@ -1507,7 +1507,7 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
       const episode = await getActiveEpisode(doc.id);
       await postEpisodeSystemMessage({
         orgId, documentId: doc.id, episodeId: episode?.id ?? null,
-        text: `${who} superseded this document while you have it checked out — your checkout stays open. Reason: ${reason.trim()}`,
+        text: `${who} superseded this document while you have it checked out - your checkout stays open. Reason: ${reason.trim()}`,
       });
     } catch {
       /* best-effort */

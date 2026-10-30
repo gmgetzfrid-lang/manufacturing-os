@@ -142,7 +142,7 @@ export default function RebaseScheduleModal({
           <label className="flex items-start gap-2 rounded-xl border border-[var(--color-border)] bg-slate-50/60 px-3 py-2 text-xs text-[var(--color-text)]">
             <input type="checkbox" checked={resetBaseline} onChange={(e) => setResetBaseline(e.target.checked)} className="mt-0.5" />
             <span>
-              <b>Treat the new dates as the plan of record</b> — reset the baseline so the shift report&apos;s &ldquo;plan said by now&rdquo; follows the moved schedule.
+              <b>Treat the new dates as the plan of record</b> - reset the baseline so the shift report&apos;s &ldquo;plan said by now&rdquo; follows the moved schedule.
               Untick to keep measuring against the old dates (you will read as behind by the shift).
             </span>
           </label>
@@ -154,7 +154,7 @@ export default function RebaseScheduleModal({
               <div className="flex items-center gap-2 text-[var(--color-text)]">
                 <span className="font-mono">{fmtInTz(currentAnchorIso, tz, { dateStyle: "medium", timeStyle: "short" })}</span>
                 <ArrowRight className="w-3 h-3 text-[var(--color-accent)]" />
-                <span className="font-mono font-bold">{previewDelta ? fmtInTz(previewDelta.newA, tz, { dateStyle: "medium", timeStyle: "short" }) : "—"}</span>
+                <span className="font-mono font-bold">{previewDelta ? fmtInTz(previewDelta.newA, tz, { dateStyle: "medium", timeStyle: "short" }) : "-"}</span>
               </div>
               {previewDelta && (
                 <div className={`mt-1 text-[11px] font-bold ${
@@ -168,7 +168,7 @@ export default function RebaseScheduleModal({
             </div>
           ) : (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-              No current anchor date detected — make sure the project has at least one milestone with a planned date before rebasing.
+              No current anchor date detected - make sure the project has at least one milestone with a planned date before rebasing.
             </div>
           )}
 

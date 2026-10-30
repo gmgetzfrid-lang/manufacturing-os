@@ -67,7 +67,7 @@ function TagInput({
             )}
           </div>
         ))}
-        {values.length === 0 && disabled && <span className="text-[var(--color-text-faint)] text-xs">—</span>}
+        {values.length === 0 && disabled && <span className="text-[var(--color-text-faint)] text-xs">-</span>}
       </div>
       {!disabled && (
         <div className="flex items-center gap-1 mt-2">
@@ -95,7 +95,7 @@ function TagInput({
           )}
         </div>
       )}
-      {!disabled && <p className="text-[10px] text-[var(--color-text-faint)] mt-1">Enter to add — commas stay in the tag</p>}
+      {!disabled && <p className="text-[10px] text-[var(--color-text-faint)] mt-1">Enter to add - commas stay in the tag</p>}
     </div>
   );
 }

@@ -396,7 +396,7 @@ async function escalateStaleCheckouts(sb: SupabaseClient<any>): Promise<number> 
       org_id: row.org_id,
       user_id: uid,
       kind: "checkout_released",
-      title: `Checkout held ${days} days — review needed`,
+      title: `Checkout held ${days} days - review needed`,
       body: `${row.user_name || "A user"} has had a document checked out since ${new Date(row.started_at).toLocaleDateString()}${row.purpose ? ` (${row.purpose})` : ""}. Nudge them or force-release if the work is done.`,
       link: row.library_id ? `/documents/${row.library_id}?doc=${row.document_id}` : "/checkouts",
       resource_type: "document",

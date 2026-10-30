@@ -59,17 +59,17 @@ export async function POST(req: NextRequest) {
   // Prose: pages already read (or with a usable text layer) go as text;
   // only the rest are sent as images.
   const read = await readPages({ orgId, fileKey: file.fileKey, pages: Array.from({ length: MAX_PAGES }, (_, i) => i + 1), maxPages: MAX_PAGES, images: "unread" });
-  if (read.pages.length === 0) return bad("The pages could not be read — is it a PDF?", 502);
+  if (read.pages.length === 0) return bad("The pages could not be read - is it a PDF?", 502);
   const images = read.images;
 
   const rubricText = QUALITY_MANUAL_RUBRIC
-    .map((a) => `- ${a.key}: ${a.label} — expect: ${a.hint}`).join("\n");
+    .map((a) => `- ${a.key}: ${a.label} - expect: ${a.hint}`).join("\n");
 
   const SYSTEM =
-    "You evaluate a contractor's QUALITY MANUAL for industrial mechanical work against a fixed rubric, reading its pages — attached as images, given as text already read from them, or both.\n" +
+    "You evaluate a contractor's QUALITY MANUAL for industrial mechanical work against a fixed rubric, reading its pages - attached as images, given as text already read from them, or both.\n" +
     "Rules:\n" +
     "- For EVERY rubric area report covered true/false with a finding grounded in what the pages actually show (\"Section 4 defines WPS/PQR control and welder continuity\") or what is missing (\"No calibration program appears anywhere in the attached pages\").\n" +
-    "- covered=true only when the manual states a real process for the area — a heading alone is not coverage.\n" +
+    "- covered=true only when the manual states a real process for the area - a heading alone is not coverage.\n" +
     "- Only the pages given count. If the manual is longer than what is given, judge what you can see; never assume content you were not given.\n" +
     "- Use ONLY the rubric keys given.\n" +
     'Return STRICT JSON: {"findings":[{"area":"doc_control","covered":true,"finding":"…"}]}';
@@ -96,9 +96,9 @@ export async function POST(req: NextRequest) {
     const parsed = block ? (JSON.parse(block) as { findings?: unknown }) : null;
     findings = validateRubricFindings(parsed?.findings);
   } catch {
-    return bad("The evaluation wasn't valid JSON — try again.", 502);
+    return bad("The evaluation wasn't valid JSON - try again.", 502);
   }
-  if (findings.length === 0) return bad("The evaluation returned nothing usable — try again.", 502);
+  if (findings.length === 0) return bad("The evaluation returned nothing usable - try again.", 502);
   const score = rubricCoverageScore(findings);
 
   return NextResponse.json({
@@ -107,6 +107,6 @@ export async function POST(req: NextRequest) {
     gaps: findings.filter((f) => !f.covered).map((f) => ({ area: f.area, finding: f.finding })),
     pagesRead: read.pages.map((p) => p.page),
     readFrom: pagesReadSummary(read),
-    note: "Proposal only — confirm to put it on the company's record.",
+    note: "Proposal only - confirm to put it on the company's record.",
   });
 }

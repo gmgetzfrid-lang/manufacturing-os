@@ -79,10 +79,10 @@ export function systemPrompt(playbook?: string): string {
     "",
     '1. A tool call, as a single JSON object: {"tool_name": "...", "parameters": { ... }}',
     "   No prose before or after it. No markdown fence.",
-    "2. Your final answer. No JSON. FORMAT IT FOR SCANNING — never a wall of prose:",
+    "2. Your final answer. No JSON. FORMAT IT FOR SCANNING - never a wall of prose:",
     "   **Answer:** one or two short sentences first (45 words max).",
     "   Then \"- \" bullets, one fact per line; group them under \"### \" headings when",
-    "   there are more than five. A line starting with \"! \" renders as a big warning —",
+    "   there are more than five. A line starting with \"! \" renders as a big warning -",
     "   use one for anything imperative or any gap. Wrap document numbers, tags, and",
     "   exact values in **bold** or `backticks` (they render as chips). Never write a",
     "   paragraph longer than two sentences.",
@@ -92,11 +92,11 @@ export function systemPrompt(playbook?: string): string {
     "",
     "RULES",
     "- Ground every factual claim in a tool result. If the tools found nothing, say so",
-    "  plainly — 'I have no documents mentioning that' is a correct and useful answer.",
+    "  plainly - 'I have no documents mentioning that' is a correct and useful answer.",
     "- Cite documents by number or name, and cite the page when you have one.",
     "- Never invent a document number, an equipment tag, a revision, or a person.",
     "- Tools marked [WRITE] are proposals. Calling one does NOT perform it; it asks the",
-    "  user. After proposing, do not call it again — carry on and finish your answer.",
+    "  user. After proposing, do not call it again - carry on and finish your answer.",
     "- Prefer search_documents for questions about content, find_documents for a specific",
     "  document, equipment_mentions for 'what do we have on <tag>'.",
     "- Stop calling tools as soon as you can answer. Extra calls cost the user money.",
@@ -123,7 +123,7 @@ function transcript(question: string, steps: OrchestratorStep[], note?: string):
 function clip(text: string): string {
   return text.length <= RESULT_CHARS
     ? text
-    : `${text.slice(0, RESULT_CHARS)}\n…(result truncated — call again with a narrower query if you need more)`;
+    : `${text.slice(0, RESULT_CHARS)}\n…(result truncated - call again with a narrower query if you need more)`;
 }
 
 /**
@@ -201,12 +201,12 @@ export async function runOrchestrator(opts: RunOptions): Promise<OrchestratorRun
     if (isRepeatCall(history, parsed.call)) {
       // Repeating a call means the result wasn't understood. Running it again
       // burns money to produce the identical bytes.
-      note = "You just made that exact call. The result above is all there is — "
+      note = "You just made that exact call. The result above is all there is - "
         + "either try a different tool or different parameters, or answer now.";
       history.push(parsed.call);
       steps.push({
         tool: parsed.call.tool, parameters: parsed.call.parameters,
-        result: null, error: "Repeated call — not run.",
+        result: null, error: "Repeated call - not run.",
       });
       continue;
     }
@@ -271,7 +271,7 @@ export async function runOrchestrator(opts: RunOptions): Promise<OrchestratorRun
 
   return {
     answer: steps.length > 0
-      ? "I couldn't finish this one. What I gathered is listed below — it may still answer part of it."
+      ? "I couldn't finish this one. What I gathered is listed below - it may still answer part of it."
       : "I couldn't answer this. Nothing came back from the search.",
     steps, pending: [...pending.values()], usage, stoppedBecause,
   };

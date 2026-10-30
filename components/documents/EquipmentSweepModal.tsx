@@ -115,7 +115,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
       const failed = (json.results as Array<{ error?: string }>).filter((r) => r.error);
-      if (failed.length > 0) setError(`${failed.length} document(s) failed — first: ${failed[0].error}`);
+      if (failed.length > 0) setError(`${failed.length} document(s) failed - first: ${failed[0].error}`);
       await refresh();
       onApplied();
     } catch (e) { setError((e as Error).message); }
@@ -131,7 +131,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
         <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2.5">
           <ScanSearch className="w-4 h-4 text-orange-600" />
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-black text-[var(--color-text)]">Equipment sweep — {libraryName}</div>
+            <div className="text-sm font-black text-[var(--color-text)]">Equipment sweep - {libraryName}</div>
             <div className="text-[11px] text-[var(--color-text-muted)]">
               AI-extracted tags from indexed drawings → your equipment column + the registry. {linkedCount} document{linkedCount === 1 ? "" : "s"} linked to knowledge.
             </div>
@@ -156,7 +156,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
                 <span className="text-[var(--color-text-muted)] font-bold">Send tags to</span>
                 <select value={bridge.targetColumnKey ?? ""} onChange={(e) => void saveSettings({ targetColumnKey: e.target.value || undefined })}
                   className="h-8 px-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] font-bold">
-                  <option value="">— pick a column —</option>
+                  <option value="">- pick a column -</option>
                   {tagColumns.map((c) => <option key={c.key} value={c.key}>{c.label ?? c.key}</option>)}
                 </select>
               </label>
@@ -166,7 +166,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
                   <select value={bridge.defaultUnitCode ?? ""} onChange={(e) => void saveSettings({ defaultUnitCode: e.target.value || undefined })}
                     className="h-8 px-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
                     <option value="">decode from drawing number</option>
-                    {book.units.map((u) => <option key={u.code} value={u.code}>{u.code} — {u.label}</option>)}
+                    {book.units.map((u) => <option key={u.code} value={u.code}>{u.code} - {u.label}</option>)}
                   </select>
                 </label>
               )}
@@ -180,7 +180,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
               </label>
             </div>
             <div className="text-[11px] text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg px-2.5 py-1.5">
-              This is the same engine <b>Connect everything</b> runs on the Documents map for every drawing library at once — reading included. Here it works on this library only.
+              This is the same engine <b>Connect everything</b> runs on the Documents map for every drawing library at once - reading included. Here it works on this library only.
               {!bridge.targetColumnKey && <> No column is picked, so tags go to the registry and the drawing&apos;s links; pick one to have them written into the library table as well.</>}
             </div>
           </div>
@@ -209,7 +209,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
             <div className="py-10 text-center text-xs text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline mr-1" /> Loading…</div>
           ) : rows.length === 0 ? (
             <div className="py-8 text-center text-xs text-[var(--color-text-muted)] italic">
-              Nothing computed yet — hit “Sweep the library”. (Drawings must be indexed in a knowledge library linked to this one.)
+              Nothing computed yet - hit “Sweep the library”. (Drawings must be indexed in a knowledge library linked to this one.)
             </div>
           ) : (
             <div className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
@@ -259,7 +259,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
           )}
 
           <p className="text-[10px] text-[var(--color-text-faint)]">
-            Violet chips aren&apos;t in the equipment registry yet — applying discovers them (unit + type from the Site Codebook, provenance recorded). Manual column entries are never removed; the bridge only adds.
+            Violet chips aren&apos;t in the equipment registry yet - applying discovers them (unit + type from the Site Codebook, provenance recorded). Manual column entries are never removed; the bridge only adds.
           </p>
         </div>
       </div>

@@ -91,7 +91,7 @@ export default function BillingPage() {
           <div className="mb-6 p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-800 flex items-start gap-2">
             <CheckCircle2 className="w-5 h-5 mt-0.5 shrink-0" />
             <div>
-              <b>Subscription started.</b> It may take a few seconds for your status to update —
+              <b>Subscription started.</b> It may take a few seconds for your status to update -
               <button onClick={() => void refresh()} className="ml-1 underline font-bold">refresh now</button>.
             </div>
           </div>
@@ -147,7 +147,7 @@ export default function BillingPage() {
                     {info.status === "past_due" ? "Payment Past Due" : "Active Subscription"}
                   </div>
                   <div className="text-xs text-[var(--color-text-muted)]">
-                    Plan: <b>{info.plan ? info.plan[0].toUpperCase() + info.plan.slice(1) : "—"}</b>
+                    Plan: <b>{info.plan ? info.plan[0].toUpperCase() + info.plan.slice(1) : "-"}</b>
                     {info.currentPeriodEnd && <> · Renews {new Date(info.currentPeriodEnd).toLocaleDateString()}</>}
                   </div>
                 </div>

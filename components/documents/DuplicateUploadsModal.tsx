@@ -121,13 +121,13 @@ export default function DuplicateUploadsModal({
             </p>
           ) : nothing ? (
             <p className="text-sm font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4" /> All clean — no duplicate uploads and no entries missing their file.
+              <CheckCircle2 className="w-4 h-4" /> All clean - no duplicate uploads and no entries missing their file.
             </p>
           ) : (
             <>
               {empty.length > 0 && (
                 <p className="text-sm text-[var(--color-text)] mb-2">
-                  <b className="text-rose-700 dark:text-rose-400">{empty.length.toLocaleString()} entr{empty.length === 1 ? "y has" : "ies have"} no file</b> — an
+                  <b className="text-rose-700 dark:text-rose-400">{empty.length.toLocaleString()} entr{empty.length === 1 ? "y has" : "ies have"} no file</b> - an
                   upload created the entry but its file never attached. There&apos;s nothing to open in them.
                 </p>
               )}

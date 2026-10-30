@@ -599,7 +599,7 @@ export default function MetadataStagingModal({
               <div className="text-sm font-black text-[var(--color-text)]">{folderUpload ? "Upload folder as-is" : "Review metadata before uploading"}</div>
               <div className="text-xs text-[var(--color-text-muted)]">
                 {folderUpload
-                  ? `${items.length} file${items.length === 1 ? "" : "s"} in ${folderSummary?.folders ?? 0} folder${folderSummary?.folders === 1 ? "" : "s"} — the structure is recreated exactly.`
+                  ? `${items.length} file${items.length === 1 ? "" : "s"} in ${folderSummary?.folders ?? 0} folder${folderSummary?.folders === 1 ? "" : "s"} - the structure is recreated exactly.`
                   : `${items.length} file${items.length === 1 ? "" : "s"} ready. Confirm or edit each row, then upload.`}
               </div>
             </div>
@@ -624,7 +624,7 @@ export default function MetadataStagingModal({
                   Goes into <span className="text-emerald-700 dark:text-emerald-400">{folderUpload.destination}</span>, organized exactly as it is on your computer
                 </div>
                 <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-                  Folders that already exist here are reused, not duplicated. Document numbers, titles and revisions are read from each filename — you can edit them after, or open the file details below first.
+                  Folders that already exist here are reused, not duplicated. Document numbers, titles and revisions are read from each filename - you can edit them after, or open the file details below first.
                 </div>
                 <ul className="mt-2 grid gap-x-4 gap-y-0.5 text-[11px] sm:grid-cols-2 max-h-36 overflow-auto">
                   {folderSummary.top.slice(0, 40).map(([path, n]) => (
@@ -724,7 +724,7 @@ export default function MetadataStagingModal({
                 <div className="flex-1 min-w-0">
                   {already.length > 0 && (
                     <div className="text-xs font-black">
-                      {already.length === 1 ? "1 file is" : `${already.length} files are`} already in the system — same bytes, maybe a different name. Each is marked below.
+                      {already.length === 1 ? "1 file is" : `${already.length} files are`} already in the system - same bytes, maybe a different name. Each is marked below.
                     </div>
                   )}
                   {twiceInBatch.length > 0 && (
@@ -753,7 +753,7 @@ export default function MetadataStagingModal({
             <Wand2 className="w-3.5 h-3.5 shrink-0" />
             <span>
               Read the drawings&apos; title blocks and filled <b>{tbFilled}</b> field{tbFilled === 1 ? "" : "s"} from
-              page-1 text (drawing numbers / revisions). Double-check anything that looks off — your edits always win.
+              page-1 text (drawing numbers / revisions). Double-check anything that looks off - your edits always win.
             </span>
           </div>
         )}
@@ -788,7 +788,7 @@ export default function MetadataStagingModal({
               <button
                 onClick={onAddColumn}
                 className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-wider bg-slate-900 text-white hover:bg-slate-800"
-                title="Add a new column to this library — opens the column wizard without closing the upload."
+                title="Add a new column to this library - opens the column wizard without closing the upload."
               >
                 + Add Column
               </button>
@@ -962,7 +962,7 @@ export default function MetadataStagingModal({
                 <tr>
                   <td colSpan={99} className="text-center py-3">
                     <button onClick={() => setShowAllRows(true)} className="text-xs font-bold text-blue-600 hover:underline">
-                      Showing 200 of {items.length.toLocaleString()} — show all (slower)
+                      Showing 200 of {items.length.toLocaleString()} - show all (slower)
                     </button>
                   </td>
                 </tr>
@@ -995,7 +995,7 @@ export default function MetadataStagingModal({
           <div className="px-4 sm:px-6 py-3 bg-amber-50 dark:bg-amber-950/30 border-t border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2 shrink-0">
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
             <span className="min-w-0 flex-1">
-              <b>{outcome}</b> Only the {items.length} file{items.length === 1 ? "" : "s"} still listed will be sent if you try again — nothing that already uploaded is sent twice.
+              <b>{outcome}</b> Only the {items.length} file{items.length === 1 ? "" : "s"} still listed will be sent if you try again - nothing that already uploaded is sent twice.
               {failedWhy.length > 0 && (
                 <ul className="mt-2 max-h-40 overflow-auto rounded-md border border-amber-200 dark:border-amber-800 bg-[var(--color-surface)] divide-y divide-amber-100 dark:divide-amber-900">
                   {failedWhy.slice(0, 300).map((f, i) => (
@@ -1021,7 +1021,7 @@ export default function MetadataStagingModal({
             {submitting && progress?.phase ? (
               <span className="font-bold text-[var(--color-text)] inline-flex items-center gap-1.5">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                {progress.phase}{progress.total > 0 ? ` — ${progress.done} of ${progress.total}` : "…"}
+                {progress.phase}{progress.total > 0 ? ` - ${progress.done} of ${progress.total}` : "…"}
               </span>
             ) : submitting && !progress ? (
               <span className="font-bold text-[var(--color-text)] inline-flex items-center gap-1.5">

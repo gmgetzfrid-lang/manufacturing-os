@@ -535,7 +535,7 @@ export async function finishMySession(input: {
       orgId: input.orgId,
       documentId: input.documentId,
       episodeId: episode?.id ?? null,
-      text: `${input.userName} checked in — everyone is done, checkout closed.`,
+      text: `${input.userName} checked in - everyone is done, checkout closed.`,
     });
   } else if (transition.kind === "transfer") {
     // Holder leaves, others remain: pass the lock so the document never
@@ -549,7 +549,7 @@ export async function finishMySession(input: {
       .eq("id", heir.id)
       .maybeSingle();
     const heirSession = heirRow as { purpose?: string | null; note?: string | null; started_at?: string | null } | null;
-    const heirNote = [heirSession?.purpose, heirSession?.note].filter(Boolean).join(" — ") || null;
+    const heirNote = [heirSession?.purpose, heirSession?.note].filter(Boolean).join(" - ") || null;
 
     await supabase
       .from("documents")
@@ -572,7 +572,7 @@ export async function finishMySession(input: {
       orgId: input.orgId,
       documentId: input.documentId,
       episodeId: episode?.id ?? null,
-      text: `${input.userName} checked in — lock passed to ${heir.userName ?? "the next collaborator"}. Still checked out: ${stillOut.join(", ")}.`,
+      text: `${input.userName} checked in - lock passed to ${heir.userName ?? "the next collaborator"}. Still checked out: ${stillOut.join(", ")}.`,
     });
   } else {
     // A collaborator (not the holder) left: rebuild the display list only.
@@ -585,7 +585,7 @@ export async function finishMySession(input: {
       orgId: input.orgId,
       documentId: input.documentId,
       episodeId: episode?.id ?? null,
-      text: `${input.userName} checked in. Still checked out: ${stillOut.join(", ") || "—"}.`,
+      text: `${input.userName} checked in. Still checked out: ${stillOut.join(", ") || "-"}.`,
     });
   }
 
@@ -669,7 +669,7 @@ export async function forceReleaseDocument(input: {
         category: "status",
         kind: "checkout_released",
         title: "Your checkout was force-released",
-        body: `${input.actorName} force-released the checkout${input.reason ? `: "${input.reason}"` : ""}. Your session has ended — any unpublished work on your machine is now based on a released lock, so coordinate before publishing.`,
+        body: `${input.actorName} force-released the checkout${input.reason ? `: "${input.reason}"` : ""}. Your session has ended - any unpublished work on your machine is now based on a released lock, so coordinate before publishing.`,
         resource: { type: "document", id: input.documentId },
         actorUserId: input.actorUserId,
         actorName: input.actorName,
@@ -720,7 +720,7 @@ export async function quickHold(input: {
     user_id: input.userId,
     user_name: input.userName,
     mode: "view",
-    note: "Quick hold — auto-expires end of day",
+    note: "Quick hold - auto-expires end of day",
     status: "active",
     lock_id: lockId,
     project_id: null,
@@ -832,8 +832,8 @@ export async function reconcileDocumentCheckoutState(
           episodeId: episode.id,
           text:
             opts.closeReason === "expired"
-              ? "Checkout auto-released — the session window expired. Checkout closed."
-              : "Checkout closed — no active sessions remain.",
+              ? "Checkout auto-released - the session window expired. Checkout closed."
+              : "Checkout closed - no active sessions remain.",
           client: db,
         });
       }
@@ -872,7 +872,7 @@ export async function reconcileDocumentCheckoutState(
       checked_out_by: heir.userId,
       checked_out_by_name: heir.userName,
       checked_out_at: heirSession?.started_at ?? new Date().toISOString(),
-      checkout_note: [heirSession?.purpose, heirSession?.note].filter(Boolean).join(" — ") || null,
+      checkout_note: [heirSession?.purpose, heirSession?.note].filter(Boolean).join(" - ") || null,
       active_collaborators: names,
     })
     .eq("id", documentId);

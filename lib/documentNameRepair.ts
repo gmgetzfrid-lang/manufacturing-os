@@ -94,7 +94,7 @@ export async function repairDocumentNames(orgId: string, docIds: string[], uid: 
   if (readError) {
     // Whatever couldn't be read is left for the next round — never guessed at.
     out.remaining = docIds.length - rows.length;
-    out.failed.push({ fileName: `${out.remaining} documents`, reason: "couldn't be read just now — press Correct again" });
+    out.failed.push({ fileName: `${out.remaining} documents`, reason: "couldn't be read just now - press Correct again" });
   }
 
   const fixOne = async (row: Record<string, unknown>) => {

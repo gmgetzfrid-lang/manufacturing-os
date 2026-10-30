@@ -57,7 +57,7 @@ export default function ExecutionGuide() {
         <div className="w-full flex items-center gap-2 bg-gradient-to-r from-[var(--color-accent-soft)] to-white dark:to-[var(--color-surface)] border border-[var(--color-accent-ring)]/40 rounded-lg px-3 py-2 text-xs text-[var(--color-text)]">
           <MousePointerClick className="w-4 h-4 text-[var(--color-accent)] shrink-0" />
           <span className="flex-1">
-            <b>New here?</b> This board runs the schedule day-by-day — move work, mark progress, and drill into sub-steps.
+            <b>New here?</b> This board runs the schedule day-by-day - move work, mark progress, and drill into sub-steps.
             <button onClick={() => { setOpen(true); markSeen(); }} className="ml-1 font-bold text-[var(--color-accent)] hover:underline">Show me how →</button>
           </span>
           <button onClick={markSeen} className="p-0.5 rounded hover:bg-black/5 text-[var(--color-text-faint)] transition-colors" title="Dismiss"><XIcon className="w-3.5 h-3.5" /></button>
@@ -87,7 +87,7 @@ export default function ExecutionGuide() {
 
               <Section title="Mark what's done (or doing, on-hold, blocked)">
                 <Row icon={<span className="w-3.5 h-3.5 rounded-full bg-slate-400 border border-black/10 inline-block" />} label="The status dot">
-                  Click the colored dot on any task or sub-item. A menu lets you set <b>Planned · In progress · Done · On hold · Blocked · Missed</b> — the same everywhere. On-hold and Blocked let you type a quick reason.
+                  Click the colored dot on any task or sub-item. A menu lets you set <b>Planned · In progress · Done · On hold · Blocked · Missed</b> - the same everywhere. On-hold and Blocked let you type a quick reason.
                 </Row>
               </Section>
 
@@ -96,7 +96,7 @@ export default function ExecutionGuide() {
                   Each task chip has a small grip on its right. Drag <i>that</i> onto another day. (Clicking the rest of the chip opens it.)
                 </Row>
                 <Row icon={<CalendarRange className="w-4 h-4 text-[var(--color-text-muted)]" />} label="Or open it & use the buttons">
-                  Click a task to open it, then use the move buttons — no dragging needed.
+                  Click a task to open it, then use the move buttons - no dragging needed.
                 </Row>
               </Section>
 
@@ -105,10 +105,10 @@ export default function ExecutionGuide() {
                   On the calendar, click a task&apos;s <b>▸</b> arrow (or flip <b>Show → Sub-items</b>). Its steps drop onto their own days.
                 </Row>
                 <Row icon={<GripVertical className="w-4 h-4 text-[var(--color-text-muted)]" />} label="Then move the one step">
-                  Drag that step&apos;s grip handle to another day — or open the task and use the <ChevronLeft className="inline w-3 h-3" /> <ChevronRight className="inline w-3 h-3" /> buttons on each sub-step row.
+                  Drag that step&apos;s grip handle to another day - or open the task and use the <ChevronLeft className="inline w-3 h-3" /> <ChevronRight className="inline w-3 h-3" /> buttons on each sub-step row.
                 </Row>
                 <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-[12px] text-emerald-900">
-                  <b>The schedule keeps itself honest:</b> moving one step leaves the others where they were and stretches the parent to cover both. Example — you did 3 of 10 steps early; only those 3 move, the rest stay on plan, and the task now spans both.
+                  <b>The schedule keeps itself honest:</b> moving one step leaves the others where they were and stretches the parent to cover both. Example - you did 3 of 10 steps early; only those 3 move, the rest stay on plan, and the task now spans both.
                 </div>
               </Section>
 

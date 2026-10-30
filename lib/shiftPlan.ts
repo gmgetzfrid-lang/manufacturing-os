@@ -160,7 +160,7 @@ export function laterShifts(next: ShiftWindow, nextOf: (w: ShiftWindow) => Shift
 export function planNote(c: ShiftPlanChange, reason: string, label: (t: number) => string): Array<{ id: string; body: string }> {
   const wo = (m?: PlannedMove) => (m ? (m.wo ? `WO ${m.wo} ${m.name}` : m.name) : "");
   const out: Array<{ id: string; body: string }> = [];
-  if (c.in) out.push({ id: c.in.id, body: `Re-planned to ${label(c.in.to[0])}${c.out ? ` in place of ${wo(c.out)}` : ""} — ${reason}` });
-  if (c.out) out.push({ id: c.out.id, body: `Re-planned to ${label(c.out.to[0])}${c.in ? ` — ${wo(c.in)} done first` : ""} — ${reason}` });
+  if (c.in) out.push({ id: c.in.id, body: `Re-planned to ${label(c.in.to[0])}${c.out ? ` in place of ${wo(c.out)}` : ""} - ${reason}` });
+  if (c.out) out.push({ id: c.out.id, body: `Re-planned to ${label(c.out.to[0])}${c.in ? ` - ${wo(c.in)} done first` : ""} - ${reason}` });
   return out;
 }

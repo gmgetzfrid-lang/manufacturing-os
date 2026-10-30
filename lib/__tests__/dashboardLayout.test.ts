@@ -166,7 +166,7 @@ describe("firstFreeSlot / packLayout / bottomRow", () => {
   });
 });
 
-describe("justifyLayout — fill to the edges", () => {
+describe("justifyLayout - fill to the edges", () => {
   it("slides widgets left to close intra-row holes, then stretches to the edge", () => {
     // A hole at x 0..2 and trailing space after x=9.
     const items: LayoutItem[] = [
@@ -197,7 +197,7 @@ describe("justifyLayout — fill to the edges", () => {
     expect(out[0].x).toBe(0);
   });
 
-  it("mixed heights still land flush — the tall widget absorbs the right slack", () => {
+  it("mixed heights still land flush - the tall widget absorbs the right slack", () => {
     const items: LayoutItem[] = [
       { id: "tall", x: 8, y: 0, w: 4, h: 4 },  // right column, spans rows 0-3
       { id: "row0", x: 0, y: 0, w: 4, h: 2 },
@@ -227,7 +227,7 @@ describe("justifyLayout — fill to the edges", () => {
     expect(noOverlaps(out)).toBe(true);
   });
 
-  it("is idempotent — justifying a justified layout changes nothing", () => {
+  it("is idempotent - justifying a justified layout changes nothing", () => {
     const items: LayoutItem[] = [
       { id: "a", x: 2, y: 0, w: 4, h: 2 },
       { id: "b", x: 8, y: 0, w: 2, h: 2 },

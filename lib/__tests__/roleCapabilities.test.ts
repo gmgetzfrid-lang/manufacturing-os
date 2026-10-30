@@ -15,7 +15,7 @@ import {
 } from "@/lib/roleCapabilities";
 import { ALL_ROLES } from "@/types/schema";
 
-describe("primaryRole — the headline that RLS reads", () => {
+describe("primaryRole - the headline that RLS reads", () => {
   it("picks the highest-ranked role in the collection", () => {
     expect(primaryRole(["Drafter", "Admin"])).toBe("Admin");
     expect(primaryRole(["Viewer", "Engineer-2", "Drafter"])).toBe("Engineer-2");
@@ -45,7 +45,7 @@ describe("capabilities union", () => {
   });
 });
 
-describe("addableRoles — the smart-picker guarantee", () => {
+describe("addableRoles - the smart-picker guarantee", () => {
   it("never offers a role already held", () => {
     for (const r of ALL_ROLES) {
       expect(addableRoles([r])).not.toContain(r);
@@ -77,7 +77,7 @@ describe("addableRoles — the smart-picker guarantee", () => {
   });
 });
 
-describe("normalizeRoles — tolerant of pre-migration rows", () => {
+describe("normalizeRoles - tolerant of pre-migration rows", () => {
   it("merges the roles[] collection with the legacy single role, deduped", () => {
     expect(normalizeRoles(["Drafter", "Admin"], "Admin")).toEqual(["Drafter", "Admin"]);
     expect(normalizeRoles(null, "Drafter")).toEqual(["Drafter"]);

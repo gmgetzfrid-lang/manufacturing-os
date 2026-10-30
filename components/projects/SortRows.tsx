@@ -42,7 +42,7 @@ export function useSortRows(onReorder?: (ids: string[]) => void) {
   const grip = (moving: string[], label: string) => (onReorder ? {
     role: "button" as const,
     tabIndex: 0,
-    "aria-label": `Move ${label} — drag, or use the arrow keys`,
+    "aria-label": `Move ${label} - drag, or use the arrow keys`,
     title: "Drag to put it in a different place (or ↑ ↓)",
     onPointerDown: (e: React.PointerEvent<HTMLElement>) => {
       if (e.button !== 0) return;

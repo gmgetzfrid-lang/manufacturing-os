@@ -74,7 +74,7 @@ export default function ServiceWorkerManager() {
       {offline && (
         <div className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-amber-500 text-white text-xs font-bold px-3 py-1.5 shadow-lg">
           <WifiOff className="w-3.5 h-3.5" />
-          Offline — showing cached data
+          Offline - showing cached data
         </div>
       )}
       {updateReady && (
@@ -83,7 +83,7 @@ export default function ServiceWorkerManager() {
           className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white text-xs font-bold px-3 py-1.5 shadow-lg transition-colors"
         >
           <RefreshCw className="w-3.5 h-3.5" />
-          Update available — tap to refresh
+          Update available - tap to refresh
         </button>
       )}
     </div>

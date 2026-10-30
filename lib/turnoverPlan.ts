@@ -122,8 +122,8 @@ export function nextOf(report: ShiftReport, r: ShiftRow, kind: NextKind, t: { T:
     case "try":
       return {
         label: `Could try${o.crew ? ` (${o.crew})` : ""}`,
-        detail: o.pulled ? `pulled ahead — planned ${t.DTs(r.crewStart)}` : r.carryOver ? `${other} crew's — ${late}`
-          : r.start < next.start ? `${other} crew's — under way` : `${other} crew's — planned ${t.DTs(r.start)}`,
+        detail: o.pulled ? `pulled ahead - planned ${t.DTs(r.crewStart)}` : r.carryOver ? `${other} crew's - ${late}`
+          : r.start < next.start ? `${other} crew's - under way` : `${other} crew's - planned ${t.DTs(r.start)}`,
         tone: "amber",
       };
     case "carry":
@@ -134,7 +134,7 @@ export function nextOf(report: ShiftReport, r: ShiftRow, kind: NextKind, t: { T:
           ? { label: `Waits for ${other} crew`, detail: `behind plan (plan had ${r.expectedPct}%), continues next ${other} shift`, tone: "amber" }
           : { label: `Waits for ${other} crew`, detail: `on plan, continues next ${other} shift`, tone: "muted" };
       }
-      return { label: `Waits for ${other} crew`, detail: `no ${next.kind} crew — planned ${t.DTs(r.start)}`, tone: "muted" };
+      return { label: `Waits for ${other} crew`, detail: `no ${next.kind} crew - planned ${t.DTs(r.start)}`, tone: "muted" };
     default:
       if (r.carryOver) return { label: "Carried over", detail: late, tone: "amber" };
       if (r.reflowed) return { label: span(r.crewStart, r.crewFinish) };
@@ -157,7 +157,7 @@ export function askedLine(asked: Array<{ name: string; from: number; now: number
   const done = asked.filter((a) => (a.now ?? 0) >= 100).length;
   const open = asked.filter((a) => (a.now ?? 0) < 100);
   const list = open.slice(0, 3).map((a) => `${a.name} ${result(a)}`).join(", ") + (open.length > 3 ? ` + ${open.length - 3} more` : "");
-  return `${done} of ${asked.length} done${open.length ? ` — ${list}` : ""} (as entered).`;
+  return `${done} of ${asked.length} done${open.length ? ` - ${list}` : ""} (as entered).`;
 }
 
 type Fmt = { T: (ms: number) => string; DTs: (ms: number) => string; hrs: (h: number) => string };
@@ -183,7 +183,7 @@ export function doneOf(report: ShiftReport, r: ShiftRow, t: Fmt): { label: strin
   }
   const moved = `${r.percent}%`;
   return r.plannedLater
-    ? { label: moved, detail: `started early — planned ${t.DTs(r.crewStart)}`, tone: "emerald", text: `${moved} this shift, started early (planned ${t.DTs(r.crewStart)})` }
+    ? { label: moved, detail: `started early - planned ${t.DTs(r.crewStart)}`, tone: "emerald", text: `${moved} this shift, started early (planned ${t.DTs(r.crewStart)})` }
     : { label: moved, detail: "progress this shift", tone: "emerald", text: `${moved} this shift` };
 }
 
@@ -205,7 +205,7 @@ export function offListDrivers(report: ShiftReport, plan: TurnoverPlan, hrs: (h:
     if (!off.length) return null;
     const total = hrs(Math.round(off.reduce((a, x) => a + x.hours, 0) * 10) / 10);
     const names = off.slice(0, 4).map((x) => `${x.parentName ? `${x.parentName} ` : ""}${x.name} ${sign}${hrs(Math.round(x.hours * 10) / 10)}`).join(", ");
-    return `${off.length} step${off.length === 1 ? "" : "s"}, ${sign}${total} — ${names}${off.length > 4 ? ` + ${off.length - 4} more` : ""}`;
+    return `${off.length} step${off.length === 1 ? "" : "s"}, ${sign}${total} - ${names}${off.length > 4 ? ` + ${off.length - 4} more` : ""}`;
   };
   return { ahead: line(report.overall.drivers.ahead, "+"), behind: line(report.overall.drivers.behind, "−") };
 }
@@ -226,8 +226,8 @@ export function gapStory(report: ShiftReport, t: Fmt, max = 5) {
     const more = xs.filter((x) => x.hours >= 0.1).length - top.length;
     return top.join(", ") + (more > 0 ? ` + ${more} more` : "");
   };
-  const aheadLine = d.aheadHours >= 0.1 ? `${h(d.aheadHours)} of work done earlier than planned — ${names(d.ahead)}.` : null;
-  const behindLine = d.behindHours >= 0.1 ? `${h(d.behindHours)} of work the plan has done by now that isn't — ${names(d.behind)}.` : null;
+  const aheadLine = d.aheadHours >= 0.1 ? `${h(d.aheadHours)} of work done earlier than planned - ${names(d.ahead)}.` : null;
+  const behindLine = d.behindHours >= 0.1 ? `${h(d.behindHours)} of work the plan has done by now that isn't - ${names(d.behind)}.` : null;
   const now = report.now;
   const line = (x: (typeof d.ahead)[number], side: "ahead" | "behind") => ({
     task: x.parentName, step: x.name,
@@ -256,7 +256,7 @@ export function crewsOf(report: ShiftReport, plan: TurnoverPlan, hrs: (h: number
   const stepLabel = (r: ShiftRow) => (r.parentName ? `${r.parentName}: ${r.leaf.name}` : r.leaf.name);
   const wNames: string[] = [], cNames: string[] = [];
   // Under the crew's name, so the short count beside it never wraps.
-  const unnamed = (crew: string, names: string[]) => (crew === "No crew named" && names.length ? `${names.slice(0, 3).join("; ")}${names.length > 3 ? ` + ${names.length - 3} more` : ""} — no responsible party set` : undefined);
+  const unnamed = (crew: string, names: string[]) => (crew === "No crew named" && names.length ? `${names.slice(0, 3).join("; ")}${names.length > 3 ? ` + ${names.length - 3} more` : ""} - no responsible party set` : undefined);
   // Worked: the shift's own planned work, and anything finished or moved on it.
   const seen = new Set<string>();
   const w = new Map<string, { n: number; done: number }>();
@@ -306,8 +306,8 @@ export function pathNote(r: ShiftRow, hrs: (h: number) => string): string | null
   if (r.critical || r.floatH == null) return null;
   const lost = r.floatThenH != null && r.floatThenH - r.floatH >= 4 && r.floatH <= 24;
   const drop = lost ? `float ${hrs(r.floatThenH!)} → ${hrs(r.floatH)} this shift` : null;
-  if (r.near) return `near critical — ${drop ?? `${hrs(r.floatH)} of float`}`;
-  return drop ? `trending to critical — ${drop}` : null;
+  if (r.near) return `near critical - ${drop ?? `${hrs(r.floatH)} of float`}`;
+  return drop ? `trending to critical - ${drop}` : null;
 }
 
 /** On the next crew's list: work that needs the same crew at the same time
@@ -443,7 +443,7 @@ export function watchLines(rows: ShiftRow[], report: ShiftReport, t: { hrs: (h: 
     // Hours of its work, not hours late — and what it's waiting on, if anything.
     const of = r.hours > 0 ? ` of ${h(r.hours)}` : "";
     const waits = r.waitingOn.length ? ` (waiting on ${r.waitingOn[0].name}${r.waitingOn.length > 1 ? ` +${r.waitingOn.length - 1}` : ""})` : "";
-    out.push({ tone: "rose", strong: `${label(r)} is ${h(s!.hours)}${of} behind${waits}`, rest: after.length ? ` — ${and(after.map((x) => x.leaf.name))} can't start until it's done${crit}.` : "." });
+    out.push({ tone: "rose", strong: `${label(r)} is ${h(s!.hours)}${of} behind${waits}`, rest: after.length ? ` - ${and(after.map((x) => x.leaf.name))} can't start until it's done${crit}.` : "." });
   }
   // Carried over from earlier shifts — and what they wait on that isn't on this list.
   const carried = rows.filter((r) => r.carryOver);
@@ -452,17 +452,17 @@ export function watchLines(rows: ShiftRow[], report: ShiftReport, t: { hrs: (h: 
     const names = [...new Set(waits.flatMap((r) => r.waitingOn.filter((w) => !listed.has(w.id)).map((w) => w.name)))];
     const who = waits.length === carried.length ? (carried.length === 1 ? "it waits" : carried.length === 2 ? "both wait" : "all wait") : `${waits.length} wait`;
     out.push({ tone: "amber", strong: `${carried.length} carried over from earlier shifts`,
-      rest: waits.length ? ` — ${who} on steps not on this list (${names.slice(0, 3).join(", ")}${names.length > 3 ? ` + ${names.length - 3} more` : ""}).` : ` — ${and(carried.slice(0, 3).map(label))}.` });
+      rest: waits.length ? ` - ${who} on steps not on this list (${names.slice(0, 3).join(", ")}${names.length > 3 ? ` + ${names.length - 3} more` : ""}).` : ` - ${and(carried.slice(0, 3).map(label))}.` });
   }
   const crit = rows.filter((r) => r.critical);
   if (crit.length) {
     const nums = crit.map((r) => numOf(r.leaf.id)).filter((n): n is number => n != null);
-    out.push({ tone: "slate", strong: `${crit.length} of ${rows.length} step${rows.length === 1 ? "" : "s"} ${crit.length === 1 ? "is" : "are"} critical`, rest: nums.length ? ` — #${nums.join(", #")}.` : "." });
+    out.push({ tone: "slate", strong: `${crit.length} of ${rows.length} step${rows.length === 1 ? "" : "s"} ${crit.length === 1 ? "is" : "are"} critical`, rest: nums.length ? ` - #${nums.join(", #")}.` : "." });
   }
   // Near the path, or losing float fast.
   const near = rows.filter((r) => pathNote(r, h));
   if (near.length) {
-    out.push({ tone: "amber", strong: `${near.length} near the critical path`, rest: ` — ${and(near.slice(0, 3).map((r) => `${numOf(r.leaf.id) ? `#${numOf(r.leaf.id)} ` : ""}${label(r)} (${r.floatH != null ? `${h(r.floatH)} float` : "?"})`))}${near.length > 3 ? ` + ${near.length - 3} more` : ""}.` });
+    out.push({ tone: "amber", strong: `${near.length} near the critical path`, rest: ` - ${and(near.slice(0, 3).map((r) => `${numOf(r.leaf.id) ? `#${numOf(r.leaf.id)} ` : ""}${label(r)} (${r.floatH != null ? `${h(r.floatH)} float` : "?"})`))}${near.length > 3 ? ` + ${near.length - 3} more` : ""}.` });
   }
   // The same crew wanted on critical work and on other work at once.
   const comp = competition(report, rows);
@@ -477,7 +477,7 @@ export function watchLines(rows: ShiftRow[], report: ShiftReport, t: { hrs: (h: 
   for (const [crew, e] of byCrew) {
     const cr = [...e.crit].map((r) => `${numOf(r.leaf.id) ? `#${numOf(r.leaf.id)} ` : ""}${r.leaf.name}`);
     out.push({ tone: "amber", strong: `${crew} is on critical work and ${e.other.length} other step${e.other.length === 1 ? "" : "s"}`,
-      rest: ` — ${and(cr.slice(0, 2))} first; ${and(e.other.slice(0, 3).map((r) => `${numOf(r.leaf.id) ? `#${numOf(r.leaf.id)} ` : ""}${r.leaf.name}`))} after${e.other.length > 3 ? ` (+${e.other.length - 3} more)` : ""}.` });
+      rest: ` - ${and(cr.slice(0, 2))} first; ${and(e.other.slice(0, 3).map((r) => `${numOf(r.leaf.id) ? `#${numOf(r.leaf.id)} ` : ""}${r.leaf.name}`))} after${e.other.length > 3 ? ` (+${e.other.length - 3} more)` : ""}.` });
   }
   return out;
 }

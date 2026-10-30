@@ -134,10 +134,10 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <UserSearch className="w-4 h-4 text-[var(--color-accent)]" />
         <span className="text-base font-bold text-[var(--color-text)]">View as…</span>
-        <span className="text-xs text-[var(--color-text-muted)]">simulate any member — computed with the SAME evaluators the app enforces with</span>
+        <span className="text-xs text-[var(--color-text-muted)]">simulate any member - computed with the SAME evaluators the app enforces with</span>
         <select value={pick} onChange={(e) => setPick(e.target.value)} className="ml-auto h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs min-w-[180px]">
           <option value="">Pick a member…</option>
-          {members.map((m) => <option key={m.uid} value={m.uid}>{m.name} — {m.role}</option>)}
+          {members.map((m) => <option key={m.uid} value={m.uid}>{m.name} - {m.role}</option>)}
         </select>
       </div>
       {who && (
@@ -175,7 +175,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
               })}
               {libs.length === 0 && <li className="text-[11px] italic text-[var(--color-text-faint)]">No libraries.</li>}
             </ul>
-            <div className="mt-2 text-[10px] text-[var(--color-text-faint)]">Folder/document-level rules refine within each library — open a node&apos;s permissions to inspect. Ownership grants (owner of a doc/folder/library) add publish authority on those items.</div>
+            <div className="mt-2 text-[10px] text-[var(--color-text-faint)]">Folder/document-level rules refine within each library - open a node&apos;s permissions to inspect. Ownership grants (owner of a doc/folder/library) add publish authority on those items.</div>
           </div>
         </div>
       )}
@@ -191,7 +191,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div>
               <div className="text-xs font-bold text-[var(--color-text-muted)] mb-1.5">Delegated actions (beyond their role)</div>
-              {personalGrants.length === 0 && <div className="text-[11px] italic text-[var(--color-text-faint)]">None — everything they can do comes from their role{contentRules.length ? " and the content rules on the right" : ""}.</div>}
+              {personalGrants.length === 0 && <div className="text-[11px] italic text-[var(--color-text-faint)]">None - everything they can do comes from their role{contentRules.length ? " and the content rules on the right" : ""}.</div>}
               <ul className="space-y-1">
                 {personalGrants.map((g) => (
                   <li key={g.cap} className="text-[11px] flex items-center gap-2">
@@ -210,7 +210,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
               </ul>
               {canEdit && (
                 <div className="mt-2.5 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]/40 p-2.5 space-y-1.5">
-                  <div className="text-[10px] font-bold text-[var(--color-text-muted)]">Delegate an action — leave the date empty for a standing grant</div>
+                  <div className="text-[10px] font-bold text-[var(--color-text-muted)]">Delegate an action - leave the date empty for a standing grant</div>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <select value={grantCap} onChange={(e) => setGrantCap(e.target.value as CapabilityId)} className="h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[11px]">
                       {CAPABILITY_DEFS.map((d) => <option key={d.id} value={d.id}>{d.area}: {d.label}</option>)}
@@ -222,14 +222,14 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
                     </button>
                   </div>
                   {grantErr && <div className="text-[10px] text-rose-600 dark:text-rose-400 font-bold">{grantErr}</div>}
-                  <div className="text-[10px] text-[var(--color-text-faint)]">Additive only — a delegation can widen this person&apos;s authority, never narrow anyone else&apos;s. Audited with before/after; the &ldquo;View as&rdquo; list above updates instantly.</div>
+                  <div className="text-[10px] text-[var(--color-text-faint)]">Additive only - a delegation can widen this person&apos;s authority, never narrow anyone else&apos;s. Audited with before/after; the &ldquo;View as&rdquo; list above updates instantly.</div>
                 </div>
               )}
             </div>
 
             <div>
               <div className="text-xs font-bold text-[var(--color-text-muted)] mb-1.5">Content rules naming them (library level)</div>
-              {contentRules.length === 0 && <div className="text-[11px] italic text-[var(--color-text-faint)]">No library rule names this person — access comes from role defaults, visibility, or team/role rules. Use Content permissions above to add a per-person rule on any library, folder, or document (with an expiry if temporary).</div>}
+              {contentRules.length === 0 && <div className="text-[11px] italic text-[var(--color-text-faint)]">No library rule names this person - access comes from role defaults, visibility, or team/role rules. Use Content permissions above to add a per-person rule on any library, folder, or document (with an expiry if temporary).</div>}
               <ul className="space-y-1">
                 {contentRules.map((r, i) => (
                   <li key={i} className="text-[11px] flex items-center gap-2">

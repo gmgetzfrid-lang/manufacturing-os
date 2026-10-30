@@ -116,7 +116,7 @@ export default function MergeWizard(props: MergeWizardProps) {
             revUp: extendRevUp ? {
               file: extendFile!,
               revisionLabel: extendRevLabel,
-              changeLog: extendChangeLog || `Merge target — absorbed ${otherSources.length + 1} sheets`,
+              changeLog: extendChangeLog || `Merge target - absorbed ${otherSources.length + 1} sheets`,
             } : undefined,
           };
 
@@ -129,7 +129,7 @@ export default function MergeWizard(props: MergeWizardProps) {
       onSuccess();
     } catch (e) {
       const f = translatePostgresError(e, { entity: "document", field: "document_number" });
-      setError(`${f.heading} — ${f.message}`);
+      setError(`${f.heading} - ${f.message}`);
     } finally {
       setSubmitting(false);
     }
@@ -166,7 +166,7 @@ export default function MergeWizard(props: MergeWizardProps) {
         <div className="p-5 space-y-4 min-h-[200px]">
           <FirstRunHint storageKey="lifecycle.merge.intro" tone="info">
             A merge takes two or more sheets and retires them all into one combined document.
-            <b className="block mt-1">You can reverse this later</b> from the Timeline tab — the source sheets come back, and a newly-created target gets parked under Superseded.
+            <b className="block mt-1">You can reverse this later</b> from the Timeline tab - the source sheets come back, and a newly-created target gets parked under Superseded.
           </FirstRunHint>
           {step === 1 && (
             <Step1Sources
@@ -330,7 +330,7 @@ function Step1Sources({
               className="w-full text-left px-3 py-2 hover:bg-[var(--color-surface-2)] flex items-center justify-between"
             >
               <div className="min-w-0 flex-1">
-                <div className="text-xs font-mono font-bold text-[var(--color-text)]">{d.documentNumber || "—"}</div>
+                <div className="text-xs font-mono font-bold text-[var(--color-text)]">{d.documentNumber || "-"}</div>
                 <div className="text-[11px] text-[var(--color-text-muted)] truncate">{d.title || d.name || "(untitled)"}</div>
               </div>
               <Plus className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
@@ -348,7 +348,7 @@ function SourceChip({ doc, primary, onRemove }: { doc: DocumentRecord; primary?:
       <span className={`text-[9px] font-bold uppercase tracking-widest px-1 py-0.5 rounded ${primary ? "bg-amber-100 text-amber-800 border border-amber-200" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border border-[var(--color-border)]"}`}>
         {primary ? "Primary" : "Source"}
       </span>
-      <span className="font-mono font-bold text-[var(--color-text)]">{doc.documentNumber || "—"}</span>
+      <span className="font-mono font-bold text-[var(--color-text)]">{doc.documentNumber || "-"}</span>
       <span className="text-[var(--color-text-muted)] truncate flex-1">{doc.title || doc.name}</span>
       {onRemove && (
         <button onClick={onRemove} className="p-1 text-[var(--color-text-faint)] hover:text-red-600">
@@ -430,7 +430,7 @@ function Step2Target(props: {
                   checked={props.extendTarget?.id === s.id}
                   onChange={() => props.setExtendTarget(s)}
                 />
-                <span className="font-mono font-bold text-[var(--color-text)]">{s.documentNumber || "—"}</span>
+                <span className="font-mono font-bold text-[var(--color-text)]">{s.documentNumber || "-"}</span>
                 <span className="text-[var(--color-text-muted)] truncate flex-1">{s.title || s.name}</span>
               </label>
             ))}
@@ -518,7 +518,7 @@ function Step3TagsAndConfirm(props: {
 
       {props.tagUnion.length > 0 && (
         <div>
-          <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1">Asset tag union — uncheck to exclude</div>
+          <div className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1">Asset tag union - uncheck to exclude</div>
           <div className="border border-[var(--color-border)] rounded-lg p-2 max-h-48 overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-1">
             {props.tagUnion.map((t) => {
               const k = tagKey(t);
@@ -541,7 +541,7 @@ function Step3TagsAndConfirm(props: {
           value={props.reason}
           onChange={(e) => props.setReason(e.target.value)}
           rows={2}
-          placeholder='e.g. "Consolidated overhead sheets 3 and 4 — equipment count after relief redesign no longer justifies two sheets."'
+          placeholder='e.g. "Consolidated overhead sheets 3 and 4 - equipment count after relief redesign no longer justifies two sheets."'
           className="mt-1 w-full text-sm border border-[var(--color-border-strong)] rounded px-2.5 py-1.5"
         />
       </label>

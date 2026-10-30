@@ -86,7 +86,7 @@ export function CommandDeck({
               {hello}{name ? <>, <span className="text-[var(--color-accent)]">{name}</span></> : ""}.
             </h1>
             <p className="text-sm text-[var(--color-text-muted)] mt-0.5">
-              {focus || "Everything that needs you, and the work you run — in one place."}
+              {focus || "Everything that needs you, and the work you run - in one place."}
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -210,7 +210,7 @@ function Pillar({
         </div>
         <div className="flex items-baseline gap-1.5">
           <span className="text-4xl font-black text-[var(--color-text)] tabular-nums leading-none">
-            {value === null ? "—" : value}
+            {value === null ? "-" : value}
           </span>
           <span className={`text-xs font-bold ${a.hint}`}>{valueHint}</span>
         </div>
@@ -244,9 +244,9 @@ export function roleFocus(role: string | null | undefined, d: InboxSnapshot): st
   const markups = d.markupRequestsToMe.length;
   const milestones = d.milestonesUpcoming.length;
   if (r.includes("draft")) {
-    if (assigned > 0) return `You have ${assigned} request${assigned === 1 ? "" : "s"} assigned — drafting is your lane today.`;
+    if (assigned > 0) return `You have ${assigned} request${assigned === 1 ? "" : "s"} assigned - drafting is your lane today.`;
     if (markups > 0) return `${markups} markup request${markups === 1 ? "" : "s"} waiting on you.`;
-    return "No requests assigned — check the pool for work to claim.";
+    return "No requests assigned - check the pool for work to claim.";
   }
   if (r.includes("engineer")) {
     if (assigned > 0) return `${assigned} item${assigned === 1 ? "" : "s"} need your engineering review or approval.`;
@@ -258,12 +258,12 @@ export function roleFocus(role: string | null | undefined, d: InboxSnapshot): st
     return null;
   }
   // Requester / other
-  if (assigned > 0 || d.ticketsUnread.length > 0) return `Track your requests — ${d.ticketsUnread.length} ha${d.ticketsUnread.length === 1 ? "s" : "ve"} new activity.`;
+  if (assigned > 0 || d.ticketsUnread.length > 0) return `Track your requests - ${d.ticketsUnread.length} ha${d.ticketsUnread.length === 1 ? "s" : "ve"} new activity.`;
   return null;
 }
 
 export function formatAgo(iso: string | undefined): string {
-  if (!iso) return "—";
+  if (!iso) return "-";
   try {
     const d = new Date(iso);
     const diff = Date.now() - d.getTime();
@@ -286,7 +286,7 @@ export function exportInboxCsv(d: InboxSnapshot, signedInAs?: string) {
     return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const lines: string[] = [];
-  lines.push(`#### My Inbox — ${new Date().toISOString().slice(0, 10)}${signedInAs ? ` · ${signedInAs}` : ""} ####`);
+  lines.push(`#### My Inbox - ${new Date().toISOString().slice(0, 10)}${signedInAs ? ` · ${signedInAs}` : ""} ####`);
   lines.push("");
 
   const addTable = (heading: string, header: string[], rows: unknown[][]) => {

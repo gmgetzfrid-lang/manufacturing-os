@@ -104,7 +104,7 @@ describe("POST /api/orchestrator/execute", () => {
     expect(res.status).toBe(403);
   });
 
-  it("refuses read tools — only writes are executable", async () => {
+  it("refuses read tools - only writes are executable", async () => {
     mockState.user = { id: "u1" };
     mockState.tables["org_members"] = { data: { uid: "u1", role: "Admin" } };
     const { POST } = await load();

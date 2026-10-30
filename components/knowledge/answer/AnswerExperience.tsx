@@ -71,7 +71,7 @@ function ProofQuote({ c, context, className }: { c: KnowledgeCitation; context?:
   if (!c.quote) {
     return (
       <p className="text-[11px] italic text-[var(--color-text-muted)]">
-        The passage text wasn&apos;t stored for this answer — open the page to read it in the document.
+        The passage text wasn&apos;t stored for this answer - open the page to read it in the document.
       </p>
     );
   }
@@ -160,7 +160,7 @@ function ProofCard({ proof, onClose, onOpenPage }: {
           <div className="mt-2.5 flex items-center gap-2 flex-wrap">
             <button onClick={() => onOpenPage(c)}
               className="inline-flex items-center gap-1.5 text-[11px] font-black px-3 py-1.5 rounded-lg bg-orange-600 text-white shadow-sm hover:bg-orange-700 transition-colors">
-              <Eye className="w-3.5 h-3.5" /> Open the page — highlighted
+              <Eye className="w-3.5 h-3.5" /> Open the page - highlighted
             </button>
             {c.highlight ? (
               <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1">
@@ -230,7 +230,7 @@ export function InlineAnswer({ text, citations, onCite }: {
                   if (showProof) showProof(c, text, e.currentTarget.getBoundingClientRect());
                   else onCite(c);
                 }}
-                title={`${c.documentName ?? "Document"} · page ${c.page} — see the exact passage`}
+                title={`${c.documentName ?? "Document"} · page ${c.page} - see the exact passage`}
                 // Minimal superscript anchor, not a filled badge: a solid
                 // chip on every line cluttered the reading flow (design
                 // review). p-1.5/-m-1 keeps a real tap target.
@@ -254,7 +254,7 @@ export function InlineAnswer({ text, citations, onCite }: {
         }
         if (/^\(not from your library/i.test(part)) {
           return (
-            <span key={i} title="General engineering knowledge or a code that isn't in this library — verify before relying on it"
+            <span key={i} title="General engineering knowledge or a code that isn't in this library - verify before relying on it"
               className="inline-block align-baseline mx-0.5 px-1.5 rounded font-mono text-[10.5px] font-bold bg-sky-100 dark:bg-sky-950/50 text-sky-800 dark:text-sky-300 whitespace-nowrap">
               not from your library
             </span>
@@ -382,7 +382,7 @@ function FactCard({ n, alt, text, citations, onCite }: {
             {sources.map((c) => (
               <button key={c.n}
                 onClick={() => onCite(c)}
-                title={`Open ${c.documentName ?? "the document"} at page ${c.page} — passage highlighted`}
+                title={`Open ${c.documentName ?? "the document"} at page ${c.page} - passage highlighted`}
                 className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1.5 sm:py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] shadow-sm hover:border-orange-400 hover:text-orange-700 dark:hover:text-orange-300 hover:bg-orange-50 dark:hover:bg-orange-950/30 active:scale-[0.98] transition-all">
                 <Eye className="w-3 h-3 shrink-0 text-orange-600" />
                 {(c.documentName ?? "Source").replace(/\.pdf$/i, "").slice(0, 26)} · p.{c.page}
@@ -509,7 +509,7 @@ function SectionedBlocks({ blocks, citations, onCite }: {
                 <div className="space-y-1.5">{renderItems(sec.items)}</div>
               ) : (
                 <div className="text-[11px] text-[var(--color-text-faint)] font-medium pl-3">
-                  {facts > 0 ? `${facts} ${facts === 1 ? "item" : "items"} — tap to expand` : "tap to expand"}
+                  {facts > 0 ? `${facts} ${facts === 1 ? "item" : "items"} - tap to expand` : "tap to expand"}
                 </div>
               )}
             </div>
@@ -717,7 +717,7 @@ export function SourceCard({ citation, onOpen, delay }: {
             c.tier === "governing"
               ? "bg-emerald-100 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
               : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"}`}
-            title={c.tier === "governing" ? "From the governing library — supersedes reference minimums" : "From a linked reference library"}>
+            title={c.tier === "governing" ? "From the governing library - supersedes reference minimums" : "From a linked reference library"}>
             {c.tier === "governing" ? "GOVERNING" : "REFERENCE"}
           </span>
         )}
@@ -790,7 +790,7 @@ function ProofItem({ c, onOpen, open, onToggle, flash, domId }: {
             </button>
             {(c.highlight || c.quote) && <CopyButton text={referencedQuote(c)} label="Copy quote" />}
             {!c.highlight && c.quote && (
-              <span className="text-[var(--color-text-faint)]">whole passage — no exact words given</span>
+              <span className="text-[var(--color-text-faint)]">whole passage - no exact words given</span>
             )}
           </div>
         </div>
@@ -950,10 +950,10 @@ function PartHead({ children }: { children: React.ReactNode }) {
  *  (the same content on a clean page). The main button copies formatted. */
 type CopyKind = "formatted" | "text" | "markdown" | "answer" | "references";
 const COPY_OPTIONS: Array<{ kind: CopyKind; label: string; hint: string }> = [
-  { kind: "formatted", label: "Formatted", hint: "Email, Word — looks like the card, proof included" },
+  { kind: "formatted", label: "Formatted", hint: "Email, Word - looks like the card, proof included" },
   { kind: "text", label: "Plain text", hint: "The whole answer and its proof, no formatting" },
   { kind: "markdown", label: "Markdown", hint: "Teams, Slack, notes, tickets" },
-  { kind: "answer", label: "Answer only", hint: "The answer line — no proof" },
+  { kind: "answer", label: "Answer only", hint: "The answer line - no proof" },
   { kind: "references", label: "References only", hint: "Each cited document, page and quote" },
 ];
 
@@ -1000,9 +1000,9 @@ function ExportButtons({ question, answer, large = false }: { question: string; 
     <div className="flex items-center gap-1.5 shrink-0">
       <div className="relative inline-flex">
         <button type="button" onClick={() => void copy("formatted")} className={`${primary} ${large ? "rounded-l-lg" : "rounded-l-md"}`}
-          title="Copy the answer and its proof, formatted — pastes into email or Word looking like the card">
+          title="Copy the answer and its proof, formatted - pastes into email or Word looking like the card">
           {state.s === "copied" ? <Check className={icon} /> : <Copy className={icon} />}
-          {state.s === "copied" ? `Copied — ${state.label}` : state.s === "failed" ? "Copy blocked" : "Copy"}
+          {state.s === "copied" ? `Copied - ${state.label}` : state.s === "failed" ? "Copy blocked" : "Copy"}
         </button>
         <button type="button" onClick={() => setMenu((v) => !v)} aria-haspopup="menu" aria-expanded={menu} title="Other ways to copy"
           className={`${primary} ${large ? "rounded-r-lg border-l border-orange-500/60 px-2" : "rounded-r-md border-l-0 px-1"}`}>
@@ -1082,10 +1082,10 @@ function SettleBox({ items, inline, onAttach, onRethink }: {
             accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
             onChange={(e) => { take(e.target.files); e.target.value = ""; }} />
           <div className="text-[13px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5">
-            <Upload className="w-3.5 h-3.5 text-orange-600" /> Drop the document here — or a photo of the page
+            <Upload className="w-3.5 h-3.5 text-orange-600" /> Drop the document here - or a photo of the page
           </div>
           <div className="text-[11.5px] text-[var(--color-text-muted)]">
-            {added.length > 0 ? `Added: ${added.join(", ")} — it goes with the rethink` : "PDF or image · it's read for this question, not added to the library"}
+            {added.length > 0 ? `Added: ${added.join(", ")} - it goes with the rethink` : "PDF or image · it's read for this question, not added to the library"}
           </div>
         </div>
       )}
@@ -1140,7 +1140,7 @@ function HelperBand({ answer, mode, onRethink, onOpenDoc, onFill }: {
       {goal && (
         <div className="text-[13.5px] leading-snug text-[var(--color-text)]">
           <span className="font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-violet-700 dark:text-violet-300 mr-1.5">Helper</span>
-          Looks like you&apos;re working toward <b>{GOAL_LABEL[goal.kind] ?? goal.kind}</b>{goal.why ? <> — {goal.why}</> : null}.
+          Looks like you&apos;re working toward <b>{GOAL_LABEL[goal.kind] ?? goal.kind}</b>{goal.why ? <> - {goal.why}</> : null}.
         </div>
       )}
       {!goal && (
@@ -1310,7 +1310,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
     <>
       {inline(text)}
       {!hasSource(text) && (
-        <span title="No citation — this line isn't tied to a page in your documents. Don't rely on it without checking."
+        <span title="No citation - this line isn't tied to a page in your documents. Don't rely on it without checking."
           className="ml-1.5 inline-block align-baseline px-1.5 rounded font-mono text-[10px] font-bold bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 whitespace-nowrap">
           no source
         </span>
@@ -1372,7 +1372,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
     {filling && shapeOrgId && (
       <FormFillModal orgId={shapeOrgId} documentId={filling.documentId} formName={filling.name}
         question={question} answer={answer.answer} citations={answer.citations}
-        goal={answer.goal ? `${answer.goal.kind}${answer.goal.why ? ` — ${answer.goal.why}` : ""}` : undefined}
+        goal={answer.goal ? `${answer.goal.kind}${answer.goal.why ? ` - ${answer.goal.why}` : ""}` : undefined}
         onClose={() => setFilling(null)} />
     )}
     {shaping && shapeOrgId && shapeUid && (
@@ -1398,7 +1398,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
         <div className="rounded-xl border-2 border-violet-300 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/30 px-3.5 py-2.5 text-[11px] font-bold text-violet-800 dark:text-violet-300 flex items-center gap-2">
           <History className="w-4 h-4 shrink-0" />
           <span>
-            <b className="font-black">Replayed from your team&apos;s record</b> — this is a PAST answer, shown
+            <b className="font-black">Replayed from your team&apos;s record</b> - this is a PAST answer, shown
             without a new AI run. Its wording and formatting are whatever was saved at the time. Use
             &ldquo;Ask fresh anyway&rdquo; on the asked-before card for a new run.
           </span>
@@ -1418,7 +1418,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
                 </span>
                 {/* What this answer was allowed to draw on — visible, not assumed. */}
                 {answer.knowledgeSource === "documents" && (
-                  <span title="Every statement is cited to a page in this library, or is something you said — no AI training knowledge, no web"
+                  <span title="Every statement is cited to a page in this library, or is something you said - no AI training knowledge, no web"
                     className="inline-flex items-center gap-1 text-[10.5px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300">
                     <ShieldCheck className="w-3 h-3" /> Documents only
                   </span>
@@ -1432,7 +1432,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
                 {/* The Reasoning Skills this question fit — so their help is
                     seen, and the Skill Library is one tap away. */}
                 {(answer.skillsApplied ?? []).map((sk) => (
-                  <a key={sk.id || sk.name} href="/intelligence/skills" title="A Reasoning Skill shaped this answer — open the Skill Library to see or change it"
+                  <a key={sk.id || sk.name} href="/intelligence/skills" title="A Reasoning Skill shaped this answer - open the Skill Library to see or change it"
                     className="inline-flex items-center gap-1 text-[10.5px] font-bold px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-950/40 text-violet-800 dark:text-violet-300 hover:underline">
                     <Sparkles className="w-3 h-3" /> {sk.name}
                   </a>
@@ -1474,7 +1474,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
               <details className="group rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-2">
                 <summary className="cursor-pointer list-none flex items-center gap-1.5 text-[12.5px] font-bold text-[var(--color-text)]">
                   <ChevronRight className="w-3.5 h-3.5 transition-transform group-open:rotate-90" />
-                  Engineering trail — the full chain, step by step
+                  Engineering trail - the full chain, step by step
                   <span className="font-mono text-[10.5px] font-normal text-[var(--color-text-faint)]">{parts.trail.filter((b) => b.type !== "label").length} steps</span>
                 </summary>
                 <div className="mt-2.5 space-y-2.5">{renderWhy(parts.trail)}</div>
@@ -1509,7 +1509,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
               <details className="group border-t border-[var(--color-border)] pt-3">
                 <summary className="cursor-pointer list-none flex items-center gap-1.5 text-[12.5px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                   <ChevronRight className="w-3.5 h-3.5 transition-transform group-open:rotate-90" />
-                  More — related rules, drafts, what would go further
+                  More - related rules, drafts, what would go further
                 </summary>
                 <div className="mt-2">
                   <SectionedBlocks key={answer.answer} blocks={parts.more} citations={answer.citations} onCite={onCite} />
@@ -1522,7 +1522,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
             <div className="pt-3 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap text-[10px] text-[var(--color-text-muted)]">
               {canShape && shapeOrgId && shapeUid && (
                 <button onClick={() => setShaping(true)}
-                  title="AI proposes how this answer attributes to the org graph — you curate, it writes"
+                  title="AI proposes how this answer attributes to the org graph - you curate, it writes"
                   className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-md border border-[var(--color-border)] hover:border-violet-400 hover:text-violet-700 dark:hover:text-violet-300 transition-colors">
                   <Waypoints className="w-3 h-3" /> Shape the graph
                 </button>
@@ -1550,7 +1550,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
                   <Globe className="w-3.5 h-3.5" /> From the web <span className="text-[var(--color-text-faint)]">{webCitations.length}</span>
                 </div>
                 <p className="text-[11px] text-[var(--color-text-muted)]">
-                  Not your controlled documents. A web page about a code is not the code — verify against the publication.
+                  Not your controlled documents. A web page about a code is not the code - verify against the publication.
                 </p>
                 {webCitations.map((c) => {
                   let host = c.url ?? "";
@@ -1614,7 +1614,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
           </div>
           <p className="mt-2 text-[11px] text-rose-700 dark:text-rose-400">
             The passages reference {answer.missingDocs!.length === 1 ? "this document" : "these documents"} for part of the answer,
-            but {answer.missingDocs!.length === 1 ? "it isn't" : "they aren't"} in this library or its linked libraries —
+            but {answer.missingDocs!.length === 1 ? "it isn't" : "they aren't"} in this library or its linked libraries -
             add {answer.missingDocs!.length === 1 ? "it" : "them"} to a linked library or pull the physical copy.
           </p>
         </div>
@@ -1682,15 +1682,15 @@ export function AnswerFeedback({ questionId, onRated, question, citations }: {
     <div className="mt-2">
       <div className="flex items-center justify-end gap-2 text-[11px] text-[var(--color-text-muted)] flex-wrap">
         {canTest && !testSaved && (
-          <button onClick={() => setTesting(true)} className="mr-auto inline-flex items-center gap-1 font-bold text-indigo-600 hover:underline" title="Mark what a right answer must do — every future version is checked against it">
+          <button onClick={() => setTesting(true)} className="mr-auto inline-flex items-center gap-1 font-bold text-indigo-600 hover:underline" title="Mark what a right answer must do - every future version is checked against it">
             <FlaskConical className="w-3.5 h-3.5" /> Make this a test case
           </button>
         )}
-        {testSaved && <span className="mr-auto font-bold text-indigo-600">Saved as a test case — see Answer tests on the library page.</span>}
-        {state === 1 && <span className="font-bold text-emerald-600 dark:text-emerald-400">Saved — similar questions will start from these pages.</span>}
-        {state === -1 && <span className="font-bold">{reasonsSent ? "Thanks — that tells us where to look." : "What went wrong?"}</span>}
+        {testSaved && <span className="mr-auto font-bold text-indigo-600">Saved as a test case - see Answer tests on the library page.</span>}
+        {state === 1 && <span className="font-bold text-emerald-600 dark:text-emerald-400">Saved - similar questions will start from these pages.</span>}
+        {state === -1 && <span className="font-bold">{reasonsSent ? "Thanks - that tells us where to look." : "What went wrong?"}</span>}
         {state === 0 && <span className="font-bold">Did this answer it?</span>}
-        <button onClick={() => void rate(1)} className={btn(state === 1)} title="Right answer — teach retrieval these pages">
+        <button onClick={() => void rate(1)} className={btn(state === 1)} title="Right answer - teach retrieval these pages">
           <ThumbsUp className="w-3.5 h-3.5" />
         </button>
         <button onClick={() => void rate(-1)} className={btn(state === -1)} title="Wrong or missed the point">
@@ -1762,11 +1762,11 @@ export function CitationChips({ citations, onOpen }: {
                 {c.quote}
               </blockquote>
             ) : (
-              <p className="text-[11px] text-[var(--color-text-muted)] italic">Passage text wasn&apos;t stored for this older answer — open the page to read it.</p>
+              <p className="text-[11px] text-[var(--color-text-muted)] italic">Passage text wasn&apos;t stored for this older answer - open the page to read it.</p>
             )}
             <button onClick={() => onOpen(c)}
               className="mt-2 inline-flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1.5 rounded-lg bg-orange-600 text-white hover:bg-orange-700 transition-colors">
-              <ExternalLink className="w-3 h-3" /> Open page {c.page} — passage highlighted
+              <ExternalLink className="w-3 h-3" /> Open page {c.page} - passage highlighted
             </button>
           </div>
         </details>

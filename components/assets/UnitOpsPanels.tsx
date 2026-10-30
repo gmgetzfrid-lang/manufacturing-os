@@ -68,7 +68,7 @@ export function CategorizeBanner({ orgId, userId, assets, types, book, onDone }:
           {result.unmatched.length > 0 && (
             <div className="text-[11px] text-amber-800 dark:text-amber-300">
               No codebook prefix matched: <b className="font-mono">{result.unmatched.slice(0, 8).join(", ")}{result.unmatched.length > 8 ? "…" : ""}</b>.
-              {" "}Teach the prefix in the <Link href="/admin/codebook" className="underline font-black">Site Codebook</Link> and run again — that fixes every future asset too.
+              {" "}Teach the prefix in the <Link href="/admin/codebook" className="underline font-black">Site Codebook</Link> and run again - that fixes every future asset too.
             </div>
           )}
         </div>
@@ -82,7 +82,7 @@ export function CategorizeBanner({ orgId, userId, assets, types, book, onDone }:
               {uncategorized > 0 && plan.unitAssignments.length > 0 ? ` · ${plan.unitAssignments.length} unfiled to areas` : ""}
             </div>
             <div className="text-[11px] text-[var(--color-text-muted)]">
-              Your Site Codebook already knows the taxonomy — {plan.assignments.length > 0
+              Your Site Codebook already knows the taxonomy - {plan.assignments.length > 0
                 ? <>its prefixes decode {plan.assignments.length} of them{plan.typesToCreate.length > 0 ? `, creating ${plan.typesToCreate.slice(0, 4).join(", ")}${plan.typesToCreate.length > 4 ? "…" : ""}` : ""}.</>
                 : <>but none of its prefixes match these tags. Add the prefixes in the <Link href="/admin/codebook" className="underline font-bold">Site Codebook</Link>.</>}
             </div>
@@ -186,14 +186,14 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
 
       {flows === null ? (
         <div className="text-[11px] text-[var(--color-text-muted)]">
-          Process flows aren&apos;t installed yet — run the process-flows migration to map what feeds what.
+          Process flows aren&apos;t installed yet - run the process-flows migration to map what feeds what.
         </div>
       ) : (
         <>
           {note && <div className="text-[11px] text-[var(--color-text-muted)] mb-2">{note}</div>}
           {proposed.length > 0 && (
             <div className="space-y-1 mb-2">
-              <div className="text-[9px] font-black uppercase tracking-widest text-amber-700">Proposed — the AI read these; you decide</div>
+              <div className="text-[9px] font-black uppercase tracking-widest text-amber-700">Proposed - the AI read these; you decide</div>
               {proposed.map((f) => (
                 <div key={f.id} className="flex items-center gap-2 rounded-lg border border-dashed border-amber-300 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20 px-2.5 py-1.5">
                   <span className="text-[11px] font-black text-[var(--color-text)]">{endpointLabel(f.from_kind, f.from_ref)}</span>
@@ -213,7 +213,7 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
                         <X className="w-3.5 h-3.5" />
                       </button>
                       <button onClick={() => void decide(f, true)} disabled={busyId === f.id}
-                        className="p-1.5 rounded-lg text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/40" title="Confirm — draw it on the graph">
+                        className="p-1.5 rounded-lg text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/40" title="Confirm - draw it on the graph">
                         {busyId === f.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
                       </button>
                     </>
@@ -224,7 +224,7 @@ export function FlowPanel({ orgId, userId, userName, isAdmin, unitCode, unitAsse
           )}
           {confirmed.length === 0 && proposed.length === 0 ? (
             <div className="text-[11px] text-[var(--color-text-muted)]">
-              Nothing mapped yet. Draw flows on the <Link href="/graph" className="underline font-bold">graph</Link> (Connect two equipment items — the first feeds the second){isAdmin ? ", or point the reader at a process flow diagram." : "."}
+              Nothing mapped yet. Draw flows on the <Link href="/graph" className="underline font-bold">graph</Link> (Connect two equipment items - the first feeds the second){isAdmin ? ", or point the reader at a process flow diagram." : "."}
             </div>
           ) : (
             <div className="flex flex-wrap gap-1.5">
@@ -323,12 +323,12 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
     }
     await load();
     if (failures.length > 0) {
-      setError(`Sync hit ${failures.length} problem${failures.length === 1 ? "" : "s"} — ${failures[0]}${failures.length > 1 ? " (and more)" : ""}`);
+      setError(`Sync hit ${failures.length} problem${failures.length === 1 ? "" : "s"} - ${failures[0]}${failures.length > 1 ? " (and more)" : ""}`);
       if (added > 0) setSyncNote(`${added} document${added === 1 ? "" : "s"} still pulled in before the errors.`);
     } else {
       setSyncNote(added > 0
-        ? `Synced — ${added} document${added === 1 ? "" : "s"} pulled in from document control.`
-        : "Synced — already up to date with document control.");
+        ? `Synced - ${added} document${added === 1 ? "" : "s"} pulled in from document control.`
+        : "Synced - already up to date with document control.");
     }
     setSyncing(false);
   };
@@ -342,14 +342,14 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
       const res = await addKnowledgeSources(orgId, klId, [{ type: target.type, id: target.id }]);
       setLinking(null);
       await load();
-      setSyncNote(`Linked “${target.name}” — ${res.added} document${res.added === 1 ? "" : "s"} pulled in. Indexing starts automatically.`);
+      setSyncNote(`Linked “${target.name}” - ${res.added} document${res.added === 1 ? "" : "s"} pulled in. Indexing starts automatically.`);
     } catch (e) { setError((e as Error).message); }
     finally { setLinkingKey(null); }
   };
   const requestLink = (target: { type: "library" | "folder"; id: string; name: string }) => {
     if (!model?.canSync) return;
     if (model.knowledgeLibraries.length === 0) {
-      setError("Create an AI knowledge library first (Knowledge tab) — then Link connects folders to it from right here.");
+      setError("Create an AI knowledge library first (Knowledge tab) - then Link connects folders to it from right here.");
       return;
     }
     if (model.knowledgeLibraries.length === 1) {
@@ -392,7 +392,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Reading failed.");
       onDone(json.proposed > 0
-        ? `${json.proposed} flow${json.proposed === 1 ? "" : "s"} proposed from pages ${json.pagesRead.join(", ")} — review them above.`
+        ? `${json.proposed} flow${json.proposed === 1 ? "" : "s"} proposed from pages ${json.pagesRead.join(", ")} - review them above.`
         : (json.note ?? "No new flows found."));
     } catch (e) { setError((e as Error).message); }
     finally { setRunningId(null); }
@@ -424,10 +424,10 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
 
   // ── One row per document, its AI state printed on it ──────────────────
   const STATE_META: Record<Exclude<DcDocRow["state"], "ready">, { label: string; hint: string }> = {
-    indexing: { label: "Indexing…", hint: "Mirrored and being indexed — the Read button appears when it finishes (usually under a minute). Reopen or Sync to refresh." },
-    pending_sync: { label: "Not synced yet", hint: "Watched by the AI — press Sync to mirror it now." },
-    unwatched: { label: "Not linked to AI", hint: "No knowledge library watches this folder — press Link to connect it right here." },
-    not_pdf: { label: "No PDF revision", hint: "The AI reads PDFs only — attach a PDF current revision." },
+    indexing: { label: "Indexing…", hint: "Mirrored and being indexed - the Read button appears when it finishes (usually under a minute). Reopen or Sync to refresh." },
+    pending_sync: { label: "Not synced yet", hint: "Watched by the AI - press Sync to mirror it now." },
+    unwatched: { label: "Not linked to AI", hint: "No knowledge library watches this folder - press Link to connect it right here." },
+    not_pdf: { label: "No PDF revision", hint: "The AI reads PDFs only - attach a PDF current revision." },
     not_current: { label: "Superseded / archived", hint: "Only current revisions are read." },
     no_file: { label: "No file yet", hint: "This document has no current file attached." },
     held_back: { label: "Held back from AI", hint: "A controller excluded this document from AI reading." },
@@ -501,7 +501,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
           <button type="button" disabled={linkingKey !== null}
             onClick={() => requestLink({ type: "folder", id: f.id, name: f.name })}
             className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900 disabled:opacity-50">
-            {linkingKey === f.id ? "linking…" : "not linked to AI — link now"}
+            {linkingKey === f.id ? "linking…" : "not linked to AI - link now"}
           </button>
         ) : (
           <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
@@ -527,7 +527,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">Read flows from a document</div>
             <div className="text-[11px] text-[var(--color-text-muted)]">
-              Your document libraries and folders, exactly as filed. Every file shows its AI status —
+              Your document libraries and folders, exactly as filed. Every file shows its AI status -
               ready ones read flows, blocked ones say why.
             </div>
           </div>
@@ -564,7 +564,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
           </div>
           <div className="flex items-center gap-2">
             <input value={pagesRaw} onChange={(e) => setPagesRaw(e.target.value)}
-              placeholder="Pages (optional): 1-4 or 2,5,9 — up to 6 per read"
+              placeholder="Pages (optional): 1-4 or 2,5,9 - up to 6 per read"
               className="flex-1 px-2.5 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs font-mono" />
             {pages.length > 0 && (
               <span className="text-[10px] font-black text-cyan-700 shrink-0">reads p. {pages.join(", ")}</span>
@@ -611,7 +611,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
             </div>
           ) : viewTree.length === 0 && viewUploads.length === 0 ? (
             <div className="text-center text-[11px] text-[var(--color-text-muted)] py-6">
-              {q ? "No documents match that search." : "No documents yet — upload PDFs in Documents or a knowledge library."}
+              {q ? "No documents match that search." : "No documents yet - upload PDFs in Documents or a knowledge library."}
             </div>
           ) : (
             <>
@@ -626,9 +626,9 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
                     {!l.watched && (model?.canSync ? (
                       <button type="button" disabled={linkingKey !== null}
                         onClick={() => requestLink({ type: "library", id: l.id, name: l.name })}
-                        title="Watch this whole library — every folder, now and in the future"
+                        title="Watch this whole library - every folder, now and in the future"
                         className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900 disabled:opacity-50">
-                        {linkingKey === l.id ? "linking…" : "not linked to AI — link whole library"}
+                        {linkingKey === l.id ? "linking…" : "not linked to AI - link whole library"}
                       </button>
                     ) : (
                       <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">

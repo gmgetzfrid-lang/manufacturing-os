@@ -919,7 +919,7 @@ export default function FullScreenViewer({
       }
 
       const description = [
-        `Source: ${docNum || "(no number)"}${docRev ? ` Rev ${docRev}` : ""}${sheet ? ` · Sheet ${sheet}` : ""}${docTitle ? ` — ${docTitle}` : ""}`,
+        `Source: ${docNum || "(no number)"}${docRev ? ` Rev ${docRev}` : ""}${sheet ? ` · Sheet ${sheet}` : ""}${docTitle ? ` - ${docTitle}` : ""}`,
         draftKey ? "(marked-up sheet attached as a Source file)" : "",
         unit ? `\nUnit: ${unit}` : "",
         "\nWhat needs to change:\n- ",
@@ -1010,8 +1010,8 @@ export default function FullScreenViewer({
           email: currentUserEmail ?? undefined,
           timestamp: now,
           expiresAt,
-          watermarkText: "UNCONTROLLED — FOR REVIEW ONLY",
-          footerNotice: `${docNumber || title || "Document"} Rev ${rev ?? "?"} WITH MARKUPS at time of export — markups are not part of the controlled revision.`,
+          watermarkText: "UNCONTROLLED - FOR REVIEW ONLY",
+          footerNotice: `${docNumber || title || "Document"} Rev ${rev ?? "?"} WITH MARKUPS at time of export - markups are not part of the controlled revision.`,
           verifyUrl: docRecord?.id && docRecord.currentVersionId && publicOrigin()
             ? `${publicOrigin()}/verify/${docRecord.id}?v=${docRecord.currentVersionId}`
             : undefined,
@@ -1173,7 +1173,7 @@ export default function FullScreenViewer({
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div className="min-w-0">
             <h2 className="text-white font-bold text-sm truncate">{title}</h2>
-            <p className="text-slate-400 text-[10px] font-mono truncate">{docNumber} • Rev {rev || "—"}</p>
+            <p className="text-slate-400 text-[10px] font-mono truncate">{docNumber} • Rev {rev || "-"}</p>
           </div>
           {docRecord && onCheckout && (
             <div className="pl-3 border-l border-slate-700 shrink-0">
@@ -1200,7 +1200,7 @@ export default function FullScreenViewer({
         {/* Page nav */}
         <div className="flex items-center bg-slate-800 rounded-lg px-2 py-1 text-xs font-mono text-slate-300">
           <button onClick={() => goPage(currentPage - 1)} disabled={currentPage <= 1} className="p-1 hover:text-white disabled:opacity-30"><ChevronLeft className="w-4 h-4" /></button>
-          <span className="mx-2">{currentPage} / {numPages || "—"}</span>
+          <span className="mx-2">{currentPage} / {numPages || "-"}</span>
           <button onClick={() => goPage(currentPage + 1)} disabled={currentPage >= numPages} className="p-1 hover:text-white disabled:opacity-30"><ChevronRight className="w-4 h-4" /></button>
         </div>
         {/* Zoom */}
@@ -1240,7 +1240,7 @@ export default function FullScreenViewer({
             markups baked in) as the Source attachment. */}
         <button onClick={() => void sendToDrafting()} disabled={!docRecord || sendingDraft}
           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-teal-600 hover:bg-teal-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Send this document to a new drafting request. Pre-fills the doc number, rev, sheet and unit — and if you've marked it up, attaches the marked-up sheet as the Source.">
+          title="Send this document to a new drafting request. Pre-fills the doc number, rev, sheet and unit - and if you've marked it up, attaches the marked-up sheet as the Source.">
           {sendingDraft ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} <span className="hidden xl:inline">Send to Drafting</span>
         </button>
 
@@ -1258,7 +1258,7 @@ export default function FullScreenViewer({
             <button
               onClick={() => setPhoneQrOpen((v) => !v)}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold ${phoneQrOpen ? "bg-blue-600 text-white" : "bg-slate-800 hover:bg-slate-700 text-slate-200"}`}
-              title="Open this drawing on your phone — scan and go"
+              title="Open this drawing on your phone - scan and go"
             >
               <Smartphone className="w-3.5 h-3.5" /> <span className="hidden lg:inline">Phone</span>
             </button>
@@ -1288,9 +1288,9 @@ export default function FullScreenViewer({
           <Lock className="w-3.5 h-3.5 shrink-0" />
           <span className="truncate">
             <b>{docRecord.checkedOutByName || "Another user"}</b> is working on this document
-            {docRecord.checkoutNote ? <> — <i>{docRecord.checkoutNote}</i></> : null}
+            {docRecord.checkoutNote ? <> - <i>{docRecord.checkoutNote}</i></> : null}
             {docRecord.checkedOutAt ? <> · since {new Date(String(docRecord.checkedOutAt)).toLocaleDateString()}</> : null}
-            . Your copy may go stale — coordinate before making changes.
+            . Your copy may go stale - coordinate before making changes.
           </span>
           {onCheckout && (
             <button
@@ -1361,7 +1361,7 @@ export default function FullScreenViewer({
                   />
                 </div>
                 {customStamps.length === 0 ? (
-                  <div className="text-[10px] text-slate-500 px-2 pb-2">Upload PNG/JPG/SVG stamps — saved on this device.</div>
+                  <div className="text-[10px] text-slate-500 px-2 pb-2">Upload PNG/JPG/SVG stamps - saved on this device.</div>
                 ) : (
                   <div className="grid grid-cols-3 gap-1 px-1 pb-1">
                     {customStamps.map((s) => (
@@ -1409,7 +1409,7 @@ export default function FullScreenViewer({
               <span className="text-[10px] font-mono text-slate-300 w-5 text-right">{strokeWidth}</span>
             </div>
             <div className="ml-auto text-[10px] text-slate-500 font-mono hidden md:block">
-              Tip: V/H/P/L/A/R/T/N/E to switch tools — Ctrl+Z / Ctrl+Y to undo
+              Tip: V/H/P/L/A/R/T/N/E to switch tools - Ctrl+Z / Ctrl+Y to undo
             </div>
           </div>
 
@@ -1514,7 +1514,7 @@ export default function FullScreenViewer({
               </div>
             </div>
             <div className="px-6 py-4 text-sm text-slate-700 space-y-3">
-              <p>Continuing will produce an <b>uncontrolled copy</b>. Every page will be stamped with a diagonal &quot;UNCONTROLLED — FOR REVIEW ONLY&quot; watermark plus a footer with your email and the timestamp. The action will be logged to the audit trail.</p>
+              <p>Continuing will produce an <b>uncontrolled copy</b>. Every page will be stamped with a diagonal &quot;UNCONTROLLED - FOR REVIEW ONLY&quot; watermark plus a footer with your email and the timestamp. The action will be logged to the audit trail.</p>
               {actionError && <p className="text-xs text-red-600 font-mono bg-red-50 border border-red-200 rounded-lg p-2">{actionError}</p>}
             </div>
             <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">

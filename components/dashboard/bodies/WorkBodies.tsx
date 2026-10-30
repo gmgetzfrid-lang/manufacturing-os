@@ -35,7 +35,7 @@ const TICKET_STATUS: Record<string, { label: string; cls: string }> = {
   CANCELED: { label: "Canceled", cls: "bg-gray-100 text-gray-500 border-gray-200" },
 };
 const ticketStatus = (s: string | null | undefined) =>
-  (s && TICKET_STATUS[s]) || { label: s ?? "—", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" };
+  (s && TICKET_STATUS[s]) || { label: s ?? "-", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" };
 
 // Pipeline stages in FIXED order (slot ↔ color assignment never shifts).
 const STAGES: Array<{ key: string; label: string; statuses: string[] }> = [
@@ -143,7 +143,7 @@ export function DraftingRequestsBody() {
             return (
               <Link key={t.id} href={`/requests/${t.id}`} className="group block p-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
                 <div className="flex items-center gap-2">
-                  <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)] shrink-0">{t.ticket_id ?? "—"}</span>
+                  <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)] shrink-0">{t.ticket_id ?? "-"}</span>
                   <span className="flex-1 min-w-0 text-[13px] font-semibold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)]">{t.title ?? "Untitled request"}</span>
                   {(t.priority ?? 0) >= 3 && <span className="shrink-0 text-[9px] font-black px-1 rounded bg-rose-600 text-white">P{t.priority}</span>}
                   <span className={`shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border ${st.cls}`}>{st.label}</span>
@@ -227,7 +227,7 @@ export function ProjectsBody() {
           </Link>
         </div>
       </div>
-      {rows.length > 5 && <div className="mt-2 shrink-0"><SearchField value={q} onChange={setQ} placeholder="Filter projects — name, MOC, owner…" /></div>}
+      {rows.length > 5 && <div className="mt-2 shrink-0"><SearchField value={q} onChange={setQ} placeholder="Filter projects - name, MOC, owner…" /></div>}
       {shown.length === 0 ? (
         <Empty>{rows.length === 0 ? "No active projects." : "No projects match."}</Empty>
       ) : (
@@ -238,7 +238,7 @@ export function ProjectsBody() {
               <span className="min-w-0 flex-1">
                 <span className="block text-[13px] font-semibold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)]">{p.name ?? "Untitled project"}</span>
                 <span className="block text-[10px] text-[var(--color-text-muted)] truncate">
-                  {p.owner_user_id === uid ? "You" : p.owner_user_name ?? "—"}{p.moc_reference ? ` · MOC ${p.moc_reference}` : ""}
+                  {p.owner_user_id === uid ? "You" : p.owner_user_name ?? "-"}{p.moc_reference ? ` · MOC ${p.moc_reference}` : ""}
                   {p.last_activity_at ? ` · active ${timeAgo(p.last_activity_at)} ago` : ""}
                 </span>
               </span>
@@ -423,7 +423,7 @@ export function EquipmentBody() {
           {(data?.count ?? 0).toLocaleString()}<span className="font-medium opacity-80">assets</span>
         </span>
         <div className="flex-1 min-w-0">
-          <SearchField value={q} onChange={setQ} placeholder="Find a tag, description or location — e.g. P-101"
+          <SearchField value={q} onChange={setQ} placeholder="Find a tag, description or location - e.g. P-101"
             onSubmit={(v) => { const hit = rows.find((r) => r.tag.toLowerCase() === v.toLowerCase()) ?? rows[0]; if (hit) window.location.href = `/assets/${encodeURIComponent(hit.tag)}`; }} />
         </div>
       </div>
@@ -461,7 +461,7 @@ export function RecentDocsBody() {
   }, [expanded, count]);
   if (loading) return <Skeleton />;
   const rows = data ?? [];
-  if (rows.length === 0) return <Empty>Nothing viewed yet — open a document and it lands here.</Empty>;
+  if (rows.length === 0) return <Empty>Nothing viewed yet - open a document and it lands here.</Empty>;
   return (
     <div className={`mt-3 space-y-0.5 ${SCROLL}`}>
       {rows.map((r) => (

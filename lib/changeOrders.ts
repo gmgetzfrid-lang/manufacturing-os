@@ -157,7 +157,7 @@ export async function decideChangeOrder(input: {
   }).eq("id", co.id).eq("status", "proposed").select("id");
   if (error) throw new Error(error.message);
   if (!claimed || claimed.length === 0) {
-    throw new Error("Someone else just decided this change order — refresh to see the outcome.");
+    throw new Error("Someone else just decided this change order - refresh to see the outcome.");
   }
 
   if (input.decision === "approved" && co.costAccountId) {
@@ -169,7 +169,7 @@ export async function decideChangeOrder(input: {
       entryType: "commitment",
       amount: co.amount,
       entryDate: new Date().toISOString().slice(0, 10),
-      description: `${co.coNumber} — ${co.title}`,
+      description: `${co.coNumber} - ${co.title}`,
       reference: co.coNumber,
       actor: { uid: input.actorId, email: input.actorName ?? null },
     });

@@ -127,7 +127,7 @@ const findDocuments: ToolDef = {
 const searchDocuments: ToolDef = {
   name: "search_documents",
   description:
-    "Search the TEXT of indexed documents — standards, procedures, reports. Use for "
+    "Search the TEXT of indexed documents - standards, procedures, reports. Use for "
     + "questions about content ('any standards about pipe supports'), not for finding "
     + "a document by its number. Returns passages with page citations.",
   params: [
@@ -266,7 +266,7 @@ const checkAuditHistory: ToolDef = {
   name: "check_audit_history",
   description:
     "Whether a drawing sheet was already audited at a given revision. Call this BEFORE "
-    + "auditing anything — re-auditing an unrevised sheet is wasted work.",
+    + "auditing anything - re-auditing an unrevised sheet is wasted work.",
   params: [
     { name: "sheet_number", type: "string", required: true, description: "Sheet or drawing number." },
     { name: "revision", type: "string", description: "Revision code, if known." },
@@ -282,7 +282,7 @@ const checkAuditHistory: ToolDef = {
     // Without a revision in the question, prior audits are history, not an
     // answer — the sheet may well have been revised since.
     const recommendation = rows.length === 0
-      ? (args.revision ? "Not audited at this revision — go ahead." : "Never audited — go ahead.")
+      ? (args.revision ? "Not audited at this revision - go ahead." : "Never audited - go ahead.")
       : args.revision
         ? "Already audited at this revision. Skip it unless the drawing has been revised since."
         : `Audited before (latest: rev ${String((rows[0] as { revision_code: string }).revision_code)}). `
@@ -296,7 +296,7 @@ const tracePidLines: ToolDef = {
   description:
     "SHEET-LEVEL connectivity: which drawings connect two pieces of equipment, following "
     + "off-page references across sheets. Use for multi-drawing routes and 'which sheets is "
-    + "this line on'. This knows co-occurrence, not drawn geometry — when both tags share a "
+    + "this line on'. This knows co-occurrence, not drawn geometry - when both tags share a "
     + "sheet, the result names it so a human can read the drawn connection in the viewer.",
   params: [
     { name: "start_tag", type: "string", required: true, description: "Equipment tag to start from." },
@@ -310,7 +310,7 @@ const tracePidLines: ToolDef = {
     const basis =
       "Derived from equipment appearing together on the same drawing page, plus off-page "
       + "continuation references. This is sheet-level connectivity, not valve-by-valve line "
-      + "tracing — intermediate components are only listed once line geometry is captured.";
+      + "tracing - intermediate components are only listed once line geometry is captured.";
 
     if (!args.end_tag) {
       const near = traceNeighbourhood(edges, String(args.start_tag), Number(args.hops ?? 2) || 2);
@@ -356,7 +356,7 @@ const tracePidLines: ToolDef = {
         ...(sameSheet.length > 0 ? {
           same_sheet: sameSheet,
           note:
-            "Both tags are drawn on the SAME sheet — tell the reader which sheet and page, and that "
+            "Both tags are drawn on the SAME sheet - tell the reader which sheet and page, and that "
             + "the drawn connection is read off the sheet itself (the viewer rings both tags). Do not "
             + "invent the routing between them.",
         } : {}),
@@ -471,7 +471,7 @@ const checkoutDocument: ToolDef = {
     const params = { document_id: args.document_id, reason: args.reason };
     return proposal(
       "checkout_document",
-      `Open ${d.document_number} to check it out — ${args.reason}`,
+      `Open ${d.document_number} to check it out - ${args.reason}`,
       params, ctx,
       `/documents/${d.library_id}?doc=${args.document_id}`,
     ) as ToolResult;                       // href set ⇒ never null
@@ -575,8 +575,8 @@ export function toolByName(name: string): ToolDef | undefined {
 export function toolCatalogue(): string {
   return TOOLS.map((t) => {
     const params = t.params
-      .map((p) => `${p.name}: ${p.type}${p.required ? "" : "?"} — ${p.description}`)
+      .map((p) => `${p.name}: ${p.type}${p.required ? "" : "?"} - ${p.description}`)
       .join("; ");
-    return `- ${t.name}(${params || "no parameters"})${t.writes ? " [WRITE — needs confirmation]" : ""}\n  ${t.description}`;
+    return `- ${t.name}(${params || "no parameters"})${t.writes ? " [WRITE - needs confirmation]" : ""}\n  ${t.description}`;
   }).join("\n");
 }

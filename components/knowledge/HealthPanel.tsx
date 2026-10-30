@@ -26,24 +26,24 @@ const TONE: Record<HealthStatus, string> = {
   notPdf: "bg-slate-400", noFile: "bg-slate-300", heldBack: "bg-slate-500", notCurrent: "bg-slate-300",
 };
 const EXPLAIN: Partial<Record<HealthStatus, string>> = {
-  waiting: "Queued — the library reads these automatically while it's open, and in the background.",
+  waiting: "Queued - the library reads these automatically while it's open, and in the background.",
   outdated: "A newer revision was published. Repair queues the new file.",
-  partial: "Marked done but some pages weren't read. Repair resumes from the last page — pages already read aren't paid for again.",
+  partial: "Marked done but some pages weren't read. Repair resumes from the last page - pages already read aren't paid for again.",
   stuck: "Started reading and stopped moving. Repair re-queues them; reading resumes where it stopped.",
   failed: "Reading failed. Repair retries; the reason is shown per file.",
-  missing: "In the linked library but not in the index — the sync never got to them. Repair adds them.",
-  retired: "Their index was set aside when they left the library. The next sync restores it — no re-reading, no new meaning-index cost.",
-  notPdf: "Not PDFs (CAD, images, spreadsheets) — they can't be read, so they're never indexed. This is expected.",
+  missing: "In the linked library but not in the index - the sync never got to them. Repair adds them.",
+  retired: "Their index was set aside when they left the library. The next sync restores it - no re-reading, no new meaning-index cost.",
+  notPdf: "Not PDFs (CAD, images, spreadsheets) - they can't be read, so they're never indexed. This is expected.",
   noFile: "No file attached to the current revision.",
   heldBack: "Held back from AI by a controller.",
-  notCurrent: "Superseded, void or archived — the AI reads only documents in force.",
+  notCurrent: "Superseded, void or archived - the AI reads only documents in force.",
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** A timeout or gateway error: the platform or a busy database, not a fault. */
 const isWeather = (e: unknown) => !!(e as { transient?: boolean })?.transient || /^HTTP 50[234]$/.test((e as Error)?.message ?? "");
 const friendly = (e: unknown) => isWeather(e)
-  ? "The database is busy right now (usually: the meaning index is being written), so this took too long. Nothing was lost — try again in a few minutes."
+  ? "The database is busy right now (usually: the meaning index is being written), so this took too long. Nothing was lost - try again in a few minutes."
   : (e as Error)?.message ?? String(e);
 
 export default function HealthPanel({ orgId, libraryId, isController, onRepaired }: {
@@ -95,7 +95,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
       onRepaired?.();
     } catch (e) {
       setError(isWeather(e)
-        ? "Repair ran longer than the host allows — common while the meaning index is being written. What it did is saved; press Repair again to finish."
+        ? "Repair ran longer than the host allows - common while the meaning index is being written. What it did is saved; press Repair again to finish."
         : friendly(e));
     } finally {
       setRepairing(false);
@@ -139,7 +139,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
       onRepaired?.();
     } catch (e) {
       setNameResult(total);
-      setError(`${friendly(e)}${total.fixed ? ` ${total.fixed} corrected before it stopped are saved — press Correct again to finish.` : ""}`);
+      setError(`${friendly(e)}${total.fixed ? ` ${total.fixed} corrected before it stopped are saved - press Correct again to finish.` : ""}`);
     } finally {
       setNaming(null);
     }
@@ -181,12 +181,12 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
           </div>
           <div className="text-[11px] text-[var(--color-text-muted)]">
             {healthy && !report.incomplete
-              ? (inFlight > 0 ? `${inFlight.toLocaleString()} still being read — everything is accounted for.` : "Every linked document is accounted for.")
-              : fixable > 0 ? `${fixable.toLocaleString()} need attention — Repair fixes them without re-paying for work already done.`
-              : report.incomplete ? "Some numbers may be short — see below."
-              : report.names?.wrong ? "Every document is indexed; some names need correcting — see below."
-              : "Some uploaded PDFs need attention — Repair re-queues them."}
-            {notIndexable > 0 && ` ${notIndexable.toLocaleString()} can't be indexed (not PDFs, held back, superseded) — expected.`}
+              ? (inFlight > 0 ? `${inFlight.toLocaleString()} still being read - everything is accounted for.` : "Every linked document is accounted for.")
+              : fixable > 0 ? `${fixable.toLocaleString()} need attention - Repair fixes them without re-paying for work already done.`
+              : report.incomplete ? "Some numbers may be short - see below."
+              : report.names?.wrong ? "Every document is indexed; some names need correcting - see below."
+              : "Some uploaded PDFs need attention - Repair re-queues them."}
+            {notIndexable > 0 && ` ${notIndexable.toLocaleString()} can't be indexed (not PDFs, held back, superseded) - expected.`}
           </div>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
@@ -225,7 +225,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
           <span>
             Repair done.{" "}
             {last.sync ? <>Added {last.sync.added}, refreshed {last.sync.refreshed}{last.sync.renamed ? `, renamed ${last.sync.renamed}` : ""}, restored {last.sync.restored} from set-aside (free), set aside {last.sync.retired}.</> : null}{" "}
-            Re-queued {last.requeued.failed} failed, {last.requeued.stuck} stuck, {last.requeued.partial} partly read — they resume where they stopped.
+            Re-queued {last.requeued.failed} failed, {last.requeued.stuck} stuck, {last.requeued.partial} partly read - they resume where they stopped.
             {last.sync && last.sync.removed > 0 && <b> {last.sync.removed} were deleted instead of set aside because the database update (20261024) hasn&apos;t been run.</b>}
             {last.sync?.errors.length ? <span className="block mt-0.5 text-amber-800 dark:text-amber-300">{last.sync.errors.slice(0, 3).join(" · ")}</span> : null}
           </span>
@@ -259,7 +259,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
               <b>{N.wrong.toLocaleString()} document {N.wrong === 1 ? "number or revision was" : "numbers or revisions were"} read wrong from {N.wrong === 1 ? "its file name" : "their file names"}</b>
               {" "}(e.g. &ldquo;EP 5-3-10&rdquo; cut to &ldquo;EP&rdquo;). The files, titles and index are fine.
               {nameFixable > 0 && " Correcting them only touches values nobody has edited since upload; each change is recorded in the document's history."}
-              {N.clashes > 0 && <span className="block mt-0.5">{N.clashes.toLocaleString()} can&apos;t be corrected automatically — their correct number is already used (often two files that are revisions of one document). They&apos;re listed for you to decide.</span>}
+              {N.clashes > 0 && <span className="block mt-0.5">{N.clashes.toLocaleString()} can&apos;t be corrected automatically - their correct number is already used (often two files that are revisions of one document). They&apos;re listed for you to decide.</span>}
               <button onClick={() => setNamesOpen((v) => !v)} className="mt-1 inline-flex items-center gap-0.5 font-bold underline-offset-2 hover:underline">
                 {namesOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />} {namesOpen ? "Hide" : "Show"} the list
               </button>
@@ -279,7 +279,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
                   <li key={f.id} className="px-2 py-1 text-[11px] grid sm:grid-cols-[1fr_auto] gap-x-2">
                     <span className="truncate text-[var(--color-text)]" title={f.fileName}>{f.fileName}</span>
                     <span className="font-mono text-[var(--color-text-muted)] truncate">
-                      <s>{f.from.documentNumber || "—"}{f.from.rev !== f.to.rev ? ` rev ${f.from.rev}` : ""}</s> → <b className="text-[var(--color-text)]">{f.to.documentNumber}{f.from.rev !== f.to.rev ? ` rev ${f.to.rev}` : ""}</b>
+                      <s>{f.from.documentNumber || "-"}{f.from.rev !== f.to.rev ? ` rev ${f.from.rev}` : ""}</s> → <b className="text-[var(--color-text)]">{f.to.documentNumber}{f.from.rev !== f.to.rev ? ` rev ${f.to.rev}` : ""}</b>
                     </span>
                     {f.clash && <span className="sm:col-span-2 text-amber-800 dark:text-amber-300">Needs you: {f.clash}</span>}
                   </li>
@@ -296,20 +296,20 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
             <CheckCircle2 className="w-4 h-4 shrink-0 mt-px" />
             <span>
               Corrected {nameResult.fixed.toLocaleString()} {nameResult.fixed === 1 ? "name" : "names"}; the index now cites them by their real numbers.
-              {nameResult.skipped > 0 && ` ${nameResult.skipped} left alone — someone changed them since the check.`}
-              {nameResult.remaining > 0 && ` ${nameResult.remaining} not reached yet — press Correct again to finish.`}
+              {nameResult.skipped > 0 && ` ${nameResult.skipped} left alone - someone changed them since the check.`}
+              {nameResult.remaining > 0 && ` ${nameResult.remaining} not reached yet - press Correct again to finish.`}
             </span>
           </div>
           {nameResult.conflicts.length > 0 && (
             <div className="mt-1 text-amber-900 dark:text-amber-200">
-              <b>{nameResult.conflicts.length} need your decision</b> — the correct number is already in use:
+              <b>{nameResult.conflicts.length} need your decision</b> - the correct number is already in use:
               <ul className="mt-0.5 max-h-32 overflow-auto">
                 {nameResult.conflicts.slice(0, 100).map((c) => <li key={c.id} className="truncate">{c.fileName}: wants {c.wanted}{c.clashesWith ? `, used by ${c.clashesWith}` : ""}</li>)}
               </ul>
             </div>
           )}
           {nameResult.failed.length > 0 && (
-            <div className="mt-1 text-rose-800 dark:text-rose-300">{nameResult.failed.length} couldn&apos;t be saved — Correct again retries them. {nameResult.failed[0].reason}</div>
+            <div className="mt-1 text-rose-800 dark:text-rose-300">{nameResult.failed.length} couldn&apos;t be saved - Correct again retries them. {nameResult.failed[0].reason}</div>
           )}
         </div>
       )}
@@ -357,7 +357,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
                   </button>
                   {open === "leftovers" && (
                     <div className="px-2.5 pb-2">
-                      <p className="text-[11px] text-[var(--color-text-muted)] mb-1.5">Still searchable but their document was moved out, held back or deleted. Repair sets them aside — kept, not searched, restored free if the file comes back.</p>
+                      <p className="text-[11px] text-[var(--color-text-muted)] mb-1.5">Still searchable but their document was moved out, held back or deleted. Repair sets them aside - kept, not searched, restored free if the file comes back.</p>
                       <ul className="max-h-48 overflow-auto divide-y divide-[var(--color-border)] rounded border border-[var(--color-border)]">
                         {L.leftovers.slice(0, 100).map((it) => <li key={it.mirrorId ?? it.id} className="px-2 py-1 text-[11px] font-mono truncate">{it.name}</li>)}
                       </ul>
@@ -377,7 +377,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
                   <div className="mt-1 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><div className="h-full bg-violet-500" style={{ width: `${meaningPct}%` }} /></div>
                 </>
               ) : (
-                <div className="text-[var(--color-text-muted)]">Busy building — the count will show on the next check.</div>
+                <div className="text-[var(--color-text-muted)]">Busy building - the count will show on the next check.</div>
               )}
             </div>
             <div className="rounded-lg border border-[var(--color-border)] px-2.5 py-2">
@@ -388,7 +388,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
             </div>
             <div className="rounded-lg border border-[var(--color-border)] px-2.5 py-2">
               <div className="font-black text-[var(--color-text)]">Set aside</div>
-              <div className="text-[var(--color-text-muted)]">{report.retired.toLocaleString()} kept for free restore — not searched</div>
+              <div className="text-[var(--color-text-muted)]">{report.retired.toLocaleString()} kept for free restore - not searched</div>
             </div>
           </div>
           <p className="text-[10px] text-[var(--color-text-faint)]">

@@ -371,7 +371,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
           checked_out_by: currentUser.uid,
           checked_out_by_name: userName,
           checked_out_at: new Date().toISOString(),
-          checkout_note: `${purposeCategory} — ${note.trim()}`,
+          checkout_note: `${purposeCategory} - ${note.trim()}`,
           current_lock_id: lockId,
           active_collaborators: newCollaborators,
         })
@@ -391,7 +391,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
           orgId: document.orgId,
           documentId: document.id!,
           episodeId: checkoutEpisode?.id ?? null,
-          text: `${userName} joined the checkout — ${purposeCategory}: "${note.trim()}".`,
+          text: `${userName} joined the checkout - ${purposeCategory}: "${note.trim()}".`,
         });
         // Tell the crew already on this checkout — especially the lock
         // holder — that someone jumped on their ticket.
@@ -435,7 +435,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         showToast({
           type: "warning",
           title: "Joined an active checkout",
-          message: "Someone else holds the lock. You're on their checkout ticket now — coordinate in the thread before editing.",
+          message: "Someone else holds the lock. You're on their checkout ticket now - coordinate in the thread before editing.",
           duration: 8000,
         });
         return;
@@ -446,7 +446,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         orgId: document.orgId,
         documentId: document.id!,
         episodeId: checkoutEpisode?.id ?? null,
-        text: `${userName} checked out (${mode}) — ${purposeCategory}: "${note.trim()}".`,
+        text: `${userName} checked out (${mode}) - ${purposeCategory}: "${note.trim()}".`,
       });
       setEpisode(checkoutEpisode);
 
@@ -550,7 +550,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         showToast({
           type: "warning",
           title: "Joined an active checkout",
-          message: "Someone else holds the lock — your quick hold put you on their checkout ticket. Coordinate before editing.",
+          message: "Someone else holds the lock - your quick hold put you on their checkout ticket. Coordinate before editing.",
           duration: 8000,
         });
       }
@@ -612,7 +612,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
               {activeSessions.length === 0 ? (
                 <div className="p-4 rounded-xl border border-dashed border-[var(--color-border-strong)] text-center text-[var(--color-text-faint)] text-sm">
                   {isOrphaned
-                    ? "This checkout got out of sync — fix it below."
+                    ? "This checkout got out of sync - fix it below."
                     : document.checkedOutBy
                       ? `Held by ${document.checkedOutByName || "another user"}, but their session went missing. An Admin/DocCtrl can force-release it from the row's checkout popover.`
                       : "No one is currently working on this file."}
@@ -664,7 +664,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                   {isOrphaned ? (
                     <div className="flex items-center gap-2 p-3 bg-blue-50 text-blue-800 rounded-lg text-xs">
                       <RefreshCw className="w-4 h-4 shrink-0" />
-                      <span><strong>Out of sync:</strong> you&apos;re shown as holding this document, but your session was lost. Check out again to keep working — or release the lock if you&apos;re done.</span>
+                      <span><strong>Out of sync:</strong> you&apos;re shown as holding this document, but your session was lost. Check out again to keep working - or release the lock if you&apos;re done.</span>
                     </div>
                   ) : (
                     <h3 className="text-sm font-bold text-[var(--color-text)]">Check out this document</h3>
@@ -681,7 +681,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                     >
                       {quickBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600 shrink-0" /> : <Zap className="w-3.5 h-3.5 text-blue-600 shrink-0" />}
                       <span className="text-[11px] text-blue-900">
-                        <b>Just need it for today?</b> Quick hold — one click, no questions, auto-releases tonight.
+                        <b>Just need it for today?</b> Quick hold - one click, no questions, auto-releases tonight.
                       </span>
                     </button>
                   )}
@@ -731,7 +731,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                   >
                     <span>
                       {projectChoice === "adhoc"
-                        ? <>Quick checkout — auto-releases in <b>{{ "24h": "24 hours", "3d": "3 days", "1w": "1 week", "1mo": "1 month" }[adhocDuration]}</b></>
+                        ? <>Quick checkout - auto-releases in <b>{{ "24h": "24 hours", "3d": "3 days", "1w": "1 week", "1mo": "1 month" }[adhocDuration]}</b></>
                         : projectChoice === "existing"
                           ? <>Linked to project <b>{projects.find((p) => p.id === selectedProjectId)?.name || "…"}</b></>
                           : <>Creating a new project</>}
@@ -789,7 +789,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                           ))}
                         </div>
                         <div className="text-[10px] text-[var(--color-text-muted)]">
-                          Ad-hoc checkouts auto-release so the doc never gets stuck. Pick a window that matches what you&apos;re doing — 1 month is the cap.
+                          Ad-hoc checkouts auto-release so the doc never gets stuck. Pick a window that matches what you&apos;re doing - 1 month is the cap.
                         </div>
                       </div>
                     )}
@@ -818,7 +818,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                         <textarea
                           value={newProjectDescription}
                           onChange={(e) => setNewProjectDescription(e.target.value)}
-                          placeholder="Description * — what's the team going to do?"
+                          placeholder="Description * - what's the team going to do?"
                           rows={2}
                           className="w-full px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-y"
                         />

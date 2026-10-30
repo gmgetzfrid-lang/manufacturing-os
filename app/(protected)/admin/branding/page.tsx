@@ -173,7 +173,7 @@ export default function AdminBrandingPage() {
           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-[var(--color-accent-fg)] disabled:opacity-50" style={{ background: "var(--color-accent)" }}>
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save branding
         </button>
-        {savedAt && <span className="text-sm text-emerald-600 font-semibold">Saved — applied for everyone.</span>}
+        {savedAt && <span className="text-sm text-emerald-600 font-semibold">Saved - applied for everyone.</span>}
       </div>
     </div>
   );

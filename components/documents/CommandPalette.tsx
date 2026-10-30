@@ -262,17 +262,17 @@ export default function CommandPalette({
               } else if (item.kind === "openDoc") {
                 icon = FileText;
                 primary = item.doc.title || item.doc.name || "Untitled";
-                secondary = item.doc.documentNumber || "—";
+                secondary = item.doc.documentNumber || "-";
                 kindLabel = "Open";
               } else if (item.kind === "stageDoc") {
                 icon = Layers;
                 primary = `Stage ${item.doc.title || item.doc.name || "doc"}`;
-                secondary = item.doc.documentNumber || "—";
+                secondary = item.doc.documentNumber || "-";
                 kindLabel = "Stage";
               } else if (item.kind === "orgDoc") {
                 icon = Globe;
                 primary = item.row.title || item.row.name || "Untitled";
-                secondary = `${item.row.document_number || "—"} · ${item.row.library_id === currentLibraryId ? "this library" : "other library"}`;
+                secondary = `${item.row.document_number || "-"} · ${item.row.library_id === currentLibraryId ? "this library" : "other library"}`;
                 kindLabel = "Org-wide";
               } else {
                 icon = item.icon;

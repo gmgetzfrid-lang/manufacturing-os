@@ -40,7 +40,7 @@ export default function ArchiveViewPage() {
             <Archive className="w-5 h-5 text-[var(--color-accent)]" /> View from a backup
           </h1>
           <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-            Drop a backup .zip to browse and view its files in your browser. Useful when a file has been archived for space — view it here, then it&apos;s gone again.
+            Drop a backup .zip to browse and view its files in your browser. Useful when a file has been archived for space - view it here, then it&apos;s gone again.
           </p>
         </div>
       </div>

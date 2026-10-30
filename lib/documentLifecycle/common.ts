@@ -62,7 +62,7 @@ export async function withCompensation<T>(
         `${base}\n\nThe operation was rolled back, but some cleanup steps failed and may need manual attention:\n- ${failures.join("\n- ")}`,
       );
     }
-    throw new Error(`${base} (the operation was rolled back — no partial changes were kept).`);
+    throw new Error(`${base} (the operation was rolled back - no partial changes were kept).`);
   }
 }
 
@@ -82,7 +82,7 @@ export async function archiveRolledBackDoc(docId: string, actor: ActorContext): 
       archived_at: now,
       updated_at: now,
       updated_by: actor.actorUserId,
-      supersession_reason: "Rolled back — lifecycle operation failed before completion",
+      supersession_reason: "Rolled back - lifecycle operation failed before completion",
     })
     .eq("id", docId);
   if (error) throw new Error(error.message);

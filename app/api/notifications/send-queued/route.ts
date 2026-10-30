@@ -78,7 +78,7 @@ export async function POST(req: Request) {
       failed: 0,
       deferred: count ?? 0,
       configured: false,
-      note: "RESEND_API_KEY is not set — emails left queued (no delivery attempted). Set the env var and the backlog sends on the next drain.",
+      note: "RESEND_API_KEY is not set - emails left queued (no delivery attempted). Set the env var and the backlog sends on the next drain.",
     });
   }
 

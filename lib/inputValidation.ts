@@ -61,7 +61,7 @@ export function translatePostgresError(
           code,
           heading: "Same document number already in this library",
           message:
-            "Another active document in this library has the same number. If your library legitimately reuses numbers across sheets/variants, open the Column Manager and tick a column (e.g. Sheet) to include in the uniqueness key — that lets the same number coexist when the other field differs.",
+            "Another active document in this library has the same number. If your library legitimately reuses numbers across sheets/variants, open the Column Manager and tick a column (e.g. Sheet) to include in the uniqueness key - that lets the same number coexist when the other field differs.",
         };
       }
       const fieldText = field ? `with that ${field}` : "with those values";
@@ -75,7 +75,7 @@ export function translatePostgresError(
       return {
         code,
         heading: "Referenced item not found",
-        message: `Couldn't link this ${entity} — one of the references it points at no longer exists. Refresh the page; if the problem persists, the referenced item may have been deleted.`,
+        message: `Couldn't link this ${entity} - one of the references it points at no longer exists. Refresh the page; if the problem persists, the referenced item may have been deleted.`,
       };
     case "23502": {
       const fieldText = field ? `"${field}"` : "A required field";
@@ -101,7 +101,7 @@ export function translatePostgresError(
       return {
         code,
         heading: "Database table missing",
-        message: `The expected table doesn't exist — the database may be behind on migrations. Contact support / DocCtrl.`,
+        message: `The expected table doesn't exist - the database may be behind on migrations. Contact support / DocCtrl.`,
       };
     case "PGRST301": // PostgREST: no rows returned where one was expected
       return {

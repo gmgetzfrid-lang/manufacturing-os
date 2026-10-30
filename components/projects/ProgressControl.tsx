@@ -79,7 +79,7 @@ export function WhenFields({ choices, idx, clock, setClock, tz, disabled, other,
   const r = clock.trim() ? clockForWork(pick.w, clock, tz, times, Infinity) : null;
   const value = r && "at" in r ? toDateTimeInput(r.at, tz) : (other ?? (idx === 0 ? today : dayKey(pick.w.start, tz)));
   return (
-    <DateTimePicker label="When" hint="— required" value={value} tz={tz} times={times} disabled={disabled}
+    <DateTimePicker label="When" hint="- required" value={value} tz={tz} times={times} disabled={disabled}
       onChange={(v) => { setOther?.(v.slice(0, 10)); setClock(v.length >= 16 ? v.slice(11, 16) : ""); }} />
   );
 }
@@ -218,7 +218,7 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy }: {
   const ready = changed && !saving && !busy;
   const save = async () => {
     if (!changed) { setMsg("Slide it to the new %."); return; }
-    if (missing) { setMsg("Add a few words first — what got done, or why it's corrected. It goes on the shift report."); noteRef.current?.focus(); return; }
+    if (missing) { setMsg("Add a few words first - what got done, or why it's corrected. It goes on the shift report."); noteRef.current?.focus(); return; }
     let forShift: ShiftCredit | undefined;
     if (clockCtx && choices.length) {
       const r = resolveWhen(pickOf(choices, whenIdx, otherDay, clockCtx.tz, clockCtx.times), when, clockCtx.tz, clockCtx.times);
@@ -241,8 +241,8 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy }: {
         <div className="flex items-baseline gap-1.5">
           <span className="font-bold text-[var(--color-text)]">What got done</span>
           {wantsNote
-            ? <span className="font-black text-amber-700 dark:text-amber-400">— required</span>
-            : <span className="text-[var(--color-text-faint)]">— optional</span>}
+            ? <span className="font-black text-amber-700 dark:text-amber-400">- required</span>
+            : <span className="text-[var(--color-text-faint)]">- optional</span>}
         </div>
         <input ref={noteRef} value={note} onChange={(e) => { setNote(e.target.value); setMsg(null); }}
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void save(); } if (e.key === "Escape" && onCancel) { e.stopPropagation(); onCancel(); } }}
@@ -314,7 +314,7 @@ export default function ProgressControl({ percent, onPick, disabled, onDisabledC
       <button
         ref={btnRef}
         onClick={(e) => { e.stopPropagation(); openMenu(); }}
-        title={disabled ? `${pct}% complete` : `${pct}% complete — click to set`}
+        title={disabled ? `${pct}% complete` : `${pct}% complete - click to set`}
         className={`relative inline-flex items-center justify-center rounded-md border font-bold tabular-nums after:absolute after:-inset-1 pointer-coarse:after:-inset-2.5 after:content-[''] ${
           size === "sm" ? "px-1 py-0 text-[9px]" : "px-1.5 py-0.5 text-[10px]"
         } ${tone} ${disabled ? "cursor-default opacity-80" : "cursor-pointer hover:brightness-95"}`}

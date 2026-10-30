@@ -86,14 +86,14 @@ const DRAFT_SYSTEM =
   "clear, specific, professional, no markdown.\n" +
   "- Narrative fields (justification, description, reason, technical basis, risk, mitigation): complete " +
   "text built from the answer and its quoted proof. Cite standards by designation, section/table and page " +
-  "(\"EP 5-2-1 Table 4, p.20\") — never [n] markers. Quote the requirement being deviated from exactly.\n" +
+  "(\"EP 5-2-1 Table 4, p.20\") - never [n] markers. Quote the requirement being deviated from exactly.\n" +
   "- State the requirement, the proposed alternative, why the requirement exists, why that reason does or " +
-  "does not apply here, and the mitigations — in that order — wherever the form gives room for it.\n" +
+  "does not apply here, and the mitigations - in that order - wherever the form gives room for it.\n" +
   "- Never invent facts the conversation doesn't contain: no line numbers, equipment tags, dates, names, " +
   "signatures, approval or reference numbers. Leave those fields \"\" and list them in needsInput.\n" +
   "- Checkbox fields: \"Yes\" or \"\". Choice fields: exactly one of the listed options, or \"\".\n" +
   "- Use ONLY what the question, the answer and the quoted proof contain. Never add engineering content, " +
-  "reasons, values or code requirements of your own — if the form asks for something they don't cover, " +
+  "reasons, values or code requirements of your own - if the form asks for something they don't cover, " +
   "leave it \"\" and list it in needsInput.";
 
 export async function POST(req: NextRequest) {
@@ -172,7 +172,7 @@ export async function POST(req: NextRequest) {
       provider: conn.provider as AiProviderId, model, apiKey: openAiKey(conn.api_key as string),
       system: DRAFT_SYSTEM,
       user: [
-        `FORM: ${meta.title} (${meta.purpose}) — file "${doc.name}"`,
+        `FORM: ${meta.title} (${meta.purpose}) - file "${doc.name}"`,
         `FIELDS (name | label | kind | options):\n${meta.fields.map((f) => `${f.name} | ${f.label} | ${f.kind}${f.options ? ` | ${f.options.join(" / ")}` : ""}`).join("\n")}`,
         `THE FORM'S OWN TEXT (instructions printed on it):\n${((formText ?? []) as Array<{ content: string }>).map((c) => c.content).join("\n").slice(0, 4000) || "(none)"}`,
         body.goal ? `WHAT THE ENGINEER IS DOING: ${String(body.goal).slice(0, 300)}` : "",

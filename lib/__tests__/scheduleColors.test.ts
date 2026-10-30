@@ -5,7 +5,7 @@ import { assignGroupColors, GROUP_PALETTE, ROOT_COLOR } from "@/lib/scheduleColo
 type N = { id: string; parentId: string | null; name: string; plannedStartAt?: string | null; plannedAt: string };
 const d = (s: string) => `${s}T12:00:00Z`;
 
-describe("assignGroupColors — multiple top groups", () => {
+describe("assignGroupColors - multiple top groups", () => {
   it("gives each top group a distinct hue and shares it with descendants", () => {
     const items: N[] = [
       { id: "A", parentId: null, name: "Phase A", plannedAt: d("2026-01-01") },
@@ -20,7 +20,7 @@ describe("assignGroupColors — multiple top groups", () => {
   });
 });
 
-describe("assignGroupColors — single overarching root", () => {
+describe("assignGroupColors - single overarching root", () => {
   const items: N[] = [
     { id: "root", parentId: null, name: "Overall project", plannedStartAt: d("2026-01-01"), plannedAt: d("2026-03-01") },
     { id: "p1", parentId: "root", name: "Design", plannedStartAt: d("2026-01-01"), plannedAt: d("2026-01-20") },
@@ -45,7 +45,7 @@ describe("assignGroupColors — single overarching root", () => {
   });
 });
 
-describe("assignGroupColors — degenerate input", () => {
+describe("assignGroupColors - degenerate input", () => {
   it("handles an empty list", () => {
     expect(assignGroupColors([]).groups).toEqual([]);
   });

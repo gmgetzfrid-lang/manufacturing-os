@@ -56,7 +56,7 @@ export async function generateTicketNumber(orgId: string): Promise<string> {
     const msg = error?.message ?? "";
     throw new Error(
       /function|schema|does not exist/i.test(msg)
-        ? "Ticket numbering isn't set up yet — apply migration 20260724_ticket_numbering.sql."
+        ? "Ticket numbering isn't set up yet - apply migration 20260724_ticket_numbering.sql."
         : `Couldn't generate a request number: ${msg || "unknown error"}`,
     );
   }

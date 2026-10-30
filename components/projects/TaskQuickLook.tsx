@@ -75,8 +75,8 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
             small={done ? null : <>now {look.percent}% · <span className={behind ? "font-bold text-rose-700 dark:text-rose-300" : ""}>plan by now {look.planNow}%</span></>} />
           <Tile label="This step done by" big={fmt.DTs(look.finish)} small={`starts ${fmt.DTs(look.start)}`} />
           {eq ? (
-            <Tile label={`${eqName} done by`} big={Number.isFinite(eq.finish) ? fmt.DTs(eq.finish) : "—"} small={`${eq.done} of ${eq.total} steps · ${eq.percent}%`} />
-          ) : <Tile label="Next" big={look.next[0] ? fmt.DTs(look.next[0].start) : "—"} small={look.next[0]?.name ?? "nothing after it"} />}
+            <Tile label={`${eqName} done by`} big={Number.isFinite(eq.finish) ? fmt.DTs(eq.finish) : "-"} small={`${eq.done} of ${eq.total} steps · ${eq.percent}%`} />
+          ) : <Tile label="Next" big={look.next[0] ? fmt.DTs(look.next[0].start) : "-"} small={look.next[0]?.name ?? "nothing after it"} />}
         </div>
 
         {look.waitsOn.length > 0 && (
@@ -91,7 +91,7 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
         {/* Every step on the equipment, in order, with its times. */}
         {look.order.length > 1 && (
           <>
-            <Heading hint="in start order — tap a step to open it">Step order on {eqName ?? "this task"}</Heading>
+            <Heading hint="in start order - tap a step to open it">Step order on {eqName ?? "this task"}</Heading>
             <div className="rounded-lg border border-[var(--color-border)] overflow-hidden">
               <table className="w-full text-[12px]">
                 <thead>
@@ -148,7 +148,7 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
               {above.map((l, i) => (
                 <li key={l.id} className="flex items-baseline gap-2 text-[12.5px]" style={{ paddingLeft: i * 10 }}>
                   <span className="min-w-0 flex-1 truncate text-[var(--color-text)]">{l.name}</span>
-                  <span className="shrink-0 text-[var(--color-text-muted)]">done by <b className="font-mono text-[var(--color-text)]">{Number.isFinite(l.finish) ? fmt.DTs(l.finish) : "—"}</b> · {l.percent}%</span>
+                  <span className="shrink-0 text-[var(--color-text-muted)]">done by <b className="font-mono text-[var(--color-text)]">{Number.isFinite(l.finish) ? fmt.DTs(l.finish) : "-"}</b> · {l.percent}%</span>
                 </li>
               ))}
             </ul>

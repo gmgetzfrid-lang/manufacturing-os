@@ -397,7 +397,7 @@ export async function recomputeDocumentAck(input: {
     const controllers = await getOrgControllers(input.orgId);
     const targets = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]);
     const msg = assignees.length === 0
-      ? `An acknowledgment requirement is set on ${label}, but it resolved to no one — nobody will be asked to sign. Check the assigned people/roles.`
+      ? `An acknowledgment requirement is set on ${label}, but it resolved to no one - nobody will be asked to sign. Check the assigned people/roles.`
       : `The acknowledgment roster for ${label} has gaps: ${warnings.join("; ")}.`;
     await Promise.all(targets.map((uid) =>
       notify({ orgId: input.orgId, userId: uid, kind: "ack_unsatisfiable", title: `Acknowledgment needs attention: ${label}`, body: msg, link, resourceType: "document", resourceId: doc.id })
@@ -499,7 +499,7 @@ export async function nudgeAcknowledgment(input: { orgId: string; rosterId: stri
   const rev = (r.revision_label as string) || "";
   await notify({
     orgId: input.orgId, userId: r.assignee_user_id as string, kind: "ack_requested",
-    title: `Reminder — acknowledge ${label}${rev ? ` Rev ${rev}` : ""}`,
+    title: `Reminder - acknowledge ${label}${rev ? ` Rev ${rev}` : ""}`,
     body: "Please confirm you've read and understood this revision.",
     link: `/documents/${doc?.library_id as string}?doc=${r.document_id as string}`,
     resourceType: "document", resourceId: r.document_id as string,
@@ -578,7 +578,7 @@ export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: n
 
     await notify({
       orgId, userId: r.assignee_user_id as string, kind: "ack_requested",
-      title: `Reminder — acknowledge ${label}${rev ? ` Rev ${rev}` : ""}`,
+      title: `Reminder - acknowledge ${label}${rev ? ` Rev ${rev}` : ""}`,
       body: "You still need to confirm you've read and understood this revision.",
       link, resourceType: "document", resourceId: r.document_id as string,
     });
@@ -595,7 +595,7 @@ export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: n
         notify({
           orgId, userId: uid, kind: "ack_overdue",
           title: `Acknowledgment overdue: ${label}`,
-          body: `${(r.assignee_name as string) || "Someone assigned"} hasn't acknowledged ${label}${rev ? ` Rev ${rev}` : ""} — ${overdueDays} days outstanding.`,
+          body: `${(r.assignee_name as string) || "Someone assigned"} hasn't acknowledged ${label}${rev ? ` Rev ${rev}` : ""} - ${overdueDays} days outstanding.`,
           link, resourceType: "document", resourceId: r.document_id as string,
         })
       ));
@@ -620,11 +620,11 @@ export function renderAckReport(meta: { label: string; title?: string | null; re
   const total = done.length + pending.length;
   const line = (r: AckRosterRow) => `<tr>
     <td>${esc(r.assigneeName || r.assigneeUserId)}</td>
-    <td>${esc(r.assigneeRole || "—")}</td>
-    <td>${r.status === "acknowledged" ? "Acknowledged" : r.status === "waived" ? `Waived${r.waivedReason ? ` — ${esc(r.waivedReason)}` : ""}` : "Outstanding"}</td>
-    <td>${r.acknowledgedAt ? esc(r.acknowledgedAt.slice(0, 16).replace("T", " ")) : "—"}</td>
+    <td>${esc(r.assigneeRole || "-")}</td>
+    <td>${r.status === "acknowledged" ? "Acknowledged" : r.status === "waived" ? `Waived${r.waivedReason ? ` - ${esc(r.waivedReason)}` : ""}` : "Outstanding"}</td>
+    <td>${r.acknowledgedAt ? esc(r.acknowledgedAt.slice(0, 16).replace("T", " ")) : "-"}</td>
   </tr>`;
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Acknowledgment record — ${esc(meta.label)}</title>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Acknowledgment record - ${esc(meta.label)}</title>
   <style>
     body{font-family:ui-sans-serif,system-ui,Arial,sans-serif;color:#0f172a;margin:32px;font-size:13px}
     h1{font-size:18px;margin:0 0 2px} .sub{color:#64748b;margin:0 0 16px}
@@ -633,7 +633,7 @@ export function renderAckReport(meta: { label: string; title?: string | null; re
     th{background:#f8fafc;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#475569}
     .foot{margin-top:18px;color:#94a3b8;font-size:11px}
   </style></head><body>
-  <h1>Read &amp; understood — acknowledgment record</h1>
+  <h1>Read &amp; understood - acknowledgment record</h1>
   <p class="sub">${esc(meta.label)}${meta.title ? ` · ${esc(meta.title)}` : ""}${meta.revisionLabel ? ` · Rev ${esc(meta.revisionLabel)}` : ""}</p>
   <div>
     <span class="kpi">${done.length} of ${total} acknowledged</span>

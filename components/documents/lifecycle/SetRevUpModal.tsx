@@ -147,7 +147,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
               value={sharedChangeLog}
               onChange={(e) => setSharedChangeLog(e.target.value)}
               rows={2}
-              placeholder='Shared change narrative (required) — applied to every sheet in this set.'
+              placeholder='Shared change narrative (required) - applied to every sheet in this set.'
               className="w-full text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5"
             />
           </div>
@@ -168,10 +168,10 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
                 {sheets.map((s, i) => (
                   <div key={s.doc.id} className="px-3 py-2 grid grid-cols-12 gap-2 items-center text-xs">
                     <div className="col-span-3 min-w-0">
-                      <div className="font-mono font-bold text-[var(--color-text)] truncate">{s.doc.documentNumber || "—"}</div>
+                      <div className="font-mono font-bold text-[var(--color-text)] truncate">{s.doc.documentNumber || "-"}</div>
                       <div className="text-[10px] text-[var(--color-text-muted)] truncate">{s.doc.title || s.doc.name}</div>
                     </div>
-                    <div className="col-span-2 font-mono text-[var(--color-text-muted)]">Rev {s.doc.rev || "—"}</div>
+                    <div className="col-span-2 font-mono text-[var(--color-text-muted)]">Rev {s.doc.rev || "-"}</div>
                     <div className="col-span-2">
                       <input value={s.newRevLabel} onChange={(e) => updateSheet(i, { newRevLabel: e.target.value })}
                         className="w-full text-xs border border-[var(--color-border-strong)] rounded px-1.5 py-1 font-mono"

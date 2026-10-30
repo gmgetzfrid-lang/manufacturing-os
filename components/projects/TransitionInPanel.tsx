@@ -126,7 +126,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
     }
     setBusy(null);
     setMsg(failed.length
-      ? `Adopted ${ok} of ${clean.length} — failed: ${failed.join(", ")}`
+      ? `Adopted ${ok} of ${clean.length} - failed: ${failed.join(", ")}`
       : `Adopted ${ok} clean document${ok === 1 ? "" : "s"} into the controlled register. ${flaggedCount ? `${flaggedCount} flagged sheet${flaggedCount === 1 ? "" : "s"} stayed for resolution.` : ""}`);
     await refresh();
   };
@@ -182,7 +182,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
               <button onClick={() => setOpen(expanded ? null : c.docId)} className="w-full flex items-center gap-2 text-left">
                 {expanded ? <ChevronDown className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
                 <span className="text-sm font-bold text-[var(--color-text)] truncate">{c.label}</span>
-                <span className="text-xs text-[var(--color-text-muted)] shrink-0">Rev {c.rev ?? "—"}{c.company ? ` · ${c.company}` : ""}</span>
+                <span className="text-xs text-[var(--color-text-muted)] shrink-0">Rev {c.rev ?? "-"}{c.company ? ` · ${c.company}` : ""}</span>
                 <span className="ml-auto flex items-center gap-1.5 shrink-0">
                   {!impact && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-faint)]" />}
                   {impact?.matchedAssets.length ? (
@@ -205,17 +205,17 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                   {impact.numberCollision && (
                     <div className="rounded-lg border border-rose-500/40 bg-rose-500/[0.06] px-2.5 py-1.5">
                       <b className="text-rose-700 dark:text-rose-300">Number collision:</b>{" "}
-                      <span className="text-[var(--color-text)]">{impact.numberCollision.label} (Rev {impact.numberCollision.rev ?? "—"}) already exists in the register.</span>{" "}
+                      <span className="text-[var(--color-text)]">{impact.numberCollision.label} (Rev {impact.numberCollision.rev ?? "-"}) already exists in the register.</span>{" "}
                       <span className="text-[var(--color-text-muted)]">Renumber this sheet below, or resolve which one is the source of truth before adopting.</span>
                     </div>
                   )}
                   {impact.overlapDocs.length > 0 && (
                     <div className="rounded-lg border border-amber-500/40 bg-amber-500/[0.06] px-2.5 py-1.5 space-y-1">
-                      <div><b className="text-amber-700 dark:text-amber-400">Equipment overlap</b> <span className="text-[var(--color-text-muted)]">— existing sheets carry the same equipment and likely need a tie-in revision:</span></div>
+                      <div><b className="text-amber-700 dark:text-amber-400">Equipment overlap</b> <span className="text-[var(--color-text-muted)]">- existing sheets carry the same equipment and likely need a tie-in revision:</span></div>
                       <ul className="space-y-0.5">
                         {impact.overlapDocs.slice(0, 8).map((o) => (
                           <li key={o.id} className="text-[var(--color-text)]">
-                            <b>{o.label}</b> <span className="text-[var(--color-text-muted)]">Rev {o.rev ?? "—"} · shares {o.sharedTags.join(", ")}</span>
+                            <b>{o.label}</b> <span className="text-[var(--color-text-muted)]">Rev {o.rev ?? "-"} · shares {o.sharedTags.join(", ")}</span>
                           </li>
                         ))}
                       </ul>
@@ -223,11 +223,11 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                   )}
                   {impact.matchedAssets.length > 0 && (
                     <div className="text-[var(--color-text-muted)]">
-                      Registry equipment on this sheet: <b className="text-[var(--color-text)]">{impact.matchedAssets.map((a) => a.tag).join(", ")}</b> — linked automatically on adoption.
+                      Registry equipment on this sheet: <b className="text-[var(--color-text)]">{impact.matchedAssets.map((a) => a.tag).join(", ")}</b> - linked automatically on adoption.
                     </div>
                   )}
                   {impact.tags.length === 0 && (
-                    <div className="text-[var(--color-text-faint)] italic">No equipment tags recognized in the number/title — adoption still works, links can be added later.</div>
+                    <div className="text-[var(--color-text-faint)] italic">No equipment tags recognized in the number/title - adoption still works, links can be added later.</div>
                   )}
 
                   {canManage && (

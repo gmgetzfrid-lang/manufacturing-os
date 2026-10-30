@@ -166,8 +166,8 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
         try {
           const stamped = await stampPdf(url, {
             userLabel: email, email, timestamp: now, expiresAt,
-            watermarkText: `UNCONTROLLED — ${doc.document_number || "DOC"} Rev ${doc.rev || "-"}`,
-            footerNotice: `${doc.document_number || "Document"} Rev ${doc.rev ?? "?"} at time of issue — verify current revision before use.`,
+            watermarkText: `UNCONTROLLED - ${doc.document_number || "DOC"} Rev ${doc.rev || "-"}`,
+            footerNotice: `${doc.document_number || "Document"} Rev ${doc.rev ?? "?"} at time of issue - verify current revision before use.`,
             verifyUrl: doc.id && doc.current_version_id && publicOrigin()
               ? `${publicOrigin()}/verify/${doc.id}?v=${doc.current_version_id}`
               : undefined,
@@ -209,7 +209,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
                 <button onClick={() => setZoom((z) => Math.max(0.4, Math.round((z - 0.15) * 100) / 100))} className="p-1.5 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white" title="Zoom out"><ZoomOut className="w-4 h-4" /></button>
                 <button onClick={() => setZoom(1)} className="w-9 text-center text-[11px] font-mono text-slate-300 hover:text-white" title="Fit to width (Ctrl + scroll to zoom)">{Math.round(zoom * 100)}%</button>
                 <button onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.15) * 100) / 100))} className="p-1.5 rounded-lg hover:bg-white/10 text-slate-300 hover:text-white" title="Zoom in"><ZoomIn className="w-4 h-4" /></button>
-                <button onClick={() => panZoom.setPanMode((v) => !v)} className={`p-1.5 rounded-lg hover:bg-white/10 ${panZoom.panMode ? "text-orange-300" : "text-slate-300 hover:text-white"}`} title={panZoom.panMode ? "Pan tool (drag to move) — click for cursor" : "Cursor — click for the pan/grab hand"}>
+                <button onClick={() => panZoom.setPanMode((v) => !v)} className={`p-1.5 rounded-lg hover:bg-white/10 ${panZoom.panMode ? "text-orange-300" : "text-slate-300 hover:text-white"}`} title={panZoom.panMode ? "Pan tool (drag to move) - click for cursor" : "Cursor - click for the pan/grab hand"}>
                   {panZoom.panMode ? <Hand className="w-4 h-4" /> : <MousePointer2 className="w-4 h-4" />}
                 </button>
               </div>

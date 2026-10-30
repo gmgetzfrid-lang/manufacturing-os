@@ -107,7 +107,7 @@ function AiInstructionsInner() {
       <PageHeaderBar
         icon={GraduationCap}
         title="AI Instructions"
-        subtitle="Teach the AI your site's conventions once — every extraction, import, and answer follows them from then on. Plain language; the AI reads these before every call."
+        subtitle="Teach the AI your site's conventions once - every extraction, import, and answer follows them from then on. Plain language; the AI reads these before every call."
         actions={canWrite ? (
           <button onClick={() => setEditing({ scope: "global", title: "", body: "", enabled: true })}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-black shadow">
@@ -118,7 +118,7 @@ function AiInstructionsInner() {
 
       {!canWrite && (
         <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-          Read-only — only Admins and Document Controllers teach the AI.
+          Read-only - only Admins and Document Controllers teach the AI.
         </div>
       )}
 
@@ -138,8 +138,8 @@ function AiInstructionsInner() {
           <div className="text-sm font-black text-[var(--color-text)]">Nothing taught yet</div>
           <p className="text-xs text-[var(--color-text-muted)] mt-1 max-w-md mx-auto">
             Every site has conventions a generic AI can&apos;t guess. Write them here in plain
-            language — &ldquo;equipment descriptions use the P&amp;ID service name, not the vendor
-            model&rdquo; — and every AI feature obeys, starting with the very next call.
+            language - &ldquo;equipment descriptions use the P&amp;ID service name, not the vendor
+            model&rdquo; - and every AI feature obeys, starting with the very next call.
           </p>
         </div>
       ) : (

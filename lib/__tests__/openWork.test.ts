@@ -27,7 +27,7 @@ describe("open work that must surface on today", () => {
   it("started early = underway leaves planned for a later day", () => {
     expect(startedEarlyWork(all, todayEnd).map((w) => w.leaf.id)).toEqual(["e"]);
   });
-  it("a completed-early future step is neither overdue nor 'started early' — it's just done", () => {
+  it("a completed-early future step is neither overdue nor 'started early' - it's just done", () => {
     const doneEarly = mk({ id: "g", name: "Done early", plannedStartAt: at("2026-10-29", "08:00"), plannedAt: at("2026-10-29", "12:00"), status: "completed", percentComplete: 100 });
     expect(overdueOpenWork([doneEarly], todayStart)).toEqual([]);
     expect(startedEarlyWork([doneEarly], todayEnd)).toEqual([]);

@@ -104,7 +104,7 @@ function chainOf(folderId: string | null, folders: Map<string, { id: string; par
 export async function resolveEstate(admin: SupabaseClient, input: ResolveRunInput): Promise<ResolveRunResult> {
   const res: ResolveRunResult = { folders: 0, documents: 0, applied: 0, pending: 0, unchanged: 0, notes: [] };
   const ctx = await loadResolveContext(admin, input.orgId);
-  if (!ctx.units.length) res.notes.push("No units in the Site Codebook — unit links need one.");
+  if (!ctx.units.length) res.notes.push("No units in the Site Codebook - unit links need one.");
 
   const proposals: ProposedEdge[] = [];
 

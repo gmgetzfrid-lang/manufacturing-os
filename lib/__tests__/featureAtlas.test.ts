@@ -5,7 +5,7 @@ import { FEATURE_ATLAS, searchAtlas, atlasForPrompt } from "@/lib/featureAtlas";
 // own integrity is worth a tripwire, and the searches people actually type
 // must land.
 
-describe("feature atlas — the app's map of itself", () => {
+describe("feature atlas - the app's map of itself", () => {
   it("has unique, absolute hrefs and non-empty aliases", () => {
     const hrefs = FEATURE_ATLAS.map((e) => e.href);
     expect(new Set(hrefs).size).toBe(hrefs.length);

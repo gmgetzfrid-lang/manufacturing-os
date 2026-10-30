@@ -57,12 +57,12 @@ interface RunResult {
 function diagnose(inputs: RunInputs): string[] {
   const out: string[] = [];
   if (inputs.withNumbers === 0) {
-    out.push("No documents carry document numbers yet — references can't resolve to anything. Fill in numbers (the title-block ingest wizard reads them automatically).");
+    out.push("No documents carry document numbers yet - references can't resolve to anything. Fill in numbers (the title-block ingest wizard reads them automatically).");
   }
   if (inputs.registryAssets === 0) {
     out.push("The equipment registry is empty, so the Shared equipment skill has nothing to compare. Add assets under Admin → Assets, or run the registry sweep.");
   } else if (inputs.equipmentLinks === 0) {
-    out.push("No documents are linked to equipment yet — run an Equipment sweep on a library to bridge them.");
+    out.push("No documents are linked to equipment yet - run an Equipment sweep on a library to bridge them.");
   }
   if (inputs.mirroredDocs === 0) {
     out.push("No knowledge documents mirror controlled documents. Link a document-control library as a knowledge source so extraction can read the real files.");
@@ -70,12 +70,12 @@ function diagnose(inputs: RunInputs): string[] {
     out.push("Extraction hasn't found cross-references in the mirrored documents yet (they may not be drawings, or haven't been indexed).");
   }
   if (inputs.citedQuestions === 0) {
-    out.push("No answered questions cite two controlled documents yet — the Answered-together skill grows with use.");
+    out.push("No answered questions cite two controlled documents yet - the Answered-together skill grows with use.");
   }
   if (inputs.customSkills === 0 && inputs.skillsInstalled) {
-    out.push("No custom skills yet — teach the engine your facility's own numbering conventions above.");
+    out.push("No custom skills yet - teach the engine your facility's own numbering conventions above.");
   } else if (inputs.customSkills > 0 && inputs.chunksScanned === 0) {
-    out.push("Custom skills had no indexed text to scan — index the source documents into a knowledge library first.");
+    out.push("Custom skills had no indexed text to scan - index the source documents into a knowledge library first.");
   }
   return out;
 }
@@ -158,7 +158,7 @@ export default function ProposedLinksPage() {
         icon={Waypoints}
         eyebrow="Link discovery"
         title="Proposed connections"
-        subtitle="What the system found in your own extracted data — each with the evidence behind it. Nothing here was applied without you."
+        subtitle="What the system found in your own extracted data - each with the evidence behind it. Nothing here was applied without you."
         actions={canRun ? (
           <button onClick={() => void runProposers()} disabled={running}
             className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-black text-white bg-violet-600 hover:bg-violet-500 disabled:opacity-60">
@@ -186,7 +186,7 @@ export default function ProposedLinksPage() {
           </div>
           {lastRun.evidenceLost > 0 && (
             <div className="text-[11px] text-amber-700">
-              {lastRun.evidenceLost} existing system link{lastRun.evidenceLost === 1 ? "" : "s"} no longer match their original evidence — marked, not removed.
+              {lastRun.evidenceLost} existing system link{lastRun.evidenceLost === 1 ? "" : "s"} no longer match their original evidence - marked, not removed.
             </div>
           )}
           {lastRun.notes.map((n) => (
@@ -209,7 +209,7 @@ export default function ProposedLinksPage() {
               ))}
               {diagnose(lastRun.inputs).length === 0 && (
                 <div className="text-[11px] text-[var(--color-text-muted)]">
-                  The inputs look healthy — everything discoverable is likely already linked or was previously decided.
+                  The inputs look healthy - everything discoverable is likely already linked or was previously decided.
                 </div>
               )}
             </div>
@@ -282,7 +282,7 @@ export default function ProposedLinksPage() {
           ))}
           <div className="flex items-center gap-1.5 pt-2 text-[11px] text-[var(--color-text-muted)]">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-            Dismissed pairs are remembered — the system won&apos;t propose them again unless a new revision brings new evidence.
+            Dismissed pairs are remembered - the system won&apos;t propose them again unless a new revision brings new evidence.
           </div>
         </div>
       )}

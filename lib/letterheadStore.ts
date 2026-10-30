@@ -30,14 +30,14 @@ export async function loadLetterhead(projectId: string): Promise<Letterhead | nu
  *  The shift settings beside it are kept as they are. */
 export async function saveLetterhead(projectId: string, lh: Letterhead | null): Promise<void> {
   const clean = lh ? cleanLetterhead({ ...lh, savedAt: new Date().toISOString() }) : null;
-  if (lh && !clean) throw new Error("That letterhead couldn't be read — try another file.");
+  if (lh && !clean) throw new Error("That letterhead couldn't be read - try another file.");
   const { data: cur, error: readErr } = await supabase.from("projects").select("shift_times").eq("id", projectId).maybeSingle();
   if (readErr) throw new Error(`Not saved: ${readErr.message}`);
   const next: Record<string, unknown> = { ...((cur as { shift_times?: Record<string, unknown> | null } | null)?.shift_times ?? {}) };
   if (clean) next.letterhead = clean; else delete next.letterhead;
   const { data, error } = await supabase.from("projects").update({ shift_times: next }).eq("id", projectId).select("id");
-  if (error) throw new Error(/shift_times/.test(error.message) ? "Not saved — the project's settings column is missing (migration 20261027_project_shift_times.sql)." : `Not saved: ${error.message}`);
-  if (!data || data.length === 0) throw new Error("Not saved — only the project owner or an admin can change the letterhead.");
+  if (error) throw new Error(/shift_times/.test(error.message) ? "Not saved - the project's settings column is missing (migration 20261027_project_shift_times.sql)." : `Not saved: ${error.message}`);
+  if (!data || data.length === 0) throw new Error("Not saved - only the project owner or an admin can change the letterhead.");
   cache.set(projectId, clean);
   try { window.dispatchEvent(new CustomEvent(EVENT, { detail: { projectId } })); } catch { /* SSR */ }
 }

@@ -69,7 +69,7 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
     <Modal onClose={onClose} size="xl" dismissable={busy !== "download"}>
       <ModalHeader icon={FileText} title={draft?.form.title ?? formName}
         subtitle={draft
-          ? `${draft.form.purpose} · ${draft.form.fillable ? "fillable PDF — filled in place, still editable" : "flat PDF — completed pages + the original form"}`
+          ? `${draft.form.purpose} · ${draft.form.fillable ? "fillable PDF - filled in place, still editable" : "flat PDF - completed pages + the original form"}`
           : "Drafting from this answer…"}
         onClose={onClose} />
       <ModalBody className="max-h-[70vh] space-y-4">
@@ -77,7 +77,7 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
           <div className="py-16 flex flex-col items-center gap-3 text-[var(--color-text-muted)]">
             <Loader2 className="w-6 h-6 animate-spin text-orange-600" />
             <div className="text-sm font-bold text-[var(--color-text)]">Drafting every field from the answer and its proof</div>
-            <div className="text-xs">Names, signatures and numbers are left for you — never invented.</div>
+            <div className="text-xs">Names, signatures and numbers are left for you - never invented.</div>
           </div>
         )}
         {error && (
@@ -107,7 +107,7 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
         )}
       </ModalBody>
       <ModalFooter>
-        <span className="mr-auto text-[11px] text-[var(--color-text-muted)]">Review every field before you submit — you own what&apos;s on this form.</span>
+        <span className="mr-auto text-[11px] text-[var(--color-text-muted)]">Review every field before you submit - you own what&apos;s on this form.</span>
         {draft && (
           <button type="button" onClick={() => void copyAll()}
             className="inline-flex items-center gap-1.5 text-[13px] font-bold px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-orange-400">
@@ -146,7 +146,7 @@ function FieldInput({ field: f, value, onChange, needsYou }: {
         </label>
       ) : f.kind === "choice" && f.options && f.options.length > 0 ? (
         <select id={id} value={value} onChange={(e) => onChange(e.target.value)} className={base}>
-          <option value="">—</option>
+          <option value="">-</option>
           {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
       ) : (

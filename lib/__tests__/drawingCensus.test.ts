@@ -115,7 +115,7 @@ describe("readDrawingSheet", () => {
     expect(out!.sheet.title).toMatchObject({ sheet: "1", rev: "39" });
   });
 
-  it("every tile failing is a failed read — nothing is changed", async () => {
+  it("every tile failing is a failed read - nothing is changed", async () => {
     const call = async (a: { system: string }) => { if (a.system === TILE_SYSTEM) throw new Error("down"); return ""; };
     await expect(readDrawingSheet(pdf, 1, "x", call, { render, transcript: false })).rejects.toThrow(DrawingReadError);
   });

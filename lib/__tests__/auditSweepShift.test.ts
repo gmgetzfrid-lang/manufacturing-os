@@ -32,7 +32,7 @@ describe("night crews: only the jobs that have one", () => {
     expect(r.goals.all.map((x) => x.leaf.id)).toEqual(["tr"]);
     expect(r.goals.movedOff.map((x) => x.leaf.id)).toEqual(["hb"]);
   });
-  it("it isn't overdue at 22:00 — it's the next day shift's first hours", () => {
+  it("it isn't overdue at 22:00 - it's the next day shift's first hours", () => {
     const hb = all.find((m) => m.id === "hb")!;
     expect(isOverdue(hb, Date.parse(at("2026-10-26", "23:00")), CHI, 0, T)).toBe(false);
     const night = shiftWindow("2026-10-26", "night", CHI);
@@ -96,7 +96,7 @@ describe("date-only steps", () => {
   });
 });
 
-describe("can be pulled ahead — only when the step before it is done or on the list", () => {
+describe("can be pulled ahead - only when the step before it is done or on the list", () => {
   it("follows the equipment's step order when the file has no links", () => {
     const p = mk({ id: "p", name: "E-12" });
     const a = mk({ id: "a", name: "Open", parentId: "p", plannedStartAt: at("2026-10-27", "05:30"), plannedAt: at("2026-10-27", "09:30"), status: "blocked" });
@@ -113,7 +113,7 @@ describe("where we stand", () => {
     const d = shiftWindow("2026-10-26", "day", CHI);
     const r = buildShiftReport({ milestones: [s], tz: CHI, shift: d, now: d.end });
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r, f, { pctOf: () => 90, finishOf: () => undefined }) });
-    expect(text).toMatch(/planned finish .* — passed/);
+    expect(text).toMatch(/planned finish .* - passed/);
     expect(text).not.toMatch(/holds for/);
   });
 });

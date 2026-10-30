@@ -110,7 +110,7 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
       const res = await addKnowledgeSources(orgId, libraryId, picks);
       showToast({
         type: "success",
-        title: `Linked ${res.linked} source${res.linked === 1 ? "" : "s"} — ${res.added} document${res.added === 1 ? "" : "s"} queued for indexing.`,
+        title: `Linked ${res.linked} source${res.linked === 1 ? "" : "s"} - ${res.added} document${res.added === 1 ? "" : "s"} queued for indexing.`,
       });
       onAdded();
       onClose();
@@ -180,7 +180,7 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
               <Link2 className="w-4 h-4 text-orange-600" /> Add sources from Document Control
             </h2>
             <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-              Linked containers feed this library LIVE — new documents index automatically, rev-ups
+              Linked containers feed this library LIVE - new documents index automatically, rev-ups
               re-index, archived ones drop out. No files are copied.
             </p>
           </div>
@@ -339,7 +339,7 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
       const res = await syncKnowledgeSources(orgId, libraryId);
       showToast({
         type: "success",
-        title: `Synced — ${res.added} added, ${res.refreshed} re-indexing after rev-up, ${res.removed} removed.`,
+        title: `Synced - ${res.added} added, ${res.refreshed} re-indexing after rev-up, ${res.removed} removed.`,
       });
       bump();
       onChanged();
@@ -375,7 +375,7 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
           <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-muted)]" />
         ) : sources.length === 0 ? (
           <span className="text-[11px] text-[var(--color-text-muted)] italic">
-            None linked — this library only has direct uploads.
+            None linked - this library only has direct uploads.
           </span>
         ) : (
           sources.map((s) => (

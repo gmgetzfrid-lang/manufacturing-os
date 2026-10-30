@@ -26,7 +26,7 @@ const types: AssetType[] = [
   { id: "t-pump", org_id: "o", name: "Pump", icon: null, color: null, sort_order: 0 } as AssetType,
 ];
 
-describe("planCategorization — codebook → registry bridge", () => {
+describe("planCategorization - codebook → registry bridge", () => {
   it("decodes tags through codebook prefixes and reuses existing categories case-insensitively", () => {
     const plan = planCategorization(
       [asset("a1", "E-22"), asset("a2", "P-101"), asset("a3", "XV-9")],
@@ -53,7 +53,7 @@ describe("planCategorization — codebook → registry bridge", () => {
     expect(plan.assignments[0]?.typeName).toBe("Exchanger");
   });
 
-  it("does nothing with an empty codebook — everything is unmatched, nothing invented", () => {
+  it("does nothing with an empty codebook - everything is unmatched, nothing invented", () => {
     const plan = planCategorization([asset("a1", "E-22")], types, EMPTY_CODEBOOK);
     expect(plan.assignments).toHaveLength(0);
     expect(plan.unmatched).toEqual(["E-22"]);

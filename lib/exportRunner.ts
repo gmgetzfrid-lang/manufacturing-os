@@ -366,7 +366,7 @@ async function s3Put(params: {
   const storedSize = Number(head.ContentLength ?? -1);
   if (storedSize !== params.body.byteLength) {
     throw new Error(
-      `Backup verification failed: wrote ${params.body.byteLength} bytes to ${params.key} but the destination reports ${storedSize}. The run is marked failed — do NOT trust this backup.`,
+      `Backup verification failed: wrote ${params.body.byteLength} bytes to ${params.key} but the destination reports ${storedSize}. The run is marked failed - do NOT trust this backup.`,
     );
   }
 }
@@ -449,7 +449,7 @@ function buildReadme(envelope: DataExportEnvelope, omittedCount = 0): string {
   const m = envelope.manifest;
   const totalRows = m.tables.reduce((s, t) => s + t.rowCount, 0);
   const omittedNote = omittedCount > 0
-    ? `\n## ⚠ Omitted binaries\n\n${omittedCount} file(s) exceeded this ZIP's embedded-bytes cap and are NOT inside — see files-omitted.json for the list and how to fetch them.\n`
+    ? `\n## ⚠ Omitted binaries\n\n${omittedCount} file(s) exceeded this ZIP's embedded-bytes cap and are NOT inside - see files-omitted.json for the list and how to fetch them.\n`
     : "";
   const shedNote = (m.spaceArchives?.length ?? 0) > 0
     ? `\n## Offline space archives\n\n${m.files.archivedOffline ?? 0} file(s) were archived offline before this export to reclaim cloud storage.\nTheir records are in tables/, but their binaries live ONLY in these space archive zip(s):\n${(m.spaceArchives ?? []).map((id) => `- <archive root>/data/${id}.zip`).join("\n")}\nKeep those zips with this backup for full binary coverage.\n`
@@ -468,12 +468,12 @@ Schema version: ${m.schemaVersion}
 
 ## Layout
 
-- manifest.json             — full export metadata
-- README.md                 — this file
-- schema/schema.sql         — base database DDL
-- schema/migrations/*.sql   — every schema migration, in order (base + migrations = the exact live schema)
-- tables/<name>.json        — one file per table; JSON array of rows
-- files/<storage-path>      — every binary file, path-preserved
+- manifest.json             - full export metadata
+- README.md                 - this file
+- schema/schema.sql         - base database DDL
+- schema/migrations/*.sql   - every schema migration, in order (base + migrations = the exact live schema)
+- tables/<name>.json        - one file per table; JSON array of rows
+- files/<storage-path>      - every binary file, path-preserved
 ${omittedNote}${shedNote}
 To rebuild elsewhere: apply schema.sql, then each migration in filename order,
 then import tables/*.json (parents before children), then upload files/* to

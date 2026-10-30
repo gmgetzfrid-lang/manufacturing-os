@@ -28,7 +28,7 @@ const kids = new Map([["e14", ms.slice(1)]]);
 
 describe("as built", () => {
   const b = asBuilt(ms, kids, LA, times);
-  it("a step done ahead of plan sits when it was done — on that shift", () => {
+  it("a step done ahead of plan sits when it was done - on that shift", () => {
     expect(builtSpan(ms[1])).toMatchObject({ kind: "done", ahead: true, start: t("2026-10-27", "14:00"), finish: t("2026-10-27", "14:00") });
     expect([...b.bands(ms[1]).day]).toEqual(["2026-10-27"]);
     expect(b.bands(ms[1]).night.size).toBe(0);
@@ -91,7 +91,7 @@ describe("each shift's report: only the comments said for it", () => {
     n("a", "trays heavier fouled", at("2026-10-27", "15:00"), undefined, "behind"),
     n("e", "Progress → 45%", at("2026-10-27", "15:00")),
   ];
-  it("day shift: its own, the meeting's, and one punched for it — not yesterday's", () => {
+  it("day shift: its own, the meeting's, and one punched for it - not yesterday's", () => {
     const r = notesForShift(notes, day, 3_600_000);
     expect(r.note.get("a")?.body).toBe("said at 14:00");
     expect(r.note.get("b")?.body).toBe("typed at the meeting");
@@ -100,7 +100,7 @@ describe("each shift's report: only the comments said for it", () => {
     expect(r.note.has("e")).toBe(false);
     expect(r.why.get("a")?.body).toBe("trays heavier fouled");
   });
-  it("night shift: only its own — nothing trails over from the day", () => {
+  it("night shift: only its own - nothing trails over from the day", () => {
     const r = notesForShift(notes, night, 3_600_000);
     expect([...r.note.keys()]).toEqual(["d"]);
     expect(r.why.size).toBe(0);

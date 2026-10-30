@@ -4,7 +4,7 @@ import { sweepTerms, sentencesWith, tieIn, sweepPassages, sweepBlock, sectionAt,
 const chunk = (id: string, docId: string, page: number, content: string, section: string | null = null): SweepChunk =>
   ({ id, document_id: docId, library_id: "L", page, section, content });
 
-describe("sweepTerms — the asker's own words", () => {
+describe("sweepTerms - the asker's own words", () => {
   it("pulls the subject out of a selection question", () => {
     const t = sweepTerms("What piping spec should I use for 150 class sour gas stream?");
     expect(t[0]).toBe("sour gas");
@@ -27,7 +27,7 @@ describe("finding the sentences that tie terms together", () => {
     expect(s).toMatch(/^7\.6 Valves for use in sour gas \(Wet H2S\)/);
     expect(tieIn(s, "sour gas", ["wet h2s", "h2s", "nace"])).toEqual({ kind: "paren", to: "Wet H2S" });
   });
-  it("a related term in the same sentence is noted as such — weaker than a parenthesis", () => {
+  it("a related term in the same sentence is noted as such - weaker than a parenthesis", () => {
     const s = "Valves for use in sour gas (H2S) service shall conform to NACE MR0103.";
     expect(tieIn(s, "sour gas", ["nace"])).toEqual({ kind: "paren", to: "H2S" });
     expect(tieIn("Sour gas lines shall meet NACE MR0103.", "sour gas", ["nace"])).toEqual({ kind: "related", to: "nace" });
@@ -64,7 +64,7 @@ describe("the sweep, as the answer reads it", () => {
       ] }],
     },
   ];
-  it("attaches every tie, then the class that fits the asked rating — not the Class 1500 one", () => {
+  it("attaches every tie, then the class that fits the asked rating - not the Class 1500 one", () => {
     const ids = sweepPassages(sweeps, ["150"]).map((c) => c.id);
     expect(ids.slice(0, 2)).toEqual(["v1", "p1"]);
     expect(ids).toContain("s1");
@@ -99,13 +99,13 @@ describe("a part rated differently from its line", () => {
     expect(lineClassOf(q)).toBe("150");
     expect(lineClassOf("What piping spec for 150 class sour gas?")).toBe("150");
   });
-  it("tells the answer both classes are the subject — not 'Class 300 doesn't answer it'", () => {
+  it("tells the answer both classes are the subject - not 'Class 300 doesn't answer it'", () => {
     const note = pressureClassNote("150", ["300", "150"]);
     expect(note).toMatch(/Class 300 components in a Class 150 line/);
     expect(note).not.toMatch(/do NOT answer it/);
     expect(pressureClassNote("150")).toMatch(/do NOT answer it/);
   });
-  it("searches where Class 300 meets each subject — nozzle included — and drops filler", () => {
+  it("searches where Class 300 meets each subject - nozzle included - and drops filler", () => {
     const t = sweepTerms(q, [], 7, ["300", "150"], "150");
     expect(t.slice(0, 4)).toEqual(["class 300 + nozzle", "class 300 + vessel", "class 300 + bolting", "class 300 + flanges"]);
     expect(t).toContain("vessel nozzle");

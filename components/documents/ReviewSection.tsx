@@ -234,7 +234,7 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
             <div className="space-y-2 pt-1 border-t border-[var(--color-border)]">
               <div className="text-[10px] font-bold text-[var(--color-text-muted)]">Certify this document is current &amp; accurate (resets the clock, no new revision).</div>
               <select value={outcome} onChange={(e) => setOutcome(e.target.value as typeof outcome)} className={`${inp} w-full`}>
-                <option value="no_change">No change — still valid</option>
+                <option value="no_change">No change - still valid</option>
                 <option value="minor">Minor edit made</option>
                 <option value="needs_revision">Needs revision (flag for drafting)</option>
               </select>

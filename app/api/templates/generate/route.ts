@@ -183,7 +183,7 @@ export async function POST(req: NextRequest) {
         .eq("org_id", orgId).eq("user_id", user.id).maybeSingle();
       if (!c || !ALLOWED_PROVIDERS.includes(c.provider as AiProviderId)) {
         return bad(
-          "This template has AI-written sections, so it needs your own API key — add a Claude or " +
+          "This template has AI-written sections, so it needs your own API key - add a Claude or " +
           "OpenAI key in AI settings (Knowledge → AI settings).",
           412,
         );
@@ -193,7 +193,7 @@ export async function POST(req: NextRequest) {
       ]);
       if (cap > 0 && spent.spentUsd >= cap) {
         return bad(
-          `Monthly AI budget reached — $${spent.spentUsd.toFixed(2)} of $${cap.toFixed(2)}. ` +
+          `Monthly AI budget reached - $${spent.spentUsd.toFixed(2)} of $${cap.toFixed(2)}. ` +
           "It resets on the 1st; an Admin can raise the cap in AI settings.",
           402,
         );
@@ -212,7 +212,7 @@ export async function POST(req: NextRequest) {
       "for that field. No markdown, no code fence, no commentary.\n\n" +
       "VOICE: match the example document's phrasing, nomenclature, abbreviations, level of detail, " +
       "and section length. Reuse its standard sentences where they fit. Never invent facts that " +
-      "aren't in the row data — if something isn't provided, write what the example writes in that " +
+      "aren't in the row data - if something isn't provided, write what the example writes in that " +
       "situation, or keep it general rather than fabricating specifics.\n" +
       "Plain sentences only: NO markdown syntax (no **, no #, no bullets unless the example uses " +
       "them), because this text lands directly in a formatted Word document. Use \\n for line breaks." +
@@ -383,7 +383,7 @@ export async function POST(req: NextRequest) {
   const zip = new JSZip();
   for (const r of rendered) zip.file(r.name, r.bytes);
   const zipBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
-  const zipName = `${tpl.name.replace(/[\\/:*?"<>|]+/g, "-")} — ${rendered.length} documents.zip`;
+  const zipName = `${tpl.name.replace(/[\\/:*?"<>|]+/g, "-")} - ${rendered.length} documents.zip`;
   return new NextResponse(new Uint8Array(zipBytes), {
     headers: {
       "content-type": "application/zip",

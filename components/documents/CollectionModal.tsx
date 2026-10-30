@@ -307,7 +307,7 @@ export default function CollectionModal({
                 {mode === "create" ? "New Collection" : (collection?.name ?? "Collection")}
               </div>
               <div className="text-xs text-[var(--color-text-muted)] truncate">
-                {scope === "org" ? "Visible to everyone in your org" : "Personal — only you can see this"}
+                {scope === "org" ? "Visible to everyone in your org" : "Personal - only you can see this"}
               </div>
             </div>
           </div>
@@ -325,7 +325,7 @@ export default function CollectionModal({
               {(mode === "create" || mode === "edit") && (
                 <div className="p-6 space-y-4 border-b border-[var(--color-border)]">
                   <Field label="Name *">
-                    <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Crude Cold Side — Receipt to Surge" className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
+                    <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Crude Cold Side - Receipt to Surge" className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
                   </Field>
                   <Field label="Description" hint="Optional. Describe what this collection is for.">
                     <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="e.g. P&IDs and isos for crude unit cold side, in flow order." className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y" />
@@ -382,7 +382,7 @@ export default function CollectionModal({
                     </div>
                     {mode === "edit" && (
                       <div className="flex items-center gap-3">
-                        <button onClick={() => void sortBySheet()} disabled={busy || itemsHydrated.length < 2} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40" title="Reorder the book by sheet number — the book opens in this order">
+                        <button onClick={() => void sortBySheet()} disabled={busy || itemsHydrated.length < 2} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40" title="Reorder the book by sheet number - the book opens in this order">
                           <ArrowUpDown className="w-3 h-3" /> Sort by Sheet #
                         </button>
                         <button onClick={() => setShowPicker(true)} className="inline-flex items-center gap-1 text-[11px] font-bold text-purple-700 hover:text-purple-800">

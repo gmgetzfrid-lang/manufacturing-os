@@ -87,7 +87,7 @@ export function archivedNotice(opts: {
     message:
       `${what} was archived for storage & cost reasons, so it lives in your ` +
       `offline backup rather than on our servers. To view it, browse for ` +
-      `${path} and drop it here — it opens instantly, without being re-saved.${suffix}`,
+      `${path} and drop it here - it opens instantly, without being re-saved.${suffix}`,
   };
 }
 

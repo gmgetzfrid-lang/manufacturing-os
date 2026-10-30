@@ -106,7 +106,7 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onC
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
         <ClipboardCheck className="w-4 h-4 text-[var(--color-accent)]" />
-        <span className="text-sm font-bold text-[var(--color-text)]">Checklists — PSSR, MI, QA/QC</span>
+        <span className="text-sm font-bold text-[var(--color-text)]">Checklists - PSSR, MI, QA/QC</span>
         <span className="text-[10px] text-[var(--color-text-muted)]">The system reads them, works out what applies, and tracks the gaps.</span>
         {canManage && (
           <button onClick={() => setShowNew((v) => !v)}
@@ -126,7 +126,7 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onC
           <ClipboardCheck className="w-7 h-7 mx-auto text-[var(--color-text-faint)] mb-2" />
           <div className="text-sm font-bold text-[var(--color-text)]">No checklists yet</div>
           <div className="text-xs text-[var(--color-text-muted)] mt-1 max-w-lg mx-auto">
-            Upload your PSSR or QA/QC checklist to document control, then point at it here — the AI
+            Upload your PSSR or QA/QC checklist to document control, then point at it here - the AI
             splits it into items, judges what applies to this job, and finds the evidence you already have.
           </div>
         </div>
@@ -229,7 +229,7 @@ function NewChecklistFlow({ orgId, projectId, actor, onDone, onCancel, setErr }:
             </select>
             <button onClick={() => void read()} disabled={!doc || reading}
               className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
-              title="AI reads the printed pages and splits them into checkable items — you review before anything saves.">
+              title="AI reads the printed pages and splits them into checkable items - you review before anything saves.">
               {reading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Read it
             </button>
             <button onClick={onCancel} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
@@ -251,7 +251,7 @@ function NewChecklistFlow({ orgId, projectId, actor, onDone, onCancel, setErr }:
           <div className="flex items-center gap-2 flex-wrap">
             <input value={title} onChange={(e) => setTitle(e.target.value)}
               className="h-8 flex-1 min-w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-bold" />
-            <span className="text-[11px] text-[var(--color-text-muted)]">{proposed.length} items read — remove any that aren&apos;t real items, then save.</span>
+            <span className="text-[11px] text-[var(--color-text-muted)]">{proposed.length} items read - remove any that aren&apos;t real items, then save.</span>
             <button onClick={() => void save()} disabled={saving || proposed.length === 0}
               className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
               {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Save checklist
@@ -325,7 +325,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
       await loadItems(); onChanged();
       setErr(null);
       if (res.satisfied + res.needsEvidence === 0) {
-        setErr("Evidence sweep: nothing new to prove or demand — items are either done, human-decided, or not evidence-shaped.");
+        setErr("Evidence sweep: nothing new to prove or demand - items are either done, human-decided, or not evidence-shaped.");
       }
     } catch (e) {
       setErr((e as Error).message);
@@ -377,7 +377,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
               </button>
               <button onClick={() => void sweep()} disabled={busy != null}
                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
-                title="Deterministic — no AI. Greens items the platform can PROVE (accepted turnover, documents on file), citation attached; flags the rest needs-evidence.">
+                title="Deterministic - no AI. Greens items the platform can PROVE (accepted turnover, documents on file), citation attached; flags the rest needs-evidence.">
                 {busy === "sweep" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ListChecks className="w-3 h-3" />} Check evidence we already hold
               </button>
               <button onClick={() => void complete()} disabled={busy != null}
@@ -426,7 +426,7 @@ function ChecklistItemRow({ orgId, projectId, item, canManage, actor, onChanged,
   const override = async (patch: Parameters<typeof updateChecklistItem>[0]["patch"], promptNote: string | null) => {
     let manualNote: string | null | undefined = undefined;
     if (promptNote) {
-      const v = await appPrompt({ title: promptNote, message: "Your note marks this item human-decided — automation keeps its hands off from then on.", placeholder: "Why?" });
+      const v = await appPrompt({ title: promptNote, message: "Your note marks this item human-decided - automation keeps its hands off from then on.", placeholder: "Why?" });
       if (v === null) return;
       manualNote = v.trim() || "decided by reviewer";
     }
@@ -471,7 +471,7 @@ function ChecklistItemRow({ orgId, projectId, item, canManage, actor, onChanged,
             )}
             {!na && (
               <button onClick={() => void override({ applicability: "na", status: "na" }, "Mark not applicable")}
-                className="px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Not applicable to this job — your reason goes on the record">N/A</button>
+                className="px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Not applicable to this job - your reason goes on the record">N/A</button>
             )}
             {na && (
               <button onClick={() => void override({ applicability: "applies", status: "open" }, "Reopen this item")}
@@ -487,9 +487,9 @@ function ChecklistItemRow({ orgId, projectId, item, canManage, actor, onChanged,
 
 function StatusDot({ status }: { status: ChecklistItem["status"] }) {
   const map: Record<string, { c: string; t: string }> = {
-    satisfied: { c: "bg-emerald-500", t: "Satisfied — evidence attached" },
-    needs_evidence: { c: "bg-amber-500", t: "Needs evidence — the system holds no proof yet" },
-    open: { c: "bg-[var(--color-text-faint)]", t: "Open — not assessed against evidence" },
+    satisfied: { c: "bg-emerald-500", t: "Satisfied - evidence attached" },
+    needs_evidence: { c: "bg-amber-500", t: "Needs evidence - the system holds no proof yet" },
+    open: { c: "bg-[var(--color-text-faint)]", t: "Open - not assessed against evidence" },
     na: { c: "bg-[var(--color-border-strong)]", t: "Not applicable to this job" },
   };
   const m = map[status] ?? map.open;
@@ -537,7 +537,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, o
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <PackageCheck className="w-4 h-4 text-[var(--color-accent)]" />
-        <span className="text-sm font-bold text-[var(--color-text)]">Turnover package — QA/QC sign-off</span>
+        <span className="text-sm font-bold text-[var(--color-text)]">Turnover package - QA/QC sign-off</span>
         {progress.required > 0 && (
           <span className="text-[10px] font-bold tabular-nums text-[var(--color-text-muted)]">
             {progress.accepted}/{progress.required} accepted{progress.received > 0 ? ` · ${progress.received} awaiting review` : ""}
@@ -554,7 +554,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, o
 
       {items.length === 0 ? (
         <div className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">
-          Nothing required yet. Seed the standard contents for this job size, or add items by hand —
+          Nothing required yet. Seed the standard contents for this job size, or add items by hand -
           then track what the contractor has actually delivered and whether QA/QC accepted it.
         </div>
       ) : (
@@ -599,7 +599,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, o
         <div className="px-4 py-2.5 border-t border-[var(--color-border)] flex items-center gap-2">
           <input value={addName} onChange={(e) => setAddName(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && addName.trim()) { void (async () => { const r = await addTurnoverItem({ orgId, projectId, name: addName, actor }); if (!r.ok) setErr(r.error ?? null); else { setAddName(""); onChanged(); } })(); } }}
-            placeholder="Add a required item — e.g. Torque records"
+            placeholder="Add a required item - e.g. Torque records"
             className="h-8 flex-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
           <button onClick={() => { if (addName.trim()) void (async () => { const r = await addTurnoverItem({ orgId, projectId, name: addName, actor }); if (!r.ok) setErr(r.error ?? null); else { setAddName(""); onChanged(); } })(); }}
             className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)]">
@@ -652,7 +652,7 @@ function PunchSection({ orgId, projectId, canManage, actor, items, onChanged, se
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
         <ListChecks className="w-4 h-4 text-[var(--color-accent)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Punch list</span>
-        <span className="text-[10px] text-[var(--color-text-muted)]">The closeout snag list — visible until it&apos;s empty.</span>
+        <span className="text-[10px] text-[var(--color-text-muted)]">The closeout snag list - visible until it&apos;s empty.</span>
         {open.length > 0 && (
           <span className="ml-auto text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">{open.length} open</span>
         )}
@@ -687,7 +687,7 @@ function PunchSection({ orgId, projectId, canManage, actor, items, onChanged, se
                 <span className={`text-[var(--color-text)] ${it.status !== "open" ? "line-through" : ""}`}>{it.title}</span>
                 {it.dueDate && it.status === "open" && (
                   <span className={`text-[10px] font-bold ${overdue ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
-                    due {new Date(it.dueDate + "T00:00:00").toLocaleDateString()}{overdue ? " — overdue" : ""}
+                    due {new Date(it.dueDate + "T00:00:00").toLocaleDateString()}{overdue ? " - overdue" : ""}
                   </span>
                 )}
                 {it.createdByName && <span className="text-[10px] text-[var(--color-text-faint)]">by {it.createdByName}</span>}
@@ -696,7 +696,7 @@ function PunchSection({ orgId, projectId, canManage, actor, items, onChanged, se
                     <button onClick={async () => { setBusy(it.id); const r = await setPunchStatus({ item: it, status: "done", actor }); setBusy(null); if (!r.ok) setErr(r.error ?? null); else onChanged(); }}
                       className="px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10">Done</button>
                     <button onClick={async () => { setBusy(it.id); const r = await setPunchStatus({ item: it, status: "void", actor }); setBusy(null); if (!r.ok) setErr(r.error ?? null); else onChanged(); }}
-                      className="px-1 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10" title="Void — not a real snag"><Ban className="w-3 h-3" /></button>
+                      className="px-1 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10" title="Void - not a real snag"><Ban className="w-3 h-3" /></button>
                   </span>
                 )}
                 {busy === it.id && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-accent)] ml-auto" />}

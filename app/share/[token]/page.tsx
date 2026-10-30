@@ -68,7 +68,7 @@ export default function SharePage() {
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error === "revoked" || body?.error === "expired"
-          ? "This link is no longer active — ask the owner for a fresh one."
+          ? "This link is no longer active - ask the owner for a fresh one."
           : "The file couldn't be prepared. Try again, or ask the person who shared it.");
       }
       const blob = await res.blob();
@@ -117,7 +117,7 @@ export default function SharePage() {
             {data.title && data.documentNumber && (
               <div className="text-sm text-[var(--color-text)] mb-1">{data.title}</div>
             )}
-            <div className="text-xs text-[var(--color-text-muted)] mb-4">Rev {data.rev || "0"} · From {data.orgName ?? "—"}</div>
+            <div className="text-xs text-[var(--color-text-muted)] mb-4">Rev {data.rev || "0"} · From {data.orgName ?? "-"}</div>
             {data.fileUrl ? (
               <button
                 onClick={() => void handleDownload()}

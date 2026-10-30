@@ -4,7 +4,7 @@ import { parseIsoDurationHours, mergeImportedProgress, needsFutureConfirm } from
 const at = (d: string, hm: string) => Date.parse(`${d}T${hm}:00-05:00`);
 const NOW = "2026-10-25T14:00:00.000Z";
 
-describe("parseIsoDurationHours — MS Project durations become real hours", () => {
+describe("parseIsoDurationHours - MS Project durations become real hours", () => {
   it("handles the shapes MS Project writes", () => {
     expect(parseIsoDurationHours("PT40H0M0S")).toBe(40);
     expect(parseIsoDurationHours("PT4H30M0S")).toBe(4.5);
@@ -19,7 +19,7 @@ describe("parseIsoDurationHours — MS Project durations become real hours", () 
   });
 });
 
-describe("mergeImportedProgress — a re-import never takes progress away", () => {
+describe("mergeImportedProgress - a re-import never takes progress away", () => {
   const live = (status: "planned" | "in_progress" | "completed" | "blocked" | "on_hold" | "missed", percent: number, actualAt: string | null = null, actualStartAt: string | null = null) =>
     ({ status, percent, actualAt, actualStartAt });
 
@@ -49,7 +49,7 @@ describe("mergeImportedProgress — a re-import never takes progress away", () =
   });
 });
 
-describe("needsFutureConfirm — ask once before progress lands on a far-future step", () => {
+describe("needsFutureConfirm - ask once before progress lands on a far-future step", () => {
   const now = at("2026-10-25", "09:00");
   it("today's and tomorrow's work is never questioned", () => {
     expect(needsFutureConfirm(at("2026-10-25", "14:00"), now, "completed", null)).toBe(false);
@@ -60,7 +60,7 @@ describe("needsFutureConfirm — ask once before progress lands on a far-future 
     expect(needsFutureConfirm(at("2026-10-28", "08:00"), now, "in_progress", null)).toBe(true);
     expect(needsFutureConfirm(at("2026-10-28", "08:00"), now, null, 30)).toBe(true);
   });
-  it("taking progress away, holding or blocking never asks — those are always safe", () => {
+  it("taking progress away, holding or blocking never asks - those are always safe", () => {
     expect(needsFutureConfirm(at("2026-10-28", "08:00"), now, "planned", null)).toBe(false);
     expect(needsFutureConfirm(at("2026-10-28", "08:00"), now, "on_hold", null)).toBe(false);
     expect(needsFutureConfirm(at("2026-10-28", "08:00"), now, "blocked", null)).toBe(false);

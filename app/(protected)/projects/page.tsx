@@ -284,7 +284,7 @@ function formatDate(ts: Timestamp): string {
   } catch { return String(ts); }
 }
 function formatRelative(ts: Timestamp | undefined): string {
-  if (!ts) return "—";
+  if (!ts) return "-";
   try {
     const d = new Date(ts as string);
     const diff = Date.now() - d.getTime();
@@ -296,5 +296,5 @@ function formatRelative(ts: Timestamp | undefined): string {
     const days = Math.floor(hr / 24);
     if (days < 7) return `${days}d ago`;
     return d.toLocaleDateString();
-  } catch { return "—"; }
+  } catch { return "-"; }
 }

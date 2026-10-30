@@ -154,7 +154,7 @@ export default function AssetPhotoUploader({
                 Photos for <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200 text-[11px] font-bold align-middle ml-0.5">{asset.tag}</span>
               </div>
               <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 leading-snug">
-                These photos attach <b>directly to this equipment asset</b> — they do NOT become documents and won&apos;t appear in your library folders. Visible everywhere this tag appears.
+                These photos attach <b>directly to this equipment asset</b> - they do NOT become documents and won&apos;t appear in your library folders. Visible everywhere this tag appears.
               </div>
             </div>
           </div>
@@ -241,7 +241,7 @@ export default function AssetPhotoUploader({
                           value={p.caption}
                           onChange={(e) => updatePending(p.id, { caption: e.target.value })}
                           disabled={p.status === "uploading" || p.status === "done"}
-                          placeholder="Caption (optional) — e.g., 'inlet side, north face'"
+                          placeholder="Caption (optional) - e.g., 'inlet side, north face'"
                           className="w-full text-[11px] border border-[var(--color-border)] rounded px-2 py-1 bg-[var(--color-surface)]"
                         />
                       </div>

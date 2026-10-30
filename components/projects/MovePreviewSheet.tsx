@@ -74,7 +74,7 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
       if (landsInPast) w.push("This lands in the past.");
     }
     if (mode === "extend" && targets.some((t) => t.status === "completed")) {
-      w.push("Some selected tasks are already Done — extending a finished task is unusual.");
+      w.push("Some selected tasks are already Done - extending a finished task is unusual.");
     }
     // Pulling work ahead of an unfinished predecessor: say so before commit.
     if (deltaDays < 0 && allTasks && allTasks.length) {
@@ -85,7 +85,7 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
         for (const c of predecessorConflicts(t, projected, byId)) {
           const when = new Date(c.predFinish).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
           const what = c.link.type === "SS" || c.link.type === "SF" ? "starts" : "finishes";
-          w.push(`“${t.name}” would start earlier than its link to “${c.pred.name}” allows (${what}${c.link.lagHours ? ` + ${c.link.lagHours} h` : ""} — ${when}), and that task isn't done.`);
+          w.push(`“${t.name}” would start earlier than its link to “${c.pred.name}” allows (${what}${c.link.lagHours ? ` + ${c.link.lagHours} h` : ""} - ${when}), and that task isn't done.`);
         }
       }
     }
@@ -111,7 +111,7 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
               active={mode === "defer"}
               onClick={() => setMode("defer")}
               title="Shift the date"
-              body={`Move the whole ${multi ? "selection" : "task"} ${dir}. Same duration — no work hours added.`}
+              body={`Move the whole ${multi ? "selection" : "task"} ${dir}. Same duration - no work hours added.`}
               tone="slate"
             />
             <ModeCard
@@ -136,7 +136,7 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
                 <Clock className="w-4 h-4 shrink-0 mt-0.5" />
                 <div>
                   <span>Extending the finish by {absDays} day{absDays === 1 ? "" : "s"}; the start stays.</span>
-                  <div className="mt-1 text-[11px] opacity-80">Planned work hours stay as entered — change them on the task if the job itself grew.</div>
+                  <div className="mt-1 text-[11px] opacity-80">Planned work hours stay as entered - change them on the task if the job itself grew.</div>
                 </div>
               </div>
             )}
@@ -144,7 +144,7 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
 
           {pushed.length > 0 && (
             <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2.5 text-[12px] text-[var(--color-text)]">
-              <b>Also moves</b> — linked step{pushed.length === 1 ? "" : "s"} that can&apos;t start until this finishes: {pushed.slice(0, 6).join(", ")}{pushed.length > 6 ? ` and ${pushed.length - 6} more` : ""}.
+              <b>Also moves</b> - linked step{pushed.length === 1 ? "" : "s"} that can&apos;t start until this finishes: {pushed.slice(0, 6).join(", ")}{pushed.length > 6 ? ` and ${pushed.length - 6} more` : ""}.
             </div>
           )}
 
@@ -155,7 +155,7 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
                   <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {wn}
                 </div>
               ))}
-              <div className="text-[10px] text-amber-700/80 pl-5">You can still continue — this is just a heads-up.</div>
+              <div className="text-[10px] text-amber-700/80 pl-5">You can still continue - this is just a heads-up.</div>
             </div>
           )}
 

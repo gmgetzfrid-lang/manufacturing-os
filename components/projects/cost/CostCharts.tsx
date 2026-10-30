@@ -77,10 +77,10 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
       ? plannedManpowerSeries({ laborHours: exAward.laborHours, scheduleStart: ex.scheduleStart, scheduleEnd: ex.scheduleEnd })
       : [];
     return (
-      <ExampleFrame note="No budget or entries yet — this is the picture a running job draws. Set a budget line below and it goes live.">
+      <ExampleFrame note="No budget or entries yet - this is the picture a running job draws. Set a budget line below and it goes live.">
         <div className="space-y-4">
           <div>
-            <SectionLabel icon={<LineChartIcon className="w-3.5 h-3.5" />} text="Spend curve — planned pace vs promised vs spent" />
+            <SectionLabel icon={<LineChartIcon className="w-3.5 h-3.5" />} text="Spend curve - planned pace vs promised vs spent" />
             <SCurveChart points={exSeries} fmt={(n) => fmtMoney(n, "USD")} todayIso={ex.today} />
           </div>
           {exForecast?.sentence && <ForecastSentence sentence={exForecast.sentence} basis={exForecast.basis} />}
@@ -110,11 +110,11 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-sm space-y-3">
       {series.length >= 2 && (
         <div>
-          <SectionLabel icon={<LineChartIcon className="w-3.5 h-3.5" />} text="Spend curve — planned pace vs promised vs spent" />
+          <SectionLabel icon={<LineChartIcon className="w-3.5 h-3.5" />} text="Spend curve - planned pace vs promised vs spent" />
           <SCurveChart points={series} fmt={fmt} todayIso={todayIso} />
           {!scheduleStart && (
             <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">
-              No schedule dates yet, so there&apos;s no planned-pace line — import or add milestones and it appears.
+              No schedule dates yet, so there&apos;s no planned-pace line - import or add milestones and it appears.
             </div>
           )}
         </div>
@@ -157,17 +157,17 @@ function ForecastSentence({ sentence, basis }: { sentence: string; basis: "cpi" 
 
 const TERMS: Array<{ term: string; plain: string }> = [
   { term: "Budget", plain: "What you plan to spend, split into budget lines (cost accounts)." },
-  { term: "Commitment", plain: "Money you've promised — a signed PO or an awarded contract. Not spent yet, but spoken for." },
-  { term: "Actual", plain: "Money that really left — an invoice or timesheet posted against a budget line." },
+  { term: "Commitment", plain: "Money you've promised - a signed PO or an awarded contract. Not spent yet, but spoken for." },
+  { term: "Actual", plain: "Money that really left - an invoice or timesheet posted against a budget line." },
   { term: "Adjustment", plain: "A signed correction. Negative adjustments credit money back." },
   { term: "Earned value (EV)", plain: "Work done, priced at budget: a line pinned to a schedule task earns its budget × that task's % complete." },
   { term: "CPI", plain: "Cost Performance Index = earned value ÷ actual cost. 1.0 is on budget; 1.06 means you get $1.06 of work per $1 spent; below 1.0 you're over-running." },
-  { term: "SPI", plain: "Schedule Performance Index — same idea for time. Below 1.0 means behind schedule." },
-  { term: "S-curve", plain: "The spend-over-time chart. Planned pace (dashed), committed, and spent — healthy jobs track near the planned line." },
-  { term: "EAC / forecast", plain: "Estimate At Completion — where the total lands if current performance continues (budget ÷ CPI)." },
+  { term: "SPI", plain: "Schedule Performance Index - same idea for time. Below 1.0 means behind schedule." },
+  { term: "S-curve", plain: "The spend-over-time chart. Planned pace (dashed), committed, and spent - healthy jobs track near the planned line." },
+  { term: "EAC / forecast", plain: "Estimate At Completion - where the total lands if current performance continues (budget ÷ CPI)." },
   { term: "RFQ group", plain: "One scope of work you asked several companies to price. Their quotes tabulate side by side under it." },
-  { term: "Bid tabulation", plain: "The side-by-side of competing quotes: price, labor hours offered, $/hour, and what each bid EXCLUDED — which is usually why the low bid is low." },
-  { term: "$/labor-hour", plain: "Total price ÷ labor hours offered. The manpower-for-the-money number — lower buys more hands." },
+  { term: "Bid tabulation", plain: "The side-by-side of competing quotes: price, labor hours offered, $/hour, and what each bid EXCLUDED - which is usually why the low bid is low." },
+  { term: "$/labor-hour", plain: "Total price ÷ labor hours offered. The manpower-for-the-money number - lower buys more hands." },
   { term: "Change order (CO)", plain: "A priced change to the contract, with a reason code. Approving one posts the money; nothing changes the budget silently." },
 ];
 

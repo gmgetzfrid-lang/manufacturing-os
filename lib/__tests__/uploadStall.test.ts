@@ -26,7 +26,7 @@ function putWithStallGuard(xhr: FakeXhr): Promise<string | null> {
     const arm = () => {
       if (stall) clearTimeout(stall);
       stall = setTimeout(() => {
-        finish(() => { xhr.abort(); reject(new Error("stalled — no data moved for 90s")); });
+        finish(() => { xhr.abort(); reject(new Error("stalled - no data moved for 90s")); });
       }, STALL_MS);
     };
     xhr.onProgress = () => arm();
@@ -105,7 +105,7 @@ describe("upload stall guard", () => {
     await expect(p).rejects.toThrow(/HTTP 504/);
   });
 
-  it("settles once — a late event after a stall cannot resolve it", async () => {
+  it("settles once - a late event after a stall cannot resolve it", async () => {
     const xhr = new FakeXhr();
     const p = putWithStallGuard(xhr);
     p.catch(() => undefined);
@@ -130,7 +130,7 @@ describe("batch semantics", () => {
   it("allSettled attempts every file and separates the failures", async () => {
     const files = ["a", "bad", "c", "d"];
     const upload = async (n: string) => {
-      if (n === "bad") throw new Error("stalled — no data moved for 90s");
+      if (n === "bad") throw new Error("stalled - no data moved for 90s");
       return n;
     };
     const results = await Promise.allSettled(files.map(upload));
@@ -141,7 +141,7 @@ describe("batch semantics", () => {
     expect((bad[0] as PromiseRejectedResult).reason.message).toMatch(/stalled/);
   });
 
-  it("Promise.all — the old behaviour — loses the files after the failure", async () => {
+  it("Promise.all - the old behaviour - loses the files after the failure", async () => {
     const attempted: string[] = [];
     const upload = async (n: string) => {
       attempted.push(n);

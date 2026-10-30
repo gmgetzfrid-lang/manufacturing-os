@@ -35,7 +35,7 @@ const build = (pullIds?: string[]) => buildShiftReport({ milestones: all, tz: CH
 describe("look-ahead", () => {
   const r = build();
   const byId = new Map(r.goals.lookAhead.map((x) => [x.row.leaf.id, x]));
-  it("offers upcoming steps not on any list — not tonight's own work", () => {
+  it("offers upcoming steps not on any list - not tonight's own work", () => {
     expect(byId.has("op")).toBe(false);
     expect([...byId.keys()].sort()).toEqual(["bl", "cl", "in", "rt"]);
   });
@@ -89,12 +89,12 @@ describe("pulled forward", () => {
       pull: { crew: "Maintenance (KE)", hands: 2, hours: 12 },
     }) });
     expect(text).toMatch(/Could try if there's time: 2 steps, 16 h of 24 h \(Maintenance \(KE\), 2 × 12 h\)\./);
-    expect(text).toMatch(/Clean flanges · .*Could try \(Maintenance \(KE\)\) — pulled ahead — planned/);
+    expect(text).toMatch(/Clean flanges · .*Could try \(Maintenance \(KE\)\) - pulled ahead - planned/);
   });
 });
 
 describe("audit fixes", () => {
-  it("a pulled step that gets blocked comes off the list, flagged — not counted or shipped", () => {
+  it("a pulled step that gets blocked comes off the list, flagged - not counted or shipped", () => {
     const blocked = { ...clean, status: "blocked", statusReason: "no scaffold" } as Milestone;
     const r = buildShiftReport({ milestones: [e12, open, blast, e20, blocked, h1, insp, v9, retube], tz: CHI, shift: day, now: day.end, pullIds: ["cl"] });
     expect(r.goals.pulled).toEqual([]);

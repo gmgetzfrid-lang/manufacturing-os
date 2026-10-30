@@ -147,7 +147,7 @@ export function runChecks(a: AnswerUnderTest, expect: CaseExpect): CheckResult[]
   // Asking for what the library holds.
   const docs = a.libraryDocNames.map((name) => ({ name }));
   const asks = settleItems(answer).filter((l) => !/Searched the library/i.test(l));
-  const held = asks.flatMap((l) => [...docsNamedIn(l, docs, 1), ...docsTitledIn(l, docs, 1)].slice(0, 1).map((d) => `asks for "${d.name}" — in the library`));
+  const held = asks.flatMap((l) => [...docsNamedIn(l, docs, 1), ...docsTitledIn(l, docs, 1)].slice(0, 1).map((d) => `asks for "${d.name}" - in the library`));
   add({ code: "asks_for_held", pass: held.length === 0, detail: held.length ? held.slice(0, 3).join("; ") : asks.length ? `${asks.length} ask(s), none for a held document` : "asks for nothing" });
 
   // Expected pages.
@@ -159,9 +159,9 @@ export function runChecks(a: AnswerUnderTest, expect: CaseExpect): CheckResult[]
     };
     const hit = a.citations.find((c) => matchDoc(c.documentName) && Math.abs(c.page - want.page) <= tol);
     const where = a.funnel?.[i];
-    const why = where === "never_found" ? " — no search ever returned it"
-      : where === "found_not_given" ? " — found by a search, then ranked out before the answer"
-      : where === "given_not_cited" ? " — it was in front of the model, which didn't use it" : "";
+    const why = where === "never_found" ? " - no search ever returned it"
+      : where === "found_not_given" ? " - found by a search, then ranked out before the answer"
+      : where === "given_not_cited" ? " - it was in front of the model, which didn't use it" : "";
     add({ code: "missed_page", pass: !!hit, detail: hit ? `cited ${want.document} p.${want.page}` : `expected ${want.document} p.${want.page}${why}` });
   });
 

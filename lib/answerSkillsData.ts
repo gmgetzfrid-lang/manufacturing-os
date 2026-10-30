@@ -66,8 +66,8 @@ export const BUILTIN_ANSWER_SKILLS: BuiltinAnswerSkillDef[] = [
       "old value, procedures that reference it.\n" +
       "- Rank every impact by proof, and say the rank: CITED (a passage states the dependency), " +
       "TRACED (the dependency follows from cited facts in steps you show), or SUSPECTED (plausible, " +
-      "needs verification — name what document or check would confirm it).\n" +
-      "- End with the impacts that could NOT be assessed from the retrieved documents — the unknown is " +
+      "needs verification - name what document or check would confirm it).\n" +
+      "- End with the impacts that could NOT be assessed from the retrieved documents - the unknown is " +
       "part of the review, not something to omit.\n" +
       "- Never soften a safety-relevant impact to keep the answer tidy.",
   },
@@ -81,7 +81,7 @@ export const BUILTIN_ANSWER_SKILLS: BuiltinAnswerSkillDef[] = [
     instructions:
       "APPLIES WHEN the question reports something broken, failing, leaking, vibrating, tripping, or " +
       "underperforming, or asks how to diagnose it. Otherwise ignore this skill.\n" +
-      "- Restate the SYMPTOMS first, separated from interpretations — what is observed, not what it means.\n" +
+      "- Restate the SYMPTOMS first, separated from interpretations - what is observed, not what it means.\n" +
       "- List candidate causes as a RANKED list. For each: why it fits the symptoms, the passage that " +
       "supports it [n], and the concrete NEXT CHECK that would confirm or eliminate it (what to measure, " +
       "inspect, or isolate).\n" +
@@ -103,10 +103,10 @@ export const BUILTIN_ANSWER_SKILLS: BuiltinAnswerSkillDef[] = [
       "previous answer was not understood. Otherwise ignore this skill.\n" +
       "- Write in the style of ASD-STE100 Simplified Technical English: short sentences (aim under 20 " +
       "words), one instruction per sentence, active voice, present tense where possible.\n" +
-      "- Use one name per thing and keep it — never alternate between synonyms for the same item.\n" +
+      "- Use one name per thing and keep it - never alternate between synonyms for the same item.\n" +
       "- Expand every abbreviation on first use. Keep the designations and values exact; simplify the " +
       "prose around them, never the numbers.\n" +
-      "- Keep the citations — plain language does not mean unsourced.",
+      "- Keep the citations - plain language does not mean unsourced.",
   },
   {
     builtin_key: "shift_handover",
@@ -114,7 +114,7 @@ export const BUILTIN_ANSWER_SKILLS: BuiltinAnswerSkillDef[] = [
     name: "Shift Handover",
     description:
       "When someone needs to pass work to the next person or crew, produce a real handover: state, " +
-      "actions taken, open items, and watch-outs — complete enough to continue without asking.",
+      "actions taken, open items, and watch-outs - complete enough to continue without asking.",
     instructions:
       "APPLIES WHEN the question asks to summarize work for the next shift, crew, or person " +
       "(\"handover\", \"summarize for the next shift\", \"write this up for whoever continues\"). " +
@@ -123,23 +123,23 @@ export const BUILTIN_ANSWER_SKILLS: BuiltinAnswerSkillDef[] = [
       "incomplete), ACTIONS TAKEN (what was done, with document references), OPEN ITEMS (what remains, " +
       "in priority order, each with what \"done\" looks like), WATCH-OUTS (limits, hold points, and " +
       "anything that bit us).\n" +
-      "- Write so the reader can act WITHOUT asking the previous shift anything — that is the test.\n" +
+      "- Write so the reader can act WITHOUT asking the previous shift anything - that is the test.\n" +
       "- Reference documents by number so the next crew can pull them; keep citations on every factual claim.\n" +
-      "- Never bury a safety-critical item in the middle of a list — watch-outs lead or close, visibly.",
+      "- Never bury a safety-critical item in the middle of a list - watch-outs lead or close, visibly.",
   },
   {
     builtin_key: "technical_query",
     cue: "\\b(tq|technical query|not covered|can.?t find|isn.?t (in|covered))",
     name: "Technical Query Builder",
     description:
-      "When the documents can't answer, don't stop at 'not covered' — draft the formal technical " +
+      "When the documents can't answer, don't stop at 'not covered' - draft the formal technical " +
       "query (TQ) that would get the answer from the party who owns it.",
     instructions:
       "APPLIES WHEN the retrieved documents cannot fully answer the question, or the user asks how to " +
       "get an answer from a vendor, engineer of record, or authority. Otherwise ignore this skill.\n" +
       "- After stating what the documents DO establish (cited), draft the technical query that closes " +
-      "the gap: WHO it should go to (the role that owns the answer — vendor, EOR, inspector), the " +
-      "CONTEXT paragraph (what we know, with document numbers), and the NUMBERED QUESTIONS — each one " +
+      "the gap: WHO it should go to (the role that owns the answer - vendor, EOR, inspector), the " +
+      "CONTEXT paragraph (what we know, with document numbers), and the NUMBERED QUESTIONS - each one " +
       "specific enough that a short written reply settles it.\n" +
       "- Ask for the answer's basis, not just the answer (\"state the value AND the code clause or " +
       "calculation it comes from\").\n" +
@@ -164,12 +164,12 @@ export const BUILTIN_ANSWER_SKILLS: BuiltinAnswerSkillDef[] = [
       "- Decode the codes with the library's own legend when one is among the passages (a designator / code " +
       "table): say what each candidate's code means, character by character where it helps choose. Never guess " +
       "what a code means without that legend.\n" +
-      "- Under **To settle this:** ask ONLY for the facts that split the shortlist — from THEY DIFFER ON (design " +
+      "- Under **To settle this:** ask ONLY for the facts that split the shortlist - from THEY DIFFER ON (design " +
       "temperature, corrosion allowance, PWHT, connection type…). If no rating was given, ask for the flange " +
       "rating first. If the service is a condition the library defines (e.g. a defined aggressive service), " +
       "quote the definition so the asker can check their stream against it.\n" +
       "- Offer the next level of detail the library holds: unit- or service-specific materials tables and " +
-      "process-stream tables, by document name — \"tell me the unit and stream and I'll check <document>'s " +
+      "process-stream tables, by document name - \"tell me the unit and stream and I'll check <document>'s " +
       "table for corrosion allowance, alloy and trim\".\n" +
       "- If nothing narrows it further, give the best shortlist and say plainly which decisions remain the " +
       "asker's (or the Owner's Engineer's) and on what basis.",
@@ -185,9 +185,9 @@ export const BUILTIN_ANSWER_SKILLS: BuiltinAnswerSkillDef[] = [
       "APPLIES WHEN the question involves a flange rating, pressure class or piping line class (\"150 class\", " +
       "\"300#\", \"which piping spec\"). Otherwise ignore this skill.\n" +
       "- \"Class\" with a number (150, 300, 600, 900, 1500, 2500) is the ASME B16.5 pressure class / flange " +
-      "rating, however it is written: 150#, 150 lb, #150, CL150, ANSI 150. 150 is never 1500 — say which class " +
+      "rating, however it is written: 150#, 150 lb, #150, CL150, ANSI 150. 150 is never 1500 - say which class " +
       "every cited table or entry is for.\n" +
-      "- A piping (line) class or spec is the site's own code (its legend says what each character means) — it " +
+      "- A piping (line) class or spec is the site's own code (its legend says what each character means) - it " +
       "carries a rating, material and service. Name the code AND its rating when you recommend one.\n" +
       "- Where two ratings meet (a 300 class flange on a 150 class line, a nozzle rated differently from the " +
       "line), state which rating governs each part and quote the rule that says so.\n" +

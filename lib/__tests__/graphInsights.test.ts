@@ -7,7 +7,7 @@ const node = (id: string, type: GraphNodeType = "document", label = id): GraphNo
 
 const edge = (a: string, b: string, type: GraphEdge["type"] = "tag"): GraphEdge => ({ a, b, type });
 
-describe("computeInsights — orphans", () => {
+describe("computeInsights - orphans", () => {
   it("flags documents and assets with no meaningful edges", () => {
     const nodes = [node("doc:1"), node("doc:2"), node("asset:1", "asset"), node("lib:1", "library")];
     const edges = [edge("doc:1", "asset:1"), edge("doc:2", "lib:1", "library")];
@@ -23,7 +23,7 @@ describe("computeInsights — orphans", () => {
   });
 });
 
-describe("computeInsights — hubs", () => {
+describe("computeInsights - hubs", () => {
   it("ranks by meaningful degree, requiring at least 3 connections", () => {
     const nodes = [
       node("asset:hx", "asset", "E-22"),
@@ -52,7 +52,7 @@ describe("computeInsights — hubs", () => {
   });
 });
 
-describe("computeInsights — bridges", () => {
+describe("computeInsights - bridges", () => {
   // Two dense clusters joined by one edge: a star of 5 around hubA, a star
   // of 5 around hubB, and the single hubA—hubB link.
   const clusterPair = () => {
@@ -97,7 +97,7 @@ describe("computeInsights — bridges", () => {
   });
 });
 
-describe("computeInsights — regions", () => {
+describe("computeInsights - regions", () => {
   it("names a component after its unit anchor when one exists", () => {
     const nodes: GraphNode[] = [node("cbunit:20", "unit", "Crude Unit")];
     const edges: GraphEdge[] = [];

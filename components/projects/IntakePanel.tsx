@@ -159,7 +159,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       }).then(() => undefined, () => undefined);
       setCompany(""); setEmail(""); setExpires(""); setTrusted(false);
       await refresh();
-      setMsg("Link created — copy it below and send it to the company.");
+      setMsg("Link created - copy it below and send it to the company.");
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
   };
@@ -226,7 +226,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       }).then(() => undefined, () => undefined);
       setAssignQ(""); setAssignResults([]);
       await refresh();
-      if (addedLabel) setMsg(`${addedLabel} assigned to ${l.companyName} — revisions they submit will come to review.`);
+      if (addedLabel) setMsg(`${addedLabel} assigned to ${l.companyName} - revisions they submit will come to review.`);
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
   };
@@ -239,7 +239,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         requireRosterComplete: false,
       });
       if (!res.published) throw new Error(res.reason || "Couldn't approve");
-      setMsg(`${p.label} Rev ${p.revLabel ?? ""} approved — it is now the current revision.`);
+      setMsg(`${p.label} Rev ${p.revLabel ?? ""} approved - it is now the current revision.`);
       await refresh();
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
@@ -263,7 +263,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         org_id: orgId, user_id: uid, user_email: userEmail ?? null,
         details: { projectId, versionId: p.pendingVersionId, revLabel: p.revLabel, company: p.company },
       }).then(() => undefined, () => undefined);
-      setMsg(`${p.label} Rev ${p.revLabel ?? ""} rejected — the record and portal now show it as not accepted.`);
+      setMsg(`${p.label} Rev ${p.revLabel ?? ""} rejected - the record and portal now show it as not accepted.`);
       await refresh();
     } catch (e) { setMsg((e as Error).message); }
     finally { setBusy(null); }
@@ -281,7 +281,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       actorId: uid, actorEmail: userEmail ?? null, actorRole: null,
     });
     setMsg(res.ok
-      ? `${candidate.label} flagged to drafting — ticket ${res.ticketNumber} is in the assignment queue.`
+      ? `${candidate.label} flagged to drafting - ticket ${res.ticketNumber} is in the assignment queue.`
       : (res.error ?? "Couldn't flag the collision."));
   };
 
@@ -305,7 +305,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
               <div className="flex items-center gap-2 flex-wrap">
                 <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                 <span className="text-sm font-bold text-[var(--color-text)]">{p.label}</span>
-                <span className="text-xs text-[var(--color-text-muted)]">Rev {p.revLabel ?? "—"} · {p.company ?? "external"}{p.submittedAt ? ` · ${new Date(p.submittedAt).toLocaleDateString()}` : ""}</span>
+                <span className="text-xs text-[var(--color-text-muted)]">Rev {p.revLabel ?? "-"} · {p.company ?? "external"}{p.submittedAt ? ` · ${new Date(p.submittedAt).toLocaleDateString()}` : ""}</span>
                 {canManage && (
                   <span className="ml-auto flex items-center gap-1.5">
                     <button onClick={() => void approve(p)} disabled={busy === p.docId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500 text-white text-[11px] font-black hover:bg-emerald-600 disabled:opacity-50">
@@ -337,7 +337,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         <div className="flex items-center gap-2 mb-2">
           <Link2 className="w-4 h-4 text-[var(--color-accent)]" />
           <span className="text-base font-bold text-[var(--color-text)]">Contractor submit links</span>
-          <span className="text-xs text-[var(--color-text-muted)]">no account needed — upload-only, own documents only, everything tracked</span>
+          <span className="text-xs text-[var(--color-text-muted)]">no account needed - upload-only, own documents only, everything tracked</span>
         </div>
         <ul className="space-y-1.5 mb-3">
           {links.map((l) => (

@@ -259,7 +259,7 @@ export default function LoginPage() {
           <div className="p-8 bg-white">
             <p className="text-sm text-slate-600 leading-relaxed">
               Your Microsoft account isn&rsquo;t linked to a workspace yet. Ask your
-              organization&rsquo;s admin to add you using this email address — once they do,
+              organization&rsquo;s admin to add you using this email address - once they do,
               just sign in with Microsoft again and you&rsquo;ll go straight in.
             </p>
             <div className="mt-6 space-y-3">

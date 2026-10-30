@@ -42,7 +42,7 @@ export function LetterheadPreview({ lh, which, width = 220 }: { lh: Letterhead; 
 
 const SAMPLE = `<div style="font-family:Inter,Arial,sans-serif;font-size:10pt;color:#0f172a">
 <div style="font-size:9pt;color:#64748b">Shift turnover</div>
-<div style="font-size:15pt;font-weight:700;margin:2pt 0 10pt">Test page — the report prints here</div>
+<div style="font-size:15pt;font-weight:700;margin:2pt 0 10pt">Test page - the report prints here</div>
 ${Array.from({ length: 70 }, (_, i) => `<div style="padding:3pt 0;border-top:1px solid #e2e8f0">${i + 1}. A line of the report, inside the letterhead's margins.</div>`).join("")}
 </div>`;
 
@@ -80,14 +80,14 @@ export function LetterheadStep({ projectId, canManage }: { projectId: string; ca
   const save = async () => {
     if (!draft) return;
     setBusy("save"); setErr(null);
-    try { await saveLetterhead(projectId, draft); setDraft(null); setMsg("Saved — printed reports on this project now come out on this letterhead."); }
+    try { await saveLetterhead(projectId, draft); setDraft(null); setMsg("Saved - printed reports on this project now come out on this letterhead."); }
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(null); }
   };
   const remove = async () => {
     if (!window.confirm("Remove the letterhead? Printed reports go back to plain paper.")) return;
     setBusy("remove"); setErr(null);
-    try { await saveLetterhead(projectId, null); setDraft(null); setMsg("Removed — reports print on plain paper."); }
+    try { await saveLetterhead(projectId, null); setDraft(null); setMsg("Removed - reports print on plain paper."); }
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(null); }
   };
@@ -114,7 +114,7 @@ export function LetterheadStep({ projectId, canManage }: { projectId: string; ca
           className={`flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center cursor-pointer ${over ? "border-[var(--color-accent)] bg-[var(--color-surface-2)]" : "border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)]"} ${!canManage ? "pointer-events-none opacity-60" : ""}`}>
           {busy === "read" ? <Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" /> : <FileUp className="w-6 h-6 text-[var(--color-text-muted)]" />}
           <span className="text-[13.5px] font-bold text-[var(--color-text)]">{busy === "read" ? "Reading the letterhead…" : "Upload your letterhead"}</span>
-          <span className="text-[12px] text-[var(--color-text-muted)] max-w-md">Word (.docx) keeps its logo, address and margins. A PDF or a picture of the page works too — the report goes in its blank part.</span>
+          <span className="text-[12px] text-[var(--color-text-muted)] max-w-md">Word (.docx) keeps its logo, address and margins. A PDF or a picture of the page works too - the report goes in its blank part.</span>
           <input type="file" accept={ACCEPT} className="sr-only" disabled={!!busy || !canManage}
             onChange={(e) => { void read(e.target.files?.[0]); e.target.value = ""; }} />
         </label>
@@ -139,7 +139,7 @@ export function LetterheadStep({ projectId, canManage }: { projectId: string; ca
             <span className="text-[var(--color-text-muted)]"> · {lh.kind === "docx" ? "Word" : lh.kind === "pdf" ? "PDF" : "picture"} · {lh.page.w}″ × {lh.page.h}″{draft ? " · not saved yet" : ""}</span>
           </div>
           <fieldset className="space-y-1.5" disabled={!canManage}>
-            <legend className="text-[12px] font-semibold text-[var(--color-text)]">Where the report goes — inches in from each edge</legend>
+            <legend className="text-[12px] font-semibold text-[var(--color-text)]">Where the report goes - inches in from each edge</legend>
             <div className="grid grid-cols-2 gap-2 max-w-xs">
               {(["top", "bottom", "left", "right"] as const).map((k) => (
                 <label key={k} className="flex items-center justify-between gap-2 text-[12px] text-[var(--color-text-muted)] capitalize">
@@ -166,7 +166,7 @@ export function LetterheadStep({ projectId, canManage }: { projectId: string; ca
                 {busy === "save" && <Loader2 className="w-4 h-4 animate-spin" />} Save for the project
               </button>
             )}
-            <button type="button" onClick={() => { if (!printLetterheadTest(lh)) setErr("Your browser blocked the print window — allow pop-ups for this site."); }} className={quiet}>
+            <button type="button" onClick={() => { if (!printLetterheadTest(lh)) setErr("Your browser blocked the print window - allow pop-ups for this site."); }} className={quiet}>
               <Printer className="w-4 h-4" /> Print a test page
             </button>
             {canManage && fileInput("Replace…", false)}

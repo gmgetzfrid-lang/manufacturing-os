@@ -111,7 +111,7 @@ export default function RestorePage() {
         const zip = await JSZip.loadAsync(file) as unknown as ZipLike;
         const entryNames = Object.keys(zip.files);
         const manifestPath = entryNames.find((p) => /(^|\/)manifest\.json$/i.test(p));
-        if (!manifestPath) throw new Error("No manifest.json — this doesn't look like a manufacturing-os backup ZIP.");
+        if (!manifestPath) throw new Error("No manifest.json - this doesn't look like a manufacturing-os backup ZIP.");
         const manifest = JSON.parse(await zip.file(manifestPath)!.async("string"));
         const tables: Record<string, unknown[]> = {};
         const tablePaths = entryNames.filter((p) => /(^|\/)tables\/[^/]+\.json$/i.test(p) && !zip.files[p].dir);
@@ -159,7 +159,7 @@ export default function RestorePage() {
     if (!activeOrgId || !envelope || !plan) return;
     const ok = await appConfirm({
       title: "Apply restore",
-      message: `Write ${fmtNum(plan.counts.totalRows)} record(s) into this workspace? ${plan.counts.newUsers} restored placeholder user(s) will be created (inactive, no seat). Existing data is kept — this is additive and can't be auto-undone.`,
+      message: `Write ${fmtNum(plan.counts.totalRows)} record(s) into this workspace? ${plan.counts.newUsers} restored placeholder user(s) will be created (inactive, no seat). Existing data is kept - this is additive and can't be auto-undone.`,
       tone: "danger",
       confirmLabel: "Apply restore",
     });
@@ -292,7 +292,7 @@ export default function RestorePage() {
     return (
       <div className="max-w-3xl mx-auto p-6">
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 flex items-center gap-2">
-          <ShieldAlert className="w-4 h-4 shrink-0" /> Restore is Admin-only — it can reshape the entire workspace.
+          <ShieldAlert className="w-4 h-4 shrink-0" /> Restore is Admin-only - it can reshape the entire workspace.
         </div>
       </div>
     );
@@ -313,7 +313,7 @@ export default function RestorePage() {
             <UploadCloud className="w-5 h-5 text-[var(--color-accent)]" /> Restore from backup
           </h1>
           <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-            Drop the Full ZIP (records + files) or the JSON export. Everything is planned in your browser — nothing is written until you approve.
+            Drop the Full ZIP (records + files) or the JSON export. Everything is planned in your browser - nothing is written until you approve.
           </p>
         </div>
       </div>
@@ -365,7 +365,7 @@ export default function RestorePage() {
           {plan.orgNameCollision && (
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <div className="text-sm font-black text-[var(--color-text)] flex items-center gap-2 mb-1"><Building2 className="w-4 h-4 text-[var(--color-accent)]" /> Which organization name should win?</div>
-              <p className="text-[11px] text-[var(--color-text-muted)] mb-3">The backup and this workspace disagree. Pick the name to keep — applied at restore.</p>
+              <p className="text-[11px] text-[var(--color-text-muted)] mb-3">The backup and this workspace disagree. Pick the name to keep - applied at restore.</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {([["current", plan.orgNameCollision.currentName, "Keep this workspace’s name"], ["backup", plan.orgNameCollision.backupName, "Use the backup’s name"]] as const).map(([val, name, hint]) => (
                   <button key={val} onClick={() => setKeepName(val)}
@@ -432,7 +432,7 @@ export default function RestorePage() {
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <div className="flex items-center gap-2 text-sm font-bold text-[var(--color-text)] mb-2">
                 <Loader2 className="w-4 h-4 animate-spin text-[var(--color-accent)]" />
-                {applyProgress.phase === "begin" ? "Reconciling users…" : <>Restoring <span className="font-mono">{applyProgress.currentTable}</span> — table {Math.min(applyProgress.tablesDone + 1, applyProgress.tablesTotal)} of {applyProgress.tablesTotal}</>}
+                {applyProgress.phase === "begin" ? "Reconciling users…" : <>Restoring <span className="font-mono">{applyProgress.currentTable}</span> - table {Math.min(applyProgress.tablesDone + 1, applyProgress.tablesTotal)} of {applyProgress.tablesTotal}</>}
               </div>
               <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
                 <div className="h-full bg-[var(--color-accent)] transition-all" style={{ width: `${pct}%` }} />
@@ -447,8 +447,8 @@ export default function RestorePage() {
               <div className="flex items-center gap-2 text-sm font-black text-emerald-900 mb-1"><CheckCircle2 className="w-4 h-4" /> Records restored</div>
               <div className="text-[11px] text-emerald-900 leading-relaxed">
                 Imported <b>{fmtNum(applyResult.totalInserted)}</b> record(s) · re-linked <b>{applyResult.linkedUsers}</b> user(s) · created <b>{applyResult.createdUsers}</b> restored placeholder(s).
-                {applyResult.failedTables.length > 0 && <> Some tables reported issues: <span className="font-mono">{applyResult.failedTables.join(", ")}</span> — re-run the restore (it&apos;s additive and safe) or check the audit log.</>}
-                {" "}Restored users are inactive — re-invite them to grant access.
+                {applyResult.failedTables.length > 0 && <> Some tables reported issues: <span className="font-mono">{applyResult.failedTables.join(", ")}</span> - re-run the restore (it&apos;s additive and safe) or check the audit log.</>}
+                {" "}Restored users are inactive - re-invite them to grant access.
               </div>
             </div>
           ) : !applying && (
@@ -456,7 +456,7 @@ export default function RestorePage() {
               <div className="flex items-start gap-3">
                 <ShieldAlert className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
                 <div className="flex-1 text-[11px] text-[var(--color-text-muted)] leading-relaxed">
-                  <b className="text-[var(--color-text)]">Applying writes to this live workspace.</b> It&apos;s additive (existing data is kept), re-runnable, and the plan above is exactly what runs. Restored users are created inactive (no seat).{zipRef.current ? " After records import, a second step can put the ZIP's files back into storage." : " Binaries aren't in a JSON backup — use the Full ZIP to also restore files."}
+                  <b className="text-[var(--color-text)]">Applying writes to this live workspace.</b> It&apos;s additive (existing data is kept), re-runnable, and the plan above is exactly what runs. Restored users are created inactive (no seat).{zipRef.current ? " After records import, a second step can put the ZIP's files back into storage." : " Binaries aren't in a JSON backup - use the Full ZIP to also restore files."}
                 </div>
               </div>
               <div className="mt-3 flex items-center justify-end">
@@ -485,7 +485,7 @@ export default function RestorePage() {
                   <div className="text-[10.5px] text-[var(--color-text-muted)] mt-1">
                     {fmtNum(filesProgress.done)} / {fmtNum(filesProgress.total)} · {fmtNum(filesProgress.uploaded)} uploaded · {fmtNum(filesProgress.skipped)} already present
                     {filesProgress.offline > 0 && <> · {fmtNum(filesProgress.offline)} left to space archives</>}
-                    {filesProgress.failed > 0 && <span className="text-red-600 font-bold"> · {fmtNum(filesProgress.failed)} failed — run again to retry</span>}
+                    {filesProgress.failed > 0 && <span className="text-red-600 font-bold"> · {fmtNum(filesProgress.failed)} failed - run again to retry</span>}
                   </div>
                 </div>
               )}

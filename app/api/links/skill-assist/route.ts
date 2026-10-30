@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
       "grounded in cited document passages.\n" +
       "Rules:\n" +
       "- The pack MUST open with an 'APPLIES WHEN …' line naming the situations that trigger it, " +
-      "ending with 'Otherwise ignore this skill.' — packs ride every question and must self-gate.\n" +
+      "ending with 'Otherwise ignore this skill.' - packs ride every question and must self-gate.\n" +
       "- Then 3–6 tight '- ' bullet directives about reasoning and reporting discipline. Never " +
       "instruct the AI to drop citations or safety caveats.\n" +
       "- 120–220 words total. Plain, imperative, industrial register.\n" +
@@ -69,11 +69,11 @@ export async function POST(req: NextRequest) {
         timeoutMs: 35_000,
       });
       const block = extractJsonBlock(out.text);
-      if (!block) return bad("The model returned no usable draft — try rephrasing.", 502);
+      if (!block) return bad("The model returned no usable draft - try rephrasing.", 502);
       const parsed = JSON.parse(block) as { name?: string; description?: string; instructions?: string };
       const instructions = String(parsed.instructions ?? "").trim();
       if (instructions.length < 40 || !/applies when/i.test(instructions)) {
-        return bad("The drafted pack came back malformed — try describing when it should apply.", 502);
+        return bad("The drafted pack came back malformed - try describing when it should apply.", 502);
       }
       return NextResponse.json({
         name: String(parsed.name ?? "").slice(0, 80),
@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
     "order numbers, permit numbers, drawing numbers, SOP codes…). When matched text resolves " +
     "to a document that owns that number, the two documents connect.\n" +
     "Rules for patterns:\n" +
-    "- JavaScript regex source strings (no surrounding slashes, no flags — the engine applies 'gi').\n" +
+    "- JavaScript regex source strings (no surrounding slashes, no flags - the engine applies 'gi').\n" +
     "- Anchor with \\b where sensible; be specific enough not to match prose. Never write a " +
     "pattern that can match empty text or a bare number with no shape.\n" +
     "- Prefer ONE tight pattern per identifier form; 1–4 patterns total.\n" +
@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
       timeoutMs: 35_000,
     });
     const block = extractJsonBlock(out.text);
-    if (!block) return bad("The model returned no usable draft — try rephrasing.", 502);
+    if (!block) return bad("The model returned no usable draft - try rephrasing.", 502);
     const parsed = JSON.parse(block) as {
       name?: string; description?: string; patterns?: unknown[]; samples?: unknown[];
     };
@@ -123,7 +123,7 @@ export async function POST(req: NextRequest) {
     });
     if (good.length === 0) {
       return bad(
-        `The drafted patterns don't compile (${errors[0] ?? "no valid patterns"}) — try describing the identifier's exact shape, e.g. "WO- followed by five digits".`,
+        `The drafted patterns don't compile (${errors[0] ?? "no valid patterns"}) - try describing the identifier's exact shape, e.g. "WO- followed by five digits".`,
         502,
       );
     }

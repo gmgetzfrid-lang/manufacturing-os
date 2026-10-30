@@ -174,13 +174,13 @@ export default function SignatureCeremony({
               />
               {reauthError
                 ? <p className="text-[11px] text-rose-600 mt-1">{reauthError}</p>
-                : <p className="text-[11px] text-[var(--color-text-faint)] mt-1">Re-entered at the moment of signing, so a signature can only come from you — not from your unlocked screen.</p>}
+                : <p className="text-[11px] text-[var(--color-text-faint)] mt-1">Re-entered at the moment of signing, so a signature can only come from you - not from your unlocked screen.</p>}
             </div>
           )}
           {reauth !== "loading" && reauth?.method === "sso" && !reauth.fresh && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
               <p className="text-xs text-amber-800">
-                Signatures need a recent sign-in. Verify it&apos;s you with your Microsoft account, then finish signing — you&apos;ll come straight back here.
+                Signatures need a recent sign-in. Verify it&apos;s you with your Microsoft account, then finish signing - you&apos;ll come straight back here.
               </p>
               <button
                 onClick={() => void reauthWithProvider()}

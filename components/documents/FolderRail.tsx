@@ -185,7 +185,7 @@ export default function FolderRail({
         {/* Discoverability: an obvious "open folders" affordance at the top. */}
         <div
           className={`flex flex-col items-center gap-1 mb-1 transition-colors ${hovered ? "text-[var(--color-accent)]" : "text-[var(--color-text-faint)]"}`}
-          title="Folders — hover to browse"
+          title="Folders - hover to browse"
         >
           <PanelLeftOpen className="w-4 h-4" />
           <span className="text-[8px] font-black uppercase tracking-[0.15em] leading-none" style={{ writingMode: "vertical-rl" }}>Folders</span>

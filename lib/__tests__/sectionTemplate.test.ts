@@ -14,7 +14,7 @@ const book = (header: (key: string, page: number, n: number) => string, plan: Ar
   return pages;
 };
 
-describe("findRunningKey — any company's spec book", () => {
+describe("findRunningKey - any company's spec book", () => {
   it("one company's format: code in parentheses mid-line", () => {
     const pages = book((k) => `Kern Energy - (${k}) - Piping Database Revision Number: 99.0 - August 2023`,
       [["FAAA1G", 5], ["FCAF1GL", 4], ["FSFKAG", 6]]);
@@ -49,7 +49,7 @@ describe("findRunningKey — any company's spec book", () => {
     let p = 1;
     for (const [k, n] of [["CS-150-A", 4], ["SS-300-B", 4], ["CS-600-C", 3]] as Array<[string, number]>) {
       for (let i = 0; i < n; i++, p++) {
-        pages.push({ page: p, text: `Pipe\nA106 Gr B\nSch 40\nElbow\nA234 WPB\nFlange\nA105\nGasket\nBolting\nNotes\nACME Refining — Material Spec ${k} — Printed copies uncontrolled` });
+        pages.push({ page: p, text: `Pipe\nA106 Gr B\nSch 40\nElbow\nA234 WPB\nFlange\nA105\nGasket\nBolting\nNotes\nACME Refining - Material Spec ${k} - Printed copies uncontrolled` });
       }
     }
     expect(findRunningKey(pages)!.ranges.map((r) => r.key)).toEqual(["CS-150-A", "SS-300-B", "CS-600-C"]);
@@ -75,7 +75,7 @@ describe("books with no header line: the code is in the table headings", () => {
   ].map((parts, i) => ({ page: i + 1, parts }));
   const full = book.map((b) => ({ page: b.page, text: b.parts.join("\n") }));
 
-  it("finds each class's pages from the codes in its headings — not from (NACE) or (PWHT)", () => {
+  it("finds each class's pages from the codes in its headings - not from (NACE) or (PWHT)", () => {
     const r = findParenKeys(full)!;
     expect(r.ranges).toEqual([
       { key: "AAAA1", first: 1, last: 3 },

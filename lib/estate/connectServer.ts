@@ -105,7 +105,7 @@ async function ensureReadLibrary(admin: SupabaseClient, orgId: string, dcLibs: A
   const dcIds = new Set(dcLibs.map((l) => l.id));
   const { data: existing } = await admin.from("knowledge_libraries").select("id, name, description").eq("org_id", orgId).limit(200);
   const libs = ((existing as Array<{ id: string; name: string; description: string | null }> | null) ?? []);
-  const isAuto = (l: { name: string; description: string | null }) => /drawings — read by the estate/i.test(l.name) && /Made by Connect everything/.test(l.description ?? "");
+  const isAuto = (l: { name: string; description: string | null }) => /drawings - read by the estate/i.test(l.name) && /Made by Connect everything/.test(l.description ?? "");
   const wholeBy = new Map<string, Set<string>>();
   for (const s of sources) if (s.source_type === "library" && dcIds.has(s.source_id)) wholeBy.set(s.library_id, new Set([...(wholeBy.get(s.library_id) ?? []), s.source_id]));
   const full = [...wholeBy.entries()].find(([, set]) => dcLibs.every((l) => set.has(l.id)))?.[0] ?? null;
@@ -114,14 +114,14 @@ async function ensureReadLibrary(admin: SupabaseClient, orgId: string, dcLibs: A
   let created = false;
   if (!libraryId) {
     const { data: made, error } = await admin.from("knowledge_libraries").insert({
-      org_id: orgId, name: "Drawings — read by the estate",
+      org_id: orgId, name: "Drawings - read by the estate",
       description: "Every drawing library in Document Control, read once so searches can put units, equipment, sheets and photos together. Made by Connect everything.",
       created_by: actor.userId, created_by_name: actor.name, ai_features: { drawingIntel: true },
     }).select("id").single();
     if (error || !made) throw new Error(`Could not make the read library: ${error?.message ?? "unknown"}`);
     libraryId = String((made as { id: string }).id); created = true;
   }
-  const libraryName = libs.find((l) => l.id === libraryId)?.name ?? "Drawings — read by the estate";
+  const libraryName = libs.find((l) => l.id === libraryId)?.name ?? "Drawings - read by the estate";
   // Other libraries reading part of these drawings: named, so the person
   // sees their work is counted.
   const partial: Array<{ name: string; count: number }> = [];
@@ -260,7 +260,7 @@ export async function connectEverything(admin: SupabaseClient, input: { orgId: s
   if (r.sourcesAdded) readBits.push(`${r.sourcesAdded} source${r.sourcesAdded === 1 ? "" : "s"} linked`);
   if (r.sync.added) readBits.push(`${r.sync.added} new to read`);
   if (r.sync.refreshed) readBits.push(`${r.sync.refreshed} revised, re-reading`);
-  if (r.rereads) readBits.push(`${r.rereads} being read again — stored AI transcripts are reused, vision is not paid twice`);
+  if (r.rereads) readBits.push(`${r.rereads} being read again - stored AI transcripts are reused, vision is not paid twice`);
   if (r.sync.errors.length) readBits.push(r.sync.errors[0]);
   steps.push({ key: "read", title: "Drawings watched", state: "done", detail: readBits.join(" · ") });
 
@@ -340,7 +340,7 @@ export async function setAutoRead(admin: SupabaseClient, input: { orgId: string;
   if (feats.drawingIntel !== true) throw new Error("Automatic reading is for drawing libraries.");
   if (input.on) {
     const { data: conn } = await admin.from("ai_connections").select("provider").eq("org_id", input.orgId).eq("user_id", input.actor.userId).maybeSingle();
-    if (!conn) throw new Error("Add your AI key in Intelligence › Setup first — new drawings are read on it.");
+    if (!conn) throw new Error("Add your AI key in Intelligence › Setup first - new drawings are read on it.");
   }
   const cur = readAutoRead(feats);
   const next = {

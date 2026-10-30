@@ -99,7 +99,7 @@ export type CriticalMode = "links" | "file" | "estimate" | "none";
 export type CriticalOverride = "yes" | "no";
 
 export const CRITICAL_MODES: Array<{ value: CriticalMode; label: string; hint: string }> = [
-  { value: "links", label: "Calculated from the links", hint: "The chain of linked work that sets the finish — recalculated as work moves, plus your changes" },
+  { value: "links", label: "Calculated from the links", hint: "The chain of linked work that sets the finish - recalculated as work moves, plus your changes" },
   { value: "file", label: "From the schedule file", hint: "What MS Project marked critical, plus your changes" },
   { value: "estimate", label: "App's estimate", hint: "The unfinished work ending nearest the finish date, plus your changes" },
   { value: "none", label: "Only what I mark", hint: "Nothing is critical unless you mark it" },

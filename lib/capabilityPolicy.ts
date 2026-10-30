@@ -87,7 +87,7 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
   { id: "holds.release", area: "Holds", label: "Release a hold",
     description: "Release an open hold.", defaultRoles: ["*"] },
   { id: "checkout.force_release", area: "Checkouts", label: "Force-release a checkout", critical: true,
-    description: "Release another user's active checkout. Enforced at the database, which reads this policy — widen or narrow freely.",
+    description: "Release another user's active checkout. Enforced at the database, which reads this policy - widen or narrow freely.",
     defaultRoles: ["Admin", "DocCtrl"] },
   { id: "admin.analytics_view", area: "Metrics", label: "Analytics dashboards",
     description: "Open /admin/analytics.", defaultRoles: [...MGMT, "DocCtrl"] },
@@ -204,7 +204,7 @@ export function validateCapabilityPolicy(policy: CapabilityPolicy): string | nul
     if (v === undefined) continue;
     if (!Array.isArray(v)) return `${def.label}: invalid value`;
     if (def.critical && !v.includes("Admin") && !v.includes("*")) {
-      return `${def.label}: Admin cannot be removed from a critical capability — that's the rail that keeps the org recoverable.`;
+      return `${def.label}: Admin cannot be removed from a critical capability - that's the rail that keeps the org recoverable.`;
     }
   }
   const validIds = new Set(CAPABILITY_DEFS.map((d) => d.id as string));

@@ -112,7 +112,7 @@ export default function SetupPage() {
     return [
       {
         key: "codebook", title: "Teach it your language",
-        blurb: "Units, equipment prefixes, and your drawing-number format live in the Site Codebook — imported from your own documents or entered by hand. Everything downstream decodes through it.",
+        blurb: "Units, equipment prefixes, and your drawing-number format live in the Site Codebook - imported from your own documents or entered by hand. Everything downstream decodes through it.",
         icon: BookMarked, hue: "from-violet-500 to-purple-600",
         checks: [
           { label: `${f.units} operating unit${f.units === 1 ? "" : "s"} defined`, ok: f.units > 0 },
@@ -126,7 +126,7 @@ export default function SetupPage() {
         icon: Tag, hue: "from-emerald-500 to-teal-600",
         checks: [
           { label: `${f.assets} asset${f.assets === 1 ? "" : "s"} registered`, ok: f.assets > 0 },
-          { label: f.uncategorized === 0 ? "All categorized" : `${f.uncategorized} uncategorized — auto-categorize in Operating areas`, ok: f.assets > 0 && f.uncategorized === 0 },
+          { label: f.uncategorized === 0 ? "All categorized" : `${f.uncategorized} uncategorized - auto-categorize in Operating areas`, ok: f.assets > 0 && f.uncategorized === 0 },
           { label: f.unitless === 0 ? "All filed to a unit" : `${f.unitless} not filed to a unit`, ok: f.assets > 0 && f.unitless === 0 },
         ],
         href: "/admin/assets", cta: "Open Operating areas",
@@ -143,7 +143,7 @@ export default function SetupPage() {
       },
       {
         key: "bridge", title: "Bridge paper to plant",
-        blurb: "Link documents to the equipment they govern — the Equipment sweep reads tags off each library, and every link becomes a graph edge and an answer source.",
+        blurb: "Link documents to the equipment they govern - the Equipment sweep reads tags off each library, and every link becomes a graph edge and an answer source.",
         icon: Link2, hue: "from-amber-500 to-orange-600",
         checks: [
           { label: `${f.docAssetLinks} document↔equipment link${f.docAssetLinks === 1 ? "" : "s"}`, ok: f.docAssetLinks > 0 },
@@ -153,7 +153,7 @@ export default function SetupPage() {
       },
       {
         key: "ai", title: "Index the knowledge",
-        blurb: "Knowledge libraries make documents askable — link your document-control libraries as sources so answers cite the real controlled files, on your own AI key.",
+        blurb: "Knowledge libraries make documents askable - link your document-control libraries as sources so answers cite the real controlled files, on your own AI key.",
         icon: Bot, hue: "from-fuchsia-500 to-pink-600",
         checks: [
           { label: `${f.kdocs} document${f.kdocs === 1 ? "" : "s"} indexed (${f.mirrored} mirroring controlled files)`, ok: f.kdocs > 0 },
@@ -195,7 +195,7 @@ export default function SetupPage() {
         icon={Compass}
         eyebrow="Facility setup"
         title="Setup navigator"
-        subtitle="Launch this at any point — it reads the live state of every subsystem and resumes from wherever your workspace actually is. Nothing here is a checkbox; every line is a real count."
+        subtitle="Launch this at any point - it reads the live state of every subsystem and resumes from wherever your workspace actually is. Nothing here is a checkbox; every line is a real count."
       />
 
       {facts === null ? (
@@ -263,7 +263,7 @@ export default function SetupPage() {
             <div className="mt-4 rounded-2xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/30 p-4 text-center">
               <div className="text-sm font-black text-emerald-800 dark:text-emerald-300">Every stage reads healthy.</div>
               <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
-                Setup is never truly finished — new documents, equipment, and questions keep feeding the web — but nothing is waiting on you.
+                Setup is never truly finished - new documents, equipment, and questions keep feeding the web - but nothing is waiting on you.
               </div>
             </div>
           )}

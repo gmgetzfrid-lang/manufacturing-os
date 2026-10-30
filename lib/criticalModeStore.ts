@@ -39,12 +39,12 @@ export async function saveCriticalMode(projectId: string, mode: CriticalMode): P
     if (/critical_mode/.test(error.message)) {
       cache(projectId, mode);
       throw new Error(mode === "links"
-        ? "Saved on this device only — run migration 20261106_links_and_discovery.sql so everyone on the project gets it."
-        : "Saved on this device only — run migration 20261101_critical_path_control.sql so everyone on the project gets it.");
+        ? "Saved on this device only - run migration 20261106_links_and_discovery.sql so everyone on the project gets it."
+        : "Saved on this device only - run migration 20261101_critical_path_control.sql so everyone on the project gets it.");
     }
     throw new Error(`Not saved: ${error.message}`);
   }
-  if (!data || data.length === 0) throw new Error("Not saved — only the project owner or an admin can change this.");
+  if (!data || data.length === 0) throw new Error("Not saved - only the project owner or an admin can change this.");
   cache(projectId, mode);
 }
 

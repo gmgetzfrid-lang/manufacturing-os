@@ -45,7 +45,7 @@ function para(text: string, style: "Title" | "Heading" | "Normal" | "Bullet" = "
 function documentXml(i: RfqInput): string {
   const scope = i.rfqGroup ?? "the attached scope";
   const body: string[] = [
-    para(`Request for Quote — ${scope}`, "Title"),
+    para(`Request for Quote - ${scope}`, "Title"),
     para(`${i.projectName}${i.orgName ? ` · ${i.orgName}` : ""}`, "Normal"),
     para(`To: ${i.companyName}`, "Normal"),
     ...(i.dueDate ? [para(`Quotes due: ${new Date(i.dueDate + "T00:00:00").toLocaleDateString()}`, "Normal")] : []),
@@ -60,9 +60,9 @@ function documentXml(i: RfqInput): string {
 
     para("2. Your quote must include", "Heading"),
     para("Quotes are compared line by line on price, manpower, and scope coverage. To be evaluated fairly, include:"),
-    para("A price breakdown by scope item — not a single lump sum.", "Bullet"),
+    para("A price breakdown by scope item - not a single lump sum.", "Bullet"),
     para("Labor hours and crew size (peak headcount) per item, by craft.", "Bullet"),
-    para("An explicit EXCLUSIONS list — anything you are not pricing. Undeclared gaps found during evaluation count against the bid; declared exclusions do not.", "Bullet"),
+    para("An explicit EXCLUSIONS list - anything you are not pricing. Undeclared gaps found during evaluation count against the bid; declared exclusions do not.", "Bullet"),
     para("Quote validity date, and any schedule constraints or premium-time assumptions.", "Bullet"),
 
     para("3. Turnover package (required from the successful bidder)", "Heading"),

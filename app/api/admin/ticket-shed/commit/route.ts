@@ -62,7 +62,7 @@ function buildTombstone(row: TombstoneSource): Record<string, unknown> {
       .filter((n): n is string => typeof n === "string")
       .slice(0, 6),
     historyCount: history.length,
-    archivedReason: "Long-closed — full content moved to the archive to free storage.",
+    archivedReason: "Long-closed - full content moved to the archive to free storage.",
   };
 }
 
@@ -97,7 +97,7 @@ export async function POST(req: NextRequest) {
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   if (!archiveId) return NextResponse.json({ error: "archiveId is required" }, { status: 400 });
   if (body.confirm !== true) {
-    return NextResponse.json({ error: "Confirmation required — only reclaim after the archive is safely saved." }, { status: 400 });
+    return NextResponse.json({ error: "Confirmation required - only reclaim after the archive is safely saved." }, { status: 400 });
   }
   const sb = actor.admin;
 
@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No such archive for this workspace (already discarded, or never produced)." }, { status: 404 });
   }
   if ((cat as { note?: string }).note === "producing…") {
-    return NextResponse.json({ error: "That archive never finished producing — re-produce or discard it. Nothing was freed." }, { status: 409 });
+    return NextResponse.json({ error: "That archive never finished producing - re-produce or discard it. Nothing was freed." }, { status: 409 });
   }
 
   // Every ticket linked to this archive — INCLUDING any already stamped by a
@@ -165,7 +165,7 @@ export async function POST(req: NextRequest) {
       .eq("org_id", orgId)
       .is("archived_at", null);
     if (error) { errors.push(`stamp ${t.id}: ${error.message}`); continue; }
-    if ((count ?? 0) === 0) { errors.push(`stamp ${t.id}: raced — left untouched`); continue; }
+    if ((count ?? 0) === 0) { errors.push(`stamp ${t.id}: raced - left untouched`); continue; }
     newlyStamped++;
     idsToFree.push(t.id);
     keysByTicket.set(t.id, keysFor(t));

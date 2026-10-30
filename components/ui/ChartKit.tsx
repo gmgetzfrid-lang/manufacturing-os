@@ -59,7 +59,7 @@ export function SCurveChart({ points, fmt, todayIso, className = "" }: {
   return (
     <div className={className}>
       <svg viewBox={`0 0 ${VB_W} ${VB_H}`} className="w-full h-auto" role="img"
-        aria-label={`Cost curve — actual ${fmt(last.actual)}, committed ${fmt(last.committed)}${last.planned != null ? `, planned ${fmt(last.planned)}` : ""}`}>
+        aria-label={`Cost curve - actual ${fmt(last.actual)}, committed ${fmt(last.committed)}${last.planned != null ? `, planned ${fmt(last.planned)}` : ""}`}>
         {/* Recessive horizontal grid at quarter lines. */}
         {[0.25, 0.5, 0.75, 1].map((f) => (
           <line key={f} x1={PAD_L} x2={VB_W - PAD_R} y1={py(max * f)} y2={py(max * f)}
@@ -90,7 +90,7 @@ export function SCurveChart({ points, fmt, todayIso, className = "" }: {
         {points.map((p, i) => (
           <rect key={i} x={px(i) - (VB_W / n) / 2} y={PAD_T} width={VB_W / n} height={VB_H - PAD_T - PAD_B}
             fill="transparent">
-            <title>{`${fmtDate(p.date)} — spent ${fmt(p.actual)} · committed ${fmt(p.committed)}${p.planned != null ? ` · planned ${fmt(p.planned)}` : ""}`}</title>
+            <title>{`${fmtDate(p.date)} - spent ${fmt(p.actual)} · committed ${fmt(p.committed)}${p.planned != null ? ` · planned ${fmt(p.planned)}` : ""}`}</title>
           </rect>
         ))}
         {/* X extremes. */}
@@ -186,7 +186,7 @@ export function ScoreDial({ score, size = 64, label, className = "" }: {
   return (
     <div className={`relative inline-flex flex-col items-center justify-center shrink-0 ${className}`}
       style={{ width: size, height: size }}
-      title={score == null ? "Not enough evidence to score yet" : `${score} / 100${label ? ` — ${label}` : ""}`}>
+      title={score == null ? "Not enough evidence to score yet" : `${score} / 100${label ? ` - ${label}` : ""}`}>
       <svg width={size} height={size} className="-rotate-90 absolute inset-0">
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--viz-track)" strokeWidth={strokeWidth} />
         {score != null && (
@@ -198,7 +198,7 @@ export function ScoreDial({ score, size = 64, label, className = "" }: {
       </svg>
       <div className="relative text-center leading-none">
         <div className="font-black tabular-nums text-[var(--color-text)]" style={{ fontSize: size / 3.4 }}>
-          {score == null ? "—" : Math.round(score)}
+          {score == null ? "-" : Math.round(score)}
         </div>
         {label && <div className="mt-0.5 text-[8px] font-black uppercase tracking-wider" style={{ color }}>{label}</div>}
       </div>
@@ -287,7 +287,7 @@ export function ExampleFrame({ children, note, className = "" }: {
           Example data
         </span>
         <span className="text-[10px] text-[var(--color-text-muted)]">
-          {note ?? "This is what the view looks like with a job in flight — it turns real as your numbers land."}
+          {note ?? "This is what the view looks like with a job in flight - it turns real as your numbers land."}
         </span>
       </div>
       <div className="p-3 opacity-90">{children}</div>

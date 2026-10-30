@@ -126,7 +126,7 @@ export async function GET(req: NextRequest) {
     const missing = error.code === "42P01" || /does not exist/i.test(error.message);
     return bad(
       missing
-        ? "The ai_connections table doesn't exist yet — run migration 20260911 in Supabase, then reopen this dialog."
+        ? "The ai_connections table doesn't exist yet - run migration 20260911 in Supabase, then reopen this dialog."
         : `Couldn't load your connection: ${error.message}`,
       missing ? 424 : 500,
     );
@@ -161,7 +161,7 @@ export async function POST(req: NextRequest) {
   if (!auth) return bad("Unauthorized", 401);
 
   if (body.scope === "org") {
-    return bad("Workspace keys are retired — everyone uses their own personal API key.", 410);
+    return bad("Workspace keys are retired - everyone uses their own personal API key.", 410);
   }
 
   // ── Test: run a real 1-line call on the saved (or provided) connection ──
@@ -173,7 +173,7 @@ export async function POST(req: NextRequest) {
       const { data: row } = await supabaseAdmin
         .from("ai_connections").select("provider, model, api_key")
         .eq("org_id", orgId).eq("user_id", auth.userId).maybeSingle();
-      if (!row) return bad("No key saved yet — enter one first.", 404);
+      if (!row) return bad("No key saved yet - enter one first.", 404);
       provider = row.provider as AiProviderId;
       model = (model || row.model) as string;
       apiKey = openAiKey(row.api_key as string);
@@ -207,7 +207,7 @@ export async function POST(req: NextRequest) {
         .from("ai_connections")
         .select("embedding_provider, embedding_model, embedding_api_key")
         .eq("org_id", orgId).eq("user_id", auth.userId).maybeSingle();
-      if (!row?.embedding_api_key) return bad("No embeddings key saved yet — paste one first.", 404);
+      if (!row?.embedding_api_key) return bad("No embeddings key saved yet - paste one first.", 404);
       ep = ep || String(row.embedding_provider ?? "");
       model = model || String(row.embedding_model ?? "");
       key = openAiKey(row.embedding_api_key as string);
@@ -249,7 +249,7 @@ export async function POST(req: NextRequest) {
     const { data: row } = await supabaseAdmin
       .from("ai_connections").select("id").eq("org_id", orgId).eq("user_id", auth.userId).maybeSingle();
     if (!row) {
-      return bad("Save your chat API key first — the embeddings key attaches to it.", 409);
+      return bad("Save your chat API key first - the embeddings key attaches to it.", 409);
     }
     // Verify a NEW key with a real embed call before storing it. A key that
     // saves is a key that works — no more discovering a typo at index-build.
@@ -276,7 +276,7 @@ export async function POST(req: NextRequest) {
     if (error) {
       return bad(
         columnMissing(error)
-          ? "Meaning-based search needs migration 20260930 — run it in Supabase, then try again."
+          ? "Meaning-based search needs migration 20260930 - run it in Supabase, then try again."
           : `Couldn't save the embeddings key: ${error.message}`,
         columnMissing(error) ? 424 : 500,
       );
@@ -299,12 +299,12 @@ export async function POST(req: NextRequest) {
     if (error) {
       return bad(
         columnMissing(error)
-          ? `Choosing a model per job needs the database update ${JOB_MODELS_MIGRATION} — run it in Supabase, then try again.`
+          ? `Choosing a model per job needs the database update ${JOB_MODELS_MIGRATION} - run it in Supabase, then try again.`
           : `Couldn't save: ${error.message}`,
         columnMissing(error) ? 424 : 500,
       );
     }
-    if (!row) return bad("Save your API key first — the choices attach to it.", 409);
+    if (!row) return bad("Save your API key first - the choices attach to it.", 409);
     await supabaseAdmin.from("audit_logs").insert({
       action: "AI_JOB_MODELS_SAVED",
       resource_type: "ai_connection", resource_id: orgId,
@@ -374,7 +374,7 @@ export async function DELETE(req: NextRequest) {
   const auth = await authMember(req, orgId);
   if (!auth) return bad("Unauthorized", 401);
   if (body.scope === "org") {
-    return bad("Workspace keys are retired — nothing to remove.", 410);
+    return bad("Workspace keys are retired - nothing to remove.", 410);
   }
   const { error } = await supabaseAdmin
     .from("ai_connections").delete()

@@ -55,10 +55,10 @@ describe("shift notes by the hour", () => {
     });
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: secs });
     const notes = text.slice(text.indexOf("SHIFT NOTES"));
-    expect(notes).toMatch(/5:30 AM — Shift meeting — No crew named: Mike · 12 on site/);
-    expect(notes).toMatch(/6:00 — Start of shift — permitting\. Permits signed for E-606\./);
-    expect(notes).toMatch(/7:00 — —/);
-    expect(notes).toMatch(/8:00 — Pulling the E-606 bundle\./);
+    expect(notes).toMatch(/5:30 AM - Shift meeting - No crew named: Mike · 12 on site/);
+    expect(notes).toMatch(/6:00 - Start of shift - permitting\. Permits signed for E-606\./);
+    expect(notes).toMatch(/7:00 - -/);
+    expect(notes).toMatch(/8:00 - Pulling the E-606 bundle\./);
   });
 });
 
@@ -124,9 +124,9 @@ describe("unfinished work: behind, or carrying over as planned", () => {
     expect(text).toMatch(/Retube \(2 days\) · behind plan \(plan had \d+%\), continues next day shift · done 10%/);
     expect(text).toMatch(/Blast tower \(2 days\) · on plan, continues next day shift · done 55%/);
     // Once in the done/next tables (the Why table above names steps on purpose, with their hours).
-    const lists = text.slice(text.search(/^(DONE|NEXT) — /m));
+    const lists = text.slice(text.search(/^(DONE|NEXT) - /m));
     for (const name of ["Hydroblast", "Retube \\(2 days\\)", "Blast tower \\(2 days\\)"]) expect(lists.match(new RegExp(`${name} ·`, "g"))?.length).toBe(1);
-    expect(text).not.toMatch(/PROBLEMS|ON PLAN —/);
+    expect(text).not.toMatch(/PROBLEMS|ON PLAN -/);
     expect(text).not.toMatch(/^CREWS/m);
     expect(text.indexOf("WHERE WE STAND")).toBeLessThan(text.indexOf("CARRIES OVER TO DAY SHIFT"));
     // Why it's behind: each step's hours on its own row — no separate table.
@@ -134,7 +134,7 @@ describe("unfinished work: behind, or carrying over as planned", () => {
     expect(text).toMatch(/Hydroblast · .*was due .* · done 60% · −[\d.]+ h/);
     // The day crew's work is in its own table, not the night shift's list.
     expect(text).toMatch(/CARRIES OVER TO DAY SHIFT/);
-    expect(text).toMatch(/^NEXT — NIGHT SHIFT[^\n]*\n   Nothing planned for the night shift\./m);
+    expect(text).toMatch(/^NEXT - NIGHT SHIFT[^\n]*\n   Nothing planned for the night shift\./m);
   });
 });
 
@@ -144,18 +144,18 @@ describe("a comment explains a step, quietly", () => {
   const r = buildShiftReport({ milestones: [fm, cal], tz: CHI, shift, now: shift.end });
   const secs = turnoverUpdate(r, f, {
     pctOf: () => 50, finishOf: () => at("2026-10-28", "17:00"), stepsOf: stepsOf([fm, cal], shift.end),
-    noteOf: (id) => (id === "cal" ? "Sent out for calibration — back Wednesday" : undefined),
+    noteOf: (id) => (id === "cal" ? "Sent out for calibration - back Wednesday" : undefined),
   });
   it("50% on a multi-day step reads on plan, with the comment under the step", () => {
     const html = toEmailHtml({ kind: "k", project: "p", when: "w", asOf: "a", sections: secs });
-    expect(html).toMatch(/Calibrate meter<div[^>]*font-style:italic[^>]*>“Sent out for calibration — back Wednesday”/);
+    expect(html).toMatch(/Calibrate meter<div[^>]*font-style:italic[^>]*>“Sent out for calibration - back Wednesday”/);
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: secs });
-    expect(text).toMatch(/FT-101 Coriolis meter — Calibrate meter \("Sent out for calibration — back Wednesday"\) · on plan, continues next day shift · done 50%/);
+    expect(text).toMatch(/FT-101 Coriolis meter - Calibrate meter \("Sent out for calibration - back Wednesday"\) · on plan, continues next day shift · done 50%/);
   });
 });
 
 describe("the update's first glance", () => {
-  it("puts the numbers and two bars in Where we stand across the full width — no bottom-line box; the safety focus off by default", () => {
+  it("puts the numbers and two bars in Where we stand across the full width - no bottom-line box; the safety focus off by default", () => {
     const stand = sections.find((s) => s.id === "stand")!;
     const ov = stand.blocks[0];
     if (ov.k !== "overview") throw new Error("no overview");

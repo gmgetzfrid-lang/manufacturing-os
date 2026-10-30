@@ -121,7 +121,7 @@ export default function SplitWizard(props: SplitWizardProps) {
       onSuccess();
     } catch (e) {
       const f = translatePostgresError(e, { entity: "document", field: "document_number" });
-      setError(`${f.heading} — ${f.message}`);
+      setError(`${f.heading} - ${f.message}`);
     } finally {
       setSubmitting(false);
     }
@@ -140,7 +140,7 @@ export default function SplitWizard(props: SplitWizardProps) {
             <div>
               <h2 className="font-black text-[var(--color-text)]">Split Document</h2>
               <div className="text-[11px] font-mono text-[var(--color-text-muted)] mt-0.5">
-                Source: {doc.documentNumber || doc.title || doc.id} · Rev {doc.rev || "—"}
+                Source: {doc.documentNumber || doc.title || doc.id} · Rev {doc.rev || "-"}
               </div>
             </div>
           </div>
@@ -156,7 +156,7 @@ export default function SplitWizard(props: SplitWizardProps) {
         <div className="p-5 space-y-4 min-h-[200px]">
           <FirstRunHint storageKey="lifecycle.split.intro" tone="info">
             A split retires the source document and creates the new ones you define here.
-            <b className="block mt-1">You can reverse the split later</b> from the document Timeline if you change your mind — nothing is permanently destroyed.
+            <b className="block mt-1">You can reverse the split later</b> from the document Timeline if you change your mind - nothing is permanently destroyed.
           </FirstRunHint>
           {step === 1 && (
             <Step1Targets
@@ -343,7 +343,7 @@ function Step2Tags({
   if (sourceTags.length === 0) {
     return (
       <div className="text-xs text-[var(--color-text-muted)] italic py-6 text-center border border-dashed border-[var(--color-border)] rounded-lg">
-        Source has no asset tags. New documents will start with no tags — you can add them later.
+        Source has no asset tags. New documents will start with no tags - you can add them later.
       </div>
     );
   }
@@ -352,7 +352,7 @@ function Step2Tags({
     <div className="space-y-3">
       <div className="text-[11px] text-[var(--color-text-muted)]">
         Distribute the source&apos;s {sourceTags.length} asset tag{sourceTags.length === 1 ? "" : "s"} across the new sheets.
-        A tag can appear on multiple targets — some equipment legitimately spans sheets.
+        A tag can appear on multiple targets - some equipment legitimately spans sheets.
       </div>
 
       <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">
@@ -416,13 +416,13 @@ function Step3Confirm({
         <div className="font-bold text-[var(--color-text)] mb-2">What will happen</div>
         <ul className="list-disc ml-5 space-y-1 text-[var(--color-text)]">
           <li>
-            <span className="font-mono">{doc.documentNumber || doc.title}</span> Rev {doc.rev || "—"} →{" "}
+            <span className="font-mono">{doc.documentNumber || doc.title}</span> Rev {doc.rev || "-"} →{" "}
             <span className="text-amber-700 font-bold">Superseded</span>
           </li>
           {targets.map((t, i) => (
             <li key={i}>
               New: <span className="font-mono font-bold">{t.documentNumber}</span> ({t.title}) at Rev{" "}
-              <span className="font-mono">{t.initialRevLabel}</span> — {t.assetTagKeys.size} tag
+              <span className="font-mono">{t.initialRevLabel}</span> - {t.assetTagKeys.size} tag
               {t.assetTagKeys.size === 1 ? "" : "s"}
             </li>
           ))}
@@ -532,7 +532,7 @@ function makeDraft(source: DocumentRecord, suffix: string): DraftTarget {
   const base = source.documentNumber || "DOC";
   return {
     documentNumber: `${base}-${suffix}`,
-    title: `${source.title || "Sheet"} — Part ${suffix}`,
+    title: `${source.title || "Sheet"} - Part ${suffix}`,
     sheetNumber: "",
     initialRevLabel: "0",
     changeLog: "",

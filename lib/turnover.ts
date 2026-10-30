@@ -16,9 +16,9 @@ export type TurnoverStatus = "open" | "received" | "accepted" | "rejected" | "wa
 
 export const TURNOVER_STATUS_LABEL: Record<TurnoverStatus, string> = {
   open: "Not received",
-  received: "Received — awaiting QA/QC review",
+  received: "Received - awaiting QA/QC review",
   accepted: "Accepted",
-  rejected: "Rejected — resubmission needed",
+  rejected: "Rejected - resubmission needed",
   waived: "Waived",
 };
 
@@ -56,24 +56,24 @@ export interface PunchItem {
  *  lists nest: standard includes small, capital includes both. */
 export const TURNOVER_SEEDS: Record<"small" | "standard" | "capital", Array<{ name: string; description: string }>> = {
   small: [
-    { name: "Work completion sign-off", description: "The contractor's statement that the scope is finished — who signed and when." },
+    { name: "Work completion sign-off", description: "The contractor's statement that the scope is finished - who signed and when." },
     { name: "As-built markups / redlines", description: "Marked-up drawings showing what was ACTUALLY installed, wherever it differs from the design." },
-    { name: "Test records", description: "Whatever proving was done — pressure test, loop check, rotation check — with the numbers, not just a checkmark." },
+    { name: "Test records", description: "Whatever proving was done - pressure test, loop check, rotation check - with the numbers, not just a checkmark." },
   ],
   standard: [
     { name: "Weld map & weld log", description: "Which weld is where, who welded it, and with what procedure. The map ties every weld number to a drawing location." },
     { name: "NDE reports", description: "Non-destructive examination results (X-ray/RT, ultrasonic/UT, dye penetrant) for the welds that required them." },
-    { name: "Material certs (MTRs)", description: "Mill test reports proving the pipe and fittings are the alloy the spec ordered — heat numbers must trace to what was installed." },
+    { name: "Material certs (MTRs)", description: "Mill test reports proving the pipe and fittings are the alloy the spec ordered - heat numbers must trace to what was installed." },
     { name: "Pressure / leak test records", description: "Test pressure, hold time, test medium, and the witness signature. The chart or gauge log comes with it." },
-    { name: "Equipment data sheets", description: "Vendor data for anything new that was installed — capacities, materials, ratings." },
+    { name: "Equipment data sheets", description: "Vendor data for anything new that was installed - capacities, materials, ratings." },
   ],
   capital: [
-    { name: "ITP records (hold/witness points)", description: "The inspection & test plan with every hold and witness point signed off in order — proof nothing skipped inspection." },
+    { name: "ITP records (hold/witness points)", description: "The inspection & test plan with every hold and witness point signed off in order - proof nothing skipped inspection." },
     { name: "Welder qualification records", description: "Current qualification papers for every welder who touched the job, matched to the procedures they welded." },
-    { name: "Calibration certs for M&TE", description: "Calibration certificates for the gauges and instruments used in testing — an uncalibrated gauge proves nothing." },
+    { name: "Calibration certs for M&TE", description: "Calibration certificates for the gauges and instruments used in testing - an uncalibrated gauge proves nothing." },
     { name: "PSSR support package", description: "Everything the pre-startup safety review needs: updated P&IDs, procedures, training records for the change." },
-    { name: "Vendor manuals & spare parts list", description: "Operating manuals and the recommended spares list for new equipment — maintenance needs these on day one." },
-    { name: "Final as-built drawings", description: "The drafted, issued as-built revisions — not just field markups — closing the loop in document control." },
+    { name: "Vendor manuals & spare parts list", description: "Operating manuals and the recommended spares list for new equipment - maintenance needs these on day one." },
+    { name: "Final as-built drawings", description: "The drafted, issued as-built revisions - not just field markups - closing the loop in document control." },
   ],
 };
 

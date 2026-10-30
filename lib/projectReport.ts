@@ -115,7 +115,7 @@ function renderReportHtml(d: ReportData): string {
     `<tr><td class="k">${esc(label)}</td><td>${value}</td></tr>`;
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>Project report — ${esc(p.name)}</title>
+<title>Project report - ${esc(p.name)}</title>
 <style>
   body { font: 12px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; color: #111827; margin: 32px auto; max-width: 820px; padding: 0 24px; }
   h1 { font-size: 20px; margin: 0 0 2px; } h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #6b7280; margin: 22px 0 8px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
@@ -129,7 +129,7 @@ function renderReportHtml(d: ReportData): string {
   @media print { body { margin: 0 auto; } }
 </style></head><body>
 <h1>${esc(p.name)}<span class="badge">${esc(p.status ?? "")}</span></h1>
-<div class="sub">Project report · generated ${esc(today)} · owner ${esc(p.owner_user_name ?? "—")}${p.moc_reference ? ` · MOC ${esc(p.moc_reference)}` : ""}</div>
+<div class="sub">Project report · generated ${esc(today)} · owner ${esc(p.owner_user_name ?? "-")}${p.moc_reference ? ` · MOC ${esc(p.moc_reference)}` : ""}</div>
 ${p.purpose ? `<p><b>Purpose:</b> ${esc(p.purpose)}</p>` : ""}
 ${goals.length ? `<p><b>Goals:</b></p><ul>${goals.map((g) => `<li>${esc(g)}</li>`).join("")}</ul>` : ""}
 ${p.success_criteria ? `<p><b>Success criteria:</b> ${esc(p.success_criteria)}</p>` : ""}
@@ -140,9 +140,9 @@ ${row("Budget", `<span class="num">${esc(money(d.rollup.budget))}</span>`)}
 ${row("Committed (promised)", `<span class="num">${esc(money(d.rollup.committed))}</span>`)}
 ${row("Spent (real money out)", `<span class="num">${esc(money(d.rollup.spent))}</span>`)}
 ${row("Remaining", `<span class="num ${d.rollup.remaining < 0 ? "flag" : "ok"}">${esc(money(d.rollup.remaining))}</span>`)}
-${d.rollup.cpi != null ? row("Cost performance (CPI)", `<span class="num">${d.rollup.cpi.toFixed(2)}</span> — ${d.rollup.cpi >= 1 ? "getting more work per dollar than planned" : "spending faster than earning"}`) : ""}
+${d.rollup.cpi != null ? row("Cost performance (CPI)", `<span class="num">${d.rollup.cpi.toFixed(2)}</span> - ${d.rollup.cpi >= 1 ? "getting more work per dollar than planned" : "spending faster than earning"}`) : ""}
 ${d.forecastSentence ? row("Forecast", esc(d.forecastSentence)) : ""}
-${d.cos.approvedCount > 0 ? row("Change orders", `<span class="num">${d.cos.approvedCount} approved · ${esc(money(d.cos.approvedAmount))}</span> — ${d.cos.byReason.map((r) => `${esc(CO_REASON_LABEL[r.reason])}: ${esc(money(r.amount))}`).join("; ")}`) : ""}
+${d.cos.approvedCount > 0 ? row("Change orders", `<span class="num">${d.cos.approvedCount} approved · ${esc(money(d.cos.approvedAmount))}</span> - ${d.cos.byReason.map((r) => `${esc(CO_REASON_LABEL[r.reason])}: ${esc(money(r.amount))}`).join("; ")}`) : ""}
 ${d.cos.open > 0 ? row("Awaiting decision", `<span class="flag">${d.cos.open} change order${d.cos.open === 1 ? "" : "s"} open</span>`) : ""}
 </table>
 
@@ -150,8 +150,8 @@ ${d.cos.open > 0 ? row("Awaiting decision", `<span class="flag">${d.cos.open} ch
 ${d.milestones.length === 0 ? `<p class="muted">No schedule loaded.</p>` : `
 <p>${d.milestones.filter((m) => m.status === "completed").length}/${d.milestones.length} milestones complete${d.overdue > 0 ? ` · <span class="flag">${d.overdue} overdue</span>` : ` · <span class="ok">nothing overdue</span>`}</p>
 <table>${d.milestones.slice(0, 25).map((m) => row(
-  m.planned_at ? new Date(m.planned_at).toLocaleDateString() : "—",
-  `${esc(m.name)} <span class="muted">— ${esc(m.status.replace("_", " "))}</span>`,
+  m.planned_at ? new Date(m.planned_at).toLocaleDateString() : "-",
+  `${esc(m.name)} <span class="muted">- ${esc(m.status.replace("_", " "))}</span>`,
 )).join("")}</table>
 ${d.milestones.length > 25 ? `<p class="muted">…and ${d.milestones.length - 25} more.</p>` : ""}`}
 
@@ -171,7 +171,7 @@ ${d.parties.length ? `<h2>Companies on the job</h2><ul>${d.parties.map((x) =>
   `<li>${esc(x.name)}${x.kind ? ` <span class="muted">(${esc(x.kind)}${x.trade ? `, ${esc(x.trade)}` : ""})</span>` : ""}</li>`).join("")}</ul>` : ""}
 
 ${p.lessons_learned ? `<h2>Lessons learned</h2><p>${esc(p.lessons_learned).replace(/\n/g, "<br>")}</p>` : ""}
-<p class="muted" style="margin-top:28px">Every figure above is drawn live from the platform's records — cost entries, change orders, milestones, checklist evidence, and turnover reviews.</p>
+<p class="muted" style="margin-top:28px">Every figure above is drawn live from the platform's records - cost entries, change orders, milestones, checklist evidence, and turnover reviews.</p>
 <script>window.print()</script>
 </body></html>`;
 }
@@ -199,28 +199,28 @@ export async function draftLessonsLearned(orgId: string, projectId: string): Pro
   }
   for (const r of d.cos.byReason) {
     const why: Record<CoReason, string> = {
-      scope_gap: "the bid missed scope — tighten the RFQ scope description and the bid-tab gap check next time",
-      field_condition: "conditions found during work — consider more up-front inspection on similar jobs",
-      owner_request: "we asked for more after award — lock scope earlier or budget an allowance",
-      design_error: "our drawings/scope were wrong — review the design check that let it through",
+      scope_gap: "the bid missed scope - tighten the RFQ scope description and the bid-tab gap check next time",
+      field_condition: "conditions found during work - consider more up-front inspection on similar jobs",
+      owner_request: "we asked for more after award - lock scope earlier or budget an allowance",
+      design_error: "our drawings/scope were wrong - review the design check that let it through",
       other: "review individually",
     };
-    lines.push(`CHANGE ORDERS (${CO_REASON_LABEL[r.reason]}): ${r.count} for ${money(r.amount)} — ${why[r.reason]}.`);
+    lines.push(`CHANGE ORDERS (${CO_REASON_LABEL[r.reason]}): ${r.count} for ${money(r.amount)} - ${why[r.reason]}.`);
   }
   if (d.overdue > 0) {
-    lines.push(`SCHEDULE: ${d.overdue} milestone${d.overdue === 1 ? "" : "s"} finished (or sat) past their planned date — check which activities slipped and why.`);
+    lines.push(`SCHEDULE: ${d.overdue} milestone${d.overdue === 1 ? "" : "s"} finished (or sat) past their planned date - check which activities slipped and why.`);
   } else if (d.milestones.length > 0) {
     lines.push("SCHEDULE: No overdue milestones at report time.");
   }
   if (d.turnover.rejected > 0) {
-    lines.push(`QUALITY: ${d.turnover.rejected} turnover item${d.turnover.rejected === 1 ? "" : "s"} rejected on first submission — feed the rejection reasons back to the contractor's record.`);
+    lines.push(`QUALITY: ${d.turnover.rejected} turnover item${d.turnover.rejected === 1 ? "" : "s"} rejected on first submission - feed the rejection reasons back to the contractor's record.`);
   }
   if (d.turnover.outstanding.length > 0) {
     lines.push(`CLOSEOUT: Turnover still outstanding at draft time: ${d.turnover.outstanding.join(", ")}.`);
   }
   const evidenceGaps = d.checklistLines.reduce((s, c) => s + c.needsEvidence, 0);
   if (evidenceGaps > 0) {
-    lines.push(`EVIDENCE: ${evidenceGaps} checklist item${evidenceGaps === 1 ? "" : "s"} closed without system-held evidence — capture those documents next job so proof is automatic.`);
+    lines.push(`EVIDENCE: ${evidenceGaps} checklist item${evidenceGaps === 1 ? "" : "s"} closed without system-held evidence - capture those documents next job so proof is automatic.`);
   }
   if (d.punchOpen > 0) {
     lines.push(`PUNCH: ${d.punchOpen} item${d.punchOpen === 1 ? "" : "s"} still open.`);

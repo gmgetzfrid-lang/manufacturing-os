@@ -57,16 +57,16 @@ export function pressureClassNote(rating: string | null, all: string[] = rating 
   if (classes.length === 1) {
     const n = classes[0];
     return `\n\nPRESSURE CLASS: the question is about ASME ${written(n)}. ` +
-      `Passages for a different class (e.g. Class ${n === "150" ? "1500" : "150"}) do NOT answer it — ` +
+      `Passages for a different class (e.g. Class ${n === "150" ? "1500" : "150"}) do NOT answer it - ` +
       "never offer them as the answer; say they are a different class. A piping class / spec code carries a " +
       `rating: the answer is the spec(s) whose rating is Class ${n} and whose service fits the fluid.`;
   }
   const line = rating ?? classes[0];
   const others = classes.filter((c) => c !== line);
-  return `\n\nPRESSURE CLASSES: the question names more than one — ${classes.map(written).join(" and ")}. ` +
+  return `\n\nPRESSURE CLASSES: the question names more than one - ${classes.map(written).join(" and ")}. ` +
     `It reads as ${others.map((c) => `Class ${c}`).join("/")} components in a Class ${line} line. Passages for ` +
     "EITHER class are the subject; a class the question doesn't name (e.g. 1500) is not. A line class's " +
-    "component tables list parts BY RATING, and a row can carry a different rating than the line — with " +
+    "component tables list parts BY RATING, and a row can carry a different rating than the line - with " +
     "numbered notes saying when that row is used (e.g. against equipment nozzles, control valves). Such a " +
     "row and its note ARE the rule for this question: quote the row, its rating, and the note's text.";
 }

@@ -186,7 +186,7 @@ export default function CheckoutsPage() {
             <>
               Every document currently locked, across every library. {rows.length} active.{" "}
               <HelpTooltip className="align-middle">
-                A <b>checkout</b> declares &ldquo;I&rsquo;m working on this drawing — don&rsquo;t touch.&rdquo;
+                A <b>checkout</b> declares &ldquo;I&rsquo;m working on this drawing - don&rsquo;t touch.&rdquo;
                 <b className="block mt-1">Project checkouts</b> are tied to an open project and stay until the project closes or the user releases.
                 <b className="block mt-1">Ad-hoc checkouts</b> auto-expire after 24h.
                 <b className="block mt-1">Collaborative sessions</b> share one lockId so multiple people can co-edit.
@@ -258,7 +258,7 @@ export default function CheckoutsPage() {
                 userIds: recipients,
                 actorUserId: uid ?? undefined,
                 kind: "checkout_conflict",
-                title: "Coordinate — overlapping checkout",
+                title: "Coordinate - overlapping checkout",
                 body: `${userEmail?.split("@")[0] ?? "A colleague"} flagged that you're both working on ${what} (${names}). Sync up before issuing so changes don't collide.`,
                 link: "/checkouts",
                 resourceType: "checkout",
@@ -320,7 +320,7 @@ function ProjectGroup({ project, items }: { project: Project | null; items: Chec
                   <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] font-mono">{project.status}</span>
                 </>
               ) : (
-                <span>Quick reviews — auto-release after 24h</span>
+                <span>Quick reviews - auto-release after 24h</span>
               )}
             </div>
           </div>
@@ -355,7 +355,7 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
         <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            <span className="font-mono text-sm font-bold text-[var(--color-text)] truncate">{row.docNumber || "—"}</span>
+            <span className="font-mono text-sm font-bold text-[var(--color-text)] truncate">{row.docNumber || "-"}</span>
             <span className="text-xs text-[var(--color-text-muted)] truncate">{row.docTitle}</span>
             {row.libraryName && <span className="text-[10px] text-[var(--color-text-faint)] truncate">in {row.libraryName}</span>}
           </div>
@@ -400,7 +400,7 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
 }
 
 function formatRelative(ts: Timestamp): string {
-  if (!ts) return "—";
+  if (!ts) return "-";
   try {
     const d = new Date(ts as string);
     const diff = d.getTime() - Date.now();
@@ -413,7 +413,7 @@ function formatRelative(ts: Timestamp): string {
     if (hr < 24) return future ? `in ${hr}h` : `${hr}h ago`;
     const days = Math.floor(hr / 24);
     return future ? `in ${days}d` : `${days}d ago`;
-  } catch { return "—"; }
+  } catch { return "-"; }
 }
 
 // ─── Phase 6: Consolidation panel ───────────────────────────────
@@ -458,7 +458,7 @@ function ConsolidationPanel({
         <div className="px-4 pb-3 space-y-2">
           <div className="text-[11px] text-amber-800/80 -mt-1">
             Two or more active checkouts touch the same asset or operational scope.
-            This is a heads-up to coordinate — not a block. Open each checkout to
+            This is a heads-up to coordinate - not a block. Open each checkout to
             see who&apos;s working on what.
           </div>
           <div className="space-y-2">
@@ -502,7 +502,7 @@ function OverlapCard({
       <div className="flex items-center gap-2">
         <div className="text-[11px] font-bold text-amber-900 inline-flex items-center gap-1.5 flex-1 min-w-0">
           {heading}
-          <span className="text-amber-700 font-normal">— {involved.length} checkout{involved.length === 1 ? "" : "s"}</span>
+          <span className="text-amber-700 font-normal">- {involved.length} checkout{involved.length === 1 ? "" : "s"}</span>
         </div>
         {involved.length >= 2 && (
           <button
@@ -522,7 +522,7 @@ function OverlapCard({
         {involved.map((c) => (
           <div key={c.id} className="flex items-center gap-2 text-[11px] text-[var(--color-text)]">
             <Lock className="w-3 h-3 text-amber-600 shrink-0" />
-            <span className="font-mono text-[var(--color-text-muted)] shrink-0">{c.docNumber || "—"}</span>
+            <span className="font-mono text-[var(--color-text-muted)] shrink-0">{c.docNumber || "-"}</span>
             <span className="truncate flex-1 min-w-0">{c.docTitle || "(untitled)"}</span>
             <span className="text-[var(--color-text-muted)]">{c.userName || c.userId.slice(0, 8)}</span>
             {c.libraryId && c.documentId && (

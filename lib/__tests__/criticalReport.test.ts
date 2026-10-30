@@ -42,16 +42,16 @@ describe("the critical path on the turnover", () => {
   it("leads the next crew's list", () => {
     expect(nextIds[0]).toBe("a");
   });
-  it("Done credits work that was on the path when the shift began — first", () => {
+  it("Done credits work that was on the path when the shift began - first", () => {
     const rows = doneByTask(report, plan, f);
     expect(rows.map((x) => x.key)).toEqual(["v7", "e17"]);
     expect(rows[0].critical).toBe(true);
     expect(rows[0].lines[0].critical).toBe(true);
     expect(rows[1].critical).toBe(false);
   });
-  it("near critical, losing float — in words", () => {
+  it("near critical, losing float - in words", () => {
     const c = plan.items.find((x) => x.r.leaf.id === "c")!.r;
-    expect(pathNote(c, f.hrs)).toBe("near critical — float 14 h → 6 h this shift");
+    expect(pathNote(c, f.hrs)).toBe("near critical - float 14 h → 6 h this shift");
     const b = plan.items.find((x) => x.r.leaf.id === "b")!.r;
     expect(pathNote(b, f.hrs)).toBeNull();
   });
@@ -64,21 +64,21 @@ describe("the critical path on the turnover", () => {
   it("the email says the same", () => {
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(report, f, { pctOf: () => 0, finishOf: () => undefined, forecast: { finish: Date.parse(at("2026-11-01", "02:18")), slipH: 8.3 } }) });
     expect(text).toMatch(/Critical path/);
-    expect(text).toMatch(/Near critical — float 14 h → 6 h this shift/);
+    expect(text).toMatch(/Near critical - float 14 h → 6 h this shift/);
     expect(text).toMatch(/Same crew as critical work \(Ancon\): Step a goes first/);
     expect(text).toMatch(/Step d1 · critical path/);
-    expect(text).toMatch(/forecast finish 11-01 02:18 — 8\.3 h late/);
+    expect(text).toMatch(/forecast finish 11-01 02:18 - 8\.3 h late/);
   });
   it("the forecast in words", () => {
     expect(forecastText({ finish: 0, slipH: 0.2 }, { D: () => "11-01", T: () => "02:18", hrs: f.hrs })).toBe("forecast finish 11-01 02:18, on plan");
-    expect(forecastText({ finish: 0, slipH: -3 }, { D: () => "10-31", T: () => "15:00", hrs: f.hrs })).toBe("forecast finish 10-31 15:00 — 3 h early");
+    expect(forecastText({ finish: 0, slipH: -3 }, { D: () => "10-31", T: () => "15:00", hrs: f.hrs })).toBe("forecast finish 10-31 15:00 - 3 h early");
   });
 });
 
 import { carriedOpenWork } from "@/lib/openWork";
 import { carryCutoff } from "@/lib/shiftReport";
 
-describe("carried over — one rule for the report, the calendar and the day list", () => {
+describe("carried over - one rule for the report, the calendar and the day list", () => {
   const late = [e17, v7,
     mk({ id: "y", name: "Yesterday's", parentId: "e17", plannedStartAt: at("2026-10-26", "08:00"), plannedAt: at("2026-10-26", "15:00"), status: "in_progress", percentComplete: 50 }),
     mk({ id: "m", name: "This morning's", parentId: "v7", plannedStartAt: at("2026-10-27", "07:00"), plannedAt: at("2026-10-27", "10:00") }),

@@ -186,7 +186,7 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
 
   if (docs.length === DOC_CAP) truncations.push(`Showing the ${DOC_CAP} most recently updated documents.`);
   if (assets.length === ASSET_CAP) truncations.push(`Showing the first ${ASSET_CAP} equipment items.`);
-  if (docAssets.capped) truncations.push("Equipment-tag links capped — densest web shown.");
+  if (docAssets.capped) truncations.push("Equipment-tag links capped - densest web shown.");
   if (projectDocs.capped) truncations.push("Project links capped.");
 
   const nodes = new Map<string, GraphNode>();
@@ -381,14 +381,14 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
     if (!docId) { unmappedMentions += 1; continue; }
     addEdge(`doc:${docId}`, `asset:${m.asset_id}`, "mention", `${L(`doc:${docId}`)} mentions ${L(`asset:${m.asset_id}`)} in its text`);
   }
-  if (mentions.capped) truncations.push("Mention links capped — densest web shown.");
+  if (mentions.capped) truncations.push("Mention links capped - densest web shown.");
   if (unmappedMentions > 0) {
     // Honest about the gap: passages in knowledge-only PDFs have no
     // controlled document to attach to, so they can't be drawn here. The
     // equipment hub still shows them.
     truncations.push(
       `${unmappedMentions} mention${unmappedMentions === 1 ? "" : "s"} come from library-only ` +
-      "documents with no controlled counterpart — see the equipment page for those.",
+      "documents with no controlled counterpart - see the equipment page for those.",
     );
   }
 

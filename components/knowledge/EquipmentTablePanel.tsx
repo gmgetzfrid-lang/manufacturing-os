@@ -39,12 +39,12 @@ export default function EquipmentTablePanel({ table, onOpenTag }: {
       <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <Table2 className="w-4 h-4 text-orange-600 shrink-0" />
         <span className="text-xs font-black text-[var(--color-text)]">
-          {table.filteredTo ? `${table.filteredTo} — ` : "Equipment register — "}
+          {table.filteredTo ? `${table.filteredTo} - ` : "Equipment register - "}
           {table.total.toLocaleString()} distinct tag{table.total === 1 ? "" : "s"}
         </span>
         {table.truncated && (
           <span className="text-[10px] text-amber-600 font-bold">
-            showing the first 400 — use the CSV export in Drawing intelligence for the full set
+            showing the first 400 - use the CSV export in Drawing intelligence for the full set
           </span>
         )}
         <span className="flex-1" />
@@ -76,7 +76,7 @@ export default function EquipmentTablePanel({ table, onOpenTag }: {
                     <tr className="text-[9px] font-black uppercase tracking-wider text-[var(--color-text-muted)] bg-[var(--color-surface-2)]">
                       <th className="text-left px-4 py-1 w-28">Tag</th>
                       <th className="text-left px-2 py-1">Context</th>
-                      <th className="text-left px-2 py-1 w-64">On sheets — click to view ringed</th>
+                      <th className="text-left px-2 py-1 w-64">On sheets - click to view ringed</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--color-border)]">
@@ -91,14 +91,14 @@ export default function EquipmentTablePanel({ table, onOpenTag }: {
                           </button>
                         </td>
                         <td className="px-2 py-1.5 align-top text-[var(--color-text-muted)]">
-                          <span className="line-clamp-2">{item.note ?? "—"}</span>
+                          <span className="line-clamp-2">{item.note ?? "-"}</span>
                         </td>
                         <td className="px-2 py-1.5 align-top">
                           <div className="flex flex-wrap gap-1">
                             {item.sheets.map((s) => (
                               <button key={`${s.documentId}-${s.page}`}
                                 onClick={() => onOpenTag(s.documentId, s.page, item.tag, s.documentName)}
-                                title={`${s.documentName} — page ${s.page}, ${item.tag} ringed`}
+                                title={`${s.documentName} - page ${s.page}, ${item.tag} ringed`}
                                 className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-orange-200 dark:border-orange-900 bg-orange-50/60 dark:bg-orange-950/20 text-orange-800 dark:text-orange-300 font-bold hover:bg-orange-100 dark:hover:bg-orange-950/40 transition-colors">
                                 <Crosshair className="w-2.5 h-2.5" />
                                 <span className="truncate max-w-[9rem]">{s.documentName.replace(/\.pdf$/i, "")}</span>

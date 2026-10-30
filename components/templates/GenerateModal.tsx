@@ -169,7 +169,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between sticky top-0 bg-[var(--color-surface)] rounded-t-2xl z-10">
           <div>
             <h2 className="text-base font-black text-[var(--color-text)] flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-orange-600" /> Generate — {template.name}
+              <Sparkles className="w-4 h-4 text-orange-600" /> Generate - {template.name}
             </h2>
             <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
               Drop your data, review the drafted wording, download finished files.
@@ -237,7 +237,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                 <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <div className="text-xs text-amber-900 dark:text-amber-200">
                   <b>This template needs a few values your sheet doesn&apos;t obviously have.</b> Point each
-                  one at the right column — the choice is remembered for next time.
+                  one at the right column - the choice is remembered for next time.
                 </div>
               </div>
               <ul className="space-y-1.5">
@@ -249,7 +249,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                       onChange={(e) => setMapping((prev) => prev && ({
                         ...prev, columnMap: { ...prev.columnMap, [m.tag]: e.target.value },
                       }))}>
-                      <option value="">— pick a column —</option>
+                      <option value="">- pick a column -</option>
                       {mapping.headers.map((h) => <option key={h} value={h}>{h}</option>)}
                     </Select>
                   </li>
@@ -269,7 +269,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
             <div className="rounded-xl border border-[var(--color-border)] p-3.5">
               <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
                 <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
-                  2 · Review — {docs.length} document{docs.length === 1 ? "" : "s"} drafted
+                  2 · Review - {docs.length} document{docs.length === 1 ? "" : "s"} drafted
                 </div>
                 {cost > 0 && (
                   <span className="text-[10px] text-[var(--color-text-muted)]">
@@ -335,14 +335,14 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                 3 · Generate
               </div>
               <p className="text-[11px] text-[var(--color-text-muted)]">
-                Renders into <b>{template.templateFileName ?? "your template"}</b> — fonts, colours,
+                Renders into <b>{template.templateFileName ?? "your template"}</b> - fonts, colours,
                 tables and headers untouched.
               </p>
               {libraries.length > 0 && (
                 <div className="flex items-center gap-2 flex-wrap text-[11px]">
                   <span className="font-bold text-[var(--color-text)]">File into document control:</span>
                   <Select value={fileInto} onChange={(e) => setFileInto(e.target.value)} className="!w-56 text-xs">
-                    <option value="">— download only —</option>
+                    <option value="">- download only -</option>
                     {libraries.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
                   </Select>
                   <span className="text-[var(--color-text-muted)]">as Draft rev 0</span>

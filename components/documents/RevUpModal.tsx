@@ -251,16 +251,16 @@ export default function RevUpModal({
     if (!revisionLabel.trim()) return setError("Revision label is required.");
     if (!changeLog.trim()) return setError("Describe what changed (required).");
     if (asBranch && branchReason.trim().length < 5) {
-      return setError("A branch needs a reason (at least 5 characters) — it becomes an open item until reconciled.");
+      return setError("A branch needs a reason (at least 5 characters) - it becomes an open item until reconciled.");
     }
     if (lockedByOther && !overrideReason.trim()) {
       return setError(
-        `${doc.checkedOutByName || "Another user"} has this checked out — add a note explaining why you're publishing now.`,
+        `${doc.checkedOutByName || "Another user"} has this checked out - add a note explaining why you're publishing now.`,
       );
     }
     if (mocRequired && mocReference.trim().length < 3) {
       return setError(
-        "This is a drawing-class document — PSM requires the MOC reference for a non-minor revision. Enter the MOC number, or set the change type to Minor/Correction if this is replacement-in-kind.",
+        "This is a drawing-class document - PSM requires the MOC reference for a non-minor revision. Enter the MOC number, or set the change type to Minor/Correction if this is replacement-in-kind.",
       );
     }
 
@@ -285,7 +285,7 @@ export default function RevUpModal({
         // The most consequential outcome in publishing must not be silent:
         // tell the user exactly what happened and what happens next.
         void appAlert({
-          title: `Submitted for review — draft ${submitted.revisionLabel}`,
+          title: `Submitted for review - draft ${submitted.revisionLabel}`,
           message: "Reviewers have been notified. The current revision stays the controlled copy; the moment the last required reviewer signs, the draft publishes automatically.",
         });
         onReviewSubmitted?.(submitted);
@@ -328,7 +328,7 @@ export default function RevUpModal({
         setShowBranchInput(false);
         try { setVersions(await listVersions(doc.id!)); } catch { /* diff falls back */ }
       } else if (e instanceof DuplicateLabelError) {
-        setError(`${e.message} The document may have advanced while this form was open — check Version History.`);
+        setError(`${e.message} The document may have advanced while this form was open - check Version History.`);
         setRevisionLabel(suggestNextRevisionLabel(doc.rev));
       } else {
         console.error("Rev up failed", e);
@@ -342,7 +342,7 @@ export default function RevUpModal({
   const handleSendConflictMessage = async () => {
     if (!conflict || !doc.id || !doc.orgId) return;
     const text = conflictMsg.trim() ||
-      `Heads up — I was about to publish Rev ${revisionLabel} of ${doc.documentNumber || doc.title || "this document"} based on an older revision, and hit your Rev ${conflict.currentRev}. Let's coordinate before I re-publish.`;
+      `Heads up - I was about to publish Rev ${revisionLabel} of ${doc.documentNumber || doc.title || "this document"} based on an older revision, and hit your Rev ${conflict.currentRev}. Let's coordinate before I re-publish.`;
     try {
       await postActivity({
         orgId: doc.orgId,
@@ -398,7 +398,7 @@ export default function RevUpModal({
             </div>
             <div className="text-xs text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3">
               Your upload is based on <b>Rev {myBaseVersion?.revisionLabel ?? doc.rev ?? "?"}</b> and does
-              <b> not</b> include their changes. <b>Nothing has been published</b> — publishing now would have
+              <b> not</b> include their changes. <b>Nothing has been published</b> - publishing now would have
               silently overwritten their work, which is exactly what this stop prevents. Review the diff,
               coordinate, then merge their change into your CAD file and publish on top of Rev {conflict.currentRev}.
             </div>
@@ -463,7 +463,7 @@ export default function RevUpModal({
                   <div className="text-[10px] text-[var(--color-text-muted)] leading-relaxed">
                     Your file is saved on the record, but it does <b>not</b> become the current revision.
                     An open item is created (visible to Document Control and both authors) that stays open
-                    until someone merges the two changes into a later revision — or withdraws this branch.
+                    until someone merges the two changes into a later revision - or withdraws this branch.
                     This is on the record: use it when you genuinely can&apos;t coordinate first.
                   </div>
                   <textarea
@@ -509,7 +509,7 @@ export default function RevUpModal({
               onClick={() => { setConflict(null); onClose(); }}
               className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
             >
-              Close — I&apos;ll coordinate first
+              Close - I&apos;ll coordinate first
             </button>
           </div>
         </div>
@@ -539,7 +539,7 @@ export default function RevUpModal({
           <div className="flex-1 min-w-0">
             <div className="text-sm font-black text-[var(--color-text)]">Publish New Revision</div>
             <div className="text-xs text-[var(--color-text-muted)] truncate">
-              {doc.documentNumber || doc.title || doc.name} — currently Rev {doc.rev || "—"}
+              {doc.documentNumber || doc.title || doc.name} - currently Rev {doc.rev || "-"}
             </div>
           </div>
           <button onClick={onClose} disabled={submitting} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
@@ -587,7 +587,7 @@ export default function RevUpModal({
           <Field
             label="Based On Revision *"
             hint={baseWasRecorded
-              ? "Recorded automatically from your checkout / download — change it only if your working copy came from somewhere else."
+              ? "Recorded automatically from your checkout / download - change it only if your working copy came from somewhere else."
               : "No checkout or download was recorded for you on this document. Declare which revision your work started from."}
           >
             <select
@@ -600,7 +600,7 @@ export default function RevUpModal({
                 <option key={v.id} value={v.id}>
                   Rev {v.revisionLabel}
                   {v.id === doc.currentVersionId ? " (current)" : ""}
-                  {v.supersededAt ? " — superseded" : ""}
+                  {v.supersededAt ? " - superseded" : ""}
                 </option>
               ))}
             </select>
@@ -609,7 +609,7 @@ export default function RevUpModal({
                 <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
                 <span>
                   You&apos;re declaring a base that is <b>not the current revision</b>. Publishing will stop
-                  with a conflict so you can review what changed since — that&apos;s expected, not an error.
+                  with a conflict so you can review what changed since - that&apos;s expected, not an error.
                 </span>
               </div>
             )}
@@ -617,7 +617,7 @@ export default function RevUpModal({
 
           {/* Rev label + Issue purpose + Change type */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <Field label="Revision Label *" hint="Free text — e.g. 1, R3, IFC-A">
+            <Field label="Revision Label *" hint="Free text - e.g. 1, R3, IFC-A">
               <input
                 value={revisionLabel}
                 onChange={(e) => setRevisionLabel(e.target.value)}
@@ -660,7 +660,7 @@ export default function RevUpModal({
                 <span>
                   This library requires <b>pre-publish review</b>.{" "}
                   {willReview
-                    ? <>Your revision will be submitted as an <b>in-review draft ({revisionLabel || "?"}A)</b> for reviewer sign-off — it won&apos;t go live until approved.</>
+                    ? <>Your revision will be submitted as an <b>in-review draft ({revisionLabel || "?"}A)</b> for reviewer sign-off - it won&apos;t go live until approved.</>
                     : <>You&apos;ve chosen to publish directly, without review.</>}
                 </span>
               </div>
@@ -688,7 +688,7 @@ export default function RevUpModal({
               field leaves the fold and stands where it can't be missed. */}
           {mocRequired && (
             <Field
-              label={docClassUnknown ? "MOC Reference (required — class unverified)" : "MOC Reference (required — drawing class)"}
+              label={docClassUnknown ? "MOC Reference (required - class unverified)" : "MOC Reference (required - drawing class)"}
               hint={docClassUnknown
                 ? "The document's class couldn't be verified right now, so drawing rules apply: a non-minor revision needs its Management of Change."
                 : "PSM: a non-minor drawing revision needs its Management of Change. Minor/Correction change types are replacement-in-kind and exempt."}
@@ -707,7 +707,7 @@ export default function RevUpModal({
               process change doesn't slip out under last week's setting. */}
           {docClass === "drawing" && isMinorLike && (
             <div className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">
-              <b>{changeType}</b> on a drawing is replacement-in-kind — no MOC required. If this revision
+              <b>{changeType}</b> on a drawing is replacement-in-kind - no MOC required. If this revision
               changes the process, switch the change type to <b>Major</b> (the MOC becomes mandatory).
             </div>
           )}
@@ -721,7 +721,7 @@ export default function RevUpModal({
             onClick={() => setShowMore((v) => !v)}
             className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
           >
-            <span>More options — signoff chain, MOC, effective date, CAD source</span>
+            <span>More options - signoff chain, MOC, effective date, CAD source</span>
             <span>{showMore ? "▲" : "▼"}</span>
           </button>
           {showMore && (<>
@@ -756,7 +756,7 @@ export default function RevUpModal({
               pulls the authoritative DWG from the vault, not a desktop folder. */}
           <Field
             label="Attach CAD Source (recommended)"
-            hint="DWG or zip of xrefs. Stored with this revision — the next drafter can pull it with one click instead of hunting a desktop folder."
+            hint="DWG or zip of xrefs. Stored with this revision - the next drafter can pull it with one click instead of hunting a desktop folder."
           >
             <div
               onClick={() => sourceInputRef.current?.click()}
@@ -801,7 +801,7 @@ export default function RevUpModal({
                 <Lock className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
                 <span>
                   <b>{doc.checkedOutByName || "Another user"}</b> has this checked out.
-                  Publishing won&apos;t release their checkout — they stay in, but get
+                  Publishing won&apos;t release their checkout - they stay in, but get
                   notified and pointed to your new revision. Best for minor changes.
                 </span>
               </div>
@@ -814,7 +814,7 @@ export default function RevUpModal({
                   onChange={(e) => setOverrideReason(e.target.value)}
                   rows={2}
                   className={`${inputClass} resize-y mt-1`}
-                  placeholder="e.g. Fixed the callout on detail B — minor, won't affect your edits."
+                  placeholder="e.g. Fixed the callout on detail B - minor, won't affect your edits."
                 />
               </div>
             </div>
@@ -840,7 +840,7 @@ export default function RevUpModal({
         {/* Footer */}
         <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between gap-2">
           <div className="text-[11px] text-[var(--color-text-muted)]">
-            Going from <b>Rev {doc.rev || "—"}</b> → {willReview
+            Going from <b>Rev {doc.rev || "-"}</b> → {willReview
               ? <b className="text-violet-600">{revisionLabel || "?"}A (in review)</b>
               : <b className="text-orange-600">Rev {revisionLabel || "?"}</b>}
           </div>

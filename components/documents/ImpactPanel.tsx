@@ -150,7 +150,7 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
                   >
                     <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.checkedOutByName ? "bg-amber-500 animate-pulse" : "bg-slate-300"}`} />
                     <span className="text-xs font-bold text-[var(--color-text)] group-hover:text-blue-700 truncate">{d.label}</span>
-                    <span className="text-[10px] text-[var(--color-text-faint)] shrink-0">Rev {d.rev ?? "—"}</span>
+                    <span className="text-[10px] text-[var(--color-text-faint)] shrink-0">Rev {d.rev ?? "-"}</span>
                     <span className="text-[10px] text-[var(--color-text-faint)] truncate">({d.sharedTags.slice(0, 3).join(", ")})</span>
                     {d.checkedOutByName && (
                       <span className="ml-auto shrink-0 inline-flex items-center gap-1 text-[10px] font-bold text-amber-700">
@@ -174,7 +174,7 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
               {impact.openTickets.map((t) => (
                 <Link key={t.id} href={`/requests/${t.id}`} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] group">
                   <TicketIcon className="w-3 h-3 text-blue-500 shrink-0" />
-                  <span className="text-xs text-[var(--color-text)] group-hover:text-blue-700 truncate">{t.ticketId ? `${t.ticketId} — ` : ""}{t.title}</span>
+                  <span className="text-xs text-[var(--color-text)] group-hover:text-blue-700 truncate">{t.ticketId ? `${t.ticketId} - ` : ""}{t.title}</span>
                   <span className="ml-auto text-[9px] font-bold uppercase text-[var(--color-text-faint)] shrink-0">{t.status.replace(/_/g, " ")}</span>
                 </Link>
               ))}
@@ -195,7 +195,7 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
           {(impact.activeHoldCount > 0 || impact.openBranchCount > 0) && (
             <div className="flex items-center gap-3 text-[10px] font-bold">
               {impact.activeHoldCount > 0 && (
-                <span className="inline-flex items-center gap-1 text-red-700"><ShieldAlert className="w-3 h-3" /> {impact.activeHoldCount} active hold{impact.activeHoldCount === 1 ? "" : "s"} — publishing is blocked</span>
+                <span className="inline-flex items-center gap-1 text-red-700"><ShieldAlert className="w-3 h-3" /> {impact.activeHoldCount} active hold{impact.activeHoldCount === 1 ? "" : "s"} - publishing is blocked</span>
               )}
               {impact.openBranchCount > 0 && (
                 <span className="inline-flex items-center gap-1 text-purple-700"><GitBranch className="w-3 h-3" /> unreconciled branch open</span>

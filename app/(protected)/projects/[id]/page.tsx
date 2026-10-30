@@ -303,7 +303,7 @@ export default function ProjectDetailPage() {
                 <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-3xl">{project.description}</p>
               )}
               <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-[var(--color-text-muted)]">
-                <span className="inline-flex items-center gap-1"><UserIcon className="w-3 h-3" /> {project.ownerUserName || "—"}</span>
+                <span className="inline-flex items-center gap-1"><UserIcon className="w-3 h-3" /> {project.ownerUserName || "-"}</span>
                 {project.targetCompletionDate && <span className="inline-flex items-center gap-1"><Calendar className="w-3 h-3" /> Target {formatDate(project.targetCompletionDate)}</span>}
                 {project.mocReference && <span className="inline-flex items-center gap-1 font-mono"><Layers className="w-3 h-3" /> {project.mocReference}</span>}
                 {project.cancelledReason && <span className="inline-flex items-center gap-1 text-red-600"><AlertTriangle className="w-3 h-3" /> Cancelled: {project.cancelledReason}</span>}
@@ -441,10 +441,10 @@ export default function ProjectDetailPage() {
             </TabButton>
             <div className="ml-1 pb-2">
               <HelpTooltip>
-                <b>Documents</b> — every checkout attached to this project (active + released).
-                <b className="block mt-1">Activity</b> — the project&rsquo;s full timeline: comments, doc events, holds, milestone hits.
-                <b className="block mt-1">Schedule</b> — milestones with planned/actual dates and an Earned-Value rollup. Import P6/MS Project as ghost overlay.
-                <b className="block mt-1">Members</b> — who&rsquo;s on this project. Owner can add/remove.
+                <b>Documents</b> - every checkout attached to this project (active + released).
+                <b className="block mt-1">Activity</b> - the project&rsquo;s full timeline: comments, doc events, holds, milestone hits.
+                <b className="block mt-1">Schedule</b> - milestones with planned/actual dates and an Earned-Value rollup. Import P6/MS Project as ghost overlay.
+                <b className="block mt-1">Members</b> - who&rsquo;s on this project. Owner can add/remove.
               </HelpTooltip>
             </div>
           </div>
@@ -514,7 +514,7 @@ export default function ProjectDetailPage() {
           <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center">
             <ShieldCheck className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
             <div className="text-sm font-bold text-[var(--color-text)]">Intake is managed by the project owner and Document Control</div>
-            <div className="text-xs text-[var(--color-text-muted)] mt-1">Contractor submissions land here for review — approved revisions show up under Documents automatically.</div>
+            <div className="text-xs text-[var(--color-text-muted)] mt-1">Contractor submissions land here for review - approved revisions show up under Documents automatically.</div>
           </div>
         )}
         {tab === "intake" && canManage && project.id && project.orgId && uid && (
@@ -574,7 +574,7 @@ export default function ProjectDetailPage() {
             <div className="px-6 py-4 border-b border-[var(--color-border)]">
               <div className="text-sm font-black text-[var(--color-text)]">Lessons learned</div>
               <div className="text-xs text-[var(--color-text-muted)] mt-1">
-                Drafted from this project&apos;s own records — change orders, slips, rejections. Edit it into what the next job should know; it saves to the project and prints on the report.
+                Drafted from this project&apos;s own records - change orders, slips, rejections. Edit it into what the next job should know; it saves to the project and prints on the report.
               </div>
             </div>
             <div className="px-6 py-4">
@@ -655,7 +655,7 @@ export default function ProjectDetailPage() {
                   </ul>
                   {failed > 0 && (
                     <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
-                      You can complete anyway — the open items stay on the record and in the report.
+                      You can complete anyway - the open items stay on the record and in the report.
                     </div>
                   )}
                 </div>
@@ -779,7 +779,7 @@ function CheckoutLine({ c, historical }: { c: CheckoutWithDoc; historical?: bool
         <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-baseline gap-x-2">
-            <span className="font-mono text-sm font-bold text-[var(--color-text)] truncate">{c.docNumber || "—"}</span>
+            <span className="font-mono text-sm font-bold text-[var(--color-text)] truncate">{c.docNumber || "-"}</span>
             <span className="text-xs text-[var(--color-text-muted)] truncate">{c.docTitle}</span>
             {c.libraryName && <span className="text-[10px] text-[var(--color-text-faint)]">in {c.libraryName}</span>}
           </div>
@@ -787,7 +787,7 @@ function CheckoutLine({ c, historical }: { c: CheckoutWithDoc; historical?: bool
             <span className="inline-flex items-center gap-1"><UserIcon className="w-3 h-3" />{c.userName}</span>
             <span className="text-[10px] font-bold uppercase bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{c.mode}</span>
             <span>{historical ? `Released ${formatRelative(c.releasedAt ?? c.endedAt)}` : `Since ${formatRelative(c.startedAt)}`}</span>
-            {c.releasedReason && <span className="text-[var(--color-text-faint)] italic">— {c.releasedReason}</span>}
+            {c.releasedReason && <span className="text-[var(--color-text-faint)] italic">- {c.releasedReason}</span>}
           </div>
           {(c.purpose || c.note) && (
             <div className="mt-1 text-[11px] text-[var(--color-text-muted)] italic line-clamp-1">&ldquo;{c.purpose || c.note}&rdquo;</div>
@@ -849,7 +849,7 @@ function ActivityTab({
       <TimelineFeed
         events={timeline}
         showScope={false}
-        emptyMessage="No activity yet — comments, checkouts, and document revisions will land here."
+        emptyMessage="No activity yet - comments, checkouts, and document revisions will land here."
       />
     </div>
   );
@@ -879,7 +879,7 @@ function MembersTab({
     try {
       const { data: userRows } = await supabase.from("users").select("id, email").eq("email", email).limit(2);
       const candidates = (userRows ?? []) as Array<{ id: string; email: string }>;
-      if (candidates.length > 1) throw new Error("Multiple accounts share that email — contact your admin.");
+      if (candidates.length > 1) throw new Error("Multiple accounts share that email - contact your admin.");
       const candidate = candidates[0] ?? null;
       // The membership check is what actually scopes this to the org — the
       // users table is global, and the old lookup happily attached strangers.
@@ -936,7 +936,7 @@ function MembersTab({
               <option value="observer">Observer</option>
             </Select>
           </div>
-          <input value={addResp} onChange={(e) => setAddResp(e.target.value)} placeholder="Responsibility (what they own / will own) — optional"
+          <input value={addResp} onChange={(e) => setAddResp(e.target.value)} placeholder="Responsibility (what they own / will own) - optional"
             className="mt-2 w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
           <div className="mt-2 flex justify-end">
             <button onClick={addByEmail} disabled={busy || !addEmail.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
@@ -1020,7 +1020,7 @@ function formatDate(ts: Timestamp): string {
   try { return new Date(ts as string).toLocaleDateString(); } catch { return String(ts); }
 }
 function formatRelative(ts: Timestamp | undefined): string {
-  if (!ts) return "—";
+  if (!ts) return "-";
   try {
     const d = new Date(ts as string);
     const diff = Date.now() - d.getTime();
@@ -1032,5 +1032,5 @@ function formatRelative(ts: Timestamp | undefined): string {
     const days = Math.floor(hr / 24);
     if (days < 7) return `${days}d ago`;
     return d.toLocaleDateString();
-  } catch { return "—"; }
+  } catch { return "-"; }
 }

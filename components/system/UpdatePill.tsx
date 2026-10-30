@@ -44,7 +44,7 @@ export default function UpdatePill() {
         className="inline-flex items-center gap-2 rounded-full border-2 border-amber-400 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/95 px-4 py-2 text-xs font-black text-amber-900 dark:text-amber-200 shadow-xl hover:bg-amber-100 dark:hover:bg-amber-900 transition-colors"
       >
         <RefreshCw className="w-3.5 h-3.5" />
-        This tab is running an old version — tap to load the update
+        This tab is running an old version - tap to load the update
       </button>
     </div>
   );

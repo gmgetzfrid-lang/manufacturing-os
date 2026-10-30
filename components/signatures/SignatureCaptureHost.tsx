@@ -62,7 +62,7 @@ export default function SignatureCaptureHost() {
         signatureImage: signatureImage ?? undefined,
       });
       window.dispatchEvent(new CustomEvent("signature-recorded", { detail: { resourceType: req.resourceType, resourceId: req.resourceId } }));
-      showToast({ type: "success", title: "Signed", message: `${intent} — recorded with your name and timestamp.` });
+      showToast({ type: "success", title: "Signed", message: `${intent} - recorded with your name and timestamp.` });
       setReq(null);
     } catch (e) {
       showToast({ type: "error", title: "Couldn't record signature", message: (e as Error).message });

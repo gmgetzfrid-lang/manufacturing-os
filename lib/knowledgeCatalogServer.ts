@@ -90,7 +90,7 @@ const PROFILE_SYSTEM =
   '{"type": "...", "designation": "...", "title": "...", "purpose": "...", "covers": ["..."], ' +
   '"references": ["..."], "form": {"purpose": "...", "fields": [{"name": "...", "label": "...", "kind": "...", "options": ["..."]}]}, ' +
   '"checklistFor": "..."}\n\n' +
-  "type — exactly one of:\n" +
+  "type - exactly one of:\n" +
   "- standard: an engineering practice / standard / specification written as clauses (e.g. \"EP 5-2-1 Selection of Piping Components and Materials\")\n" +
   "- form: a blank form to fill in (deviation or waiver request, NCR, MOC, technical query, permit, test record)\n" +
   "- checklist: a checklist used while doing work (inspection, hydrotest, flange joint assembly, pre-startup)\n" +
@@ -100,14 +100,14 @@ const PROFILE_SYSTEM =
   "- datasheet: an equipment or instrument data sheet\n" +
   "- other\n" +
   "designation: the document number as printed (\"EP 5-2-1\", \"STD-205\"), or \"\" if none.\n" +
-  "title: the document's title as printed. purpose: ONE sentence — what someone uses it for.\n" +
+  "title: the document's title as printed. purpose: ONE sentence - what someone uses it for.\n" +
   "covers: up to 8 short topics it covers. references: designations of other documents and codes it cites " +
   "(\"ASME B31.3\", \"EP 10-2-1\", \"NACE MR0103\").\n" +
-  "form — ONLY for type form or checklist: purpose is one of deviation, ncr, moc, tq, inspection, test, permit, other; " +
+  "form - ONLY for type form or checklist: purpose is one of deviation, ncr, moc, tq, inspection, test, permit, other; " +
   "fields lists every blank the user fills, in printed order: name (short), label (as printed), kind (text, long, " +
   "date, check, choice, signature), options (for choice). If FILLABLE FIELD NAMES are given below, return exactly " +
   "one field per given name, using that exact name, with the label printed next to it.\n" +
-  "checklistFor — ONLY for checklists: the job it is for (\"hydrostatic test of piping\").";
+  "checklistFor - ONLY for checklists: the job it is for (\"hydrostatic test of piping\").";
 
 /** Profile one document and store it (replacing any earlier profile). */
 export async function profileDocument(
@@ -220,7 +220,7 @@ export async function readCatalogDocument(admin: SupabaseClient, doc: DocRow, ma
   await admin.from("knowledge_page_entities").delete().eq("document_id", doc.id).eq("kind", ENTRY_KIND);
   const readAt = new Date().toISOString();
   if (byPage.size === 0) {
-    return { ...mark, entries: 0, fields: [], method: CATALOG_METHOD, readAt, problem: "This document has no indexed text yet — it is read once indexing finishes." };
+    return { ...mark, entries: 0, fields: [], method: CATALOG_METHOD, readAt, problem: "This document has no indexed text yet - it is read once indexing finishes." };
   }
   if (!found || found.ranges.length < 2) {
     return { ...mark, entries: 0, fields: [], method: CATALOG_METHOD, readAt,
@@ -290,7 +290,7 @@ export async function markCatalog(admin: SupabaseClient, opts: {
       ? { ...before, type: "catalog", catalog: read }
       : {
         v: 1, type: "catalog", designation: null, title: d.name.replace(/\.pdf$/i, ""),
-        purpose: `${read.name} — one entry per section`, covers: [], references: [],
+        purpose: `${read.name} - one entry per section`, covers: [], references: [],
         profiledAt: new Date().toISOString(), catalog: read,
       };
     await writeProfile(admin, d, profile);

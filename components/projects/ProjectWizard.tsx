@@ -44,9 +44,9 @@ const STEPS = [
 type StepKey = (typeof STEPS)[number]["key"];
 
 const JOB_KINDS = [
-  { v: "small", label: "Small job", hint: "A repair, a swap, a short scope — light paperwork, quick closeout." },
-  { v: "standard", label: "Standard project", hint: "A typical maintenance or improvement project — full turnover package." },
-  { v: "capital", label: "Capital project", hint: "Major scope, serious money — full quality program, PSSR, strict gates." },
+  { v: "small", label: "Small job", hint: "A repair, a swap, a short scope - light paperwork, quick closeout." },
+  { v: "standard", label: "Standard project", hint: "A typical maintenance or improvement project - full turnover package." },
+  { v: "capital", label: "Capital project", hint: "Major scope, serious money - full quality program, PSSR, strict gates." },
 ] as const;
 
 export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRole, onClose, onCreated }: {
@@ -170,7 +170,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
 
   const finish = async (finalSkips: Record<string, boolean>) => {
     if (!name.trim()) { setStep(0); setError("Project name is required."); return; }
-    if (!description.trim()) { setStep(0); setError("Description is required — say what the team will be doing."); return; }
+    if (!description.trim()) { setStep(0); setError("Description is required - say what the team will be doing."); return; }
     setBusy(true); setError(null);
     try {
       const project = await createProject({
@@ -279,9 +279,9 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           <div className="flex items-center gap-3">
             <div className="p-2 bg-[var(--color-accent-soft)] rounded-lg"><Icon className="w-5 h-5 text-[var(--color-accent)]" /></div>
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-black text-[var(--color-text)]">New project — {STEPS[step].label}</div>
+              <div className="text-sm font-black text-[var(--color-text)]">New project - {STEPS[step].label}</div>
               <div className="text-xs text-[var(--color-text-muted)]">
-                Step {step + 1} of {STEPS.length}. Everything after Basics is optional — skipped steps come back as coach suggestions, never lost.
+                Step {step + 1} of {STEPS.length}. Everything after Basics is optional - skipped steps come back as coach suggestions, never lost.
               </div>
             </div>
             <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
@@ -302,10 +302,10 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                 <FromDocSummary result={fromDoc} onClear={() => setFromDoc(null)} />
               ) : (
                 <BudgetDocDrop orgId={orgId} onRead={prefillFromDoc} compact
-                  label="Start from a document — AFE, estimate, or budget sheet fills in every step" />
+                  label="Start from a document - AFE, estimate, or budget sheet fills in every step" />
               )}
               <Field label="Name *">
-                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="2026 Q1 Turnaround — Unit 300" autoFocus
+                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="2026 Q1 Turnaround - Unit 300" autoFocus
                   className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
               </Field>
               <Field label="Description *">
@@ -313,7 +313,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                   placeholder="What is this project about? What will the team do?"
                   className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y bg-[var(--color-surface)]" />
               </Field>
-              <Field label="Job size — sets sensible defaults, never permissions">
+              <Field label="Job size - sets sensible defaults, never permissions">
                 <div className="grid sm:grid-cols-3 gap-2">
                   {JOB_KINDS.map((k) => (
                     <button key={k.v} onClick={() => setJobKind(k.v)}
@@ -327,7 +327,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
               <div className="grid grid-cols-2 gap-3">
                 <Field label="MOC reference (Management of Change)">
                   <input value={moc} onChange={(e) => setMoc(e.target.value)} placeholder="MOC-2026-0142"
-                    title="The Management of Change number authorizing this work — required by PSM before modifying covered processes."
+                    title="The Management of Change number authorizing this work - required by PSM before modifying covered processes."
                     className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-mono bg-[var(--color-surface)]" />
                 </Field>
                 <Field label="Target completion">
@@ -350,7 +350,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
 
           {step === 1 && (
             <>
-              <StepIntro text="Why does this project exist, and what does 'done well' mean? Everyone who opens the project reads this first — and the AI grounds checklist assessments on it." />
+              <StepIntro text="Why does this project exist, and what does 'done well' mean? Everyone who opens the project reads this first - and the AI grounds checklist assessments on it." />
               <Field label="Purpose">
                 <textarea value={purpose} onChange={(e) => setPurpose(e.target.value)} rows={2} autoFocus
                   placeholder="e.g. Replace the corroded E-301 exchanger circuits before they force an unplanned outage."
@@ -368,7 +368,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                   <div className="flex items-center gap-2">
                     <input value={goalDraft} onChange={(e) => setGoalDraft(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter" && goalDraft.trim()) { setGoals([...goals, goalDraft.trim()]); setGoalDraft(""); } }}
-                      placeholder="Add a goal and press Enter — e.g. Zero recordables"
+                      placeholder="Add a goal and press Enter - e.g. Zero recordables"
                       className="flex-1 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]" />
                     <button onClick={() => { if (goalDraft.trim()) { setGoals([...goals, goalDraft.trim()]); setGoalDraft(""); } }}
                       className="p-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)]"><Plus className="w-4 h-4" /></button>
@@ -385,7 +385,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
 
           {step === 2 && (
             <>
-              <StepIntro text="Attach the Summary of Work — the scope document. It feeds RFQs, grounds the AI's checklist assessment, and anchors the project report. Pick one from document control (upload it there first if it isn't in yet)." />
+              <StepIntro text="Attach the Summary of Work - the scope document. It feeds RFQs, grounds the AI's checklist assessment, and anchors the project report. Pick one from document control (upload it there first if it isn't in yet)." />
               {sowDoc ? (
                 <div className="flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.06] px-3 py-2.5 text-sm">
                   <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -419,8 +419,8 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
           {step === 3 && (
             <>
               <StepIntro text={fromDoc
-                ? `Read from ${fromDoc.source.fileName} — check each line. The company on a line is who it was budgeted for; their invoices will route to it on their own.`
-                : "Budget lines are where money lives — 'Piping subcontract', 'Scaffolding', 'Engineering hours'. Even one line unlocks the burn bar, the S-curve, and the finish-cost forecast."} />
+                ? `Read from ${fromDoc.source.fileName} - check each line. The company on a line is who it was budgeted for; their invoices will route to it on their own.`
+                : "Budget lines are where money lives - 'Piping subcontract', 'Scaffolding', 'Engineering hours'. Even one line unlocks the burn bar, the S-curve, and the finish-cost forecast."} />
               <div className="space-y-2">
                 {budgetRows.map((r, i) => (
                   <div key={i} className="flex items-center gap-2">
@@ -432,7 +432,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                     </select>
                     <input value={r.supplier} onChange={(e) => setBudgetRows(rows(budgetRows, i, { supplier: e.target.value }))}
                       list="wizard-line-companies" placeholder="Company"
-                      title="Who this line is budgeted for — their invoices route here"
+                      title="Who this line is budgeted for - their invoices route here"
                       className="w-28 px-2 py-2 border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]" />
                     <input value={r.budget} onChange={(e) => setBudgetRows(rows(budgetRows, i, { budget: e.target.value }))}
                       placeholder="Budget (USD)" inputMode="decimal"
@@ -454,7 +454,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
 
           {step === 4 && (
             <>
-              <StepIntro text="A few dated milestones are enough to start — they unlock the schedule board, overdue alerts, and the planned-pace line on the cost curve. Import a full P6/MS Project XML later from the Schedule tab." />
+              <StepIntro text="A few dated milestones are enough to start - they unlock the schedule board, overdue alerts, and the planned-pace line on the cost curve. Import a full P6/MS Project XML later from the Schedule tab." />
               <div className="space-y-2">
                 {milestoneRows.map((r, i) => (
                   <div key={i} className="flex items-center gap-2">
@@ -570,21 +570,21 @@ function FromDocSummary({ result, onClear }: { result: BudgetReadResult; onClear
             {d.authorizedAmount != null ? ` · ${fmtMoney(d.authorizedAmount, cur)} authorized` : ""}
           </div>
           <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-            {bits.length ? `${bits.join(", ")} — ` : ""}walk the steps to check each one. Fields you had already typed were kept.
+            {bits.length ? `${bits.join(", ")} - ` : ""}walk the steps to check each one. Fields you had already typed were kept.
           </div>
           {!recon.balanced && recon.unallocated != null && (
             <div className="text-[10px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
-              Lines total {fmtMoney(recon.linesTotal, cur)} — {fmtMoney(Math.abs(recon.unallocated), cur)} {recon.unallocated > 0 ? "short of" : "over"} the authorized amount.
+              Lines total {fmtMoney(recon.linesTotal, cur)} - {fmtMoney(Math.abs(recon.unallocated), cur)} {recon.unallocated > 0 ? "short of" : "over"} the authorized amount.
             </div>
           )}
           {result.blankPages.length > 0 && (
             <div className="text-[10px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
-              Page{result.blankPages.length === 1 ? "" : "s"} {result.blankPages.join(", ")} came through blank (scanner compression) — anything only there wasn&apos;t read.
+              Page{result.blankPages.length === 1 ? "" : "s"} {result.blankPages.join(", ")} came through blank (scanner compression) - anything only there wasn&apos;t read.
             </div>
           )}
           {recon.overBudgetBy != null && recon.overBudgetBy > 0 && (
             <div className="text-[10px] font-bold text-amber-700 dark:text-amber-300 mt-0.5">
-              {fmtMoney(recon.overBudgetBy, cur)} over the approved budget it cites{d.varianceNote ? ` — ${d.varianceNote}` : "."}
+              {fmtMoney(recon.overBudgetBy, cur)} over the approved budget it cites{d.varianceNote ? ` - ${d.varianceNote}` : "."}
             </div>
           )}
         </div>

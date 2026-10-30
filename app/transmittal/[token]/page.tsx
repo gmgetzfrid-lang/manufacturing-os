@@ -68,7 +68,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
       });
       const body = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
       if (!res.ok || !body?.ok) throw new Error(body?.error || `HTTP ${res.status}`);
-      setMsg({ tone: "ok", text: "Receipt recorded — thank you. The issuer has been notified." });
+      setMsg({ tone: "ok", text: "Receipt recorded - thank you. The issuer has been notified." });
       await refresh();
     } catch (e) {
       setMsg({ tone: "err", text: (e as Error).message });
@@ -83,8 +83,8 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
 
   if (state === "loading") return <Shell><div className="p-8 text-center text-slate-500"><Loader2 className="w-5 h-5 animate-spin inline mr-2" />Opening transmittal…</div></Shell>;
   if (state !== "ok" || !data) {
-    const text = state === "voided" ? "This transmittal was voided by the issuer — it is no longer a valid record. Contact them for a replacement."
-      : state === "notfound" ? "This link doesn't exist — it may have been mistyped."
+    const text = state === "voided" ? "This transmittal was voided by the issuer - it is no longer a valid record. Contact them for a replacement."
+      : state === "notfound" ? "This link doesn't exist - it may have been mistyped."
       : "Something went wrong opening this transmittal. Try again shortly.";
     return <Shell><div className="p-8 text-center"><AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-2" /><p className="text-sm text-slate-500">{text}</p></div></Shell>;
   }
@@ -151,7 +151,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
               </li>
             ))}
           </ul>
-          <div className="mt-1.5 text-[10px] text-slate-400">Files download exactly as issued on this transmittal — if a newer revision exists, it is NOT what this record covers.</div>
+          <div className="mt-1.5 text-[10px] text-slate-400">Files download exactly as issued on this transmittal - if a newer revision exists, it is NOT what this record covers.</div>
         </div>
 
         {data.notes && (
@@ -183,7 +183,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
             <div className="flex items-end gap-2 flex-wrap">
               <label className="block flex-1 min-w-48">
                 <span className="text-[9px] font-black uppercase tracking-wider text-slate-500">Your name (required)</span>
-                <input value={ackName} onChange={(e) => setAckName(e.target.value)} placeholder="e.g. Dave Miller — Acme Fabricators"
+                <input value={ackName} onChange={(e) => setAckName(e.target.value)} placeholder="e.g. Dave Miller - Acme Fabricators"
                   className="mt-0.5 w-full h-9 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 text-sm text-slate-900 dark:text-white" />
               </label>
               <label className="block flex-1 min-w-48">
@@ -200,7 +200,7 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
         )}
 
         <div className="text-[10px] text-slate-400 border-t border-slate-100 dark:border-slate-800 pt-3">
-          Transmittal {data.number} · This page is the live record — every download and the acknowledgment are logged. Only the holder of this link can see it.
+          Transmittal {data.number} · This page is the live record - every download and the acknowledgment are logged. Only the holder of this link can see it.
         </div>
       </div>
     </Shell>

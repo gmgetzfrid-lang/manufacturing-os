@@ -113,7 +113,7 @@ function CenterPanel({
             <div className="text-[11px] text-[var(--color-text-muted)]">
               {counts.all === 0
                 ? "You're all caught up."
-                : `${counts.all} item${counts.all === 1 ? "" : "s"} — every badge in the app counts these.`}
+                : `${counts.all} item${counts.all === 1 ? "" : "s"} - every badge in the app counts these.`}
             </div>
           </div>
           <button

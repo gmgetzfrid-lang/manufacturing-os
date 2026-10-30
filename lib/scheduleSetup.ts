@@ -38,20 +38,20 @@ export function setupChecklist(s: {
 }): SetupItem[] {
   return [
     { id: "timezone", label: "Plant time zone", required: true, done: s.timezoneSet,
-      why: "Without it the schedule runs on UTC — plan-by-now, behind / on plan and the current shift are hours off." },
+      why: "Without it the schedule runs on UTC - plan-by-now, behind / on plan and the current shift are hours off." },
     { id: "shifts", label: "Shift change times", required: true, done: s.shiftTimesSaved === true, checking: s.shiftTimesSaved == null,
       why: "Every day / night split, the shift report and the turnover meeting time hang on these." },
     // Required: a schedule file puts work in night hours that nights may not
     // staff — the turnover would hand day work to nights. One choice settles
     // it ("follow the file" is a choice too).
     { id: "night", label: "Night crews", required: true, done: s.nightDecided === true, checking: s.nightDecided === null,
-      why: "Until it's set, every step the file put in night hours is handed to nights — even on jobs nights don't staff." },
+      why: "Until it's set, every step the file put in night hours is handed to nights - even on jobs nights don't staff." },
     { id: "critical", label: "Critical path source", required: false, done: s.criticalChosen,
-      why: "Schedule files often mark nearly everything critical — choose where it comes from." },
+      why: "Schedule files often mark nearly everything critical - choose where it comes from." },
     { id: "baseline", label: "Baseline", required: false, done: s.hasBaseline,
-      why: "Without one, moving work later quietly erases the slip — progress is measured against today's plan." },
+      why: "Without one, moving work later quietly erases the slip - progress is measured against today's plan." },
     { id: "print", label: "Printed reports", required: false, extra: true, done: !!s.letterheadSet,
-      why: "Optional — upload your company letterhead (Word or PDF) and printed reports come out on it." },
+      why: "Optional - upload your company letterhead (Word or PDF) and printed reports come out on it." },
   ];
 }
 

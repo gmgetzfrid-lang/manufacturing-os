@@ -127,13 +127,13 @@ export default function DocBrowserBody() {
 
   if (topLoading) return <Skeleton />;
   if (libs.length === 0) {
-    return <Empty><Link href="/admin/libraries" className="font-bold text-[var(--color-accent)] hover:underline">No libraries yet — create your first library →</Link></Empty>;
+    return <Empty><Link href="/admin/libraries" className="font-bold text-[var(--color-accent)] hover:underline">No libraries yet - create your first library →</Link></Empty>;
   }
 
   const search = (
     <SearchField value={q} onChange={setQ}
       onSubmit={(v) => router.push(`/search?q=${encodeURIComponent(v)}`)}
-      placeholder={lib ? `Search ${lib.name} — number, title…` : "Search every library — number, title…"}
+      placeholder={lib ? `Search ${lib.name} - number, title…` : "Search every library - number, title…"}
       title="Results appear as you type; Enter opens full search" />
   );
 

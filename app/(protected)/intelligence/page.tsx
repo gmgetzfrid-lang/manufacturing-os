@@ -180,7 +180,7 @@ export default function IntelligencePage() {
       <ViewTabs title="Intelligence" tabs={INTELLIGENCE_VIEWS} />
       <PageHeaderBar
         title="Intelligence"
-        subtitle="Everything AI in one place — status at a glance, every gap linked to its fix"
+        subtitle="Everything AI in one place - status at a glance, every gap linked to its fix"
         icon={Sparkles}
       />
 
@@ -196,7 +196,7 @@ export default function IntelligencePage() {
               ok={!!s.chatKey}
               title="Chat key"
               okText={`Claude/OpenAI key active · ····${s.chatKey}`}
-              fixText="No key saved — questions can't run"
+              fixText="No key saved - questions can't run"
               href="/intelligence/setup" cta="Add key"
             />
             <StatusCard
@@ -212,7 +212,7 @@ export default function IntelligencePage() {
               ok={s.docs > 0}
               title="Knowledge"
               okText={`${s.docs} document${s.docs === 1 ? "" : "s"} across ${s.libraries} librar${s.libraries === 1 ? "y" : "ies"}`}
-              fixText="Nothing indexed — the AI has nothing to read yet"
+              fixText="Nothing indexed - the AI has nothing to read yet"
               href="/knowledge" cta="Upload documents"
             />
             {s.schemaGaps !== null ? (
@@ -220,7 +220,7 @@ export default function IntelligencePage() {
                 ok={s.schemaGaps === 0}
                 title="Database"
                 okText="All expected tables present"
-                fixText={`${s.schemaGaps} schema gap${s.schemaGaps === 1 ? "" : "s"} — features render empty until migrated`}
+                fixText={`${s.schemaGaps} schema gap${s.schemaGaps === 1 ? "" : "s"} - features render empty until migrated`}
                 href="/admin/settings" cta="Open Database health"
               />
             ) : (
@@ -229,7 +229,7 @@ export default function IntelligencePage() {
                 ok={s.chunksTotal > 0 ? s.chunksEmbedded > 0 : true}
                 title="Meaning index"
                 okText={s.chunksTotal > 0 ? `${coveragePct}% of passages embedded` : "Builds after your first uploads"}
-                fixText="Index not built yet — semantic linking is off"
+                fixText="Index not built yet - semantic linking is off"
                 href="/knowledge" cta="Build index"
               />
             )}
@@ -252,7 +252,7 @@ export default function IntelligencePage() {
                   <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-black">{s.pendingProposals > 99 ? "99+" : s.pendingProposals}</span>
                   <div className="flex-1">
                     <div className="text-sm font-bold text-[var(--color-text)]">Proposed connections to review</div>
-                    <div className="text-[11px] text-[var(--color-text-muted)]">Links the system found in your own data — approve or dismiss, each with its evidence.</div>
+                    <div className="text-[11px] text-[var(--color-text-muted)]">Links the system found in your own data - approve or dismiss, each with its evidence.</div>
                   </div>
                   <ArrowRight className="w-4 h-4 text-amber-600" />
                 </Link>
@@ -264,7 +264,7 @@ export default function IntelligencePage() {
                   <Gauge className="w-5 h-5 text-violet-600" />
                   <div className="flex-1">
                     <div className="text-sm font-bold text-[var(--color-text)]">Meaning index {coveragePct}% built</div>
-                    <div className="text-[11px] text-[var(--color-text-muted)]">{s.chunksEmbedded} of {s.chunksTotal} passages embedded — finish it from the library page.</div>
+                    <div className="text-[11px] text-[var(--color-text-muted)]">{s.chunksEmbedded} of {s.chunksTotal} passages embedded - finish it from the library page.</div>
                   </div>
                   <ArrowRight className="w-4 h-4 text-[var(--color-text-faint)]" />
                 </Link>
@@ -283,7 +283,7 @@ export default function IntelligencePage() {
                 </div>
               ) : s.recentAsks.length === 0 ? (
                 <p className="text-xs text-[var(--color-text-muted)]">
-                  Nobody has asked anything yet. <Link className="font-bold text-violet-700 hover:underline" href="/assistant">Ask the first question</Link> — try &ldquo;what do we have on E-101?&rdquo;
+                  Nobody has asked anything yet. <Link className="font-bold text-violet-700 hover:underline" href="/assistant">Ask the first question</Link> - try &ldquo;what do we have on E-101?&rdquo;
                 </p>
               ) : (
                 <ul className="space-y-2">
@@ -307,7 +307,7 @@ export default function IntelligencePage() {
             <JumpCard href="/assistant" icon={Bot} title="Ask" body="Plain-English questions; it calls the system's tools and shows its work." />
             <JumpCard href="/knowledge" icon={BookOpen} title="Knowledge" body="Upload P&IDs and standards; extraction runs at ingest." />
             <JumpCard href="/graph" icon={Waypoints} title="Graph" body="The whole org as one zoomable relationship map." />
-            <JumpCard href="/intelligence/setup" icon={Settings2} title="Setup" body="Keys, usage caps, playbooks, codebook — all configuration." />
+            <JumpCard href="/intelligence/setup" icon={Settings2} title="Setup" body="Keys, usage caps, playbooks, codebook - all configuration." />
           </div>
         </div>
     </PageShell>

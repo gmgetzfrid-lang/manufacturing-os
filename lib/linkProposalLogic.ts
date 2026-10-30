@@ -92,7 +92,7 @@ export function proposeOpcContinuity(
               : `Sheet references drawing ${ref}`,
             detail: provable
               ? undefined
-              : `${owners.length} documents carry the number ${ref} — confirm which one this continues onto.`,
+              : `${owners.length} documents carry the number ${ref} - confirm which one this continues onto.`,
             page: occ.page,
           },
           sourceRev: occ.sourceRev ?? null,
@@ -204,8 +204,8 @@ export const BUILTIN_SKILLS: BuiltinSkillDef[] = [
     builtin_key: "opc_continuity",
     name: "Drawing cross-reference continuity",
     description:
-      "Follows references extracted from drawings — continuation callouts, off-page connectors, " +
-      "referenced sheet numbers — to the document that owns the referenced number. A reference " +
+      "Follows references extracted from drawings - continuation callouts, off-page connectors, " +
+      "referenced sheet numbers - to the document that owns the referenced number. A reference " +
       "resolving to exactly one document applies itself; anything ambiguous queues for review.",
     kind: "reference",
     config: {},
@@ -216,7 +216,7 @@ export const BUILTIN_SKILLS: BuiltinSkillDef[] = [
     description:
       "Connects documents linked to the same registry asset (directly or through an alias). " +
       "Two documents about the same physical thing usually relate; several shared items make " +
-      "the case strong. Nothing here auto-applies — relating is a human call.",
+      "the case strong. Nothing here auto-applies - relating is a human call.",
     kind: "shared_entity",
     config: {},
   },
@@ -225,7 +225,7 @@ export const BUILTIN_SKILLS: BuiltinSkillDef[] = [
     name: "Answered together",
     description:
       "Watches your team's questions: when answers repeatedly cite the same pair of documents, " +
-      "that pair is proposed as related — with the questions as evidence. Your usage of the " +
+      "that pair is proposed as related - with the questions as evidence. Your usage of the " +
       "knowledge base becomes connective tissue.",
     kind: "co_citation",
     config: { minCoCitations: 2 },
@@ -314,7 +314,7 @@ export function proposeCustomReferences(
               summary: `Text references “${matched}”`,
               detail: unique
                 ? `Found by the “${rule.name}” skill.`
-                : `Found by the “${rule.name}” skill — ${owners.length} documents carry this number.`,
+                : `Found by the “${rule.name}” skill - ${owners.length} documents carry this number.`,
               page: occ.page,
               rule: rule.name,
             },

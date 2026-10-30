@@ -146,7 +146,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
                   type="button"
                   onClick={() => { setOpen(false); openCenter("all"); }}
                   className="text-[11px] font-bold text-[var(--color-accent)] hover:underline"
-                  title="Open the full notification center — filters, mark read, everything in one panel"
+                  title="Open the full notification center - filters, mark read, everything in one panel"
                 >
                   See all
                 </button>

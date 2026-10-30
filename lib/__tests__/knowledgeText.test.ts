@@ -70,13 +70,13 @@ describe("parseSearchQueries", () => {
 });
 
 describe("parseRefineQueries", () => {
-  it("treats [] as satisfied — no new queries", () => {
+  it("treats [] as satisfied - no new queries", () => {
     expect(parseRefineQueries("[]")).toEqual([]);
     expect(parseRefineQueries("  []  ")).toEqual([]);
   });
 
   it("treats a READY sentinel as satisfied", () => {
-    expect(parseRefineQueries("READY — the passages cover it.")).toEqual([]);
+    expect(parseRefineQueries("READY - the passages cover it.")).toEqual([]);
   });
 
   it("returns new queries when the model provides them", () => {
@@ -158,7 +158,7 @@ describe("isSectionHeading", () => {
   it("accepts numbered and keyword headings", () => {
     expect(isSectionHeading("5.3 Pipe Supports")).toBe(true);
     expect(isSectionHeading("12.1.4 Hydrostatic Testing Requirements")).toBe(true);
-    expect(isSectionHeading("SECTION 7 — TESTING")).toBe(true);
+    expect(isSectionHeading("SECTION 7 - TESTING")).toBe(true);
     expect(isSectionHeading("APPENDIX C Tables")).toBe(true);
   });
 
@@ -229,7 +229,7 @@ describe("parseAnswerBlocks", () => {
     expect(blocks[2]).toEqual({ type: "label", text: "Governing documents (which wins)" });
   });
 
-  it("accepts wider label lines — digits, parens, slashes", () => {
+  it("accepts wider label lines - digits, parens, slashes", () => {
     const blocks = parseAnswerBlocks("**Table 121.5 limits (SA-106/B):**\n- 7 ft max [1]");
     expect(blocks[0]).toEqual({ type: "label", text: "Table 121.5 limits (SA-106/B)" });
   });
@@ -303,7 +303,7 @@ describe("ensurePdfPolyfills", () => {
 // only answerable if a chunk exists that IS Table 3.
 describe("table-aware chunking", () => {
   const TABLE = [
-    "TABLE 3 — BOLT TORQUE",
+    "TABLE 3 - BOLT TORQUE",
     "Size | Torque | Lubricant",
     '1/2" | 30 ft-lb | dry',
     '3/4" | 100 ft-lb | dry',
@@ -321,11 +321,11 @@ describe("table-aware chunking", () => {
 
   it("re-heads each part of an oversized table with caption + header row", () => {
     const rows = Array.from({ length: 200 }, (_, i) => `${i} | value-${i} | note-${i}`);
-    const big = ["TABLE 9 — LONG", "id | value | note", ...rows].join("\n");
+    const big = ["TABLE 9 - LONG", "id | value | note", ...rows].join("\n");
     const chunks = chunkPageText(big);
     expect(chunks.length).toBeGreaterThan(1);
     for (const c of chunks) {
-      expect(c.startsWith("TABLE 9 — LONG")).toBe(true);
+      expect(c.startsWith("TABLE 9 - LONG")).toBe(true);
       expect(c.split("\n")[1]).toBe("id | value | note");
     }
   });
@@ -385,13 +385,13 @@ describe("sanitizeStorageText", () => {
   });
 });
 
-describe("explodeRunOn — the wall-of-text killer", () => {
+describe("explodeRunOn - the wall-of-text killer", () => {
   // The exact answer a user reported as "an ugly wall of text all ran
   // together": one 600-char sentence plus a trailing Note. It must come
   // apart into a short headline, scannable bullets, and an escalated note.
   const RUN_ON =
     "For a pump suction line, welding is governed by EP 5-5-1 (fabrication) plus its mandatory " +
-    "welding supplement EP 5-5-2, with rotating-equipment-specific requirements in EP 5-6-2 — and " +
+    "welding supplement EP 5-5-2, with rotating-equipment-specific requirements in EP 5-6-2 - and " +
     "the pump-specific drivers are joint type (butt weld for vibration/fatigue/cyclic service, " +
     "socket weld only where permitted), Field Fit Welds at the pump so spools can be aligned " +
     "without field cutting, GTAW root pass with argon back purge on all compressor piping and " +
@@ -488,7 +488,7 @@ describe("explodeRunOn — the wall-of-text killer", () => {
   });
 });
 
-describe("proofTerms + highlightQuote — the verification moment", () => {
+describe("proofTerms + highlightQuote - the verification moment", () => {
   it("extracts designations, values, and content words; drops glue", () => {
     const terms = proofTerms("Preheat to **200F** minimum per `EP 5-5-2` for P-No 4 material [3]");
     expect(terms).toContain("EP 5-5-2");
@@ -517,7 +517,7 @@ describe("proofTerms + highlightQuote — the verification moment", () => {
   });
 });
 
-describe("parseAnswerBlocks — multi-paragraph wall fallback", () => {
+describe("parseAnswerBlocks - multi-paragraph wall fallback", () => {
   it("bulletizes paragraphs 2+ when an answer has zero structure", () => {
     const p = (s: string) => `${s} and the requirement applies to every line class in this service group [1].`;
     const wall = [p("First topic covers scope"), p("Second topic covers preheat"), p("Third topic covers hydrotest"), p("Fourth topic covers PWHT")].join("\n");
@@ -534,12 +534,12 @@ describe("parseAnswerBlocks — multi-paragraph wall fallback", () => {
   });
 });
 
-describe("parseAnswerBlocks — no-wall invariant", () => {
+describe("parseAnswerBlocks - no-wall invariant", () => {
   // The exact answer a user reported rendering as one unbroken block.
   const REPORTED =
     "For piping welded at/around pumps, the governing site document is EP 5-5-2 (Welding " +
     "Requirements for Piping Constructed to ASME B31.3), invoked by the piping standard EP 5-2-1 " +
-    "§8.2.1 [143] — plus two pump-specific overlays: all compressor and pump tie-in piping in " +
+    "§8.2.1 [143] - plus two pump-specific overlays: all compressor and pump tie-in piping in " +
     "low-alloy/stainless P-numbers must have a GTAW root with an argon backside purge per " +
     "EP 5-5-1 §15.15 [142], and for HTM pump service auxiliary piping in contact with the pumped " +
     "fluid must be butt welded and flanged or socket welded and flanged, with butt welds full " +
@@ -568,7 +568,7 @@ describe("parseAnswerBlocks — no-wall invariant", () => {
     }
   });
 
-  it("handles the bare **Answer:** marker line — next line becomes the hero", () => {
+  it("handles the bare **Answer:** marker line - next line becomes the hero", () => {
     const blocks = parseAnswerBlocks("**Answer:**\nMaximum span is 7 ft [2].\n**Basis:**\n- per §5.3 [2]");
     expect(blocks[0]).toEqual({ type: "hero", text: "Maximum span is 7 ft [2]." });
     expect(blocks.some((b) => b.text === "*" || b.text === "")).toBe(false);
@@ -582,7 +582,7 @@ describe("parseAnswerBlocks — no-wall invariant", () => {
   });
 });
 
-describe("parseAnswerBlocks — paragraph runs above structure", () => {
+describe("parseAnswerBlocks - paragraph runs above structure", () => {
   it("bulletizes a multi-paragraph intro even when bullets exist below", () => {
     const input = [
       "The governing document for this service is EP 5-5-2 as invoked by EP 5-2-1 for all B31.3 piping in the unit [1].",
@@ -610,13 +610,13 @@ describe("parseAnswerBlocks — paragraph runs above structure", () => {
 
 describe("splitVerdict", () => {
   it("reads each verdict word and strips it from the sentence", () => {
-    expect(splitVerdict("YES, WITH CONDITIONS — EP 5-2-1 Table 4 lists welded A312 304 [70].")).toEqual({
+    expect(splitVerdict("YES, WITH CONDITIONS - EP 5-2-1 Table 4 lists welded A312 304 [70].")).toEqual({
       verdict: "conditional", text: "EP 5-2-1 Table 4 lists welded A312 304 [70].",
     });
-    expect(splitVerdict("NO — cast B16.9 fittings are prohibited [58].").verdict).toBe("no");
-    expect(splitVerdict("YES — permitted for Category D [36].").verdict).toBe("yes");
-    expect(splitVerdict("NOT SETTLED — the line class in EP 5-2-3 decides it.").verdict).toBe("unsettled");
-    expect(splitVerdict("**YES** — allowed.").verdict).toBe("yes");
+    expect(splitVerdict("NO - cast B16.9 fittings are prohibited [58].").verdict).toBe("no");
+    expect(splitVerdict("YES - permitted for Category D [36].").verdict).toBe("yes");
+    expect(splitVerdict("NOT SETTLED - the line class in EP 5-2-3 decides it.").verdict).toBe("unsettled");
+    expect(splitVerdict("**YES** - allowed.").verdict).toBe("yes");
   });
 
   it("ignores ordinary sentences that start with yes/no words", () => {
@@ -628,15 +628,15 @@ describe("splitVerdict", () => {
 
 describe("extractEvidenceBlock", () => {
   const answer = [
-    "**Answer:** YES, WITH CONDITIONS — welded 304 is listed [70][11].",
+    "**Answer:** YES, WITH CONDITIONS - welded 304 is listed [70][11].",
     "**Basis:**",
     "- Table 4 lists A312 and A358 Grade 304 [70].",
     "",
     "**Evidence:**",
-    "- [70] decides — A312/A358 304 listed for pipe — \"ASTM A358/A358M Grade 304\"",
-    "- [11] decides — A312 covers welded pipe — “Seamless, Welded, and Heavily Cold Worked”",
+    "- [70] decides - A312/A358 304 listed for pipe - \"ASTM A358/A358M Grade 304\"",
+    "- [11] decides - A312 covers welded pipe - “Seamless, Welded, and Heavily Cold Worked”",
     "- [36] limits: §6.4 applies to Table 2 pipe only: \"Restricted Service piping per Table 2\"",
-    "- [9] context — no quote here",
+    "- [9] context - no quote here",
   ].join("\n");
 
   it("removes the block from the text the reader sees", () => {
@@ -662,7 +662,7 @@ describe("extractEvidenceBlock", () => {
 describe("locateSpan", () => {
   const passage = "ASTM A312   Specification for Seamless, Welded,\nand Heavily Cold Worked Austenitic Stainless Steel Pipes ASTM A358 Specification for Electric–Fusion–Welded Pipe";
 
-  it("finds the span despite whitespace, case, and dash differences — returning the passage's own text", () => {
+  it("finds the span despite whitespace, case, and dash differences - returning the passage's own text", () => {
     expect(locateSpan(passage, "seamless, welded, and heavily cold worked")).toBe("Seamless, Welded,\nand Heavily Cold Worked");
     expect(locateSpan(passage, "Electric-Fusion-Welded Pipe")).toBe("Electric–Fusion–Welded Pipe");
   });
@@ -692,17 +692,17 @@ describe("quoteWindow", () => {
   });
 });
 
-describe("parseAnswerBlocks — long markdown headings", () => {
+describe("parseAnswerBlocks - long markdown headings", () => {
   it("turns a long ### heading into a label, without its citation", () => {
-    const blocks = parseAnswerBlocks("**Answer:** See below [2].\n### Table 1 — Applicable SEMI Programs at Equity Engineering Sites (EP 19-1-1, p.4) [2]\n- Row [2]");
-    expect(blocks[1]).toEqual({ type: "label", text: "Table 1 — Applicable SEMI Programs at Equity Engineering Sites (EP 19-1-1, p.4)" });
+    const blocks = parseAnswerBlocks("**Answer:** See below [2].\n### Table 1 - Applicable SEMI Programs at Equity Engineering Sites (EP 19-1-1, p.4) [2]\n- Row [2]");
+    expect(blocks[1]).toEqual({ type: "label", text: "Table 1 - Applicable SEMI Programs at Equity Engineering Sites (EP 19-1-1, p.4)" });
   });
 });
 
 describe("extractAnswerMeta", () => {
   const raw = [
     "**Answering for:** 304 stainless · welded pipe · EP 5-2-1 · line class: not given",
-    "**Answer:** YES, WITH CONDITIONS — Table 4 lists welded A312 304 [70].",
+    "**Answer:** YES, WITH CONDITIONS - Table 4 lists welded A312 304 [70].",
     "**Why:**",
     "- Table 1 sends austenitic steels to Table 4 [66].",
     "**One question:** Which line class is it? | options: 1S1; 3S2",
@@ -761,7 +761,7 @@ describe("structureAnswer", () => {
 
 describe("verdict answers from real use", () => {
   it("keeps a long NOT SETTLED answer in one piece instead of scattering it into Why", () => {
-    const hero = "NOT SETTLED — the restricted-service welded-pipe rules in EP 5-2-1 §6.4.5/6.4.6 cover only " +
+    const hero = "NOT SETTLED - the restricted-service welded-pipe rules in EP 5-2-1 §6.4.5/6.4.6 cover only " +
       "carbon-steel API 5L / ASTM A53 grades, not 304 SS [2], so they neither permit nor forbid your line; the " +
       "deciding documents are the line class in EP 5-2-3 and the AES rules in EP 10-2-1 / EP 10-2-3, with the " +
       "Owner's Engineer approving.";
@@ -774,12 +774,12 @@ describe("verdict answers from real use", () => {
   });
 
   it("reads a mixed-case verdict followed by a dash", () => {
-    expect(splitVerdict("Yes, with conditions — Table 4 lists it [98].").verdict).toBe("conditional");
-    expect(splitVerdict("Not settled — the line class decides.").verdict).toBe("unsettled");
+    expect(splitVerdict("Yes, with conditions - Table 4 lists it [98].").verdict).toBe("conditional");
+    expect(splitVerdict("Not settled - the line class decides.").verdict).toBe("unsettled");
   });
 
   it("caps Why at 4 steps and the checklist at 5, moving the rest under More", () => {
-    const lines = ["**Answer:** YES — listed [1].", "**Why:**"];
+    const lines = ["**Answer:** YES - listed [1].", "**Why:**"];
     for (let i = 1; i <= 7; i++) lines.push(`- reason ${i} [1].`);
     lines.push("**Before you act:**", "! Never skip the hold point [1].");
     for (let i = 1; i <= 7; i++) lines.push(`- check ${i} [1].`);
@@ -822,7 +822,7 @@ describe("tables survive section splitting", () => {
 describe("enforceDocumentsOnly", () => {
   it("removes statements the model marked as outside the library, and says so", () => {
     const out = enforceDocumentsOnly([
-      "**Answer:** NO — EP 5-2-2 §4.3 prohibits it [12].",
+      "**Answer:** NO - EP 5-2-2 §4.3 prohibits it [12].",
       "**Why:**",
       "- §4.3 prohibits slip-ons directly on fittings [12].",
       "- Engineering reason (not from your library): the fillet weld sits in the fitting's transition.",
@@ -833,7 +833,7 @@ describe("enforceDocumentsOnly", () => {
   });
 
   it("leaves a clean answer untouched", () => {
-    const a = "**Answer:** YES — listed [1].";
+    const a = "**Answer:** YES - listed [1].";
     expect(enforceDocumentsOnly(a)).toEqual({ answer: a, removed: 0 });
   });
 });
@@ -850,7 +850,7 @@ describe("referencedQuote", () => {
   it("prefixes the designation and the clause the sentence sits under, and adds the page", () => {
     const quote = "6.2 Flanges 6.2.1 Weld neck flanges shall be used for Class 600. 6.2.3 Slip-on flanges shall not be directly welded to pipe fittings (e.g., welding elbows and tees).";
     expect(referencedQuote({
-      documentName: "B31 — EP-5-5-1.pdf", section: "6.2 Flanges", page: 9, quote,
+      documentName: "B31 - EP-5-5-1.pdf", section: "6.2 Flanges", page: 9, quote,
       highlight: "Slip-on flanges shall not be directly welded to pipe fittings (e.g., welding elbows and tees)",
     })).toBe('EP 5-5-1 §6.2.3: "Slip-on flanges shall not be directly welded to pipe fittings (e.g., welding elbows and tees)" (p.9)');
   });
@@ -864,7 +864,7 @@ describe("referencedQuote", () => {
 
   it("cites a web source by title and address", () => {
     expect(referencedQuote({ url: "https://asme.org/a", title: "ASME A", quote: "Slip-ons need straight pipe." }))
-      .toBe('"Slip-ons need straight pipe." — ASME A, https://asme.org/a');
+      .toBe('"Slip-ons need straight pipe." - ASME A, https://asme.org/a');
   });
 });
 

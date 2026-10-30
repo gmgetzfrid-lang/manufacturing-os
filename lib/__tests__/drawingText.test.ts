@@ -32,7 +32,7 @@ describe("extractEquipmentTags", () => {
     expect(tags).toEqual([]);
   });
 
-  it("requires the dash — prose abbreviations don't count", () => {
+  it("requires the dash - prose abbreviations don't count", () => {
     expect(extractEquipmentTags("the V3 nozzle and P101 casing")).toEqual([]);
   });
 
@@ -131,8 +131,8 @@ describe("buildEquipmentCensus", () => {
 
 describe("auditDrawingRefs", () => {
   const docs = [
-    { id: "a", name: "025-PID-0101 — Crude overhead" },
-    { id: "b", name: "025-PID-0102 — Desalter" },
+    { id: "a", name: "025-PID-0101 - Crude overhead" },
+    { id: "b", name: "025-PID-0102 - Desalter" },
   ];
 
   it("resolves in-library refs and flags same-series sheets that weren't loaded", () => {
@@ -151,7 +151,7 @@ describe("auditDrawingRefs", () => {
   // The whole point. A crude unit's P&IDs reference the FCC, the tank farm,
   // and the flare header. None of those are broken connectors — they're
   // drawings nobody handed us.
-  it("never calls another unit's drawings missing — they're out of scope", () => {
+  it("never calls another unit's drawings missing - they're out of scope", () => {
     const refs = new Map<string, string[]>([
       ["a", ["040-PID-0201", "040-PID-0202", "070-PID-0010"]],
     ]);
@@ -196,7 +196,7 @@ describe("refSeries", () => {
   });
 });
 
-describe("extractDrawingRefs — sheet addresses", () => {
+describe("extractDrawingRefs - sheet addresses", () => {
   it("captures the sheet number as part of the address", () => {
     expect(extractDrawingRefs("CONT ON DWG 025-A-1001 SH 3")).toEqual(["025-A-1001-SH3"]);
     expect(extractDrawingRefs("SEE 21-D-1105 SHT. 12")).toEqual(["21-D-1105-SH12"]);
@@ -228,7 +228,7 @@ describe("extractTitleBlock", () => {
     expect(tb.rev).toBe("A");
   });
 
-  it("requires the NO label — an OPC's 'CONT ON DWG X' is never an identity", () => {
+  it("requires the NO label - an OPC's 'CONT ON DWG X' is never an identity", () => {
     const tb = extractTitleBlock("CONT ON DWG 040-B-2002 SH 1");
     expect(tb.drawingNumber).toBeNull();
   });
@@ -243,7 +243,7 @@ describe("extractTitleBlock", () => {
   });
 });
 
-describe("auditDrawingRefs — declared identities", () => {
+describe("auditDrawingRefs - declared identities", () => {
   // Files named by whoever exported them; identity comes from the border.
   const docs = [
     { id: "a", name: "scan_0001.pdf" },
@@ -353,7 +353,7 @@ describe("pageNeedsVision", () => {
     expect(pageNeedsVision(prose, 0)).toBe(false);
   });
 
-  it("ignores long pages even without tags — that's prose, not a drawing", () => {
+  it("ignores long pages even without tags - that's prose, not a drawing", () => {
     const long = "label ".repeat(400);
     expect(pageNeedsVision(long, 0)).toBe(false);
   });
@@ -394,7 +394,7 @@ describe("unitOfRef", () => {
 
 describe("parseOpcBoxes", () => {
   it("reads OPC box numbers off a transcript line", () => {
-    expect(parseOpcBoxes("OPC 12: TO CRUDE OVHD V-1402 — 2002-D-2001 SH 4")).toEqual(["12"]);
+    expect(parseOpcBoxes("OPC 12: TO CRUDE OVHD V-1402 - 2002-D-2001 SH 4")).toEqual(["12"]);
     expect(parseOpcBoxes("OPC #07 FROM DESALTER")).toEqual(["7"]);
   });
 
@@ -403,7 +403,7 @@ describe("parseOpcBoxes", () => {
   });
 });
 
-describe("extractEquipmentTags — drawing-number guard", () => {
+describe("extractEquipmentTags - drawing-number guard", () => {
   it("never mints equipment out of a drawing number's middle segment", () => {
     expect(extractEquipmentTags("2002-D-2001")).toEqual([]);
     expect(extractEquipmentTags("SEE 2502-D-0001 SH 2")).toEqual([]);
@@ -415,7 +415,7 @@ describe("extractEquipmentTags — drawing-number guard", () => {
   });
 });
 
-describe("auditDrawingRefs — unit naming", () => {
+describe("auditDrawingRefs - unit naming", () => {
   it("labels out-of-scope series with the decoder's unit names", () => {
     const docs = [{ id: "a", name: "x.pdf" }];
     const declared = new Map([["a", ["2002-D-2001", "2002-D-2001-SH1"]]]);
@@ -427,7 +427,7 @@ describe("auditDrawingRefs — unit naming", () => {
   });
 });
 
-describe("extractDrawingRefs — furniture is never a drawing number", () => {
+describe("extractDrawingRefs - furniture is never a drawing number", () => {
   it("sheet counters don't become drawings", () => {
     expect(extractDrawingRefs("SHT 11 OF 16")).toEqual([]);
     expect(extractDrawingRefs("SHEET 2 OF 12")).toEqual([]);
@@ -447,7 +447,7 @@ describe("extractDrawingRefs — furniture is never a drawing number", () => {
   });
 });
 
-describe("buildEquipmentCensus — next available number", () => {
+describe("buildEquipmentCensus - next available number", () => {
   it("reports the highest number in use and the next after it", () => {
     const census = buildEquipmentCensus([
       { tag: "V-1" }, { tag: "V-17B" }, { tag: "V-9" }, { tag: "P-101A" },
@@ -494,7 +494,7 @@ describe("parsePrefixMap", () => {
   });
 });
 
-describe("buildEquipmentCensus — owner labels", () => {
+describe("buildEquipmentCensus - owner labels", () => {
   it("decoder-taught meanings beat the built-in guesses", () => {
     const census = buildEquipmentCensus(
       [{ tag: "X-22" }, { tag: "E-101" }, { tag: "ZZ-9" }],

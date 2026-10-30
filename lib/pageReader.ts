@@ -143,7 +143,7 @@ export function pagesAsText(r: PagesRead): string {
     total += body.length;
     parts.push(`=== PAGE ${p.page}${p.image ? " (also attached as an image)" : ""} ===\n${body}`);
   }
-  return parts.length ? `\n\nTEXT OF THE PAGES (already read from the document — treat it as the document itself):\n${parts.join("\n\n")}` : "";
+  return parts.length ? `\n\nTEXT OF THE PAGES (already read from the document - treat it as the document itself):\n${parts.join("\n\n")}` : "";
 }
 
 /** "3 pages from earlier reads, 2 from the PDF's text, 1 by image". */

@@ -44,7 +44,7 @@ export default function ProjectScopePanel({ orgId, projectId, projectName, canMa
     setBusy(true); setErr(null);
     try {
       const u = units.find((x) => x.code === unitPick);
-      await declareEdge({ orgId, a: node, b: nid.cbunit(unitPick), type: "project_scope", summary: `Project "${projectName}" covers ${u?.label ?? unitPick} (${unitPick}) — set by hand`, actor: me });
+      await declareEdge({ orgId, a: node, b: nid.cbunit(unitPick), type: "project_scope", summary: `Project "${projectName}" covers ${u?.label ?? unitPick} (${unitPick}) - set by hand`, actor: me });
       setUnitPick(""); await load();
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   };
@@ -60,7 +60,7 @@ export default function ProjectScopePanel({ orgId, projectId, projectName, canMa
         a = d2 as { id: string; tag: string } | null;
       }
       if (!a) throw new Error(`No equipment tagged "${t}" in the registry.`);
-      await declareEdge({ orgId, a: node, b: nid.asset(a.id), type: "project_scope", summary: `Project "${projectName}" covers ${a.tag} — set by hand`, actor: me });
+      await declareEdge({ orgId, a: node, b: nid.asset(a.id), type: "project_scope", summary: `Project "${projectName}" covers ${a.tag} - set by hand`, actor: me });
       setTagInput(""); await load();
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   };
@@ -80,7 +80,7 @@ export default function ProjectScopePanel({ orgId, projectId, projectName, canMa
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
-        <div className="text-sm font-black inline-flex items-center gap-2"><Briefcase className="w-4 h-4 text-amber-600" /> Scope — what this project is about</div>
+        <div className="text-sm font-black inline-flex items-center gap-2"><Briefcase className="w-4 h-4 text-amber-600" /> Scope - what this project is about</div>
         <Link href={`/graph?focus=${encodeURIComponent(node)}`} className="text-xs font-bold text-[var(--color-accent)] hover:underline inline-flex items-center gap-1"><Link2 className="w-3.5 h-3.5" /> See on the global graph</Link>
       </div>
       <div className="p-4 space-y-3">

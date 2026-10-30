@@ -104,7 +104,7 @@ export default function EstateReadiness({ orgId, onConnect, connecting }: { orgI
             <div><span className="font-bold">Missing:</span> {next.title.toLowerCase()}.</div>
             {onConnect && (
               <button onClick={onConnect} disabled={connecting} className="w-full rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-3 py-1.5 text-xs font-bold inline-flex items-center justify-center gap-1.5 disabled:opacity-60">
-                {connecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} {connecting ? "Connecting…" : "Connect everything — do all of it for me"}
+                {connecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} {connecting ? "Connecting…" : "Connect everything - do all of it for me"}
               </button>
             )}
             <button onClick={() => setByHand((v) => !v)} className="text-[11px] text-[var(--color-text-muted)] hover:underline">{byHand ? "Hide the by-hand steps" : "Or see the by-hand steps"}</button>

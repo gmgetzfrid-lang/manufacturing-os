@@ -57,7 +57,7 @@ Rules:
 - "units" are operating areas / process units identified by a number code.
 - "equipmentTypes" are equipment classes identified by a number code; tagPrefixes are the field-tag letter prefixes (E for exchangers, P for pumps) when the document states or clearly implies them; omit tagPrefixes when unknown.
 - "drawingTypes" are document/drawing discipline codes (P&ID, isometric, one-line, ...).
-- Codes are strings — preserve leading zeros exactly ("02", not 2).
+- Codes are strings - preserve leading zeros exactly ("02", not 2).
 - Only include entries the document actually defines. Do not invent, do not pad with examples. Empty arrays are correct answers.
 - If the document defines none of this, return all empty arrays and say so in notes.`;
 
@@ -77,7 +77,7 @@ async function governedPropose(opts: {
     .from("ai_connections").select("provider, model, api_key")
     .eq("org_id", orgId).eq("user_id", userId).maybeSingle();
   if (!conn || !ALLOWED_PROVIDERS.includes(conn.provider as AiProviderId)) {
-    return bad("Add your Claude or OpenAI key in AI settings first — imports run on your own key.", 412);
+    return bad("Add your Claude or OpenAI key in AI settings first - imports run on your own key.", 412);
   }
   {
     const { data: agree, error: agreeError } = await supabaseAdmin
@@ -127,7 +127,7 @@ async function governedPropose(opts: {
       notes?: unknown;
     } | null;
     if (!parsed) {
-      return bad("The AI response couldn't be parsed — run it again (a retry usually succeeds), or try a smaller excerpt of the standard.", 502);
+      return bad("The AI response couldn't be parsed - run it again (a retry usually succeeds), or try a smaller excerpt of the standard.", 502);
     }
 
     const clean = (kind: ProposedEntry["kind"], rows: Array<{ code?: unknown; label?: unknown; tagPrefixes?: unknown }> | undefined): ProposedEntry[] =>
@@ -200,14 +200,14 @@ export async function POST(req: NextRequest) {
   //    like text chunks — so render + model always fit the function window.
   if (body.action === "propose-vision") {
     const sourceName = String(body.fileName ?? "uploaded file");
-    if (!body.fileBase64) return bad("Vision reads need the uploaded file — re-upload and try again.");
+    if (!body.fileBase64) return bad("Vision reads need the uploaded file - re-upload and try again.");
     let buf: Buffer;
     try { buf = Buffer.from(String(body.fileBase64), "base64"); } catch { return bad("Couldn't decode the uploaded file"); }
     if (buf.byteLength > 3_500_000) {
-      return bad("That file is over the 3 MB upload limit — index it in a knowledge library instead and pick it from there.", 413);
+      return bad("That file is over the 3 MB upload limit - index it in a knowledge library instead and pick it from there.", 413);
     }
     if (!buf.subarray(0, 5).toString("latin1").startsWith("%PDF")) {
-      return bad(`Vision reading works on PDFs — "${sourceName}" doesn't look like one.`, 422);
+      return bad(`Vision reading works on PDFs - "${sourceName}" doesn't look like one.`, 422);
     }
     const pages = (Array.isArray(body.pages) ? body.pages : [])
       .map(Number)
@@ -237,7 +237,7 @@ export async function POST(req: NextRequest) {
       orgId, userId: user.id, sourceName,
       images,
       userMessage:
-        `PAGE IMAGES from "${sourceName}"${body.partLabel ? ` (${body.partLabel})` : ""} — ` +
+        `PAGE IMAGES from "${sourceName}"${body.partLabel ? ` (${body.partLabel})` : ""} - ` +
         `a drawing legend / numbering standard rendered as images because it has no text layer. ` +
         `Read the tables, legends, and abbreviation lists in these images and extract only the coding vocabulary THESE pages define.`,
     });
@@ -253,7 +253,7 @@ export async function POST(req: NextRequest) {
     let buf: Buffer;
     try { buf = Buffer.from(String(body.fileBase64), "base64"); } catch { return bad("Couldn't decode the uploaded file"); }
     if (buf.byteLength > 3_500_000) {
-      return bad("That file is over the 3 MB upload limit — index it in a knowledge library instead and pick it from there.", 413);
+      return bad("That file is over the 3 MB upload limit - index it in a knowledge library instead and pick it from there.", 413);
     }
     const head = buf.subarray(0, 5).toString("latin1");
     const isPdf = head.startsWith("%PDF") || /\.pdf$/i.test(sourceName);
@@ -272,7 +272,7 @@ export async function POST(req: NextRequest) {
       // An empty text layer is not an error for "extract" — the reply's
       // thinText flag tells the client to come back through vision instead.
       if (!source && body.action !== "extract") {
-        return bad(`"${sourceName}" has no extractable text (a scan or CAD export). Re-run the import — it will read the pages visually.`, 422);
+        return bad(`"${sourceName}" has no extractable text (a scan or CAD export). Re-run the import - it will read the pages visually.`, 422);
       }
     } else if (isZip) {
       // Word .docx = ZIP of XML. Detected by CONTENT (word/document.xml
@@ -305,7 +305,7 @@ export async function POST(req: NextRequest) {
     } else if (isCfb || /\.doc$/i.test(sourceName)) {
       return bad(
         `"${sourceName}" is a LEGACY Word .doc (pre-2007 binary format), which can't be read reliably. ` +
-        `Open it in Word and Save As → .docx or PDF, then upload that — both work here.`, 422);
+        `Open it in Word and Save As → .docx or PDF, then upload that - both work here.`, 422);
     } else {
       source = buf.toString("utf-8").trim();
       // A "text" file that's mostly unprintable bytes is binary in disguise —
@@ -328,7 +328,7 @@ export async function POST(req: NextRequest) {
     source = ((chunks ?? []) as Array<{ page: number; content: string }>)
       .map((c) => c.content).join("\n\n").slice(0, MAX_SOURCE_CHARS);
     if (!source.trim()) {
-      return bad(`"${sourceName}" has no extracted text yet — index it first, or paste the content directly.`, 422);
+      return bad(`"${sourceName}" has no extracted text yet - index it first, or paste the content directly.`, 422);
     }
   }
 
@@ -359,12 +359,12 @@ export async function POST(req: NextRequest) {
   {
     const junk = (source.match(/[\uFFFD\u0000-\u0008\u000E-\u001F]/g) ?? []).length;
     if (junk > source.length * 0.05) {
-      return bad(`The content from "${sourceName}" isn't readable text — it looks like binary data. Upload the document as .pdf or .docx, or paste the tables directly.`, 422);
+      return bad(`The content from "${sourceName}" isn't readable text - it looks like binary data. Upload the document as .pdf or .docx, or paste the tables directly.`, 422);
     }
   }
 
   return governedPropose({
     orgId, userId: user.id, sourceName,
-    userMessage: `SOURCE DOCUMENT (${sourceName}${body.partLabel ? `, ${body.partLabel} — extract only what THIS part defines` : ""}):\n\n${source}`,
+    userMessage: `SOURCE DOCUMENT (${sourceName}${body.partLabel ? `, ${body.partLabel} - extract only what THIS part defines` : ""}):\n\n${source}`,
   });
 }

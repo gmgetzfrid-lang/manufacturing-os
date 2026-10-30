@@ -148,9 +148,9 @@ export default function WorkspaceSettingsPage() {
         {/* Identity */}
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
           <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Workspace</div>
-          <Row icon={Briefcase} label="Name" value={org?.name ?? "—"} />
-          <Row icon={Users} label="Members" value={memberCount?.toString() ?? "—"} />
-          <Row icon={Briefcase} label="Libraries" value={libraryCount?.toString() ?? "—"} />
+          <Row icon={Briefcase} label="Name" value={org?.name ?? "-"} />
+          <Row icon={Users} label="Members" value={memberCount?.toString() ?? "-"} />
+          <Row icon={Briefcase} label="Libraries" value={libraryCount?.toString() ?? "-"} />
           {org?.subscribed_plan && <Row icon={Briefcase} label="Plan" value={org.subscribed_plan} />}
           {org?.subscription_status && <Row icon={Briefcase} label="Status" value={org.subscription_status} />}
         </div>
@@ -161,7 +161,7 @@ export default function WorkspaceSettingsPage() {
             <Hash className="w-3.5 h-3.5" /> Request Numbering
           </div>
           <p className="text-xs text-[var(--color-text-muted)] mb-4">
-            How new request numbers are built. The sequence is allocated atomically and resets each year, so every number is unique — no collisions even under simultaneous submissions.
+            How new request numbers are built. The sequence is allocated atomically and resets each year, so every number is unique - no collisions even under simultaneous submissions.
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <label className="block">
@@ -223,7 +223,7 @@ export default function WorkspaceSettingsPage() {
                 AI runs only inside Knowledge Libraries, only with a key each user connects
                 themselves, and only after they accept the data-use agreement. Usage is metered
                 per user with monthly spend caps. There is no org-wide AI and nothing runs
-                automatically over your data — configure providers under Knowledge → AI settings.
+                automatically over your data - configure providers under Knowledge → AI settings.
               </p>
             </div>
           </div>
@@ -349,18 +349,18 @@ function SchemaHealthCard({ orgId }: { orgId: string | null }) {
         <div className="text-xs text-rose-700 inline-flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> {state.message}</div>
       ) : state.healthy ? (
         <div className="text-xs text-emerald-700 inline-flex items-center gap-1.5">
-          <CheckCircle2 className="w-3.5 h-3.5" /> All {state.checkedTables} expected tables are present — every migrated feature has its schema.
+          <CheckCircle2 className="w-3.5 h-3.5" /> All {state.checkedTables} expected tables are present - every migrated feature has its schema.
         </div>
       ) : (
         <div className="space-y-3">
           <div className="text-xs font-bold text-amber-800 inline-flex items-center gap-1.5">
             <AlertTriangle className="w-3.5 h-3.5" />
-            {state.missingTables.length + state.missingColumns.length} schema gap{state.missingTables.length + state.missingColumns.length === 1 ? "" : "s"} found — features backed by these render empty until their migration runs.
+            {state.missingTables.length + state.missingColumns.length} schema gap{state.missingTables.length + state.missingColumns.length === 1 ? "" : "s"} found - features backed by these render empty until their migration runs.
           </div>
           {state.missingTables.length > 0 && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900 space-y-1">
               {state.missingTables.map((t) => (
-                <div key={t.table}><code className="bg-amber-100 px-1 rounded">{t.table}</code> — run <code className="bg-amber-100 px-1 rounded">{t.migration}</code></div>
+                <div key={t.table}><code className="bg-amber-100 px-1 rounded">{t.table}</code> - run <code className="bg-amber-100 px-1 rounded">{t.migration}</code></div>
               ))}
             </div>
           )}
@@ -368,7 +368,7 @@ function SchemaHealthCard({ orgId }: { orgId: string | null }) {
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900 space-y-1">
               {state.missingColumns.map((c) => (
                 <div key={`${c.table}.${c.column}`}>
-                  <code className="bg-amber-100 px-1 rounded">{c.table}.{c.column}</code> ({c.feature}) — run <code className="bg-amber-100 px-1 rounded">{c.migration}</code>
+                  <code className="bg-amber-100 px-1 rounded">{c.table}.{c.column}</code> ({c.feature}) - run <code className="bg-amber-100 px-1 rounded">{c.migration}</code>
                 </div>
               ))}
             </div>

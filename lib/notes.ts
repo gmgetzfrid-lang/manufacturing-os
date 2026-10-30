@@ -619,7 +619,7 @@ export function deriveCaptureTitle(findings: string[], tasks: string[]): string 
   const topic = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
   const gist = (findings[0] ?? tasks[0] ?? "Quick capture").replace(/\s+/g, " ").trim();
   let title = topic && !gist.toUpperCase().includes(topic.toUpperCase())
-    ? `${topic} — ${gist}`
+    ? `${topic} - ${gist}`
     : gist;
   if (tasks.length >= 2) title = `${title.slice(0, 62)} (${tasks.length} tasks)`;
   return title.slice(0, 80);
@@ -998,7 +998,7 @@ function fmtReportDay(iso: string): string {
 /** The report as clean markdown — for copy and .md download. */
 export function reportToMarkdown(r: ReportData): string {
   const lines: string[] = [];
-  lines.push(`# Scratchpad report — ${r.periodLabel} (${r.sinceIso === r.todayIso ? r.todayIso : `${r.sinceIso} → ${r.todayIso}`})`, "");
+  lines.push(`# Scratchpad report - ${r.periodLabel} (${r.sinceIso === r.todayIso ? r.todayIso : `${r.sinceIso} → ${r.todayIso}`})`, "");
   lines.push(`**${r.stats.done} done · ${r.stats.carry} carrying over${r.stats.overdueCarry > 0 ? ` (${r.stats.overdueCarry} overdue)` : ""}${r.stats.avgTookDays !== null ? ` · avg ${r.stats.avgTookDays}d to close` : ""}${r.stats.topTopic ? ` · top topic ${r.stats.topTopic[0]} (${r.stats.topTopic[1]})` : ""}**`, "");
 
   lines.push("## Achievements");
@@ -1009,7 +1009,7 @@ export function reportToMarkdown(r: ReportData): string {
       lines.push("", `### ${fmtReportDay(g.day)}`);
       for (const e of g.items) {
         const took = e.tookDays === null ? "" : e.tookDays === 0 ? " · same day" : ` · took ${e.tookDays}d`;
-        lines.push(`- [x] ${e.text}${e.outcome ? ` — “${e.outcome}”` : ""}${took} · ${e.topic}`);
+        lines.push(`- [x] ${e.text}${e.outcome ? ` - “${e.outcome}”` : ""}${took} · ${e.topic}`);
       }
     }
   }
@@ -1019,20 +1019,20 @@ export function reportToMarkdown(r: ReportData): string {
     lines.push("_No roadblocks flagged._");
   } else {
     for (const rb of r.roadblocks) {
-      lines.push(`- ${rb.text} — ${rb.reason} · ${rb.topic}`);
+      lines.push(`- ${rb.text} - ${rb.reason} · ${rb.topic}`);
     }
   }
 
   lines.push("", "## Carrying over / in progress");
   if (r.carryOver.length === 0) {
-    lines.push("_Nothing open — clean slate._");
+    lines.push("_Nothing open - clean slate._");
   } else {
     for (const c of r.carryOver) {
       const bits = [`open ${c.daysOpen}d`];
       if (c.overdueDays > 0) bits.push(`${c.overdueDays}d overdue`);
       else if (c.dueAt) bits.push(`due ${c.dueAt}`);
       if (c.recurring) bits.push(`every ${c.recurring}`);
-      lines.push(`- [ ] ${c.text} — ${bits.join(" · ")} · ${c.topic}`);
+      lines.push(`- [ ] ${c.text} - ${bits.join(" · ")} · ${c.topic}`);
     }
   }
 
@@ -1152,7 +1152,7 @@ export function buildReportDoc(
       const haystacks = [t.body, ...updates.map((u) => u.text)];
       for (const h of haystacks) {
         const bm = h.match(BLOCKER_RE);
-        if (bm) pushImp(text, `${bm[0].toLowerCase()}${h !== t.body ? ` — ${h}` : ""}`);
+        if (bm) pushImp(text, `${bm[0].toLowerCase()}${h !== t.body ? ` - ${h}` : ""}`);
         const rm = h.match(REQUEST_RE);
         if (rm && !bm) pushReq(text, h !== t.body ? h : `${rm[0].toLowerCase()}`);
       }
@@ -1204,7 +1204,7 @@ export function buildReportDoc(
   };
 }
 
-const PRIORITY_LABEL = (p: number | null): string => (p ? `P${p}` : "—");
+const PRIORITY_LABEL = (p: number | null): string => (p ? `P${p}` : "-");
 
 /** The editable report as clean markdown — for copy, the AI prompt, and
  *  the print/PDF fallback. */
@@ -1220,32 +1220,32 @@ export function reportDocToMarkdown(d: ReportDoc): string {
   if (d.completed.length === 0) L.push("_Nothing completed in this window._");
   else for (const c of d.completed) {
     const sched = c.scheduleNote ? ` _(${c.scheduleNote})_` : "";
-    L.push(`- **${c.text}**${sched} — ${c.description || c.outcome || "done"} · ${fmtReportDay(c.doneAt)} · ${c.topic}`);
+    L.push(`- **${c.text}**${sched} - ${c.description || c.outcome || "done"} · ${fmtReportDay(c.doneAt)} · ${c.topic}`);
   }
 
   L.push("", "## Carry-over / in progress");
-  if (d.carryOver.length === 0) L.push("_Nothing open — clean slate._");
+  if (d.carryOver.length === 0) L.push("_Nothing open - clean slate._");
   else for (const c of d.carryOver) {
     const bits = [`open ${c.daysOpen}d`];
     if (c.priority) bits.unshift(PRIORITY_LABEL(c.priority));
     if (c.overdueDays > 0) bits.push(`${c.overdueDays}d overdue`);
     else if (c.dueAt) bits.push(`due ${c.dueAt}`);
-    L.push(`- **${c.text}** — ${bits.join(" · ")}`);
+    L.push(`- **${c.text}** - ${bits.join(" · ")}`);
     if (c.description) L.push(`  - ${c.description}`);
   }
 
   L.push("", "## Impediments");
   if (d.impediments.length === 0) L.push("_None._");
-  else for (const i of d.impediments) L.push(`- ${i.text}${i.detail ? ` — ${i.detail}` : ""}`);
+  else for (const i of d.impediments) L.push(`- ${i.text}${i.detail ? ` - ${i.detail}` : ""}`);
 
   L.push("", "## Requests");
   if (d.requests.length === 0) L.push("_None._");
-  else for (const r of d.requests) L.push(`- ${r.text}${r.detail ? ` — ${r.detail}` : ""}`);
+  else for (const r of d.requests) L.push(`- ${r.text}${r.detail ? ` - ${r.detail}` : ""}`);
 
   L.push("", "## Next period priorities");
   if (d.nextPriorities.length === 0) L.push("_None set._");
   else for (const p of d.nextPriorities) {
-    L.push(`- **${p.priority ? `[${PRIORITY_LABEL(p.priority)}] ` : ""}${p.title}**${p.dueAt ? ` _(due ${p.dueAt})_` : ""}${p.description ? ` — ${p.description}` : ""}`);
+    L.push(`- **${p.priority ? `[${PRIORITY_LABEL(p.priority)}] ` : ""}${p.title}**${p.dueAt ? ` _(due ${p.dueAt})_` : ""}${p.description ? ` - ${p.description}` : ""}`);
   }
   return L.join("\n");
 }

@@ -22,8 +22,8 @@ const OSHA_SWING = { url: "https://www.osha.gov/laws-regs/regulations/standardnu
 export const CREWS_POINTS: TalkPoint[] = [
   { say: "Red danger tape: nobody crosses without talking to the person on the tag. Yellow caution tape: go in carefully, and know why it's there.", source: OSHA_SIGNS },
   { say: "Barricade all the way around, with a tag: who owns it, what's going on, and how to reach them.", source: OSHA_SIGNS },
-  { say: "Look up before you cross into any area — loads, people on scaffold, things that can drop." },
-  { say: "Never walk under a suspended load. Hear the horn — stop and look.", source: OSHA_SWING },
+  { say: "Look up before you cross into any area - loads, people on scaffold, things that can drop." },
+  { say: "Never walk under a suspended load. Hear the horn - stop and look.", source: OSHA_SWING },
   { say: "Before you start, tell the crew next to you what you're doing and what can hurt them." },
   { say: "Water jets, lifts and line breaks reach past the tape. Not sure? Ask before you cross." },
   { say: "Done for the day? Take your tape down or update the tag. Dead barricades teach people to ignore tape." },
@@ -44,7 +44,7 @@ const OSHA_EAP = { url: "https://www.osha.gov/laws-regs/regulations/standardnumb
 const OSHA_H2S = { url: "https://www.osha.gov/hydrogen-sulfide", title: "OSHA: Hydrogen sulfide" };
 const OSHA_CSE = { url: "https://www.osha.gov/laws-regs/regulations/standardnumber/1910/1910.146", title: "OSHA 1910.146: Permit-required confined spaces" };
 const OSHA_LOTO = { url: "https://www.osha.gov/laws-regs/regulations/standardnumber/1910/1910.147", title: "OSHA 1910.147: Control of hazardous energy (lockout/tagout)" };
-const OSHA_HOT = { url: "https://www.osha.gov/laws-regs/regulations/standardnumber/1910/1910.252", title: "OSHA 1910.252: Welding, cutting and brazing — fire prevention" };
+const OSHA_HOT = { url: "https://www.osha.gov/laws-regs/regulations/standardnumber/1910/1910.252", title: "OSHA 1910.252: Welding, cutting and brazing - fire prevention" };
 const OSHA_FALL = { url: "https://www.osha.gov/laws-regs/regulations/standardnumber/1926/1926.502", title: "OSHA 1926.502: Fall protection systems" };
 const OSHA_ELEC = { url: "https://www.osha.gov/laws-regs/regulations/standardnumber/1910/1910.333", title: "OSHA 1910.333: Electrical safe work practices" };
 const OSHA_DIG = { url: "https://www.osha.gov/laws-regs/regulations/standardnumber/1926/1926.651", title: "OSHA 1926.651: Excavations" };
@@ -53,13 +53,13 @@ const OSHA_DIG = { url: "https://www.osha.gov/laws-regs/regulations/standardnumb
  *  language: `always` leads every time; the others come round in turn. */
 export const CORE: Record<HazardKind, { always: TalkPoint; more: TalkPoint[] }> = {
   confined_space: {
-    always: { say: "Hole watch at the manway the whole entry, in constant contact with every entrant. Air monitored the whole time — on alarm, everyone evacuates.", source: OSHA_CSE },
+    always: { say: "Hole watch at the manway the whole entry, in constant contact with every entrant. Air monitored the whole time - on alarm, everyone evacuates.", source: OSHA_CSE },
     more: [
-      { say: "Entry permit posted at the manway for this shift. Sign in and out on the log every time — the hole watch must know who's inside.", source: OSHA_CSE },
-      { say: "Rescue plan set before anyone enters. Never go in after someone without air and a rescue team — would-be rescuers die too.", source: OSHA_CSE },
-      { say: "Every line into the vessel blinded or disconnected — not just a closed valve. Verify it before entry.", source: OSHA_CSE },
+      { say: "Entry permit posted at the manway for this shift. Sign in and out on the log every time - the hole watch must know who's inside.", source: OSHA_CSE },
+      { say: "Rescue plan set before anyone enters. Never go in after someone without air and a rescue team - would-be rescuers die too.", source: OSHA_CSE },
+      { say: "Every line into the vessel blinded or disconnected - not just a closed valve. Verify it before entry.", source: OSHA_CSE },
       { say: "Ventilation runs the whole entry, and the air is re-tested after every break. Blower stops? Everyone evacuates until it's tested again.", source: OSHA_CSE },
-      { say: "Know your way out before you go in. Trays and internals can block the manway — keep the exit path clear." },
+      { say: "Know your way out before you go in. Trays and internals can block the manway - keep the exit path clear." },
     ],
   },
   inert: {
@@ -67,7 +67,7 @@ export const CORE: Record<HazardKind, { always: TalkPoint; more: TalkPoint[] }> 
     more: [
       { say: "Post and barricade every open manway: danger, nitrogen, no entry." },
       { say: "Watch the air supply as closely as the entrant. Lose air: the entrant comes out on the escape bottle, now." },
-      { say: "Constant communication with the entrant — radio or voice line checked before entry. No answer: start the rescue, don't go in." },
+      { say: "Constant communication with the entrant - radio or voice line checked before entry. No answer: start the rescue, don't go in." },
       { say: "Route purge vents high and away from where people work. Know where the nitrogen goes after it leaves." },
     ],
   },
@@ -80,7 +80,7 @@ export const CORE: Record<HazardKind, { always: TalkPoint; more: TalkPoint[] }> 
     ],
   },
   line_break: {
-    always: { say: "Line-break permit and LOTO verified with the operator before the first bolt. See the isolation — don't assume it.", source: OSHA_LOTO },
+    always: { say: "Line-break permit and LOTO verified with the operator before the first bolt. See the isolation - don't assume it.", source: OSHA_LOTO },
     more: [
       { say: "Break away from your body. Loosen the far-side bolts first so anything trapped sprays away from you." },
       { say: "PPE for what was in the line: face shield, gloves, chemical suit if it calls for one." },
@@ -97,7 +97,7 @@ export const CORE: Record<HazardKind, { always: TalkPoint; more: TalkPoint[] }> 
     ],
   },
   bundle_pull: {
-    always: { say: "Everyone out of the line of fire while pulling — a parted cable or sling whips. Spotter on the bundle the whole way out." },
+    always: { say: "Everyone out of the line of fire while pulling - a parted cable or sling whips. Spotter on the bundle the whole way out." },
     more: [
       { say: "Bundle puller inspected and rigged to the plan before the first pull. Pull zone barricaded." },
       { say: "Once it's out, block and crib it before anyone works near it. Bundles roll." },
@@ -111,22 +111,22 @@ export const CORE: Record<HazardKind, { always: TalkPoint; more: TalkPoint[] }> 
     ],
   },
   hot_work: {
-    always: { say: "Hot work permit and gas test before the first spark — and monitor continuously while you work.", source: OSHA_HOT },
+    always: { say: "Hot work permit and gas test before the first spark - and monitor continuously while you work.", source: OSHA_HOT },
     more: [
       { say: "Fire watch for the whole job and 30 minutes after, extinguisher in hand, watching where the sparks land.", source: OSHA_HOT },
-      { say: "Drains and sewers within 35 feet sealed — vapor in a sewer finds the spark.", source: OSHA_HOT },
-      { say: "Move or cover anything that can burn — hoses, wood, rags, insulation. Fire blankets under the work.", source: OSHA_HOT },
-      { say: "Gas monitor alarms? Stop hot work, evacuate, report it — and get a new gas test before restarting." },
+      { say: "Drains and sewers within 35 feet sealed - vapor in a sewer finds the spark.", source: OSHA_HOT },
+      { say: "Move or cover anything that can burn - hoses, wood, rags, insulation. Fire blankets under the work.", source: OSHA_HOT },
+      { say: "Gas monitor alarms? Stop hot work, evacuate, report it - and get a new gas test before restarting." },
       { say: "Bottles upright, chained and capped when not in use. Flashback arrestors on both hoses, and hoses checked for leaks." },
     ],
   },
   heights: {
     always: { say: "100% tie-off whenever you're exposed to a fall, anchored overhead. Inspect harness and lanyard before you go up.", source: OSHA_FALL },
     more: [
-      { say: "Check the scaffold tag before you climb: green to use, red stay off. Never modify it — call the scaffold crew." },
+      { say: "Check the scaffold tag before you climb: green to use, red stay off. Never modify it - call the scaffold crew." },
       { say: "Tools tethered and the area below barricaded. A dropped wrench kills." },
       { say: "Ladders: three points of contact, tied off at the top, nothing in your hands while you climb." },
-      { say: "Man-lift basket gate shut, and tie off to the basket anchor — never the rail.", source: OSHA_FALL },
+      { say: "Man-lift basket gate shut, and tie off to the basket anchor - never the rail.", source: OSHA_FALL },
       { say: "Wind or rain picks up? Stop work at height and come down. Slick steel and gusts take people off." },
     ],
   },
@@ -136,12 +136,12 @@ export const CORE: Record<HazardKind, { always: TalkPoint; more: TalkPoint[] }> 
       { say: "Pressure up in stages and hold at each one. Check joints from a safe distance, never leaning over them." },
       { say: "Test rig's own gauge and relief, sized for the test. Never exceed the pressure on the permit." },
       { say: "One person runs the pump and the valves. Nobody else opens, closes or bleeds anything during the test." },
-      { say: "Test with what the permit says — water unless it says otherwise. Never switch to air or nitrogen to finish faster." },
+      { say: "Test with what the permit says - water unless it says otherwise. Never switch to air or nitrogen to finish faster." },
       { say: "Done testing? Open the vents before you drain, so it doesn't pull a vacuum, and drain to a safe place." },
     ],
   },
   electrical: {
-    always: { say: "Lock it out, then test before touch — live-dead-live with a meter. No test, no touch.", source: OSHA_ELEC },
+    always: { say: "Lock it out, then test before touch - live-dead-live with a meter. No test, no touch.", source: OSHA_ELEC },
     more: [
       { say: "Only qualified electricians inside the arc-flash boundary, in the PPE the label calls for.", source: OSHA_ELEC },
       { say: "Keep water and wet work away from open panels. Cover them or stop." },
@@ -154,25 +154,25 @@ export const CORE: Record<HazardKind, { always: TalkPoint; more: TalkPoint[] }> 
     always: { say: "Spent catalyst can ignite in air. Keep it blanketed or wet, and follow the SDS for this catalyst." },
     more: [
       { say: "Entry into a reactor bed is inert entry: supplied air, hole watch and standby rescue at the manway.", source: OSHA_CSE },
-      { say: "Respirators for everyone near the dump chute — dust carries to the people below." },
+      { say: "Respirators for everyone near the dump chute - dust carries to the people below." },
       { say: "Vacuum truck pulling catalyst: hoses grounded and bonded, and nobody in line with a hose under suction." },
       { say: "Spent catalyst can come out hot. Check its temperature before you handle it, and keep bins away from anything that burns." },
       { say: "Seal and label every bin as it fills. The label tells the next crew what's inside." },
-      { say: "Reactor top crowded during loading? Keep the manway and the escape path clear — rescue needs room to work." },
+      { say: "Reactor top crowded during loading? Keep the manway and the escape path clear - rescue needs room to work." },
     ],
   },
   chemical: {
     always: { say: "Know what's in the system and read the SDS before you open it. Eyewash and safety shower tested before you start." },
     more: [
-      { say: "Chemical PPE matched to the chemical: goggles, face shield, gloves and suit — not your everyday gloves." },
-      { say: "Check hoses and connections before the pump starts. A popped hose sprays chemical — stay out of the line of fire." },
+      { say: "Chemical PPE matched to the chemical: goggles, face shield, gloves and suit - not your everyday gloves." },
+      { say: "Check hoses and connections before the pump starts. A popped hose sprays chemical - stay out of the line of fire." },
       { say: "Splashed? Eyewash or shower for 15 minutes, then report it. Don't wait to see if it burns." },
-      { say: "Walk the cleaning circuit before the pump starts — every valve, blind and drain where the procedure says." },
+      { say: "Walk the cleaning circuit before the pump starts - every valve, blind and drain where the procedure says." },
       { say: "Barricade the chemical area and post what's in use. Only the cleaning crew inside, in their PPE." },
     ],
   },
   heater: {
-    always: { say: "Fuel isolated and blinded at the burners before anyone enters the firebox. Verify it — don't trust a closed valve.", source: OSHA_LOTO },
+    always: { say: "Fuel isolated and blinded at the burners before anyone enters the firebox. Verify it - don't trust a closed valve.", source: OSHA_LOTO },
     more: [
       { say: "Firebox fully purged before any light-off. No shortcuts on the purge time." },
       { say: "Refractory dust is silica. Respirators inside the firebox." },
@@ -186,8 +186,8 @@ export const CORE: Record<HazardKind, { always: TalkPoint; more: TalkPoint[] }> 
     always: { say: "The radiography barricade is a radiation boundary. Nobody crosses it until the RT crew clears the area." },
     more: [
       { say: "Hear the RT warning? Walk away from the barricade and stay out until the all-clear." },
-      { say: "The boundary covers every level — scaffold above the shot is inside it." },
-      { say: "Radiation signs and lights up on the boundary before the first shot — and down when the crew's done." },
+      { say: "The boundary covers every level - scaffold above the shot is inside it." },
+      { say: "Radiation signs and lights up on the boundary before the first shot - and down when the crew's done." },
       { say: "Never pick up or move anything near a camera or guide tube. Call the RT crew." },
     ],
   },
@@ -195,7 +195,7 @@ export const CORE: Record<HazardKind, { always: TalkPoint; more: TalkPoint[] }> 
     always: { say: "Dig permit and line locates before the first shovel. Hand dig or hydro-vac near marked lines.", source: OSHA_DIG },
     more: [
       { say: "Spoil and equipment at least two feet back from the edge. Walls inspected every shift.", source: OSHA_DIG },
-      { say: "Gas test before entering a trench — heavy vapors collect at the bottom.", source: OSHA_DIG },
+      { say: "Gas test before entering a trench - heavy vapors collect at the bottom.", source: OSHA_DIG },
       { say: "Five feet deep or more: shoring, sloping or a trench box before anyone goes in.", source: OSHA_DIG },
       { say: "Ladder within 25 feet of everyone in a trench four feet or deeper.", source: OSHA_DIG },
       { say: "Barricade the open hole and light it at night. Nobody walks the edge to look in." },
@@ -205,15 +205,15 @@ export const CORE: Record<HazardKind, { always: TalkPoint; more: TalkPoint[] }> 
   machining: {
     always: { say: "Machine bolted down and guarded before it spins. Hands, gloves and sleeves clear of the cutter." },
     more: [
-      { say: "Face shield over safety glasses — chips fly hot and sharp. Cover open nozzles so chips don't fall in." },
+      { say: "Face shield over safety glasses - chips fly hot and sharp. Cover open nozzles so chips don't fall in." },
       { say: "Isolation stays in place. A flange being machined is still an open line." },
       { say: "Lock out the machine before changing a cutter or clearing chips. Never reach in while it's turning." },
-      { say: "Barricade the work area — chips and the swing of the machine reach past the flange." },
-      { say: "Rig the machine onto the flange — don't carry it. Field machines are heavier than they look." },
+      { say: "Barricade the work area - chips and the swing of the machine reach past the flange." },
+      { say: "Rig the machine onto the flange - don't carry it. Field machines are heavier than they look." },
       { say: "Cords and air hoses routed away from the cutter and the walkway. Check them before every start." },
       { say: "Keep cutting fluid off the grating. A slip next to a turning cutter is how hands get caught." },
       { say: "Clean the flange face and gas test before setup. Residue left on it can burn when the cutter heats up." },
-      { say: "Hearing protection on — the machine is loud, and so is the unit around you." },
+      { say: "Hearing protection on - the machine is loud, and so is the unit around you." },
       { say: "Two on setup: one runs the machine, one watches the cutter with a hand near the stop." },
     ],
   },
@@ -336,7 +336,7 @@ export function projectFacts(p: ProjectBase | undefined, shift: { start: number;
 const PLANT_POINTS: TalkPoint[] = [
   { say: "Operators own the unit. Check in with them before you start, and tell them when you stop or anything changes." },
   { say: "Never open, close or bump a valve that isn't yours. Ask the operator." },
-  { say: "Know the alarm and your muster point. When it sounds, stop work and evacuate — don't finish the bolt.", source: OSHA_EAP },
+  { say: "Know the alarm and your muster point. When it sounds, stop work and evacuate - don't finish the bolt.", source: OSHA_EAP },
   { say: "Check the windsock when you start the job. If you evacuate, go crosswind first, then upwind to the muster point clear of the release.", source: OSHA_H2S },
 ];
 
@@ -346,18 +346,18 @@ const PLANT_POINTS: TalkPoint[] = [
 const FATIGUE = (day: number): TalkPoint[] => [
   { say: `Day ${day} of long shifts: tired people miss things. At Texas City, an operator had worked 29 straight 12-hour days.`, source: CSB_BP },
   { say: "Twelve-hour shifts stack up. Watch your partner for fatigue, and call a break when you see it." },
-  { say: "Tired crews skip checks. Double-check isolations and permits — that's where tired mistakes happen." },
+  { say: "Tired crews skip checks. Double-check isolations and permits - that's where tired mistakes happen." },
   { say: "Fatigue hits hardest in the small hours and after a meal. Rotate the hard jobs, and speak up if you're fading." },
 ];
 const BEHIND: TalkPoint[] = [
   { say: "We're behind. That's never a reason to skip a step. Nobody gets hurt to make up hours." },
-  { say: "Pressure to catch up is when steps get skipped. Use your stop-work authority — no job is that urgent." },
+  { say: "Pressure to catch up is when steps get skipped. Use your stop-work authority - no job is that urgent." },
   { say: "Behind schedule? Slow down at the risky parts. A shortcut that goes wrong costs days, not hours." },
   { say: "Rushing shows up in housekeeping first. Keep walkways clear and tools put away, even when we're behind." },
 ];
 const NEW_FACES: TalkPoint[] = [
   { say: "New faces this week. Show them the exits, the alarm and the muster point before their first job.", source: OSHA_EAP },
-  { say: "New to the unit? Ask. Nobody here minds a question — everybody minds a guess." },
+  { say: "New to the unit? Ask. Nobody here minds a question - everybody minds a guess." },
 ];
 
 /** The lines about this shift's place in the job, each on its own shifts. */
@@ -397,7 +397,7 @@ export const TA_THEMES: Array<{ key: string; title: string; points: TalkPoint[] 
     { say: "Know who's above, below and beside you. Talk to the crew next to you before you start." },
   ] },
   { key: "release", title: "Released equipment & sign-offs", points: [
-    { say: "Walk it down with the operator. Blinds, bleeders, locks — see them, don't assume them.", source: OSHA_PSM },
+    { say: "Walk it down with the operator. Blinds, bleeders, locks - see them, don't assume them.", source: OSHA_PSM },
     { say: "The JHA covers the job you were released for. Scope changes? Stop, redo the JHA, get a new sign-off." },
     { say: "Out-of-service can still get heat or pressure from the live side. At Williams Olefins, an idle reboiler blew. Two died.", source: CSB_WILLIAMS },
   ] },
@@ -424,28 +424,28 @@ export const TA_THEMES: Array<{ key: string; title: string; points: TalkPoint[] 
 export const QUIET_THEMES: Array<{ key: string; title: string; points: TalkPoint[] }> = [
   { key: "linefire", title: "Line of fire", points: [
     { say: "Before you pull, push or cut, ask: if it slips, breaks or lets go, where does it go? Don't be there." },
-    { say: "Stand clear of anything under tension or pressure — slings, hoses, springs, come-alongs. If it lets go, it whips." },
+    { say: "Stand clear of anything under tension or pressure - slings, hoses, springs, come-alongs. If it lets go, it whips." },
     { say: "Never put yourself between moving equipment and anything fixed. Vehicles, loads and swinging gates pin people." },
   ] },
   { key: "hands", title: "Hands & pinch points", points: [
     { say: "Know where your hands are before every move. Pinch points are where the work closes in on itself." },
     { say: "Use a tool, not your fingers, to line up bolt holes or guide a load." },
-    { say: "Wear the gloves the job calls for — and take them off near anything that spins." },
+    { say: "Wear the gloves the job calls for - and take them off near anything that spins." },
   ] },
   { key: "dropped", title: "Dropped objects", points: [
-    { say: "Working above others? Tether your tools, and keep loose parts in a bag or bucket — never on the grating." },
+    { say: "Working above others? Tether your tools, and keep loose parts in a bag or bucket - never on the grating." },
     { say: "Walking below work at height? Go around the barricade, not under it." },
-    { say: "Check what's above you before you set up — scaffold, open grating, a crew overhead." },
+    { say: "Check what's above you before you set up - scaffold, open grating, a crew overhead." },
   ] },
   { key: "housekeeping", title: "Housekeeping", points: [
-    { say: "Hoses and cords run overhead or along the edge — never across a stair, ladder or walkway." },
+    { say: "Hoses and cords run overhead or along the edge - never across a stair, ladder or walkway." },
     { say: "Clean as you go: scrap, rags and bolts off the grating before the shift ends." },
     { say: "Clean up or cover a spill the moment it happens, and report it. Oil on grating is a fall waiting." },
   ] },
   { key: "stopwork", title: "Stop work & speak up", points: [
-    { say: "Anyone can stop a job they think is unsafe — and nobody gets in trouble for it." },
+    { say: "Anyone can stop a job they think is unsafe - and nobody gets in trouble for it." },
     { say: "Near miss? Report it today. The one nobody reports is the one that hurts someone next week." },
-    { say: "See something, say something — even to another crew. Most people are glad you did." },
+    { say: "See something, say something - even to another crew. Most people are glad you did." },
   ] },
 ];
 
@@ -461,9 +461,9 @@ export const PHASES: Record<"shutdown" | "startup", { key: string; title: string
     lines: cycle([
       { say: "Watch equipment as it goes back in service. At Anacortes, an exchanger bank being started up after cleaning blew apart. Seven died.", source: CSB_TESORO },
       { say: "Every flange you opened is a leak point as it heats up. Know which ones are yours, and watch them." },
-      { say: "Leaks show up as lines heat up. Report any drip, wisp or smell to the operator — don't tighten bolts on a live line." },
+      { say: "Leaks show up as lines heat up. Report any drip, wisp or smell to the operator - don't tighten bolts on a live line." },
       { say: "Hydrocarbons are back in lines that were open all week. From here on, treat every line as live." },
-      { say: "Clear out what you're done with — tools, tape, hoses, scaffold. Leftovers block the operators and the escape routes." },
+      { say: "Clear out what you're done with - tools, tape, hoses, scaffold. Leftovers block the operators and the escape routes." },
       { say: "Know the start-up plan for your area: when feed comes in, and when your crew has to be out." },
       { say: "Steam and hot oil are coming back. Don't touch a line or valve you haven't checked." },
       { say: "Know your muster point and the wind before feed comes in. If the alarm sounds, evacuate crosswind, then upwind.", source: OSHA_EAP },
@@ -477,11 +477,11 @@ export const PHASES: Record<"shutdown" | "startup", { key: string; title: string
       { say: "Purging and steam-out change by the hour. Check with the operator before you start, and again when anything changes." },
       { say: "Lines are hot during steam-out. Don't touch a line or valve until you know its temperature." },
       { say: "Operators have their hands full bringing it down. Stay out of their way and wait for your release." },
-      { say: "Watch for anything not normal — flaring, venting, alarms, a smell. Stop and tell the operator." },
+      { say: "Watch for anything not normal - flaring, venting, alarms, a smell. Stop and tell the operator." },
       { say: "Pumps, drains and samples are the operators' job while it comes down. Don't touch them, even to help." },
       { say: "Know your muster point and the wind before the first equipment is opened. If the alarm sounds, evacuate crosswind, then upwind.", source: OSHA_EAP },
       { say: "Keep walkways and ladders clear. Hoses, tools and scaffold staged for the job stay out of the operators' way." },
-      { say: "More trucks and people in the unit than usual — vacuum trucks, cranes, crews staging. Use the walkways and watch for backing vehicles." },
+      { say: "More trucks and people in the unit than usual - vacuum trucks, cranes, crews staging. Use the walkways and watch for backing vehicles." },
       { say: "Sampling and draining under way: liquids can come out hot, sour or both. Stay clear of open drains and sample points." },
     ]) },
 };
@@ -522,7 +522,7 @@ export function safetyBrief(hazards: RankedHazard[], shift: { start: number; kin
   const unit = facts.unit ? ` · ${facts.unit}` : "";
   const kicker = facts.turnaround ? `Turnaround${unit}` : `The job${unit}`;
   const dayPart = facts.day != null && facts.days != null
-    ? (facts.day <= facts.days ? `Day ${facts.day} of ${facts.days}` : `Day ${facts.day} — past the planned ${facts.days}`) : "";
+    ? (facts.day <= facts.days ? `Day ${facts.day} of ${facts.days}` : `Day ${facts.day} - past the planned ${facts.days}`) : "";
   // One line on where the job stands (tired, behind, new faces) in place
   // of the topic's last line, on its shifts.
   const situational = lineFor(situationLines(facts), ord, 0, [], used);
@@ -534,12 +534,12 @@ export function safetyBrief(hazards: RankedHazard[], shift: { start: number; kin
   };
   const general: SafetyTopic = phase ? {
     key: `general:${phase.key}`, kind: "general", kicker, title: phase.title,
-    why: [dayPart, `the unit ${phase.key === "startup" ? "starting up" : "coming down"} around the work ${when}`].filter(Boolean).join(" — ").replace(/^./, (c) => c.toUpperCase()) + ".",
+    why: [dayPart, `the unit ${phase.key === "startup" ? "starting up" : "coming down"} around the work ${when}`].filter(Boolean).join(" - ").replace(/^./, (c) => c.toUpperCase()) + ".",
     points: phasePoints(phase),
   } : {
     key: `general:${theme.key}`, kind: "general", kicker, title: theme.title,
     why: [dayPart, facts.turnaround ? `live units and other crews all around the work ${when}` : `operators running the plant around the work ${when}`]
-      .filter(Boolean).join(" — ").replace(/^./, (c) => c.toUpperCase()) + ".",
+      .filter(Boolean).join(" - ").replace(/^./, (c) => c.toUpperCase()) + ".",
     points: [theme.points[0], theme.points[1], situational ?? theme.points[2]].map((p) => take(p)!),
   };
 
@@ -564,7 +564,7 @@ export function safetyBrief(hazards: RankedHazard[], shift: { start: number; kin
       key: h.kind, kind: "risk" as const, hazard: h.kind,
       kicker: `Top risk ${when}${top.length > 1 ? ` · ${i + 1}` : ""}${run >= 2 ? ` · ${ordinal(run + 1)} shift running` : ""}`,
       title: h.label,
-      why: `${who} ${DOING[h.kind]} ${where} ${when}${withOthers ? ` — next to ${andList(others.slice(0, 2))}` : ""}.`,
+      why: `${who} ${DOING[h.kind]} ${where} ${when}${withOthers ? ` - next to ${andList(others.slice(0, 2))}` : ""}.`,
       points: [take(CORE[h.kind].always), lesson, third].filter((p): p is TalkPoint => !!p),
     };
   });
@@ -573,7 +573,7 @@ export function safetyBrief(hazards: RankedHazard[], shift: { start: number; kin
   const quiet = QUIET_THEMES[mod(ord, QUIET_THEMES.length)];
   const extra: SafetyTopic[] = risks.length < 2 ? [{
     key: `general:${quiet.key}`, kind: "general", kicker, title: quiet.title,
-    why: `Quiet ${shift.kind === "night" ? "night" : "day"} on the schedule — a good one to talk through.`,
+    why: `Quiet ${shift.kind === "night" ? "night" : "day"} on the schedule - a good one to talk through.`,
     points: quiet.points.map((p) => take(p)!),
   }] : [];
   return [general, ...risks, ...extra];

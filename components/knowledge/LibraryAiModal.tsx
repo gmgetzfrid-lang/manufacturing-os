@@ -20,7 +20,7 @@ const DECODER_PLACEHOLDER =
   `e.g. "Drawing numbers: first two digits = unit (20 = Crude Unit, 25 = Vacuum Unit). Tag prefixes: X- = Exchanger, V- = Vessel, ZZ- = Sample station. Line numbers read size-service-number-spec."`;
 
 const INSTRUCTIONS_PLACEHOLDER =
-  `e.g. "These standards cross-reference each other constantly — chase references instead of stopping at one document. Our site standards supersede code minimums; when a standard defers ('per B31.3'), the code governs. Field crews read these answers: spell out units, never abbreviate equipment tags."`;
+  `e.g. "These standards cross-reference each other constantly - chase references instead of stopping at one document. Our site standards supersede code minimums; when a standard defers ('per B31.3'), the code governs. Field crews read these answers: spell out units, never abbreviate equipment tags."`;
 
 export default function LibraryAiModal({ library, orgId, open, onClose, onSaved }: {
   library: KnowledgeLibrary;
@@ -91,7 +91,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
         legendDocIds: legendDocIds.size > 0 ? [...legendDocIds].slice(0, 3) : undefined,
       });
       await setLibraryLinks({ orgId, libraryId: library.id, linkedLibraryIds: [...linked] });
-      showToast({ type: "success", title: "Library AI setup saved — applies to the next question." });
+      showToast({ type: "success", title: "Library AI setup saved - applies to the next question." });
       onSaved();
       onClose();
     } catch (e) {
@@ -121,7 +121,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
               What&apos;s in this library
             </label>
             <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
-              A hint for mapping and answers. Every document is still identified on its own — forms,
+              A hint for mapping and answers. Every document is still identified on its own - forms,
               checklists, piping specs and standards are found wherever they live.
             </p>
             <select id="library-kind" value={kind} onChange={(e) => setKind(e.target.value as LibraryKind)}
@@ -133,9 +133,9 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
           <div className="rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 px-3 py-2.5">
             <div className="text-xs font-bold text-[var(--color-text)]">Answers come from documents only</div>
             <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-              Every statement is cited to a page you can open. When the documents can&apos;t prove something —
-              like why a rule exists — the answer says so and asks for the code or publication that would.
-              Never the AI&apos;s own training. The web is used only when you turn on <b>Web</b> in the question box —
+              Every statement is cited to a page you can open. When the documents can&apos;t prove something -
+              like why a rule exists - the answer says so and asks for the code or publication that would.
+              Never the AI&apos;s own training. The web is used only when you turn on <b>Web</b> in the question box -
               then every web statement links to the page it came from, and your documents still govern.
             </p>
           </div>
@@ -145,7 +145,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
               Standing instructions
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
-              Injected into every question against this library — write plain-English rules about how
+              Injected into every question against this library - write plain-English rules about how
               these documents work and how answers should behave.
             </p>
             <Textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={6}
@@ -159,7 +159,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
             <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
               Teach any numbering scheme these documents use. Unit numbers as
               <code className="font-mono"> 20 = Crude Unit</code> pairs; tag prefixes with a
-              trailing dash, <code className="font-mono"> X- = Exchanger</code> — those override
+              trailing dash, <code className="font-mono"> X- = Exchanger</code> - those override
               the built-in category guesses everywhere (tables, census, CSV).
             </p>
             <Textarea value={decoder} onChange={(e) => setDecoder(e.target.value)} rows={4}
@@ -171,7 +171,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
               Pinned reference documents
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
-              Pick up to 3 documents whose content rides along with <b>every</b> question — a
+              Pick up to 3 documents whose content rides along with <b>every</b> question - a
               P&amp;ID legend, a glossary of terms, an abbreviations key, a notation guide. Like
               keeping the reference page open next to whatever you&apos;re reading.
             </p>
@@ -215,7 +215,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
                 <span className="block text-xs font-bold text-[var(--color-text)]">Ask before broad answers</span>
                 <span className="block text-[11px] text-[var(--color-text-muted)] mt-0.5">
                   When a question&apos;s answer spans several distinct aspects (safety vs fabrication vs
-                  design…), the AI asks which you want — select all that apply — instead of burying you
+                  design…), the AI asks which you want - select all that apply - instead of burying you
                   in everything at once. Single-aspect questions answer directly, no extra step.
                 </span>
               </span>
@@ -224,10 +224,10 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
               <input type="checkbox" checked={visionPages} onChange={(e) => setVisionPages(e.target.checked)}
                 className="accent-orange-600 w-4 h-4 mt-0.5" />
               <span className="min-w-0">
-                <span className="block text-xs font-bold text-[var(--color-text)]">Deep read — see pages as printed (ON by default)</span>
+                <span className="block text-xs font-bold text-[var(--color-text)]">Deep read - see pages as printed (ON by default)</span>
                 <span className="block text-[11px] text-[var(--color-text-muted)] mt-0.5">
-                  The AI reads the actual page images — complex tables (stress tables, span tables),
-                  typeset formulas, figures — exactly as printed, hunts down referenced tables like
+                  The AI reads the actual page images - complex tables (stress tables, span tables),
+                  typeset formulas, figures - exactly as printed, hunts down referenced tables like
                   `Table A-1`, and can fetch additional pages it needs mid-answer. Uncheck only to save
                   tokens on plain-prose libraries.
                 </span>
@@ -238,13 +238,13 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
                 className="accent-orange-600 w-4 h-4 mt-0.5" />
               <span className="min-w-0">
                 <span className="block text-xs font-bold text-[var(--color-text)]">
-                  Text doesn&apos;t extract from these files — index every page as an image
+                  Text doesn&apos;t extract from these files - index every page as an image
                 </span>
                 <span className="block text-[11px] text-[var(--color-text-muted)] mt-0.5">
                   For documents whose PDF text layer is missing or useless: scans, photos of
                   paper, CAD drawings exported with SHX fonts, image-only PDFs. Without this, such
                   a library indexes to almost nothing and looks empty for no visible reason.
-                  <b> Leave it OFF for normal PDFs</b> — standards, specs and manuals with real
+                  <b> Leave it OFF for normal PDFs</b> - standards, specs and manuals with real
                   text extract fine, and their tables and figures are already handled (tables
                   index intact, and referenced figures are read from the page image at answer
                   time). Costs a few cents per page on your key. Turn it on, then
@@ -257,12 +257,12 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
                 className="accent-orange-600 w-4 h-4 mt-0.5" />
               <span className="min-w-0">
                 <span className="block text-xs font-bold text-[var(--color-text)]">
-                  This is a drawing set — enable Drawing Intelligence
+                  This is a drawing set - enable Drawing Intelligence
                 </span>
                 <span className="block text-[11px] text-[var(--color-text-muted)] mt-0.5">
                   Adds the drawing tools to this library&apos;s page: equipment census, off-page
                   reference audit, register export, per-sheet tag index. For P&amp;IDs, isometrics,
-                  loop sheets. Leave OFF for standards and manuals — they don&apos;t need drawing
+                  loop sheets. Leave OFF for standards and manuals - they don&apos;t need drawing
                   tooling just because they mention document numbers.
                 </span>
               </span>
@@ -275,13 +275,13 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
             </div>
             <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
               Questions asked here also search the linked libraries. <b>{library.name}</b> is
-              <b> GOVERNING</b> — its documents supersede reference minimums except where they defer,
+              <b> GOVERNING</b> - its documents supersede reference minimums except where they defer,
               and every answer says which document won.
             </p>
             {!loaded ? (
               <div className="py-4 text-center"><Loader2 className="w-4 h-4 animate-spin inline text-[var(--color-text-muted)]" /></div>
             ) : allLibraries.length === 0 ? (
-              <p className="text-xs text-[var(--color-text-muted)] italic">No other libraries yet — create a second library (e.g. Code Books) to link it.</p>
+              <p className="text-xs text-[var(--color-text-muted)] italic">No other libraries yet - create a second library (e.g. Code Books) to link it.</p>
             ) : (
               <ul className="space-y-1.5">
                 {allLibraries.map((l) => (

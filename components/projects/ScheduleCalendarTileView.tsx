@@ -346,7 +346,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   const tagOf = (key: string, band: Band) => {
     const k = `${band}:${key}`;
     if (k === shiftTags.now) return <span className="shrink-0 rounded px-1 py-px text-[8.5px] font-black uppercase tracking-wider bg-rose-600 text-white">Now</span>;
-    if (k === shiftTags.last) return <span title="The shift that just ended — the one to write up" className="shrink-0 rounded px-1 py-px text-[8.5px] font-black uppercase tracking-wider bg-amber-500 text-white">Last shift</span>;
+    if (k === shiftTags.last) return <span title="The shift that just ended - the one to write up" className="shrink-0 rounded px-1 py-px text-[8.5px] font-black uppercase tracking-wider bg-amber-500 text-white">Last shift</span>;
     if (k === shiftTags.next) return <span title="The next shift" className="shrink-0 rounded px-1 py-px text-[8.5px] font-black uppercase tracking-wider bg-sky-600 text-white">Next</span>;
     return null;
   };
@@ -363,7 +363,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
     const plan = canEdit && onPlanNext && `${band}:${key}` === shiftTags.next;
     const head = (
       <button type="button" onClick={() => openShift(key, band)}
-        title={`${band === "day" ? "Day" : "Night"} shift ${clockLabel(w.start, tz)}–${clockLabel(w.end, tz)}${band === "night" ? ` (into ${fmtInTz(w.end, tz, { weekday: "short" })} morning)` : ""} — open its list to enter progress`}
+        title={`${band === "day" ? "Day" : "Night"} shift ${clockLabel(w.start, tz)}–${clockLabel(w.end, tz)}${band === "night" ? ` (into ${fmtInTz(w.end, tz, { weekday: "short" })} morning)` : ""} - open its list to enter progress`}
         className={`${plan ? "flex-1" : "shrink-0"} flex items-center gap-1 px-1 min-w-0 ${big ? "text-[10.5px]" : "text-[9px]"} font-black uppercase tracking-wider hover:underline ${band === "day" ? "text-sky-800 dark:text-sky-300" : "text-violet-800 dark:text-violet-200"}`}>
         {band === "day" ? <Sun className="w-2.5 h-2.5 shrink-0" aria-hidden /> : <Moon className="w-2.5 h-2.5 shrink-0" aria-hidden />}
         {band === "day" ? "Day" : "Night"}
@@ -376,7 +376,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
     return (
       <div className="shrink-0 flex items-center gap-1 min-w-0">
         {head}
-        <button type="button" onClick={() => onPlanNext!(w)} title="Plan this shift — swap, pull in or push out work orders. The schedule, the shift report and the email follow."
+        <button type="button" onClick={() => onPlanNext!(w)} title="Plan this shift - swap, pull in or push out work orders. The schedule, the shift report and the email follow."
           className="shrink-0 rounded px-1.5 py-px text-[9px] font-black uppercase tracking-wider bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:brightness-110">Plan</button>
       </div>
     );
@@ -572,13 +572,13 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           <Crosshair className="w-3.5 h-3.5 text-rose-500" /> Today
         </button>
         <button onClick={() => setAgendaDay(ymd(new Date(), tz))}
-          title="Every step for today in one list — enter % done, status, what's blocking it and notes, one after another"
+          title="Every step for today in one list - enter % done, status, what's blocking it and notes, one after another"
           className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-2.5 py-1 rounded-md shadow-sm transition-colors">
           <ListChecks className="w-3.5 h-3.5" /> Update progress
         </button>
         {canEdit && onPlanNext && (
           <button onClick={() => onPlanNext(shiftTags.nextWin)}
-            title="Change what the next shift does — swap, pull in or push out work orders. The schedule, the shift report and the email follow."
+            title="Change what the next shift does - swap, pull in or push out work orders. The schedule, the shift report and the email follow."
             className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] border border-[var(--color-accent)] hover:bg-[var(--color-surface-2)] px-2.5 py-1 rounded-md transition-colors">
             <CalendarClock className="w-3.5 h-3.5" /> Plan next shift
           </button>
@@ -602,7 +602,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
             </div>
             {/* Who works nights, and on what — changed as the job goes. */}
             <button type="button" onClick={() => window.dispatchEvent(new CustomEvent(OPEN_SETUP_EVENT, { detail: "night" }))}
-              title="Who works nights, and on what — see each night's work before you save"
+              title="Who works nights, and on what - see each night's work before you save"
               className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-violet-300 dark:border-violet-800 text-[11px] font-bold text-violet-800 dark:text-violet-200 hover:bg-violet-50 dark:hover:bg-violet-950/40">
               <Moon className="w-3 h-3" /> Night crews
             </button>
@@ -646,7 +646,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
       <div className={`px-3 py-1.5 border-b border-[var(--color-border)] bg-slate-50/40 dark:bg-[var(--color-surface-2)]/40 flex items-center gap-x-3 gap-y-1 flex-wrap text-[10.5px] text-[var(--color-text-muted)] ${mode === "day" ? "hidden" : ""}`}>
         <Info className="w-3.5 h-3.5 text-[var(--color-accent)] shrink-0" />
         {showSubtasks
-          ? <span><b className="text-[var(--color-text)]">Sub-items:</b> each step is its own card — drag one to move just that step.</span>
+          ? <span><b className="text-[var(--color-text)]">Sub-items:</b> each step is its own card - drag one to move just that step.</span>
           : <span><b className="text-[var(--color-text)]">{compact ? "Tap a day" : "Click a day\u2019s number"}</b> for its full list with progress entry.</span>}
         {/* What the marks on a card do — not on a phone, where a day opens its list. */}
         {!compact && <>
@@ -733,7 +733,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                 const isToday = sameDayUTC(day, today, tz);
                 return (
                   <button key={key} type="button" onClick={() => { setAgendaFocus(null); setAgendaDay(key); }} style={{ gridColumn: `${2 * i + 1} / span 2` }}
-                    title="Open this day's list — every step, with progress entry"
+                    title="Open this day's list - every step, with progress entry"
                     className={`px-2 py-1.5 text-center text-[11px] font-black uppercase tracking-wider border-r border-[var(--color-border)] hover:text-[var(--color-accent)] ${isToday ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
                     {fmtInTz(day, tz, { weekday: "short" })} {wallClock(day.getTime(), tz).day}
                     {(() => { const n = uniqueOf(key).filter((p) => !p.idleToday).length; return n > 0 ? <span className="ml-1 font-semibold normal-case tracking-normal text-[var(--color-text-faint)]">· {n}</span> : null; })()}
@@ -760,7 +760,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                         <button type="button" onClick={() => openShift(key, "day")}
                           title={overdueToday.slice(0, 6).map((w) => `• ${w.leaf.name}`).join("\n") + (overdueToday.length > 6 ? `\n…and ${overdueToday.length - 6} more` : "")}
                           className="shrink-0 w-full text-left rounded px-1.5 py-1 bg-rose-600 text-white text-[10px] font-black uppercase tracking-wide hover:bg-rose-700">
-                          ⚠ {overdueToday.length} carried over — not done
+                          ⚠ {overdueToday.length} carried over - not done
                         </button>
                       )}
                       <DayScroller fade="from-sky-50 dark:from-sky-950">
@@ -777,7 +777,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
               <div className="grid" style={{ ...cols, height: laneH("night") }}>
                 {/* The night before the week: half a box, its count. */}
                 <button type="button" onClick={() => openShift(prevKey, "night")} style={{ gridColumn: "1 / span 1" }}
-                  title={`${fmtInTz(addDaysUTC(weekDays[0], -1, tz), tz, { weekday: "long" })} night — open its list`}
+                  title={`${fmtInTz(addDaysUTC(weekDays[0], -1, tz), tz, { weekday: "long" })} night - open its list`}
                   className="min-w-0 border-r border-violet-200 dark:border-violet-900 bg-violet-100/60 dark:bg-violet-950/30 flex flex-col items-center justify-center gap-1 text-violet-800 dark:text-violet-200 hover:bg-violet-100">
                   <Moon className="w-3.5 h-3.5" aria-hidden />
                   <span className="text-[9px] font-black uppercase tracking-wider">{fmtInTz(addDaysUTC(weekDays[0], -1, tz), tz, { weekday: "short" })}</span>
@@ -856,7 +856,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                     <button
                       type="button"
                       onClick={() => setAgendaDay(key)}
-                      title={`Open ${fmtInTz(day, tz, { weekday: "long", month: "long", day: "numeric" })} — every step due that day, with progress entry`}
+                      title={`Open ${fmtInTz(day, tz, { weekday: "long", month: "long", day: "numeric" })} - every step due that day, with progress entry`}
                       className={`inline-flex items-center gap-1 text-[11px] font-bold rounded px-1 -ml-1 hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent)] transition-colors ${isToday ? "text-rose-600 dark:text-rose-400" : inMonth ? "text-[var(--color-text)]" : "text-slate-300"}`}
                     >
                       {wallClock(day.getTime(), tz).day}
@@ -875,7 +875,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                       title={overdueToday.slice(0, 6).map((w) => `• ${w.leaf.name}`).join("\n") + (overdueToday.length > 6 ? `\n…and ${overdueToday.length - 6} more` : "") + "\nOpen the day view to work them"}
                       className="shrink-0 w-full text-left rounded px-1.5 py-1 bg-rose-600 text-white text-[10px] font-black uppercase tracking-wide hover:bg-rose-700"
                     >
-                      ⚠ {overdueToday.length} carried over — not done
+                      ⚠ {overdueToday.length} carried over - not done
                     </button>
                   )}
                   <DayScroller fade={inMonth ? "from-[var(--color-surface)]" : "from-slate-50"}>
@@ -1127,7 +1127,7 @@ function Chip({
     time ? `Time: ${time}` : null,
     ms.workOrderRef ? `WO ${ms.workOrderRef}` : null,
     ms.location ? `Location: ${ms.location}` : null,
-    "— Click to open · drag to another day to reschedule",
+    "- Click to open · drag to another day to reschedule",
   ].filter(Boolean).join("\n");
 
   const crew: DayCrew = crewToday ?? (() => {
@@ -1202,7 +1202,7 @@ function Chip({
               {/* Night work is tagged; round the clock and day-and-night
                   mixes are marked; day work — most of it — is left quiet. */}
               {foundHere.map((k) => (
-                <span key={k} title={`${ADDED[k].word} on this shift — ${ADDED[k].tip}`}
+                <span key={k} title={`${ADDED[k].word} on this shift - ${ADDED[k].tip}`}
                   className={`shrink-0 rounded border px-1 text-[8.5px] font-black uppercase leading-[13px] ${ADDED_TONE[k]}`}>{ADDED[k].word}</span>
               ))}
               {night && bandStart == null && (
@@ -1211,10 +1211,10 @@ function Chip({
                 </span>
               )}
               {critical && (
-                <span title="Critical-path work on this shift — it sets the finish date" className="shrink-0 rounded px-1 text-[8.5px] font-black leading-[14px] uppercase bg-rose-700 text-white">Crit</span>
+                <span title="Critical-path work on this shift - it sets the finish date" className="shrink-0 rounded px-1 text-[8.5px] font-black leading-[14px] uppercase bg-rose-700 text-white">Crit</span>
               )}
               {aheadOf && (
-                <span title={`Worked ahead of plan — planned to start ${aheadOf}`} className="shrink-0 rounded px-1 text-[8.5px] font-black leading-[14px] uppercase bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200">Ahead</span>
+                <span title={`Worked ahead of plan - planned to start ${aheadOf}`} className="shrink-0 rounded px-1 text-[8.5px] font-black leading-[14px] uppercase bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200">Ahead</span>
               )}
               {crew === "both" && <ShiftMark work="both" />}
               {crew === "mixed" && (
@@ -1227,7 +1227,7 @@ function Chip({
             <span className="shrink-0 flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
               {(
                 <button type="button" onClick={(e) => { e.stopPropagation(); if (onToggleExpand) onToggleExpand(e); else onClick(e); }}
-                  title={isLeaf ? `${pct}% complete — tap to update` : `${pct}% complete · ${done}/${leafTotal} steps done — tap to update its steps`}
+                  title={isLeaf ? `${pct}% complete - tap to update` : `${pct}% complete · ${done}/${leafTotal} steps done - tap to update its steps`}
                   className={`relative inline-flex items-center justify-center rounded-md border px-1 py-0 text-[9px] font-bold tabular-nums after:absolute after:-inset-1 pointer-coarse:after:-inset-2.5 after:content-[''] hover:brightness-95 ${pct >= 100 ? "text-emerald-700 bg-emerald-50 border-emerald-200" : pct > 0 ? "text-blue-700 bg-blue-50 border-blue-200" : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]"}`}>
                   {pct}%
                 </button>

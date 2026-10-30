@@ -24,7 +24,7 @@ const current = (overrides: Partial<CurrentOrgContext> = {}): CurrentOrgContext 
   ...overrides,
 });
 
-describe("planRestore — org name collision", () => {
+describe("planRestore - org name collision", () => {
   it("flags a collision when names differ (Acme vs Acme Inc.)", () => {
     const plan = planRestore(env({ manifest: { orgId: "OLD_ORG", orgName: "Acme Inc." } }), current({ orgName: "Acme" }));
     expect(plan.orgNameCollision).toEqual({ backupName: "Acme Inc.", currentName: "Acme" });
@@ -37,7 +37,7 @@ describe("planRestore — org name collision", () => {
   });
 });
 
-describe("planRestore — additive users by email", () => {
+describe("planRestore - additive users by email", () => {
   it("links an existing email and creates a new placeholder for an unknown one", () => {
     const plan = planRestore(env(), current()); // alice exists, bob does not
     const alice = plan.users.find((u) => u.email === "alice@acme.com")!;
@@ -77,7 +77,7 @@ describe("planRestore — additive users by email", () => {
   });
 });
 
-describe("planRestore — id remap", () => {
+describe("planRestore - id remap", () => {
   it("always maps backup org_id to the current workspace org_id", () => {
     const plan = planRestore(env(), current());
     expect(plan.idRemap.orgId).toEqual({ OLD_ORG: "NEW_ORG" });
@@ -90,7 +90,7 @@ describe("planRestore — id remap", () => {
   });
 });
 
-describe("planRestore — table plan + counts", () => {
+describe("planRestore - table plan + counts", () => {
   it("skips identity/config tables and counts only importable rows", () => {
     const plan = planRestore(env(), current());
     const orgs = plan.counts.tables.find((t) => t.name === "orgs")!;
@@ -105,7 +105,7 @@ describe("planRestore — table plan + counts", () => {
   });
 });
 
-describe("planRestore — warnings", () => {
+describe("planRestore - warnings", () => {
   it("warns on an incomplete backup and on missing files", () => {
     const plan = planRestore(
       env({ manifest: { orgId: "OLD_ORG", orgName: "Acme", complete: false, files: { count: 5, missing: 3 } } }),

@@ -43,15 +43,15 @@ describe("work done early and progress made show on the turnover", () => {
     expect(r.review.ahead.map((x) => x.leaf.id).sort()).toEqual(["hy", "rc"]);
     expect(r.review.done.map((x) => x.leaf.id)).toContain("rc");
   });
-  it("the email says so: ahead, planned when, and what moved this shift — each step once", () => {
+  it("the email says so: ahead, planned when, and what moved this shift - each step once", () => {
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r, f, { pctOf: () => 40, finishOf: () => undefined }) });
-    expect(text).toMatch(/DONE — DAY SHIFT/);
+    expect(text).toMatch(/DONE - DAY SHIFT/);
     // One row for E-17: everything the shift did on it — finished AND in
     // progress (the bundle pulled to 40% gets its credit), and the hours.
-    const doneSec = text.slice(text.search(/^DONE — /m), text.search(/^NEXT — |^CARRIES /m));
+    const doneSec = text.slice(text.search(/^DONE - /m), text.search(/^NEXT - |^CARRIES /m));
     // Still going: where it stands against the plan, and the task's hours
     // with it (+5.8 early, −4.8 behind on the bundle pull).
-    expect(doneSec).toMatch(/E-17 Exchanger — Remove components · Schultz · 1 step done, 2 in progress · \+1 h/);
+    expect(doneSec).toMatch(/E-17 Exchanger - Remove components · Schultz · 1 step done, 2 in progress · \+1 h/);
     // Unfinished and due: it carries — where it stands, and its own hours on its own row.
     expect(text).toMatch(/Pull bundle · Schultz · was due 10-26T21:00 · done 40% · −4.8 h/);
     // Why it's ahead: both early steps, with the hours each is worth.
@@ -59,7 +59,7 @@ describe("work done early and progress made show on the turnover", () => {
     expect(text).not.toMatch(/BOTTOM LINE/);
     expect(text).toMatch(/Work ahead: 1 h/);
     // Carries over to the next day shift, dated: Mon's day shift → Tue.
-    expect(text).toMatch(/^CARRIES OVER TO DAY SHIFT — 10-27/m);
+    expect(text).toMatch(/^CARRIES OVER TO DAY SHIFT - 10-27/m);
     // The 40% counts: an 8 h pull the plan has done by now, 40% done → 4.8 h behind, not 8.
     expect(text).toMatch(/Pull bundle · .* · done 40% · −4.8 h/);
     // Every % reads as where it is now — never "0% → 25%".
@@ -67,12 +67,12 @@ describe("work done early and progress made show on the turnover", () => {
     // One row per task under Done: its last step, and the count.
     expect(doneSec.match(/E-17 Exchanger/g)?.length).toBe(1);
   });
-  it("without the record of the shift's start, later work with progress still shows — as entered", () => {
+  it("without the record of the shift's start, later work with progress still shows - as entered", () => {
     const r2 = buildShiftReport({ milestones: all, tz: CHI, shift: day, now: day.end });
     expect(r2.review.knownStart).toBe(false);
     expect(r2.review.ahead.map((x) => x.leaf.id).sort()).toEqual(["hy", "rc"]);
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r2, f, { pctOf: () => 40, finishOf: () => undefined }) });
-    expect(text).toMatch(/E-17 Exchanger — Remove components · 1 step done, 1 in progress/);
+    expect(text).toMatch(/E-17 Exchanger - Remove components · 1 step done, 1 in progress/);
     expect(text).not.toMatch(/% → /); // where it is now — never a "0% → …" to puzzle out
   });
 });

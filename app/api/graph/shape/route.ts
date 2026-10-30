@@ -169,7 +169,7 @@ export async function POST(req: NextRequest) {
 
   // ── The brain. The model reasons over handles, never raw ids. ──────────
   const roster = candidates
-    .map((c) => `${c.ref} [${c.type}] ${c.label}${c.title ? ` — ${c.title}` : ""}`)
+    .map((c) => `${c.ref} [${c.type}] ${c.label}${c.title ? ` - ${c.title}` : ""}`)
     .join("\n");
 
   let suggestions: ShapeSuggestion[] = [];
@@ -180,9 +180,9 @@ export async function POST(req: NextRequest) {
       system:
         "You are the relationship analyst for an industrial document-control graph. " +
         "Given a question, its answer, and a roster of REAL entities (controlled documents and " +
-        "registry equipment) the answer involves, decide which pairs GENUINELY RELATE — a " +
+        "registry equipment) the answer involves, decide which pairs GENUINELY RELATE - a " +
         "governing standard and the equipment it governs, a spec and the drawing that invokes " +
-        "it — not merely co-mentioned items.\n" +
+        "it - not merely co-mentioned items.\n" +
         "Rules:\n" +
         "- Use ONLY the roster handles (D1, A2, …). Never invent entities.\n" +
         "- label: at most 80 characters naming the RELATIONSHIP (e.g. \"Governs welding of\", " +
@@ -219,7 +219,7 @@ export async function POST(req: NextRequest) {
     // No key / no agreement / model failure → deterministic fallback below.
     aiNote = e instanceof GovernedCallError
       ? e.message
-      : "The AI pass failed — showing deterministic pairs instead.";
+      : "The AI pass failed - showing deterministic pairs instead.";
   }
 
   // ── Fallback (and floor): cited-together pairs, honestly labeled. ──────

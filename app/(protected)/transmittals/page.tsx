@@ -118,7 +118,7 @@ export default function TransmittalsPage() {
         if (data) {
           setPreloadDoc({
             documentId: String(data.id),
-            number: (data.document_number as string) || (data.title as string) || (data.name as string) || "—",
+            number: (data.document_number as string) || (data.title as string) || (data.name as string) || "-",
             title: (data.title as string) || null,
             rev: (data.rev as string) ?? null,
             versionId: (data.current_version_id as string) ?? null,
@@ -190,7 +190,7 @@ export default function TransmittalsPage() {
         <PageHeaderBar
           icon={Send}
           title="Transmittals"
-          subtitle="The formal record of documents issued — numbered, with a printable cover sheet and tracked receipt."
+          subtitle="The formal record of documents issued - numbered, with a printable cover sheet and tracked receipt."
           actions={
             <>
               <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
@@ -236,7 +236,7 @@ export default function TransmittalsPage() {
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${TONE_CHIP[meta.tone]}`}>{meta.label}</span>
                       {t.purpose && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 border border-orange-100">{t.purpose}</span>}
                       {staleIds.has(t.id) && (
-                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200" title="At least one transmitted document has revved since — the recipient holds a superseded revision. Consider issuing a superseding transmittal.">
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200" title="At least one transmitted document has revved since - the recipient holds a superseded revision. Consider issuing a superseding transmittal.">
                           superseded rev in circulation
                         </span>
                       )}
@@ -259,9 +259,9 @@ export default function TransmittalsPage() {
                       <button
                         onClick={() => {
                           void navigator.clipboard.writeText(transmittalPortalUrl(t.portalToken!));
-                          showToast({ type: "success", title: "Portal link copied", message: `Send it to ${t.recipientName || t.recipientCompany || "the recipient"} — they can download the files and acknowledge receipt themselves.` });
+                          showToast({ type: "success", title: "Portal link copied", message: `Send it to ${t.recipientName || t.recipientCompany || "the recipient"} - they can download the files and acknowledge receipt themselves.` });
                         }}
-                        title="Copy the recipient's secure portal link — no account needed on their side"
+                        title="Copy the recipient's secure portal link - no account needed on their side"
                         className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-accent-soft)] border-[var(--color-accent-ring)]/40 text-[var(--color-accent)] hover:brightness-95 transition-[filter]"
                       >
                         <LinkIcon className="w-3.5 h-3.5" /> Portal link
@@ -282,7 +282,7 @@ export default function TransmittalsPage() {
                         <button onClick={() => doAcknowledge(t)} disabled={busyId === t.id} title="Record recipient receipt" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-500 transition-colors">
                           {busyId === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} Receipt
                         </button>
-                        <button onClick={() => doVoid(t)} disabled={busyId === t.id} title="Void — issued in error" className="inline-flex items-center justify-center w-8 h-8 rounded-lg border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-faint)] hover:text-rose-600 hover:border-rose-200 transition-colors">
+                        <button onClick={() => doVoid(t)} disabled={busyId === t.id} title="Void - issued in error" className="inline-flex items-center justify-center w-8 h-8 rounded-lg border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-faint)] hover:text-rose-600 hover:border-rose-200 transition-colors">
                           <Ban className="w-3.5 h-3.5" />
                         </button>
                       </>
@@ -309,7 +309,7 @@ export default function TransmittalsPage() {
               type: "success",
               title: issued ? "Transmittal issued" : "Draft saved",
               message: issued
-                ? `${t?.number} issued — ${t?.recipientEmail?.trim() ? `portal link emailed to ${t.recipientEmail.trim()} and ` : ""}cover sheet opened.`
+                ? `${t?.number} issued - ${t?.recipientEmail?.trim() ? `portal link emailed to ${t.recipientEmail.trim()} and ` : ""}cover sheet opened.`
                 : "Saved to the register.",
             });
           }}
@@ -393,7 +393,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
         if (cancelled) return;
         setHits(((data ?? []) as Array<Record<string, unknown>>).map((d) => ({
           id: String(d.id),
-          number: (d.document_number as string) || (d.title as string) || (d.name as string) || "—",
+          number: (d.document_number as string) || (d.title as string) || (d.name as string) || "-",
           title: (d.title as string) || "",
           rev: (d.rev as string) ?? null,
           versionId: (d.current_version_id as string) ?? null,
@@ -467,7 +467,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
           </div>
 
           <Field label="Subject">
-            <Input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Issued for Construction — Area 200" />
+            <Input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Issued for Construction - Area 200" />
           </Field>
 
           {projects.length > 0 && (
@@ -523,7 +523,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
                 ))}
               </ul>
             )}
-            {items.length === 0 && <div className="mt-2 text-xs text-[var(--color-text-faint)] italic">No documents yet — search above to add the drawings/specs you&apos;re issuing.</div>}
+            {items.length === 0 && <div className="mt-2 text-xs text-[var(--color-text-faint)] italic">No documents yet - search above to add the drawings/specs you&apos;re issuing.</div>}
           </div>
 
           <Field label="Notes (optional)">

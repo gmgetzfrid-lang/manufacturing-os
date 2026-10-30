@@ -239,7 +239,7 @@ export default function PlotPlanBoard() {
             {plan.imagePath ? (
               <SignedPlotImage path={plan.imagePath} alt={plan.name} className="block max-w-full h-auto select-none" />
             ) : (
-              <div className="w-[640px] max-w-full aspect-video bg-[var(--color-surface-2)] flex items-center justify-center text-[var(--color-text-faint)] text-sm">No background image — markers can still be placed on this blank canvas.</div>
+              <div className="w-[640px] max-w-full aspect-video bg-[var(--color-surface-2)] flex items-center justify-center text-[var(--color-text-faint)] text-sm">No background image - markers can still be placed on this blank canvas.</div>
             )}
 
             {markers.map((m) => {

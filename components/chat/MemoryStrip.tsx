@@ -24,7 +24,7 @@ export default function MemoryStrip({ past, changed, onReview, onReuse, onDismis
       <History className="w-3.5 h-3.5 text-violet-600 shrink-0" />
       <span className="min-w-0 flex-1 truncate text-[var(--color-text)]">
         <b className="font-black">Asked before</b>
-        <span className="text-[var(--color-text-muted)]"> by {(past.userName ?? "someone").split("@")[0]} · {relativeTime(past.createdAt)} — </span>
+        <span className="text-[var(--color-text-muted)]"> by {(past.userName ?? "someone").split("@")[0]} · {relativeTime(past.createdAt)} - </span>
         <i>&ldquo;{past.question}&rdquo;</i>
       </span>
       {stale && (

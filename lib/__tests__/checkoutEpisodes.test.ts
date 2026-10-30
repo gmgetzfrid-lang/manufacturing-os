@@ -137,7 +137,7 @@ describe("activeCollaboratorNames", () => {
     expect(activeCollaboratorNames([blank, nul, CARA])).toEqual(["cara"]);
   });
 
-  it("returns [] for no sessions — the state that previously left zombies", () => {
+  it("returns [] for no sessions - the state that previously left zombies", () => {
     expect(activeCollaboratorNames([])).toEqual([]);
   });
 });

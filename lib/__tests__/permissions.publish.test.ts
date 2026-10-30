@@ -53,7 +53,7 @@ describe("canPublishOnLibrary", () => {
     expect(canPublishOnLibrary({ principal: P("Drafter", "u1", ["team-hr"]), libraryAcl: acl })).toBe(false);
   });
 
-  it("a library 'admin' grant implies publish (intentional — mirrors evaluateAcl)", () => {
+  it("a library 'admin' grant implies publish (intentional - mirrors evaluateAcl)", () => {
     const acl = lib([{ effect: "allow", subject: { type: "role", id: "DraftingSupervisor" }, actions: ["admin"] }]);
     expect(canPublishOnLibrary({ principal: P("DraftingSupervisor"), libraryAcl: acl })).toBe(true);
   });

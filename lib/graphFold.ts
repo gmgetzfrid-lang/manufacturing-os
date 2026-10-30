@@ -29,7 +29,7 @@ export function foldLeaves<N extends FoldNode, E extends FoldEdge>(nodes: N[], e
   if (!drop.size) return { nodes, edges, folded };
   const out = nodes.filter((n) => !drop.has(n.id)).map((n) => {
     const c = folded.get(n.id);
-    return c ? { ...n, label: `${n.label} (+${c})`, sub: `${n.sub ? `${n.sub} · ` : ""}${c} documents folded inside — click to open` } : n;
+    return c ? { ...n, label: `${n.label} (+${c})`, sub: `${n.sub ? `${n.sub} · ` : ""}${c} documents folded inside - click to open` } : n;
   });
   return { nodes: out, edges: edges.filter((e) => !drop.has(e.a) && !drop.has(e.b)), folded };
 }

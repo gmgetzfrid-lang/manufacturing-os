@@ -119,7 +119,7 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
                 <div className={`h-full rounded-full ${over ? "bg-rose-500" : pct >= 85 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${pct}%` }} />
               </div>
               <span className={`shrink-0 text-[12px] font-bold tabular-nums ${over ? "text-rose-700 dark:text-rose-300" : "text-[var(--color-text)]"}`}>
-                {used} h of {cap} h{over ? " — over" : ""}
+                {used} h of {cap} h{over ? " - over" : ""}
               </span>
             </div>
           ) : (
@@ -134,13 +134,13 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
             <input ref={searchRef} autoFocus value={query} onChange={(e) => { setQuery(e.target.value); setMore(false); }}
               onKeyDown={(e) => { if (e.key === "Enter" && query && only) onToggle(only.row, true); }}
               aria-label="Search the job for a step to add"
-              placeholder="Search a work order #, equipment (E-17), step or crew — the whole job"
+              placeholder="Search a work order #, equipment (E-17), step or crew - the whole job"
               className="w-full h-10 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-8 text-[13.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40" />
             {query && <button type="button" onClick={() => { setQuery(""); searchRef.current?.focus(); }} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>}
           </label>
           <div className="flex flex-wrap items-center gap-1.5 text-[11.5px]">
             {query ? (
-              <span className="text-[var(--color-text-muted)]">Searching the whole job · {list.length} to add{listedHits.length ? ` · ${listedHits.length} already listed` : ""}{only ? " — Enter adds it" : ""}</span>
+              <span className="text-[var(--color-text-muted)]">Searching the whole job · {list.length} to add{listedHits.length ? ` · ${listedHits.length} already listed` : ""}{only ? " - Enter adds it" : ""}</span>
             ) : (
               <>
                 <div className="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5" role="group" aria-label="How far ahead">
@@ -161,8 +161,8 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
           {list.length === 0 && (
             <div className="px-4 py-10 text-center text-[13px] text-[var(--color-text-muted)]">
               {query
-                ? (listedHits.length ? "Nothing new to add — what matches is already listed (below)." : <>No step matches &ldquo;{query}&rdquo;{criticalOnly ? " among critical steps" : ""}.</>)
-                : `Nothing ${readyOnly ? "ready to start" : "planned"}${criticalOnly ? " on the critical path" : ""} ${days === Infinity ? "in the rest of the job" : "in this window"}${days === Infinity ? "." : " — widen it"}${readyOnly ? ", or turn off Ready to start." : "."}`}
+                ? (listedHits.length ? "Nothing new to add - what matches is already listed (below)." : <>No step matches &ldquo;{query}&rdquo;{criticalOnly ? " among critical steps" : ""}.</>)
+                : `Nothing ${readyOnly ? "ready to start" : "planned"}${criticalOnly ? " on the critical path" : ""} ${days === Infinity ? "in the rest of the job" : "in this window"}${days === Infinity ? "." : " - widen it"}${readyOnly ? ", or turn off Ready to start." : "."}`}
             </div>
           )}
           {groups.map((g) => (
@@ -177,7 +177,7 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
                   <div key={r.leaf.id} className={`flex items-start gap-3 px-4 py-2.5 ${on ? "bg-indigo-50/70 dark:bg-indigo-950/30" : ""}`}>
                     <button type="button" disabled={locked || (cant && !on)} onClick={() => onToggle(r, !on)} aria-pressed={on}
                       aria-label={`${on ? "Remove" : "Add"} ${r.leaf.name}${r.parentName ? ` (${r.parentName})` : ""}`}
-                      title={cant ? (x.blockedBy ? `Can't start — it waits on ${x.blockedBy}, which is blocked or on hold` : `Blocked or on hold${r.reason ? `: ${r.reason}` : ""}`) : on ? "Remove from the shift" : early ? "Not ready yet — add only if you know it can start" : "Add to the shift"}
+                      title={cant ? (x.blockedBy ? `Can't start - it waits on ${x.blockedBy}, which is blocked or on hold` : `Blocked or on hold${r.reason ? `: ${r.reason}` : ""}`) : on ? "Remove from the shift" : early ? "Not ready yet - add only if you know it can start" : "Add to the shift"}
                       className={`shrink-0 mt-0.5 inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[12px] font-bold whitespace-nowrap transition-colors disabled:opacity-40 ${on
                         ? "border-indigo-500 bg-indigo-600 text-white hover:bg-indigo-700"
                         : early ? "border-amber-400 text-amber-800 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40"
@@ -189,7 +189,7 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
                         <span className="text-[13px] font-bold text-[var(--color-text)] break-words">{r.leaf.name}</span>
                         {r.critical && <Tag tone="rose">critical</Tag>}
                         <Ready x={x} kind={kind} />
-                        {scope && <Tag tone="amber">{scope}&apos;s scope — coordinate</Tag>}
+                        {scope && <Tag tone="amber">{scope}&apos;s scope - coordinate</Tag>}
                       </div>
                       <div className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)] break-words">
                         {r.path.slice(0, -1).join(" › ") || r.parentName}
@@ -255,8 +255,8 @@ function Tag({ tone, children }: { tone: "rose" | "amber" | "emerald" | "slate";
 function Ready({ x, kind }: { x: LookAheadItem; kind: string }) {
   const w = x.waits.length ? `${x.waits[0]}${x.waits.length > 1 ? ` +${x.waits.length - 1}` : ""}` : "";
   if (x.readiness === "ready") return <Tag tone="emerald">ready</Tag>;
-  if (x.blockedBy) return <Tag tone="rose">can&apos;t start — {x.blockedBy} is blocked</Tag>;
-  if (x.readiness === "after-tonight") return <Tag tone="amber">after {w} — planned to finish on the {kind} shift</Tag>;
-  if (x.readiness === "held") return <Tag tone="rose">{x.row.status === "blocked" ? "blocked" : "on hold"}{x.row.reason ? ` — ${x.row.reason}` : ""}</Tag>;
+  if (x.blockedBy) return <Tag tone="rose">can&apos;t start - {x.blockedBy} is blocked</Tag>;
+  if (x.readiness === "after-tonight") return <Tag tone="amber">after {w} - planned to finish on the {kind} shift</Tag>;
+  if (x.readiness === "held") return <Tag tone="rose">{x.row.status === "blocked" ? "blocked" : "on hold"}{x.row.reason ? ` - ${x.row.reason}` : ""}</Tag>;
   return <Tag tone="slate">waits on {w}</Tag>;
 }

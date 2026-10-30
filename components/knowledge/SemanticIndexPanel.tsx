@@ -113,20 +113,20 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
       if (final.error) {
         setBuildNote({ tone: "err", text: final.error });
       } else if (final.done) {
-        setBuildNote({ tone: "ok", text: "Meaning index complete — every passage carries a vector." });
+        setBuildNote({ tone: "ok", text: "Meaning index complete - every passage carries a vector." });
         showToast({ type: "success", title: "Meaning index complete." });
       } else if (final.paused) {
         setBuildNote({
           tone: "info",
-          text: "Paused here while the database catches up — it's busy writing the index. Everything built so far is saved, "
+          text: "Paused here while the database catches up - it's busy writing the index. Everything built so far is saved, "
             + "and the build carries on by itself in the background. Press Build index any time to drive it from this tab again.",
         });
       } else if (stopRef.current) {
-        setBuildNote({ tone: "ok", text: `Stopped — ${final.remaining.toLocaleString()} passage(s) left. Resume any time; nothing built is lost.` });
+        setBuildNote({ tone: "ok", text: `Stopped - ${final.remaining.toLocaleString()} passage(s) left. Resume any time; nothing built is lost.` });
       } else {
         // Ended without finishing, erroring, or being stopped — a silent
         // no-op is the one outcome that must never pass without comment.
-        setBuildNote({ tone: "info", text: `Paused with ${final.remaining.toLocaleString()} passage(s) to go. Everything built so far is saved — press Build index to continue.` });
+        setBuildNote({ tone: "info", text: `Paused with ${final.remaining.toLocaleString()} passage(s) to go. Everything built so far is saved - press Build index to continue.` });
       }
     } catch (e) {
       const message = (e as Error).message;
@@ -145,7 +145,7 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
       title: "Rebuild the meaning index?",
       message:
         `This clears all ${status?.total.toLocaleString()} vectors and re-embeds every passage `
-        + `on your key — roughly ${fullCents}¢. Do it after ingestion or the embedding model `
+        + `on your key - roughly ${fullCents}¢. Do it after ingestion or the embedding model `
         + "changes, so older documents are indexed the same way as new ones. "
         + "Meaning-based search is degraded until the rebuild finishes; keyword search is unaffected.",
       confirmLabel: "Rebuild",
@@ -188,13 +188,13 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
       ? strip("warn", <><b>Meaning-based search is waiting on a database migration:</b> {unavailable}</>)
       : strip("warn", <><b>Meaning-based search couldn&apos;t report its status:</b> {unavailable}</>);
   }
-  if (!status) return strip("muted", "Counting the meaning index… (slow while it's being built — no action needed)");
+  if (!status) return strip("muted", "Counting the meaning index… (slow while it's being built - no action needed)");
   if (status.total === 0) {
     return strip("muted", (
       <>
         <b className="text-[var(--color-text)]">Meaning-based search has nothing to index yet.</b>{" "}
         This library has no indexed passages. If the documents are already uploaded, they were
-        read as having almost no text — the usual cause is an AutoCAD export drawn with SHX fonts,
+        read as having almost no text - the usual cause is an AutoCAD export drawn with SHX fonts,
         or a scan, where every tag is line-work rather than text. Turn on{" "}
         <b>&ldquo;These are CAD exports or scans&rdquo;</b> in Library AI setup, run{" "}
         <b>Rebuild index</b> under Drawing intelligence, then come back here.
@@ -260,16 +260,16 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
         <span>
           <b className="text-[var(--color-text)]">{status.estimated ? "≈ " : ""}{covered.toLocaleString()}</b> of{" "}
           {status.total.toLocaleString()} passages carry meaning vectors ({pct}%).
-          {building && status.busy && " Database busy — pausing a moment, nothing lost."}
+          {building && status.busy && " Database busy - pausing a moment, nothing lost."}
         </span>
       </div>
 
       {building && status.rateLimited && (
         <div className="mt-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
-          <b>Provider rate limit — pacing, not stopped.</b> Your embeddings account is on a free
+          <b>Provider rate limit - pacing, not stopped.</b> Your embeddings account is on a free
           tier (Voyage without a payment method: 3 calls and 10K tokens per minute), so the build
           continues in small batches about once a minute. Leave this page open and it will finish.
-          Adding a payment method at your provider unlocks full speed — your free trial tokens
+          Adding a payment method at your provider unlocks full speed - your free trial tokens
           still apply.
         </div>
       )}
@@ -294,9 +294,9 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
       {!complete && !needsKey && (
         <p className="mt-1 text-[10px] text-[var(--color-text-faint)]">
           {covered === 0
-            ? "Not built yet — questions use keyword search alone, which is exactly what this library did before."
-            : "Partly built — questions already use both, and the remaining passages are keyword-only until this finishes."}
-          {" "}Needs an embeddings key, which is separate from your chat key — add one under
+            ? "Not built yet - questions use keyword search alone, which is exactly what this library did before."
+            : "Partly built - questions already use both, and the remaining passages are keyword-only until this finishes."}
+          {" "}Needs an embeddings key, which is separate from your chat key - add one under
           AI settings. Claude keeps answering the questions either way.
         </p>
       )}

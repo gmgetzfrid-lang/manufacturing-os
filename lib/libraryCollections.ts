@@ -375,7 +375,7 @@ export async function deleteFolder(
     onProgress?.(total);
     if (r.done) return { deletedFolders: r.deletedFolders ?? [collectionId] };
   }
-  throw new Error("The folder is still being deleted — try again to finish.");
+  throw new Error("The folder is still being deleted - try again to finish.");
 }
 
 /** Permanently delete documents (server-side, chunked). Records under a
@@ -396,7 +396,7 @@ export async function deleteDocuments(
     held.push(...r.held);
     onProgress?.(deleted.length, r.deleted);
     if (r.deleted.length === 0 && r.remaining.length > 0) {
-      throw new Error("Deleting stalled — try again.");
+      throw new Error("Deleting stalled - try again.");
     }
     queue = [...r.remaining, ...queue.slice(100)];
   }

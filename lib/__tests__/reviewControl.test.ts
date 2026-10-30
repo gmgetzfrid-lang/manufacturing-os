@@ -28,7 +28,7 @@ describe("resolveEffectiveReviewControl", () => {
   });
 });
 
-describe("effectiveModeForRevUp — escape hatches", () => {
+describe("effectiveModeForRevUp - escape hatches", () => {
   it("passes the mode through for a Major direct push", () => {
     expect(effectiveModeForRevUp({ control: C({ mode: "require" }), changeType: "Major" })).toBe("require");
   });

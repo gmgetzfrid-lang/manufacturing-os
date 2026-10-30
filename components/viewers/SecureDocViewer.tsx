@@ -238,7 +238,7 @@ export default function SecureDocViewer({
           <Lock className="w-3.5 h-3.5 shrink-0" />
           <span className="truncate">
             <b>{lockHolder.name || 'Another user'}</b> has this checked out
-            {lockHolder.note ? <> — <i>{lockHolder.note}</i></> : null}
+            {lockHolder.note ? <> - <i>{lockHolder.note}</i></> : null}
             {lockHolder.since ? <> · since {new Date(lockHolder.since).toLocaleDateString()}</> : null}
             . This view may go stale.
           </span>

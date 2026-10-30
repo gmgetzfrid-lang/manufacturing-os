@@ -20,7 +20,7 @@ const base = (): FlowsBrowseInputs => ({
   nonPdfDocIds: new Set(),
 });
 
-describe("assembleFlowsBrowse — the DC tree with AI states", () => {
+describe("assembleFlowsBrowse - the DC tree with AI states", () => {
   it("nests folders exactly as document control files them", () => {
     const inputs = base();
     inputs.dcDocs = [
@@ -39,7 +39,7 @@ describe("assembleFlowsBrowse — the DC tree with AI states", () => {
     expect(lib.folders[0].folders[0].docs[0].name).toBe("PFD Book");
   });
 
-  it("a brand-new folder with an unlinked doc APPEARS, state 'unwatched' — never missing", () => {
+  it("a brand-new folder with an unlinked doc APPEARS, state 'unwatched' - never missing", () => {
     const inputs = base();
     inputs.dcFolders.set("fNew", { name: "New PFDs", libraryId: "dl1", parentId: null });
     // The knowledge library watches only the old PFDs folder.
@@ -118,8 +118,8 @@ describe("assembleFlowsBrowse — the DC tree with AI states", () => {
   });
 });
 
-describe("assembleFlowsBrowse — mirror status honesty", () => {
-  it("a pending/stale mirror is 'indexing', never 'ready' — Read must not scan page 1 of an unpaged file", () => {
+describe("assembleFlowsBrowse - mirror status honesty", () => {
+  it("a pending/stale mirror is 'indexing', never 'ready' - Read must not scan page 1 of an unpaged file", () => {
     const inputs = base();
     inputs.sources = [{ knowledgeLibraryId: "kl1", sourceType: "library", sourceId: "dl1" }];
     inputs.knowledgeDocs = [

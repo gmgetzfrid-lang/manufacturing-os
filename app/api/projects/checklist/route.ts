@@ -35,7 +35,7 @@ const MAX_PAGES = 10;
 const SEGMENT_SYSTEM =
   "You read industrial checklists (PSSR, mechanical integrity, QA/QC) from printed pages and split them into discrete checkable items.\n" +
   "Rules:\n" +
-  "- One item per checkable line. Keep the item's own wording — do not paraphrase.\n" +
+  "- One item per checkable line. Keep the item's own wording - do not paraphrase.\n" +
   "- section: the heading the item sits under, when the form has sections.\n" +
   "- Skip page furniture: titles, signature blocks, revision tables, instructions-to-the-reviewer.\n" +
   "- Preserve document order.\n" +
@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
     if (aiBlock.blocked) return bad(aiBlock.reason ?? "This document is held back from AI.", 403);
 
     const read = await readPages({ orgId, fileKey: file.fileKey, pages: Array.from({ length: MAX_PAGES }, (_, i) => i + 1), maxPages: MAX_PAGES, images: "unread" });
-    if (read.pages.length === 0) return bad("The pages could not be read — is it a PDF?", 502);
+    if (read.pages.length === 0) return bad("The pages could not be read - is it a PDF?", 502);
     const images = read.images;
 
     let text: string;
@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
       const out = await governedAiCall({
         orgId, userId, op: "checklistSegment",
         system: SEGMENT_SYSTEM,
-        user: `Document: ${file.label}\nPages given in order: ${read.pages.map((p) => p.page).join(", ")} (some as images, some as text already read from the page — treat both as the printed page)${pagesAsText(read)}`,
+        user: `Document: ${file.label}\nPages given in order: ${read.pages.map((p) => p.page).join(", ")} (some as images, some as text already read from the page - treat both as the printed page)${pagesAsText(read)}`,
         images: images.length ? images.map((i) => ({ base64: i.base64, mediaType: i.mediaType })) : undefined,
         maxTokens: 4000,
         timeoutMs: 90_000,
@@ -157,8 +157,8 @@ export async function POST(req: NextRequest) {
   const ASSESS_SYSTEM =
     "You assess which items of an industrial checklist apply to a SPECIFIC job, using only the project context provided.\n" +
     "Rules:\n" +
-    "- applicability: \"applies\" when the project context shows this kind of work/equipment is in scope; \"na\" when the context clearly shows it is not; \"unknown\" when the context doesn't say — NEVER guess na without stated grounds.\n" +
-    "- rationale: one sentence grounded in the context (\"SOW covers exchanger repipe — new welds, so weld records apply\"). No rationale, no verdict.\n" +
+    "- applicability: \"applies\" when the project context shows this kind of work/equipment is in scope; \"na\" when the context clearly shows it is not; \"unknown\" when the context doesn't say - NEVER guess na without stated grounds.\n" +
+    "- rationale: one sentence grounded in the context (\"SOW covers exchanger repipe - new welds, so weld records apply\"). No rationale, no verdict.\n" +
     "- ref is the 8-character id printed before each item.\n" +
     'Return STRICT JSON: {"assessments":[{"ref":"a1b2c3d4","applicability":"applies","rationale":"…"}]}';
 
@@ -180,7 +180,7 @@ export async function POST(req: NextRequest) {
   const block = extractJsonBlock(text);
   let parsed: { assessments?: unknown[] } | null = null;
   try { parsed = block ? (JSON.parse(block) as { assessments?: unknown[] }) : null; }
-  catch { return bad("The assessment wasn't valid JSON — try again.", 502); }
+  catch { return bad("The assessment wasn't valid JSON - try again.", 502); }
   const byRef = new Map(items.map((it) => [it.id.slice(0, 8), it]));
   const proposals: Array<{ itemId: string; applicability: "applies" | "na" | "unknown"; rationale: string }> = [];
   for (const raw of parsed?.assessments ?? []) {
@@ -194,7 +194,7 @@ export async function POST(req: NextRequest) {
       rationale: String(a.rationale ?? "").slice(0, 1000),
     });
   }
-  if (proposals.length === 0) return bad("The assessment returned nothing usable — try again.", 502);
+  if (proposals.length === 0) return bad("The assessment returned nothing usable - try again.", 502);
   return NextResponse.json({
     proposals,
     humanDecided: items.filter((it) => it.manual_note).length,

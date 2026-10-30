@@ -38,7 +38,7 @@ export default function IntelligenceSetupPage() {
       <ViewTabs title="Intelligence" tabs={INTELLIGENCE_VIEWS} />
       <PageHeaderBar
         title="AI setup"
-        subtitle="Your keys, your money, your caps — plus the org-level teaching surfaces"
+        subtitle="Your keys, your money, your caps - plus the org-level teaching surfaces"
         icon={Settings2}
       />
 
@@ -68,7 +68,7 @@ export default function IntelligenceSetupPage() {
           {isController && (
             <SetupLink href="/admin/ai-instructions" icon={GraduationCap}
               title="AI instructions (playbooks)"
-              body="Standing org instructions folded into every AI prompt — 'our drawing types never include vendor codes'." />
+              body="Standing org instructions folded into every AI prompt - 'our drawing types never include vendor codes'." />
           )}
           {isController && (
             <SetupLink href="/admin/codebook" icon={BookMarked}

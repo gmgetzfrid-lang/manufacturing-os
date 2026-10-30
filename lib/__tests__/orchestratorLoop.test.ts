@@ -74,7 +74,7 @@ beforeEach(() => {
   searchImpl = async () => ({ data: { passages: [{ document: "STD-14", page: 7, text: "Pipe supports…" }] } });
 });
 
-describe("runOrchestrator — the happy path", () => {
+describe("runOrchestrator - the happy path", () => {
   it("calls a tool, then answers from the result", async () => {
     const model = scripted([callFor("pipe supports"), "You have one standard: STD-14, page 7."]);
     const run = await runOrchestrator({ question: "any standards about pipe supports?", ctx: CTX, call: model });
@@ -109,7 +109,7 @@ describe("runOrchestrator — the happy path", () => {
   });
 });
 
-describe("runOrchestrator — bounding a model that misbehaves", () => {
+describe("runOrchestrator - bounding a model that misbehaves", () => {
   it("corrects malformed JSON instead of showing it to the user", async () => {
     const model = scripted(['{"tool_name":"search_documents", parameters:{}}', "Recovered answer."]);
     const run = await runOrchestrator({ question: "q", ctx: CTX, call: model });
@@ -117,7 +117,7 @@ describe("runOrchestrator — bounding a model that misbehaves", () => {
     expect(model.prompts[1]).toMatch(/REJECTED/);
   });
 
-  it("gives up on a model that will never emit valid JSON — with prose, not silence", async () => {
+  it("gives up on a model that will never emit valid JSON - with prose, not silence", async () => {
     const model = scripted(['{"tool_name":"search_documents", oops}']);
     const run = await runOrchestrator({ question: "q", ctx: CTX, call: model });
     expect(run.stoppedBecause).toMatch(/malformed/);
@@ -165,7 +165,7 @@ describe("runOrchestrator — bounding a model that misbehaves", () => {
   });
 });
 
-describe("runOrchestrator — failures that must not become confident answers", () => {
+describe("runOrchestrator - failures that must not become confident answers", () => {
   it("surfaces a provider error rather than inventing a reply", async () => {
     const model: ModelCall = async () => { throw new Error("Anthropic rejected the API key."); };
     const run = await runOrchestrator({ question: "q", ctx: CTX, call: model });
@@ -202,7 +202,7 @@ describe("runOrchestrator — failures that must not become confident answers", 
   });
 });
 
-describe("runOrchestrator — write proposals", () => {
+describe("runOrchestrator - write proposals", () => {
   it("collects a pending action rather than performing it", async () => {
     const model = scripted([
       JSON.stringify({ tool_name: "checkout_document", parameters: { document_id: "D-1" } }),

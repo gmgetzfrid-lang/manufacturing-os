@@ -55,7 +55,7 @@ describe("isTransmittalIssuable", () => {
 describe("renderTransmittalSheet", () => {
   const t = tx({
     number: "TR-0007",
-    subject: "Issued for Construction — Area 200",
+    subject: "Issued for Construction - Area 200",
     purpose: "For Construction",
     recipientName: "Jane Doe",
     recipientCompany: "BuildCo",

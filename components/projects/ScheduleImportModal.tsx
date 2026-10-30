@@ -57,8 +57,8 @@ interface Props {
 
 const FORMAT_LABEL: Record<ScheduleFormat, string> = {
   "msproject-xml": "Microsoft Project · XML",
-  "msproject-mpp": "Microsoft Project · MPP (not accepted — export XML)",
-  "msproject-mpx": "Microsoft Project · MPX (not accepted — export XML)",
+  "msproject-mpp": "Microsoft Project · MPP (not accepted - export XML)",
+  "msproject-mpx": "Microsoft Project · MPX (not accepted - export XML)",
   "p6-xml":        "Primavera P6 · XML",
   "p6-xer":        "Primavera P6 · XER",
   "msproject-csv": "Microsoft Project · CSV",
@@ -329,7 +329,7 @@ export default function ScheduleImportModal({
                     <FormatBadge label=".csv" hint="Direct export or generic" />
                   </div>
                   <div className="mt-2 text-[10px] text-[var(--color-text-muted)]">
-                    Have a .mpp or .mpx? Export XML first — in MS Project: File → Save As → XML Format.
+                    Have a .mpp or .mpx? Export XML first - in MS Project: File → Save As → XML Format.
                   </div>
                 </>
               )}
@@ -465,10 +465,10 @@ export default function ScheduleImportModal({
                             {humanDate(r.plannedAt, tz)}
                           </td>
                           <td className="px-3 py-1.5 text-[10px] font-mono text-[var(--color-text-muted)] truncate">
-                            {r.parentExternalRef ? r.parentExternalRef.split(":")[1] : <span className="text-slate-300">—</span>}
+                            {r.parentExternalRef ? r.parentExternalRef.split(":")[1] : <span className="text-slate-300">-</span>}
                           </td>
-                          <td className="px-3 py-1.5 text-[var(--color-text)] font-mono">{r.outlineLevel ?? <span className="text-slate-300">—</span>}</td>
-                          <td className="px-3 py-1.5 text-[var(--color-text)] font-mono">{r.percentComplete != null ? `${Math.round(r.percentComplete)}%` : <span className="text-slate-300">—</span>}</td>
+                          <td className="px-3 py-1.5 text-[var(--color-text)] font-mono">{r.outlineLevel ?? <span className="text-slate-300">-</span>}</td>
+                          <td className="px-3 py-1.5 text-[var(--color-text)] font-mono">{r.percentComplete != null ? `${Math.round(r.percentComplete)}%` : <span className="text-slate-300">-</span>}</td>
                         </tr>
                       ))}
                       {moreCount > 0 && (
@@ -502,7 +502,7 @@ export default function ScheduleImportModal({
                     {snapshot && (
                       <div className="pt-1.5 flex items-center gap-2 flex-wrap">
                         {undoing === "done" ? (
-                          <span className="font-bold text-emerald-700 dark:text-emerald-300">Import undone — the schedule is back as it was.</span>
+                          <span className="font-bold text-emerald-700 dark:text-emerald-300">Import undone - the schedule is back as it was.</span>
                         ) : (
                           <button onClick={() => void undo()} disabled={undoing === "busy"}
                             className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-[var(--color-border-strong)] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
@@ -521,7 +521,7 @@ export default function ScheduleImportModal({
           {mergePlan && !replaceExisting && !importResult && (
             <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-[11px] text-[var(--color-text)]">
               <b>If you merge:</b> {mergePlan.updated} task{mergePlan.updated === 1 ? "" : "s"} updated, {mergePlan.added} new
-              {mergePlan.kept > 0 ? <>, {mergePlan.kept} already here and not in the file — kept, not deleted</> : null}.
+              {mergePlan.kept > 0 ? <>, {mergePlan.kept} already here and not in the file - kept, not deleted</> : null}.
               <span className="text-[var(--color-text-muted)]"> Updated tasks take the file&apos;s names, dates, hours and outline. Progress, comments, hold reasons and the crew setting stay as recorded here; contractor, location and work order are filled from the file only where they&apos;re blank.</span>
             </div>
           )}
@@ -529,7 +529,7 @@ export default function ScheduleImportModal({
             <label className="flex items-start gap-2 rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-[11px] text-rose-900 dark:text-rose-200">
               <input type="checkbox" checked={replaceExisting} onChange={(e) => setReplaceExisting(e.target.checked)} className="mt-0.5" />
               <span>
-                <b>Replace the current schedule</b> — delete the {existingCount} task{existingCount === 1 ? "" : "s"} already on this project first, then import the file from scratch. Cancelled jobs stay cancelled, with their notes.
+                <b>Replace the current schedule</b> - delete the {existingCount} task{existingCount === 1 ? "" : "s"} already on this project first, then import the file from scratch. Cancelled jobs stay cancelled, with their notes.
                 The file becomes the plan of record (baseline). Untick to merge instead (see above): the baseline stays and nothing recorded here is lost.
                 Deleting is audited and can&apos;t be undone.
               </span>
@@ -596,7 +596,7 @@ function XmlExportGuide({ filename, format }: { filename: string; format: "mspro
         <div className="flex-1 min-w-0">
           <div className="text-sm font-black text-[var(--color-text)]">This file needs to be exported as XML first</div>
           <div className="text-[11px] text-[var(--color-text-muted)]">
-            <code className="font-mono">{ext}</code> files are not accepted — only MS Project&apos;s XML export is a
+            <code className="font-mono">{ext}</code> files are not accepted - only MS Project&apos;s XML export is a
             guaranteed exact copy of your schedule. The export takes ~15 seconds.
           </div>
         </div>
@@ -658,7 +658,7 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
         <div className={`text-sm font-bold ${noHierarchy ? "text-rose-900 dark:text-rose-200" : "text-emerald-900 dark:text-emerald-200"}`}>
           {noHierarchy
             ? "Hierarchy NOT detected"
-            : `Hierarchy detected — ${summaries} summary parent${summaries === 1 ? "" : "s"}, ${withParent} sub-task${withParent === 1 ? "" : "s"}`}
+            : `Hierarchy detected - ${summaries} summary parent${summaries === 1 ? "" : "s"}, ${withParent} sub-task${withParent === 1 ? "" : "s"}`}
         </div>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
@@ -672,14 +672,14 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
           <div className="font-bold">Without parent/child structure, sub-tasks won&apos;t render as accordions and tasks won&apos;t group under phases.</div>
           <div>Most common causes:</div>
           <ol className="ml-4 list-decimal space-y-0.5">
-            <li>The source file is genuinely flat (an exported punch list with no outline). Verify in your PM tool — in MS Project: <i>View → Outline → Show Outline</i>. If there&apos;s nothing to expand, the file itself has no structure.</li>
+            <li>The source file is genuinely flat (an exported punch list with no outline). Verify in your PM tool - in MS Project: <i>View → Outline → Show Outline</i>. If there&apos;s nothing to expand, the file itself has no structure.</li>
             <li>A CSV export dropped the outline columns. Re-export as XML (MS Project: File → Save As → XML) or P6 XML/XER, which always carry the hierarchy.</li>
           </ol>
         </div>
       )}
       {!noHierarchy && noDurations && (
         <div className="text-[11px] text-emerald-900 dark:text-emerald-200 mt-1">
-          Note: most rows don&apos;t carry start dates — only finish. Tasks will render as single-day on their finish date. Use the per-task <b>Set duration</b> action in the Execution view to expand the ones that take multiple days.
+          Note: most rows don&apos;t carry start dates - only finish. Tasks will render as single-day on their finish date. Use the per-task <b>Set duration</b> action in the Execution view to expand the ones that take multiple days.
         </div>
       )}
     </div>

@@ -29,7 +29,7 @@ const body = (init: RequestInit) => JSON.parse(String(init.body));
 beforeEach(() => { vi.restoreAllMocks(); });
 afterEach(() => { vi.unstubAllGlobals(); });
 
-describe("embeddingConnectionFrom — who may embed", () => {
+describe("embeddingConnectionFrom - who may embed", () => {
   it("uses the embedding key even when the chat provider is Anthropic", () => {
     // THE regression. A Claude user with a Voyage key must get vectors.
     const conn = embeddingConnectionFrom({
@@ -70,7 +70,7 @@ describe("embeddingConnectionFrom — who may embed", () => {
   });
 });
 
-describe("embedPassages — provider wire shapes", () => {
+describe("embedPassages - provider wire shapes", () => {
   it("asks Voyage for 1024 dims and tells it these are documents", async () => {
     const fetchMock = mockFetch(() => ({
       data: [{ index: 0, embedding: vec() }], usage: { total_tokens: 12 },
@@ -131,7 +131,7 @@ describe("embedPassages — provider wire shapes", () => {
   });
 });
 
-describe("embedPassages — refusing bad data rather than storing it", () => {
+describe("embedPassages - refusing bad data rather than storing it", () => {
   it("rejects a response with the wrong number of vectors", async () => {
     vi.stubGlobal("fetch", mockFetch(() => ({ data: [{ index: 0, embedding: vec() }] })));
     await expect(embedPassages({

@@ -27,7 +27,7 @@ export function sealAiKey(plain: string): string {
   if (!plain) return "";
   if (!cryptoConfigured()) {
     console.warn(
-      "EXPORT_ENCRYPTION_KEY not set — storing AI provider key UNENCRYPTED. " +
+      "EXPORT_ENCRYPTION_KEY not set - storing AI provider key UNENCRYPTED. " +
       "Set the env var (64-char hex) to encrypt keys at rest.",
     );
     return plain;

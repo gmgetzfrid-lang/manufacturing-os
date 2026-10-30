@@ -5,7 +5,7 @@ import { skillsInPlay, buildAnswerSkillsBlock, type SkillRow } from "@/lib/answe
 
 const builtin = (key: string) => ({ builtin_key: key, instructions: BUILTIN_ANSWER_SKILLS.find((b) => b.builtin_key === key)!.instructions });
 
-describe("which skill fits a question — the prompt bar's hint", () => {
+describe("which skill fits a question - the prompt bar's hint", () => {
   it("the selection skill fits a selection question, not a yes/no one", () => {
     expect(skillFits(builtin("catalog_selection"), "What piping spec should I use for 150 class sour gas")).toBe(true);
     expect(skillFits(builtin("catalog_selection"), "Can I use a 300 class flange on a vessel")).toBe(false);
@@ -34,7 +34,7 @@ describe("skills picked for one question", () => {
   it("no pick: the workspace's enabled skills", () => {
     expect(skillsInPlay(rows, "me").map((r) => r.name)).toEqual(["On by default"]);
   });
-  it("a pick: exactly those — a disabled one switched on for this question, never a teammate's private one", () => {
+  it("a pick: exactly those - a disabled one switched on for this question, never a teammate's private one", () => {
     const ids = ["22222222-2222-2222-2222-222222222222", "33333333-3333-3333-3333-333333333333"];
     expect(skillsInPlay(rows, "me", ids).map((r) => r.name)).toEqual(["Off by default"]);
     expect(buildAnswerSkillsBlock(rows, "me", ids)).toMatch(/Off by default/);

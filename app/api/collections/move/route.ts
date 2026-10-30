@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
     let cursor: CollectionTreeRow | undefined = parent;
     for (let hops = 0; cursor && hops < 200; hops++) {
       if (cursor.id === collectionId) {
-        return bad("That folder is inside this one — moving it there would orphan both.");
+        return bad("That folder is inside this one - moving it there would orphan both.");
       }
       cursor = cursor.parent_id ? tree.byId.get(cursor.parent_id) : undefined;
     }

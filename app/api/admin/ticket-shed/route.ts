@@ -90,8 +90,8 @@ export async function GET(req: NextRequest) {
       bytes: ticketAttachmentBytes(t.attachments), lastModified: t.last_modified,
     })),
     note:
-      `Closed/canceled tickets quiet for over ${days} days are eligible. The whole ticket — ` +
-      "comment thread, history and attachment files — is bundled into one archive and a " +
+      `Closed/canceled tickets quiet for over ${days} days are eligible. The whole ticket - ` +
+      "comment thread, history and attachment files - is bundled into one archive and a " +
       "lightweight stub stays in the list. Producing an archive deletes nothing; content is " +
       "freed only after you confirm the archive is saved." +
       (capped ? ` Showing the oldest ${FETCH_LIMIT}; re-run after committing to reach the rest.` : ""),
@@ -125,7 +125,7 @@ export async function POST(req: NextRequest) {
     file_count: 0, total_bytes: 0,
     created_by: actor.userId, created_by_email: actor.email, note: "producing…",
   });
-  if (catErr) return NextResponse.json({ error: "Archive label collision — please retry." }, { status: 409 });
+  if (catErr) return NextResponse.json({ error: "Archive label collision - please retry." }, { status: 409 });
 
   // CLAIM the rows atomically BEFORE bundling: a conditional update grabs only
   // tickets not already linked to another (possibly concurrent) produce. This is
@@ -238,7 +238,7 @@ export async function POST(req: NextRequest) {
     `Ticket archive ${archiveId}\nProduced ${new Date().toISOString()}\nOrg ${orgId}\n` +
     `${capturedTickets} ticket(s), ${bundledFiles} attachment file(s), ${fileBytes} bytes` +
     `${skippedIncomplete ? `, ${skippedIncomplete} ticket(s) skipped (unreadable attachments, left untouched)` : ""}.\n` +
-    `Save this as ${savePath} and keep it — it's the only copy of these ` +
+    `Save this as ${savePath} and keep it - it's the only copy of these ` +
     `closed tickets' full content (comments, history, attachments) once space is reclaimed.\n`);
   const zipBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 

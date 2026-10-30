@@ -405,7 +405,7 @@ export function explodeRunOn(text: string, max = RUN_ON_MAX): AnswerBlock[] | nu
   // Sentences first; a true run-on often has none, so fall back to em-dash
   // clauses, then semicolons.
   let pieces = body.split(/(?<=[.!?])\s+(?=[A-Z0-9"“(`*])/).map((s) => s.trim()).filter(Boolean);
-  if (pieces.length === 1) pieces = splitTopLevel(body, " — ");
+  if (pieces.length === 1) pieces = splitTopLevel(body, " - ");
   if (pieces.length === 1) pieces = splitTopLevel(body, " – ");
   if (pieces.length === 1) pieces = splitTopLevel(body, "; ");
   const first = pieces[0] ?? body;
@@ -504,10 +504,11 @@ export type Verdict = "yes" | "conditional" | "no" | "unsettled" | "complies" | 
 const VERDICT_RE = /^\s*\**\s*(YES,?\s+WITH\s+CONDITIONS|NOT\s+SETTLED|DOES\s+NOT\s+COMPLY|COMPLIES|CAN'?T\s+DETERMINE|CANNOT\s+DETERMINE|YES|NO)\b\**\s*(?:[—–:-]+\s*|\.\s+|$)/;
 
 /** Capitals always count; any case counts when a dash follows ("Yes, with
- *  conditions — …"), which an ordinary sentence never has. */
+ *  conditions — …", or " - " as the model's text now has it), which an
+ *  ordinary sentence never has. */
 function matchVerdict(hero: string): RegExpMatchArray | null {
   return hero.match(VERDICT_RE)
-    ?? hero.match(/^\s*\**\s*(yes,?\s+with\s+conditions|not\s+settled|does\s+not\s+comply|complies|can'?t\s+determine|cannot\s+determine|yes|no)\**\s*[—–]\s*/i);
+    ?? hero.match(/^\s*\**\s*(yes,?\s+with\s+conditions|not\s+settled|does\s+not\s+comply|complies|can'?t\s+determine|cannot\s+determine|yes|no)\**(?:\s*[—–]\s*|\s+-\s+)/i);
 }
 
 /** Split a leading verdict word off the Answer line. */
@@ -598,7 +599,7 @@ export function extractAnswerMeta(answer: string): {
       const body = ut[1].replace(/\*\*/g, "").trim();
       const [namePart, ...whyParts] = body.split(/\s+[—–]\s+|\s+-\s+/);
       const name = namePart.replace(/^["“'`]|["”'`]$/g, "").trim();
-      if (name && useThis.length < 3) useThis.push({ name: name.slice(0, 160), why: whyParts.join(" — ").trim().slice(0, 200) });
+      if (name && useThis.length < 3) useThis.push({ name: name.slice(0, 160), why: whyParts.join(" - ").trim().slice(0, 200) });
       continue;
     }
     const af = raw.trim().match(/^\*{0,2}Answering for:?\*{0,2}:?\s*(.+)$/i);
@@ -649,7 +650,7 @@ export function referencedQuote(c: {
   url?: string; title?: string;
 }): string {
   const words = (c.highlight ?? c.quote ?? "").replace(/\s+/g, " ").trim();
-  if (c.url) return `"${words}" — ${c.title ?? c.url}, ${c.url}`;
+  if (c.url) return `"${words}" - ${c.title ?? c.url}, ${c.url}`;
   const doc = docDesignation(c.documentName ?? "Document");
   const clause = clauseFor(c.quote ?? "", c.highlight, c.section);
   return `${doc}${clause ? ` §${clause}` : ""}: "${words}"${c.page ? ` (p.${c.page})` : ""}`;
@@ -676,7 +677,7 @@ export function enforceDocumentsOnly(answer: string): { answer: string; removed:
   let out = kept.join("\n");
   if (removed > 0) {
     out += `\n\n! ${removed} statement${removed === 1 ? "" : "s"} not backed by your documents ` +
-      `${removed === 1 ? "was" : "were"} removed — this library answers from its documents only.`;
+      `${removed === 1 ? "was" : "were"} removed - this library answers from its documents only.`;
   }
   return { answer: out, removed };
 }
@@ -798,7 +799,7 @@ function normalizeWithMap(s: string): { norm: string; map: number[] } {
       lastSpace = false;
       if (ch === "“" || ch === "”" || ch === "″") ch = '"';
       else if (ch === "‘" || ch === "’" || ch === "′") ch = "'";
-      else if (ch === "–" || ch === "—" || ch === "‐" || ch === "‑") ch = "-";
+      else if (ch === "–" || ch === "\u2014" || ch === "‐" || ch === "‑") ch = "-";
       else ch = ch.toLowerCase();
     }
     norm += ch;

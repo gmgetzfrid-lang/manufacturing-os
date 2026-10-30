@@ -57,7 +57,7 @@ describe("role helpers", () => {
   });
 });
 
-describe("getInitialStatus — assignment-first routing", () => {
+describe("getInitialStatus - assignment-first routing", () => {
   it("every request type and requester role starts at PENDING_ASSIGNMENT", () => {
     const types = ["ISO", "RFI", "MOC", "INSPECTION", "ASBUILT"] as const;
     const roles: Role[] = ["Viewer", "Requester", "Engineer-1", "Admin", "Drafter"];
@@ -69,7 +69,7 @@ describe("getInitialStatus — assignment-first routing", () => {
   });
 });
 
-describe("PENDING_ASSIGNMENT — the entry queue", () => {
+describe("PENDING_ASSIGNMENT - the entry queue", () => {
   const t = mk({ status: "PENDING_ASSIGNMENT" });
 
   it("Admin can assign, flag for engineering review, or force close", () => {
@@ -99,7 +99,7 @@ describe("PENDING_ASSIGNMENT — the entry queue", () => {
   });
 });
 
-describe("PENDING_ENG_TEAM — scoped engineering review", () => {
+describe("PENDING_ENG_TEAM - scoped engineering review", () => {
   it("the assigned engineer can complete or return", () => {
     const t = mk({ status: "PENDING_ENG_TEAM", assignedEngineerId: "eng-1" });
     expect(actionsOf(t, "Engineer-1", "eng-1")).toEqual(["approve_team", "reject"].sort());
@@ -121,7 +121,7 @@ describe("PENDING_ENG_TEAM — scoped engineering review", () => {
   });
 });
 
-describe("DRAFTING — the assigned drafter's stage", () => {
+describe("DRAFTING - the assigned drafter's stage", () => {
   it("assigned drafter can stage files; submit only once a Draft file exists", () => {
     const noDraft = mk({ status: "DRAFTING", assignedDrafterId: "d-1" });
     expect(actionsOf(noDraft, "Drafter", "d-1")).toEqual(["save_progress"]);
@@ -140,7 +140,7 @@ describe("DRAFTING — the assigned drafter's stage", () => {
   });
 });
 
-describe("PENDING_REVIEW — the engineer-approval fork", () => {
+describe("PENDING_REVIEW - the engineer-approval fork", () => {
   it("a Viewer requester must route to an engineer (cannot self-approve)", () => {
     const t = mk({ status: "PENDING_REVIEW", requesterId: "u-1", requesterRole: "Viewer" });
     const acts = actionsOf(t, "Viewer", "u-1");
@@ -173,7 +173,7 @@ describe("PENDING_REVIEW — the engineer-approval fork", () => {
   });
 });
 
-describe("PENDING_FINAL_APPROVAL — engineer sign-off", () => {
+describe("PENDING_FINAL_APPROVAL - engineer sign-off", () => {
   const t = mk({ status: "PENDING_FINAL_APPROVAL", assignedEngineerId: "eng-1" });
 
   it("the assigned engineer can approve, minor-correct, send back to drafter, or return to requester", () => {
@@ -197,7 +197,7 @@ describe("closure & resurrection", () => {
     expect(actionsOf(t, "Viewer", "u-1")).toEqual(["close_ticket", "reject_final"].sort());
   });
 
-  it("CLOSED offers reopen to management and the requester — and nothing else", () => {
+  it("CLOSED offers reopen to management and the requester - and nothing else", () => {
     const t = mk({ status: "CLOSED", requesterId: "u-1" });
     expect(actionsOf(t, "Admin", "a-1")).toEqual(["reopen_ticket"]);
     expect(actionsOf(t, "Viewer", "u-1")).toEqual(["reopen_ticket"]);

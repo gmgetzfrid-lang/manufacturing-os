@@ -97,7 +97,7 @@ export default function BulkEditModal({
           <div className="p-2 rounded-lg bg-violet-100 text-violet-700"><Pencil className="w-5 h-5" /></div>
           <div className="flex-1">
             <div className="text-sm font-black text-[var(--color-text)]">Bulk edit · {docs.length} document{docs.length === 1 ? "" : "s"}</div>
-            <div className="text-xs text-[var(--color-text-muted)]">Apply one change to every selected row. Each insert is independent — a single failure doesn&apos;t roll back the rest.</div>
+            <div className="text-xs text-[var(--color-text-muted)]">Apply one change to every selected row. Each insert is independent - a single failure doesn&apos;t roll back the rest.</div>
           </div>
           <button onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
@@ -151,7 +151,7 @@ export default function BulkEditModal({
                 className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
                 disabled={busy}
               >
-                <option value="">— pick one —</option>
+                <option value="">- pick one -</option>
                 {selectOptions.map((o, i) => <option key={i} value={o}>{o}</option>)}
               </select>
             ) : (
@@ -175,7 +175,7 @@ export default function BulkEditModal({
                   <div className="font-bold flex items-center gap-1.5 mb-1"><AlertTriangle className="w-4 h-4" /> {results.failed.length} failed</div>
                   <ul className="ml-5 list-disc space-y-0.5">
                     {results.failed.slice(0, 5).map((f, i) => (
-                      <li key={i}><span className="font-mono">{f.doc}</span> — {f.reason}</li>
+                      <li key={i}><span className="font-mono">{f.doc}</span> - {f.reason}</li>
                     ))}
                     {results.failed.length > 5 && <li className="italic">+{results.failed.length - 5} more</li>}
                   </ul>

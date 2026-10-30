@@ -119,7 +119,7 @@ export default function GraphControls({
       <div className="flex items-center gap-1.5">
         {/* 2D / 3D — the switch people will reach for first. */}
         <div className="inline-flex rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)]/90 backdrop-blur p-0.5 shadow-sm">
-          <button onClick={() => onChange({ mode: "map" })} title="The estate as a tree: units, equipment, documents — same map as Documents › Graph"
+          <button onClick={() => onChange({ mode: "map" })} title="The estate as a tree: units, equipment, documents - same map as Documents › Graph"
             className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-black transition-colors ${
               settings.mode === "map" ? "bg-violet-600 text-white" : "text-[var(--color-text-muted)]"
             }`}>
@@ -176,7 +176,7 @@ export default function GraphControls({
             <div className="pt-1.5 space-y-1.5 border-t border-[var(--color-border)]">
               <Toggle label="Library links" checked={settings.showLibraryEdges}
                 onChange={(v) => onChange({ showLibraryEdges: v })}
-                hint="Every document links to its library — usually noise." />
+                hint="Every document links to its library - usually noise." />
               <Toggle label="Fold lone documents" checked={settings.foldLeaves}
                 onChange={(v) => onChange({ foldLeaves: v })}
                 hint="A document linked only to one hub sits inside it as a count. Click the hub to open it." />

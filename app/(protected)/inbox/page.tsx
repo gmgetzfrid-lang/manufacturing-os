@@ -318,7 +318,7 @@ export default function InboxPage() {
                 {data.myStaleCheckouts.length > 0 && (
                   <div className="mb-2 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded px-2 py-1">
                     <AlertTriangle className="inline w-3 h-3 mr-1" />
-                    {data.myStaleCheckouts.length} past expected release — please check in or extend
+                    {data.myStaleCheckouts.length} past expected release - please check in or extend
                   </div>
                 )}
                 <ul className="space-y-1.5">
@@ -331,7 +331,7 @@ export default function InboxPage() {
                       <Link href={`/documents/${s.libraryId ?? ""}?doc=${s.documentId}`} className="text-blue-700 hover:underline font-bold">
                         {s.documentId.slice(0, 8)}
                       </Link>
-                      {s.purpose && <span className="text-[var(--color-text-faint)] truncate">— {s.purpose}</span>}
+                      {s.purpose && <span className="text-[var(--color-text-faint)] truncate">- {s.purpose}</span>}
                       <span className="ml-auto text-[10px] text-[var(--color-text-muted)]">{formatAgo(typeof s.startedAt === "string" ? s.startedAt : undefined)}</span>
                     </li>
                   ))}
@@ -358,7 +358,7 @@ export default function InboxPage() {
 
             {data.transmittalsAwaitingAck.length > 0 && (
               <Card icon={Send} tone="blue" title="Transmittals awaiting receipt" count={data.transmittalsAwaitingAck.length}>
-                <p className="text-xs text-[var(--color-text-faint)] mb-2">Issued to a recipient who hasn&apos;t acknowledged yet — chase the receipt for a clean paper trail.</p>
+                <p className="text-xs text-[var(--color-text-faint)] mb-2">Issued to a recipient who hasn&apos;t acknowledged yet - chase the receipt for a clean paper trail.</p>
                 <ul className="space-y-1.5">
                   {data.transmittalsAwaitingAck.slice(0, 6).map((t) => (
                     <li key={t.id} className="text-xs flex items-center gap-2">
@@ -399,7 +399,7 @@ export default function InboxPage() {
 
             {data.reviewCyclesDueOnMe.length > 0 && (
               <Card icon={ShieldCheck} tone="amber" title="Periodic reviews you owe" count={data.reviewCyclesDueOnMe.length}>
-                <p className="text-xs text-[var(--color-text-faint)] mb-2">Documents whose scheduled review is due — open each, verify it&apos;s still correct, and mark it reviewed.</p>
+                <p className="text-xs text-[var(--color-text-faint)] mb-2">Documents whose scheduled review is due - open each, verify it&apos;s still correct, and mark it reviewed.</p>
                 <ul className="space-y-1.5">
                   {data.reviewCyclesDueOnMe.slice(0, 6).map((r) => (
                     <li key={r.documentId} className="text-xs flex items-center gap-2">
@@ -540,11 +540,11 @@ function TicketList({ tickets }: { tickets: TicketListItem[] }) {
     <ul className="space-y-1.5">
       {tickets.slice(0, 6).map((t, i) => (
         <li key={t.id ?? `t-${i}`} className="text-xs flex items-center gap-2">
-          <span className="font-mono text-[var(--color-text-muted)]">{t.ticketId ?? "—"}</span>
+          <span className="font-mono text-[var(--color-text-muted)]">{t.ticketId ?? "-"}</span>
           <Link href={`/requests/${t.id ?? ""}`} className="text-[var(--color-text)] hover:text-indigo-700 font-bold truncate flex-1">
             {t.title ?? "(untitled)"}
           </Link>
-          <span className="text-[10px] font-bold uppercase text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{t.status ?? "—"}</span>
+          <span className="text-[10px] font-bold uppercase text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{t.status ?? "-"}</span>
           <span className="text-[10px] text-[var(--color-text-muted)]"><Clock className="inline w-2.5 h-2.5 mr-0.5" />{formatAgo(typeof t.lastModified === "string" ? t.lastModified : undefined)}</span>
         </li>
       ))}

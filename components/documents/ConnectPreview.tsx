@@ -15,12 +15,12 @@ import LibraryAiSwitch from "@/components/documents/LibraryAiSwitch";
 import type { ConnectPlan, PlanFileState } from "@/lib/estate/connectPlan";
 
 const STATE: Record<PlanFileState, { label: string; tone: string; sent: boolean }> = {
-  new: { label: "new — will be read", tone: "bg-sky-50 border-sky-200 text-sky-800", sent: true },
-  revised: { label: "new revision — read again", tone: "bg-sky-50 border-sky-200 text-sky-800", sent: true },
-  read: { label: "already read — reused, nothing sent", tone: "bg-emerald-50 border-emerald-200 text-emerald-800", sent: false },
+  new: { label: "new - will be read", tone: "bg-sky-50 border-sky-200 text-sky-800", sent: true },
+  revised: { label: "new revision - read again", tone: "bg-sky-50 border-sky-200 text-sky-800", sent: true },
+  read: { label: "already read - reused, nothing sent", tone: "bg-emerald-50 border-emerald-200 text-emerald-800", sent: false },
   held_back: { label: "held back from AI", tone: "bg-rose-50 border-rose-200 text-rose-700", sent: false },
-  not_current: { label: "superseded or archived — never read", tone: "bg-slate-50 border-slate-200 text-slate-600", sent: false },
-  not_pdf: { label: "not a PDF — not read", tone: "bg-slate-50 border-slate-200 text-slate-600", sent: false },
+  not_current: { label: "superseded or archived - never read", tone: "bg-slate-50 border-slate-200 text-slate-600", sent: false },
+  not_pdf: { label: "not a PDF - not read", tone: "bg-slate-50 border-slate-200 text-slate-600", sent: false },
 };
 
 export default function ConnectPreview({ orgId, plan, loading, canChange, onStart, onClose, onReplan }: {
@@ -91,7 +91,7 @@ export default function ConnectPreview({ orgId, plan, loading, canChange, onStar
                             <li key={f.id} className="flex items-center gap-2">
                               <span className="truncate flex-1">{f.name}</span>
                               {f.census && <span className="shrink-0 text-[10px] font-semibold text-violet-700">to your model</span>}
-                              <span className={`shrink-0 rounded-full border px-1.5 text-[10px] ${STATE[f.state].tone}`}>{STATE[f.state].sent ? "will be read" : STATE[f.state].label.split(" — ")[0]}</span>
+                              <span className={`shrink-0 rounded-full border px-1.5 text-[10px] ${STATE[f.state].tone}`}>{STATE[f.state].sent ? "will be read" : STATE[f.state].label.split(" - ")[0]}</span>
                             </li>
                           ))}
                           {l.files > l.sample.length && <li className="text-[var(--color-text-muted)]">…and {l.files - l.sample.length} more</li>}

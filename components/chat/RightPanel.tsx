@@ -138,7 +138,7 @@ export default function RightPanel({
         <div className="p-3 border-t border-[var(--color-border)] shrink-0">
           <button onClick={() => onReuse(past)}
             className="w-full inline-flex items-center justify-center gap-1.5 h-9 rounded-lg bg-violet-600 text-white text-xs font-black hover:bg-violet-500 transition-colors">
-            <Redo2 className="w-3.5 h-3.5" /> Use this answer here — no AI call
+            <Redo2 className="w-3.5 h-3.5" /> Use this answer here - no AI call
           </button>
         </div>
       </div>
@@ -173,7 +173,7 @@ function AttachmentPane({ att, header }: {
       {header(att.name, Paperclip)}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         <p className="text-[11px] text-[var(--color-text-muted)]">
-          {fmtBytes(att.size)} · context for that question only — not indexed, not a controlled document.
+          {fmtBytes(att.size)} · context for that question only - not indexed, not a controlled document.
         </p>
         {att.kind === "image" ? (
           <AttachmentCard a={att} onOpen={() => { if (url) window.open(url, "_blank", "noopener"); }} large />
@@ -257,20 +257,20 @@ function InstructionsPane({
         <section>
           <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1">About you</div>
           <p className="text-[11px] text-[var(--color-text-muted)] mb-2">
-            Your own standing profile, sent with every question you ask. Plain text you can read and change — nothing is inferred.
+            Your own standing profile, sent with every question you ask. Plain text you can read and change - nothing is inferred.
           </p>
           <div className="space-y-2">
             <input value={prof.discipline} onChange={(e) => setProf({ ...prof, discipline: e.target.value })}
-              placeholder="Discipline — e.g. Mechanical / rotating equipment" className={field} />
+              placeholder="Discipline - e.g. Mechanical / rotating equipment" className={field} />
             <input value={prof.units} onChange={(e) => setProf({ ...prof, units: e.target.value })}
-              placeholder="Preferred units — e.g. US customary, SI" className={field} />
+              placeholder="Preferred units - e.g. US customary, SI" className={field} />
             <select value={prof.defaultLibraryId ?? ""} onChange={(e) => setProf({ ...prof, defaultLibraryId: e.target.value || null })}
               className={field}>
-              <option value="">Default library — none</option>
+              <option value="">Default library - none</option>
               {libraries.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
             </select>
             <textarea value={prof.notes} onChange={(e) => setProf({ ...prof, notes: e.target.value })} rows={3}
-              placeholder="Anything every answer should know — e.g. &quot;I work the crude unit; assume carbon steel unless told.&quot;"
+              placeholder="Anything every answer should know - e.g. &quot;I work the crude unit; assume carbon steel unless told.&quot;"
               className={`${field} resize-y`} />
           </div>
           <div className="mt-2 flex items-center gap-2">

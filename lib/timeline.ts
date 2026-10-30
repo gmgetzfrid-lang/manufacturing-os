@@ -139,7 +139,7 @@ function holdRowsToEvents(rows: HoldRow[]): TimelineEvent[] {
       userId: r.opened_by,
       userName: r.opened_by_name,
       userEmail: null,
-      summary: `Hold opened — ${r.reason}`,
+      summary: `Hold opened - ${r.reason}`,
       details: {
         holdId: r.id, reason: r.reason, notes: r.notes,
         expectedReleaseAt: r.expected_release_at,
@@ -157,7 +157,7 @@ function holdRowsToEvents(rows: HoldRow[]): TimelineEvent[] {
         userId: r.released_by,
         userName: r.released_by_name,
         userEmail: null,
-        summary: `Hold released — ${r.reason} (${durationDays}d)`,
+        summary: `Hold released - ${r.reason} (${durationDays}d)`,
         details: {
           holdId: r.id, reason: r.reason,
           releasedReason: r.released_reason, durationDays,
@@ -273,10 +273,10 @@ function summarizeAudit(r: AuditRow): string {
     case "CREATED_FROM_SPLIT":  return `Created via split of ${d.sourceDocumentNumber ?? "source"}`;
     case "DOC_MERGED":          return `Merged into ${d.mergedIntoDocumentId ? "target" : "another doc"}`;
     case "CREATED_FROM_MERGE":  return `Created via merge of ${(d.sourceDocumentNumbers as string[] | undefined)?.filter(Boolean).join(", ") || "sources"}`;
-    case "DOC_RENUMBERED":      return `Renumbered ${d.previousDocumentNumber ?? "—"} → ${d.newDocumentNumber ?? "?"}`;
+    case "DOC_RENUMBERED":      return `Renumbered ${d.previousDocumentNumber ?? "-"} → ${d.newDocumentNumber ?? "?"}`;
     case "SET_REV_UP":          return `Set bumped${d.totalSheets ? `: ${d.succeeded}/${d.totalSheets} sheets succeeded` : ""}`;
-    case "DOC_SPLIT_REVERSED":  return `Split reversed${(d.reversedNewDocIds as string[] | undefined)?.length ? ` — ${(d.reversedNewDocIds as string[]).length} new doc${(d.reversedNewDocIds as string[]).length === 1 ? "" : "s"} parked` : ""}`;
-    case "DOC_MERGE_REVERSED":  return `Merge reversed${(d.reversedSourceDocIds as string[] | undefined)?.length ? ` — ${(d.reversedSourceDocIds as string[]).length} source${(d.reversedSourceDocIds as string[]).length === 1 ? "" : "s"} restored` : ""}`;
+    case "DOC_SPLIT_REVERSED":  return `Split reversed${(d.reversedNewDocIds as string[] | undefined)?.length ? ` - ${(d.reversedNewDocIds as string[]).length} new doc${(d.reversedNewDocIds as string[]).length === 1 ? "" : "s"} parked` : ""}`;
+    case "DOC_MERGE_REVERSED":  return `Merge reversed${(d.reversedSourceDocIds as string[] | undefined)?.length ? ` - ${(d.reversedSourceDocIds as string[]).length} source${(d.reversedSourceDocIds as string[]).length === 1 ? "" : "s"} restored` : ""}`;
     case "DOC_RENUMBER_REVERSED": return `Renumber reversed${d.restoredToDocumentNumber ? ` → ${d.restoredToDocumentNumber}` : ""}`;
     case "EQUIPMENT_STATE_CHANGED": {
       const prev = d.previousState as string | undefined;

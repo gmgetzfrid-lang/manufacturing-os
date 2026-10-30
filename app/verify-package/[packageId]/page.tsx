@@ -93,7 +93,7 @@ export default function VerifyPackagePage() {
             <p className="text-white/90 text-sm font-bold mb-6">
               {result.allFresh
                 ? "Every sheet in this pack is still the current revision."
-                : `${result.staleCount} of ${result.sheetCount} sheet${result.sheetCount === 1 ? "" : "s"} changed since this pack was printed — get the new sheets before starting work.`}
+                : `${result.staleCount} of ${result.sheetCount} sheet${result.sheetCount === 1 ? "" : "s"} changed since this pack was printed - get the new sheets before starting work.`}
               {result.closed ? " (This package has been closed.)" : ""}
             </p>
 
@@ -122,7 +122,7 @@ export default function VerifyPackagePage() {
               {!result.allFresh && (
                 <div className="pt-2 border-t border-slate-100 text-xs text-slate-600 leading-relaxed">
                   Do not work from the outdated sheets. Ask the package owner or Document Control
-                  for a re-printed pack — the stale sheets are marked above.
+                  for a re-printed pack - the stale sheets are marked above.
                 </div>
               )}
             </div>

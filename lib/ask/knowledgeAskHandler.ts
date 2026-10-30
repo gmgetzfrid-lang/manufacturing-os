@@ -289,10 +289,10 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
   if (!usable) {
     return bad(
       conn
-        ? "Your saved key uses a blocked provider — only Anthropic (Claude) and OpenAI are " +
+        ? "Your saved key uses a blocked provider - only Anthropic (Claude) and OpenAI are " +
           "allowed, because their API traffic is never used for model training. Save a Claude " +
           "or OpenAI key in AI settings."
-        : "You haven't added your API key yet — every member uses their own. Add a Claude or " +
+        : "You haven't added your API key yet - every member uses their own. Add a Claude or " +
           "OpenAI key in AI settings first.",
       412,
     );
@@ -345,7 +345,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
   ]);
   if (capUsd > 0 && monthSoFar.spentUsd >= capUsd) {
     return bad(
-      `Monthly AI budget reached — you've used $${monthSoFar.spentUsd.toFixed(2)} of your ` +
+      `Monthly AI budget reached - you've used $${monthSoFar.spentUsd.toFixed(2)} of your ` +
       `$${capUsd.toFixed(2)} cap. It resets on the 1st; an Admin can raise the cap in AI settings.`,
       402,
     );
@@ -398,7 +398,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       const out = await call({
         system:
           "You are the reference assistant for a document control system. The user chose " +
-          "INTERNET mode, so answer from the web / your general knowledge — this answer is explicitly " +
+          "INTERNET mode, so answer from the web / your general knowledge - this answer is explicitly " +
           "NOT from their controlled internal documents, and you must not pretend it is. Prefer " +
           "authoritative sources (standards bodies, manufacturers, regulators). Name the source of " +
           "each key fact (publication, edition, section) so the reader can verify it. If editions " +
@@ -480,13 +480,13 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
         'Given a question, reply with ONLY a JSON array of 2-5 short keyword queries (2-6 words each) ' +
         'that would find the relevant passages. Include exact designations (like "ASME B16.5") verbatim ' +
         'when present. Standards often use different wording than the question (e.g. "support spacing" ' +
-        'tables answer "span between supports" questions) — vary the vocabulary across queries. ' +
-        'CHECKLIST QUESTIONS ("what do I need to…", "requirements for…") span MANY topics — cover every ' +
+        'tables answer "span between supports" questions) - vary the vocabulary across queries. ' +
+        'CHECKLIST QUESTIONS ("what do I need to…", "requirements for…") span MANY topics - cover every ' +
         'facet the question implies (qualifications, documentation, testing, safety, materials…), one ' +
         'query per facet. ' +
         'KEY TERMS: for each technical term in the question that a standard might define or use ' +
         '("sour gas", "lethal service", "AES", "category M"), add one query with the term as an exact quoted ' +
-        'phrase in double quotes, and one with the term plus the word definition — the library\'s own wording governs, ' +
+        'phrase in double quotes, and one with the term plus the word definition - the library\'s own wording governs, ' +
         'and a related term is not the same term. ' +
         (searchNotes.length > 0
           ? 'HOW THIS WORKSPACE\'S DOCUMENTS WORD THINGS (from its skills that fit this question): ' +
@@ -495,11 +495,11 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
         'DEVIATION / "WHY IS THIS REQUIRED" questions also get queries for the REASON behind the rule ' +
         '(the clause topic plus "because", "intent", "to prevent", "purpose") and for the exception or ' +
         'deviation process ("deviation request", "exception approval Owner\'s Engineer"). ' +
-        (answerMode === "deviation" ? 'THIS QUESTION IS A DEVIATION CASE — include those queries. ' : '') +
+        (answerMode === "deviation" ? 'THIS QUESTION IS A DEVIATION CASE - include those queries. ' : '') +
         'ATTACHED IMAGES are the asker\'s own photo, markup, or document: read every identifying string ' +
-        'in them — spec and grade stencils ("A312 TP304 WLD"), heat numbers, tags, nameplates, drawing ' +
-        'and document numbers — and use those exact terms in the queries alongside the question\'s. ' +
-        'No prose, no code fence — just the JSON array.',
+        'in them - spec and grade stencils ("A312 TP304 WLD"), heat numbers, tags, nameplates, drawing ' +
+        'and document numbers - and use those exact terms in the queries alongside the question\'s. ' +
+        'No prose, no code fence - just the JSON array.',
       user: [
         // Follow-ups arrive as fragments ("what about at the boiler?") —
         // the retrieval queries must be written against the CONVERSATION,
@@ -513,12 +513,12 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
               : "") +
             "\nResolve pronouns and ellipsis against these turns; carry forward the material, equipment, " +
             "documents, and constraints they establish when writing queries. A bare reference like " +
-            "\"table 1\" means the one in the document the conversation is about — name that document " +
+            "\"table 1\" means the one in the document the conversation is about - name that document " +
             "in the query.)"
           : "",
         question,
-        focus.length > 0 ? `(The user narrowed this to: ${focus.join(", ")} — target the queries there.)` : "",
-        inputs ? `(User-provided inputs: ${inputs} — include queries for the tables/values these imply.)` : "",
+        focus.length > 0 ? `(The user narrowed this to: ${focus.join(", ")} - target the queries there.)` : "",
+        inputs ? `(User-provided inputs: ${inputs} - include queries for the tables/values these imply.)` : "",
       ].filter(Boolean).join("\n\n"),
       maxTokens: 1000,
       ...(userImages.length > 0 ? { images: userImages } : {}),
@@ -535,7 +535,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       if (!queries.some((q) => q.toLowerCase().includes(`"class ${r}"`))) queries.push(`"class ${r}"`);
     }
     trace.stage("queries", { queries, rating, answerMode, focus, historyTurns: history.length, pinned: pinned.length });
-    emit({ t: "status", text: `Searching the library — ${queries.length} quer${queries.length === 1 ? "y" : "ies"}` });
+    emit({ t: "status", text: `Searching the library - ${queries.length} quer${queries.length === 1 ? "y" : "ies"}` });
 
     // ── ALIAS RESOLUTION: the graph's nickname layer feeds retrieval ─────
     // People ask about "the boiler"; the index stores B-101. asset_aliases
@@ -903,7 +903,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
         .filter((t) => !/^class \d+$/i.test(t) && !/^\d+\s*(#|lb|class)/i.test(t));
       const terms = sweepTerms(question, quoted, 7, ratings, rating);
       if (terms.length > 0 && reachableDocs.length > 0) {
-        emit({ t: "status", text: `Reading every document for ${terms.slice(0, 3).map((t) => `“${t.replace(/ \+ /g, "” with “")}”`).join(", ")} — all ${reachableDocs.length}, not just the best matches` });
+        emit({ t: "status", text: `Reading every document for ${terms.slice(0, 3).map((t) => `“${t.replace(/ \+ /g, "” with “")}”`).join(", ")} - all ${reachableDocs.length}, not just the best matches` });
         sweeps = await sweepLibrary(supabaseAdmin, {
           orgId, libraryIds: [libraryId, ...linkedLibraries.map((l) => l.id)], terms,
           allowedDocIds: reachableIds, deadlineMs: Math.min(askStarted + 30_000, Date.now() + 15_000),
@@ -1096,26 +1096,26 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
         : chunks.slice(0, 14).map((c, i) =>
             `[${i + 1}] (${libNameById.get(c.libraryId ?? libraryId) ?? "library"}) p.${c.page}: ${truncateSafe(c.content, 180)}`).join("\n");
       emit({ t: "status", text: chunks.length === 0
-        ? "Nothing matched yet — rewriting the search"
+        ? "Nothing matched yet - rewriting the search"
         : `Reviewing ${chunks.length} passage${chunks.length === 1 ? "" : "s"} and chasing references` });
       const refineOut = await callFast({
         system:
           'You review passages retrieved from technical document libraries to answer a question. These ' +
           'standards are spaghetti: one references another ("per STD-205", "as required by ASME B31.3") ' +
           'and part of the answer often lives in the referenced document. Also, checklist questions span ' +
-          'many sections — first-round retrieval often catches only SOME of the requirements.\n' +
+          'many sections - first-round retrieval often catches only SOME of the requirements.\n' +
           'Reply with ONLY a JSON object: {"queries": [...], "missing_documents": [...]}\n' +
-          '- "queries": 0-4 NEW searches — different vocabulary for weak coverage, searches NAMING any ' +
+          '- "queries": 0-4 NEW searches - different vocabulary for weak coverage, searches NAMING any ' +
           'referenced document ("STD-205 bolting torque"), and searches for facets of the question not ' +
           'yet covered by the passages.\n' +
           '- "missing_documents": designations of documents the passages REFERENCE for the answer that ' +
           'these libraries likely do not contain (e.g. "ASME B31.3"). Empty array if none.\n' +
           (clarifyEnabled
-            ? '- OPTIONALLY "clarify": {"question": "...", "options": ["...", "..."]} — ONLY when the ' +
+            ? '- OPTIONALLY "clarify": {"question": "...", "options": ["...", "..."]} - ONLY when the ' +
               'retrieved passages answer the question across MULTIPLE genuinely DISTINCT aspects (e.g. ' +
               'safety requirements vs fabrication requirements vs design limits) AND answering all of ' +
               'them would bury the asker in mostly-irrelevant material. 2-6 short option labels naming ' +
-              'the aspects found IN THE PASSAGES. Omit "clarify" for single-aspect questions — a needless ' +
+              'the aspects found IN THE PASSAGES. Omit "clarify" for single-aspect questions - a needless ' +
               'clarification is worse than a long answer.\n'
             : '') +
           'If the passages fully cover the question, reply {"queries": [], "missing_documents": []}.',
@@ -1232,9 +1232,9 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
           // The most actionable diagnosis this route can make: the document
           // IS here but its index can't answer for it.
           if (rows.length === 0) {
-            partialDocs.push(`${doc.name} — 0 indexed pages; re-index it`);
+            partialDocs.push(`${doc.name} - 0 indexed pages; re-index it`);
           } else if (doc.page_count && (doc.pages_indexed ?? 0) < doc.page_count && doc.status !== "indexing") {
-            partialDocs.push(`${doc.name} — only ${doc.pages_indexed ?? 0} of ${doc.page_count} pages indexed; re-index it`);
+            partialDocs.push(`${doc.name} - only ${doc.pages_indexed ?? 0} of ${doc.page_count} pages indexed; re-index it`);
           }
           return rows.map((c) => ({ ...c, libraryId: doc.library_id, tier: "governing" as const }));
         }));
@@ -1543,37 +1543,37 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
           }
         }
         drawingFacts =
-          "\n\nDRAWING FACTS — computed deterministically from EVERY sheet's extracted tags. TRUST " +
+          "\n\nDRAWING FACTS - computed deterministically from EVERY sheet's extracted tags. TRUST " +
           "these for counts and totals (the passages above are excerpts, never the whole picture):\n" +
           `- Sheets: ${docsList.length}` +
           (declaredCount > 0
-            ? ` (${declaredCount} declare their identity in their own title block — drawing number/sheet/rev were READ, not inferred)`
+            ? ` (${declaredCount} declare their identity in their own title block - drawing number/sheet/rev were READ, not inferred)`
             : " (no title-block identities could be read; sheet identity falls back to filenames)") + "\n" +
           `- Equipment, distinct tags: ${census.totalDistinct}` +
           (census.categories.length > 0
-            ? " — " + census.categories.slice(0, 12)
+            ? " - " + census.categories.slice(0, 12)
                 .map((c) => `${c.label} [${c.prefix}]: ${c.distinctTags}` +
                   (c.nextNumber !== null ? ` (highest ${c.prefix}-${c.maxNumber}, next free ${c.prefix}-${c.nextNumber})` : ""))
                 .join("; ")
             : "") + "\n" +
           (census.unknownPrefixes.length > 0
-            ? `- Unrecognized tag prefixes: ${census.unknownPrefixes.slice(0, 8).join(", ")} — if asked about these, say you need the site's tag legend.\n`
+            ? `- Unrecognized tag prefixes: ${census.unknownPrefixes.slice(0, 8).join(", ")} - if asked about these, say you need the site's tag legend.\n`
             : "") +
           `- Drawing cross-references: ${audit.totalRefs} total; ${audit.resolved} resolve to sheets ` +
           "that ARE loaded.\n" +
-          `- SCOPE of this drawing set — series loaded: ${audit.seriesInScope.join(", ") || "(unknown)"}.\n` +
-          `- Referenced but NOT loaded, SAME series (gaps in this set — actionable): ` +
+          `- SCOPE of this drawing set - series loaded: ${audit.seriesInScope.join(", ") || "(unknown)"}.\n` +
+          `- Referenced but NOT loaded, SAME series (gaps in this set - actionable): ` +
           (audit.missingInSeries.length > 0
-            ? `${audit.missingInSeries.length} — ${audit.missingInSeries.slice(0, 10).map((m) => `${m.ref}×${m.count}`).join(", ")}`
+            ? `${audit.missingInSeries.length} - ${audit.missingInSeries.slice(0, 10).map((m) => `${m.ref}×${m.count}`).join(", ")}`
             : "none") + "\n" +
-          `- Referenced but NOT loaded, DIFFERENT series (outside this set — EXPECTED, NOT broken): ` +
+          `- Referenced but NOT loaded, DIFFERENT series (outside this set - EXPECTED, NOT broken): ` +
           (audit.outOfScope.length > 0
             ? audit.outOfScope.slice(0, 10).map((o) =>
                 `${o.series}${o.unitName ? ` = ${o.unitName}` : ""} (${o.count} connector(s): ${o.refs.slice(0, 6).join(", ")})`).join("; ")
             : "none") + "\n" +
           `- One-way connectors (BOTH sheets loaded, reference runs only one direction): ` +
           (audit.oneWay.length > 0
-            ? `${audit.oneWay.length} — ` + audit.oneWay.slice(0, 6).map((o) => `${o.from} → ${o.to}`).join("; ")
+            ? `${audit.oneWay.length} - ` + audit.oneWay.slice(0, 6).map((o) => `${o.from} → ${o.to}`).join("; ")
             : "none") + "\n" +
           (ents.some((e) => e.kind === "opc")
             ? (() => {
@@ -1582,26 +1582,26 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
                 return `- Off-page connector BOX NUMBERS captured: ${opcs.length} ` +
                   "(the numbered box at the page edge; the same number on the continuation sheet is " +
                   "the match, verified by stream name and destination equipment).\n" +
-                  `- BROKEN connectors — an OPC with NO drawing number is broken by definition ` +
+                  `- BROKEN connectors - an OPC with NO drawing number is broken by definition ` +
                   `(nothing tells the reader where to continue): ${broken.length}` +
                   (broken.length > 0
-                    ? ` — e.g. ${broken.slice(0, 4).map((b) => `box ${b.tag}: "${(b.raw ?? "").slice(0, 60)}"`).join("; ")}`
+                    ? ` - e.g. ${broken.slice(0, 4).map((b) => `box ${b.tag}: "${(b.raw ?? "").slice(0, 60)}"`).join("; ")}`
                     : "") + "\n";
               })()
             : "") +
           (decoderText
-            ? `\nSITE NUMBERING DECODER (owner-provided — use it to read every drawing number):\n${decoderText.slice(0, 1200)}\n`
+            ? `\nSITE NUMBERING DECODER (owner-provided - use it to read every drawing number):\n${decoderText.slice(0, 1200)}\n`
             : "") +
           "- The full tag list is in the library's Drawing intelligence panel (equipment register export).\n" +
           "- When the user asks to SEE or FIND specific equipment, keep the answer short and lean on " +
           "the citations: every cited sheet opens in the viewer with the named tags ringed on the " +
           "drawing itself.\n" +
           "\nCONNECTOR SCOPE RULE (non-negotiable): a connector pointing to a DIFFERENT series is not " +
-          "broken, missing, or an error — the user gave you one unit's drawings and every unit ends at " +
+          "broken, missing, or an error - the user gave you one unit's drawings and every unit ends at " +
           "battery limits that hand off to units you weren't given. NEVER report those as broken or as " +
           "problems. Say what you CAN audit (connectors inside the loaded series, plus same-series " +
           "sheets that are absent), then NAME the exact series/drawing numbers you'd need to extend " +
-          "the audit, and note that adding them will in turn expose their own outward connectors — " +
+          "the audit, and note that adding them will in turn expose their own outward connectors - " +
           "so the audit is always bounded by what's loaded. Reserve the words broken/missing for: " +
           "same-series sheets that are absent, one-way connectors between loaded sheets, and " +
           "malformed drawing numbers.";
@@ -1628,13 +1628,13 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
           question:
             `The loaded documents connect outward to ${outOfScopeList.length} other drawing ` +
             "sets/units that aren't in this library. Everything that IS loaded gets fully covered " +
-            "either way — pick which destinations to keep in scope, and I'll track those as the " +
+            "either way - pick which destinations to keep in scope, and I'll track those as the " +
             "documents to obtain next instead of listing everything.",
           options: [
             ...outOfScopeList.slice(0, 8).map((o) => {
               const nums = o.refs.slice(0, 3).join(", ") +
                 (o.refs.length > 3 ? ` +${o.refs.length - 3} more` : "");
-              return `${nums}${o.unitName ? ` — ${o.unitName}` : ""} (${o.count} connector${o.count === 1 ? "" : "s"})`;
+              return `${nums}${o.unitName ? ` - ${o.unitName}` : ""} (${o.count} connector${o.count === 1 ? "" : "s"})`;
             }),
             ONLY_LOADED,
           ],
@@ -1652,20 +1652,20 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
         .select("id", { count: "exact", head: true })
         .in("library_id", [libraryId, ...linkedLibraries.map((l) => l.id)]);
       const answer = (anyChunks ?? 0) === 0
-        ? "**Answer:** Nothing is indexed from these documents yet — every page came back with **no " +
+        ? "**Answer:** Nothing is indexed from these documents yet - every page came back with **no " +
           "text layer**. That is normal for AutoCAD exports drawn with **SHX fonts** (the tags plot as " +
           "line-work, not text) and for scans.\n" +
-          "! Fix: open this library and press **Rebuild index** with your AI key saved — pages without " +
+          "! Fix: open this library and press **Rebuild index** with your AI key saved - pages without " +
           "text are read by **AI vision** during indexing, which makes their tags, connectors, and notes " +
           "searchable. Rephrasing the question will not help until that runs.\n" +
           "**Basis:**\n" +
           "- Every indexed page in this library yielded zero extractable text.\n" +
           "- Vision indexing bills to your own key and counts against your monthly cap.\n" +
-          "- Re-issuing the drawings with TrueType fonts is the alternative — then plain text extraction works."
+          "- Re-issuing the drawings with TrueType fonts is the alternative - then plain text extraction works."
         : "**Answer:** Nothing in " + (hasLinks ? "this library or its linked libraries" : "this library") +
           " matches the question. It may not be covered by the indexed documents, or it may use different " +
-          "terminology — try rephrasing with the exact terms the standard would use." +
-          (missingDocs.length > 0 ? `\n! The answer likely lives in: ${missingDocs.join(", ")} — not in your libraries.` : "") +
+          "terminology - try rephrasing with the exact terms the standard would use." +
+          (missingDocs.length > 0 ? `\n! The answer likely lives in: ${missingDocs.join(", ")} - not in your libraries.` : "") +
           (partialDocs.length > 0 ? `\n! Indexing gap: ${partialDocs.join("; ")}.` : "");
       trace.stage("answer", { citations: [], nothingFound: true, anyIndexed: (anyChunks ?? 0) > 0, missingDocs, partialDocs });
       if (!evalMode) await supabaseAdmin.from("knowledge_questions").insert({
@@ -1811,10 +1811,10 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       }
       if (anchorHits.length > 0) {
         anchorFacts =
-          "\n\nREFERENCED TABLES & FIGURES — recorded at indexing, where each one lives:\n" +
+          "\n\nREFERENCED TABLES & FIGURES - recorded at indexing, where each one lives:\n" +
           anchorHits.map((a) =>
             `- ${a.tag} → ${docName.get(a.document_id) ?? "document"} p.${a.page}` +
-            " (its page image is attached — read values from the IMAGE, not from prose about it)").join("\n");
+            " (its page image is attached - read values from the IMAGE, not from prose about it)").join("\n");
       }
       if (targets.length > 0) emit({ t: "status", text: `Reading ${Math.min(targets.length, MAX_DEEP_READ_PAGES)} printed page${Math.min(targets.length, MAX_DEEP_READ_PAGES) === 1 ? "" : "s"} as images` });
       pageImages = await renderTargets(targets, MAX_DEEP_READ_PAGES);
@@ -1825,11 +1825,11 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
     // Passages carry document STRUCTURE (§) and, when libraries are linked,
     // the PRECEDENCE TIER — governing site standards vs reference code books.
     const buildPassages = (list: typeof chunks) => list.length === 0
-      ? "(no text passages matched the question's search terms — answer from the DRAWING FACTS if they cover it, otherwise say what's missing)"
+      ? "(no text passages matched the question's search terms - answer from the DRAWING FACTS if they cover it, otherwise say what's missing)"
       : list.map((c, i) => {
           const sec = c.section ? `, ${c.section}` : "";
           const tierLabel = hasLinks
-            ? `${c.tier === "reference" ? "REFERENCE" : "GOVERNING"} — ${libNameById.get(c.libraryId ?? libraryId) ?? "library"} | `
+            ? `${c.tier === "reference" ? "REFERENCE" : "GOVERNING"} - ${libNameById.get(c.libraryId ?? libraryId) ?? "library"} | `
             : "";
           const wholeTag = wholeDocIds.has(c.document_id) ? "FULL TEXT | " : "";
           const pinTag = pinnedChunkIds.has(c.id) ? "CITED EARLIER IN THIS CONVERSATION | " : "";
@@ -1849,26 +1849,26 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
     trace.hits("passages", chunks, { reserved: reserved.length, wholeDocs: [...wholeDocIds] }, 80);
     const graphHopNote = graphHops.length > 0
       ? "\n\nGRAPH HOPS: some passages were pulled by FOLLOWING REFERENCES found in the retrieved " +
-        "pages — the document graph resolved these edges automatically:\n" +
+        "pages - the document graph resolved these edges automatically:\n" +
         graphHops.map((h) =>
           `- ${docName.get(h.from) ?? "a retrieved document"} references "${h.via}" → passages from ${h.to} were attached`).join("\n") +
         "\nWhen a hopped document supplies part of the answer, SAY the chain in Why (\"§X points to " +
-        "**" + "the referenced document" + "** [n]\") — the reader should see the trail, not just the destination."
+        "**" + "the referenced document" + "** [n]\") - the reader should see the trail, not just the destination."
       : "";
     const wholeDocNote = wholeDocIds.size > 0
       ? "\n\nFULL DOCUMENTS LOADED: passages marked FULL TEXT are the COMPLETE text of " +
         [...wholeDocIds].map((id) => `**${docName.get(id) ?? "a document"}**`).join(" and ") +
-        " in page order — you are reading the whole document, not excerpts. Synthesize across its " +
+        " in page order - you are reading the whole document, not excerpts. Synthesize across its " +
         "sections the way you would reading it cover to cover; nothing from it is missing, so never " +
         "say its content 'was not retrieved'."
       : "";
 
     const precedence = hasLinks
-      ? "\n\nPRECEDENCE: passages are labeled GOVERNING (the asked library — site standards) or " +
-        "REFERENCE (linked libraries — code books/external references). GOVERNING documents supersede " +
+      ? "\n\nPRECEDENCE: passages are labeled GOVERNING (the asked library - site standards) or " +
+        "REFERENCE (linked libraries - code books/external references). GOVERNING documents supersede " +
         "REFERENCE minimums. When a GOVERNING passage is silent or explicitly defers (\"per B31.3\"), " +
         "the REFERENCE passage governs. ALWAYS state which document wins and why (e.g. \"site standard " +
-        "requires 250 ft-lb [2], exceeding the code minimum [5] — site standard governs\")."
+        "requires 250 ft-lb [2], exceeding the code minimum [5] - site standard governs\")."
       : "";
     // Legend / decoder sheets ride along with every question — the way an
     // engineer keeps the legend page open next to the drawing. ACL applies;
@@ -1896,13 +1896,13 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
     }
     const catalogBlock = buildCatalogBlock(catalog);
     const catalogNote = catalogBlock
-      ? "\n\nWHAT THE LIBRARIES HOLD — a catalog of every mapped document the user can reach. You know " +
+      ? "\n\nWHAT THE LIBRARIES HOLD - a catalog of every mapped document the user can reach. You know " +
         "this library: when a form, checklist, procedure, standard drawing, catalog entry or standard in it " +
-        "fits what the user is doing, say so — never make them ask whether one exists:\n" + catalogBlock
+        "fits what the user is doing, say so - never make them ask whether one exists:\n" + catalogBlock
       : "";
     const pipeClassNote = pipeClasses.length > 0
-      ? "\n\nCATALOG ENTRY FACTS — read from the opening pages of a catalog a person marked; TRUST these " +
-        "fields as printed, and read the entry's pages (among the passages — cite those [n]) for its tables:\n" +
+      ? "\n\nCATALOG ENTRY FACTS - read from the opening pages of a catalog a person marked; TRUST these " +
+        "fields as printed, and read the entry's pages (among the passages - cite those [n]) for its tables:\n" +
         entryFacts(pipeClasses)
       : "";
     const standing =
@@ -1910,22 +1910,22 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
         ? `\n\nLIBRARY OWNER'S STANDING INSTRUCTIONS (follow them):\n${aiInstructions.slice(0, 2000)}`
         : "") +
       (legendBlock
-        ? `\n\nP&ID LEGEND / DECODER SHEETS (owner-attached — authoritative for symbols, line ` +
+        ? `\n\nP&ID LEGEND / DECODER SHEETS (owner-attached - authoritative for symbols, line ` +
           `codes, and abbreviations on these drawings):\n${legendBlock}`
         : "");
     const missing = (missingDocs.length > 0
       ? `\n\nKNOWN GAPS: the passages reference these documents, which are NOT in the libraries: ${missingDocs.join(", ")}. ` +
-        "Where part of the answer depends on one, say so with an \"! \" line — do not guess its content."
+        "Where part of the answer depends on one, say so with an \"! \" line - do not guess its content."
       : "") + (partialDocs.length > 0
       ? `\n\nINDEXING GAPS: these documents ARE in the libraries but their search index is incomplete, so ` +
         `passages from them may be missing: ${partialDocs.join("; ")}. If the answer seems thin on one of ` +
-        `them, add an "! " line telling the user to re-index that document — do not blame the library for ` +
+        `them, add an "! " line telling the user to re-index that document - do not blame the library for ` +
         `lacking it.`
       : "");
     const focusDirective = focus.length > 0 && !scopeFocused
       ? `\n\nFOCUS: the user was asked which aspects they want and chose: ${focus.join(", ")}. ` +
         "Answer ONLY those aspects. If another aspect contains something safety-critical they must not " +
-        "miss, give it ONE \"! \" line pointing at it — nothing more."
+        "miss, give it ONE \"! \" line pointing at it - nothing more."
       : "";
     const scopeDirective = scopeFocused
       ? "\n\nUSER-CHOSEN SCOPE: cover everything in the loaded documents fully. " +
@@ -1933,17 +1933,17 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
           ? `Track ONLY these as the documents to obtain next: ${chosenScope
               .map((o) => `${o.series}${o.unitName ? ` (${o.unitName})` : ""}`).join("; ")}. ` +
             "All other outward references get at most one combined-count line."
-          : "The user chose to stay with what's loaded — no outside-documents needs list beyond " +
+          : "The user chose to stay with what's loaded - no outside-documents needs list beyond " +
             "gaps inside the loaded sets; outward references get at most one combined-count line.")
       : "";
     // Applies to EVERY library — standards, drawings, manuals, mixed. The
     // tool's job is never silently narrowed to what happens to be loaded.
     const needsDirective =
       "\n\nNEEDS: do the whole job with what's loaded, and never silently shrink it. If doing it " +
-      "COMPLETELY requires documents or values you don't have — a referenced spec or code edition, " +
+      "COMPLETELY requires documents or values you don't have - a referenced spec or code edition, " +
       "another unit's drawings, a data sheet, a legend, a vendor manual, a measurement only the user " +
-      "knows — finish everything you CAN, then add a short 'To go further I need:' list under **More:** naming " +
-      "each item and exactly why — at most 3 items, and only items that would change the answer or " +
+      "knows - finish everything you CAN, then add a short 'To go further I need:' list under **More:** naming " +
+      "each item and exactly why - at most 3 items, and only items that would change the answer or " +
       "finish the job. When the user must choose between discovered options, ask ONE question " +
       "listing them rather than assuming.";
     // "How do I determine X?" must leave the reader COVERED — the whole
@@ -1951,49 +1951,49 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
     // rules and floors the source spells out.
     const decisionPathProtocol =
       "\n\nHOW-DO-I / DETERMINE / SIZE / SELECT QUESTIONS: the reader must be covered by the answer " +
-      "ALONE. Walk the COMPLETE decision path the passages define — the general rule, every special " +
+      "ALONE. Walk the COMPLETE decision path the passages define - the general rule, every special " +
       "case that changes it, the mandated estimating rules when data isn't available yet, any " +
-      "floor/minimum or vacuum/external-pressure provision, and any duty to re-evaluate later — " +
+      "floor/minimum or vacuum/external-pressure provision, and any duty to re-evaluate later - " +
       "each as its OWN Why bullet carrying the [n] of the exact provision it came from. NEVER " +
       "merge several provisions into one bullet or one citation: a claim built from §A plus §B " +
       "cites [nA] on the §A part and [nB] on the §B part, so each highlight matches its claim. " +
       "When the user supplied their own operating numbers, END with '### Applied to your case' " +
       "walking those values through the path to a concrete result. If a required user-specific " +
-      "input is MISSING for that final step, do NOT append a Need inside the answer — follow the " +
+      "input is MISSING for that final step, do NOT append a Need inside the answer - follow the " +
       "CALCULATIONS rule instead: reply with ONLY the one-line '**Need:** …' question; the full " +
       "decision path comes after they answer.";
     const calcProtocol =
       "\n\nCALCULATIONS: when the question requires computing from a cited formula (test pressures, " +
       "spans, thicknesses…): (1) transcribe the formula EXACTLY as printed with its variable " +
-      "definitions [n]; (2) list every input with its source — a cited passage [n], a table lookup " +
+      "definitions [n]; (2) list every input with its source - a cited passage [n], a table lookup " +
       "(name the table and the exact row/column you read), or USER-PROVIDED; (3) substitute and " +
       "compute step by step; (4) state units, and end with a **Check:** naming the table cells to " +
       "verify. If a required input is user-specific (test temperature, design pressure, material " +
       "grade…) and was NOT provided, do NOT assume a value: reply with ONLY one line " +
-      "'**Need:** <one specific question naming exactly which value(s) you need and why>' — nothing else.";
+      "'**Need:** <one specific question naming exactly which value(s) you need and why>' - nothing else.";
     const askerImagesNote = userImages.length > 0
       ? `\n\nASKER ATTACHMENTS: the first ${userImages.length} image${userImages.length === 1 ? "" : "s"} ` +
         "in the image list were attached by the asker for THIS question (a photo, a marked-up " +
         "drawing, a screenshot, or pages of a PDF they attached). Read them as context for the " +
-        "question. They are NOT library documents — never cite them with [n]; describe what you " +
+        "question. They are NOT library documents - never cite them with [n]; describe what you " +
         "read in them in words. When what you see bears on the answer (a stencil reading " +
         "\"A312 TP304 WLD\", a visible weld seam, corrosion, a nameplate value), the FIRST Why " +
         "bullet starts \"From your attachment:\" and says exactly what you read and where in the " +
-        "image — so the asker can confirm you looked at the right thing. If the image is unclear " +
+        "image - so the asker can confirm you looked at the right thing. If the image is unclear " +
         "or doesn't show what the question needs, say what's missing in that bullet."
       : "";
     const buildPagesNote = (imgs: typeof pageImages) => askerImagesNote + (imgs.length > 0
       ? "\n\nPRINTED PAGES: attached are the actual page images, in order: " +
         imgs.map((img, i) =>
           `image ${userImages.length + i + 1} = ${docName.get(img.documentId) ?? "Document"} page ${img.page}`).join("; ") +
-        ". Use them to read tables, formulas, and figures EXACTLY as printed — they outrank the " +
+        ". Use them to read tables, formulas, and figures EXACTLY as printed - they outrank the " +
         "extracted text when the two disagree. A value read from a page image cites the [n] of a " +
         "passage from that same page (or names the document and page when no passage matches)."
       : "");
     const fetchDirective = visionEnabled
       ? "\n\nFETCHING PAGES: if you need to SEE a table, figure, or page that is NOT attached (e.g. " +
         "`Table A-1` to read a stress value), reply with ONLY one line " +
-        "'**Fetch:** <table/figure name plus qualifiers — material grade, temperature, document>' and " +
+        "'**Fetch:** <table/figure name plus qualifiers - material grade, temperature, document>' and " +
         "those pages will be attached and the question re-asked. NEVER guess a table value, and NEVER " +
         "tell the user to look a value up themselves when a Fetch could read it."
       : "";
@@ -2005,7 +2005,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       ? "\n\nSTRUCTURED TABLE ATTACHED: an interactive equipment table (grouped by category, every " +
         "tag clickable to open its sheet with the tag ringed) is shown to the user WITH your answer. " +
         "Do NOT re-list every tag. Give totals, notable items, anomalies, and anything the user " +
-        "specifically asked about — the table does the enumeration."
+        "specifically asked about - the table does the enumeration."
       : "";
     // Org Playbooks: standing instructions this org taught its AI ("our
     // transmittals cite the PO number") ride on every ask. Reasoning Skills
@@ -2023,37 +2023,37 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
     const baseAnswerSystem =
       "You are the reference-library assistant for an industrial facility's document control system. Answer the " +
       "question USING ONLY the numbered passages provided.\n\n" +
-      "PROVENANCE — DOCUMENTS ONLY, NON-NEGOTIABLE. The engineer must be able to check every claim, so " +
+      "PROVENANCE - DOCUMENTS ONLY, NON-NEGOTIABLE. The engineer must be able to check every claim, so " +
       "every statement you make has a source they can open:\n" +
       "- Every bullet and sentence in Answer, Why, Engineering trail, Before you act and Don't miss " +
-      "carries the [n] of the passage it comes from — or, for a fact the user gave you, says so " +
+      "carries the [n] of the passage it comes from - or, for a fact the user gave you, says so " +
       "(\"you said the line is in sour service\").\n" +
       "- Never add engineering knowledge, code requirements, typical values, design reasons or " +
-      "\"best practice\" from your own training — not marked, not hedged, not as background. If it " +
+      "\"best practice\" from your own training - not marked, not hedged, not as background. If it " +
       "isn't in a passage or from the user, it isn't in the answer.\n" +
       "- WHY A RULE EXISTS: state a reason ONLY when a passage states it, and quote that passage [n]. " +
-      "When the documents give the requirement but not its reason, the answer says exactly that — " +
-      "\"EP 5-2-2 §4.3 states the requirement but not the reason [n]\" — and stops there.\n" +
+      "When the documents give the requirement but not its reason, the answer says exactly that - " +
+      "\"EP 5-2-2 §4.3 states the requirement but not the reason [n]\" - and stops there.\n" +
       "- THE ASKER'S OWN TERMS: answer for the term the asker used (\"sour gas\"). If a passage defines " +
       "or uses that exact term, quote it. Never treat a related defined condition (\"wet H2S\") as the " +
-      "same thing unless a passage ties them — a definition, or the company's own wording such as " +
+      "same thing unless a passage ties them - a definition, or the company's own wording such as " +
       "\"sour gas (Wet H2S) service\" (the TERM SWEEP lists every such sentence). When one does, say the " +
       "company's documents write it that way, cite it, and say what that document governs. When none " +
       "does, say plainly that the documents define <that condition>, not <the asker's term>, quote it, " +
       "and make which one applies the One question. The Answering for chip states which term you " +
       "answered for.\n" +
       "- NEVER ASK FOR WHAT THE LIBRARY HOLDS: a document that appears in WHAT THE LIBRARIES HOLD or among " +
-      "the passages is never a **To settle this:** item — the system searches it for you. If its relevant " +
-      "part isn't in the passages, write \"Searched <document> for <what> — not found in the indexed text\".\n" +
+      "the passages is never a **To settle this:** item - the system searches it for you. If its relevant " +
+      "part isn't in the passages, write \"Searched <document> for <what> - not found in the indexed text\".\n" +
       "- WHEN IT CAN'T BE PROVEN FROM WHAT'S HERE, ASK FOR THE SOURCE: under **To settle this:**, " +
       "name the publication that would answer it. Prefer the ones the passages themselves point to, " +
-      "and quote the pointer (\"EP 5-2-2 §2.0 references ASME B16.5 and ASME B31.3 [n] — upload the " +
+      "and quote the pointer (\"EP 5-2-2 §2.0 references ASME B16.5 and ASME B31.3 [n] - upload the " +
       "flange-attachment requirements from those\"). Say what to look for by TOPIC; never give a " +
       "clause, table or paragraph number you cannot see in a passage. If no passage points anywhere, " +
       "ask for the standard's basis/commentary document or the code it was written against.\n\n" +
       (webOn
-        ? "WEB SEARCH — ON FOR THIS QUESTION (the user turned it on). The documents still come first and " +
-          "GOVERN. You may search the web ONLY to fill what the documents don't cover — why a rule exists, " +
+        ? "WEB SEARCH - ON FOR THIS QUESTION (the user turned it on). The documents still come first and " +
+          "GOVERN. You may search the web ONLY to fill what the documents don't cover - why a rule exists, " +
           "what a referenced code says. Rules:\n" +
           "- A web statement must come from a page you actually retrieved this turn. The system marks every " +
           "web-backed sentence with its page automatically; never write web markers or URLs yourself, and " +
@@ -2066,17 +2066,17 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
           "- If a web source conflicts with a library passage, say so; the library governs.\n" +
           "- Everything outside the web pages and the passages is still off limits.\n\n"
         : "") +
-      "OUTPUT FORMAT — follow it exactly, sections in this order, no preamble, no restating the question:\n" +
-      "**Mode:** answer | compliance | explore | deviation — one word, the shape you chose (see ANSWER MODES).\n" +
-      "**Heading toward:** (optional) when the conversation shows where the user is going — not just " +
-      "this question — one of: deviation, compliance, ncr, tq, moc, inspection, test, design, " +
-      "troubleshoot, learn; then \" — \" and one short reason (\"deviation — wants to keep slip-on " +
+      "OUTPUT FORMAT - follow it exactly, sections in this order, no preamble, no restating the question:\n" +
+      "**Mode:** answer | compliance | explore | deviation - one word, the shape you chose (see ANSWER MODES).\n" +
+      "**Heading toward:** (optional) when the conversation shows where the user is going - not just " +
+      "this question - one of: deviation, compliance, ncr, tq, moc, inspection, test, design, " +
+      "troubleshoot, learn; then \" - \" and one short reason (\"deviation - wants to keep slip-on " +
       "flanges on elbows that EP 5-2-2 §4.3 prohibits\"). Leave it out unless it is evident.\n" +
       "**Use this:** (optional, up to 2 lines) a document from WHAT THE LIBRARIES HOLD that the user " +
-      "should use for what they're doing, by its exact quoted name, then \" — \" and why (\"Use this: " +
-      "Deviation Request Form — to request the exception formally\").\n" +
+      "should use for what they're doing, by its exact quoted name, then \" - \" and why (\"Use this: " +
+      "Deviation Request Form - to request the exception formally\").\n" +
       "**Answering for:** what you understood the question to be about, as 2-5 short facts joined " +
-      "by \" · \" — the item/material, the governing document, and any condition the answer turns " +
+      "by \" · \" - the item/material, the governing document, and any condition the answer turns " +
       "on (e.g. \"304 stainless · welded pipe · EP 5-2-1 · line class: not given\"). A fact the " +
       "answer depends on that the user hasn't given is written \"<name>: not given\". When a word in " +
       "the question has two meanings in this field, the chip says which one you answered for " +
@@ -2084,22 +2084,22 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       "follow-ups against the conversation here, so the user can see and correct your reading.\n" +
       "**Answer:** the direct answer in ONE or two SHORT sentences (45 words MAX) with its [n] " +
       "markers. Mandatory. NEVER pack an enumeration into the Answer line.\n" +
-      "VERDICT: when the question asks for a decision — can I / may I / is it allowed, acceptable, " +
-      "required, permitted, OK to use — the Answer line STARTS with exactly one of these words in " +
-      "capitals, then an em dash: YES — / NO — / YES, WITH CONDITIONS — / NOT SETTLED —. " +
+      "VERDICT: when the question asks for a decision - can I / may I / is it allowed, acceptable, " +
+      "required, permitted, OK to use - the Answer line STARTS with exactly one of these words in " +
+      "capitals, then an em dash: YES - / NO - / YES, WITH CONDITIONS - / NOT SETTLED -. " +
       "YES or NO only when a passage explicitly settles it; YES, WITH CONDITIONS when it is " +
       "permitted subject to named conditions or approvals (list them under Before you act); NOT " +
-      "SETTLED when the passages genuinely don't decide it — then the sentence names which " +
+      "SETTLED when the passages genuinely don't decide it - then the sentence names which " +
       "document and section DOES decide it, or who does (e.g. the Owner's Engineer).\n" +
       "RULE, NOT READING LIST: for which / what / how-do-I-know / how-do-I-choose questions, the " +
       "Answer line states the RULE the reader applies and what it yields (e.g. \"Use the " +
       "insulation schedule the Owner's Engineer issued for the line; only where none exists, " +
       "select from EP 11-3-7 Table 2 by operating temperature and pipe size [n]\"). An Answer that " +
       "only names documents to go read is a WRONG answer. Answer the question asked, about the " +
-      "item asked — not a neighboring topic.\n" +
+      "item asked - not a neighboring topic.\n" +
       "**To settle this:** (ONLY when the verdict is NOT SETTLED / CAN'T DETERMINE, or the answer " +
       "hinges on a document or value that isn't here)\n" +
-      "- **<document, table, or value>** — why it settles the question, quoting where the loaded " +
+      "- **<document, table, or value>** - why it settles the question, quoting where the loaded " +
       "standards point to it (\"EP 5-2-1 §2.0 invokes **ASME B31.3**; its **Table A-1B** gives the " +
       "joint factor for welded A312 [n]\"). One bullet per item, most decisive first, at most 4.\n" +
       "- **Best answer with what I have:** the most likely outcome and why, in one sentence.\n" +
@@ -2111,17 +2111,17 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       "- the FULL chain an engineer would walk, one provision per bullet, in order: " +
       "\"**<document §/table>** → what it says → what it means for this case [n]\" (e.g. \"**EP " +
       "5-2-1 Table 1** → austenitic Cr-Ni steel → use Table 4 [94]\"). 3-10 steps. Include the steps " +
-      "that rule things OUT, and end on the deciding step. This is the proof the reader forwards — " +
+      "that rule things OUT, and end on the deciding step. This is the proof the reader forwards - " +
       "every step cites. Shown collapsed under Why.\n" +
       "**Before you act:**\n" +
       "- the checklist: ONLY conditions, approvals, hold points, and verifications that could change " +
       "the outcome, each a short imperative with its [n] (\"Confirm the line class in EP 5-2-3 " +
       "lists welded A312 [n]\"). When the items cover different things, start each with what it " +
-      "applies to in bold — e.g. **The pipe you have:**, **When fabricating:**, **Approval:** — so " +
+      "applies to in bold - e.g. **The pipe you have:**, **When fabricating:**, **Approval:** - so " +
       "the reader never has to guess. Whenever a value comes from a table, include what to verify on " +
-      "the printed page — PDF table extraction jumbles numbers. A line starting \"! \" marks a " +
+      "the printed page - PDF table extraction jumbles numbers. A line starting \"! \" marks a " +
       "safety-critical MUST. Leave the section out when there is nothing.\n" +
-      "**Don't miss:** (optional) at most 2 bullets — ONLY things the user didn't ask about that are " +
+      "**Don't miss:** (optional) at most 2 bullets - ONLY things the user didn't ask about that are " +
       "safety-critical or would change the outcome (a hold point, a prohibited combination, a " +
       "service condition that voids the answer). Everything else that's merely related goes under " +
       "More, never here.\n" +
@@ -2129,18 +2129,18 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       "the answer, then \" | options: a; b; c\" when there are natural choices. Leave it out when " +
       "nothing missing would change the answer.\n" +
       "**More:**\n" +
-      "- (optional) anything useful but not needed to act — related rules, a draft technical " +
+      "- (optional) anything useful but not needed to act - related rules, a draft technical " +
       "query, what you'd need to go further. Shown collapsed.\n" +
       "STRUCTURE IS NOT OPTIONAL: under every section each line is a \"- \" bullet or a \"### \" " +
-      "heading — NEVER a paragraph. No paragraph anywhere may exceed two sentences. Never repeat " +
+      "heading - NEVER a paragraph. No paragraph anywhere may exceed two sentences. Never repeat " +
       "the same fact in two sections.\n\n" +
-      "EMPHASIS: wrap every key identifier — document numbers, section refs, specific values and " +
-      "limits — in **bold**. Put exact values/designations in `backticks` (rendered as value chips): " +
+      "EMPHASIS: wrap every key identifier - document numbers, section refs, specific values and " +
+      "limits - in **bold**. Put exact values/designations in `backticks` (rendered as value chips): " +
       "`250 ft-lb`, `ASME B31.3`, `Table 121.5`.\n\n" +
       "PRIORITY ORDER: within each section and each ### group, order bullets by what the reader " +
-      "must act on first — binding requirements (shall/must, hold points, safety limits) first, " +
+      "must act on first - binding requirements (shall/must, hold points, safety limits) first, " +
       "specific values and limits next, supporting context last. The reader works top-down.\n\n" +
-      "COMPLETENESS: for checklist/what-do-I-need questions, completeness BEATS brevity — enumerate " +
+      "COMPLETENESS: for checklist/what-do-I-need questions, completeness BEATS brevity - enumerate " +
       "EVERY requirement found across ALL passages, grouped under short **bold** group names; never " +
       "stop at the first passage's list. If the passages suggest more requirements exist beyond what " +
       "was retrieved (a referenced appendix, a continued table), add a Before you act line saying " +
@@ -2149,12 +2149,12 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       "**Answer:** says exactly what's covered and what isn't. Engineers act on these answers.\n\n" +
       "WHOLE PROVISION: when a cited passage states a rule AND then adds a recommendation, default, " +
       "exception, or practice (\"it is recommended…\", \"unless…\", \"typically…\", \"should be set " +
-      "at…\"), the answer INCLUDES that part — a recommendation in the source is part of the answer, " +
+      "at…\"), the answer INCLUDES that part - a recommendation in the source is part of the answer, " +
       "not commentary. Stopping at \"no explicit value is given\" when the same passage recommends " +
       "one is a WRONG answer.\n\n" +
-      "RELEVANCE — answer THE question, not the topic area: before writing, identify what the asker " +
+      "RELEVANCE - answer THE question, not the topic area: before writing, identify what the asker " +
       "is actually trying to decide or do, and lead with exactly that. Passages are a haystack you " +
-      "were handed, not an outline to summarize — leave out anything that doesn't change the asker's " +
+      "were handed, not an outline to summarize - leave out anything that doesn't change the asker's " +
       "decision, even when it's from the right document. The one exception: a safety-critical fact " +
       "they didn't ask about but cannot act without gets ONE \"! \" line. An answer that buries the " +
       "point under adjacent material is a WRONG answer here.\n\n" +
@@ -2163,10 +2163,10 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       "rule does not govern pipe). Cite an out-of-scope clause ONLY to show that it does NOT apply, " +
       "and say so in the same bullet. Never present one as if it governs.\n\n" +
       "CONVERSATION: a follow-up continues the same job. Interpret short follow-ups (\"show me " +
-      "table 1\", \"what about fittings\") against the conversation — the same material, item, and " +
-      "document — never as a fresh question about something else. When the user pushes back " +
+      "table 1\", \"what about fittings\") against the conversation - the same material, item, and " +
+      "document - never as a fresh question about something else. When the user pushes back " +
       "(\"that doesn't answer it\", \"be more explicit\"), keep the same question and give a SHARPER " +
-      "verdict in FEWER lines — do not add sections. Passages marked CITED EARLIER IN THIS " +
+      "verdict in FEWER lines - do not add sections. Passages marked CITED EARLIER IN THIS " +
       "CONVERSATION are evidence you already relied on; they remain valid.\n\n" +
       "NEVER write that a passage, table, or section is \"not in the attached/loaded pages\" or " +
       "\"not retrieved\". If a table you need is referenced but its text isn't here, use Fetch. If " +
@@ -2177,7 +2177,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       "PLAIN WORDS: the reader is a field engineer reading fast; if they can't tell what you mean " +
       "at a glance, the answer failed even when it is technically right. When a term has more " +
       "than one meaning in this field, say which one in plain words the first time you use it " +
-      "(\"seam-welded pipe — made with a weld along its length at the mill\" vs \"welded joints — " +
+      "(\"seam-welded pipe - made with a weld along its length at the mill\" vs \"welded joints - " +
       "the welds made when the piping is fabricated\"), and never switch meanings mid-answer. " +
       "Spell out codes and shorthand on first use (AES = Aggressive Environmental Service; P8 = " +
       "the austenitic stainless weld group; S5 = full radiography of the seam; CMTR = certified " +
@@ -2189,20 +2189,20 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       "approval\"), and a ready-to-send deviation request or technical query under **More:**. " +
       "Never leave the user with \"confirm with the Owner's Engineer\" and nothing to send.\n\n" +
       "ANSWER MODES:\n" +
-      "- answer: the default — the direct answer to what was asked, as above.\n" +
+      "- answer: the default - the direct answer to what was asked, as above.\n" +
       "- compliance: the user describes work done or planned (\"they fabricated…\", \"we installed…\", " +
       "\"does this meet…\") and needs to know if it meets the standard. The Answer line starts with " +
-      "COMPLIES — / DOES NOT COMPLY — / CAN'T DETERMINE —. Each Why bullet is one finding: " +
-      "\"**Requirement:** what the standard requires [n] — **Found:** what was done — **Gap:** the " +
+      "COMPLIES - / DOES NOT COMPLY - / CAN'T DETERMINE -. Each Why bullet is one finding: " +
+      "\"**Requirement:** what the standard requires [n] - **Found:** what was done - **Gap:** the " +
       "difference (or none)\". Before you act lists the corrective actions. Under More, add a short, " +
       "factual, ready-to-send note to the responsible party stating each requirement, the quoted " +
-      "clause with document/section/page, and the required correction — firm, not personal.\n" +
+      "clause with document/section/page, and the required correction - firm, not personal.\n" +
       "- deviation: the user wants to depart from a requirement (\"get out of\", \"exception\", " +
       "\"waiver\", \"deviation\", \"do we really have to\"). Build the case honestly, for an " +
       "engineer to judge: the Answer line says whether a deviation looks technically supportable " +
-      "for THEIR case — YES, WITH CONDITIONS — / NO — / NOT SETTLED —. Why, in order: (1) " +
+      "for THEIR case - YES, WITH CONDITIONS - / NO - / NOT SETTLED -. Why, in order: (1) " +
       "**Requirement:** the rule, quoted [n]; (2) **Why the rule exists:** the reason as the " +
-      "standard or its referenced code states it, quoted [n] — when no passage states it, say the " +
+      "standard or its referenced code states it, quoted [n] - when no passage states it, say the " +
       "library doesn't state the reason, make the verdict NOT SETTLED, and ask for the source under " +
       "**To settle this:** (see PROVENANCE); never supply a reason yourself; (3) **Does that reason " +
       "apply here:** what about their case makes the hazard present or absent; (4) **Proposed " +
@@ -2214,27 +2214,27 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       "\"design review\"). A verdict is optional; Why may run to 8 bullets; Don't miss may hold up " +
       "to 5 considerations; still cite everything.\n" +
       (answerMode
-        ? `THE USER CHOSE MODE: ${answerMode.toUpperCase()} — use it and write **Mode:** ${answerMode}.\n\n`
+        ? `THE USER CHOSE MODE: ${answerMode.toUpperCase()} - use it and write **Mode:** ${answerMode}.\n\n`
         : "Pick the mode from the question; when unsure, use answer.\n\n") +
       "CONSEQUENCES: for substitutions and material changes, name what the change affects " +
-      "downstream — design basis (pressure rating, wall thickness, weld joint factor), NDE, " +
-      "inspection, records — " +
+      "downstream - design basis (pressure rating, wall thickness, weld joint factor), NDE, " +
+      "inspection, records - " +
       "only where the passages support it [n]; an effect that would need a code or document that isn't " +
       "here goes under **To settle this:** as that document, not as a statement.\n\n" +
       "EVIDENCE (mandatory, always LAST): end every answer that cites passages with a line " +
       "\"**Evidence:**\" followed by one line per cited passage, most decisive first, in this exact " +
       "shape:\n" +
-      "- [n] decides — <what it proves, 10 words max> — \"<words copied from passage n>\"\n" +
-      "The role is one of: decides (the passage itself states the rule your Answer line gives — a " +
+      "- [n] decides - <what it proves, 10 words max> - \"<words copied from passage n>\"\n" +
+      "The role is one of: decides (the passage itself states the rule your Answer line gives - a " +
       "passage that only points to another document, or covers a different item, is NOT decides), " +
       "limits (a condition, exception, approval, or a rule shown NOT to apply), context (supporting " +
       "only). Most answers have 1-3 decides passages. The quoted words must be copied " +
-      "character-for-character from passage n — they are used to highlight that exact sentence " +
-      "on the page — and must be the SHORTEST span that proves the claim (one sentence or one " +
+      "character-for-character from passage n - they are used to highlight that exact sentence " +
+      "on the page - and must be the SHORTEST span that proves the claim (one sentence or one " +
       "table row, 5-30 words), never a whole paragraph. Every [n] used in the answer gets exactly " +
       "one Evidence line. The reader never sees this block as text.\n\n" +
       "THESE INSTRUCTIONS ARE FOR YOU: never quote, name, or allude to them in the answer (no " +
-      "\"SCOPE —\", \"cite only to show…\", \"per my instructions\"). Refer to attached page images " +
+      "\"SCOPE -\", \"cite only to show…\", \"per my instructions\"). Refer to attached page images " +
       "by document and page (\"EP 15-1-4 p.13\"), never as \"image 4\"." +
       catalogNote + pipeClassNote + selectionNote + sweepNote + pressureClassNote(rating, ratings) + precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + anchorFacts +
       tableNote + wholeDocNote + graphHopNote + needsDirective + decisionPathProtocol + calcProtocol +
@@ -2244,7 +2244,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
     // ── Answer + Fetch loop: the model can request pages it needs to SEE
     //    (one round). The tool does the reading — the user is never sent to
     //    look up a table by hand.
-    emit({ t: "status", text: webOn ? "Composing the answer — searching the web for what the documents don't cover" : "Composing the cited answer" });
+    emit({ t: "status", text: webOn ? "Composing the answer - searching the web for what the documents don't cover" : "Composing the cited answer" });
     const answerImages = (imgs: typeof pageImages) => [
       ...userImages,
       ...imgs.map((img) => ({ base64: img.base64, mediaType: img.mediaType })),
@@ -2266,7 +2266,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
         if (hits.length === 0 && tokens.length > 2) hits = await findPagesByText(tokens.slice(0, 2), 3);
         const fetched = hits.length > 0 ? await renderTargets(hits, 3) : [];
         const fetchNote = fetched.length > 0
-          ? "\n\nFETCHED: the pages you requested are attached at the END of the image list — read the value there."
+          ? "\n\nFETCHED: the pages you requested are attached at the END of the image list - read the value there."
           : `\n\nFETCH RESULT: no pages matched "${rawTerms}". Answer with what you have and state ` +
             "plainly which value could not be read and exactly where it lives (document, table).";
         if (fetched.length > 0) pageImages = [...pageImages, ...fetched];
@@ -2302,8 +2302,8 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       trace.stage("draft", { settleItems: items, unreadNamed: unread.map((d) => d.id), citations: extractCitationNumbers(answerOut.text).length });
       if (unread.length > 0 || items.length > 0) {
         emit({ t: "status", text: items.length > 0
-          ? `Looking up what the answer needs — ${items.length} item${items.length === 1 ? "" : "s"} — in the library instead of asking you`
-          : `The answer pointed to ${unread.map((d) => d.name.split(" — ")[0]).join(", ")} — reading from the library` });
+          ? `Looking up what the answer needs - ${items.length} item${items.length === 1 ? "" : "s"} - in the library instead of asking you`
+          : `The answer pointed to ${unread.map((d) => d.name.split(" — ")[0]).join(", ")} - reading from the library` });
         const firstNew = chunks.length + 1;
         const have = new Set(chunks.map((c) => c.id));
         const add = (rows: RetrievedChunk[], d: { id: string; library_id: string } | null, max: number) => {
@@ -2357,14 +2357,14 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
           trace.hits("chase", chunks.slice(firstNew - 1), { looked: chased });
           const chaseNote = `\n\nSEARCHED FOR WHAT YOUR DRAFT ASKED THE USER FOR: ${chased.map((c) => `"${c}"`).join("; ")}. ` +
             `The library's best passages for those are now attached as [${firstNew}]–[${chunks.length}]. Use them. ` +
-            "Under **To settle this:** never name a document that is in these libraries or among the passages — the system " +
+            "Under **To settle this:** never name a document that is in these libraries or among the passages - the system " +
             "searches them for you. If something was searched for and is still not in the passages, write \"Searched the " +
-            "library for <what> — not found\" instead of asking the user to supply it. Ask the user only for facts only they " +
+            "library for <what> - not found\" instead of asking the user to supply it. Ask the user only for facts only they " +
             "know (a temperature, a concentration, a design condition) or for a document that is genuinely not in the libraries.";
           // Only now is the draft replaced — a search that found nothing new
           // leaves the first answer standing as streamed.
           emit({ t: "reset" });
-          emit({ t: "status", text: `Found ${chunks.length - firstNew + 1} more passage${chunks.length - firstNew + 1 === 1 ? "" : "s"} — answering again` });
+          emit({ t: "status", text: `Found ${chunks.length - firstNew + 1} more passage${chunks.length - firstNew + 1 === 1 ? "" : "s"} - answering again` });
           answerOut = await call({
             system: baseAnswerSystem + orgInstructions + buildPagesNote(pageImages) + chaseNote,
             user: `${conversationBlock}PASSAGES:\n\n${buildPassages(chunks)}${providedInputs}\n\nQUESTION: ${question}`,
@@ -2447,7 +2447,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
           answer = answer.split(`[${n}]`).join("");
         }
         answer +=
-          "\n\n! One or more citation markers pointed at no retrieved passage and were removed — " +
+          "\n\n! One or more citation markers pointed at no retrieved passage and were removed - " +
           "treat any adjacent claim as uncited.";
         used = used.filter((n) => n >= 1 && n <= chunks.length);
       }
@@ -2476,7 +2476,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       });
     }
     if (webRefused) {
-      answer += "\n\n! Web search is available with a Claude key only — this answer used your documents only.";
+      answer += "\n\n! Web search is available with a Claude key only - this answer used your documents only.";
     }
 
     // Which equipment tags does the ANSWER talk about? On a drawing, that's

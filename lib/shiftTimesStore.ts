@@ -74,12 +74,12 @@ export async function saveProjectShiftTimes(projectId: string, t: ShiftTimes): P
     // The column isn't there yet: keep them on this device meanwhile.
     if (/shift_times/.test(error.message)) {
       cache(projectId, clean);
-      throw new Error("Saved on this device only — run migration 20261027_project_shift_times.sql so everyone on the project gets these times.");
+      throw new Error("Saved on this device only - run migration 20261027_project_shift_times.sql so everyone on the project gets these times.");
     }
     throw new Error(`Not saved: ${error.message}`);
   }
   // The database saved nothing (not allowed to change this project).
-  if (!data || data.length === 0) throw new Error("Not saved — only the project owner or an admin can change the shift times.");
+  if (!data || data.length === 0) throw new Error("Not saved - only the project owner or an admin can change the shift times.");
   cache(projectId, clean);
 }
 

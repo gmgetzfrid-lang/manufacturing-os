@@ -168,7 +168,7 @@ export default function ThemeMenu() {
                 className="hidden"
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) void onLogo(f); e.currentTarget.value = ""; }}
               />
-              <div className="mt-1.5 text-[10px] text-[var(--color-text-faint)]">We read the colors right here in your browser — the logo isn&apos;t uploaded anywhere.</div>
+              <div className="mt-1.5 text-[10px] text-[var(--color-text-faint)]">We read the colors right here in your browser - the logo isn&apos;t uploaded anywhere.</div>
             </div>
           </div>
         </>,

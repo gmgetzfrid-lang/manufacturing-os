@@ -229,12 +229,12 @@ export default function Sidebar({
       { label: 'Documents',   hint: 'Libraries · board · locks · packages · blocked', href: '/documents',    icon: FileStack, tone: 'blue', ...badgeOf(sectionCounts.documents)   },
       { label: 'Operating areas', hint: 'Equipment registry by unit · plot-plan map',  href: '/admin/assets', icon: Factory,   tone: 'purple' },
       { label: 'Projects',    hint: 'Project workspaces & milestones',                         href: '/projects',     icon: Briefcase, tone: 'indigo', ...badgeOf(sectionCounts.projects) },
-      { label: 'Companies',   hint: 'Known contractors & vendors — scored on evidence',        href: '/companies',    icon: HardHat,   tone: 'amber' },
+      { label: 'Companies',   hint: 'Known contractors & vendors - scored on evidence',        href: '/companies',    icon: HardHat,   tone: 'amber' },
       {
         label: 'Drafting Requests', hint: 'Drafting & design request portal', href: '/requests', icon: MailPlus, tone: 'orange',
         ...badgeOf(sectionCounts.requests),
       },
-      { label: 'Intelligence', hint: 'AI in one place — ask, knowledge, graph, link review, setup', href: '/intelligence', icon: Bot, tone: 'violet' },
+      { label: 'Intelligence', hint: 'AI in one place - ask, knowledge, graph, link review, setup', href: '/intelligence', icon: Bot, tone: 'violet' },
       { label: 'Output Docs', hint: 'Generate scopes & letters from templates + data', href: '/output-templates', icon: FileOutput, tone: 'orange' },
       { label: 'Activity',    hint: 'History + audit log',                             href: '/activity',     icon: Activity, tone: 'emerald' },
     ];
@@ -441,7 +441,7 @@ export default function Sidebar({
             <Link href="/profile" className="flex items-center min-w-0 flex-1 group" title="Open profile">
               <UserAvatar uid={uid} email={userEmail} size={36} rounded="lg" />
               <div className="ml-2.5 overflow-hidden">
-                <div className="text-xs font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{userEmail?.split('@')[0] ?? '—'}</div>
+                <div className="text-xs font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{userEmail?.split('@')[0] ?? '-'}</div>
                 <div className="text-[10px] text-[var(--color-accent)] truncate font-mono uppercase tracking-widest font-bold">{activeOrgId ? (activeRole ?? '…') : 'No workspace'}</div>
               </div>
             </Link>
@@ -512,7 +512,7 @@ function SidebarLeaf({
                                 'bg-orange-500 shadow-orange-900/50';
   return (
     <Link href={leaf.href}
-      title={collapsed ? `${leaf.label}${leaf.hint ? ` — ${leaf.hint}` : ''}` : (leaf.hint ?? leaf.label)}
+      title={collapsed ? `${leaf.label}${leaf.hint ? ` - ${leaf.hint}` : ''}` : (leaf.hint ?? leaf.label)}
       style={active ? ACTIVE_BG_STYLE : undefined}
       className={`relative flex items-center gap-2.5 rounded-lg transition-colors ${
         collapsed ? 'h-10 justify-center' : 'h-9 px-2.5'

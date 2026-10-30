@@ -24,7 +24,7 @@ export default function ScheduleEmptyState({ canEdit, onImport, onAdd }: Props) 
         </div>
         <h2 className="text-lg font-black text-[var(--color-text)]">Let&apos;s build your schedule</h2>
         <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-md mx-auto">
-          Pick how you want to start. You can mix and match later — everything lands in the same plan and runs in the Execution board.
+          Pick how you want to start. You can mix and match later - everything lands in the same plan and runs in the Execution board.
         </p>
       </div>
 
@@ -35,7 +35,7 @@ export default function ScheduleEmptyState({ canEdit, onImport, onAdd }: Props) 
             icon={<Upload className="w-5 h-5" />}
             badge="Easiest"
             title="Import a schedule"
-            body="Already have one? Drop a Microsoft Project XML or Primavera (.xer/.xml) file and we'll parse it — hierarchy and all. (In MS Project: File → Save As → XML.)"
+            body="Already have one? Drop a Microsoft Project XML or Primavera (.xer/.xml) file and we'll parse it - hierarchy and all. (In MS Project: File → Save As → XML.)"
             cta="Upload a file"
             onClick={onImport}
           />

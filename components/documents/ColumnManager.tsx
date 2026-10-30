@@ -172,7 +172,7 @@ export default function ColumnManager(props: {
           <div className="px-5 py-2 bg-blue-50/50 border-b border-blue-100 text-[11px] text-[var(--color-text)] flex items-start gap-2">
             <Pencil className="w-3 h-3 text-blue-600 mt-0.5 shrink-0" />
             <span>
-              <b>Tip:</b> Every column has a <Pencil className="inline w-2.5 h-2.5 align-baseline" /> pencil to rename — including the built-in ones (e.g. <i>Doc No</i> → <i>Sheet No</i>). Renames affect the displayed label only, the underlying data is untouched.
+              <b>Tip:</b> Every column has a <Pencil className="inline w-2.5 h-2.5 align-baseline" /> pencil to rename - including the built-in ones (e.g. <i>Doc No</i> → <i>Sheet No</i>). Renames affect the displayed label only, the underlying data is untouched.
             </span>
           </div>
         )}
@@ -210,7 +210,7 @@ export default function ColumnManager(props: {
         <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="border border-[var(--color-border)] rounded-xl p-3">
             <div className="text-xs font-bold text-[var(--color-text-muted)] mb-2">
-              Columns <span className="font-normal text-[var(--color-text-faint)]">— click a row to show / hide it</span>
+              Columns <span className="font-normal text-[var(--color-text-faint)]">- click a row to show / hide it</span>
             </div>
             <div className="space-y-1 max-h-[320px] overflow-auto">
               {columns.map((col) => {
@@ -273,7 +273,7 @@ export default function ColumnManager(props: {
                           <button
                             onClick={() => startRename(col.key, col.label)}
                             className="shrink-0 p-2 rounded-lg border-2 border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] hover:border-[var(--color-accent)]/50 transition-colors"
-                            title={`Rename "${col.label}" — works for built-in columns too`}
+                            title={`Rename "${col.label}" - works for built-in columns too`}
                           >
                             <Pencil className="h-3.5 w-3.5" />
                           </button>

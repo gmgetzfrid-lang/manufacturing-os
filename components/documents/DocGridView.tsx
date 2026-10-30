@@ -94,7 +94,7 @@ export default function DocGridView({
             >
               <DocThumb documentId={doc.id} width={thumbWidth} rounded="rounded" />
               <span className="font-mono text-xs font-bold text-[var(--color-text)] truncate max-w-[16ch] shrink-0">
-                {doc.documentNumber || "—"}
+                {doc.documentNumber || "-"}
               </span>
               <span className="text-xs text-[var(--color-text)] truncate flex-1">
                 {doc.title || doc.name || "Untitled"}
@@ -141,7 +141,7 @@ export default function DocGridView({
             <DocThumb documentId={doc.id} width={thumbWidth} className="pointer-events-none" />
             <div className="w-full text-center min-w-0">
               <div className="font-mono text-[11px] font-bold text-[var(--color-text)] truncate">
-                {doc.documentNumber || doc.title || doc.name || "—"}
+                {doc.documentNumber || doc.title || doc.name || "-"}
               </div>
               {doc.documentNumber && (doc.title || doc.name) && (
                 <div className="text-[10px] text-[var(--color-text-muted)] truncate mt-0.5">

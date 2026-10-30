@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
   }
   if (upErr) {
     if (/rating|rated_at|column/i.test(upErr.message)) {
-      return bad("Feedback requires migration 20261013_answer_feedback.sql — run it in Supabase.", 409);
+      return bad("Feedback requires migration 20261013_answer_feedback.sql - run it in Supabase.", 409);
     }
     return bad(upErr.message, 500);
   }

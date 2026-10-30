@@ -112,7 +112,7 @@ export function SourcesMenu({ scope, libraryId, libraries, onScopeChange, scopeL
               <Toggle on={webOn} />
               <span className="min-w-0">
                 <span className="block text-xs font-bold text-[var(--color-text)]">Also search the web</span>
-                <span className="block text-[10px] text-[var(--color-text-muted)]">Your documents first — they govern. Every web statement links to its page.</span>
+                <span className="block text-[10px] text-[var(--color-text-muted)]">Your documents first - they govern. Every web statement links to its page.</span>
               </span>
             </button>
           )}
@@ -121,7 +121,7 @@ export function SourcesMenu({ scope, libraryId, libraries, onScopeChange, scopeL
               <div className="my-1 h-px bg-[var(--color-border)]" />
               <Item active={scope === "tools"} icon={Bot} label="System tools" sub="Documents, equipment, audit history, P&ID traces"
                 onClick={() => { setOpen(false); onScopeChange("tools", null); }} />
-              <Item active={scope === "internet"} icon={Globe} label="Internet only" sub="Web / general knowledge — not your documents"
+              <Item active={scope === "internet"} icon={Globe} label="Internet only" sub="Web / general knowledge - not your documents"
                 onClick={() => { setOpen(false); onScopeChange("internet", libraryId ?? libraries[0]?.id ?? null); }} />
             </>
           )}
@@ -174,7 +174,7 @@ export function AnswerMenu({ answerMode, onAnswerMode, skills, picked, onPick, q
             <Head>Skills for this question</Head>
             {picked && <button type="button" onClick={() => onPick(null)} className="text-[10px] font-bold text-[var(--color-accent)] hover:underline">Back to workspace defaults</button>}
           </div>
-          <div className="px-2 pb-1 text-[10px] text-[var(--color-text-muted)]">Each skill applies itself when the question fits — the ones marked <b>fits</b> match what you typed.</div>
+          <div className="px-2 pb-1 text-[10px] text-[var(--color-text-muted)]">Each skill applies itself when the question fits - the ones marked <b>fits</b> match what you typed.</div>
           {skills === null && <div className="px-2 py-1.5 text-[11px] text-[var(--color-text-muted)]">Loading skills…</div>}
           {[...(skills ?? [])].sort((a, b) => Number(skillFits(b, question)) - Number(skillFits(a, question))).map((s) => {
             const fits = skillFits(s, question);
@@ -195,7 +195,7 @@ export function AnswerMenu({ answerMode, onAnswerMode, skills, picked, onPick, q
           })}
           <div className="my-1.5 h-px bg-[var(--color-border)]" />
           <div className="flex items-center justify-between gap-2 px-2 py-1 text-[11px]">
-            <Link href="/intelligence/skills" className="inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline"><Wand2 className="w-3 h-3" /> Skill Library — write your own</Link>
+            <Link href="/intelligence/skills" className="inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline"><Wand2 className="w-3 h-3" /> Skill Library - write your own</Link>
             {onOpenInstructions && (
               <button type="button" onClick={() => { setOpen(false); onOpenInstructions(); }} className="inline-flex items-center gap-1 font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                 <SlidersHorizontal className="w-3 h-3" /> Instructions{instructionCount ? ` (${instructionCount})` : ""}

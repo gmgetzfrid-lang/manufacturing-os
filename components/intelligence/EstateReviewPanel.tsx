@@ -61,7 +61,7 @@ export default function EstateReviewPanel() {
     setRunning(true); setNote(null);
     try {
       const r = await estatePost<{ folders: number; documents: number; applied: number; pending: number; unchanged: number; notes: string[] }>("/api/estate/resolve", { orgId: activeOrgId, all: true });
-      setNote(`${r.folders} folders and ${r.documents} documents looked at — ${r.applied} links applied, ${r.pending} new here, ${r.unchanged} already decided.${r.notes.length ? " " + r.notes.join(" ") : ""}`);
+      setNote(`${r.folders} folders and ${r.documents} documents looked at - ${r.applied} links applied, ${r.pending} new here, ${r.unchanged} already decided.${r.notes.length ? " " + r.notes.join(" ") : ""}`);
       await load();
     } catch (err) { setNote((err as Error).message); }
     finally { setRunning(false); }

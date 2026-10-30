@@ -63,11 +63,11 @@ export function aiReadability(doc: BoundaryDoc, inSource: boolean): BoundaryVerd
 export function explainBlock(reason: AiBlockReason): string {
   switch (reason) {
     case "held_back":
-      return "Held back from AI by a controller — not mirrored, not indexed, not citable.";
+      return "Held back from AI by a controller - not mirrored, not indexed, not citable.";
     case "out_of_scope":
       return "Not inside any library or folder linked as a knowledge source, so AI features never see it.";
     case "not_current":
-      return "Superseded, void, or archived — the AI only reads documents currently in force.";
+      return "Superseded, void, or archived - the AI only reads documents currently in force.";
     case "no_file":
       return "No current version file to read.";
   }

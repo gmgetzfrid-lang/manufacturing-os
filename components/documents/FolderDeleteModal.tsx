@@ -133,12 +133,12 @@ export default function FolderDeleteModal({
         {previews !== null && !empty && (
           <div className="p-5 space-y-2.5">
             {option("all", FolderX, "Delete the folder and everything in it", held > 0
-                ? <span className="text-rose-700 dark:text-rose-400 font-bold">{held} document{held === 1 ? " is" : "s are"} under a legal hold inside — release the hold or move those records out first.</span>
+                ? <span className="text-rose-700 dark:text-rose-400 font-bold">{held} document{held === 1 ? " is" : "s are"} under a legal hold inside - release the hold or move those records out first.</span>
                 : <>All {docs.toLocaleString()} document{docs === 1 ? "" : "s"} are <b>permanently deleted</b>
                     {subfolders > 0 ? `, and all ${subfolders.toLocaleString()} subfolder${subfolders === 1 ? "" : "s"} go with ${one ? "it" : "them"}` : ""}.
                     {" "}The empty folder structure can be restored from Recently deleted for 30 days; the documents can&apos;t.</>,
               held > 0)}
-            {option("lift", FolderOutput, "Delete only the folder — keep what's inside", directDocs > 0 || directSubs > 0
+            {option("lift", FolderOutput, "Delete only the folder - keep what's inside", directDocs > 0 || directSubs > 0
                 ? <>Its {directDocs > 0 ? `${directDocs.toLocaleString()} document${directDocs === 1 ? "" : "s"}` : ""}
                     {directDocs > 0 && directSubs > 0 ? " and " : ""}
                     {directSubs > 0 ? `${directSubs} subfolder${directSubs === 1 ? "" : "s"}` : ""} move up into <b>{parentName}</b>. Nothing is deleted except the folder.</>
