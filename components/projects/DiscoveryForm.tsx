@@ -120,7 +120,11 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
   const [foundV, setFoundV] = useState(() => (onDay && onDay < nowV ? onDay : nowV));
   const [startMode, setStartMode] = useState<"asap" | "set">(onDay ? "set" : "asap");
   const [startV, setStartV] = useState(onDay ?? "");
-  const asap = useMemo(() => earliestStart(milestones, afterId, now), [milestones, afterId, now]);
+  // As soon as it can: right after it was found, or once what it starts
+  // after is done.
+  const foundMs = toMs(foundV);
+  const asap = useMemo(() => earliestStart(milestones, afterId, now, Number.isFinite(foundMs) ? foundMs : undefined), [milestones, afterId, now, foundMs]);
+  const afterStep = afterId ? milestones.find((m) => m.id === afterId) : undefined;
   const follows = useMemo(() => followsUntil(milestones, afterId), [milestones, afterId]);
   const afterName = steps.find((s) => s.id === afterId)?.name;
   const foundAt = toMs(foundV);
@@ -297,7 +301,12 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
               ))}
             </div>
             {startMode === "asap"
-              ? <div className="text-[11px] text-[var(--color-text-muted)]">{afterName && follows != null && follows >= now ? `When “${afterName}” is planned to be done.` : "Now - what it starts after is done or due."}</div>
+              ? <div className="text-[11px] text-[var(--color-text-muted)]">{(() => {
+                if (afterStep && afterStep.status !== "completed") return follows != null && follows >= now ? `When “${afterName}” is planned to be done.` : `When “${afterName}” is done - it isn't yet, so from now.`;
+                const end = afterStep ? ms(afterStep.actualAt ?? afterStep.plannedAt) : NaN;
+                if (Number.isFinite(end) && Number.isFinite(foundMs) && end > foundMs) return `When “${afterName}” was done.`;
+                return `Right when it was ${k.found}.`;
+              })()}</div>
               : <DateTimePicker label="Planned start" value={startV} onChange={(v) => { setStartV(v); setMsg(null); }} tz={tz} times={times} future showNow={false} />}
           </div>
           <label className="block">

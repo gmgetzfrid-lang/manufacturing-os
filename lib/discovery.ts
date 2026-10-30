@@ -141,12 +141,18 @@ export function defaultHolds(milestones: Milestone[], taskId: string, afterId: s
   return leavesUnder(milestones, taskId).filter((m) => m.id && m.id !== afterId && (m.dependsOn ?? []).includes(afterId) && m.status !== "completed").map((m) => m.id!);
 }
 
-/** As soon as the work can start: now, or when the step it follows is
- *  done (as planned, or when it was), whichever is later. */
-export function earliestStart(milestones: Milestone[], afterId: string | null | undefined, now: number): number {
+/** As soon as the work can start: right when it was found (`foundAt`;
+ *  none given: now), or when the step it follows is done, whichever is
+ *  later. A step it follows that's done: when it was done. One not done
+ *  yet: when it's planned to be, and never before now (it's still
+ *  waiting on it). */
+export function earliestStart(milestones: Milestone[], afterId: string | null | undefined, now: number, foundAt?: number): number {
   const after = afterId ? milestones.find((m) => m.id === afterId) : undefined;
-  const afterEnd = after ? (after.status === "completed" ? ms(after.actualAt ?? after.plannedAt) : ms(after.plannedAt)) : -Infinity;
-  return Math.max(now, Number.isFinite(afterEnd) ? afterEnd : -Infinity);
+  const afterEnd = !after ? -Infinity
+    : after.status === "completed" ? ms(after.actualAt ?? after.plannedAt)
+      : Math.max(now, ms(after.plannedAt));
+  const from = foundAt != null && Number.isFinite(foundAt) ? foundAt : now;
+  return Math.max(from, Number.isFinite(afterEnd) ? afterEnd : -Infinity);
 }
 
 /** When the step it follows is planned to be done (or was), if it follows one. */
@@ -163,7 +169,7 @@ export function planDiscovery(milestones: Milestone[], draft: DiscoveryDraft, o:
   const byId = new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m]));
   const after = draft.afterId ? byId.get(draft.afterId) : undefined;
   // When it's planned to start, or as soon as it can.
-  let t = draft.startAt != null && Number.isFinite(draft.startAt) ? draft.startAt : earliestStart(milestones, draft.afterId, o.now);
+  let t = draft.startAt != null && Number.isFinite(draft.startAt) ? draft.startAt : earliestStart(milestones, draft.afterId, o.now, draft.foundAt);
   const steps: DiscoveryPlan["steps"] = [];
   draft.steps.forEach((s, i) => {
     const hrs = Math.max(0.25, s.hours || 0);

@@ -29,6 +29,15 @@ describe("discovery work into the schedule", () => {
     // Found at hour 2; the step it follows is planned done at 10.
     expect(earliestStart(base(), "open", now)).toBe(T0 + 10 * 3_600_000);
     expect(earliestStart(base(), null, now)).toBe(now);
+    // As soon as it can: right when it was found, not when it's entered.
+    expect(earliestStart(base(), null, now, T0 + 1 * 3_600_000)).toBe(T0 + 1 * 3_600_000);
+    // After a step already done: when it was done, if that's later than found.
+    const done = base().map((m) => (m.id === "open" ? { ...m, status: "completed" as const, actualAt: h(3) } : m));
+    expect(earliestStart(done, "open", now, T0 + 1 * 3_600_000)).toBe(T0 + 3 * 3_600_000);
+    expect(earliestStart(done, "open", now, T0 + 3.5 * 3_600_000)).toBe(T0 + 3.5 * 3_600_000);
+    // After a step not done yet and already past its plan: it waits, so from now.
+    const late = base().map((m) => (m.id === "open" ? { ...m, plannedAt: h(2) } : m));
+    expect(earliestStart(late, "open", now, T0 + 1 * 3_600_000)).toBe(now);
     expect(followsUntil(base(), "open")).toBe(T0 + 10 * 3_600_000);
     const asap = planDiscovery(base(), { taskId: "v7", what: "Tray 14", foundAt: T0 + 2 * 3_600_000, steps: [{ name: "Weld", hours: 4 }], afterId: "open" }, { now, tz: UTC });
     expect([asap.steps[0].plannedStartAt, asap.steps[0].plannedAt]).toEqual([h(10), h(14)]);
@@ -74,9 +83,9 @@ describe("discovery work into the schedule", () => {
     expect(p.impact.critical).toBe(false);
     expect(impactLine(p.impact, (n) => `${n} h`)).toBe("4 h of work · task finish +4 h · turnaround finish unchanged");
   });
-  it("never starts before it's found", () => {
-    const p = planDiscovery(base(), { taskId: "e13", what: "Found late", foundAt: now, steps: [{ name: "Fix", hours: 1 }], afterId: null }, { now: T0 + 20 * 3_600_000, tz: UTC });
-    expect(p.steps[0].plannedStartAt).toBe(h(20));
+  it("as soon as it can: right when it was found, even when that's hours before it's entered", () => {
+    const p = planDiscovery(base(), { taskId: "e13", what: "Found earlier", foundAt: now, steps: [{ name: "Fix", hours: 1 }], afterId: null }, { now: T0 + 20 * 3_600_000, tz: UTC });
+    expect(p.steps[0].plannedStartAt).toBe(h(4));
   });
 });
 
