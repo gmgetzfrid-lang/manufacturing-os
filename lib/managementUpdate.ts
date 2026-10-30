@@ -10,6 +10,7 @@
 
 import { capacityOf, askedResult } from "@/lib/shiftHandover";
 import { turnoverPlan, nextOf, askedLine, crewsOf, vsPlan, doneByTask, shareOf, pathNote, competition, type TableOrder } from "@/lib/turnoverPlan";
+import { behindWhyBlocks, type BehindWhy } from "@/lib/behindWhy";
 import { discoveryOf, discoverySummary, discoveryStepLine, impactLine, ADDED, kindOf as addedKind, addedTitle, type Discovery } from "@/lib/discovery";
 import { type PullCrew, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
 import { rankHazards, type HazardJobInput, type HazardKind } from "@/lib/safetyMoment";
@@ -75,6 +76,8 @@ export interface UpdateLookups {
   forecast?: { finish: number; slipH: number };
   /** Discovery work on the schedule (lib/discovery). */
   discovery?: Discovery[];
+  /** Why it's behind (lib/behindWhy). */
+  why?: BehindWhy;
   shiftNotes?: Array<{ at: number; text: string; followUp?: boolean; from?: string }>;
   /** Shift notes, hour by hour — the approved lines, with the clock each
    *  shows ("8:00 AM", "8:30"). */
@@ -202,6 +205,8 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
         // No bottom-line box: the numbers and bars get the whole width.
         title: "", lines: [],
       },
+      // Why: the hours behind by cause, and what holds each chain up.
+      ...(look.why && look.why.total >= 0.5 ? behindWhyBlocks(look.why, f) : []),
     ],
   });
 

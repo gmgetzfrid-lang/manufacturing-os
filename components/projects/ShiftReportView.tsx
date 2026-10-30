@@ -30,10 +30,11 @@ import { createPortal } from "react-dom";
 import {
   Printer, ChevronLeft, ChevronRight, ChevronDown, Sun, Moon, CheckCircle2, Flag, FastForward,
   TrendingUp, TrendingDown, Minus, Zap, Presentation, X, Settings2, Rocket, ArrowLeftRight, Trophy,
-  Mail, FileText, Hourglass, Clock, Pencil, Plus, CalendarClock,
+  Mail, FileText, Hourglass, Clock, Pencil, Plus, CalendarClock, Eye, EyeOff,
 } from "lucide-react";
 import type { Milestone, MilestoneNote } from "@/types/schema";
 import { buildProgressIndex, leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
+import { behindWhy, chainText, CAUSE_ORDER, CAUSE_WORD, type BehindWhy, type BehindCause } from "@/lib/behindWhy";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { withWorkOrderCrews } from "@/lib/workOrderCrew";
 import { turnoverPlan, nextOf, standing, askedLine, doneOf, crewsOf, doneByTask, shareOf, watchLines, SEVERE_BEHIND_H, pathNote, competition, type TableOrder } from "@/lib/turnoverPlan";
@@ -273,6 +274,10 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     const mine = (r: ShiftRow) => (decisions[r.leaf.id ?? ""]?.crew ?? pulledCrewFallback) === crew || whoOf(r) === crew;
     return { ...v, goals: { ...v.goals, pulled: report.goals.pulled.filter(mine), pulledHeld: report.goals.pulledHeld.filter(mine) } };
   }, [report, crew, decisions, pulledCrewFallback]);
+  // Why it's behind: each step's hours of work traced to what holds it up
+  // (lib/behindWhy) — the whole job's, like the standing.
+  const why = useMemo(() => behindWhy({ behind: report.overall.drivers.behind, ahead: report.overall.drivers.aheadHours, milestones, now: report.now,
+    pctOf: (m) => (m.id ? progress?.get(m.id)?.percent : undefined) ?? leafPercent(m) }), [report, milestones, progress]);
   const kickoff = useMemo(() => buildKickoff({ milestones, progress, criticalIds, tz, times }), [milestones, progress, criticalIds, tz, times]);
   const closeout = useMemo(() => buildCloseout({ milestones, progress, criticalIds, tz }), [milestones, progress, criticalIds, tz]);
   const rehearsal = now < shift.start;
@@ -476,15 +481,32 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     remove: canEdit && userId && orgId ? (id) => void saveRec(CLOSEOUT_KEY, (r) => ({ ...r, lessons: (r.lessons ?? []).filter((x) => x.id !== id) })) : undefined,
     msg: recMsg ?? recErr,
   }), [lessonsRec, canEdit, userId, orgId, saveRec, userName, recMsg, recErr]);
-  const sections = useMemo(() => meeting === "kickoff"
+  const allSections = useMemo(() => meeting === "kickoff"
     ? kickoffSections(kickoff, ctx)
     : meeting === "closeout"
       ? closeoutSections(closeout, report, ctx, cancelled, discoveryList, lookBack, lessons)
-      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet, onEdit: canEdit && onUpdateStep ? setEditing : undefined, forecast, pathSource, discovery: discoveryList,
+      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet, onEdit: canEdit && onUpdateStep ? setEditing : undefined, forecast, pathSource, discovery: discoveryList, why,
         onDiscovery: onDiscovery ? () => { const first = view.goals.all[0]?.parentId ?? view.review.done[0]?.parentId; const t = (first ? live.find((m) => m.id === first) : undefined) ?? live.find((m) => live.some((k) => k.parentId === m.id)); if (t) onDiscovery(t); } : undefined,
         // Only while the next shift is still ahead (or on).
         onPlanNext: onPlanNext && report.next.end > now ? () => onPlanNext(report.next) : undefined }),
-  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, onDiscovery, live, onPlanNext, now, lookBack, lessons]);
+  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, onDiscovery, live, onPlanNext, now, lookBack, lessons]);
+  // Sections left off the report, on screen and in print — the viewer's own
+  // choice for each meeting, remembered like the email's. Each comes back
+  // with a tap (listed at the bottom); the email keeps its own choice.
+  const [hiddenBy, setHiddenBy] = useState<Record<string, string[]>>({});
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the viewer's own choice, read once after mount
+    try { setHiddenBy((JSON.parse(localStorage.getItem("shiftReport:hidden") ?? "{}") ?? {}) as Record<string, string[]>); } catch { /* private mode */ }
+  }, []);
+  const setHidden = useCallback((id: string | null, hide: boolean) => setHiddenBy((cur) => {
+    const was = cur[meeting] ?? [];
+    const next = { ...cur, [meeting]: id == null ? [] : hide ? [...new Set([...was, id])] : was.filter((x) => x !== id) };
+    try { localStorage.setItem("shiftReport:hidden", JSON.stringify(next)); } catch { /* private mode */ }
+    return next;
+  }), [meeting]);
+  const sections = useMemo(() => allSections.filter((x) => !(hiddenBy[meeting] ?? []).includes(x.id)), [allSections, hiddenBy, meeting]);
+  const hiddenSecs = useMemo(() => allSections.filter((x) => (hiddenBy[meeting] ?? []).includes(x.id)), [allSections, hiddenBy, meeting]);
+  const [showSecs, setShowSecs] = useState(false);
 
   // A step's card: asked about mid-meeting, answered from the schedule.
   const qlIndex = useMemo(() => quickLookIndex(milestones), [milestones]);
@@ -588,8 +610,9 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           order: sheet.order,
           forecast,
           discovery: discoveryList,
+          why,
         })
-        : withoutEmpty(sections.filter((x) => x.data).map((x) => ({ id: x.id, title: x.title, sub: x.sub, flag: x.flag ?? null, blocks: x.data!() }))),
+        : withoutEmpty(allSections.filter((x) => x.data).map((x) => ({ id: x.id, title: x.title, sub: x.sub, flag: x.flag ?? null, blocks: x.data!() }))),
     };
   };
 
@@ -682,6 +705,33 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                 )}
                 {timesMsg && <div className={`leading-snug ${/^Saved for everyone/.test(timesMsg) ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-400"}`}>{timesMsg}</div>}
               </div>
+            )}
+          </div>
+          <div className="relative">
+            <button type="button" onClick={() => setShowSecs((v) => !v)} aria-expanded={showSecs}
+              className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border ${hiddenSecs.length ? "border-[var(--color-accent)] text-[var(--color-accent)]" : "border-[var(--color-border-strong)] text-[var(--color-text)]"} hover:bg-[var(--color-surface-2)]`}
+              title="Choose what shows on the report — on screen and in print">
+              <EyeOff className="w-3.5 h-3.5" /> Hide{hiddenSecs.length ? ` (${hiddenSecs.length})` : ""}
+            </button>
+            {showSecs && (
+              <>
+                <div className="fixed inset-0 z-20" onClick={() => setShowSecs(false)} aria-hidden />
+                <div className="absolute right-0 top-full mt-1 z-30 w-64 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-2.5 text-[12px]">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Show on the report</div>
+                  <div className="mt-1.5 space-y-1">
+                    {allSections.map((x) => (
+                      <label key={x.id} className="flex items-center gap-2 cursor-pointer select-none py-0.5">
+                        <input type="checkbox" className="accent-[var(--color-accent)] w-4 h-4" checked={!hiddenSecs.includes(x)} onChange={(e) => setHidden(x.id, !e.target.checked)} />
+                        <span className="font-semibold text-[var(--color-text)]">{x.title.split(" — ")[0]}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <div className="mt-2 flex items-center justify-between gap-2 border-t border-[var(--color-border)] pt-2">
+                    <span className="text-[10.5px] text-[var(--color-text-muted)] leading-snug">On screen and in print. The email has its own list.</span>
+                    {hiddenSecs.length > 0 && <button type="button" onClick={() => setHidden(null, false)} className="shrink-0 font-bold text-[var(--color-accent)] hover:underline">Show all</button>}
+                  </div>
+                </div>
+              </>
             )}
           </div>
           <button onClick={() => setPresenting(presenting == null ? 0 : null)}
@@ -800,6 +850,18 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
               </section>
             );
           })}
+          {hiddenSecs.length > 0 && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-dashed border-[var(--color-border-strong)] px-3 py-2 text-[11.5px] text-[var(--color-text-muted)] print:hidden">
+              <EyeOff className="w-3.5 h-3.5" /> Hidden:
+              {hiddenSecs.map((x) => (
+                <button key={x.id} type="button" onClick={() => setHidden(x.id, false)} title="Show it again"
+                  className="rounded-full border border-[var(--color-border)] px-2 py-0.5 font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                  {x.title.split(" — ")[0]} <Eye className="inline w-3 h-3 -mt-px" />
+                </button>
+              ))}
+              <button type="button" onClick={() => setHidden(null, false)} className="ml-auto font-bold text-[var(--color-accent)] hover:underline">Show all</button>
+            </div>
+          )}
           <Footnote meeting={meeting} ctx={ctx} asOf={asOf} now={now} projectName={projectName} />
         </div>
       )}
@@ -1231,6 +1293,8 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   pathSource?: { label: string; theirs: number; calculated: number; onUse?: () => void; msg?: string | null };
   /** Discovery work on the schedule, and the way to add it. */
   discovery?: Discovery[]; onDiscovery?: () => void;
+  /** Why it's behind (lib/behindWhy). */
+  why?: BehindWhy;
   /** Change what the next shift does, in the schedule. */
   onPlanNext?: () => void }): Sec[] {
   const { overall, review, goals, shift, next } = report;
@@ -1285,7 +1349,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     const sh = shareOf(report, r.leaf.id);
     if (!sh) return null;
     const h = c.hrs(Math.round(sh.hours * 10) / 10);
-    return sh.side === "ahead" ? { t: `${h} ahead of plan`, tone: "emerald" } : { t: `${h} behind plan`, tone: sh.hours >= SEVERE_BEHIND_H ? "rose" : "amber" };
+    // Hours of the step's work, not hours late: "25 of 48 h behind plan".
+    const of = r.hours > 0 ? ` of ${c.hrs(Math.round(r.hours * 10) / 10)}` : "";
+    return sh.side === "ahead" ? { t: `${h}${of} ahead of plan`, tone: "emerald" } : { t: `${h}${of} behind plan`, tone: sh.hours >= SEVERE_BEHIND_H ? "rose" : "amber" };
   };
   // ── Done: finished, and moved forward but on no list below.
   const doneIds = new Set(plan.done.map((r) => r.leaf.id ?? r.leaf.name));
@@ -1428,6 +1494,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           <StandTiles print={print} actual={overall.actualPct} planned={overall.plannedPct} standing={overall.standing}
             gap={{ label: standStats[2].label, value: standStats[2].value }} done={overall.stepsDone} total={overall.stepsTotal}
             pastDue={pastDueAll} pastDueLabel={standStats[4].label} />
+          {o.why && o.why.total >= 0.5 && <WhyBehind why={o.why} c={c} print={print} />}
           {!print && o.pathSource && (
             <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-[var(--color-text-muted)] print:hidden">
               <span>Critical path: <b className="text-[var(--color-text)]">{o.pathSource.label}</b> ({o.pathSource.theirs} step{o.pathSource.theirs === 1 ? "" : "s"}). From the schedule&apos;s links it&apos;s {o.pathSource.calculated}, recalculated as work moves — near-critical and float come with it.</span>
@@ -2251,6 +2318,65 @@ function StandTiles({ actual, planned, standing, gap, done, total, pastDue, past
         <div className={`${value} ${pastDue ? "text-amber-700 dark:text-amber-400" : ""}`}>{pastDue}</div>
         <div className={sub}>steps past their finish</div>
       </div>
+    </div>
+  );
+}
+
+const CAUSE_TONE: Record<BehindCause, string> = {
+  discovery: "border-violet-300 bg-violet-50 text-violet-900 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200",
+  added: "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200",
+  held: "border-rose-300 bg-rose-50 text-rose-900 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200",
+  own: "border-slate-300 bg-slate-50 text-slate-800 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200",
+};
+
+/** Why it's behind: the hours of work behind by cause — found work, added
+ *  scope, holds, or late / slow with nothing in the way — then what holds
+ *  each chain up and the steps waiting on it (lib/behindWhy). */
+function WhyBehind({ why, c, print }: { why: BehindWhy; c: Ctx; print: boolean }) {
+  const [all, setAll] = useState(false);
+  const h = (x: number) => c.hrs(Math.round(x * 10) / 10);
+  const shown = print || all ? why.chains : why.chains.slice(0, 6);
+  const more = why.chains.length - shown.length;
+  const text = print ? "text-[8pt]" : "text-[12px]";
+  const small = print ? "text-[7.5pt]" : "text-[11px]";
+  return (
+    <div className={`mt-2 rounded-lg border border-slate-200 dark:border-slate-700 ${print ? "px-2 py-1.5" : "px-3 py-2.5"} keep`}>
+      <div className={`font-bold ${print ? "text-[9pt]" : "text-[13px]"}`}>
+        Why we&apos;re behind — {h(why.total)} of work behind plan
+        {why.ahead >= 0.5 && <span className="font-medium text-[var(--color-text-muted)]">, {h(why.ahead)} ahead elsewhere</span>}
+      </div>
+      <div className={`mt-1.5 flex flex-wrap gap-1.5 ${small}`}>
+        {CAUSE_ORDER.filter((k) => why.byCause[k] >= 0.05).map((k) => (
+          <span key={k} className={`rounded-full border px-2 py-0.5 font-bold ${CAUSE_TONE[k]}`}>
+            {CAUSE_WORD[k].word} <span className="font-mono">{h(why.byCause[k])}</span>
+          </span>
+        ))}
+      </div>
+      <ul className={`mt-2 divide-y divide-slate-200 dark:divide-slate-700/60 ${text}`}>
+        {shown.map((ch) => {
+          const t = chainText(ch, c);
+          return (
+            <li key={ch.head.id} className="py-1.5 flex items-start gap-2">
+              <span className={`shrink-0 mt-px rounded border px-1.5 font-bold ${small} ${CAUSE_TONE[ch.cause]}`}>{CAUSE_WORD[ch.cause].short}</span>
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold text-[var(--color-text)] break-words">{t.title} <span className="font-normal text-[var(--color-text-muted)]">— {t.state}</span></div>
+                {t.facts && <div className="text-[var(--color-text-muted)] break-words">{t.facts}</div>}
+                {t.waiting && <div className="text-[var(--color-text-muted)] break-words">{t.waiting}</div>}
+                {t.split && <div className={`${small} text-[var(--color-text-faint)]`}>{t.split}</div>}
+              </div>
+              <span className="shrink-0 font-bold font-mono tabular-nums text-rose-700 dark:text-rose-400">{h(ch.hours)}</span>
+            </li>
+          );
+        })}
+      </ul>
+      {more > 0 && (
+        <button type="button" onClick={() => setAll(true)} className="mt-1 text-[11.5px] font-bold text-[var(--color-accent)] hover:underline print:hidden">
+          Show {more} more ({h(why.chains.slice(shown.length).reduce((a, x) => a + x.hours, 0))})
+        </button>
+      )}
+      {all && why.chains.length > 6 && (
+        <button type="button" onClick={() => setAll(false)} className="mt-1 text-[11.5px] font-bold text-[var(--color-text-muted)] hover:underline print:hidden">Show fewer</button>
+      )}
     </div>
   );
 }

@@ -444,7 +444,10 @@ export function watchLines(rows: ShiftRow[], report: ShiftReport, t: { hrs: (h: 
   for (const { r, s } of severe) {
     const after = rows.filter((x) => x.waitingOn.some((w) => w.id === r.leaf.id));
     const crit = after.some((x) => x.critical) ? ", and it's on the critical path" : "";
-    out.push({ tone: "rose", strong: `${label(r)} is ${h(s!.hours)} behind`, rest: after.length ? ` — ${and(after.map((x) => x.leaf.name))} can't start until it's done${crit}.` : "." });
+    // Hours of its work, not hours late — and what it's waiting on, if anything.
+    const of = r.hours > 0 ? ` of ${h(r.hours)}` : "";
+    const waits = r.waitingOn.length ? ` (waiting on ${r.waitingOn[0].name}${r.waitingOn.length > 1 ? ` +${r.waitingOn.length - 1}` : ""})` : "";
+    out.push({ tone: "rose", strong: `${label(r)} is ${h(s!.hours)}${of} behind${waits}`, rest: after.length ? ` — ${and(after.map((x) => x.leaf.name))} can't start until it's done${crit}.` : "." });
   }
   // Carried over from earlier shifts — and what they wait on that isn't on this list.
   const carried = rows.filter((r) => r.carryOver);
