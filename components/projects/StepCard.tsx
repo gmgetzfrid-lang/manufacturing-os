@@ -8,7 +8,7 @@
 // few things that happened sit underneath.
 
 import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Play, Check } from "lucide-react";
+import { ChevronLeft, ChevronRight, Play, Check, Trash2 } from "lucide-react";
 import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import { shiftAt, workHours, type ShiftTimes } from "@/lib/shiftReport";
 import { fmtInTz, toDateTimeInput, fromDateTimeInput } from "@/lib/scheduleTz";
@@ -18,7 +18,7 @@ import { discoveryOf, kindOf, ADDED, type AddedKind } from "@/lib/discovery";
 import { ADDED_TONE } from "@/components/projects/DiscoveryTag";
 import PctSlider from "@/components/projects/PctSlider";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
-import { updateMilestoneNote, setProgressTime, setNoteTime, updateDiscoveryRecord, deleteDiscovery, deleteMilestoneNote, undoLastProgress, resetStepProgress, setProgressPercent, AHEAD_MAX_MS } from "@/lib/milestones";
+import { updateMilestoneNote, setProgressTime, setNoteTime, updateDiscoveryRecord, deleteDiscovery, deleteMilestoneNote, undoLastProgress, resetStepProgress, setProgressPercent, removeProgressEntry, AHEAD_MAX_MS } from "@/lib/milestones";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import type { ProgressLogRow } from "@/lib/progressHistory";
 import { describeChange } from "@/lib/timeLog";
@@ -496,9 +496,15 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     return best;
   }, [rows]);
   const STATUS_WORD: Record<MilestoneStatus, string> = { planned: "not started", in_progress: "in progress", completed: "done", on_hold: "on hold", blocked: "blocked", missed: "missed" };
-  const removable = (x: HistoryEvent): "change" | "comment" | null =>
-    x.logId != null && lastChange && x.logId === lastChange.id ? "change"
-      : x.logId == null && !x.fix && x.noteIds.length > 0 ? "comment" : null;
+  // A % entry anywhere comes off on its own; a start, finish or hold only
+  // when it's the latest (the step goes back); a comment any time.
+  const rowOf = (x: HistoryEvent) => (x.logId != null ? rows.find((r) => r.id === x.logId) : undefined);
+  const removable = (x: HistoryEvent): "change" | "entry" | "comment" | null => {
+    if (x.logId != null && lastChange && x.logId === lastChange.id) return "change";
+    const r = rowOf(x);
+    if (r && r.old_status != null && r.old_status === r.new_status) return "entry";
+    return x.logId == null && !x.fix && x.noteIds.length > 0 ? "comment" : null;
+  };
   const changed = (ids: string[]) => {
     window.dispatchEvent(new CustomEvent("schedule:changed", { detail: { ids } }));
     window.dispatchEvent(new CustomEvent("milestone-notes:changed"));
@@ -507,10 +513,15 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     const kind = removable(x);
     if (!kind || !m.id) return;
     const before = lastChange ? `${STATUS_WORD[lastChange.old_status as MilestoneStatus] ?? lastChange.old_status}${lastChange.old_status === "in_progress" || lastChange.old_status === "on_hold" || lastChange.old_status === "blocked" ? `, ${Math.round(Number(lastChange.old_percent ?? 0))}%` : ""}` : "";
+    const from = rowOf(x)?.old_percent;
     if (!(await appConfirm(kind === "change" ? {
       title: `Take back “${x.text}”?`,
       message: `It comes off the history${x.noteIds.length ? " with its comment" : ""}, and the step goes back to how it stood before it: ${before}${x.fix === "finish" ? ", with no finish time" : x.fix === "start" ? ", with no start time" : ""}. Then enter it again the right way.`,
       confirmLabel: "Take it back",
+    } : kind === "entry" ? {
+      title: `Remove “${x.text}”?`,
+      message: `It comes off the history${x.noteIds.length ? " with its comment" : ""}. The step stays as it is now; the entry after it counts from ${Math.round(Number(from ?? 0))}%.`,
+      confirmLabel: "Remove",
     } : {
       title: "Remove this comment?",
       message: "It comes off the step's history and the reports.",
@@ -522,9 +533,13 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         const r = await undoLastProgress(m.id);
         if (r !== "ok") { setFixMsg(r === "missing" ? "Taking back an entry needs the database update (20261109_history_remove.sql) run first." : r === "none" ? "There's nothing to take back." : "Not taken back."); return; }
       }
+      if (kind === "entry" && x.logId != null) {
+        const r = await removeProgressEntry(x.logId);
+        if (r !== "ok") { setFixMsg(r === "missing" ? "Removing an entry needs the database update (20261112_history_remove_entry.sql) run first." : r === "status" ? "A start, finish or hold comes off only when it's the latest - or Start over." : "Not removed."); return; }
+      }
       for (const id of x.noteIds) await deleteMilestoneNote(id).catch(() => undefined);
       changed([m.id]);
-      setFixing(null); setSaved(kind === "change" ? `Took back “${x.text}”` : "Comment removed");
+      setFixing(null); setSaved(kind === "change" ? `Took back “${x.text}”` : kind === "entry" ? `Removed “${x.text}”` : "Comment removed");
     } catch (e) { setFixMsg((e as Error).message || "Not removed."); }
     finally { setFixBusy(false); }
   };
@@ -731,6 +746,12 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                       {x.text && <b className="text-[var(--color-text)]">{x.text}</b>}
                       {x.said.map((c, k) => <span key={k} className="text-[var(--color-text)]">{x.text || k > 0 ? " - " : ""}{c.text}</span>)}
                       {editable && fixing !== x.key && <button type="button" onClick={() => openFix(x)} className="ml-1.5 text-[11px] font-semibold text-[var(--color-accent)] hover:underline">Edit</button>}
+                      {editable && fixing !== x.key && removable(x) && (
+                        <button type="button" onClick={() => void removeEntry(x)} disabled={fixBusy} aria-label={`Remove ${x.text || "this comment"}`} title={removable(x) === "change" ? "Take it back" : "Remove"}
+                          className="ml-1 align-middle inline-flex items-center justify-center w-5 h-5 rounded text-[var(--color-text-muted)] hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 disabled:opacity-50">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                     {fixing === x.key && (
                       <div className="mt-1 mb-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-2.5 space-y-2 text-[12.5px]">
@@ -751,7 +772,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                               {removable(x) === "change" ? "Take back" : "Remove"}
                             </button>
                           ) : x.logId != null && (
-                            <span className="ml-auto text-[11px] text-[var(--color-text-muted)]">Only the latest entry can be taken back - or Start over.</span>
+                            <span className="ml-auto text-[11px] text-[var(--color-text-muted)]">A start, finish or hold comes off only when it&apos;s the latest - or Start over.</span>
                           )}
                         </div>
                       </div>

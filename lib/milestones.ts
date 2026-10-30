@@ -887,6 +887,19 @@ export async function setProgressPercent(logId: number, pct: number): Promise<"o
   return data === "ok" || data === "status" || data === "range" ? data : "error";
 }
 
+/** Take a % entry out of a step's history, wherever it sits: the line
+ *  goes, the entry after it counts from where this one started, the step
+ *  stays as it is now (20261112_history_remove_entry.sql). "status": a
+ *  start, finish or hold - only the latest comes off (Take back);
+ *  "latest": it's the latest - take it back instead; "missing": the
+ *  database update isn't run yet. */
+export type EntryRemoveResult = "ok" | "status" | "latest" | "missing" | "error";
+export async function removeProgressEntry(logId: number): Promise<EntryRemoveResult> {
+  const { data, error } = await supabase.rpc("remove_progress_entry", { p_log_id: logId });
+  if (error) return error.code === "PGRST202" || error.code === "42883" ? "missing" : "error";
+  return (["ok", "status", "latest"] as const).find((x) => x === data) ?? "error";
+}
+
 /** Start a step over: not started, no times, no history, no comments. */
 export const resetStepProgress = (milestoneId: string) => historyRpc("reset_step_progress", milestoneId);
 
