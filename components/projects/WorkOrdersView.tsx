@@ -11,7 +11,7 @@
 // (lib/workOrdersPrint) — without changing the view.
 
 import React, { useMemo, useState } from "react";
-import { Search, ChevronRight, Printer, Ban } from "lucide-react";
+import { Search, ChevronRight, Printer, Ban, Plus } from "lucide-react";
 import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { leafPercent } from "@/lib/scheduleProgress";
@@ -30,6 +30,7 @@ import { useLetterhead } from "@/lib/letterheadStore";
 import { letterheadDocument } from "@/lib/letterhead";
 import { workOrdersHtml, PRINT_CSS, type PrintOrder, type PrintFormat } from "@/lib/workOrdersPrint";
 import { CancelJobForm } from "@/components/projects/CancelledJobs";
+import AddWorkPicker from "@/components/projects/AddWorkPicker";
 import { saidWithLatest } from "@/lib/stepComment";
 
 const STEP_STATUS: Record<MilestoneStatus, string> = { planned: "Not started", in_progress: "In progress", completed: "Done", on_hold: "On hold", blocked: "Blocked", missed: "Missed" };
@@ -90,6 +91,8 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
   const [open, setOpen] = useState<Set<string>>(new Set());
   // The work order being taken off the schedule (its key).
   const [cancelling, setCancelling] = useState<string | null>(null);
+  // Adding discovery or added scope: which work order first.
+  const [picking, setPicking] = useState(false);
 
   const orders = useMemo(() => {
     const byId = new Map<string, Milestone>();
@@ -241,6 +244,10 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
 
   return (
     <div className="space-y-2">
+      {picking && onDiscovery && (
+        <AddWorkPicker day={today} tz={tz} milestones={milestones}
+          onPick={(t) => { setPicking(false); onDiscovery(t); }} onClose={() => setPicking(false)} />
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-1.5 h-9 flex-1 min-w-[220px] max-w-[420px] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 focus-within:border-[var(--color-accent-ring)]">
           <Search className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
@@ -259,7 +266,13 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
             );
           })}
         </div>
-        <span className="relative ml-auto inline-flex">
+        {canEdit && onDiscovery && (
+          <button type="button" onClick={() => setPicking(true)}
+            className="ml-auto inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
+            <Plus className="w-3.5 h-3.5" /> Add discovery or added scope
+          </button>
+        )}
+        <span className={`relative inline-flex ${canEdit && onDiscovery ? "" : "ml-auto"}`}>
           <button type="button" onClick={() => setPrintMenu((v) => !v)} aria-expanded={printMenu} disabled={shown.length === 0}
             className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
             <Printer className="w-3.5 h-3.5" /> Print
@@ -341,6 +354,14 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
                 </button>
                 {isOpen && (
                   <div className="border-t border-[var(--color-border)]">
+                    {canEdit && onDiscovery && (
+                      <div className="px-3 pt-2">
+                        <button type="button" onClick={() => onDiscovery(o.owner)}
+                          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
+                          <Plus className="w-3.5 h-3.5" /> Add discovery or added scope to this work order
+                        </button>
+                      </div>
+                    )}
                     <CalendarQuickView whole task={o.owner} onDay={o.steps} others={[]} dayKey={today} band={null} dayLabel="" marks={marks}
                       tz={tz} times={times} progress={progress} canEdit={canEdit}
                       onUpdate={onUpdate} onFixTimes={onFixTimes} onOpenDetail={onOpenDetail} onMoveDays={canEdit ? onMoveDays : undefined} onDiscovery={onDiscovery} />
