@@ -99,7 +99,7 @@ export default function DateTimePicker({ label, value, onChange, tz, times, plan
         </button>
         {sh && (!future && t > nowMs + 60_000
           ? <span className="text-[12px] font-semibold text-amber-700 dark:text-amber-400">{aheadWords(t - nowMs)} from now</span>
-          : <span className="text-[12px] text-[var(--color-text-muted)]">{fmtInTz(sh.start, tz, { weekday: "short" })} {sh.kind} shift</span>)}
+          : <span className="text-[12px] text-[var(--color-text-muted)]" title="The shift this time counts for - not the date">{fmtInTz(sh.start, tz, { weekday: "short" })} {sh.kind} shift, {fmtInTz(sh.start, tz, { hour: "numeric", minute: "2-digit", hour12: true })} to {fmtInTz(sh.end, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>)}
       </div>
       {date && firstDay && date < firstDay ? (
         <div className="text-[12px] font-semibold text-rose-700 dark:text-rose-400">Before the job started ({dayWords(firstDay)}). Pick the right day.</div>
