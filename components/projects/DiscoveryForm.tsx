@@ -168,6 +168,13 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
                 <option value="">Nothing — starts now</option>
                 {steps.map((s) => <option key={s.id} value={s.id!}>{s.name}{s.status === "completed" ? " (done)" : s.status === "in_progress" ? " (under way)" : ""}</option>)}
               </select>
+              {/* After work that isn't done: it waits for it — say so, so two
+                  jobs meant to run side by side aren't put one after the other. */}
+              {afterId && steps.find((s) => s.id === afterId)?.status !== "completed" && (
+                <span className="mt-1 block text-[11px] font-semibold text-amber-800 dark:text-amber-300">
+                  One after the other: it waits until “{afterName}” is done{follows != null ? ` (planned ${fmt(follows)})` : ""}. Running side by side? Pick what they both start after.
+                </span>
+              )}
             </label>
             <div>
               <span className={lbl}>Holds up <span className="font-normal text-[var(--color-text-muted)]">— can&apos;t start until it&apos;s done</span></span>
