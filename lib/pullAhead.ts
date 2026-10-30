@@ -8,6 +8,7 @@
 // ready or not, with why it isn't.
 
 import type { LookAheadItem } from "@/lib/shiftReport";
+import { discoveryText } from "@/lib/discovery";
 
 export interface LookAheadFilter {
   query: string;
@@ -22,7 +23,7 @@ const norm = (s: string) => s.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g
 /** What a step is searched by. */
 export function searchText(x: LookAheadItem): string {
   const m = x.row.leaf;
-  return norm([m.name, ...x.row.path, m.workOrderRef ?? "", m.responsibleParty ?? "", m.location ?? "", m.wbs ?? ""].join(" "));
+  return norm([m.name, ...x.row.path, m.workOrderRef ?? "", m.responsibleParty ?? "", m.location ?? "", m.wbs ?? "", discoveryText(m)].join(" "));
 }
 
 export function filterLookAhead(items: LookAheadItem[], f: LookAheadFilter): LookAheadItem[] {

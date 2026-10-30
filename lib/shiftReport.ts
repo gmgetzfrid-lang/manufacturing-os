@@ -1135,11 +1135,13 @@ export function crewsOnReport(report: ShiftReport): Array<{ who: string; steps: 
     .sort((a, b) => Number(a.who === UNASSIGNED) - Number(b.who === UNASSIGNED) || b.steps - a.steps || a.who.localeCompare(b.who));
 }
 
-/** The report narrowed to one crew's steps. Where the job stands
+/** The report narrowed to one crew's steps (or the steps a test keeps:
+ *  added work, a crew's added work). Where the job stands
  *  (overall) stays the whole job's; the gap-closing hint, which is about
  *  the whole job, is dropped. */
-export function filterShiftReport(report: ShiftReport, who: string): ShiftReport {
-  const keep = (rows: ShiftRow[]) => rows.filter((r) => whoOf(r) === who);
+export function filterShiftReport(report: ShiftReport, who: string | ((r: ShiftRow) => boolean)): ShiftReport {
+  const ok = typeof who === "string" ? (r: ShiftRow) => whoOf(r) === who : who;
+  const keep = (rows: ShiftRow[]) => rows.filter(ok);
   const { review, goals } = report;
   const all = keep(goals.all);
   return {

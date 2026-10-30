@@ -800,10 +800,11 @@ export async function creditProgressTo(milestoneId: string, at: number): Promise
 }
 
 /** Correct a piece of discovery after it was added: what was found and
- *  when. It's kept on each step it added (attributes.discovery), and its
- *  "Discovery: …" comment on the step it follows says when — all of them
- *  are changed. Returns how many steps were changed. */
-export async function updateDiscoveryRecord(projectId: string, recordId: string, patch: { foundAt?: number; what?: string; kind?: AddedKind }): Promise<number> {
+ *  when, and its work order number. It's kept on each step it added
+ *  (attributes.discovery, the WO field), and its "Discovery: …" comment on
+ *  the step it follows says when — all of them are changed. Returns how
+ *  many steps were changed. */
+export async function updateDiscoveryRecord(projectId: string, recordId: string, patch: { foundAt?: number; what?: string; kind?: AddedKind; wo?: string | null }): Promise<number> {
   const { rows, error } = await fetchAllRows<{ id: string; attributes: Record<string, unknown> | null }>((from, to) => supabase
     .from("milestones").select("id, attributes").eq("project_id", projectId).order("id").range(from, to) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>);
   if (error) throw new Error(error);
@@ -813,7 +814,7 @@ export async function updateDiscoveryRecord(projectId: string, recordId: string,
     if (!rec || rec.id !== recordId) continue;
     if (!before || rec.seq === 1) before = rec;
     const next = { ...rec, ...(patch.what != null ? { what: patch.what.trim() } : {}), ...(patch.foundAt != null ? { foundAt: patch.foundAt } : {}), ...(patch.kind ? { kind: patch.kind } : {}) };
-    const { error: e } = await supabase.from("milestones").update({ attributes: { ...(r.attributes ?? {}), discovery: discoveryAttr(next) } }).eq("id", r.id);
+    const { error: e } = await supabase.from("milestones").update({ attributes: { ...(r.attributes ?? {}), discovery: discoveryAttr(next) }, ...(patch.wo !== undefined ? { work_order_ref: patch.wo?.trim() || null } : {}) }).eq("id", r.id);
     if (e) throw new Error(e.message);
     n++;
   }

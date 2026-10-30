@@ -1,13 +1,14 @@
 "use client";
 
-// AddWorkPicker — adding discovery or added scope from a calendar day:
-// first the work order it goes under (the ones worked that day on top),
-// then the same form as on Work orders, with the day filled in.
+// AddWorkPicker — adding discovery or added scope from a calendar day, or
+// an hour of the shift notes: first the work order it goes under (the ones
+// worked that day on top), then the same form as on Work orders, with the
+// day (or the hour) filled in.
 
 import React, { useMemo, useState } from "react";
 import { Plus, Search, X as XIcon } from "lucide-react";
 import type { Milestone } from "@/types/schema";
-import { dayKeyToMs, fmtInTz } from "@/lib/scheduleTz";
+import { dayKeyToMs, fmtInTz, fromDateTimeInput } from "@/lib/scheduleTz";
 import { inheritedWorkOrders } from "@/lib/workOrderCrew";
 
 const ms = (v: unknown) => (v == null || v === "" ? NaN : Date.parse(String(v)));
@@ -31,18 +32,23 @@ export function workOrdersForDay(milestones: Milestone[], day: string, tz: strin
   return { onDay: onDay.sort(byName), others: others.sort(byName) };
 }
 
-export default function AddWorkPicker({ day, tz, milestones, onPick, onClose }: {
+export default function AddWorkPicker({ day: when, tz, milestones, onPick, onClose }: {
+  /** "YYYY-MM-DD", or "YYYY-MM-DDTHH:mm" for an hour. */
   day: string; tz: string; milestones: Milestone[];
   onPick: (task: Milestone) => void;
   onClose: () => void;
 }) {
   const [q, setQ] = useState("");
+  const day = when.slice(0, 10);
   const { onDay, others } = useMemo(() => workOrdersForDay(milestones, day, tz), [milestones, day, tz]);
   const wos = useMemo(() => inheritedWorkOrders(milestones), [milestones]);
   const parentName = useMemo(() => new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m.name])), [milestones]);
   const wo = (m: Milestone) => m.workOrderRef?.trim() || (m.id ? wos.get(m.id) : undefined) || "";
   const hit = (m: Milestone) => !q.trim() || `${m.name} ${wo(m)} ${m.parentId ? parentName.get(m.parentId) ?? "" : ""}`.toLowerCase().includes(q.trim().toLowerCase());
-  const label = fmtInTz(dayKeyToMs(day, tz) + 12 * 3_600_000, tz, { weekday: "long", month: "short", day: "numeric" });
+  const at = when.length >= 16 ? Date.parse(fromDateTimeInput(when, tz) ?? "") : NaN;
+  const label = Number.isFinite(at)
+    ? fmtInTz(at, tz, { weekday: "long", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })
+    : fmtInTz(dayKeyToMs(day, tz) + 12 * 3_600_000, tz, { weekday: "long", month: "short", day: "numeric" });
   const list = (title: string, xs: Milestone[]) => {
     const shown = xs.filter(hit);
     if (!shown.length) return null;

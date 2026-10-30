@@ -27,6 +27,7 @@ import PathTag from "@/components/projects/PathTag";
 import DiscoveryTag from "@/components/projects/DiscoveryTag";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { lastChanges, saidWithLatest } from "@/lib/stepComment";
+import { woOf } from "@/lib/workOrderCrew";
 
 /** What the quick view saves for a step. */
 export type { StepUpdate } from "@/components/projects/StepCard";
@@ -102,7 +103,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
   const taskPct = task.id && !isLeaf ? progress?.get(task.id)?.percent : undefined;
   const taskPlan = task.id && !isLeaf ? planNow?.get(task.id) : undefined;
   const taskHours = Math.round(all.reduce((a, m) => a + hoursOf(m), 0) * 10) / 10;
-  const wos = [...new Set([task.workOrderRef, ...all.map((m) => m.workOrderRef)].map((x) => x?.trim()).filter(Boolean))] as string[];
+  const wos = [...new Set([woOf(task), ...all.map(woOf)].map((x) => x?.trim()).filter(Boolean))] as string[];
   // The time you type is on this shift (or this day).
   const win: ShiftWindow = useMemo(() => {
     if (band) return shiftWindow(dayKey, band, tz, times);
@@ -202,7 +203,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
           </span>
         </button>
         {isOpen && (
-          <StepCard key={id} m={m} wo={(m.workOrderRef?.trim() || task.workOrderRef?.trim() || wos[0]) ?? undefined} pct={pct} hours={h} rows={info.rows} notes={info.mine}
+          <StepCard key={id} m={m} wo={(m.workOrderRef?.trim() || woOf(task) || wos[0]) ?? undefined} pct={pct} hours={h} rows={info.rows} notes={info.mine}
             tz={tz} times={times} now={now} canEdit={canEdit && !!onUpdate && !!m.id} onUpdate={onUpdate && m.id ? (u) => onUpdate(m.id!, u) : undefined}
             onFixTimes={onFixTimes && m.id ? (t) => onFixTimes(m.id!, t) : undefined} onMoveDays={onMoveDays} />
         )}

@@ -18,6 +18,7 @@ import { planDiscovery, defaultAfter, defaultHolds, impactLine, earliestStart, f
 import type { CriticalMode } from "@/lib/criticalPath";
 import DateTimePicker from "@/components/projects/DateTimePicker";
 import CrewPicker from "@/components/projects/CrewPicker";
+import { inheritedWorkOrders } from "@/lib/workOrderCrew";
 
 const ms = (v: unknown) => (v == null ? NaN : Date.parse(String(v)));
 
@@ -34,7 +35,8 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
   mode?: CriticalMode | null;
   /** Added from a calendar day ("YYYY-MM-DD"): the work goes on that day.
    *  An earlier day: found then, and starting then (the times to pick). A
-   *  later day: found now, starting then. */
+   *  later day: found now, starting then. From an hour of the shift notes
+   *  ("YYYY-MM-DDTHH:mm"): found and starting at that hour. */
   day?: string;
   /** Saved with the moment its preview was worked out, so the record says
    *  what the preview said. */
@@ -51,15 +53,28 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
   const tasks = useMemo(() => milestones.filter((m) => m.id && (kids.get(m.id) ?? []).some((c) => !c.id || !(kids.get(c.id) ?? []).length))
     .sort((a, b) => a.name.localeCompare(b.name)), [milestones, kids]);
   // Added from a calendar day other than today: the work goes on that day.
-  const onDay = day && day !== toDateTimeInput(now, tz).slice(0, 10) ? day : null;
-  const dayFrom = useMemo(() => (onDay ? { from: dayKeyToMs(onDay, tz), now } : undefined), [onDay, tz, now]);
+  const nowV = toDateTimeInput(now, tz);
+  const atHour = day && day.length >= 16 ? day.slice(0, 16) : null;
+  const onDay = atHour ?? (day && day !== nowV.slice(0, 10) ? day : null);
+  const dayFrom = useMemo(() => {
+    if (!onDay) return undefined;
+    const from = onDay.length >= 16 ? Date.parse(fromDateTimeInput(onDay, tz) ?? "") : dayKeyToMs(onDay, tz);
+    return Number.isFinite(from) ? { from, now } : undefined;
+  }, [onDay, tz, now]);
   const initialTask = start.id && kids.get(start.id)?.length ? start.id : start.parentId ?? start.id ?? "";
   const [taskId, setTaskId] = useState(initialTask);
   const steps = useMemo(() => (kids.get(taskId) ?? []).filter((m) => m.id && !(kids.get(m.id) ?? []).length)
     .sort((a, b) => ms(a.plannedStartAt ?? a.plannedAt) - ms(b.plannedStartAt ?? b.plannedAt)), [kids, taskId]);
   const [afterId, setAfterId] = useState<string | null>(() => (start.id && !kids.get(start.id)?.length ? start.id : defaultAfter(milestones, initialTask, dayFrom)));
   const [holds, setHolds] = useState<string[]>(() => defaultHolds(milestones, initialTask, start.id && !kids.get(start.id)?.length ? start.id : defaultAfter(milestones, initialTask, dayFrom)));
+  // Its work order number: asked every time - the task's, its own, or none yet.
+  const wos = useMemo(() => inheritedWorkOrders(milestones), [milestones]);
+  const woOfTask = (id: string) => milestones.find((m) => m.id === id)?.workOrderRef?.trim() || wos.get(id) || "";
+  const [wo, setWo] = useState("");
+  const [noWo, setNoWo] = useState(false);
+  const taskWo = woOfTask(taskId);
   const pickTask = (id: string) => {
+    if (wo.trim() && wo.trim() === woOfTask(taskId)) setWo("");
     setTaskId(id);
     const a = defaultAfter(milestones, id, dayFrom);
     setAfterId(a); setHolds(defaultHolds(milestones, id, a));
@@ -76,7 +91,7 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
   const [busy, setBusy] = useState(false);
   // When it was found (history) — and when the work starts (the plan).
   const toMs = (v: string) => { const x = v.length >= 16 ? fromDateTimeInput(v, tz) : null; return x ? Date.parse(x) : NaN; };
-  const [foundV, setFoundV] = useState(() => (onDay && onDay < toDateTimeInput(now, tz) ? onDay : toDateTimeInput(now, tz)));
+  const [foundV, setFoundV] = useState(() => (onDay && onDay < nowV ? onDay : nowV));
   const [startMode, setStartMode] = useState<"asap" | "set">(onDay ? "set" : "asap");
   const [startV, setStartV] = useState(onDay ?? "");
   const asap = useMemo(() => earliestStart(milestones, afterId, now), [milestones, afterId, now]);
@@ -104,12 +119,13 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
 
   const save = async () => {
     if (!what.trim()) { setMsg(kind === "added" ? "Say what's being added." : "Say what was found."); return; }
+    if (!wo.trim() && !noWo) { setMsg(`Put in its work order #${taskWo ? `, or tap Same as the task (${taskWo})` : ""}, or No WO # yet.`); return; }
     if (!filled.length) { setMsg("Add the work it needs - a step with its hours."); return; }
     if (timeProblem) { setMsg(timeProblem); return; }
     if (foundAt > Date.now() + 60_000) { setMsg(`When it was ${k.found} can't be in the future.`); return; }
     if (!draft) return;
     setBusy(true); setMsg(null);
-    const ok = await onSave(draft, now).catch((e: Error) => { setMsg(e.message); return false; });
+    const ok = await onSave({ ...draft, wo: noWo ? null : wo.trim() }, now).catch((e: Error) => { setMsg(e.message); return false; });
     setBusy(false);
     if (ok) onClose();
   };
@@ -148,6 +164,20 @@ export default function DiscoveryForm({ milestones, task: start, tz, times, crew
             <textarea value={what} onChange={(e) => { setWhat(e.target.value); setMsg(null); }} rows={2} placeholder={kind === "added" ? "e.g. Clean the downcomers while the tower is open" : "e.g. Tray 14 cracked at the weld - needs repair before close-up"}
               className={`${inp} w-full h-auto py-1.5`} />
           </label>
+          <div className="space-y-1">
+            <span className={lbl}>Work order # <span className="font-bold text-amber-700 dark:text-amber-400">- required</span></span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <input value={wo} onChange={(e) => { setWo(e.target.value); setNoWo(false); setMsg(null); }} placeholder="e.g. 310990" aria-label="Work order number"
+                className={`${inp} w-36 font-mono`} />
+              {taskWo && (
+                <button type="button" aria-pressed={!noWo && wo.trim() === taskWo} onClick={() => { setWo(taskWo); setNoWo(false); setMsg(null); }}
+                  className={`h-8 px-3 rounded-md border text-[12px] font-bold ${!noWo && wo.trim() === taskWo ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>Same as the task: {taskWo}</button>
+              )}
+              <button type="button" aria-pressed={noWo} onClick={() => { setNoWo(true); setWo(""); setMsg(null); }}
+                className={`h-8 px-3 rounded-md border text-[12px] font-bold ${noWo ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] bg-[var(--color-surface)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}>No WO # yet</button>
+            </div>
+            {noWo && <div className="text-[11px] text-[var(--color-text-muted)]">{taskWo ? `It shows under the task's WO ${taskWo} until you add its own (the step's Edit).` : "Add it later on the step (Edit)."}</div>}
+          </div>
           <DateTimePicker label={`When was it ${k.found}?`} hint="- required" value={foundV} onChange={(v) => { setFoundV(v); setMsg(null); }} tz={tz} times={times} />
           <div>
             <span className={lbl}>Work it adds</span>

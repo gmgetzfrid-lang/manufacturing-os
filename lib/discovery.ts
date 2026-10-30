@@ -43,6 +43,8 @@ export interface DiscoveryDraft {
   taskId: string;
   /** What was found. */
   what: string;
+  /** Its work order number; none: it's under the task's. */
+  wo?: string | null;
   foundAt: number;
   foundBy?: string;
   approvedBy?: string;
@@ -228,6 +230,14 @@ export const discoveryOf = (m: Milestone): DiscoveryRecord | undefined => {
   const r = d as DiscoveryRecord | undefined;
   return r && typeof r === "object" && r.id && r.what ? r : undefined;
 };
+
+/** What added work is searched by besides its name and WO number: what
+ *  was found, its kind ("discovery", "added scope"), who approved it.
+ *  Empty for planned work. */
+export function discoveryText(m: Milestone): string {
+  const d = discoveryOf(m);
+  return d ? [ADDED[kindOf(d)].lower, d.what, d.approvedBy].filter(Boolean).join(" ") : "";
+}
 
 /** The attribute value that keeps it. */
 export const discoveryAttr = (r: DiscoveryRecord): string => JSON.stringify(r);

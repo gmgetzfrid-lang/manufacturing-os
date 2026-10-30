@@ -47,7 +47,7 @@ import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSibli
 import { resolveCriticalPath, pathMarks, CRITICAL_MODES, type CriticalMode, type CriticalOverride } from "@/lib/criticalPath";
 import { useCriticalMode, saveCriticalMode } from "@/lib/criticalModeStore";
 import { resolveVisibleDepIndex } from "@/lib/scheduleDeps";
-import { buildProgressIndex } from "@/lib/scheduleProgress";
+import { buildProgressIndex, leafPercent } from "@/lib/scheduleProgress";
 import { computeExecutionReport } from "@/lib/executionReport";
 import { assignGroupColors, type GroupColor } from "@/lib/scheduleColors";
 import SchedulePulse from "@/components/projects/SchedulePulse";
@@ -59,7 +59,7 @@ import { addDays as addDaysTz, dayDiff as dayDiffTz, dayKey, dayOfWeek, fmtInTz,
 import { needsFutureConfirm } from "@/lib/scheduleRules";
 import { startMsOf as plannedStartMsOf } from "@/lib/calendarPlacement";
 import { effectiveSpans, byStart, spanLabel, barGeometry, xAt, hourStep, startOf as timedStart, finishOf as timedFinish } from "@/lib/scheduleTime";
-import { expectedByParent, isOverdue, shiftAt, standingOf, workShiftOf, type ShiftCredit, type ShiftTimes, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
+import { expectedByParent, expectedFraction, isOverdue, shiftAt, standingOf, workHours, workShiftOf, type ShiftCredit, type ShiftTimes, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
 import type { StepUpdate } from "@/components/projects/CalendarQuickView";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
 import { linkOf } from "@/lib/scheduleLinks";
@@ -329,6 +329,31 @@ export default function ExecutionView({
   // When the job starts: no work is entered as happening before it.
   const jobStart = useMemo(() => jobStartOf(milestones), [milestones]);
 
+  // The critical path as the project has it: its source (calculated from
+  // the links, the file's flags, the app's estimate, or none) with every
+  // hand mark on top — lib/criticalPath, the one answer every view reads.
+  // Recalculated as work moves, and every few minutes as time passes.
+  const criticalMode = useCriticalMode(projectId);
+  const [cpClock, setCpClock] = useState(() => Date.now());
+  useEffect(() => { const t = setInterval(() => setCpClock(Date.now()), 5 * 60_000); return () => clearInterval(t); }, []);
+  const critical = useMemo(() => resolveCriticalPath(items, criticalMode, { now: cpClock, tz }), [items, criticalMode, cpClock, tz]);
+  // A task with any critical step under it reads as critical too.
+  const criticalAny = useMemo(() => {
+    const out = new Set<string>();
+    for (const id of critical.ids) {
+      for (let t = byId.get(id); t?.id && !out.has(t.id); t = t.parentId ? byId.get(t.parentId) : undefined) out.add(t.id);
+    }
+    return out;
+  }, [critical, byId]);
+  const criticalSourceLabel = CRITICAL_MODES.find((x) => x.value === critical.mode)?.label ?? "";
+  // The same answer, as the calendar, its quick view and the day list mark it.
+  const marks = useMemo(() => pathMarks(critical), [critical]);
+
+  // One pass over the whole tree: each task's effective % + status. Leaves
+  // report their own (status-reconciled) percent; summaries roll their leaf
+  // descendants up, duration-weighted (see lib/scheduleProgress.ts).
+  const progressIndex = useMemo(() => buildProgressIndex(items, tz), [items, tz]);
+
   // ── Search / filter ──────────────────────────────────────────
   const [filter, setFilter] = useState<ScheduleFilter>(EMPTY_FILTER);
   // Typing stays instant on a 600-task board: the rows follow a moment later.
@@ -339,8 +364,17 @@ export default function ExecutionView({
       // Night = the ☾ work, overdue = the same rule as every count.
       shiftOf: (m) => workShiftOf(m, tz, shiftTimes),
       isOverdue: (m, now) => isOverdue(m, now, tz),
+      isCritical: (m) => !!m.id && critical.ids.has(m.id),
+      // Behind: half an hour of work or more short of the plan by now (the
+      // work orders' Behind, step by step).
+      isBehind: (m) => {
+        if (m.status === "completed" || !m.id) return false;
+        const pct = progressIndex.get(m.id)?.percent ?? leafPercent(m);
+        const w = Math.max(0.1, m.durationHours != null && m.durationHours > 0 ? m.durationHours : workHours(m, tz));
+        return ((expectedFraction(m, cpClock, tz, shiftTimes) * 100 - pct) / 100) * w >= 0.5;
+      },
     }),
-    [items, appliedFilter, tz, shiftTimes],
+    [items, appliedFilter, tz, shiftTimes, critical, progressIndex, cpClock],
   );
   // The milestones each sub-view should render (full list when the
   // filter is off, so nothing changes for the common case).
@@ -366,25 +400,6 @@ export default function ExecutionView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, visibleIds]);
 
-  // The critical path as the project has it: its source (calculated from
-  // the links, the file's flags, the app's estimate, or none) with every
-  // hand mark on top — lib/criticalPath, the one answer every view reads.
-  // Recalculated as work moves, and every few minutes as time passes.
-  const criticalMode = useCriticalMode(projectId);
-  const [cpClock, setCpClock] = useState(() => Date.now());
-  useEffect(() => { const t = setInterval(() => setCpClock(Date.now()), 5 * 60_000); return () => clearInterval(t); }, []);
-  const critical = useMemo(() => resolveCriticalPath(items, criticalMode, { now: cpClock, tz }), [items, criticalMode, cpClock, tz]);
-  // A task with any critical step under it reads as critical too.
-  const criticalAny = useMemo(() => {
-    const out = new Set<string>();
-    for (const id of critical.ids) {
-      for (let t = byId.get(id); t?.id && !out.has(t.id); t = t.parentId ? byId.get(t.parentId) : undefined) out.add(t.id);
-    }
-    return out;
-  }, [critical, byId]);
-  const criticalSourceLabel = CRITICAL_MODES.find((x) => x.value === critical.mode)?.label ?? "";
-  // The same answer, as the calendar, its quick view and the day list mark it.
-  const marks = useMemo(() => pathMarks(critical), [critical]);
   // Mark a task critical or not — an overall task takes every step under it
   // along (their own marks are cleared). Undo puts every mark back.
   const markCritical = useCallback(async (ms: Milestone, v: CriticalOverride | null) => {
@@ -444,10 +459,6 @@ export default function ExecutionView({
     return top.map((m) => build(m, 0));
   }, [items, childrenOf, byId, cmp, filterOn, visibleIds]);
 
-  // One pass over the whole tree: each task's effective % + status. Leaves
-  // report their own (status-reconciled) percent; summaries roll their leaf
-  // descendants up, duration-weighted (see lib/scheduleProgress.ts).
-  const progressIndex = useMemo(() => buildProgressIndex(items, tz), [items, tz]);
 
   // Only the rows near the screen are drawn on a big schedule (600 tasks
   // drawn in full was ~30,000 page elements and a 2-second stall per key).
@@ -773,7 +784,7 @@ export default function ExecutionView({
         await updateMilestone({ id: created.id!, ...who, patch: {
           dependsOn: st.dependsOn.map(real),
           responsibleParty: st.crew ?? sib?.responsibleParty ?? null,
-          workOrderRef: task?.workOrderRef?.trim() || sib?.workOrderRef?.trim() || null,
+          workOrderRef: draft.wo?.trim() || task?.workOrderRef?.trim() || sib?.workOrderRef?.trim() || null,
           ...(sib?.shift ? { shift: sib.shift } : {}),
           attributes: { ...(sibAttrs.work_hours != null ? { work_hours: sibAttrs.work_hours } : {}), ...(sibAttrs.work_calendar != null ? { work_calendar: sibAttrs.work_calendar } : {}), discovery: discoveryAttr(rec) },
         } });

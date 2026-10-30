@@ -6,10 +6,11 @@
 // to sit above the board in every view (timeline / calendar / report).
 
 import React from "react";
-import { Search, X as XIcon, AlertTriangle, PauseCircle, SlidersHorizontal, Sun, Moon, Sunset } from "lucide-react";
+import { Search, X as XIcon, AlertTriangle, PauseCircle, SlidersHorizontal, Sun, Moon, Sunset, PlusCircle, Flame, TrendingDown, Circle } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import type { ScheduleFilter } from "@/lib/scheduleFilter";
-import { isFilterActive } from "@/lib/scheduleFilter";
+import { isFilterActive, EMPTY_FILTER } from "@/lib/scheduleFilter";
+import { ADDED } from "@/lib/discovery";
 
 const STATUS_CHIPS: Array<{ s: MilestoneStatus; label: string; dot: string }> = [
   { s: "planned", label: "Planned", dot: "bg-slate-400" },
@@ -43,6 +44,19 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
     onChange({ ...filter, groupIds: has ? filter.groupIds.filter((x) => x !== id) : [...filter.groupIds, id] });
   };
 
+  const TONE = {
+    rose: "bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-700 text-rose-700 dark:text-rose-300",
+    amber: "bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300",
+    violet: "bg-violet-50 dark:bg-violet-950/40 border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300",
+    slate: "bg-slate-100 dark:bg-slate-800 border-slate-400 dark:border-slate-500 text-slate-800 dark:text-slate-100",
+  };
+  const quick = (label: string, icon: React.ReactNode, on: boolean, tone: keyof typeof TONE, flip: () => void) => (
+    <button type="button" onClick={flip} aria-pressed={on}
+      className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${on ? TONE[tone] : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}>
+      {icon} {label}
+    </button>
+  );
+
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03] px-3 py-2.5 space-y-2">
       <div className="flex items-center gap-2 flex-wrap">
@@ -62,32 +76,31 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
           )}
         </div>
 
-        {/* Quick toggles */}
-        <button
-          onClick={() => onChange({ ...filter, blockedOnly: !filter.blockedOnly })}
-          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${filter.blockedOnly ? "bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-700 text-rose-700 dark:text-rose-300" : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}
-        >
-          <PauseCircle className="w-3.5 h-3.5" /> Needs attention
-        </button>
-        <button
-          onClick={() => onChange({ ...filter, overdueOnly: !filter.overdueOnly })}
-          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${filter.overdueOnly ? "bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-700 text-rose-700 dark:text-rose-300" : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}
-        >
-          <AlertTriangle className="w-3.5 h-3.5" /> Overdue
-        </button>
-        <button
-          onClick={() => setShowMore((v) => !v)}
-          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${showMore || filter.statuses.length || filter.groupIds.length || filter.shifts.length ? "bg-[var(--color-accent-soft)] border-[var(--color-accent-ring)]/50 text-[var(--color-accent)]" : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}
-        >
-          {(() => { const n = filter.statuses.length + filter.groupIds.length + filter.shifts.length; return <><SlidersHorizontal className="w-3.5 h-3.5" /> Filters{n > 0 ? ` (${n})` : ""}</>; })()}
-        </button>
+        {/* Quick filters: each narrows what's shown, together they narrow
+            each other (critical and behind = critical steps behind). */}
+        <div role="group" aria-label="Quick filters" className="flex items-center gap-1.5 sm:flex-wrap max-sm:w-full max-sm:overflow-x-auto max-sm:pb-0.5 scroll-quiet">
+          {quick("Critical path", <Flame className="w-3.5 h-3.5" />, !!filter.criticalOnly, "rose", () => onChange({ ...filter, criticalOnly: !filter.criticalOnly }))}
+          {quick("Behind", <TrendingDown className="w-3.5 h-3.5" />, !!filter.behindOnly, "amber", () => onChange({ ...filter, behindOnly: !filter.behindOnly }))}
+          {quick("Overdue", <AlertTriangle className="w-3.5 h-3.5" />, filter.overdueOnly, "rose", () => onChange({ ...filter, overdueOnly: !filter.overdueOnly }))}
+          {quick("Not started", <Circle className="w-3.5 h-3.5" />, !!filter.notStartedOnly, "slate", () => onChange({ ...filter, notStartedOnly: !filter.notStartedOnly }))}
+          {quick("Needs attention", <PauseCircle className="w-3.5 h-3.5" />, filter.blockedOnly, "rose", () => onChange({ ...filter, blockedOnly: !filter.blockedOnly }))}
+          {/* Work added after the plan: discovery and added scope. */}
+          {quick(filter.added?.length === 1 ? ADDED[filter.added[0]].word : "Discovery & added", <PlusCircle className="w-3.5 h-3.5" />, !!filter.added?.length, "violet",
+            () => onChange({ ...filter, added: filter.added?.length ? [] : ["discovery", "added"] }))}
+          <button
+            onClick={() => setShowMore((v) => !v)}
+            className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${showMore || filter.statuses.length || filter.groupIds.length || filter.shifts.length ? "bg-[var(--color-accent-soft)] border-[var(--color-accent-ring)]/50 text-[var(--color-accent)]" : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}
+          >
+            {(() => { const n = filter.statuses.length + filter.groupIds.length + filter.shifts.length; return <><SlidersHorizontal className="w-3.5 h-3.5" /> Filters{n > 0 ? ` (${n})` : ""}</>; })()}
+          </button>
+        </div>
 
         {/* Match count + clear */}
         <span className="text-[11px] text-[var(--color-text-muted)] font-mono ml-auto">
           {active ? <><b className="text-[var(--color-text)]">{matchCount}</b> of {totalCount}</> : <>{totalCount} tasks</>}
         </span>
         {active && (
-          <button onClick={() => onChange({ query: "", statuses: [], groupIds: [], overdueOnly: false, blockedOnly: false, shifts: [] })} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-2 py-1 rounded hover:bg-[var(--color-accent-soft)] transition-colors">
+          <button onClick={() => onChange(EMPTY_FILTER)} className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-2 py-1 rounded hover:bg-[var(--color-accent-soft)] transition-colors">
             <XIcon className="w-3 h-3" /> Clear
           </button>
         )}
@@ -120,6 +133,18 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
               })}
             </div>
           )}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mr-1">Added work</span>
+            {(["discovery", "added"] as const).map((k) => {
+              const on = !!filter.added?.includes(k);
+              return (
+                <button key={k} aria-pressed={on} onClick={() => onChange({ ...filter, added: on ? (filter.added ?? []).filter((x) => x !== k) : [...(filter.added ?? []), k] })}
+                  className={`px-2 py-1 rounded-full text-[11px] font-semibold border transition-colors ${on ? "bg-violet-700 text-white border-violet-700" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
+                  {ADDED[k].word}
+                </button>
+              );
+            })}
+          </div>
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mr-1">Shift</span>
             {(["day", "night", "swing"] as const).map((sh) => {

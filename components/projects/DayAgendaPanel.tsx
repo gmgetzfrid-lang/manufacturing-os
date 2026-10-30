@@ -38,6 +38,7 @@ import type { PathMarks } from "@/lib/criticalPath";
 import PathTag from "@/components/projects/PathTag";
 import { whenChoices } from "@/components/projects/ProgressControl";
 import { inheritedWorkOrders } from "@/lib/workOrderCrew";
+import { discoveryText } from "@/lib/discovery";
 import StepCard from "@/components/projects/StepCard";
 import { loadProgressLog, type ProgressLogRow } from "@/lib/progressHistory";
 import { lastChanges, saidWithLatest } from "@/lib/stepComment";
@@ -203,7 +204,7 @@ export default function DayAgendaPanel({
     const hit = (t?: string | null) => !!t && t.toLowerCase().replace(/[\s_-]+/g, "").includes(q);
     return groups.map((g) => {
       const groupHit = hit(g.parent?.name) || g.crumbs.some((c) => hit(c.name));
-      return { ...g, rows: groupHit ? g.rows : g.rows.filter((r) => hit(r.leaf.name) || hit(woOf(r.leaf)) || hit(r.leaf.responsibleParty) || hit(r.leaf.location)) };
+      return { ...g, rows: groupHit ? g.rows : g.rows.filter((r) => hit(r.leaf.name) || hit(woOf(r.leaf)) || hit(r.leaf.responsibleParty) || hit(r.leaf.location) || hit(discoveryText(r.leaf))) };
     }).filter((g) => g.rows.length > 0);
   }, [groups, query, woOf]);
   // The day shift's work, then the night shift's: a step the night crew
@@ -333,10 +334,10 @@ export default function DayAgendaPanel({
     const hit = (s?: string | null) => !!s && s.toLowerCase().includes(q);
     return milestones
       .filter((m) => m.id && !kids.has(m.id) && !here.has(m.id) && m.plannedAt)
-      .filter((m) => hit(m.name) || hit(m.workOrderRef) || hit(m.responsibleParty) || ancestorsOf(m).some((a) => hit(a.name)))
+      .filter((m) => hit(m.name) || hit(woOf(m)) || hit(m.responsibleParty) || hit(discoveryText(m)) || ancestorsOf(m).some((a) => hit(a.name)))
       .sort((a, b) => startMsOf(a) - startMsOf(b))
       .slice(0, 12);
-  }, [query, groups, milestones, ancestorsOf]);
+  }, [query, groups, milestones, ancestorsOf, woOf]);
   const pctOf = (m: Milestone) =>
     (m.id ? progress?.get(m.id)?.percent : undefined) ?? (m.percentComplete != null ? Math.round(m.percentComplete) : (m.status === "completed" ? 100 : 0));
 

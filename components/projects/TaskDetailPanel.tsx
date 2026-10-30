@@ -637,11 +637,11 @@ export default function TaskDetailPanel({
                 onClose={() => setCancelling(false)} onDone={() => { onChanged(); onClose(); }} />
             ) : (
               <>
-                <button onClick={() => setCancelling(true)} title="Take it off this schedule - it's still done, somewhere else"
+                <button onClick={() => setCancelling(true)} title="Planned, but not done here: kept on record as cancelled, with why (and where it moved)"
                   className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-700 dark:text-amber-400 hover:text-amber-900 dark:hover:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40 px-2 py-1 rounded-md">
                   <Ban className="w-3.5 h-3.5" /> Cancel job
                 </button>
-                <button onClick={() => void onDelete()} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:text-rose-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 px-2 py-1 rounded-md">
+                <button onClick={() => void onDelete()} title="Put in by mistake: gone for good" className="inline-flex items-center gap-1.5 text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:text-rose-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 px-2 py-1 rounded-md">
                   <Trash2 className="w-3.5 h-3.5" /> Delete task
                 </button>
               </>

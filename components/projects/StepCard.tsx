@@ -109,7 +109,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   const ps = startMsOf(m), pf = finishMsOf(m);
   const found = discoveryOf(m);
   // Correcting what was found and when (on every step it added).
-  const [foundEdit, setFoundEdit] = useState<{ kind: AddedKind; what: string; at: string } | null>(null);
+  const [foundEdit, setFoundEdit] = useState<{ kind: AddedKind; what: string; at: string; wo: string } | null>(null);
   const [foundMsg, setFoundMsg] = useState<string | null>(null);
   const [foundBusy, setFoundBusy] = useState(false);
   const saveFound = async () => {
@@ -123,7 +123,8 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     if (at > Date.now() + 60_000) { setFoundMsg(`When it was ${k.found} can't be in the future.`); return; }
     setFoundBusy(true);
     try {
-      await updateDiscoveryRecord(m.projectId, found.id, { kind: foundEdit.kind, what, foundAt: at });
+      const woNow = foundEdit.wo.trim();
+      await updateDiscoveryRecord(m.projectId, found.id, { kind: foundEdit.kind, what, foundAt: at, ...(woNow !== (m.workOrderRef ?? "").trim() ? { wo: woNow || null } : {}) });
       window.dispatchEvent(new CustomEvent("schedule:changed"));
       setFoundEdit(null); setSaved(`${k.word}: ${k.found} ${when(at)}`);
     } catch (e) { setFoundMsg((e as Error).message || "Not saved."); }
@@ -579,6 +580,16 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                 <input value={foundEdit.what} onChange={(e) => { setFoundEdit({ ...foundEdit, what: e.target.value }); setFoundMsg(null); }} aria-label={ADDED[foundEdit.kind].what}
                   className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]" />
               </label>
+              <div>
+                <span className="block font-semibold mb-1">Work order #</span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <input value={foundEdit.wo} onChange={(e) => { setFoundEdit({ ...foundEdit, wo: e.target.value }); setFoundMsg(null); }} aria-label="Work order number" placeholder="e.g. 310990"
+                    className="h-9 w-36 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 font-mono text-[12.5px] text-[var(--color-text)]" />
+                  {!m.workOrderRef?.trim() && wo && foundEdit.wo.trim() !== wo && (
+                    <button type="button" onClick={() => setFoundEdit({ ...foundEdit, wo })} className="h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)]">Same as the task: {wo}</button>
+                  )}
+                </div>
+              </div>
               <DateTimePicker label={`When was it ${ADDED[foundEdit.kind].found}?`} value={foundEdit.at} onChange={(v) => { setFoundEdit({ ...foundEdit, at: v }); setFoundMsg(null); }} tz={tz} times={times} />
               {foundMsg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{foundMsg}</div>}
               <div className="flex items-center gap-2">
@@ -590,8 +601,9 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
           ) : (
             <>
               <b>{ADDED[kindOf(found)].word}</b>{Number.isFinite(found.foundAt) ? ` · ${ADDED[kindOf(found)].found} ${when(found.foundAt)}` : ""} - “{found.what}”. Not in the original schedule.
-              {canEdit && m.projectId && <button type="button" onClick={() => { setFoundEdit({ kind: kindOf(found), what: found.what, at: toDateTimeInput(found.foundAt, tz) }); setFoundMsg(null); }} className="ml-1.5 text-[11px] font-semibold text-[var(--color-accent)] hover:underline">Edit</button>}
-              {canEdit && m.projectId && <button type="button" onClick={() => void removeFound()} disabled={foundBusy} className="ml-2 text-[11px] font-semibold text-rose-700 dark:text-rose-400 hover:underline disabled:opacity-50">{foundBusy ? "Deleting…" : "Delete"}</button>}
+              {!m.workOrderRef?.trim() && <span className="ml-1 font-semibold text-amber-700 dark:text-amber-400">No WO # of its own yet.</span>}
+              {canEdit && m.projectId && <button type="button" onClick={() => { setFoundEdit({ kind: kindOf(found), what: found.what, at: toDateTimeInput(found.foundAt, tz), wo: m.workOrderRef ?? "" }); setFoundMsg(null); }} className="ml-1.5 text-[11px] font-semibold text-[var(--color-accent)] hover:underline">Edit</button>}
+              {canEdit && m.projectId && <button type="button" onClick={() => void removeFound()} disabled={foundBusy} title="Put in by mistake: every step it added, gone for good" className="ml-2 text-[11px] font-semibold text-rose-700 dark:text-rose-400 hover:underline disabled:opacity-50">{foundBusy ? "Deleting…" : "Delete"}</button>}
               {foundMsg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{foundMsg}</div>}
             </>
           )}

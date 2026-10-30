@@ -44,7 +44,7 @@ import {
   crewsOnReport, filterShiftReport, whoOf, notesForShift, TURNOVER_GRACE_MS, type PathInfo,
 } from "@/lib/shiftReport";
 import { buildKickoff, buildCloseout, defaultMeeting, type MeetingKind, type PlanRow } from "@/lib/meetingPlan";
-import { clockLabel, fmtInTz, tzAbbrev } from "@/lib/scheduleTz";
+import { clockLabel, fmtInTz, tzAbbrev, toDateTimeInput } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { toPlainText, toEmailHtml, type ExportBlock, type ExportCell, type ExportDoc, type ExportStepRow } from "@/lib/reportExport";
 import { turnoverUpdate, withoutEmpty, noteLine, hazardJobsOf, forecastText, discoverySub, discoveryBlock } from "@/lib/managementUpdate";
@@ -54,6 +54,7 @@ import { useShiftRecords, saveShiftRecord, lastSameKind, openFollowUps, newId, C
 import { buildLookBack, CAUSE_LABEL, type LookBack, type StepLook } from "@/lib/lookBack";
 import { IncidentsLine, ShiftNotesBox, TimeLogButton } from "@/components/projects/ShiftRecordParts";
 import { useSortRows, Grip } from "@/components/projects/SortRows";
+import AddWorkPicker from "@/components/projects/AddWorkPicker";
 import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
 import { discoveries, discoveryOf, discoverySummary, discoveryStepLine, impactLine, ADDED, kindOf, addedTitle, type Discovery } from "@/lib/discovery";
 import { buildTimeLog, downloadTimeLog, stepLabels } from "@/lib/timeLog";
@@ -102,7 +103,8 @@ interface Props {
   /** Update a step from its row — the same save as the calendar's quick view. */
   onUpdateStep?: (id: string, u: StepUpdate) => Promise<boolean>;
   /** Found work: into the schedule (DiscoveryForm, hosted by the schedule). */
-  onDiscovery?: (task: Milestone) => void;
+  /** Discovery / added scope on a task; `at` ("YYYY-MM-DDTHH:mm"): from an hour of the notes. */
+  onDiscovery?: (task: Milestone, at?: string) => void;
   /** The schedule's clock for the critical path — the same moment the
    *  calendar and the discovery preview use, so the forecast reads alike. */
   pathNow?: number;
@@ -269,15 +271,21 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const crews = useMemo(() => crewsOnReport(report), [report]);
   const [crewPick, setCrewPick] = useState<string | null>(null);
   const crew = meeting === "turnover" && crewPick && crews.some((x) => x.who === crewPick) ? crewPick : null;
+  // Only the critical path, only work added after the plan (discovery,
+  // added scope): each narrows the turnover, with the crew.
+  const [onlyPick, setOnlyPick] = useState<{ critical: boolean; added: boolean }>({ critical: false, added: false });
+  const addedOnly = meeting === "turnover" && onlyPick.added;
+  const criticalOnly = meeting === "turnover" && onlyPick.critical;
   // Pulled work is the extra crew's, not the step owner's: in one crew's
   // view it shows when it's that crew's to do (or its own scope).
   const pulledCrewFallback = (hand.pullDraft ?? pullSet)?.crew ?? null;
   const view = useMemo(() => {
-    if (!crew) return report;
-    const v = filterShiftReport(report, crew);
-    const mine = (r: ShiftRow) => (decisions[r.leaf.id ?? ""]?.crew ?? pulledCrewFallback) === crew || whoOf(r) === crew;
+    if (!crew && !addedOnly && !criticalOnly) return report;
+    const added = (r: ShiftRow) => (!addedOnly || !!discoveryOf(r.leaf)) && (!criticalOnly || r.critical);
+    const v = filterShiftReport(report, (r) => (!crew || whoOf(r) === crew) && added(r));
+    const mine = (r: ShiftRow) => (!crew || (decisions[r.leaf.id ?? ""]?.crew ?? pulledCrewFallback) === crew || whoOf(r) === crew) && added(r);
     return { ...v, goals: { ...v.goals, pulled: report.goals.pulled.filter(mine), pulledHeld: report.goals.pulledHeld.filter(mine) } };
-  }, [report, crew, decisions, pulledCrewFallback]);
+  }, [report, crew, addedOnly, criticalOnly, decisions, pulledCrewFallback]);
   // Why it's behind: each step's hours of work traced to what holds it up
   // (lib/behindWhy) — the whole job's, like the standing.
   const why = useMemo(() => behindWhy({ behind: report.overall.drivers.behind, ahead: report.overall.drivers.aheadHours, milestones, now: report.now,
@@ -441,6 +449,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   // The tables' order as dragged at the meeting — shown at once, kept on
   // the shift's record (the email follows it too).
   const [orderLocal, setOrderLocal] = useState<{ key: string; order: TableOrder } | null>(null);
+  // Work added from an hour of the notes: which work order, then the form at that hour.
+  const [addAt, setAddAt] = useState<number | null>(null);
   const tableOrder = orderLocal?.key === thisKey ? orderLocal.order : records.get(thisKey)?.order;
   const sheet = useMemo<SheetCtx>(() => {
     const recThis = records.get(thisKey), recNext = records.get(nextKey);
@@ -464,6 +474,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       tz,
       hourly: orgId ? {
         notes: recThis?.hourly, update: updateHourly, entries, slots, upTo: Math.min(now, shift.end), ongoing,
+        onAddWork: canEdit && onDiscovery ? setAddAt : undefined,
       } : undefined,
       order: tableOrder,
       setOrder: (table, ids) => {
@@ -471,7 +482,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         void saveRec(thisKey, (r) => ({ ...r, order: { ...(r.order ?? {}), [table]: ids ?? undefined } }));
       },
     };
-  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, saveRec, recMsg, recErr, tableOrder, setOrderLocal, updateHourly, entries, shift, slots, now, ongoing]);
+  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, saveRec, recMsg, recErr, tableOrder, setOrderLocal, updateHourly, entries, shift, slots, now, ongoing, onDiscovery]);
   const shiftTitle = `${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`;
   // The hourly log of the shift on screen (any shift, backed up by date),
   // as a file on the letterhead.
@@ -669,7 +680,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
 
   const head = (print: boolean) => (
     <Masthead meeting={meeting} report={report} kickoff={kickoff} closeout={closeout} ctx={ctx} asOf={asOf} now={now}
-      rehearsal={rehearsal} historyNote={historyNote} projectName={projectName} print={print} crew={crew} />
+      rehearsal={rehearsal} historyNote={historyNote} projectName={projectName} print={print} crew={crew} addedOnly={addedOnly} criticalOnly={criticalOnly} />
   );
 
   return (
@@ -869,12 +880,28 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
               })}
             </div>
           )}
+          <div className="shrink-0 flex items-center gap-1" role="group" aria-label="Show only">
+            <span className="text-[9.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mr-0.5">Only</span>
+            <button type="button" aria-pressed={criticalOnly} onClick={() => setOnlyPick((v) => ({ ...v, critical: !v.critical }))}
+              className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${criticalOnly ? "bg-rose-600 text-white border-rose-600" : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+              Critical path
+            </button>
+            <button type="button" aria-pressed={addedOnly} onClick={() => setOnlyPick((v) => ({ ...v, added: !v.added }))}
+              className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${addedOnly ? "bg-violet-700 text-white border-violet-700" : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+              Discovery &amp; added
+            </button>
+          </div>
           <TaskSearch idx={qlIndex} fmt={ctx} onPick={openLook} />
         </div>
       )}
       </div>
 
       {/* ── Screen body ─────────────────────────────────────────────── */}
+      {addAt != null && onDiscovery && (
+        <AddWorkPicker day={toDateTimeInput(addAt, tz)} tz={tz} milestones={live}
+          onPick={(t) => { const at = toDateTimeInput(addAt, tz); setAddAt(null); onDiscovery(t, at); }}
+          onClose={() => setAddAt(null)} />
+      )}
       <QuickLookOpen.Provider value={openLook}>
       {presenting != null && sections[presenting] ? (
         <div className="px-6 py-5 min-h-[420px] text-[14px]">
@@ -2265,11 +2292,13 @@ function closeSection(title: string, signers: string[], sub = "Notes, actions an
 
 // ─── Masthead & footnote ─────────────────────────────────────────────
 
-function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehearsal, historyNote, projectName, print, crew }: {
+function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehearsal, historyNote, projectName, print, crew, addedOnly, criticalOnly }: {
   meeting: MeetingKind; report: ShiftReport; kickoff: ReturnType<typeof buildKickoff>; closeout: ReturnType<typeof buildCloseout>;
   ctx: Ctx; asOf: number; now: number; rehearsal: boolean; historyNote: string | null; projectName?: string; print: boolean;
   /** The crew the report is narrowed to. */
   crew?: string | null;
+  addedOnly?: boolean;
+  criticalOnly?: boolean;
 }) {
   const { overall, shift, next } = report;
   const standing = overall.standing;
@@ -2298,6 +2327,8 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
           <div className={`text-[11px] ${print ? "text-slate-700" : "text-slate-300"}`}>
             {when} · as of {c.T(meeting === "turnover" ? asOf : now)} {tzAbbrev(c.tz, now)}
             {crew && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-slate-700 text-slate-900" : "bg-white text-slate-900"}`}>{crew} only</span>}
+            {criticalOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-rose-700 text-rose-900" : "bg-rose-200 text-rose-950"}`}>Critical path only</span>}
+            {addedOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-violet-700 text-violet-900" : "bg-violet-200 text-violet-950"}`}>Discovery &amp; added only</span>}
             {rehearsal && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-amber-700 text-amber-800" : "bg-amber-400 text-slate-900"}`}>Rehearsal - shift not started</span>}
             {historyNote && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold ${print ? "border border-slate-500 text-slate-700" : "bg-slate-700 text-slate-100"}`}>Earlier shift - {historyNote}</span>}
           </div>

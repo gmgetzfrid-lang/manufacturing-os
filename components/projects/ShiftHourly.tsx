@@ -7,7 +7,7 @@
 // hour can be typed over; that one is then kept as typed.
 
 import React, { useState } from "react";
-import { Pencil, RotateCcw } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { CrewCountEditor, AddCompany } from "@/components/projects/ShiftRecordParts";
 import { crewLine } from "@/lib/managementUpdate";
 import type { CrewCount } from "@/lib/shiftRecord";
@@ -32,6 +32,8 @@ export interface HourlyCtx {
   upTo: number;
   /** What each crew kept working on in an hour nothing new was entered for it (lib/shiftHourly ongoingByHour). */
   ongoing?: Map<string, string[]>;
+  /** Put discovery or added scope into the schedule at this hour (the hour's start). */
+  onAddWork?: (at: number) => void;
 }
 
 /** The meeting's attendance: each crew on the shift, its supervisor at the
@@ -124,13 +126,22 @@ export function ShiftHourlyBox({ h, edit, print, tz, meeting }: {
                 ) : (
                   <Items text={r.text} going={h.ongoing?.get(r.slot.key) ?? []} empty={r.slot.kind === "work"} />
                 )}
+                {/* A typed note: a mistake, or now put in as work (its own entry
+                    says it) - deleted, the hour shows its entries again. */}
                 {edit && typed && editing !== r.slot.key && r.slot.kind !== "meeting" && (
-                  <button type="button" onClick={() => void setHour(r.slot, null)}
-                    className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">
-                    <RotateCcw className="w-3 h-3" /> Write it from the entries again
+                  <button type="button" onClick={() => void setHour(r.slot, null)} title="Delete what was typed here - the hour shows its entries"
+                    className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-rose-700 dark:text-rose-400 hover:underline">
+                    <Trash2 className="w-3 h-3" /> Delete typed note
                   </button>
                 )}
               </div>
+              {!print && h.onAddWork && editing !== r.slot.key && r.slot.kind !== "meeting" && (
+                <button type="button" onClick={() => h.onAddWork?.(r.slot.start)} aria-label={`Add discovery or added scope at ${clocks[i]}`}
+                  title="Add discovery or added scope at this hour - it goes into the schedule"
+                  className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-dashed border-[var(--color-accent)] text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
+                  <Plus className="w-3 h-3" /> Add work
+                </button>
+              )}
               {edit && editing !== r.slot.key && (
                 <button type="button" onClick={() => setEditing(r.slot.key)} aria-label={`Edit ${clocks[i]}`}
                   className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">

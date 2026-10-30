@@ -10,6 +10,7 @@
 // hierarchy intact instead of orphaning matches.
 
 import type { Milestone, MilestoneStatus } from "@/types/schema";
+import { discoveryText, discoveryOf, kindOf, type AddedKind } from "@/lib/discovery";
 
 export interface ScheduleFilter {
   /** Free text — matches name, WBS, work order, responsible, location,
@@ -25,14 +26,28 @@ export interface ScheduleFilter {
   blockedOnly: boolean;
   /** Restrict to these shifts (empty = all). */
   shifts: Array<"day" | "night" | "swing">;
+  /** Only work added after the plan: discovery, added scope (empty / none = all work). */
+  added?: AddedKind[];
+  /** Only steps on the critical path (opts.isCritical). */
+  criticalOnly?: boolean;
+  /** Only steps behind plan by now (opts.isBehind). */
+  behindOnly?: boolean;
+  /** Only steps nobody has started. */
+  notStartedOnly?: boolean;
 }
 
 export const EMPTY_FILTER: ScheduleFilter = {
-  query: "", statuses: [], groupIds: [], overdueOnly: false, blockedOnly: false, shifts: [],
+  query: "", statuses: [], groupIds: [], overdueOnly: false, blockedOnly: false, shifts: [], added: [],
+  criticalOnly: false, behindOnly: false, notStartedOnly: false,
 };
 
+/** Not started: planned (or missed), no start recorded, nothing done. */
+export const notStarted = (m: Milestone): boolean =>
+  (m.status === "planned" || m.status === "missed") && !m.actualStartAt && !((m.percentComplete ?? 0) > 0);
+
 export function isFilterActive(f: ScheduleFilter): boolean {
-  return f.query.trim().length > 0 || f.statuses.length > 0 || f.groupIds.length > 0 || f.overdueOnly || f.blockedOnly || f.shifts.length > 0;
+  return f.query.trim().length > 0 || f.statuses.length > 0 || f.groupIds.length > 0 || f.overdueOnly || f.blockedOnly || f.shifts.length > 0 || (f.added?.length ?? 0) > 0
+    || !!f.criticalOnly || !!f.behindOnly || !!f.notStartedOnly;
 }
 
 /** Haystack for free-text search over one milestone. */
@@ -45,7 +60,10 @@ function haystack(m: Milestone): string {
   if (m.actualParty) parts.push(m.actualParty);
   if (m.location) parts.push(m.location);
   if (m.description) parts.push(m.description);
-  if (m.attributes) for (const v of Object.values(m.attributes)) if (v != null) parts.push(String(v));
+  // Added work: what was found, not the record it's kept in.
+  if (m.attributes) for (const [k, v] of Object.entries(m.attributes)) if (v != null && k !== "discovery") parts.push(String(v));
+  const found = discoveryText(m);
+  if (found) parts.push(found);
   return parts.join(" ").toLowerCase();
 }
 
@@ -66,6 +84,10 @@ export function filterMilestones(
     /** Past due and not done — the same rule as everywhere else
      *  (lib/shiftReport isOverdue). */
     isOverdue?: (m: Milestone, now: number) => boolean;
+    /** On the critical path - the project's answer (lib/criticalPath). */
+    isCritical?: (m: Milestone) => boolean;
+    /** Behind plan by now - the same rule as the work orders' Behind. */
+    isBehind?: (m: Milestone, now: number) => boolean;
   },
 ): Set<string> {
   const all = new Set<string>();
@@ -112,6 +134,17 @@ export function filterMilestones(
       }
     }
     if (f.blockedOnly && m.status !== "blocked" && m.status !== "on_hold") return false;
+    // Critical, behind, not started: said of steps; a task shows for its steps.
+    if (f.criticalOnly || f.behindOnly || f.notStartedOnly) {
+      if (m.id && childrenByParent.has(m.id)) return false;
+      if (f.criticalOnly && !opts?.isCritical?.(m)) return false;
+      if (f.behindOnly && !opts?.isBehind?.(m, now)) return false;
+      if (f.notStartedOnly && !notStarted(m)) return false;
+    }
+    if (f.added?.length) {
+      const d = discoveryOf(m);
+      if (!d || !f.added.includes(kindOf(d))) return false;
+    }
     if (f.shifts.length > 0) {
       // "swing" in the filter = round the clock ("both").
       const w = opts?.shiftOf ? opts.shiftOf(m) : (m.shift === "swing" ? "both" : m.shift);

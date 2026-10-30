@@ -79,3 +79,35 @@ describe("filterMilestones", () => {
     expect(r.has("day")).toBe(false);
   });
 });
+
+describe("the quick filters every view shares", () => {
+  const now = Date.parse("2026-03-10T00:00:00Z");
+  const disc = (what: string, kind = "discovery") => ({ discovery: JSON.stringify({ id: "g1", kind, what, foundAt: 1, addedAt: 1, seq: 1, of: 1, impact: {} }) });
+  const job: Milestone[] = [
+    mk({ id: "T", name: "V-8 Reflux Drum", attributes: { "Work Order": "310507" } }),
+    mk({ id: "s1", name: "Hydroblast", parentId: "T", status: "in_progress", actualStartAt: "2026-03-09T06:00:00Z", percentComplete: 20 }),
+    mk({ id: "s2", name: "Close manway", parentId: "T" }),
+    mk({ id: "d1", name: "Welded fabrication", parentId: "T", workOrderRef: "310990", attributes: disc("Corroded vortex breaker") }),
+    mk({ id: "d2", name: "Clean downcomers", parentId: "T", attributes: disc("Unplanned clean", "added") }),
+  ];
+  const ids = (o: Partial<ScheduleFilter>, opts = {}) => [...filterMilestones(job, f(o), { now, ...opts })].sort();
+
+  it("added work: its own WO #, what was found, and its kind are searched; the record isn't", () => {
+    expect(ids({ query: "310990" })).toEqual(["T", "d1"]);
+    expect(ids({ query: "vortex" })).toEqual(["T", "d1"]);
+    expect(ids({ query: "added scope" })).toEqual(["T", "d2"]);
+    expect(ids({ query: "foundat" })).toEqual([]);
+  });
+  it("discovery and added scope, each or both", () => {
+    expect(ids({ added: ["discovery", "added"] })).toEqual(["T", "d1", "d2"]);
+    expect(ids({ added: ["added"] })).toEqual(["T", "d2"]);
+  });
+  it("critical, behind, not started: steps only, their task kept for context", () => {
+    expect(ids({ criticalOnly: true }, { isCritical: (m: Milestone) => m.id === "s2" || m.id === "T" })).toEqual(["T", "s2"]);
+    expect(ids({ behindOnly: true }, { isBehind: (m: Milestone) => m.id === "s1" })).toEqual(["T", "s1"]);
+    expect(ids({ notStartedOnly: true })).toEqual(["T", "d1", "d2", "s2"]);
+    // Together: each narrows the other.
+    expect(ids({ notStartedOnly: true, added: ["discovery"] })).toEqual(["T", "d1"]);
+    expect(isFilterActive(f({ criticalOnly: true }))).toBe(true);
+  });
+});

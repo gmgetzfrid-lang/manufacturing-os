@@ -20,7 +20,7 @@ import { dayKey } from "@/lib/scheduleTz";
 import { whenDated } from "@/lib/timeWords";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { woOf } from "@/lib/workOrderCrew";
-import { discoveryOf, kindOf, ADDED, type AddedKind } from "@/lib/discovery";
+import { discoveryOf, discoveryText, kindOf, ADDED, type AddedKind } from "@/lib/discovery";
 import type { PathMarks } from "@/lib/criticalPath";
 import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
 import { notesFor } from "@/lib/milestones";
@@ -33,7 +33,7 @@ import { CancelJobForm } from "@/components/projects/CancelledJobs";
 import { saidWithLatest } from "@/lib/stepComment";
 
 const STEP_STATUS: Record<MilestoneStatus, string> = { planned: "Not started", in_progress: "In progress", completed: "Done", on_hold: "On hold", blocked: "Blocked", missed: "Missed" };
-const SHOW_WORD: Record<string, string> = { all: "All work orders", open: "Open work orders", behind: "Work orders behind plan", held: "Held work orders", done: "Done work orders" };
+const SHOW_WORD: Record<string, string> = { all: "All work orders", open: "Open work orders", critical: "Work orders on the critical path", behind: "Work orders behind plan", notStarted: "Work orders not started", held: "Held work orders", done: "Done work orders", added: "Work orders with discovery or added scope" };
 const noteAt = (n: MilestoneNote) => ms(n.happenedAt ?? n.createdAt);
 
 type Standing = "not_started" | "in_progress" | "held" | "done";
@@ -43,7 +43,7 @@ const STANDING: Record<Standing, { word: string; cls: string }> = {
   held: { word: "Held", cls: "text-amber-800 bg-amber-50 border-amber-200 dark:text-amber-300 dark:bg-amber-950/40 dark:border-amber-900" },
   done: { word: "Done", cls: "text-emerald-700 bg-emerald-50 border-emerald-200 dark:text-emerald-300 dark:bg-emerald-950/40 dark:border-emerald-900" },
 };
-type Show = "all" | "open" | "behind" | "held" | "done";
+type Show = "all" | "open" | "critical" | "behind" | "notStarted" | "held" | "done" | "added";
 /** Its description — not the schedule file's "Summary (rolls up children)". */
 const descOf = (m: Milestone) => { const d = m.description?.trim() ?? ""; return /^summary \(rolls up children\)$/i.test(d) ? "" : d; };
 const ms = (v: unknown) => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
@@ -99,7 +99,8 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
     const groups = new Map<string, { wo: string | null; owner: Milestone; steps: Milestone[] }>();
     for (const m of milestones) {
       if (!m.id || (childrenByParent.get(m.id)?.length ?? 0) > 0) continue;
-      let x: Milestone | undefined = m, wo = "", owner: Milestone | undefined;
+      // Added work stays on its equipment's card, even with a WO # of its own.
+      let x: Milestone | undefined = discoveryOf(m) && m.parentId ? byId.get(m.parentId) ?? m : m, wo = "", owner: Milestone | undefined;
       const seen = new Set<string>();
       while (x && x.id && !seen.has(x.id)) {
         seen.add(x.id);
@@ -142,7 +143,7 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
         pct: Math.round(pSum / wSum), plan: Math.round(planSum / wSum), hours: Math.round(hours * 10) / 10,
         standing: all ? "done" : held ? "held" : started ? "in_progress" : "not_started", done,
         added,
-        find: [g.wo, g.owner.name, ...crews, ...steps.flatMap((s) => [s.name, s.description, woOf(s)]), ...added.map((x) => ADDED[x.kind].lower)].filter(Boolean).join(" ").toLowerCase(),
+        find: [g.wo, g.owner.name, ...crews, ...steps.flatMap((s) => [s.name, s.description, woOf(s), discoveryText(s)]), ...added.map((x) => ADDED[x.kind].lower)].filter(Boolean).join(" ").toLowerCase(),
       });
     }
     return out.sort((a, b) => a.planStart - b.planStart || (a.wo ?? "~").localeCompare(b.wo ?? "~"));
@@ -151,9 +152,12 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
   const is: Record<Show, (o: WorkOrder) => boolean> = {
     all: () => true,
     open: (o) => o.standing !== "done",
+    critical: (o) => o.standing !== "done" && o.steps.some((s) => !!s.id && !!marks?.ids.has(s.id)),
     behind: (o) => o.standing !== "done" && o.hours <= -0.5,
+    notStarted: (o) => o.standing === "not_started",
     held: (o) => o.standing === "held",
     done: (o) => o.standing === "done",
+    added: (o) => o.added.length > 0,
   };
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const found = orders.filter((o) => words.every((w) => o.find.includes(w)));
@@ -245,7 +249,7 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
           {query && <button type="button" onClick={() => setQuery("")} className="text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Clear</button>}
         </label>
         <div className="inline-flex flex-wrap gap-1" role="group" aria-label="Show">
-          {([["all", "All"], ["open", "Open"], ["behind", "Behind"], ["held", "Held"], ["done", "Done"]] as const).map(([k, l]) => {
+          {([["all", "All"], ["open", "Open"], ["critical", "Critical path"], ["behind", "Behind"], ["notStarted", "Not started"], ["held", "Held"], ["done", "Done"], ["added", "Discovery & added"]] as const).map(([k, l]) => {
             const n = found.filter(is[k]).length;
             return (
               <button key={k} type="button" aria-pressed={show === k} onClick={() => setShow(k)}
@@ -349,7 +353,7 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
                             onClose={() => setCancelling(null)}
                             onDone={() => { setCancelling(null); toggle(o.key); onCancelled?.(); }} />
                         ) : (
-                          <button type="button" onClick={() => setCancelling(o.key)} title="Take it off this schedule - it's still done, somewhere else"
+                          <button type="button" onClick={() => setCancelling(o.key)} title="Planned, but not done here: kept on record as cancelled, with why (and where it moved)"
                             className="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 px-2 py-1 rounded-md">
                             <Ban className="w-3.5 h-3.5" /> Cancel work order
                           </button>
