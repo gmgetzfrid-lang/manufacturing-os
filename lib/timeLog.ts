@@ -166,7 +166,7 @@ export function buildTimeLog(input: {
 export async function downloadTimeLog(rows: TimeLogRow[], o: { project: string; title: string; tz: string; fileName: string }): Promise<void> {
   const XLSX = await import("xlsx");
   const date = (at: number) => new Date(at).toLocaleDateString("en-US", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: o.tz });
-  const time = (at: number) => new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: o.tz });
+  const time = (at: number) => new Date(at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: o.tz });
   const head = ["Date", "Time", "Shift", "Task / equipment", "WO", "Step", "Crew", "What happened", "%", "Comment", "Entered by", "Entered at"];
   const aoa: (string | number)[][] = [
     [`${o.project} - ${o.title}`],

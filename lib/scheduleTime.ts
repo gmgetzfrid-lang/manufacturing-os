@@ -63,7 +63,7 @@ export function byStart(starts: Map<string, number>, wbsCompare: (a?: string | n
   };
 }
 
-/** "Thu Oct 22 6:00 → 10:00", "Thu Oct 22 18:00 → Fri 6:00", or for a
+/** "Thu Oct 22 6:00 AM → 10:00 AM", "Thu Oct 22 6:00 PM → Fri 6:00 AM", or for a
  *  date-only task "Oct 22" / "Oct 22 – Oct 24 · 3d". */
 export function spanLabel(s: number, f: number, tz: string): string {
   if (!Number.isFinite(s) || !Number.isFinite(f)) return Number.isFinite(f) ? fmtInTz(f, tz, { month: "short", day: "numeric" }) : "No dates";
@@ -74,11 +74,11 @@ export function spanLabel(s: number, f: number, tz: string): string {
     const d = (ms: number) => fmtInTz(ms, tz, { month: "short", day: "numeric" });
     return n <= 1 ? d(f) : `${d(s)} – ${d(f)} · ${n}d`;
   }
-  const t = (ms: number) => clockLabel(ms, tz) || "0:00";
+  const t = (ms: number) => clockLabel(ms, tz) || "12:00 AM";
   const days = dayDiff(s, f, tz);
   if (days === 0) return `${day(s)} ${t(s)} → ${t(f)}`;
-  // Ends at midnight: "→ 24:00" on the start day reads better than "Fri 0:00".
-  if (days === 1 && !hasTimeOfDay(f, tz)) return `${day(s)} ${t(s)} → 24:00`;
+  // Ends at midnight: "→ 12:00 AM" on the start day reads better than "Fri 12:00 AM".
+  if (days === 1 && !hasTimeOfDay(f, tz)) return `${day(s)} ${t(s)} → 12:00 AM`;
   const endDay = days < 7 ? fmtInTz(f, tz, { weekday: "short" }) : fmtInTz(f, tz, { month: "short", day: "numeric" });
   return `${day(s)} ${t(s)} → ${endDay} ${t(f)}`;
 }

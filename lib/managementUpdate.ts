@@ -83,7 +83,7 @@ export interface UpdateLookups {
    *  shows ("8:00 AM", "8:30"). */
   /** The shift by the hour (lib/shiftHourly): its meeting, the first hour
    *  (permitting), then each hour so far. */
-  hourly?: Array<{ clock: string; kind?: "meeting" | "permit" | "work"; text: string }>;
+  hourly?: Array<{ clock: string; kind?: "meeting" | "permit" | "work" | "break"; text: string; ongoing?: string[] }>;
 }
 
 /** "forecast finish Nov 01 02:18 — 8.3 h late": where the work as it
@@ -214,7 +214,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
 
   // ── 2. Done this shift — and what each one meant for the plan.
   const doneRows = [...plan.done, ...plan.moved];
-  const byTaskDone = doneByTask(report, plan, t, (id) => note(id), { timeOf: look.timeOf, taskPct: look.taskPct, whyOf: look.whyOf, stepCount: (id) => look.stepsOf?.(id)?.length });
+  const byTaskDone = doneByTask(report, plan, t, (id) => note(id), { timeOf: look.timeOf, taskPct: look.taskPct, whyOf: look.whyOf, taskSteps: (id) => { const s = look.stepsOf?.(id); return s ? { done: s.filter((x) => x.percent >= 100).length, total: s.length } : undefined; } });
   const pctText = (p?: { pct: number; plan?: number }) => (p ? `task ${p.pct}% done${p.plan != null ? ` · plan ${p.plan}%` : ""}` : undefined);
   const taskSub = (r: ShiftRow) => (r.parentId ? pctText(look.taskPct?.(r.parentId)) : undefined);
   if (doneRows.length || asked.length) {
@@ -223,15 +223,20 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       sub: [`${plan.done.length} finished`, plan.moved.length ? `${plan.moved.length} moved forward` : null].filter(Boolean).join(" · "),
       blocks: [
         ...(byTaskDone.length ? [{
-          k: "table", head: ["Task", "WO", "Last step", "Who", "What it means", "vs plan"], align: ["left", "left", "left", "left", "left", "right"],
+          k: "table", head: ["Task", "WO", "Last done · In progress", "Who", "What it means", "vs plan"], align: ["left", "left", "left", "left", "left", "right"],
           textLabels: ["", "WO", "", "by", "", "vs plan"], nowrap: [1, 5],
           rows: byTaskDone.map((x) => [
-            { t: x.task, bold: true, ...(x.taskPct || x.critical ? { sub: [...(x.critical ? [{ t: "Critical path", tone: "rose" as const }] : []), ...(x.taskPct ? [{ t: pctText(x.taskPct)! }] : [])] } : {}) }, x.wo,
-            // The step done last: its time when times are on, its WO when the task has several.
+            { t: x.task, bold: true, ...(x.taskPct || x.count || x.critical ? { sub: [...(x.critical ? [{ t: "Critical path", tone: "rose" as const }] : []), ...(x.taskPct || x.count ? [{ t: [x.taskPct ? pctText(x.taskPct)! : null, x.count ?? null].filter(Boolean).join(" · ") }] : [])] } : {}) }, x.wo,
+            // The step done last and the one still going, labeled: its time when
+            // times are on, its WO when the task has several, its own comment.
             (() => {
-              const l = x.last;
-              const lead = [l.wo ? `WO ${l.wo}` : "", look.showTimes && l.time != null ? f.T(l.time) : ""].filter(Boolean).join(" ");
-              return { t: `${lead ? `${lead} ` : ""}${l.name}${l.critical ? " · critical path" : ""}${l.discovery ? ` · ${l.discovery}` : ""}`, ...(l.note ? { note: l.note } : {}) };
+              const say = (label: string, l: typeof x.last, more: number, word: string) => {
+                const lead = [l.wo ? `WO ${l.wo}` : "", look.showTimes && l.time != null ? f.T(l.time) : ""].filter(Boolean).join(" ");
+                return { t: `${label}: ${lead ? `${lead} ` : ""}${l.name}${l.critical ? " · critical path" : ""}${l.discovery ? ` · ${l.discovery}` : ""}${more ? ` (+${more} more ${word})` : ""}`, note: l.note };
+              };
+              const shown = [x.lastDone ? say("Last done", x.lastDone, x.moreDone, "done") : null, x.going ? say("In progress", x.going, x.moreGoing, "going") : null].filter((v): v is { t: string; note: string | undefined } => !!v);
+              const [first, ...rest] = shown;
+              return { t: first.t, ...(first.note ? { note: first.note } : {}), ...(rest.length ? { lines: rest.map((r) => ({ t: r.t, note: r.note })) } : {}) };
             })(),
             muted(x.who),
             { t: x.result.text, tone: x.result.tone === "amber" ? "amber" : "emerald", bold: true, ...(x.why ? { sub: [{ t: `Why behind: ${x.why}`, tone: "amber" as const, italic: true }] } : {}) },
@@ -380,10 +385,18 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     const attended = crewRows(cr.worked, look.crewsThis).filter((x) => x.title !== "No work planned").map((x) => `${x.title}: ${x.value}`).join("; ");
     out.push({
       id: "hourly", title: `Shift notes - ${shiftName(shift)} ${f.D(shift.start)}`, sub: "hour by hour",
-      blocks: [{ k: "table", head: ["Time", "What happened"], align: ["left", "left"], textLabels: ["", ""], nowrap: [0], rows: hl.map((x) => [{ t: x.clock, bold: true },
-        x.kind === "meeting" ? `Shift meeting - ${[attended, x.text].filter(Boolean).join(". ") || "-"}`
-          : x.kind === "permit" ? `Start of shift - permitting${x.text ? `. ${x.text}` : ""}`
-            : x.text || { t: "-", tone: "muted" as const }] as ExportCell[]) }],
+      blocks: [{ k: "table", head: ["Time", "What happened"], align: ["left", "left"], textLabels: ["", ""], nowrap: [0], rows: hl.map((x) => {
+        // Each item on its own line; then what crews kept working on.
+        const items = [
+          ...(x.kind === "meeting" ? [`Shift meeting - ${[attended, x.text].filter(Boolean).join(". ") || "-"}`]
+            : x.kind === "permit" ? [`Start of shift - permitting`, ...x.text.split("\n").filter(Boolean)]
+              : x.text.split("\n").filter(Boolean)),
+          ...(x.ongoing ?? []).map((o) => `Continuing: ${o}`),
+        ];
+        const [first, ...rest] = items;
+        return [{ t: x.clock, bold: true }, !first ? { t: "-", tone: "muted" as const }
+          : { t: first, ...(x.kind === "break" ? { tone: "muted" as const } : {}), ...(rest.length ? { lines: rest.map((t) => ({ t })) } : {}) }] as ExportCell[];
+      }) }],
     });
   }
 

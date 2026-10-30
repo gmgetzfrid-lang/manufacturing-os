@@ -81,7 +81,7 @@ describe("the turnover email: additions in the sections it already has", () => {
     ...o,
   });
   const text = (o?: Partial<Parameters<typeof turnoverUpdate>[2]>) => toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(report, f, look(o)) });
-  it("Done shows each task's last step and how many of its steps got done, with the whole task's % and why it's behind", () => {
+  it("Done shows each task's last step done and the one going, labeled, with the whole task's % and why it's behind", () => {
     const s = turnoverUpdate(report, f, look());
     const done = s.find((x) => x.id === "done")!.blocks.find((b) => b.k === "table")!;
     if (done.k !== "table") throw new Error();
@@ -89,13 +89,15 @@ describe("the turnover email: additions in the sections it already has", () => {
     const task = row[0], steps = row[2], result = row[4];
     if (typeof task === "string" || typeof steps === "string" || typeof result === "string") throw new Error();
     expect(task.sub?.[0].t).toBe("task 19% done · plan 28%");
-    expect(steps.t).toBe("Set Blinds");
-    expect(result.t).toBe("1 step done, 1 in progress");
+    expect(steps.t).toBe("Last done: Set Blinds");
+    expect(steps.lines?.map((l) => l.t)).toEqual(["In progress: Open Internal Manways (45%)"]);
+    expect(steps.lines?.[0].note).toBe("26 of 57 trays removed");
+    expect(result.t).toBe("Behind plan, plan had 100% by now");
     expect(result.sub?.[0].t).toBe("Why behind: trays heavier fouled than planned");
   });
   it("times are off by default - and on when asked", () => {
     expect(text()).not.toMatch(/07:40 Set Blinds/);
-    expect(text({ showTimes: true })).toMatch(/07:40 Set Blinds · Schultz · 1 step done, 1 in progress/);
+    expect(text({ showTimes: true })).toMatch(/Last done: 07:40 Set Blinds; In progress: 16:36 Open Internal Manways \(45%\) \("26 of 57 trays removed"\) · Schultz · Behind plan/);
   });
   it("crews: who attended the meeting, supervisor and head count - the first line of the notes by the hour", () => {
     const s = text({ crewsThis: { Schultz: { supervisor: "B. Smith", headcount: 14 } }, hourly: [{ clock: "5:30 AM", kind: "meeting", text: "" }] });

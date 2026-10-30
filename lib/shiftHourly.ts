@@ -11,6 +11,7 @@
 // is theirs — never written over.
 
 import type { TimeLogRow } from "@/lib/timeLog";
+import { timeInShift, type ShiftBreak, type ShiftWindow } from "@/lib/shiftReport";
 
 export interface HourlyLine {
   id: string;
@@ -41,23 +42,42 @@ export interface HourlyNotes {
   approved?: { at: number; by?: string | null } | null;
 }
 
-export type SlotKind = "meeting" | "permit" | "work";
-export interface HourSlot { key: string; kind: SlotKind; start: number; end: number }
+export type SlotKind = "meeting" | "permit" | "work" | "break";
+export interface HourSlot {
+  key: string; kind: SlotKind; start: number; end: number;
+  /** A break's name ("Lunch") and how long it is. */
+  label?: string; minutes?: number;
+}
+
+/** A break on the shift, as set in the shift times: when, and how long. */
+export interface HourBreak { at: number; minutes: number; label: string }
 
 const HOUR = 3_600_000;
 
-/** The shift by the hour: its meeting (the minutes before it starts, from
- *  the shift times), the first hour — start of shift, permitting — then
- *  each hour to its end. */
-export function hourSlots(shift: { start: number; end: number }, meetingBeforeMin: number): HourSlot[] {
-  const out: HourSlot[] = [{ key: "meeting", kind: "meeting", start: shift.start - Math.max(0, meetingBeforeMin) * 60_000, end: shift.start }];
-  for (let t = shift.start; t < shift.end; t += HOUR) out.push({ key: String(t), kind: t === shift.start ? "permit" : "work", start: t, end: Math.min(t + HOUR, shift.end) });
+/** The shift by the hour, meeting to meeting: its meeting (the minutes
+ *  before it starts, from the shift times), the first hour (start of
+ *  shift, permitting), then each hour until the next shift's meeting
+ *  (5:30 AM to 5:30 PM on a 6-to-6 day). Its breaks sit at their times. */
+export function hourSlots(shift: { start: number; end: number }, meetingBeforeMin: number, breaks: HourBreak[] = []): HourSlot[] {
+  const lead = Math.max(0, meetingBeforeMin) * 60_000;
+  const until = Math.max(shift.start + HOUR, shift.end - lead);
+  const out: HourSlot[] = [{ key: "meeting", kind: "meeting", start: shift.start - lead, end: shift.start }];
+  for (let t = shift.start; t < until; t += HOUR) out.push({ key: String(t), kind: t === shift.start ? "permit" : "work", start: t, end: Math.min(t + HOUR, until) });
+  for (const b of breaks) {
+    if (!(b.at >= shift.start && b.at < until)) continue;
+    // After the hour it falls in: "12:00 PM" the hour's work, then "Lunch".
+    const i = out.findIndex((x) => x.kind !== "meeting" && x.kind !== "break" && b.at >= x.start && b.at < x.end);
+    const after = i < 0 ? out.length : out.findIndex((x, j) => j > i && (x.kind !== "break" || x.start > b.at));
+    const slot: HourSlot = { key: `break:${b.at}`, kind: "break", start: b.at, end: b.at + b.minutes * 60_000, label: b.label, minutes: b.minutes };
+    out.splice(after < 0 ? out.length : after, 0, slot);
+  }
   return out;
 }
 
-/** The hour a time is in: before the shift, its meeting; after, its last hour. */
+/** The hour a time is in: before the shift, its meeting; after, its last
+ *  hour. Breaks hold no entries: what's logged then is its hour's. */
 export function slotOf(at: number, slots: HourSlot[]): HourSlot {
-  const hours = slots.filter((x) => x.kind !== "meeting");
+  const hours = slots.filter((x) => x.kind !== "meeting" && x.kind !== "break");
   if (!hours.length || at < hours[0].start) return slots[0];
   return hours.find((x) => at >= x.start && at < x.end) ?? hours[hours.length - 1];
 }
@@ -105,7 +125,7 @@ export function hourSource(rows: TimeLogRow[], tz: string): string {
 export function hoursToWrite(slots: HourSlot[], rows: Map<string, TimeLogRow[]>, lines: Map<string, HourlyLine[]>, tz: string, retryPlain: boolean): { write: Array<{ slot: HourSlot; rows: TimeLogRow[]; src: string }>; clear: string[] } {
   const write: Array<{ slot: HourSlot; rows: TimeLogRow[]; src: string }> = [], clear: string[] = [];
   for (const slot of slots) {
-    if (slot.kind === "meeting") continue;
+    if (slot.kind === "meeting" || slot.kind === "break") continue;
     const ls = lines.get(slot.key) ?? [];
     if (ls.some((l) => l.hand)) continue;
     const rs = rows.get(slot.key) ?? [];
@@ -143,7 +163,8 @@ export function plainHour(rows: TimeLogRow[]): string {
     if (!by.has(k)) { by.set(k, []); crews.push(k); }
     by.get(k)!.push(`${where}${what ? ` ${what}` : ""}${note}`);
   }
-  return [...crews.map((k) => `${k ? `${k}: ` : ""}${by.get(k)!.join("; ")}`), ...out].map((x) => (/[.!?]$/.test(x) ? x : `${x}.`)).join(" ");
+  // One line each: a crew's work, a note, an incident.
+  return [...crews.map((k) => `${k ? `${k}: ` : ""}${by.get(k)!.join("; ")}`), ...out].map((x) => (/[.!?]$/.test(x) ? x : `${x}.`)).join("\n");
 }
 
 /** The notes as the report and email give them: each hour up to `upTo`
@@ -152,12 +173,15 @@ export function hourlyRows(n: HourlyNotes | null | undefined, slots: HourSlot[],
   const by = linesBySlot(n, slots);
   return slots.filter((x) => x.kind === "meeting" || x.start <= upTo).map((slot) => {
     const lines = by.get(slot.key) ?? [];
-    return { slot, lines, text: lines.map((l) => l.text).join(" ") };
+    return { slot, lines, text: lines.map((l) => l.text).join("\n") };
   });
 }
 
 /** What each kind of hour is called. */
-export const SLOT_LABEL: Record<SlotKind, string> = { meeting: "Shift meeting", permit: "Start of shift - permitting", work: "" };
+export const SLOT_LABEL: Record<SlotKind, string> = { meeting: "Shift meeting", permit: "Start of shift - permitting", work: "", break: "Break" };
+
+/** "Lunch, 30 min" - a break as its row says it. */
+export const breakLabel = (x: HourSlot) => `${x.label || "Break"}${x.minutes ? `, ${x.minutes} min` : ""}`;
 
 /** "08:00" in plant time — the form times go to and come back from the model in. */
 export function clock24(at: number, tz: string): string {
@@ -193,17 +217,19 @@ export function factLine(r: TimeLogRow, tz: string): string {
 
 export const HOURLY_SYSTEM =
   "You write the hour-by-hour shift notes for a refinery turnaround shift report, the way a field " +
-  "supervisor writes them for management: one short, plain line for each hour.\n\n" +
+  "supervisor writes them for management: for each hour, short plain lines - one per crew's work, " +
+  "one per note or incident.\n\n" +
   "Example of the style:\n" +
   "07:00 – SS X-12 failed hydro, will stab X-11 takeout bundle.\n" +
   "09:00 – X-01 TS hydro sold, moving to X-14 TS and X-7.\n" +
   "14:00 – X-3 head hung, hanging X-4.\n\n" +
   "Rules:\n" +
-  "- Write one line for each HOUR given, and no other hours. Return the hour exactly as given (HH:MM).\n" +
+  "- Write lines for each HOUR given, and no other hours. Return the hour exactly as given (HH:MM).\n" +
+  "- One line per crew (all of that crew's work in the hour on it), and one per shift note or incident. Never run them together.\n" +
   "- Use ONLY that hour's entries. Never add a fact, cause, quantity, time, name, forecast or reason " +
   "that is not in them. If an entry says a thing is expected (\"expected back in 72 hrs\"), keep it " +
   "as expected.\n" +
-  "- Cover every entry in the hour on its line. Don't put a clock time in the text unless an entry's " +
+  "- Cover every entry in the hour on its lines. Don't put a clock time in the text unless an entry's " +
   "comment has it.\n" +
   "- Say who and what: the crew (\"Schultz\", \"Maintenance\"), the work in plain words (\"setting " +
   "blinds\", \"pulling the bundle\", \"done removing components\") and the equipment tag as the entry " +
@@ -216,7 +242,7 @@ export const HOURLY_SYSTEM =
   "- No work order numbers and no percentages unless a comment is only a percentage.\n" +
   "- A shift note or a safety incident is its own fact on its hour's line, worded as given.\n" +
   "- Write it as the supervisor's own notes: never mention entries, instructions, a system or an assistant.\n\n" +
-  'Return STRICT JSON only: {"hours":[{"hour":"07:00","text":"…"}]}';
+  'Return STRICT JSON only: {"hours":[{"hour":"07:00","lines":["Schultz setting blinds on E-12 and E-20.","Maintenance pulling LV-009B."]}]}';
 
 /** The prompt's user turn: each hour to write, with its entries. */
 export function hourlyPrompt(hours: Array<{ slot: HourSlot; rows: TimeLogRow[] }>, o: { tz: string; shiftTitle: string; window: string }): string {
@@ -240,9 +266,13 @@ export function parseHourly(text: string): Array<{ time: string; text: string }>
   const start = text.indexOf("{"), end = text.lastIndexOf("}");
   if (start >= 0 && end > start) {
     try {
-      const j = JSON.parse(text.slice(start, end + 1)) as { lines?: Array<{ time?: unknown; hour?: unknown; text?: unknown }>; hours?: Array<{ time?: unknown; hour?: unknown; text?: unknown }> };
+      type Hour = { time?: unknown; hour?: unknown; text?: unknown; lines?: unknown };
+      const j = JSON.parse(text.slice(start, end + 1)) as { lines?: Hour[]; hours?: Hour[] };
+      // Each item on its own line ("lines"), or the hour's text as one.
+      const say = (l: Hour) => (Array.isArray(l.lines) ? l.lines.map((x) => String(x)) : [String(l.text ?? "")])
+        .map((x) => x.replace(/\s+/g, " ").trim()).filter(Boolean).join("\n");
       const lines = (j.hours ?? j.lines ?? [])
-        .map((l) => ({ time: norm(String(l.hour ?? l.time ?? "")), text: String(l.text ?? "").replace(/\s+/g, " ").trim() }))
+        .map((l) => ({ time: norm(String(l.hour ?? l.time ?? "")), text: say(l) }))
         .filter((l) => l.time && l.text);
       if (lines.length) return lines;
     } catch { /* fall through to plain lines */ }
@@ -290,7 +320,7 @@ export function flagsFor(text: string, rows: TimeLogRow[]): string[] {
 export function wordHours(answer: Array<{ time: string; text: string }>, hours: Array<{ slot: HourSlot; rows: TimeLogRow[] }>, tz: string): Map<string, { text: string; plain: boolean }> {
   const out = new Map<string, { text: string; plain: boolean }>();
   for (const { slot, rows } of hours) {
-    const said = answer.filter((a) => a.time === clock24(slot.start, tz)).map((a) => a.text).join(" ").trim();
+    const said = answer.filter((a) => a.time === clock24(slot.start, tz)).map((a) => a.text).join("\n").trim();
     out.set(slot.key, said && flagsFor(said, rows).length === 0 ? { text: said, plain: false } : { text: plainHour(rows), plain: true });
   }
   return out;
@@ -298,3 +328,46 @@ export function wordHours(answer: Array<{ time: string; text: string }>, hours: 
 
 /** "E-20 - Transmix Charge Exchanger" → "E-20". */
 export const shortTask = (t: string) => t.replace(/\s+[-–—]\s+.*$/, "").trim();
+
+/** What each crew kept working on, hour by hour, when nothing new was
+ *  entered for it that hour: steps under way at the hour's start (by the
+ *  progress log, not held) whose crew works this shift. "Schultz - V-7
+ *  Clean Tower, E-12 Tube Side Hydro". Only hours up to `upTo`. */
+export function ongoingByHour(
+  slots: HourSlot[],
+  steps: Array<{ id: string; name: string; task: string; crew: string; worksShift: boolean }>,
+  log: Array<{ milestone_id: string; at: string; new_status: string }>,
+  upTo: number,
+): Map<string, string[]> {
+  const byStep = new Map<string, Array<{ t: number; status: string }>>();
+  for (const r of log) {
+    const t = Date.parse(r.at);
+    if (Number.isFinite(t)) byStep.set(r.milestone_id, [...(byStep.get(r.milestone_id) ?? []), { t, status: r.new_status }]);
+  }
+  for (const v of byStep.values()) v.sort((a, b) => a.t - b.t);
+  const out = new Map<string, string[]>();
+  for (const slot of slots) {
+    if ((slot.kind !== "work" && slot.kind !== "permit") || slot.start > upTo) continue;
+    const crews = new Map<string, string[]>();
+    for (const s of steps) {
+      if (!s.worksShift) continue;
+      const rows = byStep.get(s.id) ?? [];
+      // Something entered for it this hour: the hour's own lines say it.
+      if (rows.some((r) => r.t >= slot.start && r.t < slot.end)) continue;
+      const before = rows.filter((r) => r.t < slot.start);
+      if (before[before.length - 1]?.status !== "in_progress") continue;
+      const k = s.crew || "No crew named";
+      crews.set(k, [...(crews.get(k) ?? []), `${shortTask(s.task)} ${s.name}`.trim()]);
+    }
+    // Two steps of one name (two pipe jobs) say it once, with how many.
+    const said = (names: string[]) => [...new Set(names)].map((n) => { const k = names.filter((x) => x === n).length; return k > 1 ? `${n} (${k})` : n; });
+    if (crews.size) out.set(slot.key, [...crews].map(([crew, names]) => `${crew} - ${said(names).join(", ")}`));
+  }
+  return out;
+}
+
+/** The shift's breaks as times on it (lib/shiftReport ShiftTimes.breaks). */
+export function breaksOn(shift: ShiftWindow, breaks: ShiftBreak[] | undefined, tz: string): HourBreak[] {
+  return (breaks ?? []).filter((b) => b.shift === shift.kind).map((b) => ({ at: timeInShift(shift, b.start, tz), minutes: b.minutes, label: b.label }))
+    .filter((b): b is HourBreak => b.at != null).sort((a, b) => a.at - b.at);
+}

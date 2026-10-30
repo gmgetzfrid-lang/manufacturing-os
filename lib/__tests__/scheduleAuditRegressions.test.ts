@@ -142,16 +142,16 @@ describe("linked steps follow the step before them, without a day gap", () => {
     const c = n("c", at("2026-10-14", "12:00"), at("2026-10-14", "14:00"), ["b"]);
     const out = new Map(cascadeDependents([a, b, c], ["a"], CHI).map((x) => [x.id, x]));
     expect(dayKey(ms(out.get("b")!.plannedStartAt), CHI)).toBe("2026-10-15");
-    expect(clockLabel(ms(out.get("b")!.plannedStartAt), CHI)).toBe("10:00");
+    expect(clockLabel(ms(out.get("b")!.plannedStartAt), CHI)).toBe("10:00 AM");
     expect(dayKey(ms(out.get("c")!.plannedStartAt), CHI)).toBe("2026-10-15");
-    expect(clockLabel(ms(out.get("c")!.plannedStartAt), CHI)).toBe("12:00");
+    expect(clockLabel(ms(out.get("c")!.plannedStartAt), CHI)).toBe("12:00 PM");
   });
   it("stretching a phase keeps its steps' clock times", () => {
     const p: ReflowNode = { id: "p", plannedStartAt: at("2026-10-14", "08:00"), plannedAt: at("2026-10-14", "14:00") };
     const k: ReflowNode = { id: "k", parentId: "p", plannedStartAt: at("2026-10-14", "08:00"), plannedAt: at("2026-10-14", "10:00") };
     const out = computeSummaryResize([p, k], "p", "finish", 1, CHI).find((x) => x.id === "k")!;
     expect(ms(out.plannedAt)).toBeGreaterThan(ms(out.plannedStartAt));
-    expect(clockLabel(ms(out.plannedStartAt), CHI)).toBe("8:00");
+    expect(clockLabel(ms(out.plannedStartAt), CHI)).toBe("8:00 AM");
   });
 });
 
@@ -257,7 +257,7 @@ describe("link types and lags are honoured", () => {
     const a = n("a", at("2026-10-15", "08:00"), at("2026-10-15", "16:00"));
     const b = n("b", at("2026-10-15", "06:00"), at("2026-10-15", "09:00"), ["a"], { a: { type: "SS", lagHours: 2 } });
     const out = cascadeDependents([a, b], ["a"], CHI).find((x) => x.id === "b")!;
-    expect(clockLabel(ms(out.plannedStartAt), CHI)).toBe("10:00");
+    expect(clockLabel(ms(out.plannedStartAt), CHI)).toBe("10:00 AM");
   });
   it("finish-to-start + 12 h cure: starts 12 h after it ends", () => {
     const a = n("a", at("2026-10-15", "08:00"), at("2026-10-15", "16:00"));

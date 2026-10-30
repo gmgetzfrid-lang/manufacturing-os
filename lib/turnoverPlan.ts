@@ -336,16 +336,20 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
   taskPct?: (taskId: string) => { pct: number; plan?: number } | undefined;
   /** Why a step is behind, as said for the report. */
   whyOf?: (id: string) => string | undefined;
-  /** How many steps the task has in all (not cancelled). */
-  stepCount?: (taskId: string) => number | undefined;
+  /** The task's steps: how many are done, of how many (not cancelled). */
+  taskSteps?: (taskId: string) => { done: number; total: number } | undefined;
 } = {}): Array<{
   task: string; wo: string; steps: string; who: string; result: { text: string; tone: NextTone }; vs: { text: string; tone?: "emerald" | "rose" }; ids: string[];
   /** "3 done", "2 done, 1 in progress" — then a line per step. */
   head: string; lines: DoneLine[];
-  /** The step done last on the shift (or moved last, when none was done). */
+  /** The step done last on the shift, and how many more were done. */
+  lastDone?: DoneLine; moreDone: number;
+  /** The step moved last and still going, and how many more moved. */
+  going?: DoneLine; moreGoing: number;
+  /** The one the table names first: the last done, else the one going. */
   last: DoneLine;
-  /** "2 of 5 steps done", ", 1 in progress" — what the shift did to the task. */
-  count: string;
+  /** "4 of 10 steps done": where the whole task stands. */
+  count?: string;
   taskPct?: { pct: number; plan?: number };
   /** Why it's behind — the steps behind that have a reason given. */
   why?: string;
@@ -388,15 +392,28 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
         discovery: discoveryOf(r.leaf) ? ADDED[kindOf(discoveryOf(r.leaf))].lower : undefined,
       };
     });
-    // The one step the table shows: the last done (by when), else the last moved.
+    // What the table names: the step done last (by when), and the one moved
+    // last that's still going.
     const when = (l: DoneLine, r: ShiftRow) => l.time ?? (r.leaf.actualAt ? Date.parse(String(r.leaf.actualAt)) : -Infinity);
     const pick = (rs: ShiftRow[], off: number) => rs.reduce<{ l: DoneLine; t: number } | null>((best, r, i) => {
       const l = lines[off + i], t = when(l, r);
       return !best || t >= best.t ? { l, t } : best;
     }, null);
-    const last = (pick(done, 0) ?? pick(moved, done.length))!.l;
-    const total = rows[0].parentId ? o.stepCount?.(rows[0].parentId) : undefined;
-    const count = `${done.length}${total ? ` of ${total}` : ""} step${(total ?? done.length) === 1 ? "" : "s"} done${moved.length ? `, ${moved.length} in progress` : ""}`;
+    const lastDone = pick(done, 0)?.l, going = pick(moved, done.length)?.l;
+    const last = (lastDone ?? going)!;
+    const tally = rows[0].parentId ? o.taskSteps?.(rows[0].parentId) : undefined;
+    const count = tally && tally.total > 0 ? `${tally.done} of ${tally.total} step${tally.total === 1 ? "" : "s"} done` : undefined;
+    // What it means, said once: behind, late, early or on plan.
+    const early = done.filter((r) => r.plannedLater);
+    const startedEarly = moved.filter((r) => r.plannedLater);
+    const ahead = moved.filter((r) => !r.plannedLater && r.percent > r.expectedPct + 2);
+    const worst = [...behind].sort((a, b) => (b.expectedPct - b.percent) - (a.expectedPct - a.percent))[0];
+    const verdict = worst
+      ? `Behind plan, ${worst.leaf.id === going?.id ? "" : `${worst.leaf.name}: `}plan had ${worst.expectedPct}% by now`
+      : late.length ? `Done late, was due ${t.DTs(Math.min(...late.map((r) => r.dueAt)))}`
+        : early.length ? `Done early, planned ${t.DTs(Math.min(...early.map((r) => r.crewStart)))}`
+          : startedEarly.length ? `Started early, planned ${t.DTs(Math.min(...startedEarly.map((r) => r.crewStart)))}`
+            : ahead.length ? "Ahead of plan" : "On plan";
     // Why it's behind: the steps behind plan that have a reason given.
     const whys = rows.filter((r) => r.leaf.id && shareOf(report, r.leaf.id)?.side === "behind")
       .map((r) => ({ r, w: o.whyOf?.(r.leaf.id!)?.trim() })).filter((x) => x.w);
@@ -404,16 +421,16 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
     const parentId = rows[0].parentId;
     return {
       head, lines, last, count, why: why || undefined,
+      lastDone, moreDone: Math.max(0, done.length - 1), going, moreGoing: Math.max(0, moved.length - 1),
       critical: onPath(rows),
       taskPct: parentId ? o.taskPct?.(parentId) : undefined,
       task: rows[0].parentName ?? rows[0].leaf.name,
       // The work order number(s) — one for most work orders.
       wo: [...new Set(rows.map((r) => r.leaf.workOrderRef?.trim()).filter(Boolean))].join(", "),
-      // The last step, as the table shows it.
-      steps: `${last.name}${last.note ? ` “${last.note}”` : ""}`,
+      // The steps, as the table shows them.
+      steps: [lastDone ? `Last done: ${lastDone.name}${lastDone.note ? ` “${lastDone.note}”` : ""}` : "", going ? `In progress: ${going.name}${going.note ? ` “${going.note}”` : ""}` : ""].filter(Boolean).join("; "),
       who,
-      // What it means: how many of the task's steps the shift got done.
-      result: { text: count, tone: late.length || behind.length ? "amber" : "emerald" },
+      result: { text: verdict, tone: late.length || behind.length ? "amber" : "emerald" },
       vs: Math.abs(net) < 0.1 ? { text: "" } : net > 0 ? { text: `+${h}`, tone: "emerald" } : { text: `−${h}`, tone: "rose" },
       ids: rows.map((r) => r.leaf.id ?? r.leaf.name),
       /** The task's place in the table — what a dragged order keeps. */

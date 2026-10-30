@@ -370,7 +370,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
   // Night work the file plans that no night crew is on: the day shift's.
   const waiting = plan.filter((x) => fileShift(x.m) !== "day" && x.now === "day" && x.m.status !== "completed" && finishMsOf(x.m) > Date.now());
   const dayF = useMemo(() => new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", month: "short", day: "numeric" }), [tz]);
-  const clockF = useMemo(() => new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false }), [tz]);
+  const clockF = useMemo(() => new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit", hour12: true }), [tz]);
   const hoursIn = (m: Milestone, a: number, b: number) => {
     const s = startMsOf(m), f = finishMsOf(m);
     if (!Number.isFinite(s) || !Number.isFinite(f)) return "";

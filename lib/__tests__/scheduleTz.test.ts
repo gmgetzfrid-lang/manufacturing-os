@@ -66,7 +66,7 @@ describe("time-of-day labels", () => {
     expect(hasTimeOfDay(midnight, CHI)).toBe(false);
     expect(clockLabel(midnight, CHI)).toBe("");
     const six = wallClockToMs({ year: 2026, month: 10, day: 14, hour: 6, minute: 5, second: 0 }, CHI);
-    expect(clockLabel(six, CHI)).toBe("6:05");
+    expect(clockLabel(six, CHI)).toBe("6:05 AM");
     expect(hasTimeOfDay(six, "UTC")).toBe(true);
   });
 
@@ -110,7 +110,7 @@ describe("imports and zone changes", () => {
     // set to Chicago it must still read 08:00 at the plant.
     const moved = shiftWallClock("2026-08-15T08:00:00Z", "UTC", CHI);
     expect(moved).toBe("2026-08-15T13:00:00.000Z");
-    expect(clockLabel(Date.parse(moved), CHI)).toBe("8:00");
+    expect(clockLabel(Date.parse(moved), CHI)).toBe("8:00 AM");
     // And back.
     expect(shiftWallClock(moved, CHI, "UTC")).toBe("2026-08-15T08:00:00.000Z");
     // A no-op when the zone doesn't change.

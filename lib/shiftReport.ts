@@ -39,7 +39,13 @@ export interface ShiftTimes {
   /** Hands kept for extra work pulled forward (lib/shiftHandover): the
    *  crew's name as on the schedule, and its usual size. */
   helpers?: PullCrew;
+  /** Breaks and lunch on each shift: blocked off in the notes by the hour. */
+  breaks?: ShiftBreak[];
 }
+
+/** A break on the day or night shift: when it starts, how long, and what
+ *  it is ("Break", "Lunch"). */
+export interface ShiftBreak { shift: ShiftKind; start: string; minutes: number; label: string }
 
 /** Minutes before a shift change the turnover meeting starts. */
 export function meetingLeadMin(t: ShiftTimes): number {

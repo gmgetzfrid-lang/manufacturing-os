@@ -699,7 +699,7 @@ export default function ExecutionView({
       await addNote(id, u.note.trim(), u.at, u.status);
       return true;
     }
-    const label = fmtInTz(u.at, tz, { weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false });
+    const label = fmtInTz(u.at, tz, { weekday: "short", hour: "numeric", minute: "2-digit", hour12: true });
     const w: ShiftCredit = { at: u.at, label };
     const cur = m.status;
     const curPct = m.percentComplete != null ? Math.round(m.percentComplete) : (cur === "completed" ? 100 : 0);
@@ -809,7 +809,7 @@ export default function ExecutionView({
       try { await updateMilestone({ id: c.in.id, ...who, patch: c.inPatch }); }
       catch (e) { notify(`Moved, but ${c.in.name}'s crew or hours couldn't be changed: ${(e as Error).message}`, "warning"); }
     }
-    const label = (t: number) => { const w = shiftAt(t, tz, shiftTimes); return `${fmtInTz(w.start, tz, { weekday: "short" })} ${w.kind} ${fmtInTz(t, tz, { hour: "2-digit", minute: "2-digit", hour12: false })}`; };
+    const label = (t: number) => { const w = shiftAt(t, tz, shiftTimes); return `${fmtInTz(w.start, tz, { weekday: "short" })} ${w.kind} ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`; };
     const made: string[] = [];
     for (const n of planNote(c, reason, label)) {
       try {
@@ -2414,7 +2414,7 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
             onChange={(e) => { const v = Number(e.target.value); setValue(Number.isFinite(v) && v > 0 ? v : unit === "hours" ? 0.25 : 1); }}
             className="w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30" />
           <div className="text-[11px] text-[var(--color-text-muted)]">
-            Keeps its finish, <b>{fmtInTz(finishAt, tz, { weekday: "short", month: "short", day: "numeric", ...(timed ? { hour: "2-digit", minute: "2-digit", hourCycle: "h23" } : {}) })}</b>;
+            Keeps its finish, <b>{fmtInTz(finishAt, tz, { weekday: "short", month: "short", day: "numeric", ...(timed ? { hour: "numeric", minute: "2-digit", hour12: true } : {}) })}</b>;
             {unit === "hours" ? ` starts ${value} h before it.` : days > 1 ? ` starts ${Math.round(days) - 1} day${Math.round(days) - 1 === 1 ? "" : "s"} earlier.` : " a single-day task."}
           </div>
           {error && <div className="text-xs text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-md p-2">{error}</div>}

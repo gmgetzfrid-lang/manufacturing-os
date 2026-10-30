@@ -40,6 +40,7 @@ import { whenChoices } from "@/components/projects/ProgressControl";
 import { inheritedWorkOrders } from "@/lib/workOrderCrew";
 import StepCard from "@/components/projects/StepCard";
 import { loadProgressLog, type ProgressLogRow } from "@/lib/progressHistory";
+import { lastChanges, saidWithLatest } from "@/lib/stepComment";
 
 interface Props {
   day: string; // "YYYY-MM-DD" in the plant zone
@@ -277,16 +278,18 @@ export default function DayAgendaPanel({
   const dayStartsAt = shiftWindow(day, "day", tz, shiftTimes).start;
   const latestByStep = useMemo(() => {
     const out = new Map<string, LatestNote & { t: number }>();
+    // Only a comment typed with the step's last change, or after it.
+    const changed = lastChanges(log, dayEndsAt);
     for (const n of stepNotes) {
       const body = n.body?.trim();
       if (n.kind !== "note" || !body || !n.id || /^Progress → \d+%$/.test(body)) continue;
       const t = Date.parse(String(n.happenedAt ?? n.createdAt ?? ""));
-      if (!(t <= dayEndsAt)) continue;
+      if (!(t <= dayEndsAt) || !saidWithLatest(t, changed.get(n.milestoneId))) continue;
       const had = out.get(n.milestoneId);
       if (!had || t > had.t) out.set(n.milestoneId, { id: n.id, body, at: String(n.happenedAt ?? n.createdAt ?? ""), by: n.createdByName ?? null, byId: n.createdBy ?? null, t });
     }
     return out;
-  }, [stepNotes, dayEndsAt]);
+  }, [stepNotes, dayEndsAt, log]);
   const keyOf = (g: EquipmentGroup) => g.parent?.id ?? `top-${g.rows[0].leaf.id}`;
   const isOpen = (g: EquipmentGroup) => {
     if (query.trim()) return true;
@@ -346,11 +349,11 @@ export default function DayAgendaPanel({
     if (r.live === "overdue") return "OVERDUE";
     if (r.live === "started-early") return "early";
     // Done: when, if it was this day — not a span across days.
-    if (r.live === "done-ahead" || (r.leaf.status === "completed" && r.leaf.actualAt && r.endsToday)) return `done ${clockLabel(r.finishMs, tz) || "0:00"}`;
+    if (r.live === "done-ahead" || (r.leaf.status === "completed" && r.leaf.actualAt && r.endsToday)) return `done ${clockLabel(r.finishMs, tz) || "12:00 AM"}`;
     // Under a day long: its clock, across midnight too ("18:00–3:00").
-    if (r.finishMs > r.startMs && r.finishMs - r.startMs < 86_400_000 && (clockLabel(r.startMs, tz) || clockLabel(r.finishMs, tz))) return `${clockLabel(r.startMs, tz) || "0:00"}–${clockLabel(r.finishMs, tz) || "24:00"}`;
-    const a = r.startsToday ? (clockLabel(r.startMs, tz) || "0:00") : "…";
-    const b = r.endsToday ? (clockLabel(r.finishMs, tz) || "24:00") : "…";
+    if (r.finishMs > r.startMs && r.finishMs - r.startMs < 86_400_000 && (clockLabel(r.startMs, tz) || clockLabel(r.finishMs, tz))) return `${clockLabel(r.startMs, tz) || "12:00 AM"}–${clockLabel(r.finishMs, tz) || "12:00 AM"}`;
+    const a = r.startsToday ? (clockLabel(r.startMs, tz) || "12:00 AM") : "…";
+    const b = r.endsToday ? (clockLabel(r.finishMs, tz) || "12:00 AM") : "…";
     if (a === "…" && b === "…") return "all day";
     return `${a}–${b}`;
   };

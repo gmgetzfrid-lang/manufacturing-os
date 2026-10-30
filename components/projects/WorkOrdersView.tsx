@@ -30,6 +30,7 @@ import { useLetterhead } from "@/lib/letterheadStore";
 import { letterheadDocument } from "@/lib/letterhead";
 import { workOrdersHtml, PRINT_CSS, type PrintOrder, type PrintFormat } from "@/lib/workOrdersPrint";
 import { CancelJobForm } from "@/components/projects/CancelledJobs";
+import { saidWithLatest } from "@/lib/stepComment";
 
 const STEP_STATUS: Record<MilestoneStatus, string> = { planned: "Not started", in_progress: "In progress", completed: "Done", on_hold: "On hold", blocked: "Blocked", missed: "Missed" };
 const SHOW_WORD: Record<string, string> = { all: "All work orders", open: "Open work orders", behind: "Work orders behind plan", held: "Held work orders", done: "Done work orders" };
@@ -178,6 +179,9 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
       const ids = shown.flatMap((o) => o.steps.map((s) => s.id)).filter((id): id is string => !!id);
       const notes = await notesFor(ids);
       const latest = new Map<string, { at: number; text: string }>();
+      // Only a comment typed with the step's last change, or after it: a
+      // finished step doesn't carry the comment from an earlier update.
+      const doneAt = new Map(milestones.filter((m) => m.id && m.status === "completed" && m.actualAt).map((m) => [m.id!, Date.parse(String(m.actualAt))]));
       for (const n of notes) {
         const text = n.body?.trim();
         // What people wrote: comments, why it's behind, and hold / block
@@ -186,7 +190,7 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
           || (n.kind === "status" && (n.statusAt === "on_hold" || n.statusAt === "blocked"));
         if (!text || !said) continue;
         const at = noteAt(n), cur = latest.get(n.milestoneId);
-        if (Number.isFinite(at) && (!cur || at >= cur.at)) latest.set(n.milestoneId, { at, text });
+        if (Number.isFinite(at) && saidWithLatest(at, doneAt.get(n.milestoneId)) && (!cur || at >= cur.at)) latest.set(n.milestoneId, { at, text });
       }
       const hist = new Map<string, TimeLogRow[]>();
       if (history && projectId) {

@@ -26,6 +26,7 @@ import type { PathMarks } from "@/lib/criticalPath";
 import PathTag from "@/components/projects/PathTag";
 import DiscoveryTag from "@/components/projects/DiscoveryTag";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
+import { lastChanges, saidWithLatest } from "@/lib/stepComment";
 
 /** What the quick view saves for a step. */
 export type { StepUpdate } from "@/components/projects/StepCard";
@@ -115,8 +116,11 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
 
   const stepInfo = (m: Milestone) => {
     const mine = notes.filter((n) => n.milestoneId === m.id);
-    const latest = (k: MilestoneNote["kind"]) => mine.filter((n) => n.kind === k && n.body?.trim()).sort((a, b) => ms(b.createdAt) - ms(a.createdAt))[0];
     const rows = log.filter((r) => r.milestone_id === m.id);
+    // Only a comment typed with the step's last change, or after it.
+    const changed = lastChanges(rows).get(m.id ?? "");
+    const latest = (k: MilestoneNote["kind"]) => mine.filter((n) => n.kind === k && n.body?.trim() && saidWithLatest(ms(n.happenedAt ?? n.createdAt), changed))
+      .sort((a, b) => ms(b.createdAt) - ms(a.createdAt))[0];
     const since = [...rows].reverse().find((r) => r.new_status === m.status)?.at;
     // The comment this shift's report shows for it (lib/shiftReport) — the
     // one Revise changes; the latest overall is context.

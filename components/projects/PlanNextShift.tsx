@@ -52,7 +52,7 @@ export default function PlanNextShift({ milestones, next, now, tz, times, mode, 
   const [view, setView] = useState<View>({ v: "list" });
   const [saved, setSaved] = useState<string | null>(null);
 
-  const T = (t: number) => fmtInTz(t, tz, { hour: "2-digit", minute: "2-digit", hour12: false });
+  const T = (t: number) => fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true });
   const D = (t: number) => fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric" });
   const when = (t: number) => `${fmtInTz(t, tz, { weekday: "short" })} ${T(t)}`;
   // "Tue 18:00–22:00", or across midnight "Tue 15:00 → Wed 09:00".

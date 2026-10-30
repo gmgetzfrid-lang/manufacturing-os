@@ -33,9 +33,9 @@ describe("work in the order it happens", () => {
 
 describe("start and finish times on every task", () => {
   it("same day, overnight, midnight end, date-only", () => {
-    expect(spanLabel(at("2026-10-22T06:00:00-07:00"), at("2026-10-22T10:00:00-07:00"), tz)).toBe("Thu, Oct 22 6:00 → 10:00");
-    expect(spanLabel(at("2026-10-22T18:00:00-07:00"), at("2026-10-23T06:00:00-07:00"), tz)).toBe("Thu, Oct 22 18:00 → Fri 6:00");
-    expect(spanLabel(at("2026-10-22T18:00:00-07:00"), at("2026-10-23T00:00:00-07:00"), tz)).toBe("Thu, Oct 22 18:00 → 24:00");
+    expect(spanLabel(at("2026-10-22T06:00:00-07:00"), at("2026-10-22T10:00:00-07:00"), tz)).toBe("Thu, Oct 22 6:00 AM → 10:00 AM");
+    expect(spanLabel(at("2026-10-22T18:00:00-07:00"), at("2026-10-23T06:00:00-07:00"), tz)).toBe("Thu, Oct 22 6:00 PM → Fri 6:00 AM");
+    expect(spanLabel(at("2026-10-22T18:00:00-07:00"), at("2026-10-23T00:00:00-07:00"), tz)).toBe("Thu, Oct 22 6:00 PM → 12:00 AM");
     expect(spanLabel(at("2026-10-22T00:00:00-07:00"), at("2026-10-24T00:00:00-07:00"), tz)).toBe("Oct 22 – Oct 24 · 3d");
   });
 });

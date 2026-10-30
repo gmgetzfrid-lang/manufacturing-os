@@ -17,7 +17,7 @@ import { newId } from "@/lib/shiftRecord";
 import type { TimeLogRow } from "@/lib/timeLog";
 import {
   hourlyClocks, hourlyPrompt, hourlyRows, hoursToWrite, linesBySlot, liveLines, parseHourly, rowsBySlot, slotOf, wordHours,
-  SLOT_LABEL, type HourSlot, type HourlyLine, type HourlyNotes,
+  SLOT_LABEL, breakLabel, type HourSlot, type HourlyLine, type HourlyNotes,
 } from "@/lib/shiftHourly";
 
 const inputCls = "rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1 text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent-ring)]";
@@ -38,6 +38,8 @@ export interface HourlyCtx {
   slots: HourSlot[];
   /** Up to when the hours show: now, or the shift's end. */
   upTo: number;
+  /** What each crew kept working on in an hour nothing new was entered for it (lib/shiftHourly ongoingByHour). */
+  ongoing?: Map<string, string[]>;
   /** Being written now. */
   busy?: boolean;
 }
@@ -142,7 +144,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meeting }: {
     try {
       await h.update((cur) => {
         const rest = liveLines(cur).filter((l) => slotOf(l.at, h.slots).key !== slot.key);
-        const t = text?.replace(/\s+/g, " ").trim();
+        const t = text?.split("\n").map((x) => x.replace(/\s+/g, " ").trim()).filter(Boolean).join("\n");
         return { ...(cur?.v === 2 ? cur : {}), v: 2, lines: t ? [...rest, { id: newId(), at: slot.start, text: t, hand: true }] : rest };
       });
       setMsg(null);
@@ -153,15 +155,20 @@ export function ShiftHourlyBox({ h, edit, print, tz, meeting }: {
     return (
       <table className="w-full text-[8.5pt] border-collapse">
         <tbody>
-          {rows.map((r, i) => (
-            <tr key={r.slot.key} className="align-top">
-              <td className="w-16 pr-2 py-0.5 font-semibold whitespace-nowrap">{clocks[i]}</td>
-              <td className="py-0.5">
-                {SLOT_LABEL[r.slot.kind] && <b>{SLOT_LABEL[r.slot.kind]}{r.slot.kind === "meeting" ? " - " : r.text ? ". " : ""}</b>}
-                {r.slot.kind === "meeting" ? meetingLine(meeting, r.text) || "-" : r.text || (r.slot.kind === "work" ? "-" : "")}
-              </td>
-            </tr>
-          ))}
+          {rows.map((r, i) => {
+            const going = h.ongoing?.get(r.slot.key) ?? [];
+            return (
+              <tr key={r.slot.key} className="align-top">
+                <td className="w-16 pr-2 py-0.5 font-semibold whitespace-nowrap">{clocks[i]}</td>
+                <td className="py-0.5">
+                  {r.slot.kind === "break" ? <span className="text-slate-500">{breakLabel(r.slot)}</span> : <>
+                    {SLOT_LABEL[r.slot.kind] && <b>{SLOT_LABEL[r.slot.kind]}{r.slot.kind === "meeting" ? " - " : ""}</b>}
+                    {r.slot.kind === "meeting" ? meetingLine(meeting, r.text) || "-" : <Items text={r.text} going={going} empty={r.slot.kind === "work"} />}
+                  </>}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     );
@@ -176,6 +183,15 @@ export function ShiftHourlyBox({ h, edit, print, tz, meeting }: {
         {rows.map((r, i) => {
           const typed = r.lines.some((l) => l.hand);
           const label = SLOT_LABEL[r.slot.kind];
+          // A break: its own quiet row, blocked off.
+          if (r.slot.kind === "break") {
+            return (
+              <li key={r.slot.key} className="flex items-start gap-2 px-3 py-1 text-[12px] leading-snug bg-[var(--color-surface-2)]/60">
+                <span className="w-[66px] shrink-0 font-bold text-[var(--color-text-muted)] whitespace-nowrap tabular-nums">{clocks[i]}</span>
+                <span className="font-semibold text-[var(--color-text-muted)]">{breakLabel(r.slot)}</span>
+              </li>
+            );
+          }
           return (
             <li key={r.slot.key} className="flex items-start gap-2 px-3 py-1.5 text-[12.5px] leading-snug">
               <span className="w-[66px] shrink-0 font-bold text-[var(--color-text)] whitespace-nowrap tabular-nums">{clocks[i]}</span>
@@ -187,11 +203,11 @@ export function ShiftHourlyBox({ h, edit, print, tz, meeting }: {
                 {editing === r.slot.key ? (
                   <HourForm init={r.text} placeholder={r.slot.kind === "meeting" ? "Anything from the meeting" : "What happened this hour"}
                     onDone={(t) => void setHour(r.slot, t)} onCancel={() => setEditing(null)} />
-                ) : r.text ? (
-                  <div className="break-words text-[var(--color-text)]">{r.text}</div>
-                ) : r.slot.kind === "work" ? (
-                  <div className="text-[var(--color-text-faint)]">-</div>
-                ) : null}
+                ) : r.slot.kind === "meeting" ? (
+                  r.text ? <div className="break-words text-[var(--color-text)]">{r.text}</div> : null
+                ) : (
+                  <Items text={r.text} going={h.ongoing?.get(r.slot.key) ?? []} empty={r.slot.kind === "work"} />
+                )}
                 {edit && typed && editing !== r.slot.key && r.slot.kind !== "meeting" && (
                   <button type="button" onClick={() => void setHour(r.slot, null)}
                     className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">
@@ -211,6 +227,18 @@ export function ShiftHourlyBox({ h, edit, print, tz, meeting }: {
       </ul>
       {msg && <div role="alert" className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">{msg}</div>}
     </div>
+  );
+}
+
+/** An hour's lines, one item each, then what crews kept working on. */
+function Items({ text, going, empty }: { text: string; going: string[]; empty: boolean }) {
+  const items = text.split("\n").map((x) => x.trim()).filter(Boolean);
+  if (!items.length && !going.length) return empty ? <div className="text-[var(--color-text-faint)]">-</div> : null;
+  return (
+    <ul className="space-y-0.5">
+      {items.map((x, i) => <li key={i} className="break-words text-[var(--color-text)]">{x}</li>)}
+      {going.map((x, i) => <li key={`g${i}`} className="break-words text-[var(--color-text-muted)]"><span className="font-semibold">Continuing:</span> {x}</li>)}
+    </ul>
   );
 }
 
@@ -235,7 +263,7 @@ function HourForm({ init, placeholder, onDone, onCancel }: { init: string; place
   const [text, setText] = useState(init);
   return (
     <div className="mt-0.5 space-y-1.5">
-      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} aria-label={placeholder} placeholder={placeholder} autoFocus
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={Math.min(8, Math.max(2, text.split("\n").length + 1))} aria-label={placeholder} placeholder={`${placeholder} - one line each`} autoFocus
         className={`${inputCls} w-full resize-y`} />
       <div className="flex items-center gap-2">
         <button type="button" onClick={() => onDone(text)} className={`${btn} bg-[var(--color-accent)] text-[var(--color-accent-fg)]`}>Save</button>

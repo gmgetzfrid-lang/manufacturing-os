@@ -386,9 +386,9 @@ export default function TaskDetailPanel({
                       </span>
                     ) : (
                       <span>
-                        {m.actualStartAt ? `started ${fmtInTz(m.actualStartAt as string, tz, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}`
+                        {m.actualStartAt ? `started ${fmtInTz(m.actualStartAt as string, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}`
                           : m.status === "completed" ? "start time not recorded" : m.status === "planned" ? "not started" : "start time not recorded"}
-                        {m.status === "completed" ? (m.actualAt ? ` · finished ${fmtInTz(m.actualAt as string, tz, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}` : " · finish time not recorded") : ""}
+                        {m.status === "completed" ? (m.actualAt ? ` · finished ${fmtInTz(m.actualAt as string, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}` : " · finish time not recorded") : ""}
                         {canEdit && (m.actualStartAt || m.status !== "planned") && (
                           <button onClick={() => setActualEdit({ start: toDateTimeInput(m.actualStartAt as string | null, tz), finish: toDateTimeInput(m.actualAt as string | null, tz) })}
                             className="ml-1.5 text-[10px] font-bold text-[var(--color-accent)] hover:underline" title="Correct when the work really started or finished - the shift that did it gets the credit">correct</button>
@@ -913,7 +913,7 @@ function labelOf(s: MilestoneStatus): string {
 /** "Oct 26 14:05" in plant time, like every other time on the schedule. */
 function fmtWhen(iso: string | number | Date | null | undefined, tz: string): string {
   if (!iso) return "";
-  try { return fmtInTz(iso, tz, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }); }
+  try { return fmtInTz(iso, tz, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }); }
   catch { return ""; }
 }
 

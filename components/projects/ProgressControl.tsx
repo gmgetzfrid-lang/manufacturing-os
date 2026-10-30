@@ -59,7 +59,7 @@ export function resolveWhen(choice: { w: ShiftWindow; label: string }, clock: st
   if (!clock.trim()) return { error: "Put in the time it happened." };
   const r = clockForWork(choice.w, clock, tz, times);
   if ("error" in r) return r;
-  const label = new Date(r.at).toLocaleString("en-US", { weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tz });
+  const label = new Date(r.at).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", hour12: true, timeZone: tz });
   return { credit: { at: r.at, label } };
 }
 

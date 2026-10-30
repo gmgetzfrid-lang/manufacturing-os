@@ -1092,7 +1092,7 @@ function Chip({
     if (todayStart == null || todayEnd == null) return dayIndex > 0 ? "cont." : startClock(ms, tz);
     if (bandStart != null && bandEnd != null) {
       // Against its shift: "18:00–3:00", "→14:00", "all shift".
-      const s = clockLabel(todayStart, tz) || "0:00", e = clockLabel(todayEnd, tz) || "0:00";
+      const s = clockLabel(todayStart, tz) || "12:00 AM", e = clockLabel(todayEnd, tz) || "12:00 AM";
       const sIn = todayStart > bandStart + 60_000, eIn = todayEnd < bandEnd - 60_000 || todayStart >= bandEnd;
       // A moment (work done at a time): just the time.
       if (todayEnd - todayStart < 60_000 && sIn) return s;
@@ -1102,8 +1102,8 @@ function Chip({
     const dayEndMs = addDaysTz(dayStartMs, 1, tz);
     const startsToday = todayStart > dayStartMs;
     const endsToday = todayEnd < dayEndMs;
-    const s = clockLabel(todayStart, tz) || "0:00";
-    const e = clockLabel(todayEnd, tz) || "24:00";
+    const s = clockLabel(todayStart, tz) || "12:00 AM";
+    const e = clockLabel(todayEnd, tz) || "12:00 AM";
     if (startsToday && endsToday) return `${s}–${e}`;
     if (startsToday) return `${s}→`;
     if (endsToday) return `→${e}`;

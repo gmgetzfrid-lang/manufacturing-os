@@ -65,6 +65,10 @@ export async function saveProjectShiftTimes(projectId: string, t: ShiftTimes): P
     // Which jobs have a night crew (lib/nightStaffing) — kept with the times.
     ...(t.nightJobs === "file" || Array.isArray(t.nightJobs) ? { nightJobs: t.nightJobs === "file" ? "file" : t.nightJobs.filter((x) => typeof x === "string") } : {}),
     ...(t.helpers ? { helpers: cleanPullCrew(t.helpers) } : {}),
+    // Breaks and lunch, blocked off in the notes by the hour.
+    ...(Array.isArray(t.breaks) ? { breaks: t.breaks
+      .filter((b) => (b.shift === "day" || b.shift === "night") && /^\d{1,2}:\d{2}$/.test(b.start?.trim() ?? "") && b.minutes > 0 && b.minutes <= 240)
+      .map((b) => ({ shift: b.shift, start: b.start.trim().padStart(5, "0"), minutes: Math.round(b.minutes), label: (b.label?.trim() || "Break").slice(0, 24) })) } : {}),
   };
   // Keep the letterhead saved beside the times (lib/letterheadStore).
   const { data: kept } = await supabase.from("projects").select("lh:shift_times->letterhead").eq("id", projectId).maybeSingle();

@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import {
   flagsFor, parseHourly, hourlyClocks, factLine, clock24, hourSlots, slotOf, rowsBySlot, linesBySlot, hoursToWrite, hourSource,
-  wordHours, plainHour, liveLines, hourlyRows, hourlyPrompt, type HourlyNotes,
+  wordHours, plainHour, liveLines, hourlyRows, hourlyPrompt, breakLabel, ongoingByHour, type HourlyNotes,
 } from "@/lib/shiftHourly";
 import type { TimeLogRow } from "@/lib/timeLog";
 
@@ -31,7 +31,8 @@ describe("the shift by the hour", () => {
     expect(slots[0]).toEqual({ key: "meeting", kind: "meeting", start: at("05:30"), end: at("06:00") });
     expect(slots[1]).toEqual({ key: key("06:00"), kind: "permit", start: at("06:00"), end: at("07:00") });
     expect(slots[2]).toMatchObject({ kind: "work", start: at("07:00"), end: at("08:00") });
-    expect(slots[12]).toMatchObject({ kind: "work", start: at("17:00"), end: at("18:00") });
+    // To the next shift's meeting: 5:00 to 5:30 PM is the last of it.
+    expect(slots[12]).toMatchObject({ kind: "work", start: at("17:00"), end: at("17:30") });
     expect(hourlyClocks(slots.map((x) => x.start), tz).slice(0, 4)).toEqual(["5:30 AM", "6:00", "7:00", "8:00"]);
   });
   it("a time falls in its hour", () => {
@@ -66,6 +67,38 @@ describe("the shift by the hour", () => {
   });
 });
 
+describe("breaks, and what crews kept working on", () => {
+  it("a break sits after the hour it falls in, and takes no entries", () => {
+    const withBreaks = hourSlots(shift, 30, [{ at: at("09:00"), minutes: 15, label: "Break" }, { at: at("12:00"), minutes: 30, label: "Lunch" }]);
+    const i = withBreaks.findIndex((x) => x.kind === "break" && x.label === "Lunch");
+    expect(withBreaks[i - 1]).toMatchObject({ kind: "work", start: at("12:00") });
+    expect(withBreaks[i]).toMatchObject({ start: at("12:00"), end: at("12:30"), minutes: 30 });
+    expect(breakLabel(withBreaks[i])).toBe("Lunch, 30 min");
+    expect(slotOf(at("12:10"), withBreaks).kind).toBe("work");
+  });
+  it("the model's lines come back one item each", () => {
+    expect(parseHourly('{"hours":[{"hour":"07:00","lines":["Schultz setting blinds.","Crane on site."]}]}')).toEqual([{ time: "07:00", text: "Schultz setting blinds.\nCrane on site." }]);
+  });
+  it("an hour with nothing new entered still says what each crew was on", () => {
+    const steps = [
+      { id: "a", name: "Clean Tower", task: "V-7 - Fractionator", crew: "Ancon", worksShift: true },
+      { id: "b", name: "Hydro", task: "E-12 - Exchanger", crew: "Schultz", worksShift: true },
+      { id: "c", name: "Night job", task: "E-1 - X", crew: "Schultz", worksShift: false },
+    ];
+    const log = [
+      { milestone_id: "a", at: new Date(at("06:30")).toISOString(), new_status: "in_progress" },
+      { milestone_id: "b", at: new Date(at("07:15")).toISOString(), new_status: "in_progress" },
+      { milestone_id: "b", at: new Date(at("10:20")).toISOString(), new_status: "on_hold" },
+      { milestone_id: "c", at: new Date(at("06:10")).toISOString(), new_status: "in_progress" },
+    ];
+    const g = ongoingByHour(slots, steps, log, at("11:30"));
+    expect(g.get(key("07:00"))).toEqual(["Ancon - V-7 Clean Tower"]); // Hydro started this hour: its own line says so
+    expect(g.get(key("08:00"))).toEqual(["Ancon - V-7 Clean Tower", "Schultz - E-12 Hydro"]);
+    expect(g.get(key("11:00"))).toEqual(["Ancon - V-7 Clean Tower"]); // Hydro on hold
+    expect(g.has(key("12:00"))).toBe(false); // not yet
+  });
+});
+
 describe("checked against the hour's entries", () => {
   const hours = [...rowsBySlot(rows, slots)].map(([k, rs]) => ({ slot: slots.find((x) => x.key === k)!, rows: rs }));
   it("a faithful line has no flags", () => {
@@ -89,12 +122,15 @@ describe("checked against the hour's entries", () => {
   });
   it("says a step's entry, or the shift's own note, plainly", () => {
     expect(plainHour(rows.slice(0, 2))).toBe("Schultz: V-7 Set Blinds; Verify LOTO started - Majority of Schultz was going through site safety orientation (6am-7:15am); E-12 Set Blinds; Verify LOTO started.");
+    // One line per crew, and per note.
+    expect(plainHour([rows[2], row("14:40", { task: "Notes & actions", what: "Note", comment: "Crane on site" })]).split("\n")).toEqual([
+      "Schultz: E-17 Pull Bundle to 20% - Pulled 2/5 bundles.", "Note: Crane on site."]);
     expect(plainHour([row("09:00", { task: "Notes & actions", what: "Note", comment: "Crane on site" })])).toBe("Note: Crane on site.");
     expect(plainHour([
       row("10:00", { task: "V-7 - Piping", step: "Inspect", crew: "Schultz", what: "Comment", comment: "Discovery: low TML" }),
       row("10:00", { task: "V-7 - Piping", step: "Welded pipe", crew: "Schultz", what: "Discovery found", comment: "low TML - 32 h of work · task finish +24 h" }),
       row("10:30", { task: "E-14 - Cooler", step: "LV-009B", crew: "Maintenance", what: "Off hold, in progress", comment: "Putting the valve back in" }),
-    ])).toBe("Schultz: V-7 Welded pipe discovery - low TML. Maintenance: E-14 LV-009B back in progress - Putting the valve back in.");
+    ])).toBe("Schultz: V-7 Welded pipe discovery - low TML.\nMaintenance: E-14 LV-009B back in progress - Putting the valve back in.");
   });
   it("asks for each hour with its entries", () => {
     const p = hourlyPrompt(hours, { tz, shiftTitle: "Day shift Mon Oct 26", window: "6:00–18:00" });

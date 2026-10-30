@@ -165,7 +165,8 @@ export function clockLabel(ms: number, tz: string): string {
   if (!Number.isFinite(ms)) return "";
   const w = wallClock(ms, tz);
   if (w.hour === 0 && w.minute === 0) return "";
-  return `${w.hour}:${String(w.minute).padStart(2, "0")}`;
+  // Always AM / PM: "5:09 PM", never "17:09".
+  return `${w.hour % 12 || 12}:${String(w.minute).padStart(2, "0")} ${w.hour < 12 ? "AM" : "PM"}`;
 }
 
 /** Value for an <input type="datetime-local"> showing plant time. */

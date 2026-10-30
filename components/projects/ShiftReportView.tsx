@@ -37,9 +37,9 @@ import { buildProgressIndex, leafPercent, type ProgressInfo } from "@/lib/schedu
 import { behindWhy, chainText, CAUSE_ORDER, CAUSE_WORD, type BehindWhy, type BehindCause } from "@/lib/behindWhy";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { withWorkOrderCrews } from "@/lib/workOrderCrew";
-import { turnoverPlan, nextOf, standing, askedLine, doneOf, crewsOf, doneByTask, shareOf, watchLines, SEVERE_BEHIND_H, pathNote, competition, type TableOrder } from "@/lib/turnoverPlan";
+import { turnoverPlan, nextOf, standing, askedLine, doneOf, crewsOf, doneByTask, shareOf, SEVERE_BEHIND_H, pathNote, competition, type TableOrder, type DoneLine } from "@/lib/turnoverPlan";
 import {
-  buildShiftReport, shiftWindow, shiftAt, nextShift, previousShift, defaultReviewShift, nextShiftWithWork, expectedByParent, paceOf, expectedFraction, workShiftOf, staffedDueMs, meetingLeadMin, type Pace, type WorkShift,
+  buildShiftReport, shiftWindow, shiftAt, nextShift, previousShift, defaultReviewShift, nextShiftWithWork, expectedByParent, paceOf, expectedFraction, workShiftOf, staffedDueMs, meetingLeadMin, type Pace, type WorkShift, type ShiftBreak,
   DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftRow, type ShiftWindow, type ShiftReport, type PullCrew,
   crewsOnReport, filterShiftReport, whoOf, notesForShift, TURNOVER_GRACE_MS, type PathInfo,
 } from "@/lib/shiftReport";
@@ -76,7 +76,8 @@ import { PullAheadPicker } from "@/components/projects/PullAheadPicker";
 import { useHandoverDraft } from "@/lib/useHandoverDraft";
 import { scopeOf } from "@/lib/pullAhead";
 import { ShiftHourlyBox, useAutoHourly, meetingLine, type HourlyCtx, type MeetingCrews } from "@/components/projects/ShiftHourly";
-import { hourlyClocks, hourlyRows, hourSlots } from "@/lib/shiftHourly";
+import { hourlyClocks, hourlyRows, hourSlots, breaksOn, breakLabel, ongoingByHour } from "@/lib/shiftHourly";
+import { saidWithLatest } from "@/lib/stepComment";
 
 /** The crew the report is narrowed to (tables then drop their Who column). */
 const ReportCrew = React.createContext<string | null>(null);
@@ -283,17 +284,22 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const rehearsal = now < shift.start;
   const jumpTarget = useMemo(() => (report.review.scheduled.length === 0 ? nextShiftWithWork(milestones, shift, tz, times) : null), [report.review.scheduled.length, milestones, shift, tz, times]);
   const byId = useMemo(() => { const m = new Map<string, Milestone>(); for (const x of milestones) if (x.id) m.set(x.id, x); return m; }, [milestones]);
-  // How many steps each task has, all told — "2 of 5 steps done".
-  const stepCount = useMemo(() => {
+  // Each task's steps: how many are done, of how many - "4 of 10 steps done".
+  const stepTally = useMemo(() => {
     const parents = new Set(milestones.map((m) => m.parentId).filter((x): x is string => !!x));
-    const n = new Map<string, number>();
+    const n = new Map<string, { done: number; total: number }>();
     for (const m of milestones) {
       if (!m.parentId || (m.id && parents.has(m.id))) continue;
+      const done = m.status === "completed" || ((m.id ? progress?.get(m.id)?.percent : undefined) ?? leafPercent(m)) >= 100;
       const seen = new Set<string>();
-      for (let pid: string | null | undefined = m.parentId; pid && !seen.has(pid); pid = byId.get(pid)?.parentId) { seen.add(pid); n.set(pid, (n.get(pid) ?? 0) + 1); }
+      for (let pid: string | null | undefined = m.parentId; pid && !seen.has(pid); pid = byId.get(pid)?.parentId) {
+        seen.add(pid);
+        const c = n.get(pid) ?? { done: 0, total: 0 };
+        n.set(pid, { done: c.done + (done ? 1 : 0), total: c.total + 1 });
+      }
     }
     return n;
-  }, [milestones, byId]);
+  }, [milestones, byId, progress]);
 
   // Each main task's planned % by now — "on plan" or "behind", and "x% of
   // y% planned" next to its progress.
@@ -358,10 +364,6 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   // same cut-off as the progress). Each comment lands on one report.
   const grace = recordedBy - shift.end;
   const shiftNotes = useMemo(() => notesForShift(allNotes, shift, grace), [allNotes, shift, grace]);
-  const noteThen = useCallback((id: string) => {
-    const n = shiftNotes.note.get(id);
-    return n ? { body: n.body, at: new Date(n.at).toISOString(), by: n.by } : undefined;
-  }, [shiftNotes]);
   // Why a step is behind, as said for this shift — beside its hours.
   const whyOf = useCallback((id: string) => shiftNotes.why.get(id)?.body, [shiftNotes]);
   // The time each step was done on the shift (its finish), or moved last —
@@ -385,6 +387,12 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     const a = m?.status === "completed" && m.actualAt ? new Date(m.actualAt).getTime() : NaN;
     return Number.isFinite(a) && a >= shift.start && a <= shift.end ? a : movedAt.get(id);
   }, [byId, movedAt, shift.start, shift.end]);
+  // A step's comment this shift: the one typed with its last change, or
+  // after it. One from an earlier update isn't shown with a later change.
+  const noteThen = useCallback((id: string) => {
+    const n = shiftNotes.note.get(id);
+    return n && saidWithLatest(n.at, timeOf(id)) ? { body: n.body, at: new Date(n.at).toISOString(), by: n.by } : undefined;
+  }, [shiftNotes, timeOf]);
   // Where a whole task stands: its % done and % planned by now.
   const taskPct = useCallback((id: string) => {
     const p = progress?.get(id)?.percent;
@@ -411,7 +419,17 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   }, [orgId, projectId, userId, thisKey]);
   // The shift by the hour: its meeting (from the shift times), the first
   // hour (permitting), then each hour.
-  const slots = useMemo(() => hourSlots(shift, meetingLeadMin(times)), [shift, times]);
+  const slots = useMemo(() => hourSlots(shift, meetingLeadMin(times), breaksOn(shift, times.breaks, tz)), [shift, times, tz]);
+  // What each crew kept working on in an hour nothing new was entered for it.
+  const ongoing = useMemo(() => {
+    const parents = new Set(live.map((m) => m.parentId).filter((x): x is string => !!x));
+    const name = new Map(live.map((m) => [m.id, m.name]));
+    const steps = live.filter((m) => m.id && !parents.has(m.id)).map((m) => {
+      const w = workShiftOf(m, tz, times);
+      return { id: m.id!, name: m.name, task: (m.parentId ? name.get(m.parentId) : "") ?? "", crew: m.responsibleParty?.trim() ?? "", worksShift: w === "both" || w === shift.kind };
+    });
+    return ongoingByHour(slots, steps, log ?? [], Math.min(now, shift.end));
+  }, [live, tz, times, shift.kind, shift.end, slots, log, now]);
   // The tables' order as dragged at the meeting — shown at once, kept on
   // the shift's record (the email follows it too).
   const [orderLocal, setOrderLocal] = useState<{ key: string; order: TableOrder } | null>(null);
@@ -437,7 +455,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       error: recMsg ?? (recErr && canEdit ? recErr : null),
       tz,
       hourly: orgId ? {
-        notes: recThis?.hourly, update: updateHourly, rows: shiftRows, orgId, projectId, by, slots, upTo: Math.min(now, shift.end),
+        notes: recThis?.hourly, update: updateHourly, rows: shiftRows, orgId, projectId, by, slots, upTo: Math.min(now, shift.end), ongoing,
         shiftTitle: `${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`,
         window: ctx.win(shift),
       } : undefined,
@@ -447,7 +465,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         void saveRec(thisKey, (r) => ({ ...r, order: { ...(r.order ?? {}), [table]: ids ?? undefined } }));
       },
     };
-  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, saveRec, recMsg, recErr, tableOrder, setOrderLocal, updateHourly, shiftRows, projectId, shift, slots, now]);
+  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, saveRec, recMsg, recErr, tableOrder, setOrderLocal, updateHourly, shiftRows, projectId, shift, slots, now, ongoing]);
   // The hours keep themselves written while the turnover is open.
   const hourlyBusy = useAutoHourly(sheet.hourly, meeting === "turnover" && sheet.edit, tz);
   const sheetNow = useMemo<SheetCtx>(() => (sheet.hourly ? { ...sheet, hourly: { ...sheet.hourly, busy: hourlyBusy } } : sheet), [sheet, hourlyBusy]);
@@ -502,11 +520,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     ? kickoffSections(kickoff, ctx)
     : meeting === "closeout"
       ? closeoutSections(closeout, report, ctx, cancelled, discoveryList, lookBack, lessons)
-      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet: sheetNow, onEdit: canEdit && onUpdateStep ? setEditing : undefined, forecast, pathSource, discovery: discoveryList, why, stepCount: (id) => stepCount.get(id),
+      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet: sheetNow, onEdit: canEdit && onUpdateStep ? setEditing : undefined, forecast, pathSource, discovery: discoveryList, why, taskSteps: (id) => stepTally.get(id),
         onDiscovery: onDiscovery ? () => { const first = view.goals.all[0]?.parentId ?? view.review.done[0]?.parentId; const t = (first ? live.find((m) => m.id === first) : undefined) ?? live.find((m) => live.some((k) => k.parentId === m.id)); if (t) onDiscovery(t); } : undefined,
         // Only while the next shift is still ahead (or on).
         onPlanNext: onPlanNext && report.next.end > now ? () => onPlanNext(report.next) : undefined }),
-  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheetNow, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, stepCount, onDiscovery, live, onPlanNext, now, lookBack, lessons]);
+  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheetNow, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, lessons]);
   // Sections left off the report, on screen and in print — the viewer's own
   // choice for each meeting, remembered like the email's. Each comes back
   // with a tap (listed at the bottom); the email keeps its own choice.
@@ -623,7 +641,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           crewsThis: sheet.crewsThis, crewsNext: sheet.crewsNext,
           incidents: sheet.incidents && (sheet.incidents.none || sheet.incidents.items?.length) ? { none: !!sheet.incidents.none, items: sheet.incidents.items ?? [] } : undefined,
           shiftNotes: sheet.notes.map((n) => ({ at: n.at, text: n.text, followUp: n.followUp, from: n.from })),
-          hourly: sheet.hourly ? (() => { const hr = hourlyRows(sheet.hourly.notes, sheet.hourly.slots, sheet.hourly.upTo); const cl = hourlyClocks(hr.map((r) => r.slot.start), tz); return hr.map((r, i) => ({ clock: cl[i], kind: r.slot.kind, text: r.text })); })() : [],
+          hourly: sheet.hourly ? (() => {
+            const hr = hourlyRows(sheet.hourly.notes, sheet.hourly.slots, sheet.hourly.upTo);
+            const cl = hourlyClocks(hr.map((r) => r.slot.start), tz);
+            return hr.map((r, i) => ({ clock: cl[i], kind: r.slot.kind, text: r.slot.kind === "break" ? breakLabel(r.slot) : r.text, ongoing: sheet.hourly?.ongoing?.get(r.slot.key) }));
+          })() : [],
           order: sheet.order,
           forecast,
           discovery: discoveryList,
@@ -697,7 +719,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
               <button onClick={() => setShowTimes((v) => !v)} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Shift times" aria-expanded={showTimes}><Settings2 className="w-4 h-4" /></button>
             )}
             {showTimes && (
-              <div className="absolute right-0 top-full mt-1 z-30 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-2.5 space-y-1.5 text-[11px] w-52">
+              <div className="absolute left-0 sm:left-auto sm:right-0 top-full mt-1 z-30 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-2.5 space-y-1.5 text-[11px] w-[23rem] max-w-[calc(100vw-1.5rem)]">
                 <div className="font-bold text-[var(--color-text)]">Shift change times (plant time)</div>
                 <label className="flex items-center justify-between gap-2 text-[var(--color-text-muted)]"><span className="inline-flex items-center gap-1"><Sun className="w-3 h-3" /> Day starts</span>
                   <input type="time" value={draft.dayStart} onChange={(e) => { setTimesMsg(null); setTimesDraft({ ...draft, dayStart: e.target.value || DEFAULT_SHIFT_TIMES.dayStart }); }} className="h-7 border border-[var(--color-border-strong)] rounded px-1 bg-[var(--color-surface)]" />
@@ -708,6 +730,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                 <label className="flex items-center justify-between gap-2 text-[var(--color-text-muted)]"><span>Turnover meeting, min before</span>
                   <input type="number" min={0} max={180} step={5} value={meetingLeadMin(draft)} onChange={(e) => { setTimesMsg(null); setTimesDraft({ ...draft, meetingBefore: Number(e.target.value) }); }} className="h-7 w-16 border border-[var(--color-border-strong)] rounded px-1 bg-[var(--color-surface)]" />
                 </label>
+                <BreaksEditor breaks={draft.breaks ?? []} onChange={(b) => { setTimesMsg(null); setTimesDraft({ ...draft, breaks: b }); }} />
                 {!timesDraft && timesSaved === false && (
                   <div className="flex justify-end pt-0.5">
                     <button onClick={() => { void saveProjectShiftTimes(projectId, times).then(() => setTimesMsg("Saved for everyone on this project.")).catch((e: Error) => setTimesMsg(e.message)); }}
@@ -1182,7 +1205,7 @@ interface HandoverCtx {
 function makeCtx(tz: string, byId: Map<string, Milestone>, progress?: Map<string, ProgressInfo>, planOf?: Map<string, number>): Ctx {
   const D = (ms: number) => fmtInTz(ms, tz, { weekday: "short", month: "short", day: "numeric" });
   const DL = (ms: number) => fmtInTz(ms, tz, { weekday: "long", month: "long", day: "numeric" });
-  const T = (ms: number) => clockLabel(ms, tz) || "0:00";
+  const T = (ms: number) => clockLabel(ms, tz) || "12:00 AM";
   const DT = (ms: number) => `${D(ms)} ${T(ms)}`;
   const day = (ms: number) => fmtInTz(ms, tz, { year: "numeric", month: "numeric", day: "numeric" });
   const DS = (ms: number) => fmtInTz(ms, tz, { month: "short", day: "numeric" });
@@ -1206,6 +1229,36 @@ function makeCtx(tz: string, byId: Map<string, Milestone>, progress?: Map<string
       };
     },
   };
+}
+
+/** Breaks and lunch for each shift: blocked off in the notes by the hour.
+ *  Picked, not typed: the shift, the time, how long, and what it is. */
+function BreaksEditor({ breaks, onChange }: { breaks: ShiftBreak[]; onChange: (b: ShiftBreak[]) => void }) {
+  const sel = "h-7 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[11px]";
+  const set = (i: number, v: Partial<ShiftBreak>) => onChange(breaks.map((b, j) => (j === i ? { ...b, ...v } : b)));
+  return (
+    <div className="border-t border-[var(--color-border)] pt-1.5 space-y-1">
+      <div className="font-bold text-[var(--color-text)]">Breaks and lunch</div>
+      {breaks.length === 0 && <div className="text-[var(--color-text-muted)]">None set.</div>}
+      {breaks.map((b, i) => (
+        <div key={i} className="flex items-center gap-1">
+          <select value={b.shift} onChange={(e) => set(i, { shift: e.target.value as ShiftBreak["shift"] })} aria-label="Shift" className={sel}>
+            <option value="day">Day</option><option value="night">Night</option>
+          </select>
+          <select value={b.label} onChange={(e) => set(i, { label: e.target.value })} aria-label="What" className={sel}>
+            {["Break", "Lunch", "Dinner"].map((x) => <option key={x}>{x}</option>)}
+          </select>
+          <input type="time" value={b.start} onChange={(e) => set(i, { start: e.target.value || b.start })} aria-label="Starts" className={`${sel} w-[6.2rem]`} />
+          <select value={b.minutes} onChange={(e) => set(i, { minutes: Number(e.target.value) })} aria-label="How long" className={sel}>
+            {[10, 15, 20, 30, 45, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
+          </select>
+          <button type="button" onClick={() => onChange(breaks.filter((_, j) => j !== i))} aria-label="Remove this break" className="p-1 text-[var(--color-text-muted)] hover:text-rose-700"><X className="w-3.5 h-3.5" /></button>
+        </div>
+      ))}
+      <button type="button" onClick={() => onChange([...breaks, { shift: "day", start: breaks.length ? "12:00" : "09:00", minutes: breaks.length ? 30 : 15, label: breaks.length ? "Lunch" : "Break" }])}
+        className="font-semibold text-[var(--color-accent)] hover:underline">+ Add a break</button>
+    </div>
+  );
 }
 
 // ─── Agenda items ────────────────────────────────────────────────────
@@ -1312,8 +1365,8 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   discovery?: Discovery[]; onDiscovery?: () => void;
   /** Why it's behind (lib/behindWhy). */
   why?: BehindWhy;
-  /** How many steps a task has in all. */
-  stepCount?: (taskId: string) => number | undefined;
+  /** A task's steps: how many are done, of how many. */
+  taskSteps?: (taskId: string) => { done: number; total: number } | undefined;
   /** Change what the next shift does, in the schedule. */
   onPlanNext?: () => void }): Sec[] {
   const { overall, review, goals, shift, next } = report;
@@ -1375,7 +1428,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   // ── Done: finished, and moved forward but on no list below.
   const doneIds = new Set(plan.done.map((r) => r.leaf.id ?? r.leaf.name));
   // One row per task: its steps done or moved this shift, in one cell.
-  const doneTasks = doneByTask(report, plan, c, (id) => noteLine(o.noteOf?.(id), shift.start, c.D), { timeOf: o.sheet?.timeOf, taskPct: o.sheet?.taskPct, whyOf: o.sheet?.whyOf, stepCount: o.stepCount });
+  const doneTasks = doneByTask(report, plan, c, (id) => noteLine(o.noteOf?.(id), shift.start, c.D), { timeOf: o.sheet?.timeOf, taskPct: o.sheet?.taskPct, whyOf: o.sheet?.whyOf, taskSteps: o.taskSteps });
   // Why a step is behind, under it — said in the quick view.
   const whyFor = (r: ShiftRow) => (r.leaf.id && shareOf(report, r.leaf.id)?.side === "behind" ? o.sheet?.whyOf(r.leaf.id) : undefined);
   const creditedIds = new Set([...plan.done, ...plan.moved].map((r) => r.leaf.id));
@@ -1440,7 +1493,6 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     (id) => noteLine(o.noteOf?.(id), shift.start, c.D));
   const capa = capacityOf(ho?.pullSet ?? null, tryList, shiftHrs);
   // The five-second read of the list.
-  const watch = watchLines(planList, report, { hrs: c.hrs }, (id) => (id ? priorityOf.get(id) : undefined));
   const addButton = ho?.openPicker ? (
     <button type="button" onClick={ho.openPicker}
       className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-indigo-400 dark:border-indigo-700 px-3 py-1.5 text-[12px] font-bold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 print:hidden">
@@ -1595,7 +1647,6 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
               <b>Night crews aren&apos;t set</b> - this list follows the schedule file&apos;s hours, which can hand day work to nights. Set them once in <b>Schedule setup → Night crews</b>.
             </div>
           )}
-          <WatchBox lines={watch} label={`Watch ${next.kind === "night" ? "tonight" : "today"}`} print={print} />
           {planList.length + tryList.length > 0 && putBack(print, "next")}
           {planList.length + tryList.length === 0 ? <Empty>Nothing is scheduled for the next shift.</Empty> : (
             <StepTable print={print} box whenHead="When" rightHead="Done → goal" rows={nextRows(print, true)} sort={sortOf(print, "next")} onEdit={print ? undefined : editRow} />
@@ -1656,7 +1707,8 @@ function hourlySection(sh: SheetCtx, h: HourlyCtx, meeting?: MeetingCrews): Sec 
     body: (print) => <ShiftHourlyBox h={h} edit={sh.edit} print={print} tz={sh.tz} meeting={meeting} />,
     data: () => [{ k: "table", head: ["Time", "What happened"], align: ["left", "left"], textLabels: ["", ""], nowrap: [0], rows: rows.map((r, i) => [
       { t: clocks[i], bold: true },
-      r.slot.kind === "meeting" ? `Shift meeting - ${meetingLine(meeting, r.text) || "-"}`
+      r.slot.kind === "break" ? { t: breakLabel(r.slot), tone: "muted" }
+        : r.slot.kind === "meeting" ? `Shift meeting - ${meetingLine(meeting, r.text) || "-"}`
         : r.slot.kind === "permit" ? `Start of shift - permitting${r.text ? `. ${r.text}` : ""}`
           : r.text || { t: "-", tone: "muted" },
     ] as ExportCell[]) }],
@@ -2374,26 +2426,6 @@ function WhyBehind({ why, c, print }: { why: BehindWhy; c: Ctx; print: boolean }
   );
 }
 
-/** The next shift's list in a few lines — what to watch. */
-function WatchBox({ lines, label, print }: { lines: ReturnType<typeof watchLines>; label: string; print: boolean }) {
-  if (!lines.length) return null;
-  const dot = { rose: "bg-rose-700", amber: "bg-amber-600", slate: "bg-slate-500" };
-  return (
-    <div className={`keep rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 ${print ? "px-2 py-1" : "px-3.5 py-2.5"}`}>
-      <div className={`font-semibold text-slate-900 dark:text-slate-100 ${print ? "text-[8.5pt]" : "text-[12.5px]"}`}>{label}</div>
-      <ul className={`mt-0.5 space-y-0.5 text-slate-800 dark:text-slate-200 ${print ? "text-[8pt]" : "text-[12.5px]"}`}>
-        {lines.map((l) => (
-          <li key={l.strong} className="flex items-baseline gap-2 leading-snug">
-            <span className={`shrink-0 w-[7px] h-[7px] rounded-full -translate-y-px ${dot[l.tone]}`} aria-hidden />
-            <span><b className="font-semibold">{l.strong}</b>{l.rest}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-/** A number in a plain tile — coloured only when it's off. */
 function Stat({ label, value, tone }: { label: string; value: string; tone: "emerald" | "rose" | "amber" | "slate" }) {
   const t = tone === "emerald" ? "text-emerald-700 dark:text-emerald-400" : tone === "rose" ? "text-rose-700 dark:text-rose-400" : tone === "amber" ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text)]";
   return (
@@ -2696,19 +2728,30 @@ function EditBtn({ label, onClick }: { label: string; onClick: () => void }) {
  *  on a phone, a short card each — nothing to scroll sideways for. */
 type DoneTask = ReturnType<typeof doneByTask>[number];
 
-/** The step a task did last this shift: its WO when the task has several,
- *  its time when times are on, its comment under it. */
+/** What a task did this shift, in two labeled lines: the step done last and
+ *  the one still going (each with its time when times are on, its WO when
+ *  the task has several, and the comment typed with it). Phone and desktop alike. */
 function DoneLines({ x, stamps, T, print, onEdit }: { x: DoneTask; stamps: boolean; T: (ms: number) => string; print: boolean; onEdit?: (id: string) => void }) {
-  const l = x.last;
-  const lead = [l.wo ? `WO ${l.wo}` : "", stamps && l.time != null ? T(l.time) : ""].filter(Boolean).join(" ");
+  const small = print ? "text-[7pt]" : "text-[10.5px]";
+  const line = (label: string, l: DoneLine, more: number, moreWord: string) => {
+    const lead = [l.wo ? `WO ${l.wo}` : "", stamps && l.time != null ? T(l.time) : ""].filter(Boolean).join(" ");
+    return (
+      <div className="mt-0.5 first:mt-0">
+        <span className={`mr-1.5 font-black uppercase tracking-wide text-slate-500 dark:text-slate-400 ${small}`}>{label}</span>
+        {lead && <span className={`font-mono text-slate-600 dark:text-slate-300 mr-1.5 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>{lead}</span>}
+        <span>{l.name}</span>
+        {l.critical && <span className={`ml-1.5 font-bold text-rose-700 dark:text-rose-400 ${small}`}>critical path</span>}
+        {l.discovery && <span className={`ml-1.5 font-bold text-violet-700 dark:text-violet-300 ${small}`}>{l.discovery}</span>}
+        {more > 0 && <span className={`ml-1.5 text-slate-500 dark:text-slate-400 ${small}`}>+{more} more {moreWord}</span>}
+        {!print && onEdit && <EditBtn label={l.name} onClick={() => onEdit(l.id)} />}
+        {l.note && <div className={`italic text-slate-500 dark:text-slate-400 ml-3 ${print ? "text-[7.5pt]" : "text-[11px]"}`}>“{l.note}”</div>}
+      </div>
+    );
+  };
   return (
     <div>
-      {lead && <span className={`font-mono text-slate-600 dark:text-slate-300 mr-1.5 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>{lead}</span>}
-      <span>{l.name}</span>
-      {l.critical && <span className={`ml-1.5 font-bold text-rose-700 dark:text-rose-400 ${print ? "text-[7pt]" : "text-[10.5px]"}`}>critical path</span>}
-      {l.discovery && <span className={`ml-1.5 font-bold text-violet-700 dark:text-violet-300 ${print ? "text-[7pt]" : "text-[10.5px]"}`}>{l.discovery}</span>}
-      {!print && onEdit && <EditBtn label={l.name} onClick={() => onEdit(l.id)} />}
-      {l.note && <div className={`italic text-slate-500 dark:text-slate-400 ${lead ? "ml-3" : ""} ${print ? "text-[7.5pt]" : "text-[11px]"}`}>“{l.note}”</div>}
+      {x.lastDone && line("Last done", x.lastDone, x.moreDone, "done")}
+      {x.going && line("In progress", x.going, x.moreGoing, "going")}
     </div>
   );
 }
@@ -2723,7 +2766,7 @@ function DoneTasks({ rows, print, stamps = false, T, sort, onEdit }: { rows: Don
   const resultCls = (t: string) => (t === "amber" ? "text-amber-700 dark:text-amber-300" : "text-emerald-700 dark:text-emerald-400");
   const vsCls = (t?: string) => (t === "rose" ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400");
   const cell = print ? "px-1 py-[1px]" : "px-2 py-1.5";
-  const pctLine = (x: DoneTask) => (x.taskPct ? `task ${x.taskPct.pct}% done${x.taskPct.plan != null ? ` · plan ${x.taskPct.plan}%` : ""}` : null);
+  const pctLine = (x: DoneTask) => [x.taskPct ? `task ${x.taskPct.pct}% done${x.taskPct.plan != null ? ` · plan ${x.taskPct.plan}%` : ""}` : null, x.count ?? null].filter(Boolean).join(" · ") || null;
   const whyLine = (x: DoneTask) => x.why && <div className={`mt-0.5 italic font-medium text-amber-800 dark:text-amber-300 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>Why behind: {x.why}</div>;
   return (
     <div ref={sortBox} className="relative">
@@ -2749,7 +2792,7 @@ function DoneTasks({ rows, print, stamps = false, T, sort, onEdit }: { rows: Don
         <table className={`w-full border-collapse ${print ? "text-[8pt]" : "text-[12.5px]"}`}>
           <thead>
             <tr className="border-b border-slate-300 dark:border-slate-600 text-[11px] font-medium text-slate-500 dark:text-slate-400 text-left">
-              <th className={`${cell} w-[18%]`}>Task</th>{hasWo && <th className={`${cell} w-[62px]`}>WO</th>}<th className={cell}>Last step</th><th className={`${cell} w-[13%]`}>Who</th>
+              <th className={`${cell} w-[18%]`}>Task</th>{hasWo && <th className={`${cell} w-[62px]`}>WO</th>}<th className={cell}>Last done · In progress</th><th className={`${cell} w-[13%]`}>Who</th>
               <th className={`${cell} w-[20%]`}>What it means</th><th className={`${cell} w-[64px] text-right`}>vs plan</th>
             </tr>
           </thead>

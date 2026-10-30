@@ -12,11 +12,11 @@ describe("reflow in plant time", () => {
     const task = n("t", null, "2026-10-31T13:00:00Z", "2026-10-31T21:00:00Z");
     const [c] = computeTreeMove([task], "t", 2, "defer", CHI);
     expect(dayKey(Date.parse(c.plannedStartAt), CHI)).toBe("2026-11-02");
-    expect(clockLabel(Date.parse(c.plannedStartAt), CHI)).toBe("8:00");
-    expect(clockLabel(Date.parse(c.plannedAt), CHI)).toBe("16:00");
+    expect(clockLabel(Date.parse(c.plannedStartAt), CHI)).toBe("8:00 AM");
+    expect(clockLabel(Date.parse(c.plannedAt), CHI)).toBe("4:00 PM");
     // In UTC the same move drifts an hour on the plant clock — the old behaviour.
     const [u] = computeTreeMove([task], "t", 2, "defer", "UTC");
-    expect(clockLabel(Date.parse(u.plannedStartAt), CHI)).toBe("8:00".replace("8", "7"));
+    expect(clockLabel(Date.parse(u.plannedStartAt), CHI)).toBe("8:00 AM".replace("8", "7"));
   });
 
   it("edge resize and sequencing step by plant days", () => {
@@ -24,12 +24,12 @@ describe("reflow in plant time", () => {
     const b = n("b", "p", "2026-10-31T13:00:00Z", "2026-10-31T21:00:00Z");
     const p = n("p", null, "2026-10-31T13:00:00Z", "2026-10-31T21:00:00Z");
     const [r] = computeEdgeResize([p, a, b], "a", "finish", 2, CHI).filter((c) => c.id === "a");
-    expect(clockLabel(Date.parse(r.plannedAt), CHI)).toBe("16:00");
+    expect(clockLabel(Date.parse(r.plannedAt), CHI)).toBe("4:00 PM");
     // Timed steps chain back-to-back: b starts when a's 16:00 finish lands,
     // the same day — not a whole day later.
     const seq = sequenceSiblings([p, a, b], "p", CHI).find((c) => c.id === "b")!;
     expect(dayKey(Date.parse(seq.plannedStartAt), CHI)).toBe("2026-10-31");
-    expect(clockLabel(Date.parse(seq.plannedStartAt), CHI)).toBe("16:00");
+    expect(clockLabel(Date.parse(seq.plannedStartAt), CHI)).toBe("4:00 PM");
   });
 
   it("summary resize snaps to plant midnight, not UTC midnight", () => {

@@ -200,9 +200,10 @@ function plainText(d: ExportDoc): string {
               if (!v) return "";
               const label = b.textLabels ? b.textLabels[j + 1] ?? "" : (b.head[j + 1] ?? "").toLowerCase();
               const note = typeof c !== "string" && c.note ? ` ("${c.note}")` : "";
-              const lines = typeof c !== "string" && c.lines?.length ? ` ${c.lines.map((x) => `${x.lead ? `${x.lead} ` : ""}${x.t}${x.note ? ` ("${x.note}")` : ""}`).join("; ")}` : "";
+              // After a heading ("3 steps:") the lines follow it; after a line of its own, a "; ".
+              const lines = typeof c !== "string" && c.lines?.length ? `${/:$/.test(v) ? " " : "; "}${c.lines.map((x) => `${x.lead ? `${x.lead} ` : ""}${x.t}${x.note ? ` ("${x.note}")` : ""}`).join("; ")}` : "";
               const sub = typeof c !== "string" && c.sub?.length ? ` (${c.sub.map((x) => x.t).join("; ")})` : "";
-              return (label && (typeof c === "string" || (!c.tone && !c.bold)) ? `${label} ${v}` : v) + lines + note + sub;
+              return (label && (typeof c === "string" || (!c.tone && !c.bold)) ? `${label} ${v}` : v) + note + lines + sub;
             }).filter(Boolean).join(" · ");
             if (first) out.push(`   • ${first}${tail ? ` - ${tail}` : ""}`);
             else if (tail) out.push(`       ${tail}`);
