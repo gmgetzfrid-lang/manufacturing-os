@@ -51,7 +51,7 @@ describe("work done early and progress made show on the turnover", () => {
     const doneSec = text.slice(text.search(/^DONE — /m), text.search(/^NEXT — |^CARRIES /m));
     // Still going: where it stands against the plan, and the task's hours
     // with it (+5.8 early, −4.8 behind on the bundle pull).
-    expect(doneSec).toMatch(/E-17 Exchanger — 1 done, 2 in progress: Remove components; Pull bundle \(40%\); Hydroblast \(30%\) · .*1 done early \(planned 10-27T13:00\); 1 started early \(planned 10-28T11:00\); in progress — behind, plan had 100% by now · \+1 h/);
+    expect(doneSec).toMatch(/E-17 Exchanger — Remove components · Schultz · 1 step done, 2 in progress · \+1 h/);
     // Unfinished and due: it carries — where it stands, and its own hours on its own row.
     expect(text).toMatch(/Pull bundle · Schultz · was due 10-26T21:00 · done 40% · −4.8 h/);
     // Why it's ahead: both early steps, with the hours each is worth.
@@ -64,15 +64,15 @@ describe("work done early and progress made show on the turnover", () => {
     expect(text).toMatch(/Pull bundle · .* · done 40% · −4.8 h/);
     // Every % reads as where it is now — never "0% → 25%".
     expect(text).not.toMatch(/% → /);
-    // Each step credited once under Done.
-    for (const name of ["Pull bundle", "Remove components", "Hydroblast"]) expect(doneSec.match(new RegExp(name, "g"))?.length).toBe(1);
+    // One row per task under Done: its last step, and the count.
+    expect(doneSec.match(/E-17 Exchanger/g)?.length).toBe(1);
   });
   it("without the record of the shift's start, later work with progress still shows — as entered", () => {
     const r2 = buildShiftReport({ milestones: all, tz: CHI, shift: day, now: day.end });
     expect(r2.review.knownStart).toBe(false);
     expect(r2.review.ahead.map((x) => x.leaf.id).sort()).toEqual(["hy", "rc"]);
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r2, f, { pctOf: () => 40, finishOf: () => undefined }) });
-    expect(text).toMatch(/Hydroblast \(30%\) · .*started early \(planned 10-28T11:00\)/);
+    expect(text).toMatch(/E-17 Exchanger — Remove components · 1 step done, 1 in progress/);
     expect(text).not.toMatch(/% → /); // where it is now — never a "0% → …" to puzzle out
   });
 });

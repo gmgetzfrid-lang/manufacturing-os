@@ -336,10 +336,16 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
   taskPct?: (taskId: string) => { pct: number; plan?: number } | undefined;
   /** Why a step is behind, as said for the report. */
   whyOf?: (id: string) => string | undefined;
+  /** How many steps the task has in all (not cancelled). */
+  stepCount?: (taskId: string) => number | undefined;
 } = {}): Array<{
   task: string; wo: string; steps: string; who: string; result: { text: string; tone: NextTone }; vs: { text: string; tone?: "emerald" | "rose" }; ids: string[];
   /** "3 done", "2 done, 1 in progress" — then a line per step. */
   head: string; lines: DoneLine[];
+  /** The step done last on the shift (or moved last, when none was done). */
+  last: DoneLine;
+  /** "2 of 5 steps done", ", 1 in progress" — what the shift did to the task. */
+  count: string;
   taskPct?: { pct: number; plan?: number };
   /** Why it's behind — the steps behind that have a reason given. */
   why?: string;
@@ -359,30 +365,9 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
   return inOrder(usual, ([k]) => k, plan.order?.done).map(([key, rows]) => {
     const done = rows.filter((r) => r.percent >= 100);
     const moved = rows.filter((r) => r.percent < 100);
-    const early = done.filter((r) => r.plannedLater);
     const late = done.filter((r) => !r.plannedLater && r.dueAt < report.shift.start);
-    const movedEarly = moved.filter((r) => r.plannedLater);
-    const stepText = [
-      ...done.map((r) => r.leaf.name),
-      // Where it is now — one number, read at a glance.
-      ...moved.map((r) => `${r.leaf.name} (${r.percent}%)`),
-    ].map((txt, i) => { const r = [...done, ...moved][i]; const n = r.leaf.id ? noteOf?.(r.leaf.id) : undefined; return n ? `${txt} “${n}”` : txt; }).join(", ");
-    const parts: string[] = [];
-    const onPlan = done.length - early.length - late.length;
-    if (onPlan > 0) parts.push(done.length === onPlan && !moved.length ? "done, on plan" : `${onPlan} done on plan`);
-    if (early.length) parts.push(`${early.length} done early (planned ${t.DTs(Math.min(...early.map((r) => r.crewStart)))}${early.length > 1 ? " on" : ""})`);
-    if (late.length) parts.push(`${late.length} done late (was due ${t.DTs(Math.min(...late.map((r) => r.dueAt)))})`);
-    if (movedEarly.length) parts.push(`${movedEarly.length} started early (planned ${t.DTs(Math.min(...movedEarly.map((r) => r.crewStart)))}${movedEarly.length > 1 ? " on" : ""})`);
-    // Still going: where it stands against where the plan has it by now.
-    const going = moved.filter((r) => !r.plannedLater);
-    const behind = going.filter((r) => r.percent < r.expectedPct - 2);
-    const ahead = going.filter((r) => r.percent > r.expectedPct + 2);
-    if (going.length === 1) {
-      const r = going[0];
-      parts.push(behind.length ? `in progress — behind, plan had ${r.expectedPct}% by now` : ahead.length ? `in progress — ahead, plan had ${r.expectedPct}% by now` : "in progress, on plan");
-    } else if (going.length > 1) {
-      parts.push(`${going.length} in progress${behind.length ? ` — ${behind.length} behind plan` : ahead.length === going.length ? " — ahead of plan" : ", on plan"}`);
-    }
+    // Still going and short of where the plan has it by now: the count reads amber.
+    const behind = moved.filter((r) => !r.plannedLater && r.percent < r.expectedPct - 2);
     // Every step's hours ahead or behind, the ones still going too (they
     // show again on their own row below — this is the task's account).
     let net = 0;
@@ -403,21 +388,32 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
         discovery: discoveryOf(r.leaf) ? ADDED[kindOf(discoveryOf(r.leaf))].lower : undefined,
       };
     });
+    // The one step the table shows: the last done (by when), else the last moved.
+    const when = (l: DoneLine, r: ShiftRow) => l.time ?? (r.leaf.actualAt ? Date.parse(String(r.leaf.actualAt)) : -Infinity);
+    const pick = (rs: ShiftRow[], off: number) => rs.reduce<{ l: DoneLine; t: number } | null>((best, r, i) => {
+      const l = lines[off + i], t = when(l, r);
+      return !best || t >= best.t ? { l, t } : best;
+    }, null);
+    const last = (pick(done, 0) ?? pick(moved, done.length))!.l;
+    const total = rows[0].parentId ? o.stepCount?.(rows[0].parentId) : undefined;
+    const count = `${done.length}${total ? ` of ${total}` : ""} step${(total ?? done.length) === 1 ? "" : "s"} done${moved.length ? `, ${moved.length} in progress` : ""}`;
     // Why it's behind: the steps behind plan that have a reason given.
     const whys = rows.filter((r) => r.leaf.id && shareOf(report, r.leaf.id)?.side === "behind")
       .map((r) => ({ r, w: o.whyOf?.(r.leaf.id!)?.trim() })).filter((x) => x.w);
     const why = whys.length === 1 ? whys[0].w : whys.length ? whys.map((x) => `${x.r.leaf.name}: ${x.w}`).join("; ") : undefined;
     const parentId = rows[0].parentId;
     return {
-      head, lines, why: why || undefined,
+      head, lines, last, count, why: why || undefined,
       critical: onPath(rows),
       taskPct: parentId ? o.taskPct?.(parentId) : undefined,
       task: rows[0].parentName ?? rows[0].leaf.name,
       // The work order number(s) — one for most work orders.
       wo: [...new Set(rows.map((r) => r.leaf.workOrderRef?.trim()).filter(Boolean))].join(", "),
-      steps: `${done.length ? `${done.length} done` : ""}${done.length && moved.length ? ", " : ""}${moved.length ? `${moved.length} in progress` : ""}: ${stepText}`,
+      // The last step, as the table shows it.
+      steps: `${last.name}${last.note ? ` “${last.note}”` : ""}`,
       who,
-      result: { text: parts.join("; "), tone: late.length || behind.length ? "amber" : "emerald" },
+      // What it means: how many of the task's steps the shift got done.
+      result: { text: count, tone: late.length || behind.length ? "amber" : "emerald" },
       vs: Math.abs(net) < 0.1 ? { text: "" } : net > 0 ? { text: `+${h}`, tone: "emerald" } : { text: `−${h}`, tone: "rose" },
       ids: rows.map((r) => r.leaf.id ?? r.leaf.name),
       /** The task's place in the table — what a dragged order keeps. */

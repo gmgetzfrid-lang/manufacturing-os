@@ -71,17 +71,17 @@ describe("the update says what happened, in as few words as it takes", () => {
     expect(sections.map((s) => s.id)).toEqual(["stand", "done", "incidents"]); // header, progress, done
   });
 
-  it("what got done: each step once, by its task, with no finish time claimed", () => {
+  it("what got done: each task's last step, and how many of its steps the shift did", () => {
     const done = sections.find((s) => s.id === "done")!.blocks.find((b) => b.k === "table")!;
     if (done.k !== "table") throw new Error();
     const lines = done.rows.map((r) => r.map((c) => (typeof c === "string" ? c : [c.t, ...(c.lines ?? []).map((l) => `${l.lead ? `${l.lead} ` : ""}${l.t}`)].join(" / "))).join(" | "));
-    // One row per task, its steps in one cell, each on its own line.
-    expect(lines.join("\n")).toMatch(/^T-605 Tower \|  \| 1 done: \/ Open manways \| .* \| done, on plan \| $/m); // on plan: nothing in "vs plan"
-    expect(lines.join("\n")).toMatch(/^E-606 Exchanger \|  \| 2 done: \/ Pull bundle \/ Hydroblast \| .* \| done, on plan \| $/m);
+    // One row per task: the step done last, then how many of the task's steps got done.
+    expect(lines.join("\n")).toMatch(/^T-605 Tower \|  \| Open manways \| .* \| 1 of 1 step done \| $/m); // on plan: nothing in "vs plan"
+    expect(lines.join("\n")).toMatch(/^E-606 Exchanger \|  \| Hydroblast \| .* \| 2 of 3 steps done \| $/m);
     expect(done.rows).toHaveLength(2);
     // When it was marked done isn't when it finished — no time is claimed.
     // The WO column (empty here: these steps have no WO number) is left out of the email.
-    expect(done.head).toEqual(["Task", "WO", "Done this shift", "Who", "What it means", "vs plan"]);
+    expect(done.head).toEqual(["Task", "WO", "Last step", "Who", "What it means", "vs plan"]);
   });
 
   it("no numbers, no stretch, no 'in this order'", () => {

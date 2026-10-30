@@ -214,7 +214,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
 
   // ── 2. Done this shift — and what each one meant for the plan.
   const doneRows = [...plan.done, ...plan.moved];
-  const byTaskDone = doneByTask(report, plan, t, (id) => note(id), { timeOf: look.timeOf, taskPct: look.taskPct, whyOf: look.whyOf });
+  const byTaskDone = doneByTask(report, plan, t, (id) => note(id), { timeOf: look.timeOf, taskPct: look.taskPct, whyOf: look.whyOf, stepCount: (id) => look.stepsOf?.(id)?.length });
   const pctText = (p?: { pct: number; plan?: number }) => (p ? `task ${p.pct}% done${p.plan != null ? ` · plan ${p.plan}%` : ""}` : undefined);
   const taskSub = (r: ShiftRow) => (r.parentId ? pctText(look.taskPct?.(r.parentId)) : undefined);
   if (doneRows.length || asked.length) {
@@ -223,12 +223,16 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       sub: [`${plan.done.length} finished`, plan.moved.length ? `${plan.moved.length} moved forward` : null].filter(Boolean).join(" · "),
       blocks: [
         ...(byTaskDone.length ? [{
-          k: "table", head: ["Task", "WO", "Done this shift", "Who", "What it means", "vs plan"], align: ["left", "left", "left", "left", "left", "right"],
+          k: "table", head: ["Task", "WO", "Last step", "Who", "What it means", "vs plan"], align: ["left", "left", "left", "left", "left", "right"],
           textLabels: ["", "WO", "", "by", "", "vs plan"], nowrap: [1, 5],
           rows: byTaskDone.map((x) => [
             { t: x.task, bold: true, ...(x.taskPct || x.critical ? { sub: [...(x.critical ? [{ t: "Critical path", tone: "rose" as const }] : []), ...(x.taskPct ? [{ t: pctText(x.taskPct)! }] : [])] } : {}) }, x.wo,
-            // One step per line — its time when times are on, its WO when the task has several.
-            { t: `${x.head}:`, lines: x.lines.map((l) => ({ lead: [l.wo ? `WO ${l.wo}` : "", look.showTimes && l.time != null ? f.T(l.time) : ""].filter(Boolean).join(" ") || undefined, t: `${l.name}${l.critical ? " · critical path" : ""}${l.discovery ? ` · ${l.discovery}` : ""}`, note: l.note })) },
+            // The step done last: its time when times are on, its WO when the task has several.
+            (() => {
+              const l = x.last;
+              const lead = [l.wo ? `WO ${l.wo}` : "", look.showTimes && l.time != null ? f.T(l.time) : ""].filter(Boolean).join(" ");
+              return { t: `${lead ? `${lead} ` : ""}${l.name}${l.critical ? " · critical path" : ""}${l.discovery ? ` · ${l.discovery}` : ""}`, ...(l.note ? { note: l.note } : {}) };
+            })(),
             muted(x.who),
             { t: x.result.text, tone: x.result.tone === "amber" ? "amber" : "emerald", bold: true, ...(x.why ? { sub: [{ t: `Why behind: ${x.why}`, tone: "amber" as const, italic: true }] } : {}) },
             { t: x.vs.text, tone: x.vs.tone, bold: true }] as ExportCell[]),

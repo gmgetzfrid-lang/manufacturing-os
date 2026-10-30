@@ -283,6 +283,17 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const rehearsal = now < shift.start;
   const jumpTarget = useMemo(() => (report.review.scheduled.length === 0 ? nextShiftWithWork(milestones, shift, tz, times) : null), [report.review.scheduled.length, milestones, shift, tz, times]);
   const byId = useMemo(() => { const m = new Map<string, Milestone>(); for (const x of milestones) if (x.id) m.set(x.id, x); return m; }, [milestones]);
+  // How many steps each task has, all told — "2 of 5 steps done".
+  const stepCount = useMemo(() => {
+    const parents = new Set(milestones.map((m) => m.parentId).filter((x): x is string => !!x));
+    const n = new Map<string, number>();
+    for (const m of milestones) {
+      if (!m.parentId || (m.id && parents.has(m.id))) continue;
+      const seen = new Set<string>();
+      for (let pid: string | null | undefined = m.parentId; pid && !seen.has(pid); pid = byId.get(pid)?.parentId) { seen.add(pid); n.set(pid, (n.get(pid) ?? 0) + 1); }
+    }
+    return n;
+  }, [milestones, byId]);
 
   // Each main task's planned % by now — "on plan" or "behind", and "x% of
   // y% planned" next to its progress.
@@ -491,11 +502,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     ? kickoffSections(kickoff, ctx)
     : meeting === "closeout"
       ? closeoutSections(closeout, report, ctx, cancelled, discoveryList, lookBack, lessons)
-      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet: sheetNow, onEdit: canEdit && onUpdateStep ? setEditing : undefined, forecast, pathSource, discovery: discoveryList, why,
+      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet: sheetNow, onEdit: canEdit && onUpdateStep ? setEditing : undefined, forecast, pathSource, discovery: discoveryList, why, stepCount: (id) => stepCount.get(id),
         onDiscovery: onDiscovery ? () => { const first = view.goals.all[0]?.parentId ?? view.review.done[0]?.parentId; const t = (first ? live.find((m) => m.id === first) : undefined) ?? live.find((m) => live.some((k) => k.parentId === m.id)); if (t) onDiscovery(t); } : undefined,
         // Only while the next shift is still ahead (or on).
         onPlanNext: onPlanNext && report.next.end > now ? () => onPlanNext(report.next) : undefined }),
-  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheetNow, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, onDiscovery, live, onPlanNext, now, lookBack, lessons]);
+  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheetNow, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, stepCount, onDiscovery, live, onPlanNext, now, lookBack, lessons]);
   // Sections left off the report, on screen and in print — the viewer's own
   // choice for each meeting, remembered like the email's. Each comes back
   // with a tap (listed at the bottom); the email keeps its own choice.
@@ -1301,6 +1312,8 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   discovery?: Discovery[]; onDiscovery?: () => void;
   /** Why it's behind (lib/behindWhy). */
   why?: BehindWhy;
+  /** How many steps a task has in all. */
+  stepCount?: (taskId: string) => number | undefined;
   /** Change what the next shift does, in the schedule. */
   onPlanNext?: () => void }): Sec[] {
   const { overall, review, goals, shift, next } = report;
@@ -1362,7 +1375,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   // ── Done: finished, and moved forward but on no list below.
   const doneIds = new Set(plan.done.map((r) => r.leaf.id ?? r.leaf.name));
   // One row per task: its steps done or moved this shift, in one cell.
-  const doneTasks = doneByTask(report, plan, c, (id) => noteLine(o.noteOf?.(id), shift.start, c.D), { timeOf: o.sheet?.timeOf, taskPct: o.sheet?.taskPct, whyOf: o.sheet?.whyOf });
+  const doneTasks = doneByTask(report, plan, c, (id) => noteLine(o.noteOf?.(id), shift.start, c.D), { timeOf: o.sheet?.timeOf, taskPct: o.sheet?.taskPct, whyOf: o.sheet?.whyOf, stepCount: o.stepCount });
   // Why a step is behind, under it — said in the quick view.
   const whyFor = (r: ShiftRow) => (r.leaf.id && shareOf(report, r.leaf.id)?.side === "behind" ? o.sheet?.whyOf(r.leaf.id) : undefined);
   const creditedIds = new Set([...plan.done, ...plan.moved].map((r) => r.leaf.id));
@@ -2683,25 +2696,19 @@ function EditBtn({ label, onClick }: { label: string; onClick: () => void }) {
  *  on a phone, a short card each — nothing to scroll sideways for. */
 type DoneTask = ReturnType<typeof doneByTask>[number];
 
-/** The steps a task did this shift — one per line: its WO when the task
- *  has several, its time when times are on, its comment under it. */
+/** The step a task did last this shift: its WO when the task has several,
+ *  its time when times are on, its comment under it. */
 function DoneLines({ x, stamps, T, print, onEdit }: { x: DoneTask; stamps: boolean; T: (ms: number) => string; print: boolean; onEdit?: (id: string) => void }) {
+  const l = x.last;
+  const lead = [l.wo ? `WO ${l.wo}` : "", stamps && l.time != null ? T(l.time) : ""].filter(Boolean).join(" ");
   return (
     <div>
-      <div>{x.head}:</div>
-      {x.lines.map((l) => {
-        const lead = [l.wo ? `WO ${l.wo}` : "", stamps && l.time != null ? T(l.time) : ""].filter(Boolean).join(" ");
-        return (
-          <div key={l.id} className="mt-0.5">
-            {lead && <span className={`font-mono text-slate-600 dark:text-slate-300 mr-1.5 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>{lead}</span>}
-            <span>{l.name}</span>
-            {l.critical && <span className={`ml-1.5 font-bold text-rose-700 dark:text-rose-400 ${print ? "text-[7pt]" : "text-[10.5px]"}`}>critical path</span>}
-            {l.discovery && <span className={`ml-1.5 font-bold text-violet-700 dark:text-violet-300 ${print ? "text-[7pt]" : "text-[10.5px]"}`}>{l.discovery}</span>}
-            {!print && onEdit && <EditBtn label={l.name} onClick={() => onEdit(l.id)} />}
-            {l.note && <div className={`italic text-slate-500 dark:text-slate-400 ${lead ? "ml-3" : ""} ${print ? "text-[7.5pt]" : "text-[11px]"}`}>“{l.note}”</div>}
-          </div>
-        );
-      })}
+      {lead && <span className={`font-mono text-slate-600 dark:text-slate-300 mr-1.5 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>{lead}</span>}
+      <span>{l.name}</span>
+      {l.critical && <span className={`ml-1.5 font-bold text-rose-700 dark:text-rose-400 ${print ? "text-[7pt]" : "text-[10.5px]"}`}>critical path</span>}
+      {l.discovery && <span className={`ml-1.5 font-bold text-violet-700 dark:text-violet-300 ${print ? "text-[7pt]" : "text-[10.5px]"}`}>{l.discovery}</span>}
+      {!print && onEdit && <EditBtn label={l.name} onClick={() => onEdit(l.id)} />}
+      {l.note && <div className={`italic text-slate-500 dark:text-slate-400 ${lead ? "ml-3" : ""} ${print ? "text-[7.5pt]" : "text-[11px]"}`}>“{l.note}”</div>}
     </div>
   );
 }
@@ -2742,7 +2749,7 @@ function DoneTasks({ rows, print, stamps = false, T, sort, onEdit }: { rows: Don
         <table className={`w-full border-collapse ${print ? "text-[8pt]" : "text-[12.5px]"}`}>
           <thead>
             <tr className="border-b border-slate-300 dark:border-slate-600 text-[11px] font-medium text-slate-500 dark:text-slate-400 text-left">
-              <th className={`${cell} w-[18%]`}>Task</th>{hasWo && <th className={`${cell} w-[62px]`}>WO</th>}<th className={cell}>Done this shift</th><th className={`${cell} w-[13%]`}>Who</th>
+              <th className={`${cell} w-[18%]`}>Task</th>{hasWo && <th className={`${cell} w-[62px]`}>WO</th>}<th className={cell}>Last step</th><th className={`${cell} w-[13%]`}>Who</th>
               <th className={`${cell} w-[20%]`}>What it means</th><th className={`${cell} w-[64px] text-right`}>vs plan</th>
             </tr>
           </thead>
