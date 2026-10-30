@@ -33,7 +33,8 @@ export interface CpmStep {
 
 export interface Cpm {
   steps: Map<string, CpmStep>;
-  /** The latest planned finish of any step. */
+  /** The plan's finish: the latest baseline finish when there is one (work
+   *  added after it never moves it), else the latest planned finish. */
   plannedFinish: number;
   /** Where the work as it stands now lands the finish. */
   forecastFinish: number;
@@ -124,11 +125,18 @@ export function computeCpm(milestones: Milestone[], o: { now: number; tz: string
   const need = new Map<string, number>();
   const started = new Set<string>();
   let plannedFinish = -Infinity;
+  // The plan's finish is its baseline's when there is one: work added after
+  // it (discovery, added scope) moves the forecast, never the plan.
+  let baseFinish = -Infinity;
   for (const id of order) {
     const m = byId.get(id)!;
     const sp = workSpan(m, tz);
     const ps = sp.start, pf = sp.finish;
     if (Number.isFinite(pf)) plannedFinish = Math.max(plannedFinish, pf);
+    if (Number.isFinite(ms(m.baselineStartAt ?? m.baselineFinishAt)) && Number.isFinite(ms(m.baselineFinishAt))) {
+      const bf = workSpan({ ...m, plannedStartAt: m.baselineStartAt ?? m.baselineFinishAt, plannedAt: m.baselineFinishAt } as Milestone, tz).finish;
+      if (Number.isFinite(bf)) baseFinish = Math.max(baseFinish, bf);
+    }
     const dur = Number.isFinite(ps) && Number.isFinite(pf) ? Math.max(0, pf - ps) : 0;
     const pct = m.status === "completed" ? 100 : Math.max(0, Math.min(100, Number(m.percentComplete ?? 0)));
     const as = ms(m.actualStartAt), af = ms(m.actualAt);
@@ -168,6 +176,7 @@ export function computeCpm(milestones: Milestone[], o: { now: number; tz: string
   }
   let forecastFinish = -Infinity;
   for (const s of steps.values()) forecastFinish = Math.max(forecastFinish, s.ef);
+  if (Number.isFinite(baseFinish)) plannedFinish = baseFinish;
   if (!Number.isFinite(plannedFinish)) plannedFinish = forecastFinish;
 
   // Backward from the forecast finish.

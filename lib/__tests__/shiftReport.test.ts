@@ -319,3 +319,20 @@ describe("hoursInSpan — a step's hours from its dates", () => {
     expect(hoursInSpan(step({}), t("2026-10-29", "08:00"), t("2026-10-28", "08:00"), LA)).toBe(0);
   });
 });
+
+describe("the report's planned span", () => {
+  it("is the baseline's: discovery or added scope planned past it doesn't move the planned finish", () => {
+    const plan = [
+      mk({ id: "t", name: "Task", plannedStartAt: at("2026-10-26", "06:00"), plannedAt: at("2026-10-27", "18:00") }),
+      mk({ id: "a", name: "A", parentId: "t", plannedStartAt: at("2026-10-26", "06:00"), plannedAt: at("2026-10-27", "18:00"), durationHours: 12 }),
+    ].map((m) => ({ ...m, baselineStartAt: m.plannedStartAt, baselineFinishAt: m.plannedAt }));
+    const found = mk({ id: "f", name: "Found", parentId: "t", plannedStartAt: at("2026-10-27", "18:00"), plannedAt: at("2026-10-28", "06:00"), durationHours: 12 });
+    const shift = shiftWindow("2026-10-26", "day", CHI);
+    const r = buildShiftReport({ milestones: [...plan, found], tz: CHI, shift, now: shift.end });
+    expect(r.overall.plannedFinish).toBe(at("2026-10-27", "18:00"));
+    expect(r.overall.daysTotal).toBe(2);
+    // No baseline: the steps' own dates.
+    const r2 = buildShiftReport({ milestones: [...plan.map((m) => ({ ...m, baselineStartAt: null, baselineFinishAt: null })), found], tz: CHI, shift, now: shift.end });
+    expect(r2.overall.plannedFinish).toBe(at("2026-10-28", "06:00"));
+  });
+});

@@ -844,6 +844,10 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   let aheadSum = 0, behindSum = 0;
   let baselineSetAt: string | null = null;
   let plannedStart = Infinity, plannedFinish = -Infinity;
+  // The plan's own span: its baseline when there is one — work added after
+  // it (discovery, added scope) never moves the planned finish; what it
+  // does to the finish is the forecast's.
+  let baseStart = Infinity, baseFinish = -Infinity;
   for (const m of leaves) {
     const s = startMsOf(m), f = finishMsOf(m);
     plannedStart = Math.min(plannedStart, s); plannedFinish = Math.max(plannedFinish, f);
@@ -854,6 +858,8 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     const useBase = Number.isFinite(bs) && Number.isFinite(bf);
     if (useBase) {
       baselined++;
+      const asBase = { ...m, plannedStartAt: m.baselineStartAt, plannedAt: m.baselineFinishAt } as Milestone;
+      baseStart = Math.min(baseStart, startMsOf(asBase)); baseFinish = Math.max(baseFinish, finishMsOf(asBase));
       const setMs = toMs(m.baselineSetAt);
       if (Number.isFinite(setMs) && (!baselineSetAt || setMs > Date.parse(baselineSetAt))) baselineSetAt = new Date(setMs).toISOString();
     }
@@ -877,6 +883,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   const variancePct = actualPct - plannedPct;
   const standing: ShiftReport["overall"]["standing"] = standingOf(actualPct, plannedPct);
   const unscheduled = milestones.filter((m) => isLeaf(m) && !leaves.includes(m)).length;
+  if (baselined > 0 && Number.isFinite(baseStart) && Number.isFinite(baseFinish)) { plannedStart = baseStart; plannedFinish = baseFinish; }
   const hasSpan = Number.isFinite(plannedStart) && Number.isFinite(plannedFinish);
   const daysTotal = hasSpan ? Math.max(1, dayDiff(plannedStart, plannedFinish, tz) + 1) : 0;
   const daysElapsed = hasSpan ? Math.max(0, Math.min(daysTotal, dayDiff(plannedStart, now, tz) + 1)) : 0;

@@ -133,3 +133,17 @@ describe("hand marks win — the whole job Not critical, one task Critical", () 
     expect(floatsOf(r.cpm, r.off).get("c")).toBe(6);
   });
 });
+
+describe("the plan's finish is the baseline's", () => {
+  it("work added after the baseline moves the forecast, never the planned finish", () => {
+    const baselined = base().map((m) => (m.plannedAt ? { ...m, baselineStartAt: m.plannedStartAt, baselineFinishAt: m.plannedAt } : m));
+    // Found work after D, not in the baseline, planned to finish at 40.
+    const found = mk({ id: "F", parentId: "t", plannedStartAt: h(30), plannedAt: h(40), dependsOn: ["D"] });
+    const c = computeCpm([...baselined, found], { now: T0, tz: UTC });
+    expect(c.plannedFinish).toBe(Date.parse(h(30)));
+    expect(c.forecastFinish).toBe(Date.parse(h(40)));
+    expect(c.slipH).toBe(10);
+    // Without a baseline: the latest planned finish, as before.
+    expect(computeCpm([...base(), found], { now: T0, tz: UTC }).plannedFinish).toBe(Date.parse(h(40)));
+  });
+});
