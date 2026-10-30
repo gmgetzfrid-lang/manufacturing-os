@@ -18,7 +18,7 @@ import { discoveryOf, kindOf, ADDED, type AddedKind } from "@/lib/discovery";
 import { ADDED_TONE } from "@/components/projects/DiscoveryTag";
 import PctSlider from "@/components/projects/PctSlider";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
-import { updateMilestoneNote, setProgressTime, setNoteTime, updateDiscoveryRecord, deleteDiscovery, deleteMilestoneNote, undoLastProgress, resetStepProgress, setProgressPercent } from "@/lib/milestones";
+import { updateMilestoneNote, setProgressTime, setNoteTime, updateDiscoveryRecord, deleteDiscovery, deleteMilestoneNote, undoLastProgress, resetStepProgress, setProgressPercent, AHEAD_MAX_MS } from "@/lib/milestones";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import type { ProgressLogRow } from "@/lib/progressHistory";
 import { describeChange } from "@/lib/timeLog";
@@ -36,6 +36,8 @@ export interface StepUpdate {
   why?: string;
   /** Just a comment, as of `at` — nothing else changes. */
   comment?: boolean;
+  /** `at` is later than now, and the person confirmed it (signing off ahead). */
+  ahead?: boolean;
 }
 
 type Action = "start" | "progress" | "finish" | "hold" | "resume" | "edit" | "reopen" | "comment";
@@ -360,23 +362,30 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   const [saved, setSaved] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const open = (a: Action) => {
-    setAction(a); setMsg(null); setSaved(null); setNote(""); setWhy(""); setShowWhy(false); setP(null);
+    setAction(a); setMsg(null); setSaved(null); setNote(""); setWhy(""); setShowWhy(false); setP(null); setAheadAsk(null); aheadOk.current = false;
     // Opens on now (entering it as it happens); earlier is a tap away.
     setAtV(a === "edit" ? (Number.isFinite(af) ? toDateTimeInput(af, tz) : "") : toDateTimeInput(Date.now(), tz));
     setStartV(a === "edit" && Number.isFinite(as) ? toDateTimeInput(as, tz) : "");
     if (a === "edit") setFixAll(Object.fromEntries(timed.map((e) => [e.key, toDateTimeInput(e.unsure === "unset" ? e.sort : e.at, tz)])));
   };
   const toMs = (v: string) => { const iso = fromDateTimeInput(v, tz); return iso ? Date.parse(iso) : NaN; };
+  // A time later than now (signing off ahead): asked once, then saved as picked.
+  const aheadOk = useRef(false);
+  const [aheadAsk, setAheadAsk] = useState<string | null>(null);
+  const span = (d: number) => { const m = Math.round(d / 60_000); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`; };
   const need = (v: string, what: string): number | string => {
     const t = v.length >= 16 ? toMs(v) : NaN;
     if (!Number.isFinite(t)) return `Pick ${what}${v ? " - the time" : ""}.`;
-    if (t > Date.now() + 60_000) return "That time is in the future.";
+    const ahead = t - Date.now();
+    if (ahead > AHEAD_MAX_MS) return "That's more than 12 hours from now - check the day and AM or PM.";
+    if (ahead > 60_000 && !aheadOk.current) { setAheadAsk(`That's ${span(ahead)} from now (${when(t)}). Save it anyway?`); return ""; }
     return t;
   };
 
   const save = async () => {
     if (!action || busy) return;
-    const run = async (u: StepUpdate) => (onUpdate ? onUpdate(u) : false);
+    // Past the "Save anyway?" (need): a time later than now goes as asked.
+    const run = async (u: StepUpdate) => (onUpdate ? onUpdate({ ...u, ...(u.at > Date.now() + 60_000 ? { ahead: true } : {}) }) : false);
     const extra = showWhy && why.trim() ? { why: why.trim() } : {};
     let ok = false, said = "";
     setMsg(null);
@@ -473,7 +482,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         setSaved(said); setAction(null);
       } else setMsg((x) => x ?? "Not saved.");
     } catch (e) { setMsg((e as Error).message || "Not saved."); }
-    finally { setBusy(false); }
+    finally { setBusy(false); aheadOk.current = false; }
   };
 
   // Taking back what was entered: the latest change (the step goes back to
@@ -657,11 +666,11 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
             </div>
           )}
           {action === "finish" && !started && (
-            <DateTimePicker label="Started" hint="(if known)" value={startV} onChange={(v) => { setStartV(v); setMsg(null); }} tz={tz} times={times} planned={ps}
+            <DateTimePicker label="Started" hint="(if known)" value={startV} onChange={(v) => { setStartV(v); setMsg(null); setAheadAsk(null); }} tz={tz} times={times} planned={ps}
               shortcuts={[{ label: "Planned", at: ps }]} />
           )}
           {action !== "edit" && (
-            <DateTimePicker label={pickLabel} value={atV} onChange={(v) => { setAtV(v); setMsg(null); }} tz={tz} times={times}
+            <DateTimePicker label={pickLabel} value={atV} onChange={(v) => { setAtV(v); setMsg(null); setAheadAsk(null); }} tz={tz} times={times}
               planned={action === "finish" ? pf : ps}
               shortcuts={[{ label: "Planned", at: action === "finish" ? pf : action === "start" || action === "resume" ? ps : NaN }]} />
           )}
@@ -677,6 +686,13 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
               : <button type="button" onClick={() => setShowWhy(true)} className="text-[11.5px] font-semibold text-[var(--color-accent)] hover:underline">+ Why it&apos;s behind</button>
           )}
           {msg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{msg}</div>}
+          {aheadAsk && (
+            <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40 px-2 py-1.5 space-y-1.5">
+              <div className="font-semibold text-amber-900 dark:text-amber-200">{aheadAsk}</div>
+              <button type="button" disabled={busy} onClick={() => { aheadOk.current = true; setAheadAsk(null); void save(); }}
+                className="h-8 px-3 rounded-lg bg-amber-600 text-white text-[12.5px] font-bold hover:bg-amber-700 disabled:opacity-60">Yes, save it</button>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => void save()} disabled={busy}
               className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-60">{busy ? "Saving…" : action === "progress" && p === 100 ? "Save as finished" : "Save"}</button>

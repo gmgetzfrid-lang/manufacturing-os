@@ -416,6 +416,8 @@ export interface SetMilestoneStatusInput {
   /** When this really happened (ISO), for a correction filed under an
    *  earlier shift: the start or finish is stamped then, not now. */
   at?: string;
+  /** `at` is later than now and the person said so (signing off ahead). */
+  ahead?: boolean;
   /** Progress to record with the move to in progress (1–99). */
   percentComplete?: number;
   actorUserId: string;
@@ -427,11 +429,18 @@ export interface SetMilestoneStatusInput {
 /** A recorded time as it was picked: never swapped for another. None
  *  picked: now. Later than now isn't saved at all (it's a wrong day or AM
  *  and PM), and a clock a minute or two ahead is now. */
-function pastIso(iso: string | undefined, now: string): string {
+/** Later than now: only when the person said so (signing off ahead), and
+ *  never more than a shift ahead - that's a wrong day or AM / PM. */
+export const AHEAD_MAX_MS = 12 * 3_600_000;
+function pastIso(iso: string | undefined, now: string, ahead = false): string {
   if (!iso) return now;
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) throw new Error("That time couldn't be read - pick it again.");
-  if (t > Date.parse(now) + 2 * 60_000) throw new Error("That time is later than now - check the day and AM or PM.");
+  if (t > Date.parse(now) + 2 * 60_000) {
+    if (!ahead) throw new Error("That time is later than now - check the day and AM or PM.");
+    if (t > Date.parse(now) + AHEAD_MAX_MS) throw new Error("That's more than 12 hours from now - check the day and AM or PM.");
+    return new Date(t).toISOString();
+  }
   return new Date(Math.min(t, Date.parse(now))).toISOString();
 }
 
@@ -481,7 +490,7 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
     // The sign-off time is now (or when the work really finished); the
     // FIRST completion stays on record in first_completed_at so the history
     // of a reopen is never lost.
-    const doneAt = pastIso(doneWhen, now);
+    const doneAt = pastIso(doneWhen, now, input.ahead);
     update.actual_at = doneAt;
     if (!existingFirstCompleted) update.first_completed_at = doneAt;
     update.completed_by = input.actorUserId;
@@ -494,7 +503,7 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
     update.actual_at = null;
     update.completed_by = null;
     update.completed_by_name = null;
-    if (!existingStart) update.actual_start_at = pastIso(input.at, now);
+    if (!existingStart) update.actual_start_at = pastIso(input.at, now, input.ahead);
   } else if (input.status === "planned") {
     update.percent_complete = 0;
     update.actual_at = null;
@@ -571,6 +580,8 @@ export interface SetMilestoneProgressInput {
   /** When this really happened (ISO), for a correction filed under an
    *  earlier shift. */
   at?: string;
+  /** `at` is later than now and the person said so (signing off ahead). */
+  ahead?: boolean;
   actorUserId: string;
   actorUserName?: string;
   actorUserEmail?: string;
@@ -617,7 +628,7 @@ export async function setMilestoneProgress(input: SetMilestoneProgressInput): Pr
   if (nextStatus === "completed" && prevStatus === "completed" && !doneWhen) {
     // Already done: 100% again keeps when it was done.
   } else if (nextStatus === "completed") {
-    const doneAt = pastIso(doneWhen, now);
+    const doneAt = pastIso(doneWhen, now, input.ahead);
     update.actual_at = doneAt;
     if (!existingFirstCompleted) update.first_completed_at = doneAt;
     update.completed_by = input.actorUserId;
@@ -629,7 +640,7 @@ export async function setMilestoneProgress(input: SetMilestoneProgressInput): Pr
     update.completed_by = null;
     update.completed_by_name = null;
     // Starting work (first crossing above 0%) stamps the actual start.
-    if (pct > 0 && !existingStart) update.actual_start_at = pastIso(input.at, now);
+    if (pct > 0 && !existingStart) update.actual_start_at = pastIso(input.at, now, input.ahead);
   }
 
   const { data, error } = await supabase.from("milestones").update(update).eq("id", input.id).select("*").single();

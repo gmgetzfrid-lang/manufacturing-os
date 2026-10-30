@@ -1091,7 +1091,8 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
 /** "Day · Mon Oct 26 · 05:30–17:30" */
 /** An earlier shift a progress entry can be filed under: the time it's
  *  filed at (a minute before that shift ended) and its short name. */
-export interface ShiftCredit { at: number; label: string }
+/** `ahead`: `at` is later than now, and the person confirmed it (signing off ahead). */
+export interface ShiftCredit { at: number; label: string; ahead?: boolean }
 /** The shifts a correction can count for — the ones before the shift
  *  running now ("Mon night", "Mon day"). */
 export function creditShifts(now: number, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES, n = 2): ShiftCredit[] {

@@ -83,6 +83,19 @@ describe("a time is saved as picked, or not at all", () => {
     await expect(setMilestoneStatus({ id: "m1", status: "in_progress", at: later, ...actor })).rejects.toThrow(/later than now/);
     expect(state.updates).toEqual([]);
   });
+  it("signing off ahead: a time later than now is kept as picked once confirmed, never more than 12 h ahead", async () => {
+    state.cur = { status: "in_progress", actual_start_at: "2026-10-26T15:00:00Z", first_completed_at: null, percent_complete: 50 };
+    const soon = new Date(Date.now() + 30 * 60_000).toISOString();
+    await setMilestoneStatus({ id: "m1", status: "completed", at: soon, ahead: true, ...actor });
+    expect(state.updates[0].actual_at).toBe(soon);
+    await setMilestoneProgress({ id: "m1", percentComplete: 100, at: soon, ahead: true, ...actor });
+    expect(state.updates[1].actual_at).toBe(soon);
+    const tooFar = new Date(Date.now() + 13 * 3_600_000).toISOString();
+    await expect(setMilestoneStatus({ id: "m1", status: "completed", at: tooFar, ahead: true, ...actor })).rejects.toThrow(/more than 12 hours/);
+    // Not confirmed: refused, as before.
+    await expect(setMilestoneStatus({ id: "m1", status: "completed", at: soon, ...actor })).rejects.toThrow(/later than now/);
+    expect(state.updates).toHaveLength(2);
+  });
   it("done with no start on record: the start is the finish, as before", async () => {
     state.cur = { status: "planned", actual_start_at: null, first_completed_at: null, percent_complete: 0 };
     await setMilestoneStatus({ id: "m1", status: "completed", at: "2026-10-26T08:30:00.000Z", ...actor });

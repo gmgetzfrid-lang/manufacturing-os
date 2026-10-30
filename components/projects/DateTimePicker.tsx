@@ -26,6 +26,9 @@ const dayWords = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("e
 /** "10:30 PM" for "22:30". */
 export const time12 = (hm: string) => { const h = Number(hm.slice(0, 2)); return `${h % 12 || 12}:${hm.slice(3, 5)} ${h < 12 ? "AM" : "PM"}`; };
 
+/** "30 min", "2 h 15 min": how far ahead of now a picked time is. */
+const aheadWords = (d: number) => { const m = Math.round(d / 60_000); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`; };
+
 export default function DateTimePicker({ label, value, onChange, tz, times, planned, shortcuts = [], showNow = true, disabled, hint, future = false }: {
   label: string;
   value: string;
@@ -87,7 +90,7 @@ export default function DateTimePicker({ label, value, onChange, tz, times, plan
         </button>
         <TimeBox value={time} label={`${label}: time`} open={panel === "time"} onOpen={openTime} onSet={setTime} disabled={disabled} className={chip(panel === "time", !time)} />
         {sh && (!future && t > nowMs + 60_000
-          ? <span className="text-[12px] font-semibold text-rose-700 dark:text-rose-400">in the future</span>
+          ? <span className="text-[12px] font-semibold text-amber-700 dark:text-amber-400">{aheadWords(t - nowMs)} from now</span>
           : <span className="text-[12px] text-[var(--color-text-muted)]">{fmtInTz(sh.start, tz, { weekday: "short" })} {sh.kind} shift</span>)}
       </div>
       {date && firstDay && date < firstDay ? (

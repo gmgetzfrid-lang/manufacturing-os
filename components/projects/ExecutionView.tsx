@@ -98,9 +98,9 @@ interface Props {
   /** `percent` rides with "in progress" so starting a held task is one write. */
   /** `at` (ISO): a change filed under an earlier shift — its start or
    *  finish is stamped then. */
-  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number, at?: string) => Promise<boolean>;
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number, at?: string, ahead?: boolean) => Promise<boolean>;
   /** Persist a leaf task's physical % complete (derives status server-side). */
-  onSetProgress?: (id: string, percent: number, at?: string) => Promise<boolean>;
+  onSetProgress?: (id: string, percent: number, at?: string, ahead?: boolean) => Promise<boolean>;
   /** Undo: put tasks back exactly as they were — status, %, hold reason,
    *  actual times — in one write each. */
   onRestore?: (states: MilestoneState[]) => Promise<boolean>;
@@ -605,7 +605,8 @@ export default function ExecutionView({
     if (Math.abs(w.at - Date.now()) < 120_000) return;
     const res = await creditProgressTo(id, w.at);
     if (res === "ok" || res === "late") return;
-    notify(res === "missing" ? `Saved, but logged at the time you typed it in - putting it at ${w.label} needs the database update (20261107_progress_times.sql) run first.`
+    notify(w.ahead && res === "range" ? `Saved. Its history line shows the time you put it in until the database update (20261111_progress_ahead.sql) is run.`
+      : res === "missing" ? `Saved, but logged at the time you typed it in - putting it at ${w.label} needs the database update (20261107_progress_times.sql) run first.`
       : res === "changed" ? `Saved, but logged at the time you typed it in - the step has a later entry than ${w.label}. Fix that entry's time in the step's History first.`
         : `Saved, but logged at the time you typed it in - it couldn't be put at ${w.label}.`, "warning");
   }, [notify]);
@@ -621,7 +622,7 @@ export default function ExecutionView({
     if (nextPct != null) setOptimisticPct((m) => new Map(m).set(id, Math.round(nextPct)));
     setBusy((s) => new Set(s).add(id));
     try {
-      const ok = await onSetStatus(id, next, reason, percent, forShift ? new Date(forShift.at).toISOString() : undefined);
+      const ok = await onSetStatus(id, next, reason, percent, forShift ? new Date(forShift.at).toISOString() : undefined, forShift?.ahead);
       if (!ok) {
         setOptimistic((m) => { const n = new Map(m); n.delete(id); return n; });
         setOptimisticPct((m) => { const n = new Map(m); n.delete(id); return n; });
@@ -665,7 +666,7 @@ export default function ExecutionView({
     if (prev) expectTimes(id, timesAfterProgress(prev, clamped, forShift ? new Date(forShift.at).toISOString() : undefined, new Date().toISOString()), nextStatus);
     setBusy((s) => new Set(s).add(id));
     try {
-      const ok = await onSetProgress(id, clamped, forShift ? new Date(forShift.at).toISOString() : undefined);
+      const ok = await onSetProgress(id, clamped, forShift ? new Date(forShift.at).toISOString() : undefined, forShift?.ahead);
       if (!ok) {
         setOptimisticPct((m) => { const n = new Map(m); n.delete(id); return n; });
         setOptimistic((m) => { const n = new Map(m); n.delete(id); return n; });
@@ -714,7 +715,7 @@ export default function ExecutionView({
       return true;
     }
     const label = fmtInTz(u.at, tz, { weekday: "short", hour: "numeric", minute: "2-digit", hour12: true });
-    const w: ShiftCredit = { at: u.at, label };
+    const w: ShiftCredit = { at: u.at, label, ...(u.ahead ? { ahead: true } : {}) };
     const cur = m.status;
     const curPct = m.percentComplete != null ? Math.round(m.percentComplete) : (cur === "completed" ? 100 : 0);
     let ok = true;
