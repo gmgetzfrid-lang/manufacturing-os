@@ -47,12 +47,12 @@ import { buildKickoff, buildCloseout, defaultMeeting, type MeetingKind, type Pla
 import { clockLabel, fmtInTz, tzAbbrev } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { toPlainText, toEmailHtml, type ExportBlock, type ExportCell, type ExportDoc, type ExportStepRow } from "@/lib/reportExport";
-import { turnoverUpdate, withoutEmpty, noteLine, hazardJobsOf, crewLine, forecastText, discoverySub, discoveryBlock } from "@/lib/managementUpdate";
+import { turnoverUpdate, withoutEmpty, noteLine, hazardJobsOf, forecastText, discoverySub, discoveryBlock } from "@/lib/managementUpdate";
 import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
 import { notesFor } from "@/lib/milestones";
 import { useShiftRecords, saveShiftRecord, lastSameKind, openFollowUps, newId, CLOSEOUT_KEY, type CrewCount, type Incident, type ShiftNote, type ShiftRecord, type Lesson } from "@/lib/shiftRecord";
 import { buildLookBack, CAUSE_LABEL, type LookBack, type StepLook } from "@/lib/lookBack";
-import { CrewCountEditor, IncidentsLine, ShiftNotesBox, AddCompany, TimeLogButton } from "@/components/projects/ShiftRecordParts";
+import { IncidentsLine, ShiftNotesBox, TimeLogButton } from "@/components/projects/ShiftRecordParts";
 import { useSortRows, Grip } from "@/components/projects/SortRows";
 import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
 import { discoveries, discoveryOf, discoverySummary, discoveryStepLine, impactLine, ADDED, kindOf, addedTitle, type Discovery } from "@/lib/discovery";
@@ -75,8 +75,8 @@ import { TryControl, ShipBar } from "@/components/projects/HandoverControls";
 import { PullAheadPicker } from "@/components/projects/PullAheadPicker";
 import { useHandoverDraft } from "@/lib/useHandoverDraft";
 import { scopeOf } from "@/lib/pullAhead";
-import { ShiftHourlyBox, type HourlyCtx } from "@/components/projects/ShiftHourly";
-import { approvedLines, hourlyClocks } from "@/lib/shiftHourly";
+import { ShiftHourlyBox, useAutoHourly, meetingLine, type HourlyCtx, type MeetingCrews } from "@/components/projects/ShiftHourly";
+import { hourlyClocks, hourlyRows, hourSlots } from "@/lib/shiftHourly";
 
 /** The crew the report is narrowed to (tables then drop their Who column). */
 const ReportCrew = React.createContext<string | null>(null);
@@ -394,10 +394,13 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     const [rows, notes] = await Promise.all([loadProgressLog(projectId), notesFor(stepIds ? stepIds.split(",") : [])]);
     return buildTimeLog({ milestones: live, log: rows ?? [], notes, records, tz, times, from: shift.start, to: shift.end });
   }, [projectId, stepIds, live, records, tz, times, shift.start, shift.end]);
-  const saveHourly = useCallback(async (next: ShiftRecord["hourly"] | null) => {
+  const updateHourly = useCallback(async (change: (cur: ShiftRecord["hourly"]) => ShiftRecord["hourly"] | null) => {
     if (!userId || !orgId) throw new Error("Sign in to save the notes.");
-    await saveShiftRecord({ orgId, projectId, shiftKey: thisKey, userId, change: (r) => ({ ...r, hourly: next ?? undefined }) });
+    await saveShiftRecord({ orgId, projectId, shiftKey: thisKey, userId, change: (r) => ({ ...r, hourly: change(r.hourly) ?? undefined }) });
   }, [orgId, projectId, userId, thisKey]);
+  // The shift by the hour: its meeting (from the shift times), the first
+  // hour (permitting), then each hour.
+  const slots = useMemo(() => hourSlots(shift, meetingLeadMin(times)), [shift, times]);
   // The tables' order as dragged at the meeting — shown at once, kept on
   // the shift's record (the email follows it too).
   const [orderLocal, setOrderLocal] = useState<{ key: string; order: TableOrder } | null>(null);
@@ -423,7 +426,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       error: recMsg ?? (recErr && canEdit ? recErr : null),
       tz,
       hourly: orgId ? {
-        notes: recThis?.hourly, save: saveHourly, rows: shiftRows, orgId, projectId, by,
+        notes: recThis?.hourly, update: updateHourly, rows: shiftRows, orgId, projectId, by, slots, upTo: Math.min(now, shift.end),
         shiftTitle: `${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`,
         window: ctx.win(shift),
       } : undefined,
@@ -433,7 +436,10 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         void saveRec(thisKey, (r) => ({ ...r, order: { ...(r.order ?? {}), [table]: ids ?? undefined } }));
       },
     };
-  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, saveRec, recMsg, recErr, tableOrder, setOrderLocal, saveHourly, shiftRows, projectId, shift]);
+  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, saveRec, recMsg, recErr, tableOrder, setOrderLocal, updateHourly, shiftRows, projectId, shift, slots, now]);
+  // The hours keep themselves written while the turnover is open.
+  const hourlyBusy = useAutoHourly(sheet.hourly, meeting === "turnover" && sheet.edit, tz);
+  const sheetNow = useMemo<SheetCtx>(() => (sheet.hourly ? { ...sheet, hourly: { ...sheet.hourly, busy: hourlyBusy } } : sheet), [sheet, hourlyBusy]);
   const shiftTitle = `${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`;
   // The time log: every step's times, for the project file — its own
   // export, not part of the update.
@@ -485,11 +491,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     ? kickoffSections(kickoff, ctx)
     : meeting === "closeout"
       ? closeoutSections(closeout, report, ctx, cancelled, discoveryList, lookBack, lessons)
-      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet, onEdit: canEdit && onUpdateStep ? setEditing : undefined, forecast, pathSource, discovery: discoveryList, why,
+      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet: sheetNow, onEdit: canEdit && onUpdateStep ? setEditing : undefined, forecast, pathSource, discovery: discoveryList, why,
         onDiscovery: onDiscovery ? () => { const first = view.goals.all[0]?.parentId ?? view.review.done[0]?.parentId; const t = (first ? live.find((m) => m.id === first) : undefined) ?? live.find((m) => live.some((k) => k.parentId === m.id)); if (t) onDiscovery(t); } : undefined,
         // Only while the next shift is still ahead (or on).
         onPlanNext: onPlanNext && report.next.end > now ? () => onPlanNext(report.next) : undefined }),
-  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, onDiscovery, live, onPlanNext, now, lookBack, lessons]);
+  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheetNow, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, onDiscovery, live, onPlanNext, now, lookBack, lessons]);
   // Sections left off the report, on screen and in print — the viewer's own
   // choice for each meeting, remembered like the email's. Each comes back
   // with a tap (listed at the bottom); the email keeps its own choice.
@@ -606,7 +612,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           crewsThis: sheet.crewsThis, crewsNext: sheet.crewsNext,
           incidents: sheet.incidents && (sheet.incidents.none || sheet.incidents.items?.length) ? { none: !!sheet.incidents.none, items: sheet.incidents.items ?? [] } : undefined,
           shiftNotes: sheet.notes.map((n) => ({ at: n.at, text: n.text, followUp: n.followUp, from: n.from })),
-          hourly: (() => { const ls = approvedLines(sheet.hourly?.notes); const cl = hourlyClocks(ls.map((l) => l.at), tz); return ls.map((l, i) => ({ clock: cl[i], text: l.text })); })(),
+          hourly: sheet.hourly ? (() => { const hr = hourlyRows(sheet.hourly.notes, sheet.hourly.slots, sheet.hourly.upTo); const cl = hourlyClocks(hr.map((r) => r.slot.start), tz); return hr.map((r, i) => ({ clock: cl[i], kind: r.slot.kind, text: r.text })); })() : [],
           order: sheet.order,
           forecast,
           discovery: discoveryList,
@@ -1466,11 +1472,12 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     const named = new Set(rows.map((x) => x.crew));
     return [...rows, ...Object.keys(counts ?? {}).filter((k) => !named.has(k)).map((k) => ({ crew: k }))];
   };
-  const crewCols = [
-    { which: "this" as const, title: `${shiftName(shift)} ${c.D(shift.start)} — who was here`, rows: withExtra(cr.worked, sh?.crewsThis), counts: sh?.crewsThis ?? {}, hint: sh?.hintThis },
-    { which: "next" as const, title: `${shiftName(next)} ${c.D(next.start)} — who's coming`, rows: withExtra(cr.coming, sh?.crewsNext), counts: sh?.crewsNext ?? {}, hint: sh?.hintNext },
-  ];
-  const onSite = (counts: Record<string, CrewCount>) => Object.values(counts).reduce((a, x) => a + (x.headcount ?? 0), 0);
+  // Who attended the meeting that started the shift — in its notes, hour
+  // by hour (its first line).
+  const meetingCrews: MeetingCrews | undefined = sh ? {
+    rows: withExtra(cr.worked, sh.crewsThis), counts: sh.crewsThis, hint: sh.hintThis,
+    setCrew: (crew, v) => sh.setCrew("this", crew, v),
+  } : undefined;
   // Each table's rows drag into the order the meeting wants; the email follows.
   // The dragged order shows the same for everyone and in print (as the
   // email has it); only an editor gets the grips.
@@ -1507,36 +1514,6 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       data: () => [
         { k: "stats", items: standStats },
       ],
-    },
-    {
-      id: "who", title: "Crews", short: "Crews",
-      sub: [`${cr.worked.length} on the ${shift.kind} shift · ${cr.coming.length} on the ${next.kind} shift`,
-        onSite(crewCols[0].counts) ? `${onSite(crewCols[0].counts)} on site` : null, onSite(crewCols[1].counts) ? `${onSite(crewCols[1].counts)} coming on` : null].filter(Boolean).join(" · "),
-      body: (print) => (
-        <div className="space-y-1.5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 keep">
-            {crewCols.map((col) => (
-              <div key={col.title} className="rounded-md border border-[var(--color-border)] px-3 py-2">
-                <div className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1">{col.title}</div>
-                {col.rows.length === 0 ? <div className="text-[12px] italic text-[var(--color-text-muted)]">No work planned</div> : (
-                  <ul className="space-y-0.5">
-                    {col.rows.map((x) => (
-                      <li key={x.crew} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[13px]">
-                        <span className="min-w-0"><b className="text-[var(--color-text)] break-words">{x.crew}</b>{x.note && <span className="block text-[11px] text-[var(--color-text-muted)] break-words">{x.note}</span>}</span>
-                        <CrewCountEditor key={`${col.which}:${x.crew}`}
-                          crew={x.crew} value={col.counts[x.crew]} hint={col.hint?.[x.crew]} edit={!!sh?.edit} print={print} onSave={(v) => sh?.setCrew(col.which, x.crew, v)} />
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {!print && sh?.edit && <AddCompany onAdd={(name) => sh.setCrew(col.which, name, {})} />}
-              </div>
-            ))}
-          </div>
-          {!print && sh?.error && <div role="alert" className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">{sh.error}</div>}
-        </div>
-      ),
-      data: () => [{ k: "columns", cols: crewCols.map((col) => ({ title: col.title, rows: col.rows.length ? col.rows.map((x) => ({ title: x.crew, value: crewLine(col.counts[x.crew]), note: x.note })) : [{ title: "No work planned", value: "" }] })) }],
     },
     {
       id: "safety", title: "Safety & people", short: "Safety",
@@ -1645,28 +1622,31 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       data: () => [stepsBlock(nextRows(true, false), "Done", "Why")],
     } as Sec] : []),
     ...discoverySection(shift, c, o.discovery ?? [], o.onDiscovery),
-    ...(sh?.hourly ? [hourlySection(sh, sh.hourly, shift)] : []),
+    ...(sh?.hourly ? [hourlySection(sh, sh.hourly, meetingCrews)] : []),
     closeSection("Close", ["Outgoing supervisor", "Incoming supervisor", "Crew lead"], undefined, sh ? (print) => (
       <ShiftNotesBox notes={sh.notes} edit={sh.edit} print={print} shift={shift} tz={sh.tz} T={c.T} D={c.D} onAdd={sh.addNote} onClear={sh.clearNote} onRemove={sh.removeNote} />
     ) : undefined),
   ];
 }
 
-/** Shift notes, hour by hour — written from the entries, approved by a
- *  person before the email or paper carries them. */
-function hourlySection(sh: SheetCtx, h: HourlyCtx, shift: ShiftWindow): Sec {
-  const lines = approvedLines(h.notes);
-  const clocks = hourlyClocks(lines.map((l) => l.at), sh.tz);
-  const draft = !h.notes?.approved && (h.notes?.lines.length ?? 0) > 0;
+/** Shift notes, hour by hour: the meeting that started the shift (who
+ *  attended), the first hour (permitting), then each hour so far. */
+function hourlySection(sh: SheetCtx, h: HourlyCtx, meeting?: MeetingCrews): Sec {
+  const rows = hourlyRows(h.notes, h.slots, h.upTo);
+  const clocks = hourlyClocks(rows.map((r) => r.slot.start), sh.tz);
+  const said = rows.filter((r) => r.slot.kind !== "meeting" && r.text).length;
   return {
     id: "hourly", title: "Shift notes — hour by hour", short: "Hour by hour",
-    sub: draft ? "Draft — approve it to put it in the email" : "What happened on the shift, by the time it happened",
-    count: lines.length || undefined,
-    flag: draft ? "amber" : null,
-    body: (print) => <ShiftHourlyBox h={h} edit={sh.edit} print={print} shift={shift} tz={sh.tz} />,
-    data: () => lines.length
-      ? [{ k: "table", head: ["Time", "What happened"], align: ["left", "left"], nowrap: [0], rows: lines.map((l, i) => [clocks[i], l.text] as ExportCell[]) }]
-      : [{ k: "note", text: "Not written yet.", tone: "muted" }],
+    sub: "The meeting, then what happened each hour",
+    count: said || undefined,
+    flag: null,
+    body: (print) => <ShiftHourlyBox h={h} edit={sh.edit} print={print} tz={sh.tz} meeting={meeting} />,
+    data: () => [{ k: "table", head: ["Time", "What happened"], align: ["left", "left"], textLabels: ["", ""], nowrap: [0], rows: rows.map((r, i) => [
+      { t: clocks[i], bold: true },
+      r.slot.kind === "meeting" ? `Shift meeting — ${meetingLine(meeting, r.text) || "—"}`
+        : r.slot.kind === "permit" ? `Start of shift — permitting${r.text ? `. ${r.text}` : ""}`
+          : r.text || { t: "—", tone: "muted" },
+    ] as ExportCell[]) }],
   };
 }
 

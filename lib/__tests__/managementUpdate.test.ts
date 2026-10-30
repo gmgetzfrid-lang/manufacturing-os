@@ -41,12 +41,34 @@ const stepsOf = (list: Milestone[], now: number) => (id: string) => list.filter(
 });
 const sections = turnoverUpdate(report, f, { pctOf: (id) => progress.get(id)?.percent, finishOf: (id) => spans.get(id)?.finish, planOf: () => 50, stepsOf: stepsOf(ms, shift.end) });
 
+describe("shift notes by the hour", () => {
+  it("the meeting says who attended; the first hour is permitting; an hour with nothing logged says so", () => {
+    const secs = turnoverUpdate(report, f, {
+      pctOf: (id) => progress.get(id)?.percent, finishOf: (id) => spans.get(id)?.finish, planOf: () => 50, stepsOf: stepsOf(ms, shift.end),
+      crewsThis: { "No crew named": { supervisor: "Mike", headcount: 12 } },
+      hourly: [
+        { clock: "5:30 AM", kind: "meeting", text: "" },
+        { clock: "6:00", kind: "permit", text: "Permits signed for E-606." },
+        { clock: "7:00", kind: "work", text: "" },
+        { clock: "8:00", kind: "work", text: "Pulling the E-606 bundle." },
+      ],
+    });
+    const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: secs });
+    const notes = text.slice(text.indexOf("SHIFT NOTES"));
+    expect(notes).toMatch(/5:30 AM — Shift meeting — No crew named: Mike · 12 on site/);
+    expect(notes).toMatch(/6:00 — Start of shift — permitting\. Permits signed for E-606\./);
+    expect(notes).toMatch(/7:00 — —/);
+    expect(notes).toMatch(/8:00 — Pulling the E-606 bundle\./);
+  });
+});
+
 describe("the update says what happened, in as few words as it takes", () => {
   it("leaves out what's empty: nothing unfinished, nothing blocked, nothing next", () => {
     // Everything planned today got done; Retube starts tomorrow — nothing
     // to hand over but what got done.
     // …and the safety incidents box, always there to fill in (not recorded yet here).
-    expect(sections.map((s) => s.id)).toEqual(["stand", "who", "done", "incidents"]); // header, progress, crews, done
+    // Crews are the first line of the notes by the hour (the meeting), not a section of their own.
+    expect(sections.map((s) => s.id)).toEqual(["stand", "done", "incidents"]); // header, progress, done
   });
 
   it("what got done: each step once, by its task, with no finish time claimed", () => {
@@ -105,8 +127,8 @@ describe("unfinished work: behind, or carrying over as planned", () => {
     const lists = text.slice(text.search(/^(DONE|NEXT) — /m));
     for (const name of ["Hydroblast", "Retube \\(2 days\\)", "Blast tower \\(2 days\\)"]) expect(lists.match(new RegExp(`${name} ·`, "g"))?.length).toBe(1);
     expect(text).not.toMatch(/PROBLEMS|ON PLAN —/);
-    expect(text.indexOf("WHERE WE STAND")).toBeLessThan(text.indexOf("CREWS")); // progress, then crews
-    expect(text.indexOf("CREWS")).toBeLessThan(text.indexOf("CARRIES OVER TO DAY SHIFT"));
+    expect(text).not.toMatch(/^CREWS/m);
+    expect(text.indexOf("WHERE WE STAND")).toBeLessThan(text.indexOf("CARRIES OVER TO DAY SHIFT"));
     // Why it's behind: each step's hours on its own row — no separate table.
     expect(text).toMatch(/Retube \(2 days\) · .*behind plan .* · done 10% · −[\d.]+ h/);
     expect(text).toMatch(/Hydroblast · .*was due .* · done 60% · −[\d.]+ h/);

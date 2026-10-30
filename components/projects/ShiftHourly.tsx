@@ -1,30 +1,32 @@
 "use client";
 
-// Shift notes, hour by hour — on the turnover report. One tap writes a
-// draft from the shift's own entries (lib/shiftHourly); every line shows
-// what the check found against those entries, and the times the draft left
-// out. Each line can be fixed or removed, lines can be added by hand, and
-// nothing goes in the email or on paper until someone approves it.
+// Shift notes, hour by hour — on the turnover report. The shift's meeting
+// (who attended: each crew's supervisor and head count), the first hour —
+// start of shift, permitting — then each hour to the end, written from the
+// shift's own entries in that hour (lib/shiftHourly) whenever the report is
+// open and they've changed. Any hour can be typed over; that one is then
+// kept as typed.
 
-import React, { useState } from "react";
-import Link from "next/link";
-import { AlertTriangle, CheckCircle2, Loader2, Pencil, Plus, Sparkles, X } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { Loader2, Pencil, RotateCcw } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { appConfirm } from "@/components/providers/DialogProvider";
-import { TimeChip } from "@/components/projects/DateTimePicker";
-import { clockOnShift } from "@/components/projects/ShiftRecordParts";
-import type { ShiftWindow } from "@/lib/shiftReport";
-import type { TimeLogRow } from "@/lib/timeLog";
-import { checkHourly, clock24, hourlyClocks, hourlyPrompt, parseHourly, type HourlyLine, type HourlyNotes } from "@/lib/shiftHourly";
-import { modelName } from "@/lib/ai/jobModels";
+import { CrewCountEditor, AddCompany } from "@/components/projects/ShiftRecordParts";
+import { crewLine } from "@/lib/managementUpdate";
+import type { CrewCount } from "@/lib/shiftRecord";
 import { newId } from "@/lib/shiftRecord";
+import type { TimeLogRow } from "@/lib/timeLog";
+import {
+  hourlyClocks, hourlyPrompt, hourlyRows, hoursToWrite, linesBySlot, liveLines, parseHourly, rowsBySlot, slotOf, wordHours,
+  SLOT_LABEL, type HourSlot, type HourlyLine, type HourlyNotes,
+} from "@/lib/shiftHourly";
 
 const inputCls = "rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1 text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent-ring)]";
-const btn = "inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-[12px] font-bold disabled:opacity-60";
+const btn = "inline-flex items-center gap-1.5 h-7 px-3 rounded-lg text-[12px] font-bold disabled:opacity-60";
 
 export interface HourlyCtx {
   notes?: HourlyNotes;
-  save: (next: HourlyNotes | null) => Promise<void>;
+  /** Change the notes as saved now (read fresh, so nothing typed meanwhile is lost). */
+  update: (change: (cur: HourlyNotes | undefined) => HourlyNotes | null) => Promise<void>;
   /** The shift's entries (the time log for its window). */
   rows: () => Promise<TimeLogRow[]>;
   orgId: string;
@@ -32,197 +34,213 @@ export interface HourlyCtx {
   by: string | null;
   shiftTitle: string;
   window: string;
+  /** The shift by the hour (lib/shiftHourly hourSlots). */
+  slots: HourSlot[];
+  /** Up to when the hours show: now, or the shift's end. */
+  upTo: number;
+  /** Being written now. */
+  busy?: boolean;
 }
 
-export function ShiftHourlyBox({ h, edit, print, shift, tz }: {
-  h: HourlyCtx; edit: boolean; print: boolean; shift: ShiftWindow; tz: string;
+/** The meeting's attendance: each crew on the shift, its supervisor at the
+ *  meeting and head count on site. */
+export interface MeetingCrews {
+  rows: Array<{ crew: string; note?: string }>;
+  counts: Record<string, CrewCount>;
+  hint?: Record<string, CrewCount>;
+  setCrew: (crew: string, v: Partial<CrewCount>) => void;
+}
+
+/** "Shift meeting — Schultz: Mike · 12 on site; Maintenance (KE): 4 on site" — the meeting in one line. */
+export function meetingLine(m: MeetingCrews | undefined, extra?: string): string {
+  const crews = (m?.rows ?? []).map((x) => `${x.crew}: ${crewLine(m?.counts[x.crew])}`);
+  return [crews.length ? crews.join("; ") : null, extra?.trim() || null].filter(Boolean).join(". ");
+}
+
+/** Keeps the shift's hours written: on opening the report and whenever its
+ *  entries change, the hours whose entries changed (and nobody typed over)
+ *  are written again; hours said plainly last time are worded once more. */
+export function useAutoHourly(h: HourlyCtx | undefined, on: boolean, tz: string): boolean {
+  const [busy, setBusy] = useState(false);
+  const notes = useRef<HourlyNotes | undefined>(undefined);
+  const tried = useRef(new Set<string>());
+  const running = useRef(false);
+  // A change while it was writing: once more when it's done.
+  const again = useRef(false);
+  const [tick, setTick] = useState(0);
+  useEffect(() => { notes.current = h?.notes; }, [h?.notes]);
+  const rows = h?.rows;
+  const update = h?.update;
+  const slots = h?.slots;
+  const orgId = h?.orgId, projectId = h?.projectId, shiftTitle = h?.shiftTitle ?? "", win = h?.window ?? "", by = h?.by ?? null;
+  useEffect(() => {
+    if (!on || !rows || !update || !slots?.length || !orgId || !projectId) return;
+    if (running.current) { again.current = true; return; }
+    const meta = { orgId, projectId, shiftTitle, window: win, by };
+    let alive = true;
+    void (async () => {
+      running.current = true;
+      try {
+        const entries = rowsBySlot(await rows(), slots);
+        const have = linesBySlot(notes.current, slots);
+        const due = hoursToWrite(slots, entries, have, tz, true);
+        // Worded once per visit: an hour said plainly isn't asked again until its entries change.
+        const write = due.write.filter((w) => !(tried.current.has(`${w.slot.key}:${w.src}`) && (have.get(w.slot.key)?.length ?? 0) > 0));
+        const clear = due.clear;
+        if (!write.length && !clear.length) return;
+        for (const w of write) tried.current.add(`${w.slot.key}:${w.src}`);
+        if (alive) setBusy(true);
+        let answer: Array<{ time: string; text: string }> = [];
+        let model: string | undefined;
+        if (write.length) {
+          try {
+            const { data } = await supabase.auth.getSession();
+            const res = await fetch("/api/projects/shift-notes", {
+              method: "POST",
+              headers: { "content-type": "application/json", ...(data.session?.access_token ? { authorization: `Bearer ${data.session.access_token}` } : {}) },
+              body: JSON.stringify({ orgId: meta.orgId, projectId: meta.projectId, prompt: hourlyPrompt(write, { tz, shiftTitle: meta.shiftTitle, window: meta.window }) }),
+            });
+            const out = await res.json().catch(() => null) as { text?: string; model?: string } | null;
+            if (res.ok && out?.text) { answer = parseHourly(out.text); model = out.model; }
+          } catch { /* said plainly below */ }
+        }
+        const worded = wordHours(answer, write, tz);
+        const redo = new Set([...write.map((w) => w.slot.key), ...clear]);
+        await update((cur) => {
+          // Onto the notes as they are now: an hour typed meanwhile stays.
+          const keep = liveLines(cur).filter((l) => l.hand || !redo.has(slotOf(l.at, slots).key));
+          const typed = new Set(keep.filter((l) => l.hand).map((l) => slotOf(l.at, slots).key));
+          const added: HourlyLine[] = write.filter((w) => !typed.has(w.slot.key)).map((w) => {
+            const x = worded.get(w.slot.key)!;
+            return { id: newId(), at: w.slot.start, text: x.text, src: w.src, ...(x.plain ? { plain: true } : {}) };
+          });
+          return { v: 2, lines: [...keep, ...added], model: model ?? cur?.model, madeAt: Date.now(), madeBy: meta.by };
+        });
+      } catch { /* the hours stay as they were; tried again on the next change */ }
+      finally {
+        running.current = false;
+        setBusy(false);
+        if (again.current) { again.current = false; setTick((t) => t + 1); }
+      }
+    })();
+    return () => { alive = false; };
+  }, [on, rows, update, slots, tz, orgId, projectId, shiftTitle, win, by, tick]);
+  return busy;
+}
+
+export function ShiftHourlyBox({ h, edit, print, tz, meeting }: {
+  h: HourlyCtx; edit: boolean; print: boolean; tz: string; meeting?: MeetingCrews;
 }) {
-  const [busy, setBusy] = useState<"draft" | "save" | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
-  const n = h.notes;
-  const lines = [...(n?.lines ?? [])].sort((a, b) => a.at - b.at);
-  const approved = !!n?.approved;
-  const clocks = hourlyClocks(lines.map((l) => l.at), tz);
+  const [msg, setMsg] = useState<string | null>(null);
+  const rows = hourlyRows(h.notes, h.slots, h.upTo);
+  const clocks = hourlyClocks(rows.map((r) => r.slot.start), tz);
 
-  const save = async (next: HourlyNotes | null) => {
-    setBusy("save");
-    try { await h.save(next); setMsg(null); } catch (e) { setMsg((e as Error).message); }
-    setBusy(null);
-  };
-
-  const draft = async () => {
-    if (lines.length && !(await appConfirm({
-      title: "Write the notes again?",
-      message: "This replaces the lines below, including any you changed, with a new draft from the entries.",
-      confirmLabel: "Write again",
-    }))) return;
-    setBusy("draft"); setMsg(null);
-    try {
-      const rows = await h.rows();
-      if (rows.length === 0) throw new Error("Nothing has been entered on this shift yet — no starts, progress, comments or notes to write from.");
-      const { data } = await supabase.auth.getSession();
-      const res = await fetch("/api/projects/shift-notes", {
-        method: "POST",
-        headers: { "content-type": "application/json", ...(data.session?.access_token ? { authorization: `Bearer ${data.session.access_token}` } : {}) },
-        body: JSON.stringify({ orgId: h.orgId, projectId: h.projectId, prompt: hourlyPrompt(rows, { tz, shiftTitle: h.shiftTitle, window: h.window }) }),
-      });
-      const out = await res.json().catch(() => null) as { text?: string; model?: string; error?: string } | null;
-      if (!res.ok || !out?.text) throw new Error(out?.error || `Couldn't write the notes (HTTP ${res.status}).`);
-      const parsed = parseHourly(out.text);
-      if (parsed.length === 0) throw new Error("The model's answer had no lines in it — try again.");
-      const checked = checkHourly(parsed, rows, tz);
-      const drafted: HourlyLine[] = checked.lines.map((l) => {
-        const on = l.at ?? (() => { const r = clockOnShift(shift, l.time, tz); return "at" in r ? r.at : shift.start; })();
-        return { id: newId(), at: on, text: l.text, ...(l.flags.length ? { flags: l.flags } : {}) };
-      });
-      await h.save({ lines: drafted, missing: checked.missing, model: out.model, madeAt: Date.now(), madeBy: h.by, approved: null });
-    } catch (e) { setMsg((e as Error).message); }
-    setBusy(null);
-  };
-
-  const setLine = (id: string, v: { at: number; text: string } | null) => {
-    if (!n) return;
-    const rest = n.lines.filter((l) => l.id !== id);
-    // A line someone fixed by hand has been checked by them: its flags go.
-    void save({ ...n, lines: v ? [...rest, { id, at: v.at, text: v.text }] : rest });
+  // An hour as typed: kept as typed (empty puts it back to the entries).
+  const setHour = async (slot: HourSlot, text: string | null) => {
     setEditing(null);
-  };
-  const addLine = (v: { at: number; text: string }) => {
-    void save({ ...(n ?? { lines: [], approved: null }), lines: [...(n?.lines ?? []), { id: newId(), at: v.at, text: v.text }] });
-  };
-  const flagged = lines.filter((l) => l.flags?.length).length;
-  const approve = async () => {
-    if (!n) return;
-    if (flagged > 0 && !(await appConfirm({
-      title: "Approve with lines still to check?",
-      message: `${flagged} line${flagged === 1 ? "" : "s"} still say${flagged === 1 ? "s" : ""} something the shift's entries don't. Approve only if you've checked ${flagged === 1 ? "it" : "them"} and ${flagged === 1 ? "it's" : "they're"} right.`,
-      confirmLabel: "Approve anyway",
-    }))) return;
-    await save({ ...n, approved: { at: Date.now(), by: h.by } });
+    try {
+      await h.update((cur) => {
+        const rest = liveLines(cur).filter((l) => slotOf(l.at, h.slots).key !== slot.key);
+        const t = text?.replace(/\s+/g, " ").trim();
+        return { ...(cur?.v === 2 ? cur : {}), v: 2, lines: t ? [...rest, { id: newId(), at: slot.start, text: t, hand: true }] : rest };
+      });
+      setMsg(null);
+    } catch (e) { setMsg((e as Error).message); }
   };
 
   if (print) {
-    if (!approved || lines.length === 0) return <div className="text-[8pt] text-slate-500">Not written yet.</div>;
     return (
-      <ul className="space-y-0.5 text-[8.5pt]">
-        {lines.map((l, i) => <li key={l.id} className="flex gap-2"><span className="w-14 shrink-0 font-semibold whitespace-nowrap">{clocks[i]}</span><span>{l.text}</span></li>)}
-      </ul>
+      <table className="w-full text-[8.5pt] border-collapse">
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={r.slot.key} className="align-top">
+              <td className="w-16 pr-2 py-0.5 font-semibold whitespace-nowrap">{clocks[i]}</td>
+              <td className="py-0.5">
+                {SLOT_LABEL[r.slot.kind] && <b>{SLOT_LABEL[r.slot.kind]}{r.slot.kind === "meeting" ? " — " : r.text ? ". " : ""}</b>}
+                {r.slot.kind === "meeting" ? meetingLine(meeting, r.text) || "—" : r.text || (r.slot.kind === "work" ? "—" : "")}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     );
   }
 
   return (
-    <div className="space-y-2">
-      {lines.length > 0 && !approved && (
-        <div className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-[12px] text-amber-900 dark:text-amber-200 space-y-1">
-          <div className="font-bold">Draft — check each line, then approve. It isn&apos;t in the email until you do.</div>
-          <div className="text-[11.5px]">
-            Written from {n?.model ? `this shift's entries by ${modelName(n.model)}` : "this shift's entries"}.
-            {flagged > 0 ? ` ${flagged} line${flagged === 1 ? "" : "s"} below say${flagged === 1 ? "s" : ""} something the entries don't — fix or remove ${flagged === 1 ? "it" : "them"}.` : " Every line matched the entries."}
-          </div>
-          {(n?.missing?.length ?? 0) > 0 && (
-            <div className="text-[11.5px]"><b>Left out:</b> {n!.missing!.join(" · ")} — add them with “Add a line”, or write it again.</div>
-          )}
-        </div>
+    <div className="space-y-1.5">
+      {h.busy && (
+        <div className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]"><Loader2 className="w-3 h-3 animate-spin" /> Updating…</div>
       )}
-      {lines.length > 0 && approved && (
-        <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1">
-          <CheckCircle2 className="w-3.5 h-3.5" /> Approved{n?.approved?.by ? ` by ${n.approved.by}` : ""} — in the email and on paper.
-        </div>
-      )}
-
-      {lines.length === 0 && !edit && <div className="text-[12px] text-[var(--color-text-muted)]">Not written yet.</div>}
-
-      {lines.length > 0 && (
-        <ul className="space-y-1.5">
-          {lines.map((l, i) => editing === l.id ? (
-            <li key={l.id}><LineForm shift={shift} tz={tz} init={{ clock: clock24(l.at, tz), text: l.text }} onDone={(v) => setLine(l.id, v)} onCancel={() => setEditing(null)} /></li>
-          ) : (
-            <li key={l.id} className="group">
-              <div className="flex items-baseline gap-2 text-[12.5px] leading-snug">
-                <span className="w-[66px] shrink-0 font-bold text-[var(--color-text)] whitespace-nowrap tabular-nums">{clocks[i]}</span>
-                <span className="min-w-0 flex-1 break-words text-[var(--color-text)]">{l.text}</span>
-                {edit && (
-                  <span className="shrink-0 flex gap-1">
-                    <button type="button" onClick={() => setEditing(l.id)} aria-label={`Edit the ${clocks[i]} line`} className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Pencil className="w-3.5 h-3.5" /></button>
-                    <button type="button" onClick={() => setLine(l.id, null)} aria-label={`Remove the ${clocks[i]} line`} className="p-1 rounded text-[var(--color-text-muted)] hover:text-rose-700 hover:bg-[var(--color-surface-2)]"><X className="w-3.5 h-3.5" /></button>
-                  </span>
+      <ul className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)]">
+        {rows.map((r, i) => {
+          const typed = r.lines.some((l) => l.hand);
+          const label = SLOT_LABEL[r.slot.kind];
+          return (
+            <li key={r.slot.key} className="flex items-start gap-2 px-3 py-1.5 text-[12.5px] leading-snug">
+              <span className="w-[66px] shrink-0 font-bold text-[var(--color-text)] whitespace-nowrap tabular-nums">{clocks[i]}</span>
+              <div className="min-w-0 flex-1">
+                {label && <div className="font-bold text-[var(--color-text)]">{label}</div>}
+                {r.slot.kind === "meeting" && (
+                  <MeetingBox meeting={meeting} edit={edit} />
+                )}
+                {editing === r.slot.key ? (
+                  <HourForm init={r.text} placeholder={r.slot.kind === "meeting" ? "Anything from the meeting" : "What happened this hour"}
+                    onDone={(t) => void setHour(r.slot, t)} onCancel={() => setEditing(null)} />
+                ) : r.text ? (
+                  <div className="break-words text-[var(--color-text)]">{r.text}</div>
+                ) : r.slot.kind === "work" ? (
+                  <div className="text-[var(--color-text-faint)]">—</div>
+                ) : null}
+                {edit && typed && editing !== r.slot.key && r.slot.kind !== "meeting" && (
+                  <button type="button" onClick={() => void setHour(r.slot, null)}
+                    className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">
+                    <RotateCcw className="w-3 h-3" /> Write it from the entries again
+                  </button>
                 )}
               </div>
-              {l.flags?.length ? (
-                <div className="ml-[74px] mt-0.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300 flex items-start gap-1">
-                  <AlertTriangle className="w-3 h-3 shrink-0 mt-[2px]" /> Check: {l.flags.join("; ")}
-                </div>
-              ) : null}
+              {edit && editing !== r.slot.key && (
+                <button type="button" onClick={() => setEditing(r.slot.key)} aria-label={`Edit ${clocks[i]}`}
+                  className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+              )}
             </li>
-          ))}
-        </ul>
-      )}
-
-      {edit && (
-        <div className="flex flex-wrap items-center gap-2 pt-1">
-          <button type="button" onClick={() => void draft()} disabled={busy !== null}
-            className={`${btn} ${lines.length ? "border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"}`}>
-            {busy === "draft" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-            {busy === "draft" ? "Writing…" : lines.length ? "Write again" : "Write it from this shift's entries"}
-          </button>
-          {lines.length > 0 && !approved && (
-            <button type="button" onClick={() => void approve()} disabled={busy !== null}
-              className={`${btn} bg-emerald-600 text-white hover:bg-emerald-700`}>
-              <CheckCircle2 className="w-3.5 h-3.5" /> Approve for the report
-            </button>
-          )}
-          {lines.length > 0 && approved && (
-            <button type="button" onClick={() => void save({ ...n!, approved: null })} disabled={busy !== null}
-              className="text-[11.5px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">Take back to draft</button>
-          )}
-          {lines.length === 0 && <span className="text-[11px] text-[var(--color-text-muted)]">AI writes a draft from the starts, progress, holds, comments and notes logged on the shift. You check it before it goes anywhere.</span>}
-          <Link href="/intelligence/setup" className="text-[11px] font-semibold text-[var(--color-accent)] hover:underline">Model for shift notes</Link>
-        </div>
-      )}
-      {edit && <AddLine shift={shift} tz={tz} onAdd={addLine} />}
+          );
+        })}
+      </ul>
       {msg && <div role="alert" className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">{msg}</div>}
     </div>
   );
 }
 
-function LineForm({ shift, tz, init, onDone, onCancel }: {
-  shift: ShiftWindow; tz: string; init: { clock: string; text: string };
-  onDone: (v: { at: number; text: string }) => void; onCancel: () => void;
-}) {
-  const [clock, setClock] = useState(init.clock);
-  const [text, setText] = useState(init.text);
-  const [msg, setMsg] = useState<string | null>(null);
-  const done = () => {
-    const r = clockOnShift(shift, clock, tz);
-    if ("error" in r) { setMsg(r.error); return; }
-    if (!text.trim()) { setMsg("Type what happened."); return; }
-    onDone({ at: r.at, text: text.replace(/\s+/g, " ").trim() });
-  };
+/** Who attended: each crew's supervisor at the meeting and head count. */
+function MeetingBox({ meeting, edit }: { meeting?: MeetingCrews; edit: boolean }) {
+  if (!meeting) return null;
   return (
-    <div className="rounded-lg border border-[var(--color-accent)]/50 bg-[var(--color-surface-2)]/50 p-2 space-y-1.5">
-      <div className="flex items-start gap-2">
-        <TimeChip value={clock} onChange={(v) => { setClock(v); setMsg(null); }} tz={tz} />
-        <textarea value={text} onChange={(e) => { setText(e.target.value); setMsg(null); }} rows={2} aria-label="What happened"
-          className={`${inputCls} flex-1 min-w-0 resize-y`} />
-      </div>
-      <div className="flex items-center gap-2">
-        <button type="button" onClick={done} className={`${btn} !h-7 bg-[var(--color-accent)] text-[var(--color-accent-fg)]`}>Save line</button>
-        <button type="button" onClick={onCancel} className="text-[11.5px] text-[var(--color-text-muted)] hover:underline">Cancel</button>
-        {msg && <span className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">{msg}</span>}
-      </div>
+    <div className="mt-0.5 mb-1 space-y-0.5">
+      {meeting.rows.length === 0 && <div className="text-[12px] italic text-[var(--color-text-muted)]">No work planned</div>}
+      {meeting.rows.map((x) => (
+        <div key={x.crew} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5">
+          <span className="min-w-0"><b className="text-[var(--color-text)] break-words">{x.crew}</b>{x.note && <span className="block text-[11px] text-[var(--color-text-muted)] break-words">{x.note}</span>}</span>
+          <CrewCountEditor crew={x.crew} value={meeting.counts[x.crew]} hint={meeting.hint?.[x.crew]} edit={edit} print={false} onSave={(v) => meeting.setCrew(x.crew, v)} />
+        </div>
+      ))}
+      {edit && <AddCompany onAdd={(name) => meeting.setCrew(name, {})} />}
     </div>
   );
 }
 
-function AddLine({ shift, tz, onAdd }: { shift: ShiftWindow; tz: string; onAdd: (v: { at: number; text: string }) => void }) {
-  const [open, setOpen] = useState(false);
-  if (!open) {
-    return (
-      <button type="button" onClick={() => setOpen(true)} className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-[var(--color-accent)] hover:underline">
-        <Plus className="w-3.5 h-3.5" /> Add a line (crane on site, hydro sold, shift change meeting…)
-      </button>
-    );
-  }
-  return <LineForm shift={shift} tz={tz} init={{ clock: "", text: "" }} onDone={(v) => { onAdd(v); setOpen(false); }} onCancel={() => setOpen(false)} />;
+function HourForm({ init, placeholder, onDone, onCancel }: { init: string; placeholder: string; onDone: (text: string) => void; onCancel: () => void }) {
+  const [text, setText] = useState(init);
+  return (
+    <div className="mt-0.5 space-y-1.5">
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} aria-label={placeholder} placeholder={placeholder} autoFocus
+        className={`${inputCls} w-full resize-y`} />
+      <div className="flex items-center gap-2">
+        <button type="button" onClick={() => onDone(text)} className={`${btn} bg-[var(--color-accent)] text-[var(--color-accent-fg)]`}>Save</button>
+        <button type="button" onClick={onCancel} className="text-[11.5px] text-[var(--color-text-muted)] hover:underline">Cancel</button>
+      </div>
+    </div>
+  );
 }

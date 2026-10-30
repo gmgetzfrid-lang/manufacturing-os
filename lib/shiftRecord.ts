@@ -51,7 +51,7 @@ export interface ShiftRecord {
   order?: TableOrder;
   /** The close-out's lessons (record CLOSEOUT_KEY). */
   lessons?: Lesson[];
-  /** Shift notes, hour by hour (lib/shiftHourly) — in the email once approved. */
+  /** Shift notes, hour by hour (lib/shiftHourly): written from the shift's entries as they come in. */
   hourly?: HourlyNotes;
 }
 

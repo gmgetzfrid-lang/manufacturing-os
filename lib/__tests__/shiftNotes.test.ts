@@ -98,9 +98,10 @@ describe("the turnover email: additions in the sections it already has", () => {
     expect(text()).not.toMatch(/07:40 Set Blinds/);
     expect(text({ showTimes: true })).toMatch(/07:40 Set Blinds; 16:36 Open Internal Manways \(45%\)/);
   });
-  it("crews: supervisor and head count where the step counts were", () => {
-    const s = text({ crewsThis: { Schultz: { supervisor: "B. Smith", headcount: 14 } } });
-    expect(s).toMatch(/Schultz — B\. Smith · 14 on site/);
+  it("crews: who attended the meeting, supervisor and head count — the first line of the notes by the hour", () => {
+    const s = text({ crewsThis: { Schultz: { supervisor: "B. Smith", headcount: 14 } }, hourly: [{ clock: "5:30 AM", kind: "meeting", text: "" }] });
+    expect(s).toMatch(/5:30 AM — Shift meeting — Schultz: B\. Smith · 14 on site/);
+    expect(s).not.toMatch(/^CREWS/m);
     expect(s).not.toMatch(/of \d+ done/);
   });
   it("safety incidents: their own box at the end — none, each one, or not recorded", () => {

@@ -1,10 +1,10 @@
-// POST /api/projects/shift-notes — draft the hour-by-hour shift notes.
+// POST /api/projects/shift-notes — word the shift's notes, hour by hour.
 //
-// The browser sends the shift's entries as prompt lines (lib/shiftHourly
-// hourlyPrompt: the same time log the Excel export carries) and gets back
-// the model's lines. READ-ONLY: nothing is saved here — the report checks
-// every line against the entries, shows it as a draft, and saves it to the
-// shift's record when the person keeps it.
+// The browser sends the hours to write, each with its entries (lib/shiftHourly
+// hourlyPrompt: the same time log the Excel export carries), and gets back a
+// line per hour. READ-ONLY: nothing is saved here — the report checks each
+// line against its hour's entries (anything they don't say is said plainly
+// instead) and saves the hours to the shift's record.
 //
 // Runs on the caller's own key through governedAiCall (agreement, monthly
 // cap, metering), as the "shiftNotes" op — on the Shift notes job's model
