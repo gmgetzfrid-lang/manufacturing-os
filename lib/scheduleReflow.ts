@@ -353,6 +353,37 @@ export function wouldCreateCycle(nodes: ReflowNode[], taskId: string, newPredId:
  * FORWARD (never pulls a task earlier), carries each pushed task's subtree,
  * re-envelopes ancestors, and is cycle-safe (bounded). Pure.
  */
+/** The task rows above changed steps, refitted to wrap their steps — and
+ *  nothing else: the steps linked after a changed step keep their planned
+ *  dates (the forecast, not the plan, carries what a change pushes). Returns
+ *  the changes given plus each ancestor whose span differs. */
+export function withAncestors(nodes: ReflowNode[], primary: DateChange[]): DateChange[] {
+  if (!primary.length) return primary;
+  const given = new Map(primary.map((c) => [c.id, c]));
+  const byId = new Map(nodes.map((n) => [n.id, given.has(n.id) ? { ...n, plannedStartAt: given.get(n.id)!.plannedStartAt, plannedAt: given.get(n.id)!.plannedAt } : n]));
+  const kids = new Map<string, ReflowNode[]>();
+  for (const n of byId.values()) if (n.parentId && byId.has(n.parentId)) kids.set(n.parentId, [...(kids.get(n.parentId) ?? []), n]);
+  const out = new Map(given);
+  // Each changed step's parents, nearest first; a parent refits from all its children as they now stand.
+  const seen = new Set<string>();
+  const order: string[] = [];
+  for (const c of primary) {
+    for (let p = byId.get(c.id)?.parentId ?? null; p && byId.has(p) && !seen.has(p); p = byId.get(p)!.parentId ?? null) { seen.add(p); order.push(p); }
+  }
+  const depth = (id: string) => { let d = 0; for (let p = byId.get(id)?.parentId ?? null; p && byId.has(p); p = byId.get(p)!.parentId ?? null) d++; return d; };
+  for (const pid of order.sort((a, b) => depth(b) - depth(a))) {
+    const ks = kids.get(pid) ?? [];
+    let lo = Infinity, hi = -Infinity;
+    for (const k of ks) { const s = startMsOf(k), f = finishMsOf(k); if (Number.isFinite(s)) lo = Math.min(lo, s); if (Number.isFinite(f)) hi = Math.max(hi, f); }
+    const p = byId.get(pid)!;
+    if (!Number.isFinite(lo) || !Number.isFinite(hi) || (lo === startMsOf(p) && hi === finishMsOf(p))) continue;
+    const c = { id: pid, plannedStartAt: new Date(lo).toISOString(), plannedAt: new Date(hi).toISOString() };
+    out.set(pid, c);
+    byId.set(pid, { ...p, plannedStartAt: c.plannedStartAt, plannedAt: c.plannedAt });
+  }
+  return [...out.values()];
+}
+
 export function cascadeDependents(nodes: ReflowNode[], changedIds: string[], tz: string = DEFAULT_SCHEDULE_TZ): DateChange[] {
   const byId = new Map<string, ReflowNode>();
   const childrenByParent = new Map<string, ReflowNode[]>();

@@ -311,7 +311,7 @@ function Confirm({ milestones, action, next, now, tz, times, mode, crews, when, 
         <div>Turnaround (forecast): {Number.isFinite(f0) ? `${when(f0)} → ` : ""}<b className={moved && dh > 0 ? "text-rose-700 dark:text-rose-400" : ""}>{Number.isFinite(f1) ? when(f1) : "-"}</b>{!moved ? " - unchanged" : dh > 0 ? ` - ${dh} h later` : ` - ${-dh} h sooner`}</div>
         {plan.impact.critical && <div className="font-bold text-rose-700 dark:text-rose-400">Touches the critical path.</div>}
         {plan.pushed.length > 0
-          ? <div>Moves {plan.pushed.length} linked step{plan.pushed.length === 1 ? "" : "s"} later: {plan.pushed.slice(0, 5).map((p) => `${p.name} +${p.hours} h`).join(", ")}{plan.pushed.length > 5 ? ` + ${plan.pushed.length - 5} more` : ""}</div>
+          ? <div>Pushes {plan.pushed.length} linked step{plan.pushed.length === 1 ? "" : "s"} later in the forecast (their plan stays): {plan.pushed.slice(0, 5).map((p) => `${p.name} +${p.hours} h`).join(", ")}{plan.pushed.length > 5 ? ` + ${plan.pushed.length - 5} more` : ""}</div>
           : <div className="text-[var(--color-text-muted)]">No other work moves.</div>}
       </div>
       <label className="block">

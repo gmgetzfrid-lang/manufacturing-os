@@ -1,6 +1,7 @@
 // Changing what the next shift does, in the schedule itself: swap, pull
-// in, push out — the planned dates move (the baseline doesn't), linked work
-// after a moved step moves too, and the next shift's list follows.
+// in, push out — the planned dates of the steps moved change (the baseline
+// doesn't); linked work after them keeps its plan, and the forecast says
+// what it pushes; the next shift's list follows.
 
 import { describe, it, expect, vi } from "vitest";
 vi.mock("@/lib/supabase", () => ({ supabase: {} }));
@@ -46,13 +47,16 @@ describe("plan the next shift", () => {
     // The next shift's list is what was decided.
     expect(nextList(applied(base(), c.moves))).toEqual(["pull"]);
   });
-  it("push out: off tonight, to the shift picked - and linked work after it moves too", () => {
+  it("push out: off tonight, to the shift picked - linked work after it keeps its plan; the forecast says the push", () => {
     const ms = base().map((m) => (m.id === "reinstall" ? { ...m, plannedStartAt: iso("2026-10-27", "02:00"), plannedAt: iso("2026-10-27", "04:00"), dependsOn: ["clean"] } : m));
     const to = laterShifts(night, (w) => nextShift(w, LA, times))[0];       // Tue day
     const c = planShiftChange(ms, { kind: "push", outId: "clean", to: to.start }, o)!;
     expect(c.out!.to[0]).toBe(at("2026-10-27", "06:00"));
-    expect(c.pushed.map((p) => [p.id, p.hours])).toEqual([["reinstall", 12]]);
-    expect(nextList(applied(ms, c.moves))).toEqual([]);
+    expect(c.pushed.map((p) => p.id)).toEqual(["reinstall"]);
+    expect(c.pushed[0].hours).toBeGreaterThan(0);
+    expect(c.moves.map((m) => m.id)).not.toContain("reinstall");
+    // Still planned tonight (its plan didn't move) - waiting on the work pushed out.
+    expect(nextList(applied(ms, c.moves))).toEqual(["reinstall"]);
   });
   it("pull in: what it still waits on is said before it's saved", () => {
     const c = planShiftChange(base(), { kind: "pull", inId: "reinstall" }, o)!;

@@ -1,14 +1,14 @@
 // shiftPlan — changing what the next shift does, in the schedule itself:
 // swap a step on its list for one from later on, pull one in, or push one
-// out. The planned dates move (the baseline doesn't), linked work after a
-// moved step moves with it, and the change is checked before it's saved:
+// out. The planned dates of the steps moved change (the baseline doesn't;
+// linked work after them keeps its plan), and the change is checked first:
 // what the step pulled in still waits on, whether it's the other crew's
 // hours, whether it touches the critical path, and what it does to the
 // turnaround's forecast finish. The calendar, the shift report and the
 // email all read the schedule, so they follow.
 
 import type { Milestone } from "@/types/schema";
-import { cascadeDependents, type DateChange, type ReflowNode } from "@/lib/scheduleReflow";
+import type { DateChange } from "@/lib/scheduleReflow";
 import { computeCpm } from "@/lib/cpm";
 import { resolveCriticalPath, type CriticalMode } from "@/lib/criticalPath";
 import { predecessorConflicts } from "@/lib/openWork";
@@ -33,7 +33,7 @@ export interface ShiftPlanChange {
   moves: DateChange[];
   in?: PlannedMove;
   out?: PlannedMove;
-  /** Linked work pushed later by it (hours), biggest first. */
+  /** Linked work it pushes later in the forecast (hours), biggest first; its plan stays. */
   pushed: Array<{ id: string; name: string; hours: number }>;
   /** What the step pulled in waits on that won't be done when it starts. */
   waits: Array<{ name: string; until: number }>;
@@ -53,13 +53,6 @@ export interface ShiftPlanChange {
 
 const H = 3_600_000;
 const iso = (t: number) => new Date(t).toISOString();
-
-function nodesOf(milestones: Milestone[]): ReflowNode[] {
-  return milestones.filter((m) => m.id && m.plannedAt).map((m) => ({
-    id: m.id!, parentId: m.parentId ?? null, plannedStartAt: (m.plannedStartAt as string | undefined) ?? null, plannedAt: m.plannedAt as string,
-    status: m.status, dependsOn: m.dependsOn ?? null, links: m.linkTypes ?? null,
-  }));
-}
 
 export function planShiftChange(milestones: Milestone[], action: ShiftPlanAction, o: { next: ShiftWindow; now: number; tz: string; times: ShiftTimes; mode?: CriticalMode | null;
   /** Who does the step pulled in (default: as it is). */
@@ -101,10 +94,9 @@ export function planShiftChange(milestones: Milestone[], action: ShiftPlanAction
   const outMove = mv(outM, outStart);
   if (!primary.length) return null;
 
-  // Linked work after a moved step moves with it.
+  // Only the steps pulled in or pushed out move: linked work after them
+  // keeps its planned dates (the forecast carries what the move pushes).
   const set = new Map(primary.map((c) => [c.id, c]));
-  const nodes = nodesOf(milestones).map((n) => { const c = set.get(n.id); return c ? { ...n, plannedStartAt: c.plannedStartAt, plannedAt: c.plannedAt } : n; });
-  for (const c of cascadeDependents(nodes, primary.map((c) => c.id), tz)) if (!set.has(c.id)) set.set(c.id, c);
   // The tasks around a moved step stretch to cover it — never shrink, and
   // nothing else about them changes.
   const env = new Map<string, [number, number]>();
@@ -121,9 +113,12 @@ export function planShiftChange(milestones: Milestone[], action: ShiftPlanAction
 
   const after = milestones.map((m) => { const c = m.id ? set.get(m.id) : undefined; return c ? { ...m, plannedStartAt: c.plannedStartAt, plannedAt: c.plannedAt } : m; });
   const parents = new Set(milestones.map((m) => m.parentId).filter(Boolean) as string[]);
-  const pushed = moves
-    .filter((c) => !parents.has(c.id) && c.id !== inMove?.id && c.id !== outMove?.id)
-    .map((c) => { const m = byId.get(c.id)!; return { id: c.id, name: m.name, hours: Math.round(((Date.parse(c.plannedAt) - finishMsOf(m)) / H) * 10) / 10 }; })
+  const before = computeCpm(milestones, { now, tz });
+  const afterCpm = computeCpm(after, { now, tz });
+  // Linked work the move pushes later — in the forecast; its plan stays.
+  const pushed = [...afterCpm.steps.values()]
+    .filter((st) => !parents.has(st.id) && st.id !== inMove?.id && st.id !== outMove?.id && !st.done)
+    .map((st) => ({ id: st.id, name: byId.get(st.id)?.name ?? "", hours: Math.round(((st.ef - (before.steps.get(st.id)?.ef ?? st.ef)) / H) * 10) / 10 }))
     .filter((x) => x.hours > 0)
     .sort((a, b) => b.hours - a.hours);
   const afterById = new Map(after.filter((m) => m.id).map((m) => [m.id!, m]));
@@ -136,8 +131,6 @@ export function planShiftChange(milestones: Milestone[], action: ShiftPlanAction
     const who = o.crew?.trim();
     if (who && who !== (inM.responsibleParty?.trim() ?? "")) inPatch.responsibleParty = who;
   }
-  const before = computeCpm(milestones, { now, tz });
-  const afterCpm = computeCpm(after, { now, tz });
   const critBefore = resolveCriticalPath(milestones, o.mode ?? null, { now, tz }).ids;
   const critAfter = resolveCriticalPath(after, o.mode ?? null, { now, tz }).ids;
   const ids = [inMove?.id, outMove?.id].filter(Boolean) as string[];

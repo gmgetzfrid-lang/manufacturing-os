@@ -21,7 +21,7 @@ import {
   Link2, Target, Zap, Ban,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus, MilestoneNote, ProjectMember } from "@/types/schema";
-import { wouldCreateCycle, cascadeDependents, type ReflowNode } from "@/lib/scheduleReflow";
+import { wouldCreateCycle, cascadeDependents, withAncestors, type ReflowNode } from "@/lib/scheduleReflow";
 import { LINK_LABEL, linkOf, linkShort, type LinkMap, type LinkType } from "@/lib/scheduleLinks";
 import { listMembers } from "@/lib/projects";
 import {
@@ -766,16 +766,17 @@ function EditForm({
           updatedBy: userId, updatedByName: userName, updatedByEmail: userEmail, updatedByRole: userRole,
         });
       }
-      // New dates push the steps linked after it (finish-to-start) and keep
-      // its phase around it, exactly as a drag on the timeline does.
+      // New dates keep its task row around it, as a drag on the timeline
+      // does. The steps linked after it keep their planned dates.
       if (datesChanged && allTasks?.length && m.projectId) {
         const nodes: ReflowNode[] = allTasks.map((t) => ({
           id: t.id!, parentId: t.parentId ?? null,
-          plannedStartAt: t.id === m.id ? (patch.plannedStartAt as string | null) ?? null : (t.plannedStartAt as string | undefined) ?? null,
-          plannedAt: t.id === m.id ? (patch.plannedAt as string) : (t.plannedAt as string),
+          plannedStartAt: (t.plannedStartAt as string | undefined) ?? null,
+          plannedAt: t.plannedAt as string,
           status: t.status, dependsOn: t.dependsOn ?? null, links: t.linkTypes ?? null,
         }));
-        const moves = cascadeDependents(nodes, [m.id], tz).filter((c) => c.id !== m.id);
+        const mine = { id: m.id, plannedStartAt: (patch.plannedStartAt as string | null | undefined) ?? (m.plannedStartAt as string | undefined) ?? (patch.plannedAt as string) ?? (m.plannedAt as string), plannedAt: (patch.plannedAt as string | undefined) ?? (m.plannedAt as string) };
+        const moves = withAncestors(nodes, [mine]).filter((c) => c.id !== m.id);
         if (moves.length) await applyMilestoneMoves({ orgId: m.orgId, projectId: m.projectId, moves, actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole });
       }
       onDone();
@@ -965,8 +966,8 @@ function DependencyEditor({
   const [localLinks, setLocalLinks] = useState<{ from: unknown; links: LinkMap }>({ from: milestone.linkTypes, links: milestone.linkTypes ?? {} });
   const links = localLinks.from === milestone.linkTypes ? localLinks.links : (milestone.linkTypes ?? {});
   // Save the predecessors and how it waits on each; then, if THIS task now
-  // starts too early for one of them, push it and what follows it — and
-  // nothing else (other tasks waiting on the same predecessor stay put).
+  // starts too early for one of them, push it (and its own steps, and the
+  // task row around it) — nothing else: the steps after it keep their plan.
   const save = async (next: string[], nextLinks: LinkMap = links) => {
     if (!milestone.id) return;
     setSaving(true); setError(null);
@@ -986,11 +987,8 @@ function DependencyEditor({
         const stack = [me];
         while (stack.length) { const c = stack.pop()!; if (mine.has(c)) continue; mine.add(c); stack.push(...(kids.get(c) ?? [])); }
         const own = cascadeDependents(nodes, next, tz).filter((c) => mine.has(c.id));
-        // 2) What follows it, from there.
-        const moved = new Map(own.map((c) => [c.id, c]));
-        const nodes2 = nodes.map((n) => { const c = moved.get(n.id); return c ? { ...n, plannedStartAt: c.plannedStartAt, plannedAt: c.plannedAt } : n; });
-        const after = own.length ? cascadeDependents(nodes2, [me], tz) : [];
-        const moves = [...own, ...after.filter((c) => !moved.has(c.id))];
+        // 2) The task row around it refits; what follows it stays put.
+        const moves = withAncestors(nodes, own);
         if (moves.length) await applyMilestoneMoves({ orgId: milestone.orgId, projectId: milestone.projectId, moves, actorUserId: userId });
       }
       onChanged();

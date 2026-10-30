@@ -43,7 +43,7 @@ import WorkOrdersView from "@/components/projects/WorkOrdersView";
 import { timesAfterStatus, timesAfterProgress, type ActualTimes } from "@/lib/optimisticTimes";
 import DiscoveryTag from "@/components/projects/DiscoveryTag";
 import { planNote, type ShiftPlanChange } from "@/lib/shiftPlan";
-import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, cascadeDependents, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
+import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, withAncestors, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import { resolveCriticalPath, pathMarks, CRITICAL_MODES, type CriticalMode, type CriticalOverride } from "@/lib/criticalPath";
 import { useCriticalMode, saveCriticalMode } from "@/lib/criticalModeStore";
 import { resolveVisibleDepIndex } from "@/lib/scheduleDeps";
@@ -949,22 +949,10 @@ export default function ExecutionView({
     links: m.linkTypes ?? null,
   })), [items]);
 
-  // After any edit, push dependents forward (finish-to-start) so the schedule
-  // honors explicit task dependencies. Merges the cascade into the primary
-  // changes (cascade wins on overlap) so it persists + undoes as one set.
-  const withCascade = useCallback((primary: DateChange[]): DateChange[] => {
-    if (primary.length === 0) return primary;
-    const map = new Map(primary.map((c) => [c.id, c]));
-    const updated: ReflowNode[] = reflowNodes.map((n) => {
-      const c = map.get(n.id);
-      return c ? { ...n, plannedStartAt: c.plannedStartAt, plannedAt: c.plannedAt } : n;
-    });
-    const cascade = cascadeDependents(updated, primary.map((c) => c.id), tz);
-    if (cascade.length === 0) return primary;
-    const merged = new Map(primary.map((c) => [c.id, c]));
-    for (const c of cascade) merged.set(c.id, c);
-    return Array.from(merged.values());
-  }, [reflowNodes, tz]);
+  // After any edit: what was moved, and the task rows above it refitted to
+  // wrap it. The steps linked after it keep their planned dates: the plan is
+  // the plan, and the forecast carries what the move pushes.
+  const withCascade = useCallback((primary: DateChange[]): DateChange[] => withAncestors(reflowNodes, primary), [reflowNodes]);
 
   // A move requested by the UI, awaiting confirmation. Carries the
   // target ids (one, or the multi-selection) and the day delta.
@@ -993,7 +981,7 @@ export default function ExecutionView({
         primary.push(c);
       }
     }
-    const all = withCascade(primary); // push dependents to honor FS links
+    const all = withCascade(primary);
     if (all.length === 0) return;
     // Snapshot each affected row's current dates so Undo can restore.
     const before: DateChange[] = [];
