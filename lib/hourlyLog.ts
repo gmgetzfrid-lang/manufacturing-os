@@ -6,7 +6,7 @@
 // (or what someone typed over it), never anything made up.
 
 import {
-  hourSlots, hourlyRows, ongoingByHour, breaksOn, breakLabel, SLOT_LABEL, type SlotKind,
+  hourSlots, hourlyRows, breaksOn, breakLabel, SLOT_LABEL, type SlotKind,
 } from "@/lib/shiftHourly";
 import { meetingLeadMin, shiftWindow, shiftWindowsBetween, workShiftOf, type ShiftTimes, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
 import { crewLine } from "@/lib/managementUpdate";
@@ -69,12 +69,11 @@ export function logSteps(milestones: Milestone[], tz: string, times: ShiftTimes)
 
 /** Who was at the meeting: the crews entered there, then the crews that
  *  worked the shift (no attendance entered: "-"). */
-function meetingCrews(rec: ShiftRecord | undefined, rows: TimeLogRow[], going: string[]): string[] {
+function meetingCrews(rec: ShiftRecord | undefined, rows: TimeLogRow[]): string[] {
   const out: string[] = [];
   const add = (c: string) => { const k = c.trim(); if (k && k !== "No crew named" && !out.includes(k)) out.push(k); };
   Object.keys(rec?.crews ?? {}).forEach(add);
   rows.forEach((r) => add(r.crew));
-  going.forEach((g) => add(g.split(" - ")[0]));
   return out.map((c) => `${c}: ${crewLine(rec?.crews?.[c])}`);
 }
 
@@ -87,16 +86,15 @@ export function shiftLog(o: {
   const { shift, tz } = o;
   const upTo = Math.min(o.now, shift.end);
   const slots = hourSlots(shift, meetingLeadMin(o.times), breaksOn(shift, o.times.breaks, tz));
-  const going = ongoingByHour(slots, o.steps.map((s) => ({ ...s, worksShift: s.work === "both" || s.work === shift.kind })), o.log, upTo);
   const rows = o.rows.filter((r) => r.at >= shift.start && r.at < shift.end);
   // The same hours, and the same lines, as the report shows.
-  const entries = hourlyRows(o.record?.hourly, slots, upTo, rows, tz).map(({ slot, lines }): LogEntry => {
+  const entries = hourlyRows(o.record?.hourly, slots, upTo, rows, tz).map(({ slot, lines, progress }): LogEntry => {
     const clock = clockAt(slot.start, tz);
     if (slot.kind === "meeting") {
-      return { clock, kind: "meeting", title: SLOT_LABEL.meeting, lines: [...meetingCrews(o.record, rows, [...going.values()].flat()), ...lines], continuing: [] };
+      return { clock, kind: "meeting", title: SLOT_LABEL.meeting, lines: [...meetingCrews(o.record, rows), ...lines], continuing: [] };
     }
     if (slot.kind === "break") return { clock, kind: "break", title: breakLabel(slot), lines: [], continuing: [] };
-    return { clock, kind: slot.kind, ...(slot.kind === "permit" ? { title: SLOT_LABEL.permit } : {}), lines, continuing: (going.get(slot.key) ?? []).map(noEmDash) };
+    return { clock, kind: slot.kind, ...(slot.kind === "permit" || slot.kind === "handover" ? { title: SLOT_LABEL[slot.kind] } : {}), lines, continuing: progress.map(noEmDash) };
   });
   return {
     key: `${shift.dayKey}:${shift.kind}`, kind: shift.kind,

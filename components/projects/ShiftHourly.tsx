@@ -2,9 +2,11 @@
 
 // Shift notes, hour by hour — on the turnover report. The shift's meeting
 // (who attended: each crew's supervisor and head count), the first hour —
-// start of shift, permitting — then each hour to the end, saying the
-// shift's own entries in that hour, one line each (lib/shiftHourly). Any
-// hour can be typed over; that one is then kept as typed.
+// start of shift, permitting — each hour, then the turnover meeting with
+// the next shift, saying the shift's own entries in that hour, one line
+// each, its work order in bold (lib/shiftHourly). Any hour can be typed
+// over; that one is then kept as typed. A meeting that wasn't held comes
+// off the log (and can be put back).
 
 import React, { useState } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
@@ -14,7 +16,7 @@ import type { CrewCount } from "@/lib/shiftRecord";
 import { newId } from "@/lib/shiftRecord";
 import type { TimeLogRow } from "@/lib/timeLog";
 import {
-  hourlyClocks, hourlyRows, typedLines, slotOf, SLOT_LABEL, breakLabel, type HourSlot, type HourlyNotes,
+  hourlyClocks, hourlyRows, typedLines, slotOf, SLOT_LABEL, breakLabel, boldRuns, type HourSlot, type HourlyNotes,
 } from "@/lib/shiftHourly";
 
 const inputCls = "rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1 text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent-ring)]";
@@ -30,8 +32,6 @@ export interface HourlyCtx {
   slots: HourSlot[];
   /** Up to when the hours show: now, or the shift's end. */
   upTo: number;
-  /** What each crew kept working on in an hour nothing new was entered for it (lib/shiftHourly ongoingByHour). */
-  ongoing?: Map<string, string[]>;
   /** Put discovery or added scope into the schedule at this hour (the hour's start). */
   onAddWork?: (at: number) => void;
 }
@@ -58,6 +58,20 @@ export function ShiftHourlyBox({ h, edit, print, tz, meeting }: {
   const [msg, setMsg] = useState<string | null>(null);
   const rows = hourlyRows(h.notes, h.slots, h.upTo, h.entries, tz);
   const clocks = hourlyClocks(rows.map((r) => r.slot.start), tz);
+  // Meetings taken off the log: listed under it, to put back.
+  const skipped = new Set(h.notes?.skip ?? []);
+  const removed = h.slots.filter((x) => skipped.has(x.key));
+  const setSkip = async (key: string, off: boolean) => {
+    try {
+      await h.update((cur) => {
+        const base: HourlyNotes = cur?.v === 2 ? cur : { v: 2, lines: typedLines(cur) };
+        const next = new Set(base.skip ?? []);
+        if (off) next.add(key); else next.delete(key);
+        return { ...base, v: 2, skip: [...next] };
+      });
+      setMsg(null);
+    } catch (e) { setMsg((e as Error).message); }
+  };
 
   // An hour as typed: kept as typed (empty puts it back to the entries).
   const setHour = async (slot: HourSlot, text: string | null) => {
@@ -77,7 +91,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meeting }: {
       <table className="w-full text-[8.5pt] border-collapse">
         <tbody>
           {rows.map((r, i) => {
-            const going = h.ongoing?.get(r.slot.key) ?? [];
+            const going = r.progress;
             return (
               <tr key={r.slot.key} className="align-top">
                 <td className="w-16 pr-2 py-0.5 font-semibold whitespace-nowrap">{clocks[i]}</td>
@@ -111,9 +125,10 @@ export function ShiftHourlyBox({ h, edit, print, tz, meeting }: {
             );
           }
           return (
-            <li key={r.slot.key} className="flex items-start gap-2 px-3 py-1.5 text-[12.5px] leading-snug">
-              <span className="w-[66px] shrink-0 font-bold text-[var(--color-text)] whitespace-nowrap tabular-nums">{clocks[i]}</span>
-              <div className="min-w-0 flex-1">
+            <li key={r.slot.key} className="grid grid-cols-[66px_minmax(0,1fr)_auto] max-sm:grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-0.5 px-3 py-1.5 text-[12.5px] leading-snug">
+              <span className="font-bold text-[var(--color-text)] whitespace-nowrap tabular-nums">{clocks[i]}</span>
+              {/* On a phone the time and its buttons share a line; what happened gets the full width under them. */}
+              <div className="min-w-0 max-sm:order-last max-sm:col-span-2">
                 {label && <div className="font-bold text-[var(--color-text)]">{label}</div>}
                 {r.slot.kind === "meeting" && (
                   <MeetingBox meeting={meeting} edit={edit} />
@@ -124,7 +139,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meeting }: {
                 ) : r.slot.kind === "meeting" ? (
                   r.text ? <div className="break-words text-[var(--color-text)]">{r.text}</div> : null
                 ) : (
-                  <Items text={r.text} going={h.ongoing?.get(r.slot.key) ?? []} empty={r.slot.kind === "work"} />
+                  <Items text={r.text} going={r.progress} empty={r.slot.kind === "work" || r.slot.kind === "handover"} />
                 )}
                 {/* A typed note: a mistake, or now put in as work (its own entry
                     says it) - deleted, the hour shows its entries again. */}
@@ -135,11 +150,19 @@ export function ShiftHourlyBox({ h, edit, print, tz, meeting }: {
                   </button>
                 )}
               </div>
+              <div className="flex items-center justify-end gap-1">
               {!print && h.onAddWork && editing !== r.slot.key && r.slot.kind !== "meeting" && (
                 <button type="button" onClick={() => h.onAddWork?.(r.slot.start)} aria-label={`Add discovery or added scope at ${clocks[i]}`}
                   title="Add discovery or added scope at this hour - it goes into the schedule"
                   className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-dashed border-[var(--color-accent)] text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
                   <Plus className="w-3 h-3" /> Add work
+                </button>
+              )}
+              {edit && editing !== r.slot.key && (r.slot.kind === "meeting" || r.slot.kind === "handover") && (
+                <button type="button" onClick={() => void setSkip(r.slot.key, true)} aria-label={`Remove ${SLOT_LABEL[r.slot.kind]} from the log`}
+                  title="Wasn't held: take it off the log (it can be put back)"
+                  className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40">
+                  <Trash2 className="w-3.5 h-3.5" />
                 </button>
               )}
               {edit && editing !== r.slot.key && (
@@ -148,23 +171,37 @@ export function ShiftHourlyBox({ h, edit, print, tz, meeting }: {
                   <Pencil className="w-3.5 h-3.5" />
                 </button>
               )}
+              </div>
             </li>
           );
         })}
       </ul>
+      {removed.length > 0 && (
+        <div className="text-[11.5px] text-[var(--color-text-muted)]">
+          Taken off the log: {removed.map((x, i) => (
+            <span key={x.key}>{i > 0 ? ", " : ""}{SLOT_LABEL[x.kind] || "Hour"}{edit && <button type="button" onClick={() => void setSkip(x.key, false)} className="ml-1 font-semibold text-[var(--color-accent)] hover:underline">Put back</button>}</span>
+          ))}
+        </div>
+      )}
       {msg && <div role="alert" className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">{msg}</div>}
     </div>
   );
 }
 
-/** An hour's lines, one item each, then what crews kept working on. */
+/** A line with its work order in bold. */
+function Line({ text }: { text: string }) {
+  return <>{boldRuns(text).map((r, i) => (r.b ? <b key={i} className="font-bold">{r.t}</b> : <React.Fragment key={i}>{r.t}</React.Fragment>))}</>;
+}
+
+/** An hour's lines, one item each: what started, finished or was held,
+ *  then (in the progress color) what moved its % that hour. */
 function Items({ text, going, empty }: { text: string; going: string[]; empty: boolean }) {
   const items = text.split("\n").map((x) => x.trim()).filter(Boolean);
   if (!items.length && !going.length) return empty ? <div className="text-[var(--color-text-faint)]">-</div> : null;
   return (
     <ul className="space-y-0.5">
-      {items.map((x, i) => <li key={i} className="break-words text-[var(--color-text)]">{x}</li>)}
-      {going.map((x, i) => <li key={`g${i}`} className="break-words text-[var(--color-text-muted)]"><span className="font-semibold">In progress:</span> {x}</li>)}
+      {items.map((x, i) => <li key={i} className="break-words text-[var(--color-text)]"><Line text={x} /></li>)}
+      {going.map((x, i) => <li key={`g${i}`} className="break-words text-[var(--color-text-muted)]"><Line text={x} /></li>)}
     </ul>
   );
 }

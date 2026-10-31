@@ -8,6 +8,7 @@ import JSZip from "jszip";
 import { LETTER, type Letterhead, type LhItem, type LhLayer, type LhPara, type LhRun } from "@/lib/letterhead";
 import { noEmDash } from "@/lib/noEmDash";
 import type { LogEntry, ShiftLog } from "@/lib/hourlyLog";
+import { boldRuns, plainLine } from "@/lib/shiftHourly";
 
 export interface LogFileOpts {
   project: string;
@@ -41,7 +42,8 @@ export function entryParas(e: LogEntry): Array<{ text: string; style: "title" | 
   const out: Array<{ text: string; style: "title" | "line" | "cont" | "muted" }> = [];
   if (e.title) out.push({ text: e.title, style: e.kind === "break" ? "muted" : "title" });
   for (const l of e.lines) out.push({ text: l, style: "line" });
-  for (const c of e.continuing) out.push({ text: `In progress: ${c}`, style: "cont" });
+  // What moved its % that hour, in the progress color.
+  for (const c of e.continuing) out.push({ text: c, style: "cont" });
   if (e.kind !== "break" && !e.lines.length && !e.continuing.length) out.push({ text: e.kind === "meeting" ? "No attendance entered" : "Nothing logged", style: "muted" });
   return out.map((p) => ({ ...p, text: noEmDash(p.text) }));
 }
@@ -108,6 +110,30 @@ function textFor(font: PDFFont, seen: Map<string, boolean>) {
 }
 
 /** Words onto lines `width` wide; a word longer than a line, by letter. */
+/** Text in bold and plain parts, wrapped to a width: each line its parts. */
+function wrapRuns(runs: Array<{ t: string; f: PDFFont }>, size: number, width: number): Array<Array<{ t: string; f: PDFFont }>> {
+  const words: Array<{ w: string; f: PDFFont; sp: boolean }> = [];
+  for (const r of runs) {
+    for (const part of r.t.split(/(\s+)/)) {
+      if (!part) continue;
+      if (/^\s+$/.test(part)) { if (words.length) words[words.length - 1].sp = true; } else words.push({ w: part, f: r.f, sp: false });
+    }
+  }
+  const lines: Array<Array<{ t: string; f: PDFFont }>> = [];
+  let cur: Array<{ t: string; f: PDFFont }> = [], curW = 0, gap = false, gapF: PDFFont | null = null;
+  for (const x of words) {
+    const ww = x.f.widthOfTextAtSize(x.w, size);
+    const sw = gap && gapF ? gapF.widthOfTextAtSize(" ", size) : 0;
+    if (cur.length && curW + sw + ww > width) { lines.push(cur); cur = []; curW = 0; }
+    else if (cur.length && gap && gapF) { cur.push({ t: " ", f: gapF }); curW += sw; }
+    cur.push({ t: x.w, f: x.f }); curW += ww;
+    gap = x.sp; gapF = x.f;
+  }
+  if (cur.length) lines.push(cur);
+  // Neighbours in one font drawn as one.
+  return lines.map((l) => l.reduce((acc, g) => { const last = acc[acc.length - 1]; if (last && last.f === g.f) last.t += g.t; else acc.push({ ...g }); return acc; }, [] as Array<{ t: string; f: PDFFont }>));
+}
+
 function wrap(text: string, font: PDFFont, size: number, width: number): string[] {
   const lines: string[] = [];
   let cur = "";
@@ -265,9 +291,11 @@ export async function hourlyLogPdf(logs: ShiftLog[], o: LogFileOpts): Promise<Ui
     y += 8;
     tableHead();
     for (const e of l.entries) {
+      // A line's work order in bold, the rest plain.
       const lines = entryParas(e).flatMap((p, i) => {
         const st = style[p.style];
-        return wrap(safe(st.f)(p.text), st.f, st.s, textW).map((t, j) => ({ t, ...st, h: st.s * 1.32 + (j === 0 && i > 0 ? 2 : 0) }));
+        const runs = (p.style === "line" || p.style === "cont" ? boldRuns(p.text) : [{ t: p.text, b: false }]).map((r) => { const f = r.b ? (p.style === "cont" ? fonts.bi : fonts.b) : st.f; return { t: safe(f)(r.t), f }; });
+        return wrapRuns(runs, st.s, textW).map((segs, j) => ({ segs, s: st.s, c: st.c, h: st.s * 1.32 + (j === 0 && i > 0 ? 2 : 0) }));
       });
       const pad = 5;
       const need = pad + lines.slice(0, 3).reduce((s, x) => s + x.h, 0);
@@ -282,7 +310,8 @@ export async function hourlyLogPdf(logs: ShiftLog[], o: LogFileOpts): Promise<Ui
       text(e.clock, left, y + 10, 10, fonts.b, e.kind === "break" ? GRAY : INK);
       for (const x of lines) {
         if (y + x.h > bottom) { cont(); y += pad; text(e.clock, left, y + 10, 10, fonts.b, GRAY); }
-        text(x.t, textX, y + x.s + (x.h - x.s * 1.32), x.s, x.f, x.c);
+        let dx = textX;
+        for (const g of x.segs) { text(g.t, dx, y + x.s + (x.h - x.s * 1.32), x.s, g.f, x.c); dx += g.f.widthOfTextAtSize(g.t, x.s); }
         y += x.h;
       }
       y += pad;
@@ -463,7 +492,11 @@ function shiftXml(l: ShiftLog, o: LogFileOpts, contentW: number): string {
   const head = `<w:tr><w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>${cell(timeW, cellP("TIME", { b: true, pt: 7.5, color: "64748B" }, 0), "F1F5F9")}${cell(contentW - timeW, cellP("WHAT HAPPENED", { b: true, pt: 7.5, color: "64748B" }, 0), "F1F5F9")}</w:tr>`;
   const rows = l.entries.map((e) => {
     const paras = entryParas(e);
-    return `<w:tr>${paras.length <= 6 ? "<w:trPr><w:cantSplit/></w:trPr>" : ""}${cell(timeW, cellP(e.clock, { b: true, pt: 10, color: e.kind === "break" ? "64748B" : undefined }))}${cell(contentW - timeW, paras.map((p) => cellP(p.text, look[p.style])).join(""))}</w:tr>`;
+    // A line's work order in bold, the rest plain.
+    const para = (p: (typeof paras)[number]) => p.style === "line" || p.style === "cont"
+      ? `<w:p><w:pPr><w:spacing w:before="0" w:after="20"/></w:pPr>${boldRuns(p.text).map((r) => textRun(r.t, { ...look[p.style], b: r.b })).join("")}</w:p>`
+      : cellP(p.text, look[p.style]);
+    return `<w:tr>${paras.length <= 6 ? "<w:trPr><w:cantSplit/></w:trPr>" : ""}${cell(timeW, cellP(e.clock, { b: true, pt: 10, color: e.kind === "break" ? "64748B" : undefined }))}${cell(contentW - timeW, paras.map(para).join(""))}</w:tr>`;
   }).join("");
   const border = (side: string, sz: number, color: string) => `<w:${side} w:val="single" w:sz="${sz}" w:space="0" w:color="${color}"/>`;
   return [
@@ -533,7 +566,7 @@ export async function hourlyLogDocx(logs: ShiftLog[], o: LogFileOpts): Promise<U
 
 // ─── Excel ───────────────────────────────────────────────────────────────
 
-const KIND_WORD: Record<LogEntry["kind"], string> = { meeting: "Meeting", permit: "Permitting", work: "Hour", break: "Break" };
+const KIND_WORD: Record<LogEntry["kind"], string> = { meeting: "Meeting", permit: "Permitting", work: "Hour", break: "Break", handover: "Turnover meeting" };
 
 /** The log as rows: one item a row, every row with its date, shift and time. */
 export function hourlyLogTable(logs: ShiftLog[]): string[][] {
@@ -543,8 +576,8 @@ export function hourlyLogTable(logs: ShiftLog[]): string[][] {
     for (const e of l.entries) {
       if (e.kind === "break") { out.push([...at, e.clock, "Break", e.title ?? "Break"]); continue; }
       const k = KIND_WORD[e.kind];
-      for (const x of e.lines) out.push([...at, e.clock, k, noEmDash(x)]);
-      for (const x of e.continuing) out.push([...at, e.clock, "In progress", noEmDash(x)]);
+      for (const x of e.lines) out.push([...at, e.clock, k, noEmDash(plainLine(x))]);
+      for (const x of e.continuing) out.push([...at, e.clock, "Progress", noEmDash(plainLine(x))]);
       if (!e.lines.length && !e.continuing.length) out.push([...at, e.clock, k, e.kind === "meeting" ? "No attendance entered" : "Nothing logged"]);
     }
   }

@@ -83,7 +83,8 @@ export interface UpdateLookups {
    *  shows ("8:00 AM", "8:30"). */
   /** The shift by the hour (lib/shiftHourly): its meeting, the first hour
    *  (permitting), then each hour so far. */
-  hourly?: Array<{ clock: string; kind?: "meeting" | "permit" | "work" | "break"; text: string; ongoing?: string[] }>;
+  /** `progress`: the steps whose % moved that hour ("50% to 75%"). */
+  hourly?: Array<{ clock: string; kind?: "meeting" | "permit" | "work" | "break" | "handover"; text: string; progress?: string[] }>;
 }
 
 /** "forecast finish Nov 01 02:18 — 8.3 h late": where the work as it
@@ -390,8 +391,9 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
         const items = [
           ...(x.kind === "meeting" ? [`Shift meeting - ${[attended, x.text].filter(Boolean).join(". ") || "-"}`]
             : x.kind === "permit" ? [`Start of shift - permitting`, ...x.text.split("\n").filter(Boolean)]
+              : x.kind === "handover" ? [`Turnover meeting`, ...x.text.split("\n").filter(Boolean)]
               : x.text.split("\n").filter(Boolean)),
-          ...(x.ongoing ?? []).map((o) => `In progress: ${o}`),
+          ...(x.progress ?? []),
         ];
         const [first, ...rest] = items;
         return [{ t: x.clock, bold: true }, !first ? { t: "-", tone: "muted" as const }

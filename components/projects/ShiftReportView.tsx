@@ -57,7 +57,7 @@ import { useSortRows, Grip } from "@/components/projects/SortRows";
 import AddWorkPicker from "@/components/projects/AddWorkPicker";
 import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
 import { discoveries, discoveryOf, discoverySummary, discoveryStepLine, impactLine, ADDED, kindOf, addedTitle, type Discovery } from "@/lib/discovery";
-import { buildTimeLog, downloadTimeLog, stepLabels } from "@/lib/timeLog";
+import { buildTimeLog, downloadTimeLog } from "@/lib/timeLog";
 import { loadProgressLog, scheduleAt, type ProgressLogRow } from "@/lib/progressHistory";
 import { resolveCriticalPath, floatsOf, pathMarks, CRITICAL_MODES, type PathMarks } from "@/lib/criticalPath";
 import { useCriticalMode, saveCriticalMode } from "@/lib/criticalModeStore";
@@ -80,7 +80,7 @@ import { ShiftHourlyBox, meetingLine, type HourlyCtx, type MeetingCrews } from "
 import { HourlyLogExport } from "@/components/projects/HourlyLogExport";
 import { exportedLabel, logSteps, shiftLog } from "@/lib/hourlyLog";
 import { pngInBrowser, saveHourlyLog, type LogFormat } from "@/lib/hourlyLogFiles";
-import { hourlyClocks, hourlyRows, hourSlots, breaksOn, breakLabel, ongoingByHour } from "@/lib/shiftHourly";
+import { hourlyClocks, hourlyRows, hourSlots, breaksOn, breakLabel, plainLine } from "@/lib/shiftHourly";
 import { saidWithLatest } from "@/lib/stepComment";
 
 /** The crew the report is narrowed to (tables then drop their Who column). */
@@ -437,17 +437,6 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   // The shift by the hour: its meeting (from the shift times), the first
   // hour (permitting), then each hour.
   const slots = useMemo(() => hourSlots(shift, meetingLeadMin(times), breaksOn(shift, times.breaks, tz)), [shift, times, tz]);
-  // What each crew kept working on in an hour nothing new was entered for it.
-  const ongoing = useMemo(() => {
-    const parents = new Set(live.map((m) => m.parentId).filter((x): x is string => !!x));
-    const name = new Map(live.map((m) => [m.id, m.name]));
-    const label = stepLabels(live);
-    const steps = live.filter((m) => m.id && !parents.has(m.id)).map((m) => {
-      const w = workShiftOf(m, tz, times);
-      return { id: m.id!, name: label.get(m.id!) ?? m.name, task: (m.parentId ? name.get(m.parentId) : "") ?? "", crew: m.responsibleParty?.trim() ?? "", worksShift: w === "both" || w === shift.kind };
-    });
-    return ongoingByHour(slots, steps, log ?? [], Math.min(now, shift.end));
-  }, [live, tz, times, shift.kind, shift.end, slots, log, now]);
   // The tables' order as dragged at the meeting — shown at once, kept on
   // the shift's record (the email follows it too).
   const [orderLocal, setOrderLocal] = useState<{ key: string; order: TableOrder } | null>(null);
@@ -475,7 +464,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       error: recMsg ?? (recErr && canEdit ? recErr : null),
       tz,
       hourly: orgId ? {
-        notes: recThis?.hourly, update: updateHourly, entries, slots, upTo: Math.min(now, shift.end), ongoing,
+        notes: recThis?.hourly, update: updateHourly, entries, slots, upTo: Math.min(now, shift.end),
         onAddWork: canEdit && onDiscovery ? setAddAt : undefined,
       } : undefined,
       order: tableOrder,
@@ -484,7 +473,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         void saveRec(thisKey, (r) => ({ ...r, order: { ...(r.order ?? {}), [table]: ids ?? undefined } }));
       },
     };
-  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, saveRec, recMsg, recErr, tableOrder, setOrderLocal, updateHourly, entries, shift, slots, now, ongoing, onDiscovery]);
+  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, saveRec, recMsg, recErr, tableOrder, setOrderLocal, updateHourly, entries, shift, slots, now, onDiscovery]);
   const shiftTitle = `${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`;
   // The hourly log of the shift on screen (any shift, backed up by date),
   // as a file on the letterhead.
@@ -675,7 +664,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           hourly: sheet.hourly ? (() => {
             const hr = hourlyRows(sheet.hourly.notes, sheet.hourly.slots, sheet.hourly.upTo, sheet.hourly.entries, tz);
             const cl = hourlyClocks(hr.map((r) => r.slot.start), tz);
-            return hr.map((r, i) => ({ clock: cl[i], kind: r.slot.kind, text: r.slot.kind === "break" ? breakLabel(r.slot) : r.text, ongoing: sheet.hourly?.ongoing?.get(r.slot.key) }));
+            return hr.map((r, i) => ({ clock: cl[i], kind: r.slot.kind, text: r.slot.kind === "break" ? breakLabel(r.slot) : plainLine(r.text), progress: r.progress.map(plainLine) }));
           })() : [],
           order: sheet.order,
           forecast,
@@ -761,7 +750,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                 <label className="flex items-center justify-between gap-2 text-[var(--color-text-muted)]"><span>Turnover meeting, min before</span>
                   <input type="number" min={0} max={180} step={5} value={meetingLeadMin(draft)} onChange={(e) => { setTimesMsg(null); setTimesDraft({ ...draft, meetingBefore: Number(e.target.value) }); }} className="h-7 w-16 border border-[var(--color-border-strong)] rounded px-1 bg-[var(--color-surface)]" />
                 </label>
-                <BreaksEditor breaks={draft.breaks ?? []} onChange={(b) => { setTimesMsg(null); setTimesDraft({ ...draft, breaks: b }); }} />
+                <BreaksEditor breaks={draft.breaks ?? []} times={draft} onChange={(b) => { setTimesMsg(null); setTimesDraft({ ...draft, breaks: b }); }} />
                 {!timesDraft && timesSaved === false && (
                   <div className="flex justify-end pt-0.5">
                     <button onClick={() => { void saveProjectShiftTimes(projectId, times).then(() => setTimesMsg("Saved for everyone on this project.")).catch((e: Error) => setTimesMsg(e.message)); }}
@@ -1282,15 +1271,21 @@ function makeCtx(tz: string, byId: Map<string, Milestone>, progress?: Map<string
 
 /** Breaks and lunch for each shift: blocked off in the notes by the hour.
  *  Picked, not typed: the shift, the time, how long, and what it is. */
-function BreaksEditor({ breaks, onChange }: { breaks: ShiftBreak[]; onChange: (b: ShiftBreak[]) => void }) {
+function BreaksEditor({ breaks, onChange, times }: { breaks: ShiftBreak[]; onChange: (b: ShiftBreak[]) => void; times: ShiftTimes }) {
   const sel = "h-7 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[11px]";
   const set = (i: number, v: Partial<ShiftBreak>) => onChange(breaks.map((b, j) => (j === i ? { ...b, ...v } : b)));
+  // A break outside its shift never shows: said, with the shift's hours.
+  const min = (hm: string) => Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5));
+  const c12 = (hm: string) => { const h = Number(hm.slice(0, 2)); return `${h % 12 || 12}:${hm.slice(3, 5)} ${h < 12 ? "AM" : "PM"}`; };
+  const ds = times.dayStart || "05:30", ns = times.nightStart || `${String((Number(ds.slice(0, 2)) + 12) % 24).padStart(2, "0")}:${ds.slice(3, 5)}`;
+  const inDay = (hm: string) => { const t = min(hm), a = min(ds), b = min(ns); return a <= b ? t >= a && t < b : t >= a || t < b; };
+  const outside = (b: ShiftBreak) => /^\d{2}:\d{2}/.test(b.start) && (b.shift === "day" ? !inDay(b.start) : inDay(b.start));
   return (
     <div className="border-t border-[var(--color-border)] pt-1.5 space-y-1">
       <div className="font-bold text-[var(--color-text)]">Breaks and lunch</div>
       {breaks.length === 0 && <div className="text-[var(--color-text-muted)]">None set.</div>}
       {breaks.map((b, i) => (
-        <div key={i} className="flex items-center gap-1">
+        <div key={i} className="flex flex-wrap items-center gap-1">
           <select value={b.shift} onChange={(e) => set(i, { shift: e.target.value as ShiftBreak["shift"] })} aria-label="Shift" className={sel}>
             <option value="day">Day</option><option value="night">Night</option>
           </select>
@@ -1302,6 +1297,7 @@ function BreaksEditor({ breaks, onChange }: { breaks: ShiftBreak[]; onChange: (b
             {[10, 15, 20, 30, 45, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
           </select>
           <button type="button" onClick={() => onChange(breaks.filter((_, j) => j !== i))} aria-label="Remove this break" className="p-1 text-[var(--color-text-muted)] hover:text-rose-700"><X className="w-3.5 h-3.5" /></button>
+          {outside(b) && <span className="basis-full text-[10.5px] font-semibold text-amber-700 dark:text-amber-400">{c12(b.start)} isn&apos;t on the {b.shift} shift ({c12(b.shift === "day" ? ds : ns)} to {c12(b.shift === "day" ? ns : ds)}) - it won&apos;t show. AM or PM, or the other shift?</span>}
         </div>
       ))}
       <button type="button" onClick={() => onChange([...breaks, { shift: "day", start: breaks.length ? "12:00" : "09:00", minutes: breaks.length ? 30 : 15, label: breaks.length ? "Lunch" : "Break" }])}
@@ -1765,8 +1761,9 @@ function hourlySection(sh: SheetCtx, h: HourlyCtx, meeting?: MeetingCrews, expor
       { t: clocks[i], bold: true },
       r.slot.kind === "break" ? { t: breakLabel(r.slot), tone: "muted" }
         : r.slot.kind === "meeting" ? `Shift meeting - ${meetingLine(meeting, r.text) || "-"}`
-        : r.slot.kind === "permit" ? `Start of shift - permitting${r.text ? `. ${r.text}` : ""}`
-          : r.text || { t: "-", tone: "muted" },
+        : r.slot.kind === "permit" ? `Start of shift - permitting${r.text ? `. ${plainLine(r.text)}` : ""}`
+          : r.slot.kind === "handover" ? `Turnover meeting${r.text ? `. ${plainLine(r.text)}` : ""}`
+            : plainLine(r.text) || { t: "-", tone: "muted" },
     ] as ExportCell[]) }],
   };
 }

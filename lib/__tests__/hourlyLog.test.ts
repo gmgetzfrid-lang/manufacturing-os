@@ -32,7 +32,8 @@ const record: ShiftRecord = {
 };
 const rows = [row(at(1, 10), {}), row(at(3, 20), { id: "s2", step: "Install Manways", crew: "Schultz", what: "Done", comment: "All 4 in" })];
 // Schultz's step was started before the shift, and nothing new on it until 9:20.
-const log = [{ milestone_id: "s2", at: new Date(at(-2)).toISOString(), new_status: "in_progress" }, { milestone_id: "s1", at: new Date(at(1, 10)).toISOString(), new_status: "in_progress" }];
+const log = [{ milestone_id: "s2", at: new Date(at(-2)).toISOString(), new_status: "in_progress" }, { milestone_id: "s1", at: new Date(at(1, 10)).toISOString(), new_status: "in_progress" },
+  { milestone_id: "s2", at: new Date(at(3, 20)).toISOString(), new_status: "completed", new_percent: 100 }];
 
 const one = () => shiftLog({ shift: DAY, tz: TZ, times: TIMES, record, rows, steps: logSteps(MS, TZ, TIMES), log, now: DAY.end + H });
 
@@ -47,8 +48,8 @@ describe("one shift's hourly log", () => {
     expect(l.entries[0]).toMatchObject({ kind: "meeting", title: "Shift meeting" });
     expect(l.entries[1]).toMatchObject({ kind: "permit", title: "Start of shift - permitting" });
     expect(l.entries.find((e) => e.kind === "break")).toMatchObject({ clock: "12:00 PM", title: "Lunch, 30 min" });
-    // 5:30 PM is the next shift's meeting: the last hour runs 5:00 to 5:30.
-    expect(l.entries[l.entries.length - 1].clock).toBe("5:00 PM");
+    // The last hour runs 5:00 to 5:30; then the turnover meeting with the next shift.
+    expect(l.entries.slice(-2).map((e) => [e.clock, e.kind, e.title])).toEqual([["5:00 PM", "work", undefined], ["5:30 PM", "handover", "Turnover meeting"]]);
   });
 
   it("attendance as entered, crews that worked without it as -", () => {
@@ -58,13 +59,16 @@ describe("one shift's hourly log", () => {
   it("an hour typed over, as typed; the others say their entries", () => {
     const l = one();
     expect(l.entries.find((e) => e.clock === "7:00 AM")?.lines).toEqual(["Ancon started cleaning the tower on V-7."]);
-    expect(l.entries.find((e) => e.clock === "9:00 AM")?.lines).toEqual(["9:20 AM Schultz: V-7 Install Manways done. All 4 in."]);
+    expect(l.entries.find((e) => e.clock === "9:00 AM")?.lines).toEqual(["9:20 AM **V-7**, Schultz: Install Manways done. All 4 in."]);
   });
 
-  it("what kept going, each hour nothing new was entered for it", () => {
-    const l = one();
-    expect(l.entries.find((e) => e.clock === "6:00 AM")?.continuing).toEqual(["Schultz - V-7 Install Manways"]);
-    expect(l.entries.find((e) => e.clock === "8:00 AM")?.continuing).toEqual(["Ancon - V-7 Clean Tower", "Schultz - V-7 Install Manways"]);
+  it("what moved its % in an hour is said in that hour only, in the progress color", () => {
+    const l = shiftLog({ shift: DAY, tz: TZ, times: TIMES, record, steps: logSteps(MS, TZ, TIMES), log, now: DAY.end + H,
+      rows: [...rows, row(at(4, 15), { id: "s1", what: "Progress", pct: "0% → 40%", comment: "two cells clean" })] });
+    expect(l.entries.find((e) => e.clock === "10:00 AM")?.continuing).toEqual(["10:15 AM **V-7**, Ancon: Clean Tower 0% to 40%. Two cells clean."]);
+    // Nothing carried into the hours around it.
+    expect(l.entries.find((e) => e.clock === "11:00 AM")?.continuing).toEqual([]);
+    expect(l.entries.find((e) => e.clock === "8:00 AM")?.continuing).toEqual([]);
   });
 
   it("a shift still going: up to now, and says so", () => {
@@ -105,7 +109,9 @@ const two = (): ShiftLog[] => [one(), { ...one(), key: "2026-10-29:night", title
 describe("the files", () => {
   it("a row's text: its name, what happened, what kept going", () => {
     const e = one().entries;
-    expect(entryParas(e[1]).map((p) => p.style)).toEqual(["title", "cont"]);
+    // Permitting with nothing entered: said so, nothing carried in.
+    expect(entryParas(e[1]).map((p) => p.style)).toEqual(["title", "muted"]);
+    expect(entryParas({ clock: "x", kind: "work", lines: ["**WO 1 V-7**, Ancon: Clean Tower started."], continuing: ["**WO 1 V-7**, Ancon: Clean Tower 0% to 40%."] }).map((p) => p.style)).toEqual(["line", "cont"]);
     expect(entryParas({ clock: "x", kind: "work", lines: [], continuing: [] })).toEqual([{ text: "Nothing logged", style: "muted" }]);
   });
 
@@ -148,7 +154,8 @@ describe("the files", () => {
     const t = hourlyLogTable([one()]);
     expect(t[0]).toEqual(["Thu, Oct 29, 2026", "Day shift", "5:30 AM", "Meeting", "Schultz: Mike Leonard · 12 on site"]);
     expect(t).toContainEqual(["Thu, Oct 29, 2026", "Day shift", "12:00 PM", "Break", "Lunch, 30 min"]);
-    expect(t).toContainEqual(["Thu, Oct 29, 2026", "Day shift", "8:00 AM", "In progress", "Ancon - V-7 Clean Tower"]);
+    // The work order is bold in the PDF and Word file; plain in Excel.
+    expect(t).toContainEqual(["Thu, Oct 29, 2026", "Day shift", "9:00 AM", "Hour", "9:20 AM V-7, Schultz: Install Manways done. All 4 in."]);
     const XLSX = await import("xlsx");
     const wb = XLSX.read(await hourlyLogXlsx([one()], OPTS), { type: "array" });
     const back = XLSX.utils.sheet_to_json<string[]>(wb.Sheets["Hourly log"], { header: 1 });

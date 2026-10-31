@@ -177,7 +177,8 @@ export function buildTimeLog(input: {
     if (!inRange(at)) continue;
     out.push({
       at, shift: shiftOf(at), task: d.task?.name ?? "", step: d.steps.map((s) => s.name).join("; "),
-      wo: woFor(d.task) || woFor(d.steps[0]) || "", crew: [...new Set(d.steps.map((s) => s.responsibleParty?.trim()).filter(Boolean))].join(", "),
+      // Its own WO # when it was given one, else the task's.
+      wo: d.steps[0]?.workOrderRef?.trim() || woFor(d.task) || woFor(d.steps[0]) || "", crew: [...new Set(d.steps.map((s) => s.responsibleParty?.trim()).filter(Boolean))].join(", "),
       what: `${ADDED[kindOf(d.record)].word} ${ADDED[kindOf(d.record)].found}`, pct: "",
       comment: `${d.record.what} - ${impactLine(d.record.impact, (h) => `${h} h`)}${d.record.approvedBy ? ` · approved by ${d.record.approvedBy}` : ""}`,
       enteredBy: d.record.addedBy ?? d.record.foundBy ?? "", enteredAt: d.record.addedAt - at > 5 * 60_000 ? d.record.addedAt : null,
