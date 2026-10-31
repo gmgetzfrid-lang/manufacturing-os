@@ -3,7 +3,9 @@
 // crew's head count on site, the safety topic talked through, and anything
 // else said there. One meeting, one record: it's kept on the record of the
 // shift it starts, so the day shift's 5:30 PM meeting and the night shift's
-// 5:30 PM meeting are the same one, entered once.
+// 5:30 PM meeting are the same one, entered once. Who attends and the head
+// counts carry from the last same shift (day to day, night to night) until
+// they're changed for a shift; the change is that shift's own.
 
 import type { CrewCount, ShiftRecord } from "@/lib/shiftRecord";
 import { typedLines } from "@/lib/shiftHourly";
@@ -17,6 +19,9 @@ export interface ShiftMeeting {
   safety?: string;
   /** Anything else from the meeting, as typed (one line each). */
   note?: string;
+  /** Its crews are its own (changed or checked for this shift), not
+   *  carried from the last same shift. */
+  ownCrews?: boolean;
 }
 
 /** Who attended from a crew: the names entered (earlier: its supervisor). */
@@ -71,18 +76,40 @@ export function earlierMeetingLines(rec: ShiftRecord | undefined, shiftStart: nu
   return typedLines(rec?.hourly).filter((l) => l.at < shiftStart).flatMap((l) => l.text.split("\n")).map((x) => noEmDash(x).trim()).filter(Boolean);
 }
 
-/** The meeting as the log says it, one item a line:
- *  "Schultz, 12 on site: Mike Leonard, Joe Brown", "Total on site: 16",
- *  "Safety topic: Working at heights", then anything else typed. */
-export function meetingLines(rec: ShiftRecord | undefined, shiftStart: number, order: string[] = []): string[] {
+/** The meeting as a table: each resource, its supervisor at the meeting,
+ *  its employees on site; the total; then the safety topic and notes. */
+export interface MeetingParts {
+  rows: Array<{ crew: string; supervisor: string; onSite: number | null }>;
+  /** Everyone on site (two or more resources counted), else null. */
+  total: number | null;
+  safety: string;
+  notes: string[];
+}
+export function meetingParts(rec: ShiftRecord | undefined, shiftStart: number, order: string[] = []): MeetingParts {
   const crews = meetingCrews(rec, order);
-  const out = crews.map((x) => `${x.crew}${x.headcount != null ? `, ${x.headcount} on site` : ""}${x.names.length ? `: ${x.names.join(", ")}` : ""}`);
   const total = totalOnSite(crews);
-  if (total != null && crews.filter((x) => x.headcount != null).length > 1) out.push(`Total on site: ${total}`);
-  const topic = rec?.meeting?.safety?.trim();
-  if (topic) out.push(`Safety topic: ${topic}`);
-  out.push(...earlierMeetingLines(rec, shiftStart), ...(rec?.meeting?.note ?? "").split("\n").map((x) => x.trim()).filter(Boolean));
-  return out.map(noEmDash);
+  return {
+    rows: crews.map((x) => ({ crew: noEmDash(x.crew), supervisor: noEmDash(x.names.join(", ")), onSite: x.headcount })),
+    total: total != null && crews.filter((x) => x.headcount != null).length > 1 ? total : null,
+    safety: noEmDash(rec?.meeting?.safety?.trim() ?? ""),
+    notes: [...earlierMeetingLines(rec, shiftStart), ...(rec?.meeting?.note ?? "").split("\n").map((x) => noEmDash(x).trim()).filter(Boolean)],
+  };
+}
+export const meetingEmpty = (m: MeetingParts) => !m.rows.length && !m.safety && !m.notes.length;
+/** "12 employees on site", "1 employee on site". */
+export const onSiteText = (n: number) => `${n} employee${n === 1 ? "" : "s"} on site`;
+
+/** The meeting as plain text, one item a line (Excel, copied text):
+ *  "Schultz: supervisor Mike Leonard, 12 employees on site",
+ *  "Total on site: 16", "Safety topic: Working at heights", then notes. */
+export function meetingLines(rec: ShiftRecord | undefined, shiftStart: number, order: string[] = []): string[] {
+  const m = meetingParts(rec, shiftStart, order);
+  return [
+    ...m.rows.map((x) => `${x.crew}: ${[x.supervisor ? `supervisor ${x.supervisor}` : "", x.onSite != null ? onSiteText(x.onSite) : ""].filter(Boolean).join(", ")}`),
+    ...(m.total != null ? [`Total on site: ${m.total}`] : []),
+    ...(m.safety ? [`Safety topic: ${m.safety}`] : []),
+    ...m.notes,
+  ];
 }
 
 /** Anything entered for the meeting. */
@@ -109,3 +136,32 @@ export function knownNames(records: Map<string, ShiftRecord>): Record<string, st
   for (const k of Object.keys(out)) out[k].sort((a, b) => a.localeCompare(b));
   return out;
 }
+
+/** "2026-10-27:day" before "2026-10-27:night" before "2026-10-28:day". */
+const compareKeys = (a: string, b: string) => {
+  const [da, ka] = a.split(":"), [db, kb] = b.split(":");
+  return da < db ? -1 : da > db ? 1 : ka === kb ? 0 : ka === "day" ? -1 : 1;
+};
+
+/** The crews were set for this shift (changed, or checked as they were). */
+export const hasOwnRoster = (r?: ShiftRecord) => !!r?.meeting?.ownCrews || Object.keys(r?.crews ?? {}).length > 0;
+
+/** Who attends a shift's meeting and its head counts: its own, or carried
+ *  from the last same shift that set them (`from`: that shift's key). */
+export function rosterFor(records: Map<string, ShiftRecord>, key: string): { crews: Record<string, CrewCount>; from: string | null } {
+  const own = records.get(key);
+  if (hasOwnRoster(own)) return { crews: own?.crews ?? {}, from: null };
+  const kind = key.split(":")[1];
+  const prev = [...records.keys()].filter((k) => k.split(":")[1] === kind && compareKeys(k, key) < 0 && hasOwnRoster(records.get(k))).sort(compareKeys).at(-1);
+  return prev ? { crews: records.get(prev)?.crews ?? {}, from: prev } : { crews: {}, from: null };
+}
+
+/** A shift's record as its meeting reads: its own, with the crews carried
+ *  in when it has none of its own. */
+export function meetingRecord(records: Map<string, ShiftRecord>, key: string): { record: ShiftRecord | undefined; from: string | null } {
+  const own = records.get(key);
+  const r = rosterFor(records, key);
+  if (!r.from) return { record: own, from: null };
+  return { record: { ...(own ?? {}), crews: r.crews }, from: r.from };
+}
+

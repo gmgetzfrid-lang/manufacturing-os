@@ -10,7 +10,7 @@
 // back). Work logged during the end meeting gets its own row after it.
 
 import React, { useId, useRef, useState } from "react";
-import { Pencil, Plus, Trash2, X as XIcon } from "lucide-react";
+import { AlertTriangle, Check, Pencil, Plus, Trash2, X as XIcon } from "lucide-react";
 import { AddCompany } from "@/components/projects/ShiftRecordParts";
 import type { CrewCount, ShiftRecord } from "@/lib/shiftRecord";
 import { newId } from "@/lib/shiftRecord";
@@ -18,7 +18,7 @@ import type { TimeLogRow } from "@/lib/timeLog";
 import {
   slotClocks, hourlyRows, typedLines, slotOf, SLOT_LABEL, breakLabel, boldRuns, type HourSlot, type HourlyNotes,
 } from "@/lib/shiftHourly";
-import { cleanName, crewNames, renamed, setNames, totalOnSite, withName, withoutName, earlierMeetingLines } from "@/lib/shiftMeeting";
+import { cleanName, crewNames, renamed, setNames, totalOnSite, withName, withoutName, earlierMeetingLines, hasOwnRoster, meetingEmpty, type MeetingParts } from "@/lib/shiftMeeting";
 
 const inputCls = "rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1 text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent-ring)]";
 const btn = "inline-flex items-center gap-1.5 h-7 px-3 rounded-lg text-[12px] font-bold disabled:opacity-60";
@@ -38,8 +38,13 @@ export interface HourlyCtx {
   onAddWork?: (at: number) => void;
   /** The two meetings as the log says them (lib/shiftMeeting), which are
    *  off the log, and which show before their time. */
-  meet?: { start: { title: string; lines: string[] }; end: { title: string; lines: string[] }; off: string[]; show: string[] };
+  meet?: { start: MeetingSaid; end: MeetingSaid; off: string[]; show: string[] };
 }
+
+/** A meeting as the log says it: its title, its lines, its table (resource,
+ *  supervisor, employees on site), and the shift its crews came from when
+ *  they weren't updated for this one. */
+export interface MeetingSaid { title: string; lines: string[]; parts?: MeetingParts; carried?: string }
 
 /** A meeting to fill in: the crews to list, what's entered, how to save it. */
 export interface MeetingCtx {
@@ -49,8 +54,9 @@ export interface MeetingCtx {
   record?: ShiftRecord;
   /** When that shift starts: what was typed before it is the meeting's. */
   shiftStart: number;
-  /** The last same shift's attendance: its names to add in one tap. */
-  hint?: Record<string, CrewCount>;
+  /** Its crews aren't its own yet: carried from the last same shift
+   *  (`record.crews` shows them); `label` says which. */
+  carried?: { crews: Record<string, CrewCount>; label: string };
   /** Names entered at earlier meetings, by crew (to pick from as you type). */
   known?: Record<string, string[]>;
   /** The safety topics the report gives this meeting, to pick from. */
@@ -126,7 +132,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                 <td className="py-0.5">
                   {r.slot.kind === "break" ? <span className="text-slate-500">{breakLabel(r.slot)}</span> : m ? <>
                     <b>{m.title}</b>
-                    {m.lines.length ? m.lines.map((x, j) => <div key={j}>{x}</div>) : <div className="text-slate-500">No attendance entered</div>}
+                    {m.parts && !meetingEmpty(m.parts) ? <MeetingTable p={m.parts} /> : m.lines.length ? m.lines.map((x, j) => <div key={j}>{x}</div>) : <div className="text-slate-500">No attendance entered</div>}
                   </> : <>
                     {SLOT_LABEL[r.slot.kind] && <b>{SLOT_LABEL[r.slot.kind]}</b>}
                     <Items text={r.text} going={r.progress} empty={r.slot.kind === "work"} />
@@ -221,6 +227,26 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
   );
 }
 
+/** A meeting on paper: resource, supervisor, employees on site; the
+ *  total; then the safety topic and notes. */
+function MeetingTable({ p }: { p: MeetingParts }) {
+  return (
+    <>
+      {p.rows.length > 0 && (
+        <table className="w-full border-collapse my-[2pt]">
+          <thead><tr className="text-[7pt] uppercase text-slate-500 text-left"><th className="font-bold pr-2">Resource</th><th className="font-bold pr-2">Supervisor</th><th className="font-bold text-right">Employees on site</th></tr></thead>
+          <tbody>
+            {p.rows.map((x) => <tr key={x.crew} className="border-t border-slate-200"><td className="font-semibold pr-2">{x.crew}</td><td className="pr-2">{x.supervisor || "-"}</td><td className="text-right font-semibold">{x.onSite ?? "-"}</td></tr>)}
+            {p.total != null && <tr className="border-t border-slate-300"><td className="font-bold pr-2">Total on site</td><td /><td className="text-right font-bold">{p.total}</td></tr>}
+          </tbody>
+        </table>
+      )}
+      {p.safety && <div><b>Safety topic:</b> {p.safety}</div>}
+      {p.notes.map((x, j) => <div key={j}>{x}</div>)}
+    </>
+  );
+}
+
 /** A line with its work order in bold. */
 function Line({ text }: { text: string }) {
   return <>{boldRuns(text).map((r, i) => (r.b ? <b key={i} className="font-bold">{r.t}</b> : <React.Fragment key={i}>{r.t}</React.Fragment>))}</>;
@@ -248,22 +274,41 @@ function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
   const list = [...m.crews, ...Object.keys(crews).filter((k) => !m.crews.includes(k))];
   const total = totalOnSite(list.map((c) => ({ headcount: crews[c]?.headcount ?? null })));
   const save = (change: (r: ShiftRecord) => ShiftRecord) => m.save(change).then(() => setMsg(null), (e: Error) => { setMsg(e.message); throw e; });
+  // A change makes the crews this shift's own: the carried ones first, then the change.
+  const own = (r: ShiftRecord): ShiftRecord => ({ ...r, crews: hasOwnRoster(r) ? r.crews ?? {} : { ...(m.carried?.crews ?? {}) }, meeting: { ...(r.meeting ?? {}), ownCrews: true } });
   const setCrew = (crew: string, f: (c: CrewCount | undefined) => CrewCount | null) => save((r) => {
-    const cs = { ...(r.crews ?? {}) };
+    const base = own(r);
+    const cs = { ...(base.crews ?? {}) };
     const v = f(cs[crew]);
     if (v) cs[crew] = v; else delete cs[crew];
-    return { ...r, crews: cs };
+    return { ...base, crews: cs };
   });
+  const entered = list.some((c) => crewNames(crews[c]).length || crews[c]?.headcount != null);
   const grid = "grid grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(5.5rem,9.5rem)_minmax(0,1fr)_auto] gap-x-2";
   return (
     <div className="mt-1 space-y-1">
+      {/* Carried from the last same shift until someone changes or checks it. */}
+      {m.carried ? (
+        <div role="status" className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-[11.5px] text-amber-900 dark:text-amber-100">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden />
+          <span className="min-w-0 flex-1"><b>Not updated for this shift.</b> Same people and head counts as {m.carried.label}{edit ? ": change anyone who's different." : "."}</span>
+          {edit && (
+            <button type="button" onClick={() => void save(own).catch(() => undefined)}
+              className="shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded-md bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold">
+              <Check className="w-3.5 h-3.5" /> Looks right
+            </button>
+          )}
+        </div>
+      ) : edit && entered ? (
+        <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400"><Check className="w-3.5 h-3.5" aria-hidden /> Updated for this shift</div>
+      ) : null}
       <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]">
         <div className={`${grid} px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]`}>
-          <span className="max-sm:hidden">Crew</span><span>Attendance</span><span className="w-14 text-right">On site</span>
+          <span className="max-sm:hidden">Resource</span><span>Supervisor</span><span className="w-14 text-right">On site</span>
         </div>
         {list.length === 0 && <div className="px-2 py-1 text-[12px] italic text-[var(--color-text-muted)]">No crews on the plan{edit ? " - add a company below" : ""}</div>}
         {list.map((crew) => (
-          <CrewRow key={crew} grid={grid} crew={crew} value={crews[crew]} hint={m.hint?.[crew]} known={m.known?.[crew]} edit={edit}
+          <CrewRow key={crew} grid={grid} crew={crew} value={crews[crew]} known={m.known?.[crew]} edit={edit}
             onNames={(f) => setCrew(crew, (c) => setNames(c, f))}
             onCount={(n) => void setCrew(crew, (c) => ({ ...(c ?? {}), headcount: n })).catch(() => undefined)}
             onRemove={m.crews.includes(crew) ? undefined : () => void setCrew(crew, () => null).catch(() => undefined)} />
@@ -286,8 +331,8 @@ let opSeq = 0;
 
 /** One crew at the meeting: its name, a pill for each person there (edit,
  *  remove; + adds the next one beside them), and its head count on site. */
-function CrewRow({ grid, crew, value, hint, known, edit, onNames, onCount, onRemove }: {
-  grid: string; crew: string; value?: CrewCount; hint?: CrewCount; known?: string[]; edit: boolean;
+function CrewRow({ grid, crew, value, known, edit, onNames, onCount, onRemove }: {
+  grid: string; crew: string; value?: CrewCount; known?: string[]; edit: boolean;
   onNames: (change: (names: string[]) => string[]) => Promise<void>;
   onCount: (n: number | null) => void;
   /** A company added at the meeting (not on the plan): off the list. */
@@ -304,7 +349,6 @@ function CrewRow({ grid, crew, value, hint, known, edit, onNames, onCount, onRem
     const drop = () => setOps((x) => x.filter((o) => o.id !== id));
     onNames(f).then(() => { setTimeout(drop, 4000); }, drop);
   };
-  const last = crewNames(hint).filter((x) => !names.some((n) => n.toLowerCase() === x.toLowerCase()));
   const pick = (known ?? []).filter((x) => !names.includes(x));
   return (
     <div className={`${grid} items-start px-2 py-1 border-t border-[var(--color-border)]`}>
@@ -321,26 +365,20 @@ function CrewRow({ grid, crew, value, hint, known, edit, onNames, onCount, onRem
             onRename={(to) => change((x) => renamed(x, n, to))} onRemove={() => change((x) => withoutName(x, n))} />
         ))}
         {edit && adding && (
-          <NameInput init="" listId={listId} label={`Name at the meeting from ${crew}`} keepOpen
+          <NameInput init="" listId={listId} label={`Supervisor for ${crew}`} keepOpen
             onDone={(v) => { if (v) change((x) => withName(x, v)); }} onClose={() => setAdding(false)} />
         )}
         {edit && !adding && (
-          <button type="button" onClick={() => setAdding(true)} aria-label={`Add a name from ${crew}`} title="Add a name"
+          <button type="button" onClick={() => setAdding(true)} aria-label={`Add a supervisor for ${crew}`} title="Add a supervisor"
             className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full border border-dashed border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
             <Plus className="w-3.5 h-3.5" />
-          </button>
-        )}
-        {edit && !names.length && !adding && last.length > 0 && (
-          <button type="button" onClick={() => change((x) => last.reduce(withName, x))} title="Same people as the last time this shift met"
-            className="min-w-0 truncate text-[11px] font-semibold text-[var(--color-accent)] hover:underline">
-            Last time: {last.join(", ")}
           </button>
         )}
         {!edit && !names.length && <span className="text-[var(--color-text-faint)]">-</span>}
         {edit && <datalist id={listId}>{pick.map((x) => <option key={x} value={x} />)}</datalist>}
       </div>
       <div className="max-sm:col-start-2 max-sm:row-start-1 max-sm:row-span-2">
-        <HeadCount crew={crew} value={value?.headcount ?? null} hint={hint?.headcount ?? null} edit={edit} onSave={onCount} />
+        <HeadCount crew={crew} value={value?.headcount ?? null} edit={edit} onSave={onCount} />
       </div>
     </div>
   );
@@ -395,9 +433,8 @@ function NameInput({ init, listId, label, keepOpen, onDone, onClose }: {
   );
 }
 
-/** A crew's head count on site: saved when you leave the box. The last
- *  same shift's count shows greyed until typed over. */
-function HeadCount({ crew, value, hint, edit, onSave }: { crew: string; value: number | null; hint: number | null; edit: boolean; onSave: (n: number | null) => void }) {
+/** A crew's head count on site: saved when you leave the box. */
+function HeadCount({ crew, value, edit, onSave }: { crew: string; value: number | null; edit: boolean; onSave: (n: number | null) => void }) {
   const [typed, setTyped] = useState<string | null>(null);
   const sent = useRef<number | null | undefined>(undefined);
   if (!edit) return <span className="block w-14 text-right text-[12.5px] font-bold tabular-nums text-[var(--color-text)]">{value ?? "-"}</span>;
@@ -410,7 +447,7 @@ function HeadCount({ crew, value, hint, edit, onSave }: { crew: string; value: n
   };
   return (
     <input value={typed ?? (value != null ? String(value) : "")} inputMode="numeric" aria-label={`${crew} head count on site`}
-      placeholder={hint != null ? String(hint) : "#"}
+      placeholder="#"
       onChange={(e) => setTyped(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))} onBlur={commit}
       onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
       className={`${inputCls} block w-14 h-7 text-right font-mono`} />

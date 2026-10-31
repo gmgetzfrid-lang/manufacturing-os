@@ -2,7 +2,7 @@
 // counts, the safety topic; one record per meeting, on the shift it starts.
 
 import { describe, it, expect } from "vitest";
-import { crewNames, withName, renamed, withoutName, setNames, meetingLines, meetingCrews, totalOnSite, meetingRows, meetingTitle, knownNames, earlierMeetingLines } from "@/lib/shiftMeeting";
+import { crewNames, withName, renamed, withoutName, setNames, meetingLines, meetingParts, meetingCrews, totalOnSite, meetingRows, meetingTitle, knownNames, earlierMeetingLines, rosterFor, meetingRecord, hasOwnRoster } from "@/lib/shiftMeeting";
 import type { ShiftRecord } from "@/lib/shiftRecord";
 
 describe("names at the meeting", () => {
@@ -28,11 +28,16 @@ describe("the meeting as the log says it", () => {
   it("each crew with someone named or counted, the plan's crews first; the total; the topic; the notes", () => {
     expect(meetingCrews(rec, ["Schultz"]).map((x) => x.crew)).toEqual(["Schultz", "Ancon", "Ops"]);
     expect(meetingLines(rec, 0, ["Schultz"])).toEqual([
-      "Schultz, 10 on site: Mike Leonard, Joe Brown", "Ancon, 4 on site", "Ops: Ray", "Total on site: 14",
+      "Schultz: supervisor Mike Leonard, Joe Brown, 10 employees on site", "Ancon: 4 employees on site", "Ops: supervisor Ray", "Total on site: 14",
       "Safety topic: Line of fire", "Crane inspection at 7 PM", "Gate 3 closed",
     ]);
+    // As a table: resource, supervisor, employees on site.
+    expect(meetingParts(rec, 0, ["Schultz"])).toEqual({
+      rows: [{ crew: "Schultz", supervisor: "Mike Leonard, Joe Brown", onSite: 10 }, { crew: "Ancon", supervisor: "", onSite: 4 }, { crew: "Ops", supervisor: "Ray", onSite: null }],
+      total: 14, safety: "Line of fire", notes: ["Crane inspection at 7 PM", "Gate 3 closed"],
+    });
     // One crew counted: no total line (it would say the same thing).
-    expect(meetingLines({ crews: { Schultz: { headcount: 10 } } }, 0)).toEqual(["Schultz, 10 on site"]);
+    expect(meetingLines({ crews: { Schultz: { headcount: 1 } } }, 0)).toEqual(["Schultz: 1 employee on site"]);
     expect(totalOnSite([{ headcount: null }])).toBeNull();
     expect(totalOnSite([{ headcount: 0 }, { headcount: 3 }])).toBe(3);
     expect(meetingLines(undefined, 0)).toEqual([]);
@@ -54,3 +59,32 @@ describe("the meeting as the log says it", () => {
     expect(knownNames(all)).toEqual({ Schultz: ["Al Diaz", "Joe Brown", "Mike Leonard"], Ops: ["Kim", "Ray"] });
   });
 });
+
+describe("names and head counts carry from the last same shift until changed", () => {
+  const recs = new Map<string, ShiftRecord>([
+    ["2026-10-28:day", { crews: { Schultz: { names: ["Mike"], headcount: 10 } } }],
+    ["2026-10-28:night", { crews: { Schultz: { names: ["Al"], headcount: 6 } } }],
+    ["2026-10-29:day", { meeting: { safety: "Heat" } }],
+    ["2026-10-30:day", { crews: { Schultz: { names: ["Sub Sam"], headcount: 9 } } }],
+    ["2026-11-01:day", { meeting: { ownCrews: true }, crews: {} }],
+  ]);
+  it("day to day, night to night; a shift's own change is its own", () => {
+    expect(rosterFor(recs, "2026-10-29:day")).toEqual({ crews: { Schultz: { names: ["Mike"], headcount: 10 } }, from: "2026-10-28:day" });
+    expect(rosterFor(recs, "2026-10-29:night").from).toBe("2026-10-28:night");
+    expect(rosterFor(recs, "2026-10-30:day")).toEqual({ crews: { Schultz: { names: ["Sub Sam"], headcount: 9 } }, from: null });
+    expect(rosterFor(recs, "2026-10-31:day").from).toBe("2026-10-30:day");
+    // Everyone taken off on a shift: that's its own (nothing carried in).
+    expect(rosterFor(recs, "2026-11-01:day")).toEqual({ crews: {}, from: null });
+    expect(rosterFor(recs, "2026-11-02:day").from).toBe("2026-11-01:day");
+    // Nothing earlier: nothing.
+    expect(rosterFor(recs, "2026-10-27:day")).toEqual({ crews: {}, from: null });
+  });
+  it("the record as the meeting reads it keeps its own topic and notes", () => {
+    const m = meetingRecord(recs, "2026-10-29:day");
+    expect(m.from).toBe("2026-10-28:day");
+    expect(m.record).toEqual({ meeting: { safety: "Heat" }, crews: { Schultz: { names: ["Mike"], headcount: 10 } } });
+    expect(hasOwnRoster(recs.get("2026-10-29:day"))).toBe(false);
+    expect(hasOwnRoster({ meeting: { ownCrews: true } })).toBe(true);
+  });
+});
+

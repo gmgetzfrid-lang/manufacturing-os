@@ -5,7 +5,7 @@ import { buildShiftReport, shiftWindow, paceOf, expectedFraction } from "@/lib/s
 import { buildProgressIndex } from "@/lib/scheduleProgress";
 import { effectiveSpans, startOf, finishOf } from "@/lib/scheduleTime";
 import { turnoverUpdate, withoutEmpty } from "@/lib/managementUpdate";
-import { toPlainText, toEmailHtml } from "@/lib/reportExport";
+import { toPlainText, toEmailHtml, type ExportBlock } from "@/lib/reportExport";
 import type { Milestone } from "@/types/schema";
 
 const CHI = "America/Chicago";
@@ -58,6 +58,26 @@ describe("shift notes by the hour", () => {
     expect(notes).toMatch(/6:00 - Start of shift - permitting; Permits signed for E-606\./);
     expect(notes).toMatch(/7:00 - -/);
     expect(notes).toMatch(/8:00 - Pulling the E-606 bundle\./);
+  });
+});
+
+describe("the shift meetings: their own section", () => {
+  it("each resource, its supervisor, its employees on site; the total; the safety topic; carried names said so", () => {
+    const secs = turnoverUpdate(report, f, {
+      pctOf: (id) => progress.get(id)?.percent, finishOf: (id) => spans.get(id)?.finish, planOf: () => 50, stepsOf: stepsOf(ms, shift.end),
+      meetings: [
+        { clock: "5:30 AM", title: "Day shift meeting", parts: { rows: [{ crew: "Schultz", supervisor: "Mike Leonard", onSite: 12 }, { crew: "Ancon", supervisor: "", onSite: 4 }], total: 16, safety: "Line of fire", notes: [] } },
+        { clock: "5:30 PM", title: "Night shift meeting", parts: { rows: [{ crew: "Schultz", supervisor: "Al Diaz", onSite: 9 }], total: null, safety: "", notes: [] }, carried: "Thu, Oct 29 night shift" },
+        { clock: "x", title: "Empty", parts: { rows: [], total: null, safety: "", notes: [] } },
+      ],
+    });
+    const m = secs.find((x) => x.id === "meetings")!;
+    expect(m.blocks.map((b) => b.k)).toEqual(["label", "table", "note", "label", "table", "note"]);
+    const t = m.blocks[1] as Extract<ExportBlock, { k: "table" }>;
+    expect(t.head).toEqual(["Resource", "Supervisor", "Employees on site"]);
+    expect(t.rows.map((r) => r.map((c) => (typeof c === "string" ? c : c.t)))).toEqual([["Schultz", "Mike Leonard", "12"], ["Ancon", "-", "4"], ["Total on site", "", "16"]]);
+    expect(m.blocks[2]).toEqual({ k: "note", text: "Safety topic: Line of fire" });
+    expect(m.blocks[5]).toMatchObject({ text: "Same people and head counts as Thu, Oct 29 night shift, not updated for this shift.", tone: "amber" });
   });
 });
 

@@ -9,6 +9,7 @@ import { LETTER, type Letterhead, type LhItem, type LhLayer, type LhPara, type L
 import { noEmDash } from "@/lib/noEmDash";
 import type { LogEntry, ShiftLog } from "@/lib/hourlyLog";
 import { boldRuns, plainLine } from "@/lib/shiftHourly";
+import { meetingEmpty, type MeetingParts } from "@/lib/shiftMeeting";
 
 export interface LogFileOpts {
   project: string;
@@ -291,14 +292,59 @@ export async function hourlyLogPdf(logs: ShiftLog[], o: LogFileOpts): Promise<Ui
     y += 8;
     tableHead();
     for (const e of l.entries) {
+      // Each thing in the row, top to bottom, with its height: drawn at a top.
+      const items: Array<{ h: number; draw: (at: number) => void }> = [];
+      const m = e.meeting && !meetingEmpty(e.meeting) ? e.meeting : null;
+      const paras = m ? (e.title ? [{ text: noEmDash(e.title), style: "title" as const }] : []) : entryParas(e);
       // A line's work order in bold, the rest plain.
-      const lines = entryParas(e).flatMap((p, i) => {
+      paras.forEach((p, i) => {
         const st = style[p.style];
         const runs = (p.style === "line" || p.style === "cont" ? boldRuns(p.text) : [{ t: p.text, b: false }]).map((r) => { const f = r.b ? (p.style === "cont" ? fonts.bi : fonts.b) : st.f; return { t: safe(f)(r.t), f }; });
-        return wrapRuns(runs, st.s, textW).map((segs, j) => ({ segs, s: st.s, c: st.c, h: st.s * 1.32 + (j === 0 && i > 0 ? 2 : 0) }));
+        wrapRuns(runs, st.s, textW).forEach((segs, j) => {
+          const h = st.s * 1.32 + (j === 0 && i > 0 ? 2 : 0);
+          items.push({ h, draw: (at) => { let dx = textX; for (const g of segs) { text(g.t, dx, at + st.s + (h - st.s * 1.32), st.s, g.f, st.c); dx += g.f.widthOfTextAtSize(g.t, st.s); } } });
+        });
       });
+      if (m) {
+        // The meeting as a table: resource, its supervisor, its employees on
+        // site; the total; then the safety topic.
+        const cw = [textW * 0.28, textW * 0.46, textW * 0.26], cx = [textX, textX + cw[0], textX + cw[0] + cw[1]], cp = 4;
+        const row = (cells: string[], f: PDFFont[], size: number, color: RGB, shade?: boolean) => {
+          const ws = cells.map((t, i) => { const w = wrap(safe(f[i])(t), f[i], size, cw[i] - cp * 2); return w.length ? w : [""]; });
+          const lh = size * 1.3, h = Math.max(...ws.map((w) => w.length)) * lh + 6;
+          items.push({ h, draw: (at) => {
+            if (shade) page.drawRectangle({ x: textX, y: H - at - h, width: textW, height: h, color: rgb(0.945, 0.96, 0.976) });
+            ws.forEach((ls, i) => ls.forEach((ln, j) => {
+              const x = i === 2 ? cx[2] + cw[2] - cp - f[i].widthOfTextAtSize(ln, size) : cx[i] + cp;
+              text(ln, x, at + 3 + size + j * lh, size, f[i], color);
+            }));
+            page.drawLine({ start: { x: textX, y: H - at - h }, end: { x: right, y: H - at - h }, thickness: 0.4, color: RULE });
+          } });
+        };
+        items.push({ h: 3, draw: () => undefined });
+        row(["RESOURCE", "SUPERVISOR", "EMPLOYEES ON SITE"], [fonts.b, fonts.b, fonts.b], 7, GRAY, true);
+        for (const r of m.rows) row([r.crew, r.supervisor || "-", r.onSite != null ? String(r.onSite) : "-"], [fonts.b, fonts.r, fonts.b], 9.5, INK);
+        if (m.total != null) row(["Total on site", "", String(m.total)], [fonts.b, fonts.r, fonts.b], 9.5, INK);
+        if (m.safety) {
+          const ls = wrapRuns([{ t: "Safety topic: ", f: fonts.b }, { t: safe(fonts.r)(m.safety), f: fonts.r }], 9.5, textW - cp * 2);
+          ls.forEach((segs, j) => {
+            const h = 9.5 * 1.3 + (j === 0 ? 3 : 0) + (j === ls.length - 1 ? 3 : 0);
+            items.push({ h, draw: (at) => {
+              let dx = textX + cp;
+              for (const g of segs) { text(g.t, dx, at + (j === 0 ? 3 : 0) + 9.5, 9.5, g.f, INK); dx += g.f.widthOfTextAtSize(g.t, 9.5); }
+              if (j === ls.length - 1) page.drawLine({ start: { x: textX, y: H - at - h }, end: { x: right, y: H - at - h }, thickness: 0.4, color: RULE });
+            } });
+          });
+        }
+        for (const n of m.notes) {
+          wrap(safe(fonts.r)(n), fonts.r, 10, textW).forEach((ln, j) => {
+            const h = 10 * 1.32 + (j === 0 ? 3 : 0);
+            items.push({ h, draw: (at) => text(ln, textX, at + h - 10 * 0.32, 10, fonts.r, INK) });
+          });
+        }
+      }
       const pad = 5;
-      const need = pad + lines.slice(0, 3).reduce((s, x) => s + x.h, 0);
+      const need = pad + items.slice(0, 3).reduce((a, x) => a + x.h, 0);
       const cont = () => {
         newPage(rest);
         text(`${headingOf(l)} (continued)`, left, y + 9, 9, fonts.b, GRAY);
@@ -308,10 +354,9 @@ export async function hourlyLogPdf(logs: ShiftLog[], o: LogFileOpts): Promise<Ui
       if (y + need > bottom) cont();
       y += pad;
       text(e.clock, left, y + 10, 10, fonts.b, e.kind === "break" ? GRAY : INK);
-      for (const x of lines) {
+      for (const x of items) {
         if (y + x.h > bottom) { cont(); y += pad; text(e.clock, left, y + 10, 10, fonts.b, GRAY); }
-        let dx = textX;
-        for (const g of x.segs) { text(g.t, dx, y + x.s + (x.h - x.s * 1.32), x.s, g.f, x.c); dx += g.f.widthOfTextAtSize(g.t, x.s); }
+        x.draw(y);
         y += x.h;
       }
       y += pad;
@@ -484,6 +529,27 @@ function bodyFont(lh: Letterhead | null): string {
   return "Calibri";
 }
 
+/** A meeting in Word: a table of resource, supervisor and employees on
+ *  site, the total, then the safety topic; notes under it. */
+function meetingXml(m: MeetingParts, w: number): string {
+  const cw = [w * 0.28, w * 0.46, w * 0.26];
+  const p = (runs: string, right = false) => `<w:p><w:pPr><w:spacing w:before="0" w:after="0"/>${right ? '<w:jc w:val="right"/>' : ""}</w:pPr>${runs}</w:p>`;
+  const tc = (i: number, inner: string, shade?: string, span?: number) => `<w:tc><w:tcPr><w:tcW w:w="${tw(span ? w : cw[i])}" w:type="dxa"/>${span ? `<w:gridSpan w:val="${span}"/>` : ""}${shade ? `<w:shd w:val="clear" w:color="auto" w:fill="${shade}"/>` : ""}</w:tcPr>${inner}</w:tc>`;
+  const head = { b: true, pt: 7, color: "64748B" } as const;
+  const tr = (cells: string) => `<w:tr><w:trPr><w:cantSplit/></w:trPr>${cells}</w:tr>`;
+  const rows = [
+    tr(["RESOURCE", "SUPERVISOR", "EMPLOYEES ON SITE"].map((t, i) => tc(i, p(textRun(t, head), i === 2), "F1F5F9")).join("")),
+    ...m.rows.map((r) => tr([tc(0, p(textRun(r.crew, { b: true, pt: 9.5 }))), tc(1, p(textRun(r.supervisor || "-", { pt: 9.5 }))), tc(2, p(textRun(r.onSite != null ? String(r.onSite) : "-", { b: true, pt: 9.5 }), true))].join(""))),
+    ...(m.total != null ? [tr([tc(0, p(textRun("Total on site", { b: true, pt: 9.5 }))), tc(1, p("")), tc(2, p(textRun(String(m.total), { b: true, pt: 9.5 }), true))].join(""))] : []),
+    ...(m.safety ? [tr(tc(0, p(`${textRun("Safety topic: ", { b: true, pt: 9.5 })}${textRun(m.safety, { pt: 9.5 })}`), undefined, 3))] : []),
+  ].join("");
+  const border = (side: string) => `<w:${side} w:val="single" w:sz="4" w:space="0" w:color="E2E8F0"/>`;
+  const table = `<w:tbl><w:tblPr><w:tblW w:w="${tw(w)}" w:type="dxa"/><w:tblBorders>${border("top")}${border("bottom")}${border("insideH")}</w:tblBorders><w:tblLayout w:type="fixed"/><w:tblCellMar><w:top w:w="30" w:type="dxa"/><w:left w:w="60" w:type="dxa"/><w:bottom w:w="30" w:type="dxa"/><w:right w:w="60" w:type="dxa"/></w:tblCellMar><w:tblLook w:val="0000"/></w:tblPr><w:tblGrid>${cw.map((x) => `<w:gridCol w:w="${tw(x)}"/>`).join("")}</w:tblGrid>${rows}</w:tbl>`;
+  // A cell ends with a paragraph: the notes, or an empty one.
+  const notes = m.notes.map((n) => `<w:p><w:pPr><w:spacing w:before="40" w:after="0"/></w:pPr>${textRun(n, { pt: 10 })}</w:p>`).join("");
+  return `${table}${notes || '<w:p><w:pPr><w:spacing w:before="0" w:after="0"/></w:pPr></w:p>'}`;
+}
+
 function shiftXml(l: ShiftLog, o: LogFileOpts, contentW: number): string {
   const timeW = 0.95;
   const cellP = (t: string, st: Parameters<typeof rPr>[0], after = 20) => `<w:p><w:pPr><w:spacing w:before="0" w:after="${after}"/></w:pPr>${textRun(t, st)}</w:p>`;
@@ -496,7 +562,9 @@ function shiftXml(l: ShiftLog, o: LogFileOpts, contentW: number): string {
     const para = (p: (typeof paras)[number]) => p.style === "line" || p.style === "cont"
       ? `<w:p><w:pPr><w:spacing w:before="0" w:after="20"/></w:pPr>${boldRuns(p.text).map((r) => textRun(r.t, { ...look[p.style], b: r.b })).join("")}</w:p>`
       : cellP(p.text, look[p.style]);
-    return `<w:tr>${paras.length <= 6 ? "<w:trPr><w:cantSplit/></w:trPr>" : ""}${cell(timeW, cellP(e.clock, { b: true, pt: 10, color: e.kind === "break" ? "64748B" : undefined }))}${cell(contentW - timeW, paras.map(para).join(""))}</w:tr>`;
+    const m = e.meeting && !meetingEmpty(e.meeting) ? e.meeting : null;
+    const inner = m ? `${e.title ? cellP(e.title, look.title) : ""}${meetingXml(m, contentW - timeW - 0.15)}` : paras.map(para).join("");
+    return `<w:tr>${paras.length <= 6 && !m ? "<w:trPr><w:cantSplit/></w:trPr>" : ""}${cell(timeW, cellP(e.clock, { b: true, pt: 10, color: e.kind === "break" ? "64748B" : undefined }))}${cell(contentW - timeW, inner)}</w:tr>`;
   }).join("");
   const border = (side: string, sz: number, color: string) => `<w:${side} w:val="single" w:sz="${sz}" w:space="0" w:color="${color}"/>`;
   return [

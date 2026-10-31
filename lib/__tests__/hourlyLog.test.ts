@@ -53,7 +53,8 @@ describe("one shift's hourly log", () => {
   });
 
   it("attendance as entered: each crew, its head count, who was there", () => {
-    expect(one().entries[0].lines).toEqual(["Schultz, 12 on site: Mike Leonard"]);
+    expect(one().entries[0].lines).toEqual(["Schultz: supervisor Mike Leonard, 12 employees on site"]);
+    expect(one().entries[0].meeting).toEqual({ rows: [{ crew: "Schultz", supervisor: "Mike Leonard", onSite: 12 }], total: null, safety: "", notes: [] });
   });
 
   it("both meetings: names, head counts, the total, the safety topic; the end one is the next shift's", () => {
@@ -63,7 +64,7 @@ describe("one shift's hourly log", () => {
     };
     const l = shiftLog({ shift: DAY, tz: TZ, times: TIMES, record, next, rows, steps: [], log: [], now: DAY.end + H });
     expect(l.entries.at(-1)).toMatchObject({ clock: "5:30 PM", title: "Night shift meeting", lines: [
-      "Schultz, 10 on site: Mike Leonard, Joe Brown", "Ancon, 4 on site", "Operations: Ray Ortiz", "Total on site: 14",
+      "Schultz: supervisor Mike Leonard, Joe Brown, 10 employees on site", "Ancon: 4 employees on site", "Operations: supervisor Ray Ortiz", "Total on site: 14",
       "Safety topic: Line of fire around rigging", "Crane inspection at 7 PM",
     ] });
     // Not held: off the log.
@@ -137,7 +138,9 @@ describe("the files", () => {
     const { text } = await extractText(bytes, { mergePages: false });
     expect(text[0]).toContain("7724 E. Panama Lane");
     expect(text[0]).toContain("Day shift · Thu, Oct 29, 2026");
-    expect(text[0]).toContain("Schultz, 12 on site: Mike Leonard");
+    // The meeting as a table: resource, supervisor, employees on site.
+    expect(text[0]).toMatch(/RESOURCE\s+SUPERVISOR\s+EMPLOYEES ON SITE/);
+    expect(text[0]).toMatch(/Schultz\s+Mike Leonard\s+12/);
     expect(text[text.length - 1]).toContain("Night shift");
     expect(text.join("\n")).not.toMatch(/\u2014|\b1[3-9]:\d\d\b|\b2[0-3]:\d\d\b/);
   });
@@ -153,7 +156,9 @@ describe("the files", () => {
     expect(doc.match(/<w:sectPr>/g)).toHaveLength(2);
     expect(doc).toContain('w:type="first"');
     expect(doc).toContain("<w:titlePg/>");
-    expect(doc).toContain("Schultz, 12 on site: Mike Leonard");
+    // The meeting as its own table in the row: resource, supervisor, employees on site.
+    expect(doc).toContain("EMPLOYEES ON SITE");
+    expect(doc).toMatch(/Schultz<\/w:t>.*Mike Leonard<\/w:t>.*>12<\/w:t>/);
     expect(doc).toContain("<w:tblHeader/>");
     expect(doc).not.toContain("\u2014");
     const first = await zip.file("word/header2.xml")!.async("string");
@@ -167,7 +172,7 @@ describe("the files", () => {
 
   it("Excel: one item a row, with its date, shift and time", async () => {
     const t = hourlyLogTable([one()]);
-    expect(t[0]).toEqual(["Thu, Oct 29, 2026", "Day shift", "5:30 AM", "Meeting", "Schultz, 12 on site: Mike Leonard"]);
+    expect(t[0]).toEqual(["Thu, Oct 29, 2026", "Day shift", "5:30 AM", "Meeting", "Schultz: supervisor Mike Leonard, 12 employees on site"]);
     expect(t).toContainEqual(["Thu, Oct 29, 2026", "Day shift", "12:00 PM", "Break", "Lunch, 30 min"]);
     // The work order is bold in the PDF and Word file; plain in Excel.
     expect(t).toContainEqual(["Thu, Oct 29, 2026", "Day shift", "9:00 AM", "Hour", "9:20 AM V-7, Schultz: Install Manways done. All 4 in."]);
@@ -192,3 +197,17 @@ describe("when the job starts", () => {
     expect(logs[0].key).toBe("2026-10-29:day");
   });
 });
+
+describe("the whole job: a carried roster isn't something logged", () => {
+  it("a shift with only its carried names and nothing else stays out", () => {
+    const records = new Map<string, ShiftRecord>([["2026-10-29:day", { crews: { Schultz: { names: ["Mike"], headcount: 10 } } }]]);
+    const logs = jobLogs({ milestones: MS, timeLog: [], records, log: [], tz: TZ, times: TIMES, now: shiftWindow("2026-10-31", "day", TZ, TIMES).end + H });
+    expect(logs.map((l) => l.key)).toEqual(["2026-10-29:day"]);
+  });
+  it("a shift with work in it says the carried names", () => {
+    const records = new Map<string, ShiftRecord>([["2026-10-28:day", { crews: { Schultz: { names: ["Mike"], headcount: 10 } } }]]);
+    const l = jobLogs({ milestones: MS, timeLog: rows, records, log: [], tz: TZ, times: TIMES, now: DAY.end + H }).find((x) => x.key === "2026-10-29:day")!;
+    expect(l.entries[0]).toMatchObject({ kind: "meeting", carried: true, lines: ["Schultz: supervisor Mike, 10 employees on site"] });
+  });
+});
+

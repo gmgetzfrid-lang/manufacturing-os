@@ -3,10 +3,10 @@
 // The turnover's draft controls (screen only — never printed):
 //   TryControl — on a step carried to the other crew: "night could try",
 //                which crew (the app's guesses first, with why), a note
-//   ShipBar    — Draft / Shipped, Ship, Edit & re-ship
+//   ShipBar    - Draft / Locked: Lock report, Unlock
 
 import React, { useState } from "react";
-import { Loader2, Lock, Send, Unlock } from "lucide-react";
+import { Loader2, Lock, Unlock } from "lucide-react";
 import type { HandoverDecision } from "@/lib/shiftHandover";
 
 export function TryControl({ kind, decision, suggestions, crews, disabled, onChange, inherit }: {
@@ -58,18 +58,24 @@ export function TryControl({ kind, decision, suggestions, crews, disabled, onCha
   );
 }
 
-export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShip, onUnship, when }: {
+/** The report's lock: open while it's being filled in; locked once the
+ *  turnover is done, so nobody changes the wrong day's report by mistake.
+ *  Unlocking asks first. */
+export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShip, onUnship, when, label }: {
   shippedAt: string | null; shippedBy: string | null; tries: number; canShip: boolean; busy: boolean; err: string | null;
   onShip: () => void; onUnship: () => void; when: (iso: string) => string;
+  /** "Fri, Oct 30 day shift": whose report it is. */
+  label: string;
 }) {
   if (shippedAt) {
     return (
-      <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-[12px] text-emerald-900 dark:text-emerald-100 print:hidden">
+      <div role="status" className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-[12px] text-emerald-900 dark:text-emerald-100 print:hidden">
         <Lock className="w-4 h-4 shrink-0" />
-        <span className="flex-1 min-w-[200px]"><b>Shipped</b> {when(shippedAt)}{shippedBy ? ` by ${shippedBy}` : ""}{tries ? ` · ${tries} step${tries === 1 ? "" : "s"} asked to try` : ""}. Locked - this is what was handed over.</span>
+        <span className="flex-1 min-w-[200px]"><b>Report locked</b> {when(shippedAt)}{shippedBy ? ` by ${shippedBy}` : ""}{tries ? ` · ${tries} step${tries === 1 ? "" : "s"} asked to try` : ""}. The {label} report can&apos;t be changed.</span>
         {canShip && (
-          <button onClick={onUnship} disabled={busy} className="inline-flex items-center gap-1 rounded-md border border-emerald-400 dark:border-emerald-700 px-2 py-1 text-[11px] font-bold hover:bg-emerald-100 dark:hover:bg-emerald-900/40 disabled:opacity-50">
-            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Unlock className="w-3.5 h-3.5" />} Edit &amp; re-ship
+          <button onClick={() => { if (window.confirm(`Unlock the ${label} report? It can be changed again until it's locked.`)) onUnship(); }} disabled={busy}
+            className="inline-flex items-center gap-1 rounded-md border border-emerald-400 dark:border-emerald-700 px-2 py-1 text-[11px] font-bold hover:bg-emerald-100 dark:hover:bg-emerald-900/40 disabled:opacity-50">
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Unlock className="w-3.5 h-3.5" />} Unlock to edit
           </button>
         )}
         {err && <span className="w-full text-rose-700 dark:text-rose-300">{err}</span>}
@@ -78,13 +84,13 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
   }
   return (
     <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-[12px] text-amber-900 dark:text-amber-100 print:hidden">
-      <span className="rounded bg-amber-500 text-white text-[10px] font-black tracking-wider px-1.5 py-0.5">DRAFT</span>
-      <span className="flex-1 min-w-[200px]">Mark only the exceptions{tries ? ` (${tries} asked to try)` : ""}. Ship confirms everything else as the report reads.</span>
+      <span className="rounded bg-amber-500 text-white text-[10px] font-black tracking-wider px-1.5 py-0.5">OPEN</span>
+      <span className="flex-1 min-w-[200px]">The {label} report can be changed{tries ? ` (${tries} asked to try)` : ""}. Lock it when the turnover is done so nobody changes it by mistake.</span>
       {canShip ? (
         <button onClick={onShip} disabled={busy} className="inline-flex items-center gap-1.5 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 text-[12px] font-bold shadow-sm disabled:opacity-50">
-          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Ship turnover
+          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />} Lock report
         </button>
-      ) : <span className="text-[11px]">Only someone who can edit the schedule can ship it.</span>}
+      ) : <span className="text-[11px]">Only someone who can edit the schedule can lock it.</span>}
       {err && <span className="w-full text-rose-700 dark:text-rose-300">{err}</span>}
     </div>
   );

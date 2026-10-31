@@ -50,7 +50,7 @@ import { toPlainText, toEmailHtml, type ExportBlock, type ExportCell, type Expor
 import { turnoverUpdate, withoutEmpty, noteLine, hazardJobsOf, forecastText, discoverySub, discoveryBlock } from "@/lib/managementUpdate";
 import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
 import { notesFor } from "@/lib/milestones";
-import { useShiftRecords, saveShiftRecord, lastSameKind, openFollowUps, newId, CLOSEOUT_KEY, type CrewCount, type Incident, type ShiftNote, type ShiftRecord, type Lesson } from "@/lib/shiftRecord";
+import { useShiftRecords, saveShiftRecord, openFollowUps, newId, CLOSEOUT_KEY, type CrewCount, type Incident, type ShiftNote, type ShiftRecord, type Lesson } from "@/lib/shiftRecord";
 import { buildLookBack, CAUSE_LABEL, type LookBack, type StepLook } from "@/lib/lookBack";
 import { IncidentsLine, ShiftNotesBox, TimeLogButton } from "@/components/projects/ShiftRecordParts";
 import { useSortRows, Grip } from "@/components/projects/SortRows";
@@ -77,7 +77,7 @@ import { PullAheadPicker } from "@/components/projects/PullAheadPicker";
 import { useHandoverDraft } from "@/lib/useHandoverDraft";
 import { scopeOf } from "@/lib/pullAhead";
 import { ShiftHourlyBox, type HourlyCtx, type MeetingCtx } from "@/components/projects/ShiftHourly";
-import { meetingLines, meetingRows, meetingTitle, knownNames } from "@/lib/shiftMeeting";
+import { meetingLines, meetingParts, meetingRows, meetingTitle, meetingRecord, meetingEmpty, knownNames, type MeetingParts } from "@/lib/shiftMeeting";
 import { HourlyLogExport } from "@/components/projects/HourlyLogExport";
 import { exportedLabel, logSteps, shiftLog } from "@/lib/hourlyLog";
 import { pngInBrowser, saveHourlyLog, type LogFormat } from "@/lib/hourlyLogFiles";
@@ -258,6 +258,9 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const canShip = canEdit && !!userId && !!orgId;
   const hand = useHandoverDraft({ active: meeting === "turnover", projectId, orgId, userId, hoKey, priorKey });
   const { decisions, shippedAt } = hand;
+  // Locked when the turnover is: this shift's report can't be changed by
+  // mistake (unlock it on purpose to change it).
+  const locked = meeting === "turnover" && !!shippedAt;
   // The crew kept for pulled-forward work: this turnover's own, else the
   // project's default. Null when nobody has set one — no made-up size.
   const pullSet: PullCrew | null = hand.savedPull ?? times.helpers ?? null;
@@ -447,13 +450,19 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const sheet = useMemo<SheetCtx>(() => {
     const recThis = records.get(thisKey), recNext = records.get(nextKey);
     const labelOf = (key: string) => { const [d, k] = key.split(":"); const w = shiftWindow(d, k as "day" | "night", tz, times); return `${ctx.D(w.start)} ${k}`; };
+    const shiftName = (key: string) => { const [d, k] = key.split(":"); const w = shiftWindow(d, k as "day" | "night", tz, times); return `${fmtInTz(w.start, tz, { weekday: "short", month: "short", day: "numeric" })} ${k} shift`; };
+    // Each meeting's crews: its own, or carried from the last same shift.
+    const mThis = meetingRecord(records, thisKey), mNext = meetingRecord(records, nextKey);
+    const carriedOf = (x: { record?: ShiftRecord; from: string | null }) => (x.from ? { crews: x.record?.crews ?? {}, label: shiftName(x.from) } : undefined);
     const by = userName ?? null;
     return {
       stamps, timeOf, whyOf, taskPct,
-      edit: canEdit && !!userId && !!orgId,
-      crewsThis: recThis?.crews ?? {}, crewsNext: recNext?.crews ?? {},
-      hintThis: lastSameKind(records, thisKey)?.crews, hintNext: lastSameKind(records, nextKey)?.crews,
-      recThis, recNext,
+      // A locked report: nothing on it changes until it's unlocked.
+      edit: canEdit && !!userId && !!orgId && !locked,
+      locked,
+      crewsThis: mThis.record?.crews ?? {}, crewsNext: mNext.record?.crews ?? {},
+      recThis: mThis.record, recNext: mNext.record,
+      carriedThis: carriedOf(mThis), carriedNext: carriedOf(mNext),
       // The meetings: each on the record of the shift it starts (this
       // shift's, and the next one's at its end).
       saveMeeting: async (which, change) => {
@@ -474,11 +483,12 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       tz,
       hourly: orgId ? {
         notes: recThis?.hourly, update: updateHourly, entries, slots, upTo: Math.min(now, shift.end),
-        onAddWork: canEdit && onDiscovery ? setAddAt : undefined,
+        onAddWork: canEdit && onDiscovery && !locked ? setAddAt : undefined,
         meet: {
-          start: { title: meetingTitle(shift.kind), lines: meetingLines(recThis, shift.start) },
-          end: { title: meetingTitle(report.next.kind), lines: meetingLines(recNext, shift.end) },
-          ...meetingRows(recThis, recNext, shift.end),
+          start: { title: meetingTitle(shift.kind), lines: meetingLines(mThis.record, shift.start), parts: meetingParts(mThis.record, shift.start), carried: carriedOf(mThis)?.label },
+          end: { title: meetingTitle(report.next.kind), lines: meetingLines(mNext.record, shift.end), parts: meetingParts(mNext.record, shift.end), carried: carriedOf(mNext)?.label },
+          // The end meeting shows early only for what was entered for it.
+          ...meetingRows(recThis, mNext.from ? { ...(recNext ?? {}), crews: {} } : recNext, shift.end),
         },
       } : undefined,
       order: tableOrder,
@@ -487,13 +497,14 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         void saveRec(thisKey, (r) => ({ ...r, order: { ...(r.order ?? {}), [table]: ids ?? undefined } }));
       },
     };
-  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, projectId, saveRec, recMsg, recErr, tableOrder, setOrderLocal, updateHourly, entries, shift, slots, now, onDiscovery, report.next.kind]);
+  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, projectId, saveRec, recMsg, recErr, tableOrder, setOrderLocal, updateHourly, entries, shift, slots, now, onDiscovery, report.next.kind, locked]);
   const shiftTitle = `${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`;
   // The hourly log of the shift on screen (any shift, backed up by date),
   // as a file on the letterhead.
   const exportHourly = async (format: LogFormat) => {
     const [rows, progressRows] = await Promise.all([shiftRows(), log ? Promise.resolve(log) : loadProgressLog(projectId)]);
-    const one = shiftLog({ shift, tz, times, record: records.get(thisKey), next: records.get(nextKey), rows, steps: logSteps(live, tz, times), log: progressRows ?? [], now: Date.now() });
+    const a = meetingRecord(records, thisKey), b = meetingRecord(records, nextKey);
+    const one = shiftLog({ shift, tz, times, record: a.record, next: b.record, carried: { start: !!a.from, end: !!b.from }, rows, steps: logSteps(live, tz, times), log: progressRows ?? [], now: Date.now() });
     const name = (projectName ?? "Schedule").trim() || "Schedule";
     await saveHourlyLog([one], format, { project: name, lh, exported: exportedLabel(Date.now(), tz), toPng: pngInBrowser, fileName: `${name} - hourly log ${shift.dayKey} ${shift.kind}` });
     return "Saved.";
@@ -554,11 +565,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     ? kickoffSections(kickoff, ctx)
     : meeting === "closeout"
       ? closeoutSections(closeout, report, ctx, cancelled, discoveryList, lookBack, lessons)
-      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet, hourlyExport, onEdit: canEdit && onUpdateStep ? setEditing : undefined, forecast, pathSource, discovery: discoveryList, why, taskSteps: (id) => stepTally.get(id),
-        onDiscovery: onDiscovery ? () => { const first = view.goals.all[0]?.parentId ?? view.review.done[0]?.parentId; const t = (first ? live.find((m) => m.id === first) : undefined) ?? live.find((m) => live.some((k) => k.parentId === m.id)); if (t) onDiscovery(t); } : undefined,
+      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet, hourlyExport, onEdit: canEdit && onUpdateStep && !locked ? setEditing : undefined, forecast, pathSource, discovery: discoveryList, why, taskSteps: (id) => stepTally.get(id),
+        onDiscovery: onDiscovery && !locked ? () => { const first = view.goals.all[0]?.parentId ?? view.review.done[0]?.parentId; const t = (first ? live.find((m) => m.id === first) : undefined) ?? live.find((m) => live.some((k) => k.parentId === m.id)); if (t) onDiscovery(t); } : undefined,
         // Only while the next shift is still ahead (or on).
-        onPlanNext: onPlanNext && report.next.end > now ? () => onPlanNext(report.next) : undefined }),
-  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, lessons, hourlyExport]);
+        onPlanNext: onPlanNext && report.next.end > now && !locked ? () => onPlanNext(report.next) : undefined }),
+  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, lessons, hourlyExport, locked]);
   // Sections left off the report, on screen and in print — the viewer's own
   // choice for each meeting, remembered like the email's. Each comes back
   // with a tap (listed at the bottom); the email keeps its own choice.
@@ -681,7 +692,18 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             const cl = slotClocks(hr.map((r) => r.slot), tz);
             return hr.map((r, i) => {
               const m = r.slot.kind === "meeting" ? h.meet?.start : r.slot.kind === "handover" ? h.meet?.end : undefined;
-              return { clock: cl[i], kind: r.slot.kind, ...(m ? { title: m.title } : {}), text: m ? m.lines.join("\n") : r.slot.kind === "break" ? breakLabel(r.slot) : plainLine(r.text), progress: r.progress.map(plainLine) };
+              // A meeting in the hours: on site and the safety topic (its table is its own section).
+              const brief = (p: MeetingParts) => [...(p.rows.some((x) => x.onSite != null) ? [`On site: ${p.rows.reduce((a, x) => a + (x.onSite ?? 0), 0)}`] : []), ...(p.safety ? [`Safety topic: ${p.safety}`] : [])];
+              return { clock: cl[i], kind: r.slot.kind, ...(m ? { title: m.title } : {}), text: m ? (m.parts ? brief(m.parts) : m.lines).join("\n") : r.slot.kind === "break" ? breakLabel(r.slot) : plainLine(r.text), progress: r.progress.map(plainLine) };
+            });
+          })() : [],
+          meetings: sheet.hourly ? (() => {
+            const h = sheet.hourly;
+            const hr = hourlyRows(h.notes, h.slots, h.upTo, h.entries, tz, h.meet);
+            const cl = slotClocks(hr.map((r) => r.slot), tz);
+            return hr.flatMap((r, i) => {
+              const m = r.slot.kind === "meeting" ? h.meet?.start : r.slot.kind === "handover" ? h.meet?.end : undefined;
+              return m?.parts && !meetingEmpty(m.parts) ? [{ clock: cl[i], title: m.title, parts: m.parts, ...(m.carried ? { carried: m.carried } : {}) }] : [];
             });
           })() : [],
           order: sheet.order,
@@ -851,7 +873,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           onClose={() => setPickerOpen(false)} />
       )}
       {meeting === "turnover" && (
-        <ShipBar shippedAt={shippedAt} shippedBy={hand.shippedByName} canShip={canShip} busy={shipBusy} err={hand.err}
+        <ShipBar shippedAt={shippedAt} shippedBy={hand.shippedByName} canShip={canShip} busy={shipBusy} err={hand.err} label={`${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })} ${shift.kind} shift`}
           tries={Object.keys(decisionsToShip(decisions, carried)).length}
           when={(iso) => `${ctx.DTs(Date.parse(iso))}`}
           onShip={() => { setShipBusy(true); void hand.ship((d) => decisionsToShip(d, carried, (hand.pullDraft ?? pullSet)?.crew ?? null), hand.pullDraft ?? pullSet, exportDoc, userName).finally(() => setShipBusy(false)); }}
@@ -1387,10 +1409,15 @@ interface SheetCtx {
   taskPct: (id: string) => { pct: number; plan?: number } | undefined;
   edit: boolean;
   crewsThis: Record<string, CrewCount>; crewsNext: Record<string, CrewCount>;
-  hintThis?: Record<string, CrewCount>; hintNext?: Record<string, CrewCount>;
   setCrew: (which: "this" | "next", crew: string, v: Partial<CrewCount>) => void;
-  /** This shift's record and the next one's (each holds the meeting that starts it). */
+  /** This shift's record and the next one's (each holds the meeting that
+   *  starts it), their meeting crews carried in when they have none. */
   recThis?: ShiftRecord; recNext?: ShiftRecord;
+  /** A meeting's crews carried from the last same shift: which shift. */
+  carriedThis?: { crews: Record<string, CrewCount>; label: string };
+  carriedNext?: { crews: Record<string, CrewCount>; label: string };
+  /** The report is locked: nothing on it can be changed. */
+  locked: boolean;
   saveMeeting: (which: "this" | "next", change: (r: ShiftRecord) => ShiftRecord) => Promise<void>;
   /** Names entered at earlier meetings, by crew. */
   known: Record<string, string[]>;
@@ -1610,8 +1637,8 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     ? safetyBrief(rankHazards(hazardJobs, { shift: next, T: c.T, max: RISKS_RANKED }), next, { project: projectFacts(o.safety?.project, next, hazardJobs.map((j) => j.name)), recentRisks: o.safety?.recent }).map((t) => t.title)
     : undefined;
   const meetings: { start?: MeetingCtx; end?: MeetingCtx } | undefined = sh ? {
-    start: { crews: named(cr.worked), record: sh.recThis, shiftStart: shift.start, hint: sh.hintThis, known: sh.known, save: (f) => sh.saveMeeting("this", f) },
-    end: { crews: named(cr.coming), record: sh.recNext, shiftStart: next.start, hint: sh.hintNext, known: sh.known, topics: topicPicks, save: (f) => sh.saveMeeting("next", f) },
+    start: { crews: named(cr.worked), record: sh.recThis, shiftStart: shift.start, carried: sh.carriedThis, known: sh.known, save: (f) => sh.saveMeeting("this", f) },
+    end: { crews: named(cr.coming), record: sh.recNext, shiftStart: next.start, carried: sh.carriedNext, known: sh.known, topics: topicPicks, save: (f) => sh.saveMeeting("next", f) },
   } : undefined;
   // Each table's rows drag into the order the meeting wants; the email follows.
   // The dragged order shows the same for everyone and in print (as the
@@ -1772,9 +1799,10 @@ function hourlySection(sh: SheetCtx, h: HourlyCtx, meetings?: { start?: MeetingC
   const meetingOf = (k: string) => (k === "meeting" ? h.meet?.start : k === "handover" ? h.meet?.end : undefined);
   return {
     id: "hourly", title: "Shift notes - hour by hour", short: "Hour by hour",
-    sub: "The meeting, then what happened each hour",
+    sub: sh.edit && sh.carriedThis ? "The meeting's names and head counts aren't updated for this shift yet" : "The meeting, then what happened each hour",
     count: said || undefined,
-    flag: null,
+    // Names and head counts still carried from the last shift: check them.
+    flag: sh.edit && sh.carriedThis ? "amber" : null,
     body: (print) => (
       <>
         {!print && exportButton && <div className="flex justify-end mb-1.5 print:hidden">{exportButton}</div>}

@@ -16,6 +16,7 @@ import { type PullCrew, type Pace, type ShiftReport, type ShiftRow, type ShiftWi
 import { rankHazards, type HazardJobInput, type HazardKind } from "@/lib/safetyMoment";
 import { safetyBrief, talkSources, projectFacts, RISKS_RANKED, type ProjectBase } from "@/lib/safetyTalk";
 import type { ExportBlock, ExportCell, ExportSection } from "@/lib/reportExport";
+import { meetingEmpty, type MeetingParts } from "@/lib/shiftMeeting";
 
 export interface UpdateFormat {
   /** "Thu, Oct 22" */
@@ -84,6 +85,10 @@ export interface UpdateLookups {
   /** The shift by the hour (lib/shiftHourly): its meeting, the first hour
    *  (permitting), then each hour so far. */
   /** `progress`: the steps whose % moved that hour ("50% to 75%"). */
+  /** The shift's meetings as tables (lib/shiftMeeting): who attended from
+   *  each resource, its employees on site, the total, the safety topic.
+   *  `carried`: crews carried from that shift, not updated for this one. */
+  meetings?: Array<{ clock: string; title: string; parts: MeetingParts; carried?: string }>;
   /** The hours; a meeting's `text` is what it says, one item a line, under its `title`. */
   hourly?: Array<{ clock: string; kind?: "meeting" | "permit" | "work" | "break" | "handover"; title?: string; text: string; progress?: string[] }>;
 }
@@ -372,6 +377,28 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
 
   // ── Shift notes, hour by hour: the meeting (who attended), the first
   // hour (permitting), then each hour.
+  // ── The shift meetings: each resource, its supervisor, its employees on
+  // site; the total; then the safety topic.
+  const mt = (look.meetings ?? []).filter((x) => !meetingEmpty(x.parts));
+  if (mt.length) {
+    out.push({
+      id: "meetings", title: `Shift meetings - ${shiftName(shift)} ${f.D(shift.start)}`, sub: "who attended, employees on site, safety topic",
+      blocks: mt.flatMap((x): ExportBlock[] => [
+        { k: "label", text: `${x.clock} ${x.title}` },
+        ...(x.parts.rows.length ? [{
+          k: "table", head: ["Resource", "Supervisor", "Employees on site"], align: ["left", "left", "right"], textLabels: ["", "supervisor", "on site"], nowrap: [2],
+          rows: [
+            ...x.parts.rows.map((r) => [{ t: r.crew, bold: true }, r.supervisor || "-", { t: r.onSite != null ? String(r.onSite) : "-", bold: true }] as ExportCell[]),
+            ...(x.parts.total != null ? [[{ t: "Total on site", bold: true }, "", { t: String(x.parts.total), bold: true }] as ExportCell[]] : []),
+          ],
+        } as ExportBlock] : []),
+        ...(x.parts.safety ? [{ k: "note", text: `Safety topic: ${x.parts.safety}` } as ExportBlock] : []),
+        ...x.parts.notes.map((n) => ({ k: "note", text: n } as ExportBlock)),
+        ...(x.carried ? [{ k: "note", text: `Same people and head counts as ${x.carried}, not updated for this shift.`, tone: "amber" } as ExportBlock] : []),
+      ]),
+    });
+  }
+
   const hl = look.hourly ?? [];
   if (hl.length) {
     out.push({
