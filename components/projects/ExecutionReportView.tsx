@@ -189,7 +189,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
         <Health icon={<AlertTriangle className="w-4 h-4" />} tone="rose" label="Overdue" value={r.overdue} />
         <span className="ml-auto inline-flex items-center gap-2 print:hidden">
           {!print && projectId && (
-            <HourlyLogExport formats={["pdf", "docx", "xlsx"]} what="Hourly shift log, every shift of the job" letterhead={!!lh} onExport={exportLogs} label="Export shift logs" />
+            <HourlyLogExport formats={["pdf", "docx", "xlsx"]} what="Hourly shift log, every shift of the job" letterhead={!!lh} onExport={exportLogs} label="Export hourly logs (every shift)" />
           )}
           <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-[var(--color-border)] px-2.5 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)]">
             <Printer className="w-3.5 h-3.5" /> Print / export

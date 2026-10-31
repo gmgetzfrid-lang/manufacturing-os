@@ -495,6 +495,12 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     await saveHourlyLog([one], format, { project: name, lh, exported: exportedLabel(Date.now(), tz), toPng: pngInBrowser, fileName: `${name} - hourly log ${shift.dayKey} ${shift.kind}` });
     return "Saved.";
   };
+  // The same export, from the hour-by-hour section itself.
+  const exportRef = useRef(exportHourly);
+  useEffect(() => { exportRef.current = exportHourly; });
+  const hourlyExport = useMemo(() => (
+    <HourlyLogExport formats={["pdf", "docx"]} what={`Hourly log - ${shiftTitle}`} letterhead={!!lh} onExport={(f) => exportRef.current(f)} label={lh ? "Export on letterhead" : "Export hourly log"} />
+  ), [shiftTitle, lh]);
   // The time log: every step's times, for the project file — its own
   // export, not part of the update.
   const [logBusy, setLogBusy] = useState(false);
@@ -545,11 +551,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     ? kickoffSections(kickoff, ctx)
     : meeting === "closeout"
       ? closeoutSections(closeout, report, ctx, cancelled, discoveryList, lookBack, lessons)
-      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet, onEdit: canEdit && onUpdateStep ? setEditing : undefined, forecast, pathSource, discovery: discoveryList, why, taskSteps: (id) => stepTally.get(id),
+      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet, hourlyExport, onEdit: canEdit && onUpdateStep ? setEditing : undefined, forecast, pathSource, discovery: discoveryList, why, taskSteps: (id) => stepTally.get(id),
         onDiscovery: onDiscovery ? () => { const first = view.goals.all[0]?.parentId ?? view.review.done[0]?.parentId; const t = (first ? live.find((m) => m.id === first) : undefined) ?? live.find((m) => live.some((k) => k.parentId === m.id)); if (t) onDiscovery(t); } : undefined,
         // Only while the next shift is still ahead (or on).
         onPlanNext: onPlanNext && report.next.end > now ? () => onPlanNext(report.next) : undefined }),
-  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, lessons]);
+  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, lessons, hourlyExport]);
   // Sections left off the report, on screen and in print — the viewer's own
   // choice for each meeting, remembered like the email's. Each comes back
   // with a tap (listed at the bottom); the email keeps its own choice.
@@ -812,7 +818,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                 <Clock className="w-3.5 h-3.5" /> Times {stamps ? "on" : "off"}
               </button>
               <TimeLogButton busy={logBusy} msg={logMsg} onExport={(sc) => void exportTimeLog(sc)} shiftLabel={shiftTitle} />
-              <HourlyLogExport formats={["pdf", "docx"]} what={`Hourly log - ${shiftTitle}`} letterhead={!!lh} onExport={exportHourly} />
+              <HourlyLogExport formats={["pdf", "docx"]} what={`Hourly log - ${shiftTitle}`} letterhead={!!lh} onExport={exportHourly} label="Hourly log" />
             </>
           )}
           <CopyUpdate doc={exportDoc} meeting={meeting} lh={lh} stamps={meeting === "turnover" ? { on: stamps, set: setStamps } : undefined} />
@@ -1389,6 +1395,8 @@ interface SheetCtx {
 function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void; jumpTarget: ShiftWindow | null; noteOf?: (id: string) => { body: string; at?: string | null } | undefined; times: ShiftTimes;
   /** The shift's notes and record (above). */
   sheet?: SheetCtx;
+  /** Save the hour by hour as a file (on the letterhead). */
+  hourlyExport?: React.ReactNode;
   /** Narrowed to one crew: its name, and the whole job's report (the
    *  standing up top stays the whole job's). */
   crew?: string | null; whole?: ShiftReport;
@@ -1729,7 +1737,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       data: () => [stepsBlock(nextRows(true, false), "Done", "Why")],
     } as Sec] : []),
     ...discoverySection(shift, c, o.discovery ?? [], o.onDiscovery),
-    ...(sh?.hourly ? [hourlySection(sh, sh.hourly, meetingCrews)] : []),
+    ...(sh?.hourly ? [hourlySection(sh, sh.hourly, meetingCrews, o.hourlyExport)] : []),
     closeSection("Close", ["Outgoing supervisor", "Incoming supervisor", "Crew lead"], undefined, sh ? (print) => (
       <ShiftNotesBox notes={sh.notes} edit={sh.edit} print={print} shift={shift} tz={sh.tz} T={c.T} D={c.D} onAdd={sh.addNote} onClear={sh.clearNote} onRemove={sh.removeNote} />
     ) : undefined),
@@ -1738,7 +1746,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
 
 /** Shift notes, hour by hour: the meeting that started the shift (who
  *  attended), the first hour (permitting), then each hour so far. */
-function hourlySection(sh: SheetCtx, h: HourlyCtx, meeting?: MeetingCrews): Sec {
+function hourlySection(sh: SheetCtx, h: HourlyCtx, meeting?: MeetingCrews, exportButton?: React.ReactNode): Sec {
   const rows = hourlyRows(h.notes, h.slots, h.upTo, h.entries, sh.tz);
   const clocks = hourlyClocks(rows.map((r) => r.slot.start), sh.tz);
   const said = rows.filter((r) => r.slot.kind !== "meeting" && r.text).length;
@@ -1747,7 +1755,12 @@ function hourlySection(sh: SheetCtx, h: HourlyCtx, meeting?: MeetingCrews): Sec 
     sub: "The meeting, then what happened each hour",
     count: said || undefined,
     flag: null,
-    body: (print) => <ShiftHourlyBox h={h} edit={sh.edit} print={print} tz={sh.tz} meeting={meeting} />,
+    body: (print) => (
+      <>
+        {!print && exportButton && <div className="flex justify-end mb-1.5 print:hidden">{exportButton}</div>}
+        <ShiftHourlyBox h={h} edit={sh.edit} print={print} tz={sh.tz} meeting={meeting} />
+      </>
+    ),
     data: () => [{ k: "table", head: ["Time", "What happened"], align: ["left", "left"], textLabels: ["", ""], nowrap: [0], rows: rows.map((r, i) => [
       { t: clocks[i], bold: true },
       r.slot.kind === "break" ? { t: breakLabel(r.slot), tone: "muted" }
