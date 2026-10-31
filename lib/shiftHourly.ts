@@ -8,6 +8,7 @@
 // written by a model. An hour someone types over is theirs, kept as typed.
 
 import type { TimeLogRow } from "@/lib/timeLog";
+import type { Milestone } from "@/types/schema";
 import { timeInShift, type ShiftBreak, type ShiftWindow } from "@/lib/shiftReport";
 import { noEmDash } from "@/lib/noEmDash";
 
@@ -192,11 +193,40 @@ const autoNote = (r: TimeLogRow) => r.what === "Comment" && /^(Discovery|Added s
 /** Only % moved: no start, finish or hold. */
 const PROGRESS = new Set(["Progress", "Progress corrected down"]);
 
+/** The entries that finish a whole work order: a step marked done that was
+ *  the last of its work order's steps to finish, every one of them done
+ *  now. Earlier lines about the work order aren't. */
+export function workOrderClosers(milestones: Milestone[]): (r: TimeLogRow) => boolean {
+  const byId = new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m]));
+  const kids = new Map<string, Milestone[]>();
+  for (const m of milestones) if (m.parentId) kids.set(m.parentId, [...(kids.get(m.parentId) ?? []), m]);
+  const leaves = (id: string): Milestone[] => (kids.get(id) ?? []).flatMap((c) => (c.id && kids.has(c.id) ? leaves(c.id) : [c]));
+  const done = (m: Milestone) => m.status === "completed" || (m.percentComplete ?? 0) >= 100;
+  const memo = new Map<string, number | null>();
+  // When a work order's last step finished, if all of them have.
+  const closedAt = (wo: string): number | null => {
+    if (memo.has(wo)) return memo.get(wo)!;
+    const ls = leaves(wo).filter((m) => !m.cancelledAt);
+    const at = ls.length && ls.every(done) ? Math.max(...ls.map((m) => (m.actualAt ? new Date(m.actualAt).getTime() : -Infinity))) : null;
+    memo.set(wo, at);
+    return at;
+  };
+  return (r) => {
+    if (!r.id || !r.what.startsWith("Done")) return false;
+    const m = byId.get(r.id);
+    if (!m || !done(m)) return false;
+    // A task with no steps of its own under a work order: it is the work order.
+    if (!m.parentId) return true;
+    const at = closedAt(m.parentId);
+    return at != null && r.at >= at - 60_000;
+  };
+}
+
 /** An hour's entries, in the order they happened, one line a step ("started,
  *  done 9:30 AM"); an entry off the hour says its time; the same line twice
  *  is said once. What started, finished or was held is `lines`; a step that
  *  only moved its % that hour is `progress` ("50% to 75%"). */
-export function hourParts(rows: TimeLogRow[], hourStart: number, tz: string): { lines: string[]; progress: string[] } {
+export function hourParts(rows: TimeLogRow[], hourStart: number, tz: string, closes?: (r: TimeLogRow) => boolean): { lines: string[]; progress: string[]; closed: string[] } {
   const sorted = [...rows].filter((r) => !autoNote(r)).sort((a, b) => a.at - b.at || a.crew.localeCompare(b.crew) || a.task.localeCompare(b.task));
   const groups: TimeLogRow[][] = [];
   const byStep = new Map<string, TimeLogRow[]>();
@@ -213,7 +243,7 @@ export function hourParts(rows: TimeLogRow[], hourStart: number, tz: string): { 
     if (k) byStep.set(k, ng);
   }
   const off = (r: TimeLogRow) => r.at - hourStart >= 60_000;
-  const lines: string[] = [], progress: string[] = [];
+  const lines: string[] = [], progress: string[] = [], closed: string[] = [];
   for (const g of groups) {
     const [r] = g;
     let line: string;
@@ -228,8 +258,10 @@ export function hourParts(rows: TimeLogRow[], hourStart: number, tz: string): { 
     line = noEmDash(line);
     const to = g.every((x) => PROGRESS.has(x.what)) ? progress : lines;
     if (!to.includes(line)) to.push(line);
+    // The line that finished a whole work order.
+    if (closes && to === lines && g.some(closes) && !closed.includes(line)) closed.push(line);
   }
-  return { lines, progress };
+  return { lines, progress, closed };
 }
 
 /** An hour's lines, as one list: what happened, then what moved. */
@@ -244,20 +276,36 @@ export function hourItems(rows: TimeLogRow[], hourStart: number, tz: string): st
  *  meetings say nothing here: their record does (lib/shiftMeeting).
  *  `off`: meetings not held; `show`: rows shown before their time. */
 export function hourlyRows(n: HourlyNotes | null | undefined, slots: HourSlot[], upTo: number, entries: TimeLogRow[] | null | undefined, tz: string,
-  opts: { off?: string[]; show?: string[] } = {}): Array<{ slot: HourSlot; lines: string[]; progress: string[]; typed: boolean; text: string }> {
+  opts: { off?: string[]; show?: string[]; closes?: (r: TimeLogRow) => boolean } = {}): HourlyRow[] {
   const typed = typedBySlot(n, slots);
   const said = rowsBySlot(entries ?? [], slots);
   // A row taken off the log (a meeting that wasn't held) stays off.
   const skip = new Set([...(n?.skip ?? []), ...(opts.off ?? [])]);
   const show = new Set(opts.show ?? []);
-  return slots.filter((x) => !skip.has(x.key) && (x.kind === "meeting" || x.start <= upTo || show.has(x.key))).map((slot) => {
+  const rows = slots.filter((x) => !skip.has(x.key) && (x.kind === "meeting" || x.start <= upTo || show.has(x.key))).map((slot) => {
     const meeting = slot.kind === "meeting" || slot.kind === "handover";
     const own = meeting ? [] : (typed.get(slot.key) ?? []).flatMap((l) => l.text.split("\n")).map((x) => noEmDash(x).trim()).filter(Boolean);
     // An hour typed over is all theirs; otherwise its entries say it.
-    const parts = own.length || meeting || slot.kind === "break" ? { lines: own, progress: [] } : hourParts(said.get(slot.key) ?? [], slot.start, tz);
-    return { slot, lines: parts.lines, progress: parts.progress, typed: own.length > 0, text: parts.lines.join("\n") };
+    const parts = own.length || meeting || slot.kind === "break" ? { lines: own, progress: [], closed: [] } : hourParts(said.get(slot.key) ?? [], slot.start, tz, opts.closes);
+    return { slot, lines: parts.lines, progress: parts.progress, closed: parts.closed, typed: own.length > 0, text: parts.lines.join("\n") } as HourlyRow;
   }).filter((r) => !r.slot.tail || r.lines.length > 0 || r.progress.length > 0);
+  // An hour with nothing in it and a break in it (lunch): the break's row
+  // says it, one row; the hour is kept on it (to type into or add work at).
+  const empty = (r: HourlyRow) => r.slot.kind === "work" && !r.slot.tail && !r.lines.length && !r.progress.length;
+  const inHour = (b: HourlyRow, r: HourlyRow) => b.slot.kind === "break" && b.slot.start >= r.slot.start && b.slot.start < r.slot.end;
+  const out: HourlyRow[] = [];
+  for (const r of rows) {
+    if (empty(r) && rows.some((b) => inHour(b, r))) continue;
+    const hour = r.slot.kind === "break" ? rows.find((h) => empty(h) && inHour(r, h)) : undefined;
+    out.push(hour && !out.some((x) => x.hour === hour.slot) ? { ...r, hour: hour.slot } : r);
+  }
+  return out;
 }
+
+/** An hour of the notes as said: its lines, what moved, the lines that
+ *  finished a whole work order; a break's row carries the empty hour it
+ *  stands for (`hour`). */
+export interface HourlyRow { slot: HourSlot; lines: string[]; progress: string[]; closed: string[]; typed: boolean; text: string; hour?: HourSlot }
 
 /** What each kind of hour is called. */
 export const SLOT_LABEL: Record<SlotKind, string> = { meeting: "Shift meeting", permit: "Start of shift - permitting", work: "", break: "Break", handover: "Shift meeting" };

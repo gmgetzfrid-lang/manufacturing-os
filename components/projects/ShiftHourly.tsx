@@ -36,6 +36,8 @@ export interface HourlyCtx {
   upTo: number;
   /** Put discovery or added scope into the schedule at this hour (the hour's start). */
   onAddWork?: (at: number) => void;
+  /** The entries that finish a whole work order (lib/shiftHourly workOrderClosers): their lines in green. */
+  closes?: (r: TimeLogRow) => boolean;
   /** The two meetings as the log says them (lib/shiftMeeting), which are
    *  off the log, and which show before their time. */
   meet?: { start: MeetingSaid; end: MeetingSaid; off: string[]; show: string[] };
@@ -72,7 +74,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const rows = hourlyRows(h.notes, h.slots, h.upTo, h.entries, tz, h.meet);
+  const rows = hourlyRows(h.notes, h.slots, h.upTo, h.entries, tz, { ...h.meet, closes: h.closes });
   const clocks = slotClocks(rows.map((r) => r.slot), tz);
   const meetingOf = (x: HourSlot) => (x.kind === "meeting" ? meetings?.start : x.kind === "handover" ? meetings?.end : undefined);
   const said = (x: HourSlot) => (x.kind === "meeting" ? h.meet?.start : x.kind === "handover" ? h.meet?.end : undefined);
@@ -135,7 +137,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                     {m.parts && !meetingEmpty(m.parts) ? <MeetingTable p={m.parts} /> : m.lines.length ? m.lines.map((x, j) => <div key={j}>{x}</div>) : <div className="text-slate-500">No attendance entered</div>}
                   </> : <>
                     {SLOT_LABEL[r.slot.kind] && <b>{SLOT_LABEL[r.slot.kind]}</b>}
-                    <Items text={r.text} going={r.progress} empty={r.slot.kind === "work"} />
+                    <Items text={r.text} going={r.progress} closed={r.closed} />
                   </>}
                 </td>
               </tr>
@@ -156,10 +158,34 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
           const label = isMeeting ? titleOf(r.slot) : SLOT_LABEL[r.slot.kind];
           // A break: its own quiet row, blocked off.
           if (r.slot.kind === "break") {
+            // Its hour had nothing in it: the break stands for it, and the
+            // hour can still be typed into or have work added.
+            const hr = r.hour;
             return (
               <li key={r.slot.key} className="flex items-start gap-2 px-3 py-1 text-[12px] leading-snug bg-[var(--color-surface-2)]/60">
                 <span className="w-[66px] shrink-0 font-bold text-[var(--color-text-muted)] whitespace-nowrap tabular-nums">{clocks[i]}</span>
-                <span className="font-semibold text-[var(--color-text-muted)]">{breakLabel(r.slot)}</span>
+                <div className="min-w-0 flex-1">
+                  <span className="font-semibold text-[var(--color-text-muted)]">{breakLabel(r.slot)}</span>
+                  {hr && editing === hr.key && (
+                    <HourForm init="" placeholder="What happened this hour" onDone={(t) => void setHour(hr, t)} onCancel={() => setEditing(null)} />
+                  )}
+                </div>
+                {hr && editing !== hr.key && (
+                  <div className="flex items-center justify-end gap-1">
+                    {h.onAddWork && (
+                      <button type="button" onClick={() => h.onAddWork?.(hr.start)} aria-label={`Add discovery or added scope at ${clocks[i]}`}
+                        title="Add discovery or added scope at this hour - it goes into the schedule"
+                        className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-dashed border-[var(--color-accent)] text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
+                        <Plus className="w-3 h-3" /> Add work
+                      </button>
+                    )}
+                    {edit && (
+                      <button type="button" onClick={() => setEditing(hr.key)} aria-label={`Edit ${clocks[i]}`} className={iconBtn}>
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                )}
               </li>
             );
           }
@@ -178,7 +204,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                 ) : isMeeting ? (
                   note.length ? <div className="mt-1 space-y-0.5">{note.map((x, j) => <div key={j} className="break-words text-[var(--color-text)]">{x}</div>)}</div> : null
                 ) : (
-                  <Items text={r.text} going={r.progress} empty={r.slot.kind === "work"} />
+                  <Items text={r.text} going={r.progress} closed={r.closed} />
                 )}
                 {/* A typed note: a mistake, or now put in as work (its own entry
                     says it) - deleted, the hour shows its entries again. */}
@@ -252,14 +278,19 @@ function Line({ text }: { text: string }) {
   return <>{boldRuns(text).map((r, i) => (r.b ? <b key={i} className="font-bold">{r.t}</b> : <React.Fragment key={i}>{r.t}</React.Fragment>))}</>;
 }
 
-/** An hour's lines, one item each: what started, finished or was held,
- *  then (in the progress color) what moved its % that hour. */
-function Items({ text, going, empty }: { text: string; going: string[]; empty: boolean }) {
+/** An hour's lines, one item each: what started, finished or was held
+ *  (the one that finished a whole work order in green), then (in the
+ *  progress color) what moved its % that hour. */
+function Items({ text, going, closed }: { text: string; going: string[]; closed: string[] }) {
   const items = text.split("\n").map((x) => x.trim()).filter(Boolean);
-  if (!items.length && !going.length) return empty ? <div className="text-[var(--color-text-faint)]">-</div> : null;
+  // An hour with nothing in it: left blank.
+  if (!items.length && !going.length) return null;
   return (
     <ul className="space-y-0.5">
-      {items.map((x, i) => <li key={i} className="break-words text-[var(--color-text)]"><Line text={x} /></li>)}
+      {/* A line that finished a whole work order: quiet green. */}
+      {items.map((x, i) => (closed.includes(x)
+        ? <li key={i} className="break-words text-emerald-700 dark:text-emerald-400 print:text-emerald-800" title="Work order complete"><Line text={x} /></li>
+        : <li key={i} className="break-words text-[var(--color-text)]"><Line text={x} /></li>))}
       {going.map((x, i) => <li key={`g${i}`} className="break-words text-[var(--color-text-muted)]"><Line text={x} /></li>)}
     </ul>
   );

@@ -35,7 +35,7 @@ export type ExportCell = string | {
   note?: string;
   /** One entry per line under the value (the steps done this shift), each
    *  with what leads it (its time, its WO) and its own comment. */
-  lines?: Array<{ lead?: string; t: string; note?: string }>;
+  lines?: Array<{ lead?: string; t: string; note?: string; tone?: Tone }>;
   /** Short lines under it all (where the whole task stands, why it's
    *  behind). */
   sub?: Array<{ t: string; tone?: Tone; italic?: boolean }>;
@@ -309,7 +309,7 @@ function blockHtml(b: ExportBlock): string {
             const note = "note" in o && o.note ? `<div style="${FONT}font-size:11px;font-style:italic;font-weight:normal;color:${MUTED};margin-top:1px;">“${esc(o.note)}”</div>` : "";
             // One step per line, its time / WO first, its comment under it.
             const lines = "lines" in o && o.lines?.length ? o.lines.map((x) =>
-              `<div style="${FONT}font-size:13px;font-weight:normal;color:${INK};margin-top:2px;">${x.lead ? `<span style="font-family:Consolas,Menlo,monospace;font-size:12px;color:#334155;">${esc(x.lead)}</span>&nbsp; ` : ""}${esc(x.t)}</div>` +
+              `<div style="${FONT}font-size:13px;font-weight:normal;color:${x.tone ? (x.tone === "muted" ? MUTED : TONE[x.tone].fg) : INK};margin-top:2px;">${x.lead ? `<span style="font-family:Consolas,Menlo,monospace;font-size:12px;color:#334155;">${esc(x.lead)}</span>&nbsp; ` : ""}${esc(x.t)}</div>` +
               (x.note ? `<div style="${FONT}font-size:11px;font-style:italic;font-weight:normal;color:${MUTED};margin:1px 0 0 ${x.lead ? 12 : 0}px;">“${esc(x.note)}”</div>` : "")).join("") : "";
             const sub = "sub" in o && o.sub?.length ? o.sub.map((x) =>
               `<div style="${FONT}font-size:11px;font-weight:normal;${x.italic ? "font-style:italic;" : ""}color:${x.tone ? (x.tone === "muted" ? MUTED : TONE[x.tone].fg) : MUTED};margin-top:2px;">${esc(x.t)}</div>`).join("") : "";

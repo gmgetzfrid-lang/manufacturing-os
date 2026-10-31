@@ -90,7 +90,9 @@ export interface UpdateLookups {
    *  `carried`: crews carried from that shift, not updated for this one. */
   meetings?: Array<{ clock: string; title: string; parts: MeetingParts; carried?: string }>;
   /** The hours; a meeting's `text` is what it says, one item a line, under its `title`. */
-  hourly?: Array<{ clock: string; kind?: "meeting" | "permit" | "work" | "break" | "handover"; title?: string; text: string; progress?: string[] }>;
+  hourly?: Array<{ clock: string; kind?: "meeting" | "permit" | "work" | "break" | "handover"; title?: string; text: string; progress?: string[];
+    /** Its lines that finished a whole work order (green). */
+    closed?: string[] }>;
 }
 
 /** "forecast finish Nov 01 02:18 — 8.3 h late": where the work as it
@@ -412,8 +414,11 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
           ...(x.progress ?? []),
         ];
         const [first, ...rest] = items;
-        return [{ t: x.clock, bold: true }, !first ? { t: "-", tone: "muted" as const }
-          : { t: first, ...(x.kind === "break" ? { tone: "muted" as const } : {}), ...(rest.length ? { lines: rest.map((t) => ({ t })) } : {}) }] as ExportCell[];
+        // A line that finished a whole work order: green. An hour with
+        // nothing in it: left blank.
+        const done = new Set(x.closed ?? []);
+        return [{ t: x.clock, bold: true }, !first ? ""
+          : { t: first, ...(x.kind === "break" ? { tone: "muted" as const } : done.has(first) ? { tone: "emerald" as const } : {}), ...(rest.length ? { lines: rest.map((t) => ({ t, ...(done.has(t) ? { tone: "emerald" as const } : {}) })) } : {}) }] as ExportCell[];
       }) }],
     });
   }

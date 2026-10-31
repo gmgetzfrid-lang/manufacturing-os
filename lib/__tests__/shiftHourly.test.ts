@@ -4,9 +4,10 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  hourlyClocks, slotClocks, hourSlots, slotOf, rowsBySlot, typedLines, hourlyRows, breakLabel, entryLine, hourItems, hourParts, plainLine, boldRuns, type HourlyNotes,
+  hourlyClocks, slotClocks, workOrderClosers, hourSlots, slotOf, rowsBySlot, typedLines, hourlyRows, breakLabel, entryLine, hourItems, hourParts, plainLine, boldRuns, type HourlyNotes,
 } from "@/lib/shiftHourly";
 import type { TimeLogRow } from "@/lib/timeLog";
+import type { Milestone } from "@/types/schema";
 
 const tz = "America/Los_Angeles";
 const at = (hhmm: string) => Date.parse(`2026-10-26T${hhmm}:00-07:00`);
@@ -132,11 +133,12 @@ describe("breaks, and what crews kept working on", () => {
     expect(hourParts(hr, at("10:00"), tz)).toEqual({
       lines: ["**WO 310507 V-8**, Schultz: Close Manway Cover started."],
       progress: ["**WO 310989 V-7**, Maintenance (KE): Welded pipe replacements (1 of 2) 50% to 75%. Hydro complete.", "10:45 AM **WO 301235 V-7**, Schultz: Install Internal Manways 0% to 22%. 13 of 57 trays installed."],
+      closed: [],
     });
     // The same change saved twice (its comment on its own line): said once.
     expect(hourParts([hr[2], { ...hr[2], at: at("10:46"), comment: "" }], at("10:00"), tz).progress).toEqual(["10:45 AM **WO 301235 V-7**, Schultz: Install Internal Manways 0% to 22%. 13 of 57 trays installed."]);
     // The app's own "Discovery:" note on the step it follows: the discovery's line says it.
-    expect(hourParts([row("10:00", { id: "i1", task: "V-7 - Tower", step: "Inspect", what: "Comment", pct: "", comment: "Discovery: flange swapped" })], at("10:00"), tz)).toEqual({ lines: [], progress: [] });
+    expect(hourParts([row("10:00", { id: "i1", task: "V-7 - Tower", step: "Inspect", what: "Comment", pct: "", comment: "Discovery: flange swapped" })], at("10:00"), tz)).toEqual({ lines: [], progress: [], closed: [] });
   });
 });
 
@@ -167,3 +169,45 @@ describe("clocks", () => {
     expect(c.slice(-3)).toEqual(["5:00", "5:30 PM", "5:30 PM"]);
   });
 });
+
+describe("the line that finished a whole work order", () => {
+  const mk = (p: Partial<Milestone> & { id: string }): Milestone => ({ orgId: "o", projectId: "p", name: p.id, weight: 1, status: "planned", source: "msproject", createdBy: "u", ...p } as Milestone);
+  const iso = (hhmm: string) => new Date(at(hhmm)).toISOString();
+  const ms = [
+    mk({ id: "e13", name: "E-13 - Exchanger" }),
+    mk({ id: "a", parentId: "e13", name: "Hydro", status: "completed", actualAt: iso("08:00") }),
+    mk({ id: "b", parentId: "e13", name: "QC Complete", status: "completed", actualAt: iso("09:30") }),
+    mk({ id: "v8", name: "V-8 - Drum" }),
+    mk({ id: "c", parentId: "v8", name: "Close", status: "completed", actualAt: iso("10:00") }),
+    mk({ id: "d", parentId: "v8", name: "Box up", status: "in_progress" }),
+  ];
+  const closes = workOrderClosers(ms);
+  const done = (id: string, hhmm: string) => row(hhmm, { id, task: "E-13 - Exchanger", wo: "310505", step: id, crew: "Schultz", what: "Done", pct: "100%" });
+  it("the last step done, every step of it done now: that line only", () => {
+    expect(closes(done("b", "09:30"))).toBe(true);
+    // An earlier step of the same work order: not the one that finished it.
+    expect(closes(done("a", "08:00"))).toBe(false);
+    // A started line, not a finish.
+    expect(closes({ ...done("b", "09:30"), what: "Started" })).toBe(false);
+    // A work order with a step still open: not finished.
+    expect(closes(done("c", "10:00"))).toBe(false);
+  });
+  it("its line is kept apart so it can be shown in green", () => {
+    const p = hourParts([done("b", "09:30"), row("09:10", { id: "x", task: "V-7", step: "Pull", crew: "Ancon", what: "Started" })], at("09:00"), tz, closes);
+    expect(p.closed).toEqual(["9:30 AM **WO 310505 E-13**, Schultz: b done."]);
+    expect(p.lines).toContain(p.closed[0]);
+  });
+});
+
+describe("lunch with nothing logged in its hour", () => {
+  it("one row: the break, standing for its hour", () => {
+    const withLunch = hourSlots(shift, 30, [{ at: at("11:00"), minutes: 30, label: "Lunch" }]);
+    const r = hourlyRows({ v: 2, lines: [] }, withLunch, at("18:00"), rows, tz);
+    expect(r.filter((x) => x.slot.start === at("11:00")).map((x) => x.slot.kind)).toEqual(["break"]);
+    expect(r.find((x) => x.slot.kind === "break")?.hour?.key).toBe(key("11:00"));
+    // Something logged in the hour: both rows.
+    const busy = hourlyRows({ v: 2, lines: [] }, withLunch, at("18:00"), [...rows, row("11:40", { id: "z", task: "V-9", step: "Pull", crew: "Ancon", what: "Started" })], tz);
+    expect(busy.filter((x) => x.slot.start === at("11:00")).map((x) => x.slot.kind)).toEqual(["work", "break"]);
+  });
+});
+

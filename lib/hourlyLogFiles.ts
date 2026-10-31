@@ -14,8 +14,8 @@ import { meetingEmpty, type MeetingParts } from "@/lib/shiftMeeting";
 export interface LogFileOpts {
   project: string;
   lh: Letterhead | null;
-  /** "Exported Oct 30, 2026 2:15 PM" */
-  exported: string;
+  /** When it was made ("Exported Oct 30, 2026 2:15 PM"): not printed on it. */
+  exported?: string;
   /** A picture the file can't carry (GIF, WebP) as a PNG data URL. */
   toPng?: (dataUrl: string) => Promise<string | null>;
 }
@@ -38,20 +38,22 @@ function footFree(lh: Letterhead | null): boolean {
   return [lh.layer, lh.first].every((l) => !l || (!l.image && !l.footer && !(l.floats ?? []).some((f) => f.y + f.h > ph - mb)));
 }
 
-/** A row's text, top to bottom: its name, what happened, what kept going. */
-export function entryParas(e: LogEntry): Array<{ text: string; style: "title" | "line" | "cont" | "muted" }> {
-  const out: Array<{ text: string; style: "title" | "line" | "cont" | "muted" }> = [];
+/** A row's text, top to bottom: its name, what happened (a line that
+ *  finished a whole work order in green), what moved. An hour with
+ *  nothing in it is left blank. */
+export function entryParas(e: LogEntry): Array<{ text: string; style: "title" | "line" | "done" | "cont" | "muted" }> {
+  const out: Array<{ text: string; style: "title" | "line" | "done" | "cont" | "muted" }> = [];
   if (e.title) out.push({ text: e.title, style: e.kind === "break" ? "muted" : "title" });
-  for (const l of e.lines) out.push({ text: l, style: "line" });
+  for (const l of e.lines) out.push({ text: l, style: e.closed?.includes(l) ? "done" : "line" });
   // What moved its % that hour, in the progress color.
   for (const c of e.continuing) out.push({ text: c, style: "cont" });
-  if (e.kind !== "break" && !e.lines.length && !e.continuing.length) out.push({ text: e.kind === "meeting" || e.kind === "handover" ? "No attendance entered" : "Nothing logged", style: "muted" });
+  if ((e.kind === "meeting" || e.kind === "handover") && !e.lines.length) out.push({ text: "No attendance entered", style: "muted" });
   return out.map((p) => ({ ...p, text: noEmDash(p.text) }));
 }
 
 const kicker = (project: string) => `${project} · Hourly shift log`.toUpperCase();
 const headingOf = (l: ShiftLog) => `${l.title} · ${l.date}`;
-const subOf = (l: ShiftLog, exported: string) => `${l.window}${l.through ? ` · logged through ${l.through}` : ""} · ${exported}`;
+const subOf = (l: ShiftLog) => `${l.window}${l.through ? ` · logged through ${l.through}` : ""}`;
 
 /** "data:image/png;base64,…" → its bytes and type. */
 function dataUrlBytes(src: string): { mime: string; bytes: Uint8Array } | null {
@@ -94,6 +96,8 @@ async function usable(srcs: string[], ok: (mime: string) => boolean, toPng?: Log
 
 const IN = 72;
 const INK = rgb(0.06, 0.09, 0.16), GRAY = rgb(0.39, 0.45, 0.53), RULE = rgb(0.85, 0.87, 0.9);
+/** A line that finished a whole work order: a quiet green. */
+const GREEN = rgb(0.016, 0.47, 0.34);
 interface Fonts { r: PDFFont; b: PDFFont; i: PDFFont; bi: PDFFont }
 const fontFor = (f: Fonts, b?: boolean, i?: boolean) => (b ? (i ? f.bi : f.b) : i ? f.i : f.r);
 const hexColor = (h?: string): RGB => (h && /^[0-9a-f]{6}$/i.test(h) ? rgb(parseInt(h.slice(0, 2), 16) / 255, parseInt(h.slice(2, 4), 16) / 255, parseInt(h.slice(4, 6), 16) / 255) : rgb(0, 0, 0));
@@ -281,14 +285,14 @@ export async function hourlyLogPdf(logs: ShiftLog[], o: LogFileOpts): Promise<Ui
     page.drawLine({ start: { x: left, y: H - y }, end: { x: right, y: H - y }, thickness: 0.75, color: RULE });
     y += 4;
   };
-  const style = { title: { f: fonts.b, s: 10, c: INK }, line: { f: fonts.r, s: 10, c: INK }, cont: { f: fonts.i, s: 9, c: GRAY }, muted: { f: fonts.i, s: 9.5, c: GRAY } };
+  const style = { title: { f: fonts.b, s: 10, c: INK }, line: { f: fonts.r, s: 10, c: INK }, done: { f: fonts.r, s: 10, c: GREEN }, cont: { f: fonts.i, s: 9, c: GRAY }, muted: { f: fonts.i, s: 9.5, c: GRAY } };
 
   for (const l of logs) {
     newPage(first);
     text(kicker(o.project), left, y + 8, 7.5, fonts.b, GRAY);
     y += 13;
     for (const ln of wrap(safe(fonts.b)(headingOf(l)), fonts.b, 14, right - left)) { text(ln, left, y + 13, 14, fonts.b, INK); y += 18; }
-    for (const ln of wrap(safe(fonts.r)(subOf(l, o.exported)), fonts.r, 9, right - left)) { text(ln, left, y + 9, 9, fonts.r, GRAY); y += 12; }
+    for (const ln of wrap(safe(fonts.r)(subOf(l)), fonts.r, 9, right - left)) { text(ln, left, y + 9, 9, fonts.r, GRAY); y += 12; }
     y += 8;
     tableHead();
     for (const e of l.entries) {
@@ -299,7 +303,7 @@ export async function hourlyLogPdf(logs: ShiftLog[], o: LogFileOpts): Promise<Ui
       // A line's work order in bold, the rest plain.
       paras.forEach((p, i) => {
         const st = style[p.style];
-        const runs = (p.style === "line" || p.style === "cont" ? boldRuns(p.text) : [{ t: p.text, b: false }]).map((r) => { const f = r.b ? (p.style === "cont" ? fonts.bi : fonts.b) : st.f; return { t: safe(f)(r.t), f }; });
+        const runs = (p.style === "line" || p.style === "done" || p.style === "cont" ? boldRuns(p.text) : [{ t: p.text, b: false }]).map((r) => { const f = r.b ? (p.style === "cont" ? fonts.bi : fonts.b) : st.f; return { t: safe(f)(r.t), f }; });
         wrapRuns(runs, st.s, textW).forEach((segs, j) => {
           const h = st.s * 1.32 + (j === 0 && i > 0 ? 2 : 0);
           items.push({ h, draw: (at) => { let dx = textX; for (const g of segs) { text(g.t, dx, at + st.s + (h - st.s * 1.32), st.s, g.f, st.c); dx += g.f.widthOfTextAtSize(g.t, st.s); } } });
@@ -366,7 +370,7 @@ export async function hourlyLogPdf(logs: ShiftLog[], o: LogFileOpts): Promise<Ui
   if (!logs.length) {
     newPage(first);
     text(kicker(o.project), left, y + 8, 7.5, fonts.b, GRAY);
-    text("Nothing logged yet.", left, y + 30, 12, fonts.r, INK);
+    text("No entries yet.", left, y + 30, 12, fonts.r, INK);
   }
   // Page numbers, where the letterhead leaves the foot free.
   if (footFree(o.lh)) {
@@ -553,13 +557,13 @@ function meetingXml(m: MeetingParts, w: number): string {
 function shiftXml(l: ShiftLog, o: LogFileOpts, contentW: number): string {
   const timeW = 0.95;
   const cellP = (t: string, st: Parameters<typeof rPr>[0], after = 20) => `<w:p><w:pPr><w:spacing w:before="0" w:after="${after}"/></w:pPr>${textRun(t, st)}</w:p>`;
-  const look = { title: { b: true, pt: 10 }, line: { pt: 10 }, cont: { i: true, pt: 9, color: "64748B" }, muted: { i: true, pt: 9.5, color: "64748B" } } as const;
+  const look = { title: { b: true, pt: 10 }, line: { pt: 10 }, done: { pt: 10, color: "047857" }, cont: { i: true, pt: 9, color: "64748B" }, muted: { i: true, pt: 9.5, color: "64748B" } } as const;
   const cell = (w: number, inner: string, shade?: string) => `<w:tc><w:tcPr><w:tcW w:w="${tw(w)}" w:type="dxa"/>${shade ? `<w:shd w:val="clear" w:color="auto" w:fill="${shade}"/>` : ""}</w:tcPr>${inner}</w:tc>`;
   const head = `<w:tr><w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>${cell(timeW, cellP("TIME", { b: true, pt: 7.5, color: "64748B" }, 0), "F1F5F9")}${cell(contentW - timeW, cellP("WHAT HAPPENED", { b: true, pt: 7.5, color: "64748B" }, 0), "F1F5F9")}</w:tr>`;
   const rows = l.entries.map((e) => {
     const paras = entryParas(e);
     // A line's work order in bold, the rest plain.
-    const para = (p: (typeof paras)[number]) => p.style === "line" || p.style === "cont"
+    const para = (p: (typeof paras)[number]) => p.style === "line" || p.style === "done" || p.style === "cont"
       ? `<w:p><w:pPr><w:spacing w:before="0" w:after="20"/></w:pPr>${boldRuns(p.text).map((r) => textRun(r.t, { ...look[p.style], b: r.b })).join("")}</w:p>`
       : cellP(p.text, look[p.style]);
     const m = e.meeting && !meetingEmpty(e.meeting) ? e.meeting : null;
@@ -570,7 +574,7 @@ function shiftXml(l: ShiftLog, o: LogFileOpts, contentW: number): string {
   return [
     `<w:p><w:pPr><w:spacing w:before="0" w:after="40"/></w:pPr>${textRun(kicker(o.project), { b: true, pt: 7.5, color: "64748B" })}</w:p>`,
     `<w:p><w:pPr><w:keepNext/><w:spacing w:before="0" w:after="40"/></w:pPr>${textRun(headingOf(l), { b: true, pt: 14 })}</w:p>`,
-    `<w:p><w:pPr><w:keepNext/><w:spacing w:before="0" w:after="160"/></w:pPr>${textRun(subOf(l, o.exported), { pt: 9, color: "64748B" })}</w:p>`,
+    `<w:p><w:pPr><w:keepNext/><w:spacing w:before="0" w:after="160"/></w:pPr>${textRun(subOf(l), { pt: 9, color: "64748B" })}</w:p>`,
     `<w:tbl><w:tblPr><w:tblW w:w="${tw(contentW)}" w:type="dxa"/><w:tblBorders>${border("top", 6, "CBD5E1")}${border("bottom", 6, "CBD5E1")}${border("insideH", 4, "E2E8F0")}</w:tblBorders><w:tblLayout w:type="fixed"/><w:tblCellMar><w:top w:w="70" w:type="dxa"/><w:left w:w="90" w:type="dxa"/><w:bottom w:w="50" w:type="dxa"/><w:right w:w="90" w:type="dxa"/></w:tblCellMar><w:tblLook w:val="0000"/></w:tblPr><w:tblGrid><w:gridCol w:w="${tw(timeW)}"/><w:gridCol w:w="${tw(contentW - timeW)}"/></w:tblGrid>${head}${rows}</w:tbl>`,
   ].join("");
 }
@@ -611,7 +615,7 @@ export async function hourlyLogDocx(logs: ShiftLog[], o: LogFileOpts): Promise<U
   const sect = `<w:sectPr>${refs.join("")}<w:type w:val="nextPage"/><w:pgSz w:w="${tw(P.w)}" w:h="${tw(P.h)}"/><w:pgMar w:top="${tw(M.top)}" w:right="${tw(M.right)}" w:bottom="${tw(M.bottom)}" w:left="${tw(M.left)}" w:header="${tw(hdrAt)}" w:footer="${tw(ftrAt)}" w:gutter="0"/>${titlePg ? "<w:titlePg/>" : ""}</w:sectPr>`;
   const body = logs.length
     ? logs.map((l, i) => `${shiftXml(l, o, contentW)}<w:p>${i < logs.length - 1 ? `<w:pPr>${sect}</w:pPr>` : ""}</w:p>`).join("")
-    : `<w:p>${textRun("Nothing logged yet.", { pt: 12 })}</w:p>`;
+    : `<w:p>${textRun("No entries yet.", { pt: 12 })}</w:p>`;
   const font = xe(bodyFont(lh));
   doc.link(`${REL}/styles`, "styles.xml");
   doc.link(`${REL}/settings`, "settings.xml");
@@ -644,20 +648,21 @@ export function hourlyLogTable(logs: ShiftLog[]): string[][] {
     for (const e of l.entries) {
       if (e.kind === "break") { out.push([...at, e.clock, "Break", e.title ?? "Break"]); continue; }
       const k = KIND_WORD[e.kind];
-      for (const x of e.lines) out.push([...at, e.clock, k, noEmDash(plainLine(x))]);
+      for (const x of e.lines) out.push([...at, e.clock, e.closed?.includes(x) ? "Work order done" : k, noEmDash(plainLine(x))]);
       for (const x of e.continuing) out.push([...at, e.clock, "Progress", noEmDash(plainLine(x))]);
-      if (!e.lines.length && !e.continuing.length) out.push([...at, e.clock, k, e.kind === "meeting" || e.kind === "handover" ? "No attendance entered" : "Nothing logged"]);
+      // An hour with nothing in it has no row; a meeting with nothing entered says so.
+      if ((e.kind === "meeting" || e.kind === "handover") && !e.lines.length) out.push([...at, e.clock, k, "No attendance entered"]);
     }
   }
   return out;
 }
 
 /** The log as an Excel workbook. */
-export async function hourlyLogXlsx(logs: ShiftLog[], o: Pick<LogFileOpts, "project" | "exported">): Promise<Uint8Array> {
+export async function hourlyLogXlsx(logs: ShiftLog[], o: Pick<LogFileOpts, "project">): Promise<Uint8Array> {
   const XLSX = await import("xlsx");
   const head = ["Date", "Shift", "Time", "Type", "What happened"];
   const rows = hourlyLogTable(logs);
-  const aoa = [[`${o.project} - Hourly shift log`], [`${o.exported}. Times are plant time.`], [], head, ...rows];
+  const aoa = [[`${o.project} - Hourly shift log`], ["Times are plant time."], [], head, ...rows];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws["!cols"] = [18, 12, 10, 12, 100].map((wch) => ({ wch }));
   if (rows.length) ws["!autofilter"] = { ref: `A4:E${aoa.length}` };

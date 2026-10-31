@@ -125,10 +125,14 @@ const two = (): ShiftLog[] => [one(), { ...one(), key: "2026-10-29:night", title
 describe("the files", () => {
   it("a row's text: its name, what happened, what kept going", () => {
     const e = one().entries;
-    // Permitting with nothing entered: said so, nothing carried in.
-    expect(entryParas(e[1]).map((p) => p.style)).toEqual(["title", "muted"]);
+    // Permitting with nothing entered: its name only, nothing carried in.
+    expect(entryParas(e[1]).map((p) => p.style)).toEqual(["title"]);
     expect(entryParas({ clock: "x", kind: "work", lines: ["**WO 1 V-7**, Ancon: Clean Tower started."], continuing: ["**WO 1 V-7**, Ancon: Clean Tower 0% to 40%."] }).map((p) => p.style)).toEqual(["line", "cont"]);
-    expect(entryParas({ clock: "x", kind: "work", lines: [], continuing: [] })).toEqual([{ text: "Nothing logged", style: "muted" }]);
+    // An hour with nothing in it: blank, no "Nothing logged".
+    expect(entryParas({ clock: "x", kind: "work", lines: [], continuing: [] })).toEqual([]);
+    expect(entryParas({ clock: "x", kind: "handover", title: "Night shift meeting", lines: [], continuing: [] }).map((p) => p.text)).toEqual(["Night shift meeting", "No attendance entered"]);
+    // The line that finished a whole work order: its own (green) style.
+    expect(entryParas({ clock: "x", kind: "work", lines: ["a", "b"], closed: ["b"], continuing: [] }).map((p) => p.style)).toEqual(["line", "done"]);
   });
 
   it("PDF: each shift on its own pages, the letterhead on them, no em dash", async () => {
@@ -138,6 +142,8 @@ describe("the files", () => {
     const { text } = await extractText(bytes, { mergePages: false });
     expect(text[0]).toContain("7724 E. Panama Lane");
     expect(text[0]).toContain("Day shift · Thu, Oct 29, 2026");
+    // No export date on it, no "Nothing logged".
+    expect(text.join("\n")).not.toMatch(/Exported|Nothing logged/);
     // The meeting as a table: resource, supervisor, employees on site.
     expect(text[0]).toMatch(/RESOURCE\s+SUPERVISOR\s+EMPLOYEES ON SITE/);
     expect(text[0]).toMatch(/Schultz\s+Mike Leonard\s+12/);

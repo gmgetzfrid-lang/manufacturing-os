@@ -7,7 +7,7 @@
 // anything made up.
 
 import {
-  hourSlots, hourlyRows, breaksOn, breakLabel, SLOT_LABEL, type SlotKind,
+  hourSlots, hourlyRows, breaksOn, breakLabel, workOrderClosers, SLOT_LABEL, type SlotKind,
 } from "@/lib/shiftHourly";
 import { meetingLeadMin, nextShift, shiftWindow, shiftWindowsBetween, workShiftOf, type ShiftTimes, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
 import { meetingLines, meetingParts, meetingRows, meetingTitle, meetingRecord, type MeetingParts } from "@/lib/shiftMeeting";
@@ -26,6 +26,8 @@ export interface LogEntry {
   lines: string[];
   /** What moved its % that hour (in the progress color). */
   continuing: string[];
+  /** Its lines that finished a whole work order (in green). */
+  closed?: string[];
   /** A meeting with nothing entered for this shift: its crews carried
    *  from the last same shift (not counted as something in the log). */
   carried?: boolean;
@@ -83,6 +85,8 @@ export function shiftLog(o: {
   shift: ShiftWindow; tz: string; times: ShiftTimes;
   record?: ShiftRecord; next?: ShiftRecord; rows: TimeLogRow[]; steps: LogStep[]; log: LogProgress[]; now: number;
   carried?: { start?: boolean; end?: boolean };
+  /** The entries that finish a whole work order (lib/shiftHourly workOrderClosers). */
+  closes?: (r: TimeLogRow) => boolean;
 }): ShiftLog {
   const { shift, tz } = o;
   const upTo = Math.min(o.now, shift.end);
@@ -92,7 +96,7 @@ export function shiftLog(o: {
   // The same hours, and the same lines, as the report shows.
   // The end meeting shows before its time only for what was entered for it.
   const mr = meetingRows(o.record, o.carried?.end ? { ...(o.next ?? {}), crews: {} } : o.next, shift.end);
-  const entries = hourlyRows(o.record?.hourly, slots, upTo, rows, tz, mr).map(({ slot, lines, progress }): LogEntry => {
+  const entries = hourlyRows(o.record?.hourly, slots, upTo, rows, tz, { ...mr, closes: o.closes }).map(({ slot, lines, progress, closed }): LogEntry => {
     const clock = clockAt(slot.start, tz);
     // The meetings: who attended, head counts, the safety topic, as entered.
     // Carried crews alone aren't something entered on the shift.
@@ -103,7 +107,7 @@ export function shiftLog(o: {
     if (slot.kind === "meeting") return { clock, kind: "meeting", title: meetingTitle(shift.kind), ...meet(o.record, shift.start, o.carried?.start) };
     if (slot.kind === "handover") return { clock, kind: "handover", title: meetingTitle(other), ...meet(o.next, shift.end, o.carried?.end) };
     if (slot.kind === "break") return { clock, kind: "break", title: breakLabel(slot), lines: [], continuing: [] };
-    return { clock, kind: slot.kind, ...(slot.kind === "permit" ? { title: SLOT_LABEL.permit } : {}), lines, continuing: progress.map(noEmDash) };
+    return { clock, kind: slot.kind, ...(slot.kind === "permit" ? { title: SLOT_LABEL.permit } : {}), lines, continuing: progress.map(noEmDash), ...(closed.length ? { closed } : {}) };
   });
   return {
     key: `${shift.dayKey}:${shift.kind}`, kind: shift.kind,
@@ -128,6 +132,7 @@ export function jobLogs(o: {
 }): ShiftLog[] {
   const { tz, times } = o;
   const steps = logSteps(o.milestones, tz, times);
+  const closes = workOrderClosers(o.milestones);
   // From the first thing that happened (the progress log's own lines for
   // a step being made aren't).
   const starts = [
@@ -142,7 +147,7 @@ export function jobLogs(o: {
       const nx = nextShift(shift, tz, times);
       // Each meeting's crews: its own, or carried from the last same shift.
       const a = meetingRecord(o.records, `${shift.dayKey}:${shift.kind}`), b = meetingRecord(o.records, `${nx.dayKey}:${nx.kind}`);
-      return shiftLog({ shift, tz, times, record: a.record, next: b.record, carried: { start: !!a.from, end: !!b.from }, rows: o.timeLog, steps, log: o.log, now: o.now });
+      return shiftLog({ shift, tz, times, record: a.record, next: b.record, carried: { start: !!a.from, end: !!b.from }, rows: o.timeLog, steps, log: o.log, now: o.now, closes });
     })
     .filter(logHasWork);
 }

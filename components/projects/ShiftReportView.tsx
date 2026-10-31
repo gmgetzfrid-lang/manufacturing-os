@@ -81,7 +81,7 @@ import { meetingLines, meetingParts, meetingRows, meetingTitle, meetingRecord, m
 import { HourlyLogExport } from "@/components/projects/HourlyLogExport";
 import { exportedLabel, logSteps, shiftLog } from "@/lib/hourlyLog";
 import { pngInBrowser, saveHourlyLog, type LogFormat } from "@/lib/hourlyLogFiles";
-import { slotClocks, hourlyRows, hourSlots, breaksOn, breakLabel, plainLine } from "@/lib/shiftHourly";
+import { slotClocks, hourlyRows, hourSlots, breaksOn, breakLabel, plainLine, workOrderClosers } from "@/lib/shiftHourly";
 import { saidWithLatest } from "@/lib/stepComment";
 
 /** The crew the report is narrowed to (tables then drop their Who column). */
@@ -447,6 +447,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   // Work added from an hour of the notes: which work order, then the form at that hour.
   const [addAt, setAddAt] = useState<number | null>(null);
   const tableOrder = orderLocal?.key === thisKey ? orderLocal.order : records.get(thisKey)?.order;
+  // The entries that finish a whole work order: green in the hours.
+  const closers = useMemo(() => workOrderClosers(live), [live]);
   const sheet = useMemo<SheetCtx>(() => {
     const recThis = records.get(thisKey), recNext = records.get(nextKey);
     const labelOf = (key: string) => { const [d, k] = key.split(":"); const w = shiftWindow(d, k as "day" | "night", tz, times); return `${ctx.D(w.start)} ${k}`; };
@@ -484,6 +486,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       hourly: orgId ? {
         notes: recThis?.hourly, update: updateHourly, entries, slots, upTo: Math.min(now, shift.end),
         onAddWork: canEdit && onDiscovery && !locked ? setAddAt : undefined,
+        closes: closers,
         meet: {
           start: { title: meetingTitle(shift.kind), lines: meetingLines(mThis.record, shift.start), parts: meetingParts(mThis.record, shift.start), carried: carriedOf(mThis)?.label },
           end: { title: meetingTitle(report.next.kind), lines: meetingLines(mNext.record, shift.end), parts: meetingParts(mNext.record, shift.end), carried: carriedOf(mNext)?.label },
@@ -497,14 +500,14 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         void saveRec(thisKey, (r) => ({ ...r, order: { ...(r.order ?? {}), [table]: ids ?? undefined } }));
       },
     };
-  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, projectId, saveRec, recMsg, recErr, tableOrder, setOrderLocal, updateHourly, entries, shift, slots, now, onDiscovery, report.next.kind, locked]);
+  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, projectId, saveRec, recMsg, recErr, tableOrder, setOrderLocal, updateHourly, entries, shift, slots, now, onDiscovery, report.next.kind, locked, closers]);
   const shiftTitle = `${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`;
   // The hourly log of the shift on screen (any shift, backed up by date),
   // as a file on the letterhead.
   const exportHourly = async (format: LogFormat) => {
     const [rows, progressRows] = await Promise.all([shiftRows(), log ? Promise.resolve(log) : loadProgressLog(projectId)]);
     const a = meetingRecord(records, thisKey), b = meetingRecord(records, nextKey);
-    const one = shiftLog({ shift, tz, times, record: a.record, next: b.record, carried: { start: !!a.from, end: !!b.from }, rows, steps: logSteps(live, tz, times), log: progressRows ?? [], now: Date.now() });
+    const one = shiftLog({ shift, tz, times, record: a.record, next: b.record, carried: { start: !!a.from, end: !!b.from }, rows, steps: logSteps(live, tz, times), log: progressRows ?? [], now: Date.now(), closes: closers });
     const name = (projectName ?? "Schedule").trim() || "Schedule";
     await saveHourlyLog([one], format, { project: name, lh, exported: exportedLabel(Date.now(), tz), toPng: pngInBrowser, fileName: `${name} - hourly log ${shift.dayKey} ${shift.kind}` });
     return "Saved.";
@@ -688,18 +691,18 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           shiftNotes: sheet.notes.map((n) => ({ at: n.at, text: n.text, followUp: n.followUp, from: n.from })),
           hourly: sheet.hourly ? (() => {
             const h = sheet.hourly;
-            const hr = hourlyRows(h.notes, h.slots, h.upTo, h.entries, tz, h.meet);
+            const hr = hourlyRows(h.notes, h.slots, h.upTo, h.entries, tz, { ...h.meet, closes: h.closes });
             const cl = slotClocks(hr.map((r) => r.slot), tz);
             return hr.map((r, i) => {
               const m = r.slot.kind === "meeting" ? h.meet?.start : r.slot.kind === "handover" ? h.meet?.end : undefined;
               // A meeting in the hours: on site and the safety topic (its table is its own section).
               const brief = (p: MeetingParts) => [...(p.rows.some((x) => x.onSite != null) ? [`On site: ${p.rows.reduce((a, x) => a + (x.onSite ?? 0), 0)}`] : []), ...(p.safety ? [`Safety topic: ${p.safety}`] : [])];
-              return { clock: cl[i], kind: r.slot.kind, ...(m ? { title: m.title } : {}), text: m ? (m.parts ? brief(m.parts) : m.lines).join("\n") : r.slot.kind === "break" ? breakLabel(r.slot) : plainLine(r.text), progress: r.progress.map(plainLine) };
+              return { clock: cl[i], kind: r.slot.kind, ...(m ? { title: m.title } : {}), text: m ? (m.parts ? brief(m.parts) : m.lines).join("\n") : r.slot.kind === "break" ? breakLabel(r.slot) : plainLine(r.text), progress: r.progress.map(plainLine), closed: r.closed.map(plainLine) };
             });
           })() : [],
           meetings: sheet.hourly ? (() => {
             const h = sheet.hourly;
-            const hr = hourlyRows(h.notes, h.slots, h.upTo, h.entries, tz, h.meet);
+            const hr = hourlyRows(h.notes, h.slots, h.upTo, h.entries, tz, { ...h.meet, closes: h.closes });
             const cl = slotClocks(hr.map((r) => r.slot), tz);
             return hr.flatMap((r, i) => {
               const m = r.slot.kind === "meeting" ? h.meet?.start : r.slot.kind === "handover" ? h.meet?.end : undefined;
@@ -1793,7 +1796,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
 /** Shift notes, hour by hour: the meeting that started the shift (who
  *  attended), the first hour (permitting), then each hour so far. */
 function hourlySection(sh: SheetCtx, h: HourlyCtx, meetings?: { start?: MeetingCtx; end?: MeetingCtx }, exportButton?: React.ReactNode): Sec {
-  const rows = hourlyRows(h.notes, h.slots, h.upTo, h.entries, sh.tz, h.meet);
+  const rows = hourlyRows(h.notes, h.slots, h.upTo, h.entries, sh.tz, { ...h.meet, closes: h.closes });
   const clocks = slotClocks(rows.map((r) => r.slot), sh.tz);
   const said = rows.filter((r) => r.slot.kind !== "meeting" && r.slot.kind !== "handover" && r.text).length;
   const meetingOf = (k: string) => (k === "meeting" ? h.meet?.start : k === "handover" ? h.meet?.end : undefined);

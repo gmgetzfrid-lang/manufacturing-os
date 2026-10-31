@@ -42,7 +42,7 @@ const stepsOf = (list: Milestone[], now: number) => (id: string) => list.filter(
 const sections = turnoverUpdate(report, f, { pctOf: (id) => progress.get(id)?.percent, finishOf: (id) => spans.get(id)?.finish, planOf: () => 50, stepsOf: stepsOf(ms, shift.end) });
 
 describe("shift notes by the hour", () => {
-  it("the meeting says who attended; the first hour is permitting; an hour with nothing logged says so", () => {
+  it("the meeting says who attended; the first hour is permitting; an hour with nothing logged is left blank", () => {
     const secs = turnoverUpdate(report, f, {
       pctOf: (id) => progress.get(id)?.percent, finishOf: (id) => spans.get(id)?.finish, planOf: () => 50, stepsOf: stepsOf(ms, shift.end),
       hourly: [
@@ -56,7 +56,8 @@ describe("shift notes by the hour", () => {
     const notes = text.slice(text.indexOf("SHIFT NOTES"));
     expect(notes).toMatch(/5:30 AM - Day shift meeting; Schultz, 12 on site: Mike; Safety topic: Hand placement/);
     expect(notes).toMatch(/6:00 - Start of shift - permitting; Permits signed for E-606\./);
-    expect(notes).toMatch(/7:00 - -/);
+    // An hour with nothing in it: blank, not a dash or "Nothing logged".
+    expect(notes).not.toMatch(/7:00 - -|Nothing logged/);
     expect(notes).toMatch(/8:00 - Pulling the E-606 bundle\./);
   });
 });
