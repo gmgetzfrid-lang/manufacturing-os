@@ -45,9 +45,8 @@ describe("shift notes by the hour", () => {
   it("the meeting says who attended; the first hour is permitting; an hour with nothing logged says so", () => {
     const secs = turnoverUpdate(report, f, {
       pctOf: (id) => progress.get(id)?.percent, finishOf: (id) => spans.get(id)?.finish, planOf: () => 50, stepsOf: stepsOf(ms, shift.end),
-      crewsThis: { "No crew named": { supervisor: "Mike", headcount: 12 } },
       hourly: [
-        { clock: "5:30 AM", kind: "meeting", text: "" },
+        { clock: "5:30 AM", kind: "meeting", title: "Day shift meeting", text: "Schultz, 12 on site: Mike\nSafety topic: Hand placement" },
         { clock: "6:00", kind: "permit", text: "Permits signed for E-606." },
         { clock: "7:00", kind: "work", text: "" },
         { clock: "8:00", kind: "work", text: "Pulling the E-606 bundle." },
@@ -55,7 +54,7 @@ describe("shift notes by the hour", () => {
     });
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: secs });
     const notes = text.slice(text.indexOf("SHIFT NOTES"));
-    expect(notes).toMatch(/5:30 AM - Shift meeting - No crew named: Mike · 12 on site/);
+    expect(notes).toMatch(/5:30 AM - Day shift meeting; Schultz, 12 on site: Mike; Safety topic: Hand placement/);
     expect(notes).toMatch(/6:00 - Start of shift - permitting; Permits signed for E-606\./);
     expect(notes).toMatch(/7:00 - -/);
     expect(notes).toMatch(/8:00 - Pulling the E-606 bundle\./);

@@ -99,9 +99,10 @@ describe("the turnover email: additions in the sections it already has", () => {
     expect(text()).not.toMatch(/07:40 Set Blinds/);
     expect(text({ showTimes: true })).toMatch(/Last done: 07:40 Set Blinds; In progress: 16:36 Open Internal Manways \(45%\) \("26 of 57 trays removed"\) · Schultz · Behind plan/);
   });
-  it("crews: who attended the meeting, supervisor and head count - the first line of the notes by the hour", () => {
-    const s = text({ crewsThis: { Schultz: { supervisor: "B. Smith", headcount: 14 } }, hourly: [{ clock: "5:30 AM", kind: "meeting", text: "" }] });
-    expect(s).toMatch(/5:30 AM - Shift meeting - Schultz: B\. Smith · 14 on site/);
+  it("the meeting: who attended and head count - the first line of the notes by the hour", () => {
+    const s = text({ hourly: [{ clock: "5:30 AM", kind: "meeting", title: "Day shift meeting", text: "Schultz, 14 on site: B. Smith" }, { clock: "5:30 PM", kind: "handover", title: "Night shift meeting", text: "" }] });
+    expect(s).toMatch(/5:30 AM - Day shift meeting; Schultz, 14 on site: B\. Smith/);
+    expect(s).toMatch(/5:30 PM - Night shift meeting; No attendance entered/);
     expect(s).not.toMatch(/^CREWS/m);
     expect(s).not.toMatch(/of \d+ done/);
   });

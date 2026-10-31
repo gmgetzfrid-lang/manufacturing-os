@@ -9,7 +9,7 @@
 // nothing is blocked.
 
 import { capacityOf, askedResult } from "@/lib/shiftHandover";
-import { turnoverPlan, nextOf, askedLine, crewsOf, vsPlan, doneByTask, shareOf, pathNote, competition, type TableOrder } from "@/lib/turnoverPlan";
+import { turnoverPlan, nextOf, askedLine, vsPlan, doneByTask, shareOf, pathNote, competition, type TableOrder } from "@/lib/turnoverPlan";
 import { behindWhyBlocks, type BehindWhy } from "@/lib/behindWhy";
 import { discoveryOf, discoverySummary, discoveryStepLine, impactLine, ADDED, kindOf as addedKind, addedTitle, type Discovery } from "@/lib/discovery";
 import { type PullCrew, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
@@ -84,7 +84,8 @@ export interface UpdateLookups {
   /** The shift by the hour (lib/shiftHourly): its meeting, the first hour
    *  (permitting), then each hour so far. */
   /** `progress`: the steps whose % moved that hour ("50% to 75%"). */
-  hourly?: Array<{ clock: string; kind?: "meeting" | "permit" | "work" | "break" | "handover"; text: string; progress?: string[] }>;
+  /** The hours; a meeting's `text` is what it says, one item a line, under its `title`. */
+  hourly?: Array<{ clock: string; kind?: "meeting" | "permit" | "work" | "break" | "handover"; title?: string; text: string; progress?: string[] }>;
 }
 
 /** "forecast finish Nov 01 02:18 — 8.3 h late": where the work as it
@@ -95,8 +96,9 @@ export function forecastText(fc: { finish: number; slipH: number }, f: { D: (ms:
 }
 
 /** "Mike Leonard · 14 on site" — what was entered, "—" when nothing was. */
-export function crewLine(c?: { supervisor?: string; headcount?: number | null }): string {
-  return [c?.supervisor?.trim() || null, c?.headcount != null ? `${c.headcount} on site` : null].filter(Boolean).join(" · ") || "-";
+export function crewLine(c?: { names?: string[]; supervisor?: string; headcount?: number | null }): string {
+  const names = c?.names?.length ? c.names.join(", ") : c?.supervisor?.trim() || null;
+  return [names, c?.headcount != null ? `${c.headcount} on site` : null].filter(Boolean).join(" · ") || "-";
 }
 
 /** The next shift's steps as the safety moment ranks them: their hours
@@ -346,17 +348,6 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     });
   }
 
-  // ── Crews: who attended the meeting that started the shift — the first
-  // line of its notes, hour by hour (below).
-  const cr = crewsOf(report, plan, f.hrs);
-  // Each crew: its supervisor at the meeting and head count on site (the
-  // attendance) — and any company added at the meeting that has no steps.
-  const crewRows = (list: Array<{ crew: string; note?: string }>, counts?: Record<string, { supervisor?: string; headcount?: number | null }>) => {
-    const named = new Set(list.map((x) => x.crew));
-    const extra = Object.keys(counts ?? {}).filter((k) => !named.has(k) && (counts![k].supervisor?.trim() || counts![k].headcount != null));
-    const rows = [...list.map((x) => ({ title: x.crew, value: crewLine(counts?.[x.crew]), note: x.note })), ...extra.map((k) => ({ title: k, value: crewLine(counts![k]) }))];
-    return rows.length ? rows : [{ title: "No work planned", value: "" }];
-  };
   // ── Safety topics: the job as a whole, then the next shift's two riskiest
   // kinds of work — the things to say out loud. Left out unless ticked.
   const hj = hazardJobsOf(nextList, next, (r) => (r.carryOver ? `due ${f.DTs(r.dueAt)}` : `${f.T(Math.max(r.start, next.start))}–${r.finish <= next.end ? f.T(r.finish) : "…"}`), (id) => note(id));
@@ -383,15 +374,13 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   // hour (permitting), then each hour.
   const hl = look.hourly ?? [];
   if (hl.length) {
-    const attended = crewRows(cr.worked, look.crewsThis).filter((x) => x.title !== "No work planned").map((x) => `${x.title}: ${x.value}`).join("; ");
     out.push({
       id: "hourly", title: `Shift notes - ${shiftName(shift)} ${f.D(shift.start)}`, sub: "hour by hour",
       blocks: [{ k: "table", head: ["Time", "What happened"], align: ["left", "left"], textLabels: ["", ""], nowrap: [0], rows: hl.map((x) => {
         // Each item on its own line; then what crews kept working on.
         const items = [
-          ...(x.kind === "meeting" ? [`Shift meeting - ${[attended, x.text].filter(Boolean).join(". ") || "-"}`]
+          ...(x.kind === "meeting" || x.kind === "handover" ? [x.title || "Shift meeting", ...(x.text.split("\n").filter(Boolean).length ? x.text.split("\n").filter(Boolean) : ["No attendance entered"])]
             : x.kind === "permit" ? [`Start of shift - permitting`, ...x.text.split("\n").filter(Boolean)]
-              : x.kind === "handover" ? [`Turnover meeting`, ...x.text.split("\n").filter(Boolean)]
               : x.text.split("\n").filter(Boolean)),
           ...(x.progress ?? []),
         ];

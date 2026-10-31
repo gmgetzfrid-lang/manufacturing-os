@@ -13,9 +13,12 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import type { TableOrder } from "@/lib/turnoverPlan";
 import type { HourlyNotes } from "@/lib/shiftHourly";
+import type { ShiftMeeting } from "@/lib/shiftMeeting";
 
 export interface CrewCount {
-  /** The crew's supervisor at the turnover meeting — doubles as attendance. */
+  /** Who attended the meeting from the crew (lib/shiftMeeting). */
+  names?: string[];
+  /** Earlier: the crew's supervisor at the meeting (one name). */
   supervisor?: string;
   /** On site this shift. */
   headcount?: number | null;
@@ -44,8 +47,11 @@ export interface Lesson { id: string; kind: "keep" | "improve"; text: string; by
 export const CLOSEOUT_KEY = "closeout";
 
 export interface ShiftRecord {
-  /** By crew name, as on the schedule. */
+  /** The meeting that starts the shift: who attended from each crew and its
+   *  head count on site, by crew name as on the schedule. */
   crews?: Record<string, CrewCount>;
+  /** That meeting's safety topic and notes, or that it wasn't held. */
+  meeting?: ShiftMeeting;
   incidents?: { none?: { at: number; by?: string | null } | null; items?: Incident[] };
   notes?: ShiftNote[];
   /** The report's tables as dragged into order at the meeting. */
@@ -73,7 +79,7 @@ export function lastSameKind(records: Map<string, ShiftRecord>, shiftKey: string
   const keys = [...records.keys()].filter((k) => k.split(":")[1] === kind && compareShiftKeys(k, shiftKey) < 0).sort(compareShiftKeys).reverse();
   for (const k of keys) {
     const crews = records.get(k)?.crews;
-    if (crews && Object.values(crews).some((c) => c.supervisor?.trim() || c.headcount != null)) return { key: k, crews };
+    if (crews && Object.values(crews).some((c) => c.names?.length || c.supervisor?.trim() || c.headcount != null)) return { key: k, crews };
   }
   return null;
 }
@@ -99,9 +105,25 @@ export async function loadShiftRecords(projectId: string): Promise<Map<string, S
   return out;
 }
 
+// One save at a time for each shift: each reads the record fresh, so two
+// quick changes (two names added) both land.
+const saving = new Map<string, Promise<unknown>>();
+
 /** Change one shift's record: read it fresh, apply the change, write the
  *  record back (the turnover's other columns are left alone). */
-export async function saveShiftRecord(input: {
+export function saveShiftRecord(input: {
+  orgId: string; projectId: string; shiftKey: string; userId: string;
+  change: (r: ShiftRecord) => ShiftRecord;
+}): Promise<ShiftRecord> {
+  const k = `${input.projectId}|${input.shiftKey}`;
+  const run = (saving.get(k) ?? Promise.resolve()).catch(() => undefined).then(() => saveOnce(input));
+  saving.set(k, run);
+  const done = () => { if (saving.get(k) === run) saving.delete(k); };
+  run.then(done, done);
+  return run;
+}
+
+async function saveOnce(input: {
   orgId: string; projectId: string; shiftKey: string; userId: string;
   change: (r: ShiftRecord) => ShiftRecord;
 }): Promise<ShiftRecord> {

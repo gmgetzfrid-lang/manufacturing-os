@@ -1,13 +1,13 @@
 "use client";
 
-// The turnover's own record, on the report: each crew's supervisor at the
-// meeting and head count, the shift's safety incidents, and its notes &
-// actions (lib/shiftRecord). Inputs on screen, plain text on paper.
+// The turnover's own record, on the report: the shift's safety incidents,
+// and its notes & actions (lib/shiftRecord). Inputs on screen, plain text
+// on paper. The meetings' attendance is in the notes, hour by hour
+// (components/projects/ShiftHourly).
 
-import React, { useRef, useState } from "react";
+import React, { useState } from "react";
 import { FileSpreadsheet } from "lucide-react";
-import { INCIDENT_KINDS, type CrewCount, type Incident, type IncidentKind, type ShiftNote } from "@/lib/shiftRecord";
-import { crewLine } from "@/lib/managementUpdate";
+import { INCIDENT_KINDS, type Incident, type IncidentKind, type ShiftNote } from "@/lib/shiftRecord";
 import { parseClock, timeInShift, timeOnDay, shiftAt, DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
 import { dayKey } from "@/lib/scheduleTz";
 import { TimeChip } from "@/components/projects/DateTimePicker";
@@ -61,45 +61,6 @@ export const typeClock = (v: string) => {
 const nowClock = (tz: string) => new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz });
 
 const inputCls = "h-7 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent-ring)]";
-
-/** A crew's supervisor and head count — saved when you leave the box. The
- *  last same shift's values show greyed until typed over. */
-export function CrewCountEditor({ crew, value, hint, edit, print, onSave }: {
-  crew: string; value?: CrewCount; hint?: CrewCount; edit: boolean; print: boolean;
-  /** Only the box that changed — so a save can't undo the other one. */
-  onSave: (v: Partial<CrewCount>) => void;
-}) {
-  // What you typed stays in the box (the saved record comes back a moment later).
-  const [sup, setSup] = useState<string | null>(null);
-  const [hc, setHc] = useState<string | null>(null);
-  const sent = useRef<{ s?: string; h?: number | null }>({});
-  if (print || !edit) return <span className="font-mono text-[12px] text-[var(--color-text-muted)] whitespace-nowrap">{crewLine(value)}</span>;
-  const supV = sup ?? value?.supervisor ?? "";
-  const hcV = hc ?? (value?.headcount != null ? String(value.headcount) : "");
-  const commitSup = () => {
-    if (sup == null) return;
-    const s = sup.trim();
-    if (s === (sent.current.s ?? value?.supervisor ?? "")) return;
-    sent.current.s = s;
-    onSave({ supervisor: s || undefined });
-  };
-  const commitHc = () => {
-    if (hc == null) return;
-    const n = hc.trim() === "" ? null : Math.max(0, Math.round(Number(hc)));
-    if (n === (sent.current.h !== undefined ? sent.current.h : value?.headcount ?? null)) return;
-    sent.current.h = n;
-    onSave({ headcount: n });
-  };
-  return (
-    <span className="inline-flex items-center gap-1 shrink-0">
-      <input value={supV} onChange={(e) => setSup(e.target.value)} onBlur={commitSup} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-        placeholder={hint?.supervisor || "Supervisor"} aria-label={`${crew} supervisor at the meeting`} className={`${inputCls} w-32 sm:w-36`} />
-      <input value={hcV} onChange={(e) => setHc(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))} onBlur={commitHc} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-        inputMode="numeric" placeholder={hint?.headcount != null ? String(hint.headcount) : "#"} aria-label={`${crew} head count on site`} className={`${inputCls} w-11 text-right font-mono`} />
-      <span className="text-[11px] text-[var(--color-text-muted)]">on site</span>
-    </span>
-  );
-}
 
 /** "Safety incidents this shift: None / Report one" — in place of the old
  *  tick-box, with each one reported listed under it. */

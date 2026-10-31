@@ -1,6 +1,7 @@
-// shiftHourly — the shift's notes by the hour, for the report, email and
+// shiftHourly - the shift's notes by the hour, for the report, email and
 // exported log: the meeting that starts the shift (who attended), the first
-// hour (start of shift, permitting), then every hour to the end. Each hour
+// hour (start of shift, permitting), every hour, then the meeting that
+// starts the next shift (lib/shiftMeeting). Each hour
 // says its own entries (lib/timeLog: starts, progress, holds, done, each
 // comment with the entry it was typed with, the shift's notes and
 // incidents), one line each, in fixed words: nothing made up, nothing
@@ -42,12 +43,15 @@ export interface HourlyNotes {
 }
 
 /** The meeting that starts the shift, permitting, the hours, a break, and
- *  the turnover meeting at its end (with the next shift). */
+ *  the meeting at its end (the one that starts the next shift). */
 export type SlotKind = "meeting" | "permit" | "work" | "break" | "handover";
 export interface HourSlot {
   key: string; kind: SlotKind; start: number; end: number;
   /** A break's name ("Lunch") and how long it is. */
   label?: string; minutes?: number;
+  /** The work from the end meeting to the end of the shift (5:30 to 6:00
+   *  PM): its own row, shown only when something was logged then. */
+  tail?: boolean;
 }
 
 /** A break on the shift, as set in the shift times: when, and how long. */
@@ -57,15 +61,19 @@ const HOUR = 3_600_000;
 
 /** The shift by the hour, meeting to meeting: its meeting (the minutes
  *  before it starts, from the shift times), the first hour (start of
- *  shift, permitting), each hour, then the turnover meeting with the next
- *  shift (5:30 AM to 6:00 PM on a 6-to-6 day). Its breaks sit at their
- *  times. */
+ *  shift, permitting), each hour, then the meeting that starts the next
+ *  shift (5:30 AM to 5:30 PM on a 6-to-6 day). The meetings hold no work:
+ *  what's logged from 5:30 PM on is its own row after the meeting. Its
+ *  breaks sit at their times. */
 export function hourSlots(shift: { start: number; end: number }, meetingBeforeMin: number, breaks: HourBreak[] = []): HourSlot[] {
   const lead = Math.max(0, meetingBeforeMin) * 60_000;
   const until = Math.max(shift.start + HOUR, shift.end - lead);
   const out: HourSlot[] = [{ key: "meeting", kind: "meeting", start: shift.start - lead, end: shift.start }];
   for (let t = shift.start; t < until; t += HOUR) out.push({ key: String(t), kind: t === shift.start ? "permit" : "work", start: t, end: Math.min(t + HOUR, until) });
-  if (until < shift.end) out.push({ key: "meeting:end", kind: "handover", start: until, end: shift.end });
+  if (until < shift.end) {
+    out.push({ key: "meeting:end", kind: "handover", start: until, end: shift.end });
+    out.push({ key: String(until), kind: "work", start: until, end: shift.end, tail: true });
+  }
   for (const b of breaks) {
     if (!(b.at >= shift.start && b.at < until)) continue;
     // After the hour it falls in: "12:00 PM" the hour's work, then "Lunch".
@@ -77,11 +85,11 @@ export function hourSlots(shift: { start: number; end: number }, meetingBeforeMi
   return out;
 }
 
-/** The hour a time is in: before the shift, its meeting; from the
- *  turnover meeting on, that meeting; past the last hour, the last hour.
- *  Breaks hold no entries: what's logged then is its hour's. */
+/** The hour a time is in: before the shift, its meeting; past the last
+ *  hour, the last hour. Breaks and the end meeting hold no entries: what's
+ *  logged then is its hour's. */
 export function slotOf(at: number, slots: HourSlot[]): HourSlot {
-  const hours = slots.filter((x) => x.kind === "work" || x.kind === "permit" || x.kind === "handover");
+  const hours = slots.filter((x) => x.kind === "work" || x.kind === "permit");
   if (!hours.length || at < hours[0].start) return slots[0];
   return hours.find((x) => at >= x.start && at < x.end) ?? hours[hours.length - 1];
 }
@@ -232,37 +240,46 @@ export function hourItems(rows: TimeLogRow[], hourStart: number, tz: string): st
 
 /** The hours as the report, email and exported log say them, up to `upTo`
  *  (the meeting always): an hour typed over, as typed; otherwise its
- *  entries, one line each (none while they're still being read). */
-export function hourlyRows(n: HourlyNotes | null | undefined, slots: HourSlot[], upTo: number, entries: TimeLogRow[] | null | undefined, tz: string): Array<{ slot: HourSlot; lines: string[]; progress: string[]; typed: boolean; text: string }> {
+ *  entries, one line each (none while they're still being read). The
+ *  meetings say nothing here: their record does (lib/shiftMeeting).
+ *  `off`: meetings not held; `show`: rows shown before their time. */
+export function hourlyRows(n: HourlyNotes | null | undefined, slots: HourSlot[], upTo: number, entries: TimeLogRow[] | null | undefined, tz: string,
+  opts: { off?: string[]; show?: string[] } = {}): Array<{ slot: HourSlot; lines: string[]; progress: string[]; typed: boolean; text: string }> {
   const typed = typedBySlot(n, slots);
   const said = rowsBySlot(entries ?? [], slots);
   // A row taken off the log (a meeting that wasn't held) stays off.
-  const skip = new Set(n?.skip ?? []);
-  return slots.filter((x) => !skip.has(x.key) && (x.kind === "meeting" || x.start <= upTo)).map((slot) => {
-    const own = (typed.get(slot.key) ?? []).flatMap((l) => l.text.split("\n")).map((x) => noEmDash(x).trim()).filter(Boolean);
+  const skip = new Set([...(n?.skip ?? []), ...(opts.off ?? [])]);
+  const show = new Set(opts.show ?? []);
+  return slots.filter((x) => !skip.has(x.key) && (x.kind === "meeting" || x.start <= upTo || show.has(x.key))).map((slot) => {
+    const meeting = slot.kind === "meeting" || slot.kind === "handover";
+    const own = meeting ? [] : (typed.get(slot.key) ?? []).flatMap((l) => l.text.split("\n")).map((x) => noEmDash(x).trim()).filter(Boolean);
     // An hour typed over is all theirs; otherwise its entries say it.
-    const parts = own.length || slot.kind === "meeting" || slot.kind === "break" ? { lines: own, progress: [] } : hourParts(said.get(slot.key) ?? [], slot.start, tz);
+    const parts = own.length || meeting || slot.kind === "break" ? { lines: own, progress: [] } : hourParts(said.get(slot.key) ?? [], slot.start, tz);
     return { slot, lines: parts.lines, progress: parts.progress, typed: own.length > 0, text: parts.lines.join("\n") };
-  });
+  }).filter((r) => !r.slot.tail || r.lines.length > 0 || r.progress.length > 0);
 }
 
 /** What each kind of hour is called. */
-export const SLOT_LABEL: Record<SlotKind, string> = { meeting: "Shift meeting", permit: "Start of shift - permitting", work: "", break: "Break", handover: "Turnover meeting" };
+export const SLOT_LABEL: Record<SlotKind, string> = { meeting: "Shift meeting", permit: "Start of shift - permitting", work: "", break: "Break", handover: "Shift meeting" };
 
 /** "Lunch, 30 min" - a break as its row says it. */
 export const breakLabel = (x: HourSlot) => `${x.label || "Break"}${x.minutes ? `, ${x.minutes} min` : ""}`;
 
 /** "8:00 AM" on the first line and wherever AM/PM changes, "8:30" between
- *  — the way a shift writes its notes. */
-export function hourlyClocks(ats: number[], tz: string): string[] {
+ *  - the way a shift writes its notes. `full`: rows that always say AM or
+ *  PM (the meetings, and the row after one). */
+export function hourlyClocks(ats: number[], tz: string, full: boolean[] = []): string[] {
   let prev = "";
-  return ats.map((at) => {
+  return ats.map((at, i) => {
     const [t, ap] = clock(at, tz).split(" ");
-    const out = ap !== prev ? `${t} ${ap}` : t;
+    const out = ap !== prev || full[i] || full[i - 1] ? `${t} ${ap}` : t;
     prev = ap;
     return out;
   });
 }
+/** The clocks of the rows of the notes, the meetings always with AM or PM. */
+export const slotClocks = (slots: HourSlot[], tz: string) =>
+  hourlyClocks(slots.map((x) => x.start), tz, slots.map((x) => x.kind === "meeting" || x.kind === "handover"));
 
 /** "E-20 - Transmix Charge Exchanger" → "E-20". */
 export const shortTask = (t: string) => t.replace(/\s+[-–—]\s+.*$/, "").trim();

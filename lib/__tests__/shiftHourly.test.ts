@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  hourlyClocks, hourSlots, slotOf, rowsBySlot, typedLines, hourlyRows, breakLabel, entryLine, hourItems, hourParts, plainLine, boldRuns, type HourlyNotes,
+  hourlyClocks, slotClocks, hourSlots, slotOf, rowsBySlot, typedLines, hourlyRows, breakLabel, entryLine, hourItems, hourParts, plainLine, boldRuns, type HourlyNotes,
 } from "@/lib/shiftHourly";
 import type { TimeLogRow } from "@/lib/timeLog";
 
@@ -25,21 +25,24 @@ const slots = hourSlots(shift, 30);
 const key = (hhmm: string) => String(at(hhmm));
 
 describe("the shift by the hour", () => {
-  it("the meeting, the first hour (permitting), each hour, then the turnover meeting", () => {
-    expect(slots).toHaveLength(14);
+  it("the meeting, the first hour (permitting), each hour, then the meeting that starts the next shift", () => {
+    expect(slots).toHaveLength(15);
     expect(slots[0]).toEqual({ key: "meeting", kind: "meeting", start: at("05:30"), end: at("06:00") });
     expect(slots[1]).toEqual({ key: key("06:00"), kind: "permit", start: at("06:00"), end: at("07:00") });
     expect(slots[2]).toMatchObject({ kind: "work", start: at("07:00"), end: at("08:00") });
-    // 5:00 to 5:30 PM is the last hour; then the turnover meeting with the next shift.
+    // 5:00 to 5:30 PM is the last hour; then the meeting that starts the
+    // next shift; work logged from 5:30 on is its own row after it.
     expect(slots[12]).toMatchObject({ kind: "work", start: at("17:00"), end: at("17:30") });
     expect(slots[13]).toEqual({ key: "meeting:end", kind: "handover", start: at("17:30"), end: at("18:00") });
+    expect(slots[14]).toEqual({ key: key("17:30"), kind: "work", start: at("17:30"), end: at("18:00"), tail: true });
     expect(hourlyClocks(slots.map((x) => x.start), tz).slice(0, 4)).toEqual(["5:30 AM", "6:00", "7:00", "8:00"]);
   });
   it("a time falls in its hour", () => {
     expect(slotOf(at("06:20"), slots).kind).toBe("permit");
     expect(slotOf(at("05:45"), slots).kind).toBe("meeting");
     expect(slotOf(at("14:30"), slots).key).toBe(key("14:00"));
-    expect(slotOf(at("17:40"), slots).key).toBe("meeting:end");
+    expect(slotOf(at("17:40"), slots).key).toBe(key("17:30"));
+    expect(slotOf(at("17:30"), slots).key).toBe(key("17:30"));
     expect(slotOf(at("17:20"), slots).key).toBe(key("17:00"));
     expect([...rowsBySlot(rows, slots).keys()]).toEqual([key("08:00"), key("14:00"), key("16:00")]);
   });
@@ -104,6 +107,8 @@ describe("what stands, and what the report shows", () => {
     const end = hourlyRows({ v: 2, lines: [], skip: ["meeting:end"] }, slots, at("18:00"), rows, tz);
     expect(end.some((x) => x.slot.key === "meeting:end")).toBe(false);
     expect(hourlyRows({ v: 2, lines: [] }, slots, at("18:00"), rows, tz).at(-1)?.slot.kind).toBe("handover");
+    // Off on the meeting's own record: gone too.
+    expect(hourlyRows({ v: 2, lines: [] }, slots, at("18:00"), rows, tz, { off: ["meeting"] })[0].slot.kind).toBe("permit");
     // Still being read: nothing yet, not a guess.
     expect(hourlyRows(undefined, slots, at("09:00"), null, tz)[3].lines).toEqual([]);
   });
@@ -132,5 +137,33 @@ describe("breaks, and what crews kept working on", () => {
     expect(hourParts([hr[2], { ...hr[2], at: at("10:46"), comment: "" }], at("10:00"), tz).progress).toEqual(["10:45 AM **WO 301235 V-7**, Schultz: Install Internal Manways 0% to 22%. 13 of 57 trays installed."]);
     // The app's own "Discovery:" note on the step it follows: the discovery's line says it.
     expect(hourParts([row("10:00", { id: "i1", task: "V-7 - Tower", step: "Inspect", what: "Comment", pct: "", comment: "Discovery: flange swapped" })], at("10:00"), tz)).toEqual({ lines: [], progress: [] });
+  });
+});
+
+describe("the meetings hold no work", () => {
+  it("work logged during the end meeting: its own row after it, only when there is some", () => {
+    const late = [...rows, row("17:40", { id: "e9", task: "E-9 - Cooler", wo: "301600", step: "Box Up", what: "Done", pct: "100%" })];
+    const r = hourlyRows({ v: 2, lines: [] }, slots, at("18:00"), late, tz);
+    expect(r.slice(-2).map((x) => [x.slot.kind, x.slot.tail ?? false, x.lines])).toEqual([
+      ["handover", false, []],
+      ["work", true, ["5:40 PM **WO 301600 E-9**: Box Up done."]],
+    ]);
+    // Nothing then: no row.
+    expect(hourlyRows({ v: 2, lines: [] }, slots, at("18:00"), rows, tz).some((x) => x.slot.tail)).toBe(false);
+  });
+  it("the end meeting shows before its time once it has something entered", () => {
+    expect(hourlyRows(undefined, slots, at("15:10"), rows, tz).some((x) => x.slot.kind === "handover")).toBe(false);
+    expect(hourlyRows(undefined, slots, at("15:10"), rows, tz, { show: ["meeting:end"] }).at(-1)?.slot.kind).toBe("handover");
+  });
+});
+
+
+describe("clocks", () => {
+  it("the meetings, and the row after one, always say AM or PM", () => {
+    const c = slotClocks(slots, tz);
+    expect(c[0]).toBe("5:30 AM");
+    expect(c[1]).toBe("6:00 AM");
+    expect(c[2]).toBe("7:00");
+    expect(c.slice(-3)).toEqual(["5:00", "5:30 PM", "5:30 PM"]);
   });
 });

@@ -44,7 +44,7 @@ export function entryParas(e: LogEntry): Array<{ text: string; style: "title" | 
   for (const l of e.lines) out.push({ text: l, style: "line" });
   // What moved its % that hour, in the progress color.
   for (const c of e.continuing) out.push({ text: c, style: "cont" });
-  if (e.kind !== "break" && !e.lines.length && !e.continuing.length) out.push({ text: e.kind === "meeting" ? "No attendance entered" : "Nothing logged", style: "muted" });
+  if (e.kind !== "break" && !e.lines.length && !e.continuing.length) out.push({ text: e.kind === "meeting" || e.kind === "handover" ? "No attendance entered" : "Nothing logged", style: "muted" });
   return out.map((p) => ({ ...p, text: noEmDash(p.text) }));
 }
 
@@ -566,7 +566,7 @@ export async function hourlyLogDocx(logs: ShiftLog[], o: LogFileOpts): Promise<U
 
 // ─── Excel ───────────────────────────────────────────────────────────────
 
-const KIND_WORD: Record<LogEntry["kind"], string> = { meeting: "Meeting", permit: "Permitting", work: "Hour", break: "Break", handover: "Turnover meeting" };
+const KIND_WORD: Record<LogEntry["kind"], string> = { meeting: "Meeting", permit: "Permitting", work: "Hour", break: "Break", handover: "Meeting" };
 
 /** The log as rows: one item a row, every row with its date, shift and time. */
 export function hourlyLogTable(logs: ShiftLog[]): string[][] {
@@ -578,7 +578,7 @@ export function hourlyLogTable(logs: ShiftLog[]): string[][] {
       const k = KIND_WORD[e.kind];
       for (const x of e.lines) out.push([...at, e.clock, k, noEmDash(plainLine(x))]);
       for (const x of e.continuing) out.push([...at, e.clock, "Progress", noEmDash(plainLine(x))]);
-      if (!e.lines.length && !e.continuing.length) out.push([...at, e.clock, k, e.kind === "meeting" ? "No attendance entered" : "Nothing logged"]);
+      if (!e.lines.length && !e.continuing.length) out.push([...at, e.clock, k, e.kind === "meeting" || e.kind === "handover" ? "No attendance entered" : "Nothing logged"]);
     }
   }
   return out;

@@ -1,15 +1,16 @@
-// hourlyLog — the shift's notes, hour by hour, as a log to keep: one shift
+// hourlyLog - the shift's notes, hour by hour, as a log to keep: one shift
 // or every shift of the job, for the PDF, Word and Excel exports. The same
-// hours the report shows (lib/shiftHourly): the meeting (who attended),
-// start of shift (permitting), each hour, its breaks, and what each crew
-// kept working on, and where each stood. Each hour says its own entries
-// (or what someone typed over it), never anything made up.
+// hours the report shows (lib/shiftHourly): the meeting (who attended from
+// each crew, head counts, the safety topic), start of shift (permitting),
+// each hour, its breaks, and the meeting that starts the next shift. Each
+// hour says its own entries (or what someone typed over it), never
+// anything made up.
 
 import {
   hourSlots, hourlyRows, breaksOn, breakLabel, SLOT_LABEL, type SlotKind,
 } from "@/lib/shiftHourly";
-import { meetingLeadMin, shiftWindow, shiftWindowsBetween, workShiftOf, type ShiftTimes, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
-import { crewLine } from "@/lib/managementUpdate";
+import { meetingLeadMin, nextShift, shiftWindow, shiftWindowsBetween, workShiftOf, type ShiftTimes, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
+import { meetingLines, meetingRows, meetingTitle } from "@/lib/shiftMeeting";
 import { noEmDash } from "@/lib/noEmDash";
 import type { ShiftRecord } from "@/lib/shiftRecord";
 import { stepLabels, type TimeLogRow } from "@/lib/timeLog";
@@ -19,7 +20,7 @@ export interface LogEntry {
   /** "5:30 AM" */
   clock: string;
   kind: SlotKind;
-  /** "Shift meeting", "Start of shift - permitting", "Lunch, 30 min". */
+  /** "Day shift meeting", "Start of shift - permitting", "Lunch, 30 min". */
   title?: string;
   /** One item each: a crew's work, a note, an incident, a crew at the meeting. */
   lines: string[];
@@ -67,34 +68,27 @@ export function logSteps(milestones: Milestone[], tz: string, times: ShiftTimes)
   }));
 }
 
-/** Who was at the meeting: the crews entered there, then the crews that
- *  worked the shift (no attendance entered: "-"). */
-function meetingCrews(rec: ShiftRecord | undefined, rows: TimeLogRow[]): string[] {
-  const out: string[] = [];
-  const add = (c: string) => { const k = c.trim(); if (k && k !== "No crew named" && !out.includes(k)) out.push(k); };
-  Object.keys(rec?.crews ?? {}).forEach(add);
-  rows.forEach((r) => add(r.crew));
-  return out.map((c) => `${c}: ${crewLine(rec?.crews?.[c])}`);
-}
-
 /** One shift's log, up to `now` while it's still going. `rows`: its
- *  entries (the time log for the shift); `log`: the job's progress log. */
+ *  entries (the time log for the shift); `log`: the job's progress log;
+ *  `next`: the next shift's record (the meeting that starts it ends this
+ *  shift's log). */
 export function shiftLog(o: {
   shift: ShiftWindow; tz: string; times: ShiftTimes;
-  record?: ShiftRecord; rows: TimeLogRow[]; steps: LogStep[]; log: LogProgress[]; now: number;
+  record?: ShiftRecord; next?: ShiftRecord; rows: TimeLogRow[]; steps: LogStep[]; log: LogProgress[]; now: number;
 }): ShiftLog {
   const { shift, tz } = o;
   const upTo = Math.min(o.now, shift.end);
   const slots = hourSlots(shift, meetingLeadMin(o.times), breaksOn(shift, o.times.breaks, tz));
   const rows = o.rows.filter((r) => r.at >= shift.start && r.at < shift.end);
+  const other = shift.kind === "day" ? "night" : "day";
   // The same hours, and the same lines, as the report shows.
-  const entries = hourlyRows(o.record?.hourly, slots, upTo, rows, tz).map(({ slot, lines, progress }): LogEntry => {
+  const entries = hourlyRows(o.record?.hourly, slots, upTo, rows, tz, meetingRows(o.record, o.next, shift.end)).map(({ slot, lines, progress }): LogEntry => {
     const clock = clockAt(slot.start, tz);
-    if (slot.kind === "meeting") {
-      return { clock, kind: "meeting", title: SLOT_LABEL.meeting, lines: [...meetingCrews(o.record, rows), ...lines], continuing: [] };
-    }
+    // The meetings: who attended, head counts, the safety topic, as entered.
+    if (slot.kind === "meeting") return { clock, kind: "meeting", title: meetingTitle(shift.kind), lines: meetingLines(o.record, shift.start), continuing: [] };
+    if (slot.kind === "handover") return { clock, kind: "handover", title: meetingTitle(other), lines: meetingLines(o.next, shift.end), continuing: [] };
     if (slot.kind === "break") return { clock, kind: "break", title: breakLabel(slot), lines: [], continuing: [] };
-    return { clock, kind: slot.kind, ...(slot.kind === "permit" || slot.kind === "handover" ? { title: SLOT_LABEL[slot.kind] } : {}), lines, continuing: progress.map(noEmDash) };
+    return { clock, kind: slot.kind, ...(slot.kind === "permit" ? { title: SLOT_LABEL.permit } : {}), lines, continuing: progress.map(noEmDash) };
   });
   return {
     key: `${shift.dayKey}:${shift.kind}`, kind: shift.kind,
@@ -106,10 +100,9 @@ export function shiftLog(o: {
   };
 }
 
-/** Anything in it: an hour that says something, or attendance entered. */
+/** Anything in it: an hour that says something, or a meeting entered. */
 export function logHasWork(l: ShiftLog): boolean {
-  return l.entries.some((e) => (e.kind !== "meeting" && e.kind !== "break" && (e.lines.length > 0 || e.continuing.length > 0))
-    || (e.kind === "meeting" && e.lines.some((x) => !x.endsWith(": -"))));
+  return l.entries.some((e) => e.kind !== "break" && (e.lines.length > 0 || e.continuing.length > 0));
 }
 
 /** Every shift of the job with something in it, first to last (up to now). */
@@ -129,6 +122,9 @@ export function jobLogs(o: {
   if (!starts.length) return [];
   const from = Math.min(...starts);
   return shiftWindowsBetween(from, o.now + 1, tz, times)
-    .map((shift) => shiftLog({ shift, tz, times, record: o.records.get(`${shift.dayKey}:${shift.kind}`), rows: o.timeLog, steps, log: o.log, now: o.now }))
+    .map((shift) => {
+      const nx = nextShift(shift, tz, times);
+      return shiftLog({ shift, tz, times, record: o.records.get(`${shift.dayKey}:${shift.kind}`), next: o.records.get(`${nx.dayKey}:${nx.kind}`), rows: o.timeLog, steps, log: o.log, now: o.now });
+    })
     .filter(logHasWork);
 }

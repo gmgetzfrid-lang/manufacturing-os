@@ -45,15 +45,30 @@ describe("one shift's hourly log", () => {
     expect(l.window).toBe("6:00 AM to 6:00 PM");
     expect(l.through).toBeUndefined();
     expect(l.entries.map((e) => e.clock).slice(0, 3)).toEqual(["5:30 AM", "6:00 AM", "7:00 AM"]);
-    expect(l.entries[0]).toMatchObject({ kind: "meeting", title: "Shift meeting" });
+    expect(l.entries[0]).toMatchObject({ kind: "meeting", title: "Day shift meeting" });
     expect(l.entries[1]).toMatchObject({ kind: "permit", title: "Start of shift - permitting" });
     expect(l.entries.find((e) => e.kind === "break")).toMatchObject({ clock: "12:00 PM", title: "Lunch, 30 min" });
-    // The last hour runs 5:00 to 5:30; then the turnover meeting with the next shift.
-    expect(l.entries.slice(-2).map((e) => [e.clock, e.kind, e.title])).toEqual([["5:00 PM", "work", undefined], ["5:30 PM", "handover", "Turnover meeting"]]);
+    // The last hour runs 5:00 to 5:30; then the meeting that starts the night shift.
+    expect(l.entries.slice(-2).map((e) => [e.clock, e.kind, e.title])).toEqual([["5:00 PM", "work", undefined], ["5:30 PM", "handover", "Night shift meeting"]]);
   });
 
-  it("attendance as entered, crews that worked without it as -", () => {
-    expect(one().entries[0].lines).toEqual(["Schultz: Mike Leonard · 12 on site", "Ancon: -"]);
+  it("attendance as entered: each crew, its head count, who was there", () => {
+    expect(one().entries[0].lines).toEqual(["Schultz, 12 on site: Mike Leonard"]);
+  });
+
+  it("both meetings: names, head counts, the total, the safety topic; the end one is the next shift's", () => {
+    const next: ShiftRecord = {
+      crews: { Schultz: { names: ["Mike Leonard", "Joe Brown"], headcount: 10 }, Ancon: { headcount: 4 }, Operations: { names: ["Ray Ortiz"] }, Empty: {} },
+      meeting: { safety: "Line of fire around rigging", note: "Crane inspection at 7 PM" },
+    };
+    const l = shiftLog({ shift: DAY, tz: TZ, times: TIMES, record, next, rows, steps: [], log: [], now: DAY.end + H });
+    expect(l.entries.at(-1)).toMatchObject({ clock: "5:30 PM", title: "Night shift meeting", lines: [
+      "Schultz, 10 on site: Mike Leonard, Joe Brown", "Ancon, 4 on site", "Operations: Ray Ortiz", "Total on site: 14",
+      "Safety topic: Line of fire around rigging", "Crane inspection at 7 PM",
+    ] });
+    // Not held: off the log.
+    const off = shiftLog({ shift: DAY, tz: TZ, times: TIMES, record: { ...record, meeting: { off: true } }, next: { ...next, meeting: { off: true } }, rows, steps: [], log: [], now: DAY.end + H });
+    expect(off.entries.some((e) => e.kind === "meeting" || e.kind === "handover")).toBe(false);
   });
 
   it("an hour typed over, as typed; the others say their entries", () => {
@@ -122,7 +137,7 @@ describe("the files", () => {
     const { text } = await extractText(bytes, { mergePages: false });
     expect(text[0]).toContain("7724 E. Panama Lane");
     expect(text[0]).toContain("Day shift · Thu, Oct 29, 2026");
-    expect(text[0]).toContain("Schultz: Mike Leonard · 12 on site");
+    expect(text[0]).toContain("Schultz, 12 on site: Mike Leonard");
     expect(text[text.length - 1]).toContain("Night shift");
     expect(text.join("\n")).not.toMatch(/\u2014|\b1[3-9]:\d\d\b|\b2[0-3]:\d\d\b/);
   });
@@ -138,7 +153,7 @@ describe("the files", () => {
     expect(doc.match(/<w:sectPr>/g)).toHaveLength(2);
     expect(doc).toContain('w:type="first"');
     expect(doc).toContain("<w:titlePg/>");
-    expect(doc).toContain("Schultz: Mike Leonard · 12 on site");
+    expect(doc).toContain("Schultz, 12 on site: Mike Leonard");
     expect(doc).toContain("<w:tblHeader/>");
     expect(doc).not.toContain("\u2014");
     const first = await zip.file("word/header2.xml")!.async("string");
@@ -152,7 +167,7 @@ describe("the files", () => {
 
   it("Excel: one item a row, with its date, shift and time", async () => {
     const t = hourlyLogTable([one()]);
-    expect(t[0]).toEqual(["Thu, Oct 29, 2026", "Day shift", "5:30 AM", "Meeting", "Schultz: Mike Leonard · 12 on site"]);
+    expect(t[0]).toEqual(["Thu, Oct 29, 2026", "Day shift", "5:30 AM", "Meeting", "Schultz, 12 on site: Mike Leonard"]);
     expect(t).toContainEqual(["Thu, Oct 29, 2026", "Day shift", "12:00 PM", "Break", "Lunch, 30 min"]);
     // The work order is bold in the PDF and Word file; plain in Excel.
     expect(t).toContainEqual(["Thu, Oct 29, 2026", "Day shift", "9:00 AM", "Hour", "9:20 AM V-7, Schultz: Install Manways done. All 4 in."]);
