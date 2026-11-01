@@ -33,7 +33,7 @@ describe("project type", () => {
     expect(projectTypeSet(undefined)).toBe(false);
   });
   it("its own word: tidied, no em dash, a short form at least the word", () => {
-    expect(cleanProjectType({ word: "  Tie—in  ", short: "" })).toEqual({ word: "Tie-in", short: "Tie-in" });
+    expect(cleanProjectType({ word: `  Tie${String.fromCharCode(0x2014)}in  `, short: "" })).toEqual({ word: "Tie-in", short: "Tie-in" });
     expect(cleanProjectType({ word: "   " })).toBeNull();
     expect(cleanProjectType("Turnaround")).toBeNull();
   });
