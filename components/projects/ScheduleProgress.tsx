@@ -10,16 +10,25 @@
 //   * Counts per status with a stacked progress bar.
 //   * Upcoming milestones in the next 14 days, oldest first, so
 //     the user sees what they need to act on next.
+//   * What needs you: overdue and held work, a tap to show it (the board
+//     filters to it). One card: the job's numbers aren't said twice.
+//
+// The verdict is the job's work-hours behind the plan (standingByHours),
+// and the forecast is the schedule's own, from its links (lib/cpm), to the
+// hour: the same verdict and forecast the shift report gives.
 //
 // Pure render — no fetches. Drives off the metrics already computed
 // by lib/milestones.ts:computeScheduleMetrics().
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { dayDiff as dayDiffTz, fmtInTz } from "@/lib/scheduleTz";
-import { isOverdue, standingOf } from "@/lib/shiftReport";
+import { isOverdue } from "@/lib/shiftReport";
 import { computeExecutionReport } from "@/lib/executionReport";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
+import { useCriticalMode } from "@/lib/criticalModeStore";
+import { resolveCriticalPath } from "@/lib/criticalPath";
+import { clockLabel } from "@/lib/scheduleTz";
 import {
   TrendingUp, TrendingDown, Flag, AlertTriangle, CalendarClock,
   CheckCircle2, Circle, PauseCircle, MinusCircle, XCircle,
@@ -32,6 +41,9 @@ interface Props {
   metrics: ScheduleMetrics;
   /** For the project's shift-change times (plan by now runs on them). */
   projectId?: string;
+  /** Show the overdue work / the held work on the board (Work tab). */
+  onShowOverdue?: () => void;
+  onShowBlocked?: () => void;
 }
 
 const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: string; Icon: React.ComponentType<{ className?: string }> }> = {
@@ -44,7 +56,7 @@ const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: s
   on_hold:     { label: "On hold",     tone: "text-amber-700 dark:text-amber-300",   bar: "bg-amber-500",   Icon: PauseCircle },
 };
 
-export default function ScheduleProgress({ milestones, metrics, projectId }: Props) {
+export default function ScheduleProgress({ milestones, metrics, projectId, onShowOverdue, onShowBlocked }: Props) {
   const tz = useScheduleTz();
   const total = milestones.length;
   const today = new Date(); today.setHours(0,0,0,0);
@@ -67,14 +79,24 @@ export default function ScheduleProgress({ milestones, metrics, projectId }: Pro
   const earnedPct = r.pctComplete;
   const planPct = r.expectedPct;
   const spi = planPct > 0 ? earnedPct / planPct : 1;
-  const verdict = standingOf(earnedPct, planPct);
-  // Forecast from the same report as the verdict above: the finish at the
-  // pace so far, against the planned finish (whole plant days).
-  const forecastEndAt = r.forecastFinish;
+  // The job's verdict from the work-hours behind, as the shift report has it.
+  const verdict = r.standing;
+  const gapH = Math.abs(r.gapHours);
+  // The schedule's own forecast, to the hour (from its links), as the shift
+  // report has it; without links, the finish at the pace so far.
+  const criticalMode = useCriticalMode(projectId);
+  const cpm = useMemo(() => resolveCriticalPath(milestones, criticalMode, { now: nowMs, tz }).cpm, [milestones, criticalMode, nowMs, tz]);
+  const linked = !!cpm && Number.isFinite(cpm.forecastFinish);
+  const forecastEndAt = linked ? new Date(cpm!.forecastFinish).toISOString() : r.forecastFinish;
   const plannedEndAt = r.finish;
-  const slipDays = forecastEndAt && plannedEndAt
+  const slipH = linked ? cpm!.slipH : 0;
+  const slipDays = !linked && forecastEndAt && plannedEndAt
     ? Math.max(0, dayDiffTz(Date.parse(plannedEndAt), Date.parse(forecastEndAt), tz))
     : 0;
+  const late = linked ? slipH >= 0.5 : verdict === "behind" || slipDays > 0;
+  // Held work, and the overdue among it, said once: "8 overdue, 1 on hold".
+  const held = r.onHold + r.blocked;
+  const heldWord = [r.onHold ? `${r.onHold} on hold` : null, r.blocked ? `${r.blocked} blocked` : null].filter(Boolean).join(", ");
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
@@ -95,7 +117,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId }: Pro
             </div>
             <div className="text-[11px] text-[var(--color-text-muted)] mt-1 inline-flex items-center gap-1 justify-end">
               {verdict === "behind" ? <TrendingDown className="w-3 h-3 text-rose-600 dark:text-rose-400" /> : <TrendingUp className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />}
-              {verdict === "behind" ? "behind plan" : verdict === "ahead" ? "ahead of plan" : "on plan"}
+              {verdict === "behind" ? `${fmtH(gapH)} behind plan` : verdict === "ahead" ? `${fmtH(gapH)} ahead of plan` : "on plan"}
             </div>
           </div>
         </div>
@@ -125,7 +147,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId }: Pro
       <div className="space-y-3">
         {/* Forecast / slip card */}
         <div className={`rounded-2xl p-4 border ${
-          verdict === "behind" || slipDays > 0
+          late
             ? "bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800"
             : forecastEndAt
               ? "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800"
@@ -133,18 +155,26 @@ export default function ScheduleProgress({ milestones, metrics, projectId }: Pro
         }`}>
           <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Forecast end</div>
           <div className="text-lg font-black text-[var(--color-text)] mt-1">
-            {forecastEndAt ? humanDate(forecastEndAt, tz) : plannedEndAt ? humanDate(plannedEndAt, tz) : "-"}
+            {forecastEndAt ? (linked ? humanDateTime(forecastEndAt, tz) : humanDate(forecastEndAt, tz)) : plannedEndAt ? humanDate(plannedEndAt, tz) : "-"}
           </div>
-          {/* Follows the verdict on the left — never "on track" while behind. */}
-          <div className={`text-[11px] mt-1 inline-flex items-center gap-1 ${verdict === "behind" || slipDays > 0 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}`}>
-            {verdict === "behind" || slipDays > 0
-              ? <><AlertTriangle className="w-3 h-3" /> {!forecastEndAt ? "Behind - no work recorded yet to forecast from" : slipDays > 0 ? `${slipDays}d slip vs plan` : "Behind plan - under a day of slip so far"}</>
-              : plannedEndAt ? <><CheckCircle2 className="w-3 h-3" /> On track</> : "Plan not yet set"
+          <div className={`text-[11px] mt-1 inline-flex items-center gap-1 ${late ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}`}>
+            {linked
+              ? (slipH >= 0.5 ? <><AlertTriangle className="w-3 h-3" /> {fmtH(slipH)} late</> : slipH <= -0.5 ? <><CheckCircle2 className="w-3 h-3" /> {fmtH(-slipH)} early</> : <><CheckCircle2 className="w-3 h-3" /> On plan</>)
+              : late
+                ? <><AlertTriangle className="w-3 h-3" /> {!forecastEndAt ? "Behind - no work recorded yet to forecast from" : slipDays > 0 ? `${slipDays}d slip vs plan` : "Behind plan - under a day of slip so far"}</>
+                : plannedEndAt ? <><CheckCircle2 className="w-3 h-3" /> On plan</> : "Plan not yet set"
             }
           </div>
-          {overdue.length > 0 && (
-            <div className="mt-2 text-[11px] font-bold text-rose-700 dark:text-rose-300 inline-flex items-center gap-1">
-              <AlertTriangle className="w-3 h-3" /> {overdue.length} overdue
+          {(overdue.length > 0 || held > 0) && (
+            <div className="mt-2 flex flex-wrap items-center gap-x-1 text-[11.5px] font-bold">
+              <AlertTriangle className="w-3 h-3 text-rose-700 dark:text-rose-300" />
+              {overdue.length > 0 && (onShowOverdue
+                ? <button type="button" onClick={onShowOverdue} className="text-rose-700 dark:text-rose-300 underline decoration-dotted underline-offset-2 hover:decoration-solid" title="Show the overdue work">{overdue.length} overdue</button>
+                : <span className="text-rose-700 dark:text-rose-300">{overdue.length} overdue</span>)}
+              {overdue.length > 0 && held > 0 && <span className="text-[var(--color-text-muted)]">,</span>}
+              {held > 0 && (onShowBlocked
+                ? <button type="button" onClick={onShowBlocked} className="text-amber-700 dark:text-amber-300 underline decoration-dotted underline-offset-2 hover:decoration-solid" title="Review the held work">{heldWord}</button>
+                : <span className="text-amber-700 dark:text-amber-300">{heldWord}</span>)}
             </div>
           )}
         </div>
@@ -212,4 +242,13 @@ function humanRelative(d: Date, tz: string): string {
   if (diff === 1) return "tomorrow";
   if (diff > 1 && diff < 7) return `in ${diff} days`;
   return fmtInTz(d, tz, { month: "short", day: "numeric" });
+}
+
+/** "19 h", "1.5 h". */
+function fmtH(h: number): string { return `${Math.round(h * 10) / 10} h`; }
+
+/** "Sun, Nov 1, 7:00 PM" in plant time. */
+function humanDateTime(iso: string, tz: string): string {
+  const t = Date.parse(iso);
+  return `${fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric" })}, ${clockLabel(t, tz)}`;
 }

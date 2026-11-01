@@ -168,3 +168,16 @@ describe("the update as it goes out", () => {
     expect(html).toContain("<title>Transmix-1 - Shift turnover - Night shift Fri, Oct 30</title>");
   });
 });
+
+describe("one verdict: from the work-hours behind", () => {
+  it("on track within 1% of the job's work-hours (at least 2 h); past it, behind or ahead", async () => {
+    const { standingByHours } = await import("@/lib/shiftReport");
+    // The Transmix-1 job: 574 h planned, 19 h behind: behind, never "on track".
+    expect(standingByHours(19, 574)).toBe("behind");
+    expect(standingByHours(5, 574)).toBe("on track");
+    expect(standingByHours(-6, 574)).toBe("ahead");
+    // A small job: 1 h either way is still on track.
+    expect(standingByHours(1, 12)).toBe("on track");
+    expect(standingByHours(2, 12)).toBe("behind");
+  });
+});

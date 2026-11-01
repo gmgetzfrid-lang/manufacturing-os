@@ -57,7 +57,9 @@ describe("work done early and progress made show on the turnover", () => {
     // Why it's ahead: both early steps, with the hours each is worth.
     // No bottom-line box: the numbers, and each step's hours in "vs plan".
     expect(text).not.toMatch(/BOTTOM LINE/);
-    expect(text).toMatch(/Work ahead: 1 h/);
+    // The verdict follows the hours: 1 h ahead on a small job is within
+    // the on-track band (at least 2 h), so it says the gap, not "ahead".
+    expect(text).toMatch(/Gap: 1 h ahead/);
     // Carries over to the next day shift, dated: Mon's day shift → Tue.
     expect(text).toMatch(/^CARRIES OVER TO DAY SHIFT - 10-27/m);
     // The 40% counts: an 8 h pull the plan has done by now, 40% done → 4.8 h behind, not 8.

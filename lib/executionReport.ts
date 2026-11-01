@@ -20,7 +20,7 @@ import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { effectiveWeight, leafPercent, roundPct } from "@/lib/scheduleProgress";
 import { dayDiff } from "@/lib/scheduleTz";
 import { startOf, finishOf } from "@/lib/scheduleTime";
-import { expectedFraction, isOverdue, workSpan, BEHIND_POINTS, DEFAULT_SHIFT_TIMES, type ShiftTimes } from "@/lib/shiftReport";
+import { expectedFraction, isOverdue, workSpan, standingByHours, DEFAULT_SHIFT_TIMES, type ShiftTimes } from "@/lib/shiftReport";
 import { computeCpm, isLinked } from "@/lib/cpm";
 
 export interface GroupRollup {
@@ -77,6 +77,11 @@ export interface ExecutionReport {
   expectedPct: number;
   /** pctComplete − expectedPct. Positive = ahead, negative = behind. */
   paceDelta: number;
+  /** Planned work-hours not done by now (negative: done early). */
+  gapHours: number;
+  /** The job's verdict from those hours (lib/shiftReport standingByHours),
+   *  the same rule as the shift report's. */
+  standing: "ahead" | "on track" | "behind";
   /** Naive forecast finish ISO, or null. */
   forecastFinish: string | null;
   groups: GroupRollup[];
@@ -210,6 +215,8 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
   for (const m of leaves) wexp += effectiveWeight(m, tz) * expectedFraction(m, now, tz, opts?.shiftTimes ?? DEFAULT_SHIFT_TIMES);
   const expectedPct = wsum > 0 ? Math.min(100, roundPct((wexp / wsum) * 100)) : 0;
   const paceDelta = pctComplete - expectedPct;
+  const gapHours = Math.round(((wexp - wpct / 100) * 10)) / 10;
+  const standing = standingByHours(gapHours, wsum);
 
   // Forecast from the same work-hours pace as the verdict, so the two can't
   // disagree: on plan or ahead → the planned finish; behind → the plan
@@ -221,7 +228,7 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
   // plan % was measured on (the baseline when there is one) stretched by
   // planned ÷ done — no earlier than the current planned finish.
   let forecastFinish: string | null = finish;
-  const behind = pctComplete < 100 && expectedPct - pctComplete >= BEHIND_POINTS;
+  const behind = pctComplete < 100 && standing === "behind";
   const pastEnd = Number.isFinite(workFinish) && now >= workFinish;
   if (pctComplete < 100 && Number.isFinite(envStart) && Number.isFinite(workFinish) && (behind || pastEnd)) {
     if (pctComplete <= 0) forecastFinish = null;
@@ -333,7 +340,7 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
     totalLeaves, done: tally.done, inProgress: tally.inProgress, planned: tally.planned,
     onHold: tally.onHold, blocked: tally.blocked, missed: tally.missed, overdue: tally.overdue,
     pctComplete, plannedHours, earnedHours, pctHours,
-    start, finish, elapsedDays, totalDays, expectedPct, paceDelta, forecastFinish,
+    start, finish, elapsedDays, totalDays, expectedPct, paceDelta, gapHours, standing, forecastFinish,
     groups, blockers,
     performers: { byActualKind, deviations },
     baseline,

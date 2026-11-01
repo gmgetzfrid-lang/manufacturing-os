@@ -71,7 +71,7 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
     return (
       <div role="status" className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-[12px] text-emerald-900 dark:text-emerald-100 print:hidden">
         <Lock className="w-4 h-4 shrink-0" />
-        <span className="flex-1 min-w-[200px]"><b>Report locked</b> {when(shippedAt)}{shippedBy ? ` by ${shippedBy}` : ""}{tries ? ` · ${tries} step${tries === 1 ? "" : "s"} asked to try` : ""}. The {label} report can&apos;t be changed.</span>
+        <span className="flex-1 min-w-[200px]"><b>Report locked</b> {when(shippedAt)}{shippedBy ? ` by ${shippedBy}` : ""}{tries ? ` · ${tries} step${tries === 1 ? "" : "s"} asked to try` : ""}. It can&apos;t be changed.</span>
         {canShip && (
           <button onClick={() => { if (window.confirm(`Unlock the ${label} report? It can be changed again until it's locked.`)) onUnship(); }} disabled={busy}
             className="inline-flex items-center gap-1 rounded-md border border-emerald-400 dark:border-emerald-700 px-2 py-1 text-[11px] font-bold hover:bg-emerald-100 dark:hover:bg-emerald-900/40 disabled:opacity-50">
@@ -85,7 +85,7 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
   return (
     <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-[12px] text-amber-900 dark:text-amber-100 print:hidden">
       <span className="rounded bg-amber-500 text-white text-[10px] font-black tracking-wider px-1.5 py-0.5">OPEN</span>
-      <span className="flex-1 min-w-[200px]">The {label} report can be changed{tries ? ` (${tries} asked to try)` : ""}. Lock it when the turnover is done so nobody changes it by mistake.</span>
+      <span className="flex-1 min-w-[200px]">This shift&apos;s report can be changed{tries ? ` (${tries} asked to try)` : ""}. Lock it when the turnover is done so nobody changes it by mistake.</span>
       {canShip ? (
         <button onClick={onShip} disabled={busy} className="inline-flex items-center gap-1.5 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 text-[12px] font-bold shadow-sm disabled:opacity-50">
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />} Lock report

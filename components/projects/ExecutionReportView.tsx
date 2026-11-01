@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { computeExecutionReport } from "@/lib/executionReport";
-import { standingOf, type ShiftTimes } from "@/lib/shiftReport";
+import type { ShiftTimes } from "@/lib/shiftReport";
 import { computeCriticalPathLite, type CriticalPathResult } from "@/lib/criticalPath";
 
 export default function ExecutionReportView({ milestones, shiftTimes, critical: given, criticalSource }: {
@@ -51,7 +51,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
   }
 
   // The same verdict as the shift report and the banner.
-  const standing = standingOf(r.pctComplete, r.expectedPct);
+  const standing = r.standing;
   const ahead = r.paceDelta >= 0;
   return (
     <>

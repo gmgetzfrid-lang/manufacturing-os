@@ -316,7 +316,8 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       </FirstRunHint>}
 
       {/* Progress dashboard — always on top, summarizes everything */}
-      {(mode === "plan" || mode === "work") && <ScheduleProgress milestones={milestones} metrics={metrics} projectId={projectId} />}
+      {/* Work has it at the top of the board, with what needs you. */}
+      {mode === "plan" && <ScheduleProgress milestones={milestones} metrics={metrics} projectId={projectId} />}
 
       {/* Which clock the schedule runs on. Every date and time below is the
           plant's; a project without a zone still reads as UTC, so say so. */}

@@ -28,8 +28,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  Printer, ChevronLeft, ChevronRight, ChevronDown, Sun, Moon, CheckCircle2, Flag, FastForward,
-  TrendingUp, TrendingDown, Minus, Zap, Presentation, X, Settings2, Rocket, ArrowLeftRight, Trophy,
+  Printer, ChevronLeft, ChevronRight, ChevronDown, Sun, Moon, Flag, FastForward,
+  Zap, Presentation, X, Settings2, Rocket, ArrowLeftRight, Trophy,
   Mail, FileText, Hourglass, Clock, Pencil, Plus, CalendarClock, Eye, EyeOff,
 } from "lucide-react";
 import type { Milestone, MilestoneNote } from "@/types/schema";
@@ -1667,7 +1667,11 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   ].filter(Boolean).join(" · ");
   const laterCount = plan.carries.length + plan.held.length;
   const laterSub = [plan.carries.length ? `${plan.carries.length} for the ${otherKind} crew` : null, plan.held.length ? `${plan.held.length} blocked or on hold` : null].filter(Boolean).join(" · ") + ` - not the ${next.kind} shift's work`;
-  const pastDueAll = (o.whole ?? report).review.carryOver.filter((r) => !isHeld(r)).length;
+  // Past due across every crew, the held ones in the count and named: the
+  // same count as the board's "8 overdue, 1 on hold".
+  const pastDueRows = (o.whole ?? report).review.carryOver;
+  const pastDueAll = pastDueRows.length;
+  const pastDueHeld = pastDueRows.filter((r) => isHeld(r)).length;
   const forCrew = o.crew ? ` for ${o.crew}` : "";
   const standStats = [
     { label: "Actual", value: `${overall.actualPct}%`, tone: (overall.standing === "behind" ? "rose" : overall.standing === "ahead" ? "emerald" : "slate") as "rose" | "emerald" | "slate" },
@@ -1721,7 +1725,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         <>
           <StandTiles print={print} actual={overall.actualPct} planned={overall.plannedPct} standing={overall.standing}
             gap={{ label: standStats[2].label, value: standStats[2].value }} done={overall.stepsDone} total={overall.stepsTotal}
-            pastDue={pastDueAll} pastDueLabel={standStats[4].label} />
+            pastDue={pastDueAll} pastDueHeld={pastDueHeld} pastDueLabel={standStats[4].label} />
           {o.why && o.why.total >= 0.5 && <WhyBehind why={o.why} c={c} print={print} />}
           {!print && o.pathSource && (
             <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-[var(--color-text-muted)] print:hidden">
@@ -2426,16 +2430,9 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
   addedOnly?: boolean;
   criticalOnly?: boolean;
 }) {
-  const { overall, shift, next } = report;
-  const standing = overall.standing;
-  const pill = meeting === "kickoff" ? null
-    : meeting === "closeout"
-      ? { label: closeout.done >= closeout.steps ? "Complete" : `${closeout.steps - closeout.done} open`, cls: closeout.done >= closeout.steps ? "emerald" : "amber", Icon: CheckCircle2 }
-      : standing === "ahead" ? { label: "Ahead", cls: "emerald", Icon: TrendingUp }
-        : standing === "behind" ? { label: "Behind", cls: "rose", Icon: TrendingDown } : { label: "On track", cls: "slate", Icon: Minus };
-  const pillCls = !pill ? "" : print
-    ? `border-2 ${pill.cls === "emerald" ? "border-emerald-700 text-emerald-800" : pill.cls === "rose" ? "border-rose-700 text-rose-800" : pill.cls === "amber" ? "border-amber-700 text-amber-800" : "border-slate-700 text-slate-800"}`
-    : pill.cls === "emerald" ? "bg-emerald-600 text-white" : pill.cls === "rose" ? "bg-rose-600 text-white" : pill.cls === "amber" ? "bg-amber-500 text-white" : "bg-slate-700 text-white";
+  // No verdict badge here: Where we stand gives it (and the close-out's
+  // tiles count what's open) - each number once.
+  const { shift, next } = report;
   const title = meeting === "kickoff" ? "Kick-off meeting" : meeting === "closeout" ? "Close-out meeting" : "Shift turnover";
   const when = meeting === "turnover"
     ? <>{shiftName(shift)} {c.D(shift.start)} {c.win(shift)} <span className="opacity-60">→</span> <b>{shiftName(next)} {c.D(next.start)} {c.win(next)}</b></>
@@ -2459,12 +2456,6 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
             {historyNote && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold ${print ? "border border-slate-500 text-slate-700" : "bg-slate-700 text-slate-100"}`}>Earlier shift - {historyNote}</span>}
           </div>
         </div>
-        {pill && (
-          <div className={`rounded-lg px-2.5 py-1 text-right shrink-0 ${pillCls}`}>
-            <div className="inline-flex items-center gap-1 text-[13px] font-bold leading-none"><pill.Icon className="w-3.5 h-3.5" /> {pill.label}</div>
-            {meeting === "turnover" && <div className="text-[10.5px] font-medium opacity-90">{overall.actualPct}% done vs {overall.plannedPct}% planned</div>}
-          </div>
-        )}
       </div>
     </header>
   );
@@ -2498,9 +2489,9 @@ function SectionHead({ n, s, collapsed, big, print }: { n: number; s: Sec; colla
 /** Where the job stands, four tiles: progress against the plan (with the
  *  plan marked), work behind or ahead, steps done, past due. Colour only
  *  on a number that's off. */
-function StandTiles({ actual, planned, standing, gap, done, total, pastDue, pastDueLabel, print }: {
+function StandTiles({ actual, planned, standing, gap, done, total, pastDue, pastDueHeld = 0, pastDueLabel, print }: {
   actual: number; planned: number; standing: "ahead" | "behind" | "on track"; gap: { label: string; value: string };
-  done: number; total: number; pastDue: number; pastDueLabel: string; print: boolean;
+  done: number; total: number; pastDue: number; pastDueHeld?: number; pastDueLabel: string; print: boolean;
 }) {
   const tile = `rounded-lg border border-slate-200 dark:border-slate-700 ${print ? "px-2 py-1" : "px-3 py-2"}`;
   const label = `font-medium text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-[11px]"}`;
@@ -2531,7 +2522,7 @@ function StandTiles({ actual, planned, standing, gap, done, total, pastDue, past
       <div className={tile}>
         <div className={label}>{pastDueLabel}</div>
         <div className={`${value} ${pastDue ? "text-amber-700 dark:text-amber-400" : ""}`}>{pastDue}</div>
-        <div className={sub}>steps past their finish</div>
+        <div className={sub}>steps past their finish{pastDueHeld ? `, ${pastDueHeld} on hold or blocked` : ""}</div>
       </div>
     </div>
   );

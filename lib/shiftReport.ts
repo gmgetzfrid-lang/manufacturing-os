@@ -569,10 +569,19 @@ export type Pace = "done" | "overdue" | "behind" | "held" | "on plan";
  *  step, in every view, so the headline and the rows can't disagree. */
 export const BEHIND_POINTS = 5;
 
-/** The verdict for actual vs planned %, the same everywhere. */
+/** The verdict for actual vs planned %, for a task or step. */
 export function standingOf(actualPct: number, plannedPct: number): "ahead" | "on track" | "behind" {
   const v = actualPct - plannedPct;
   return v <= -BEHIND_POINTS ? "behind" : v >= BEHIND_POINTS ? "ahead" : "on track";
+}
+
+/** The job's verdict, from the work-hours behind (or ahead of) the plan:
+ *  the same hours the report shows, so it can't say "on track" next to
+ *  "19 h behind". Within 1% of the job's planned work-hours (at least
+ *  2 h) is on track. `gapHours`: positive = behind. */
+export function standingByHours(gapHours: number, jobHours: number): "ahead" | "on track" | "behind" {
+  const band = Math.max(2, (Number.isFinite(jobHours) ? jobHours : 0) * 0.01);
+  return gapHours >= band ? "behind" : gapHours <= -band ? "ahead" : "on track";
 }
 
 /** Planned work-hours for a step — the weight % complete rolls up by
@@ -889,7 +898,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   const plannedPct = wsum > 0 ? roundPct((wplanned / wsum) * 100) : 0;
   const actualPct = wsum > 0 ? roundPct((wactual / wsum) * 100) : 0;
   const variancePct = actualPct - plannedPct;
-  const standing: ShiftReport["overall"]["standing"] = standingOf(actualPct, plannedPct);
+  const standing: ShiftReport["overall"]["standing"] = standingByHours(behindSum - aheadSum, wsum);
   const unscheduled = milestones.filter((m) => isLeaf(m) && !leaves.includes(m)).length;
   if (baselined > 0 && Number.isFinite(baseStart) && Number.isFinite(baseFinish)) { plannedStart = baseStart; plannedFinish = baseFinish; }
   const hasSpan = Number.isFinite(plannedStart) && Number.isFinite(plannedFinish);

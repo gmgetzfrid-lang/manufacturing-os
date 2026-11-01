@@ -34,7 +34,7 @@ import {
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import type { CancelledJob } from "@/lib/cancelledJobs";
-import { groupTasksUnderParent, setTaskDuration, addMilestoneNote, stateOf, deleteMilestones, restoreDeletedMilestones, applyBulkFieldChange, creditProgressTo, createMilestone, updateMilestone, deleteMilestone, deleteMilestoneNote, setActualTimes, type MilestoneState } from "@/lib/milestones";
+import { computeScheduleMetrics, groupTasksUnderParent, setTaskDuration, addMilestoneNote, stateOf, deleteMilestones, restoreDeletedMilestones, applyBulkFieldChange, creditProgressTo, createMilestone, updateMilestone, deleteMilestone, deleteMilestoneNote, setActualTimes, type MilestoneState } from "@/lib/milestones";
 import { planDiscovery, discoveryAttr, impactLine, addedNote, ADDED, type DiscoveryDraft, type DiscoveryRecord } from "@/lib/discovery";
 import DiscoveryForm from "@/components/projects/DiscoveryForm";
 import MarkSheet from "@/components/projects/MarkSheet";
@@ -50,7 +50,7 @@ import { resolveVisibleDepIndex } from "@/lib/scheduleDeps";
 import { buildProgressIndex, leafPercent } from "@/lib/scheduleProgress";
 import { computeExecutionReport } from "@/lib/executionReport";
 import { assignGroupColors, type GroupColor } from "@/lib/scheduleColors";
-import SchedulePulse from "@/components/projects/SchedulePulse";
+import ScheduleProgress from "@/components/projects/ScheduleProgress";
 import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
 import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
 import ShiftReportView from "@/components/projects/ShiftReportView";
@@ -59,7 +59,7 @@ import { addDays as addDaysTz, dayDiff as dayDiffTz, dayKey, dayOfWeek, fmtInTz,
 import { needsFutureConfirm } from "@/lib/scheduleRules";
 import { startMsOf as plannedStartMsOf } from "@/lib/calendarPlacement";
 import { effectiveSpans, byStart, spanLabel, barGeometry, xAt, hourStep, startOf as timedStart, finishOf as timedFinish } from "@/lib/scheduleTime";
-import { expectedByParent, expectedFraction, isOverdue, shiftAt, standingOf, workHours, workShiftOf, type ShiftCredit, type ShiftTimes, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
+import { expectedByParent, expectedFraction, isOverdue, shiftAt, workHours, workShiftOf, type ShiftCredit, type ShiftTimes, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
 import type { StepUpdate } from "@/components/projects/CalendarQuickView";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
 import { linkOf } from "@/lib/scheduleLinks";
@@ -371,6 +371,8 @@ export default function ExecutionView({
   // report their own (status-reconciled) percent; summaries roll their leaf
   // descendants up, duration-weighted (see lib/scheduleProgress.ts).
   const progressIndex = useMemo(() => buildProgressIndex(items, tz), [items, tz]);
+  // The Completion card's counts (Work's summary at the top).
+  const metrics = useMemo(() => computeScheduleMetrics(items), [items]);
 
   // ── Search / filter ──────────────────────────────────────────
   const [filter, setFilter] = useState<ScheduleFilter>(EMPTY_FILTER);
@@ -1250,16 +1252,10 @@ export default function ExecutionView({
         <CompactSummary items={items} now={nowDate} shiftTimes={shiftTimes} onOpen={() => setShowCards(true)} />
       ) : (
         <>
-          <SchedulePulse
-            milestones={items}
-            shiftTimes={shiftTimes}
+          {/* The job at a glance, once: done, verdict, forecast, and what needs you. */}
+          <ScheduleProgress milestones={items} metrics={metrics} projectId={projectId}
             onShowOverdue={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, overdueOnly: true, query: f.query })); }}
-            onShowBlocked={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, blockedOnly: true, query: f.query })); }}
-          />
-
-          <div className="flex items-center gap-2">
-            <SummaryStrip items={items} now={nowDate} shiftTimes={shiftTimes} />
-          </div>
+            onShowBlocked={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, blockedOnly: true, query: f.query })); }} />
           {compact && <button onClick={() => setShowCards(false)} className="text-[11px] font-bold text-[var(--color-text-muted)]">Fold the summary</button>}
         </>
       )}
@@ -1623,7 +1619,7 @@ function statusWord(s: MilestoneStatus): string {
 function CompactSummary({ items, now, shiftTimes, onOpen }: { items: Milestone[]; now: Date; shiftTimes: ShiftTimes; onOpen: () => void }) {
   const tz = useScheduleTz();
   const r = useMemo(() => computeExecutionReport(items, { tz, now, shiftTimes }), [items, tz, now, shiftTimes]);
-  const standing = standingOf(r.pctComplete, r.expectedPct);
+  const standing = r.standing;
   return (
     <button onClick={onOpen} className="w-full flex items-center gap-2 flex-wrap rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[12px] text-left">
       <b className="text-[var(--color-text)]">{r.pctComplete}%</b>
@@ -1634,44 +1630,6 @@ function CompactSummary({ items, now, shiftTimes, onOpen }: { items: Milestone[]
       {r.blocked + r.onHold > 0 && <span className="font-bold text-amber-700 dark:text-amber-300">{r.blocked + r.onHold} stuck</span>}
       <span className="ml-auto text-[11px] text-[var(--color-text-faint)]">Details</span>
     </button>
-  );
-}
-
-function SummaryStrip({ items, now, shiftTimes }: {
-  items: Milestone[]; now: Date; shiftTimes: ShiftTimes;
-}) {
-  const tz = useScheduleTz();
-  // The same counts as the execution report and the shift report: one
-  // definition of done, in progress, overdue and % complete.
-  const r = useMemo(() => computeExecutionReport(items, { tz, now, shiftTimes }), [items, tz, now, shiftTimes]);
-  const total = r.totalLeaves, done = r.done, inProg = r.inProgress, overdue = r.overdue, pct = r.pctComplete;
-
-  return (
-    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03] px-4 py-3 flex items-center gap-5 flex-wrap">
-      <div className="flex items-center gap-3 min-w-[200px]">
-        <div className={`text-3xl font-black tracking-tighter ${pct === 100 ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>{pct}<span className="text-base text-[var(--color-text-faint)] font-bold">%</span></div>
-        <div className="flex-1">
-          <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden w-40">
-            <div className={`h-full transition-all duration-500 ${pct === 100 ? "bg-emerald-500" : "bg-[var(--color-accent)]"}`} style={{ width: `${pct}%` }} />
-          </div>
-          <div className="text-[11px] text-[var(--color-text-muted)] font-mono mt-1">{done} / {total} tasks complete</div>
-        </div>
-      </div>
-      <Stat label="In progress" value={inProg} tone="blue" />
-      <Stat label="Overdue" value={overdue} tone={overdue > 0 ? "rose" : "slate"} />
-      {/* The job's own days (not the chart's padded range) — same as the reports. */}
-      <Stat label="Schedule day" value={`${r.elapsedDays} / ${r.totalDays}`} tone="slate" />
-    </div>
-  );
-}
-
-function Stat({ label, value, tone }: { label: string; value: number | string; tone: "blue" | "rose" | "slate" }) {
-  const c = tone === "blue" ? "text-blue-600 dark:text-blue-400" : tone === "rose" ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]";
-  return (
-    <div className="flex flex-col">
-      <span className="text-[9px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">{label}</span>
-      <span className={`text-lg font-black tabular-nums ${c}`}>{value}</span>
-    </div>
   );
 }
 
