@@ -22,7 +22,7 @@ import { timeAfter, type HoldOver } from "@/lib/holdOver";
 import { timeOnDay } from "@/lib/shiftReport";
 import { dayKey } from "@/lib/scheduleTz";
 import { TimeChip } from "@/components/projects/DateTimePicker";
-import { cleanName, crewNames, renamed, setNames, totalOnSite, withName, withoutName, earlierMeetingLines, hasOwnRoster, meetingEmpty, type MeetingParts } from "@/lib/shiftMeeting";
+import { cleanName, crewNames, renamed, setNames, totalOnSite, withName, withoutName, earlierMeetingLines, hasOwnRoster, meetingEmpty, onSiteCell, type MeetingParts } from "@/lib/shiftMeeting";
 
 const inputCls = "rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1 text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent-ring)]";
 const btn = "inline-flex items-center gap-1.5 h-7 px-3 rounded-lg text-[12px] font-bold disabled:opacity-60";
@@ -50,7 +50,7 @@ export interface HourlyCtx {
 }
 
 /** A meeting as the log says it: its title, its lines, its table (resource,
- *  supervisor, employees on site), and the shift its crews came from when
+ *  meeting attendees, on site), and the shift its crews came from when
  *  they weren't updated for this one. */
 export interface MeetingSaid { title: string; lines: string[]; parts?: MeetingParts; carried?: string }
 
@@ -399,17 +399,17 @@ function SentHomeForm({ ot, onDone, onError }: { ot: OtCtx; onDone: () => void; 
   );
 }
 
-/** A meeting on paper: resource, supervisor, employees on site; the
+/** A meeting on paper: resource, meeting attendees, on site; the
  *  total; then the safety topic and notes. */
 function MeetingTable({ p }: { p: MeetingParts }) {
   return (
     <>
       {p.rows.length > 0 && (
         <table className="w-full border-collapse my-[2pt]">
-          <thead><tr className="text-[7pt] uppercase text-slate-500 text-left"><th className="font-bold pr-2">Resource</th><th className="font-bold pr-2">Supervisor</th><th className="font-bold text-right">Employees on site</th></tr></thead>
+          <thead><tr className="text-[7pt] uppercase text-slate-500 text-left"><th className="font-bold pr-2">Resource</th><th className="font-bold pr-2">Meeting attendees</th><th className="font-bold text-right">On site</th></tr></thead>
           <tbody>
-            {p.rows.map((x) => <tr key={x.crew} className="border-t border-slate-200"><td className="font-semibold pr-2">{x.crew}</td><td className="pr-2">{x.supervisor || "-"}</td><td className="text-right font-semibold">{x.onSite ?? "-"}</td></tr>)}
-            {p.total != null && <tr className="border-t border-slate-300"><td className="font-bold pr-2">Total on site</td><td /><td className="text-right font-bold">{p.total}</td></tr>}
+            {p.rows.map((x) => <tr key={x.crew} className="border-t border-slate-200"><td className="font-semibold pr-2">{x.crew}</td><td className="pr-2">{x.attendees || "-"}</td><td className={`text-right ${x.plant ? "" : "font-semibold"}`}>{onSiteCell(x)}</td></tr>)}
+            {p.total != null && <tr className="border-t border-slate-300"><td className="font-bold pr-2">Total on the job</td><td /><td className="text-right font-bold">{p.total}</td></tr>}
           </tbody>
         </table>
       )}
@@ -449,7 +449,8 @@ function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
   const crews = m.record?.crews ?? {};
   // The crews on the plan, then any added at the meeting.
   const list = [...m.crews, ...Object.keys(crews).filter((k) => !m.crews.includes(k))];
-  const total = totalOnSite(list.map((c) => ({ headcount: crews[c]?.headcount ?? null })));
+  // Plant staff (not on the job) aren't counted.
+  const total = totalOnSite(list.map((c) => ({ headcount: crews[c]?.headcount ?? null, plant: !!crews[c]?.plant })));
   const save = (change: (r: ShiftRecord) => ShiftRecord) => m.save(change).then(() => setMsg(null), (e: Error) => { setMsg(e.message); throw e; });
   // A change makes the crews this shift's own: the carried ones first, then the change.
   const own = (r: ShiftRecord): ShiftRecord => ({ ...r, crews: hasOwnRoster(r) ? r.crews ?? {} : { ...(m.carried?.crews ?? {}) }, meeting: { ...(r.meeting ?? {}), ownCrews: true } });
@@ -460,7 +461,7 @@ function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
     if (v) cs[crew] = v; else delete cs[crew];
     return { ...base, crews: cs };
   });
-  const entered = list.some((c) => crewNames(crews[c]).length || crews[c]?.headcount != null);
+  const entered = list.some((c) => crewNames(crews[c]).length || crews[c]?.headcount != null || crews[c]?.plant);
   const grid = "grid grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(5.5rem,9.5rem)_minmax(0,1fr)_auto] gap-x-2";
   return (
     <div className="mt-1 space-y-1">
@@ -481,19 +482,20 @@ function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
       ) : null}
       <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]">
         <div className={`${grid} px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]`}>
-          <span className="max-sm:hidden">Resource</span><span>Supervisor</span><span className="w-14 text-right">On site</span>
+          <span className="max-sm:hidden">Resource</span><span>Meeting attendees</span><span className="w-14 text-right">On site</span>
         </div>
         {list.length === 0 && <div className="px-2 py-1 text-[12px] italic text-[var(--color-text-muted)]">No crews on the plan{edit ? " - add a company below" : ""}</div>}
         {list.map((crew) => (
           <CrewRow key={crew} grid={grid} crew={crew} value={crews[crew]} known={m.known?.[crew]} edit={edit}
             onNames={(f) => setCrew(crew, (c) => setNames(c, f))}
             onCount={(n) => void setCrew(crew, (c) => ({ ...(c ?? {}), headcount: n })).catch(() => undefined)}
+            onPlant={(on) => void setCrew(crew, (c) => ({ ...(c ?? {}), plant: on || undefined, ...(on ? { headcount: null } : {}) })).catch(() => undefined)}
             onRemove={m.crews.includes(crew) ? undefined : () => void setCrew(crew, () => null).catch(() => undefined)} />
         ))}
         {(edit || (total != null && list.length > 1)) && (
           <div className={`${grid} items-center px-2 py-1 border-t border-[var(--color-border)]`}>
             <span className="min-w-0 sm:col-span-2">{edit && <AddCompany onAdd={(name) => void setCrew(cleanName(name), (c) => c ?? {}).catch(() => undefined)} />}</span>
-            <span className="w-14 text-right text-[12px] tabular-nums whitespace-nowrap">{total != null && <><span className="text-[10px] font-bold uppercase text-[var(--color-text-muted)]">Total </span><b>{total}</b></>}</span>
+            <span className="text-right text-[12px] tabular-nums whitespace-nowrap">{total != null && <><span className="text-[10px] font-bold uppercase text-[var(--color-text-muted)]">Total on the job </span><b>{total}</b></>}</span>
           </div>
         )}
       </div>
@@ -508,10 +510,12 @@ let opSeq = 0;
 
 /** One crew at the meeting: its name, a pill for each person there (edit,
  *  remove; + adds the next one beside them), and its head count on site. */
-function CrewRow({ grid, crew, value, known, edit, onNames, onCount, onRemove }: {
+function CrewRow({ grid, crew, value, known, edit, onNames, onCount, onPlant, onRemove }: {
   grid: string; crew: string; value?: CrewCount; known?: string[]; edit: boolean;
   onNames: (change: (names: string[]) => string[]) => Promise<void>;
   onCount: (n: number | null) => void;
+  /** Plant staff (not on the job, not counted), or counted again. */
+  onPlant: (on: boolean) => void;
   /** A company added at the meeting (not on the plan): off the list. */
   onRemove?: () => void;
 }) {
@@ -542,11 +546,11 @@ function CrewRow({ grid, crew, value, known, edit, onNames, onCount, onRemove }:
             onRename={(to) => change((x) => renamed(x, n, to))} onRemove={() => change((x) => withoutName(x, n))} />
         ))}
         {edit && adding && (
-          <NameInput init="" listId={listId} label={`Supervisor for ${crew}`} keepOpen
+          <NameInput init="" listId={listId} label={`Attendee from ${crew}`} keepOpen
             onDone={(v) => { if (v) change((x) => withName(x, v)); }} onClose={() => setAdding(false)} />
         )}
         {edit && !adding && (
-          <button type="button" onClick={() => setAdding(true)} aria-label={`Add a supervisor for ${crew}`} title="Add a supervisor"
+          <button type="button" onClick={() => setAdding(true)} aria-label={`Add an attendee from ${crew}`} title="Add an attendee"
             className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full border border-dashed border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
             <Plus className="w-3.5 h-3.5" />
           </button>
@@ -555,7 +559,7 @@ function CrewRow({ grid, crew, value, known, edit, onNames, onCount, onRemove }:
         {edit && <datalist id={listId}>{pick.map((x) => <option key={x} value={x} />)}</datalist>}
       </div>
       <div className="max-sm:col-start-2 max-sm:row-start-1 max-sm:row-span-2">
-        <HeadCount crew={crew} value={value?.headcount ?? null} edit={edit} onSave={onCount} />
+        <HeadCount crew={crew} value={value?.headcount ?? null} plant={!!value?.plant} edit={edit} onSave={onCount} onPlant={onPlant} />
       </div>
     </div>
   );
@@ -611,10 +615,19 @@ function NameInput({ init, listId, label, keepOpen, onDone, onClose }: {
 }
 
 /** A crew's head count on site: saved when you leave the box. */
-function HeadCount({ crew, value, edit, onSave }: { crew: string; value: number | null; edit: boolean; onSave: (n: number | null) => void }) {
+function HeadCount({ crew, value, plant, edit, onSave, onPlant }: { crew: string; value: number | null; plant: boolean; edit: boolean; onSave: (n: number | null) => void; onPlant: (on: boolean) => void }) {
   const [typed, setTyped] = useState<string | null>(null);
   const sent = useRef<number | null | undefined>(undefined);
-  if (!edit) return <span className="block w-14 text-right text-[12.5px] font-bold tabular-nums text-[var(--color-text)]">{value ?? "-"}</span>;
+  if (!edit) return <span className={`block text-right text-[12.5px] tabular-nums whitespace-nowrap ${plant ? "text-[var(--color-text-muted)]" : "w-14 font-bold text-[var(--color-text)]"}`}>{plant ? "Plant staff" : value ?? "-"}</span>;
+  // Plant staff: at the meeting, not on the job, not counted. Tap to count them.
+  if (plant) {
+    return (
+      <button type="button" onClick={() => onPlant(false)} aria-pressed title="Plant staff: not on the job, not counted. Tap to count them."
+        className="block h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[11px] font-semibold text-[var(--color-text-muted)] whitespace-nowrap">
+        Plant staff
+      </button>
+    );
+  }
   const commit = () => {
     if (typed == null) return;
     const n = typed.trim() === "" ? null : Math.max(0, Math.round(Number(typed)));
@@ -623,11 +636,15 @@ function HeadCount({ crew, value, edit, onSave }: { crew: string; value: number 
     onSave(n);
   };
   return (
-    <input value={typed ?? (value != null ? String(value) : "")} inputMode="numeric" aria-label={`${crew} head count on site`}
-      placeholder="#"
-      onChange={(e) => setTyped(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))} onBlur={commit}
-      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-      className={`${inputCls} block w-14 h-7 text-right font-mono`} />
+    <span className="flex flex-col items-end gap-0.5">
+      <input value={typed ?? (value != null ? String(value) : "")} inputMode="numeric" aria-label={`${crew} head count on site`}
+        placeholder="#"
+        onChange={(e) => setTyped(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))} onBlur={commit}
+        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+        className={`${inputCls} block w-14 h-7 text-right font-mono`} />
+      <button type="button" onClick={() => onPlant(true)} title="At the meeting, not on the job (plant staff): not counted"
+        className="text-[10px] text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:underline whitespace-nowrap">Plant staff?</button>
+    </span>
   );
 }
 

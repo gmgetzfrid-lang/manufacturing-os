@@ -23,6 +23,9 @@ export interface CrewCount {
   supervisor?: string;
   /** On site this shift. */
   headcount?: number | null;
+  /** Plant staff at the meeting (Operations on all the units): not on the
+   *  job, not counted on site. */
+  plant?: boolean;
 }
 
 export const INCIDENT_KINDS = ["Near miss", "First aid", "Recordable", "Spill / release", "Evacuation / alarm", "Stop work", "Property damage"] as const;

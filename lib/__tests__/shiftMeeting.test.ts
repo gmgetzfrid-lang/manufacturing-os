@@ -28,16 +28,16 @@ describe("the meeting as the log says it", () => {
   it("each crew with someone named or counted, the plan's crews first; the total; the topic; the notes", () => {
     expect(meetingCrews(rec, ["Schultz"]).map((x) => x.crew)).toEqual(["Schultz", "Ancon", "Ops"]);
     expect(meetingLines(rec, 0, ["Schultz"])).toEqual([
-      "Schultz: supervisor Mike Leonard, Joe Brown, 10 employees on site", "Ancon: 4 employees on site", "Ops: supervisor Ray", "Total on site: 14",
+      "Schultz. Attendees: Mike Leonard, Joe Brown. On site: 10.", "Ancon. On site: 4.", "Ops. Attendees: Ray.", "Total on the job: 14",
       "Safety topic: Line of fire", "Crane inspection at 7 PM", "Gate 3 closed",
     ]);
-    // As a table: resource, supervisor, employees on site.
+    // As a table: resource, meeting attendees, on site.
     expect(meetingParts(rec, 0, ["Schultz"])).toEqual({
-      rows: [{ crew: "Schultz", supervisor: "Mike Leonard, Joe Brown", onSite: 10 }, { crew: "Ancon", supervisor: "", onSite: 4 }, { crew: "Ops", supervisor: "Ray", onSite: null }],
+      rows: [{ crew: "Schultz", attendees: "Mike Leonard, Joe Brown", onSite: 10, plant: false }, { crew: "Ancon", attendees: "", onSite: 4, plant: false }, { crew: "Ops", attendees: "Ray", onSite: null, plant: false }],
       total: 14, safety: "Line of fire", notes: ["Crane inspection at 7 PM", "Gate 3 closed"],
     });
     // One crew counted: no total line (it would say the same thing).
-    expect(meetingLines({ crews: { Schultz: { headcount: 1 } } }, 0)).toEqual(["Schultz: 1 employee on site"]);
+    expect(meetingLines({ crews: { Schultz: { headcount: 1 } } }, 0)).toEqual(["Schultz. On site: 1."]);
     expect(totalOnSite([{ headcount: null }])).toBeNull();
     expect(totalOnSite([{ headcount: 0 }, { headcount: 3 }])).toBe(3);
     expect(meetingLines(undefined, 0)).toEqual([]);
@@ -85,6 +85,25 @@ describe("names and head counts carry from the last same shift until changed", (
     expect(m.record).toEqual({ meeting: { safety: "Heat" }, crews: { Schultz: { names: ["Mike"], headcount: 10 } } });
     expect(hasOwnRoster(recs.get("2026-10-29:day"))).toBe(false);
     expect(hasOwnRoster({ meeting: { ownCrews: true } })).toBe(true);
+  });
+});
+
+describe("plant staff at the meeting", () => {
+  it("listed with who attended, said as plant staff, not counted on the job", () => {
+    const rec: ShiftRecord = { crews: {
+      Schultz: { names: ["Ron Web", "Wayne Lederer"], headcount: 20 },
+      "Operations (KE)": { names: ["Jesse Montgomery"], headcount: 30, plant: true },
+      "Engineering (KE)": { names: ["Grant Getzfrid"], headcount: 2 },
+    } };
+    const m = meetingParts(rec, 0);
+    expect(m.rows.find((x) => x.crew === "Operations (KE)")).toEqual({ crew: "Operations (KE)", attendees: "Jesse Montgomery", onSite: null, plant: true });
+    expect(m.total).toBe(22);
+    expect(meetingLines(rec, 0)).toEqual([
+      "Schultz. Attendees: Ron Web, Wayne Lederer. On site: 20.", "Operations (KE). Attendees: Jesse Montgomery. Plant staff.", "Engineering (KE). Attendees: Grant Getzfrid. On site: 2.", "Total on the job: 22",
+    ]);
+    // Plant staff with no one named still shows.
+    expect(meetingCrews({ crews: { Ops: { plant: true } } }).map((x) => x.crew)).toEqual(["Ops"]);
+    expect(totalOnSite([{ headcount: 5, plant: true }, { headcount: 3 }])).toBe(3);
   });
 });
 

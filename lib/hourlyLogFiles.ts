@@ -9,7 +9,7 @@ import { LETTER, type Letterhead, type LhItem, type LhLayer, type LhPara, type L
 import { noEmDash } from "@/lib/noEmDash";
 import type { LogEntry, ShiftLog } from "@/lib/hourlyLog";
 import { boldRuns, plainLine } from "@/lib/shiftHourly";
-import { meetingEmpty, type MeetingParts } from "@/lib/shiftMeeting";
+import { meetingEmpty, onSiteCell, type MeetingParts } from "@/lib/shiftMeeting";
 
 export interface LogFileOpts {
   project: string;
@@ -326,9 +326,9 @@ export async function hourlyLogPdf(logs: ShiftLog[], o: LogFileOpts): Promise<Ui
           } });
         };
         items.push({ h: 3, draw: () => undefined });
-        row(["RESOURCE", "SUPERVISOR", "EMPLOYEES ON SITE"], [fonts.b, fonts.b, fonts.b], 7, GRAY, true);
-        for (const r of m.rows) row([r.crew, r.supervisor || "-", r.onSite != null ? String(r.onSite) : "-"], [fonts.b, fonts.r, fonts.b], 9.5, INK);
-        if (m.total != null) row(["Total on site", "", String(m.total)], [fonts.b, fonts.r, fonts.b], 9.5, INK);
+        row(["RESOURCE", "MEETING ATTENDEES", "ON SITE"], [fonts.b, fonts.b, fonts.b], 7, GRAY, true);
+        for (const r of m.rows) row([r.crew, r.attendees || "-", onSiteCell(r)], [fonts.b, fonts.r, r.plant ? fonts.r : fonts.b], 9.5, INK);
+        if (m.total != null) row(["Total on the job", "", String(m.total)], [fonts.b, fonts.r, fonts.b], 9.5, INK);
         if (m.safety) {
           const ls = wrapRuns([{ t: "Safety topic: ", f: fonts.b }, { t: safe(fonts.r)(m.safety), f: fonts.r }], 9.5, textW - cp * 2);
           ls.forEach((segs, j) => {
@@ -533,7 +533,7 @@ function bodyFont(lh: Letterhead | null): string {
   return "Calibri";
 }
 
-/** A meeting in Word: a table of resource, supervisor and employees on
+/** A meeting in Word: a table of resource, meeting attendees and on
  *  site, the total, then the safety topic; notes under it. */
 function meetingXml(m: MeetingParts, w: number): string {
   const cw = [w * 0.28, w * 0.46, w * 0.26];
@@ -542,9 +542,9 @@ function meetingXml(m: MeetingParts, w: number): string {
   const head = { b: true, pt: 7, color: "64748B" } as const;
   const tr = (cells: string) => `<w:tr><w:trPr><w:cantSplit/></w:trPr>${cells}</w:tr>`;
   const rows = [
-    tr(["RESOURCE", "SUPERVISOR", "EMPLOYEES ON SITE"].map((t, i) => tc(i, p(textRun(t, head), i === 2), "F1F5F9")).join("")),
-    ...m.rows.map((r) => tr([tc(0, p(textRun(r.crew, { b: true, pt: 9.5 }))), tc(1, p(textRun(r.supervisor || "-", { pt: 9.5 }))), tc(2, p(textRun(r.onSite != null ? String(r.onSite) : "-", { b: true, pt: 9.5 }), true))].join(""))),
-    ...(m.total != null ? [tr([tc(0, p(textRun("Total on site", { b: true, pt: 9.5 }))), tc(1, p("")), tc(2, p(textRun(String(m.total), { b: true, pt: 9.5 }), true))].join(""))] : []),
+    tr(["RESOURCE", "MEETING ATTENDEES", "ON SITE"].map((t, i) => tc(i, p(textRun(t, head), i === 2), "F1F5F9")).join("")),
+    ...m.rows.map((r) => tr([tc(0, p(textRun(r.crew, { b: true, pt: 9.5 }))), tc(1, p(textRun(r.attendees || "-", { pt: 9.5 }))), tc(2, p(textRun(onSiteCell(r), { b: !r.plant, pt: 9.5 }), true))].join(""))),
+    ...(m.total != null ? [tr([tc(0, p(textRun("Total on the job", { b: true, pt: 9.5 }))), tc(1, p("")), tc(2, p(textRun(String(m.total), { b: true, pt: 9.5 }), true))].join(""))] : []),
     ...(m.safety ? [tr(tc(0, p(`${textRun("Safety topic: ", { b: true, pt: 9.5 })}${textRun(m.safety, { pt: 9.5 })}`), undefined, 3))] : []),
   ].join("");
   const border = (side: string) => `<w:${side} w:val="single" w:sz="4" w:space="0" w:color="E2E8F0"/>`;

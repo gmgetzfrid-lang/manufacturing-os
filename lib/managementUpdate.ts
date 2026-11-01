@@ -16,7 +16,7 @@ import { type PullCrew, type Pace, type ShiftReport, type ShiftRow, type ShiftWi
 import { rankHazards, type HazardJobInput, type HazardKind } from "@/lib/safetyMoment";
 import { safetyBrief, talkSources, projectFacts, RISKS_RANKED, type ProjectBase } from "@/lib/safetyTalk";
 import type { ExportBlock, ExportCell, ExportSection } from "@/lib/reportExport";
-import { meetingEmpty, type MeetingParts } from "@/lib/shiftMeeting";
+import { meetingEmpty, onSiteCell, type MeetingParts } from "@/lib/shiftMeeting";
 
 export interface UpdateFormat {
   /** "Thu, Oct 22" */
@@ -384,14 +384,14 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   const mt = (look.meetings ?? []).filter((x) => !meetingEmpty(x.parts));
   if (mt.length) {
     out.push({
-      id: "meetings", title: `Shift meetings - ${shiftName(shift)} ${f.D(shift.start)}`, sub: "who attended, employees on site, safety topic",
+      id: "meetings", title: `Shift meetings - ${shiftName(shift)} ${f.D(shift.start)}`, sub: "who attended, on site, safety topic",
       blocks: mt.flatMap((x): ExportBlock[] => [
         { k: "label", text: `${x.clock} ${x.title}` },
         ...(x.parts.rows.length ? [{
-          k: "table", head: ["Resource", "Supervisor", "Employees on site"], align: ["left", "left", "right"], textLabels: ["", "supervisor", "on site"], nowrap: [2],
+          k: "table", head: ["Resource", "Meeting attendees", "On site"], align: ["left", "left", "right"], textLabels: ["", "attendees", "on site"], nowrap: [2],
           rows: [
-            ...x.parts.rows.map((r) => [{ t: r.crew, bold: true }, r.supervisor || "-", { t: r.onSite != null ? String(r.onSite) : "-", bold: true }] as ExportCell[]),
-            ...(x.parts.total != null ? [[{ t: "Total on site", bold: true }, "", { t: String(x.parts.total), bold: true }] as ExportCell[]] : []),
+            ...x.parts.rows.map((r) => [{ t: r.crew, bold: true }, r.attendees || "-", r.plant ? { t: "Plant staff", tone: "muted" } : { t: onSiteCell(r), bold: true }] as ExportCell[]),
+            ...(x.parts.total != null ? [[{ t: "Total on the job", bold: true }, "", { t: String(x.parts.total), bold: true }] as ExportCell[]] : []),
           ],
         } as ExportBlock] : []),
         ...(x.parts.safety ? [{ k: "note", text: `Safety topic: ${x.parts.safety}` } as ExportBlock] : []),

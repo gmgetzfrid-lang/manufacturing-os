@@ -730,7 +730,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             return hr.map((r, i) => {
               const m = r.slot.kind === "meeting" ? h.meet?.start : r.slot.kind === "handover" ? h.meet?.end : undefined;
               // A meeting in the hours: on site and the safety topic (its table is its own section).
-              const brief = (p: MeetingParts) => [...(p.rows.some((x) => x.onSite != null) ? [`On site: ${p.rows.reduce((a, x) => a + (x.onSite ?? 0), 0)}`] : []), ...(p.safety ? [`Safety topic: ${p.safety}`] : [])];
+              const brief = (p: MeetingParts) => [...(p.rows.some((x) => !x.plant && x.onSite != null) ? [`On the job: ${p.rows.reduce((a, x) => a + (x.plant ? 0 : x.onSite ?? 0), 0)}`] : []), ...(p.safety ? [`Safety topic: ${p.safety}`] : [])];
               if (r.slot.kind === "overtime") return { clock: cl[i], kind: r.slot.kind, title: r.slot.label ?? "Overtime", text: "" };
               return { clock: cl[i], kind: r.slot.kind, ...(m ? { title: m.title } : {}), text: m ? (m.parts ? brief(m.parts) : m.lines).join("\n") : r.slot.kind === "break" ? breakLabel(r.slot) : plainLine(r.text), progress: r.progress.map(plainLine), closed: r.closed.map(plainLine) };
             });
