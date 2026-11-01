@@ -32,7 +32,7 @@ describe("the form", () => {
     expect(h).toContain("Hydroblast 10K Tubes &amp; Shell");
     expect(h).toContain('Plan Oct 27 4:00 AM to Oct 27 8:00 AM</div><span class="pill">Ancon</span>');
     expect(h).toContain('Plan Oct 26 10:00 AM to Oct 26 12:00 PM</div><span class="pill">Schultz</span>');
-    expect(h).toMatch(/Step &amp; plan.*Start \(date &amp; time\).*Finish \(date &amp; time\).*%.*Notes/s);
+    expect(h).toMatch(/Step &amp; plan[\s\S]*Start \(date &amp; time\)[\s\S]*Finish \(date &amp; time\)[\s\S]*%[\s\S]*Notes/);
     // A 3-day work order: 6 lines for each of its 2 steps.
     expect(rowsOf(h)).toBe(12);
     expect(rowsOf(fieldTrackerHtml({ project: "TA", tz, orders: [e12], lines: 4 }))).toBe(8);
