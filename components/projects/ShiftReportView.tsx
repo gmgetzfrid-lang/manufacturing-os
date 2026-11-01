@@ -183,6 +183,15 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const needLog = pastShift || meeting === "turnover";
   const liveSig = useMemo(() => live.map((m) => `${m.id}:${m.percentComplete ?? 0}:${m.status}`).join("|"), [live]);
   const [logState, setLogState] = useState<{ rows: ProgressLogRow[] | null } | undefined>(undefined);
+  // A time fixed on a step (its % and status the same) changes the log
+  // too: read it again then.
+  const [logTick, setLogTick] = useState(0);
+  useEffect(() => {
+    const on = () => setLogTick((t) => t + 1);
+    window.addEventListener("milestone-notes:changed", on);
+    window.addEventListener("schedule:changed", on);
+    return () => { window.removeEventListener("milestone-notes:changed", on); window.removeEventListener("schedule:changed", on); };
+  }, []);
   useEffect(() => {
     if (!needLog) return;
     let alive = true;
@@ -190,7 +199,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       loadProgressLog(projectId).then((l) => { if (alive) setLogState({ rows: l }); }).catch(() => { if (alive) setLogState({ rows: null }); });
     }, 400);
     return () => { alive = false; clearTimeout(t); };
-  }, [needLog, projectId, liveSig]);
+  }, [needLog, projectId, liveSig, logTick]);
   const log = logState?.rows;
   const recordedBy = shift.end + TURNOVER_GRACE_MS;
   const history = useMemo(

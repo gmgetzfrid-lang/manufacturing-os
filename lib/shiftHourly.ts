@@ -285,9 +285,15 @@ export function hourlyRows(n: HourlyNotes | null | undefined, slots: HourSlot[],
   const rows = slots.filter((x) => !skip.has(x.key) && (x.kind === "meeting" || x.start <= upTo || show.has(x.key))).map((slot) => {
     const meeting = slot.kind === "meeting" || slot.kind === "handover";
     const own = meeting ? [] : (typed.get(slot.key) ?? []).flatMap((l) => l.text.split("\n")).map((x) => noEmDash(x).trim()).filter(Boolean);
+    if (meeting || slot.kind === "break") return { slot, lines: [], progress: [], closed: [], typed: false, text: "", said: "" } as HourlyRow;
     // An hour typed over is all theirs; otherwise its entries say it.
-    const parts = own.length || meeting || slot.kind === "break" ? { lines: own, progress: [], closed: [] } : hourParts(said.get(slot.key) ?? [], slot.start, tz, opts.closes);
-    return { slot, lines: parts.lines, progress: parts.progress, closed: parts.closed, typed: own.length > 0, text: parts.lines.join("\n") } as HourlyRow;
+    const auto = hourParts(said.get(slot.key) ?? [], slot.start, tz, opts.closes);
+    const now = [...auto.lines, ...auto.progress].join("\n");
+    const parts = own.length ? { lines: own, progress: [], closed: typedClosed(own, auto.closed) } : auto;
+    // Typed over, and its entries changed since (a time fixed, a step added).
+    const src = (typed.get(slot.key) ?? []).map((l) => l.src).find((x) => x != null);
+    return { slot, lines: parts.lines, progress: parts.progress, closed: parts.closed, typed: own.length > 0, text: parts.lines.join("\n"), said: now,
+      ...(own.length && src != null && src !== now ? { stale: true } : {}) } as HourlyRow;
   }).filter((r) => !r.slot.tail || r.lines.length > 0 || r.progress.length > 0);
   // An hour with nothing in it and a break in it (lunch): the break's row
   // says it, one row; the hour is kept on it (to type into or add work at).
@@ -302,10 +308,34 @@ export function hourlyRows(n: HourlyNotes | null | undefined, slots: HourSlot[],
   return out;
 }
 
+/** An hour typed over where a work order was finished: the typed line
+ *  that still names that work order ("WO 310505") stays green; of several,
+ *  the one that says it's done (else the last). */
+export function typedClosed(typed: string[], closed: string[]): string[] {
+  const out: string[] = [];
+  for (const c of closed) {
+    const head = boldRuns(c).find((r) => r.b)?.t ?? "";
+    const key = (/^WO\s+\S+/i.exec(head)?.[0] ?? head).toLowerCase();
+    if (!key) continue;
+    const hits = typed.filter((t) => plainLine(t).toLowerCase().includes(key));
+    if (!hits.length) continue;
+    const pick = hits.filter((t) => /\b(done|complete|completed|finished)\b/i.test(plainLine(t)));
+    const line = (pick.length ? pick : hits).at(-1)!;
+    if (!out.includes(line)) out.push(line);
+  }
+  return out;
+}
+
 /** An hour of the notes as said: its lines, what moved, the lines that
  *  finished a whole work order; a break's row carries the empty hour it
  *  stands for (`hour`). */
-export interface HourlyRow { slot: HourSlot; lines: string[]; progress: string[]; closed: string[]; typed: boolean; text: string; hour?: HourSlot }
+export interface HourlyRow {
+  slot: HourSlot; lines: string[]; progress: string[]; closed: string[]; typed: boolean; text: string; hour?: HourSlot;
+  /** What its entries say now (kept with a typed hour, to see if they change). */
+  said: string;
+  /** Typed over, and its entries changed after. */
+  stale?: boolean;
+}
 
 /** What each kind of hour is called. */
 export const SLOT_LABEL: Record<SlotKind, string> = { meeting: "Shift meeting", permit: "Start of shift - permitting", work: "", break: "Break", handover: "Shift meeting" };

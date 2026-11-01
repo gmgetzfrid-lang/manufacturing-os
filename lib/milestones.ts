@@ -737,12 +737,34 @@ export async function setActualTimes(input: {
   const { data, error } = await supabase.from("milestones").update(patch).eq("id", input.id).select("*").single();
   if (error || !data) throw new Error(error?.message ?? "Couldn't save the actual times");
   const m = rowToMilestone(data as MilestoneRow);
+  // Its start and finish lines in the progress log move with it, so the
+  // hourly log and the time log say the same time.
+  await moveLogLines(input.id, input.actualStartAt, input.actualAt).catch(() => undefined);
   await addMilestoneNote({
     orgId: m.orgId, milestoneId: m.id!, kind: "status", statusAt: m.status,
     body: `Actual times corrected${input.actualStartAt !== undefined ? ` · started ${input.actualStartAt ? new Date(input.actualStartAt).toISOString() : "-"}` : ""}${input.actualAt !== undefined ? ` · finished ${input.actualAt ? new Date(input.actualAt).toISOString() : "-"}` : ""}`,
     createdBy: input.actorUserId, createdByName: input.actorUserName,
   }).catch(() => undefined);
   return m;
+}
+
+/** A step's start or finish corrected: the progress log's line for it
+ *  (its first move off "not started", its last "done") goes to the same
+ *  time. Best effort: a line it can't move stays where it was. */
+async function moveLogLines(id: string, start?: string | null, finish?: string | null): Promise<void> {
+  if (!start && !finish) return;
+  const { data, error } = await supabase.from("milestone_progress_log").select("id, at, old_status, new_status").eq("milestone_id", id)
+    .order("at", { ascending: true }).order("id", { ascending: true });
+  if (error || !data) return;
+  const rows = data as Array<{ id: number; at: string; old_status: string | null; new_status: string }>;
+  const doneRow = finish ? [...rows].reverse().find((r) => r.new_status === "completed" && r.old_status != null && r.old_status !== "completed") : undefined;
+  const startRow = start ? rows.find((r) => r.old_status === "planned" && r.new_status !== "planned") : undefined;
+  const move = async (r: { id: number; at: string } | undefined, to: string | null | undefined) => {
+    if (!r || !to || Math.abs(Date.parse(r.at) - Date.parse(to)) < 60_000) return;
+    await setProgressTime(r.id, Date.parse(to));
+  };
+  await move(doneRow, finish);
+  if (startRow && startRow.id !== doneRow?.id) await move(startRow, start);
 }
 
 // ─── Milestone activity notes (breadcrumb trail) ─────────────────

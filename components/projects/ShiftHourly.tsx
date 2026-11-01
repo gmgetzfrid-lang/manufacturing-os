@@ -101,12 +101,14 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
   });
 
   // An hour as typed: kept as typed (empty puts it back to the entries).
-  const setHour = (slot: HourSlot, text: string | null) => {
+  // What its entries said is kept with it: if they change after (a time
+  // fixed on the work order), the hour says so.
+  const setHour = (slot: HourSlot, text: string | null, said?: string) => {
     setEditing(null);
     return run(() => h.update((cur) => {
       const rest = typedLines(cur).filter((l) => slotOf(l.at, h.slots).key !== slot.key);
       const t = text?.split("\n").map((x) => x.replace(/\s+/g, " ").trim()).filter(Boolean).join("\n");
-      return { ...(cur?.v === 2 ? cur : {}), v: 2, lines: t ? [...rest, { id: newId(), at: slot.start, text: t, hand: true }] : rest };
+      return { ...(cur?.v === 2 ? cur : {}), v: 2, lines: t ? [...rest, { id: newId(), at: slot.start, text: t, hand: true, ...(said != null ? { src: said } : {}) }] : rest };
     }));
   };
   // The meeting's notes, on its record (what was typed before, folded in).
@@ -167,7 +169,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                 <div className="min-w-0 flex-1">
                   <span className="font-semibold text-[var(--color-text-muted)]">{breakLabel(r.slot)}</span>
                   {hr && editing === hr.key && (
-                    <HourForm init="" placeholder="What happened this hour" onDone={(t) => void setHour(hr, t)} onCancel={() => setEditing(null)} />
+                    <HourForm init="" placeholder="What happened this hour" onDone={(t) => void setHour(hr, t, "")} onCancel={() => setEditing(null)} />
                   )}
                 </div>
                 {hr && editing !== hr.key && (
@@ -200,11 +202,20 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                 {isMeeting && !m && (said(r.slot)?.lines ?? []).map((x, j) => <div key={j} className="break-words text-[var(--color-text)]">{x}</div>)}
                 {editing === r.slot.key ? (
                   <HourForm init={isMeeting ? note.join("\n") : r.text} placeholder={isMeeting ? "Anything else from the meeting" : "What happened this hour"}
-                    onDone={(t) => void (m ? setMeetingNote(m, t) : setHour(r.slot, t))} onCancel={() => setEditing(null)} />
+                    onDone={(t) => void (m ? setMeetingNote(m, t) : setHour(r.slot, t, r.said))} onCancel={() => setEditing(null)} />
                 ) : isMeeting ? (
                   note.length ? <div className="mt-1 space-y-0.5">{note.map((x, j) => <div key={j} className="break-words text-[var(--color-text)]">{x}</div>)}</div> : null
                 ) : (
                   <Items text={r.text} going={r.progress} closed={r.closed} />
+                )}
+                {/* Typed over, then its entries changed (a time fixed on the work
+                    order, a step moved here or away): say so, one tap to the entries. */}
+                {edit && r.typed && r.stale && editing !== r.slot.key && (
+                  <div role="status" className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-[11.5px] text-amber-900 dark:text-amber-100">
+                    <span className="min-w-0 flex-1">This hour was typed over, and its entries changed after.</span>
+                    <button type="button" onClick={() => void setHour(r.slot, null)} className="font-bold hover:underline">Use the entries</button>
+                    <button type="button" onClick={() => void setHour(r.slot, r.text, r.said)} className="font-semibold text-amber-800 dark:text-amber-200 hover:underline">Keep as typed</button>
+                  </div>
                 )}
                 {/* A typed note: a mistake, or now put in as work (its own entry
                     says it) - deleted, the hour shows its entries again. */}
