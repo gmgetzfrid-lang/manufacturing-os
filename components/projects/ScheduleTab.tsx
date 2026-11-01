@@ -33,7 +33,6 @@ import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import Spinner from "@/components/ui/Spinner";
 import HelpTooltip from "@/components/ui/HelpTooltip";
-import FirstRunHint from "@/components/ui/FirstRunHint";
 import ScheduleProgress from "@/components/projects/ScheduleProgress";
 import ScheduleImportModal from "@/components/projects/ScheduleImportModal";
 import ScheduleEmptyState from "@/components/projects/ScheduleEmptyState";
@@ -309,11 +308,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
         </div>
       )}
 
-      {mode === "plan" && <FirstRunHint storageKey="schedule.intro.v2" tone="info">
-        Drop an exported schedule file and we&apos;ll parse it - from MS Project (.xml / .csv) or Primavera P6,
-        the scheduling tool big projects use (.xml / .xer export). No file? Type a few milestones by hand - that&apos;s
-        enough to unlock the board. Drag milestones in the calendar to reschedule; click a pill to advance its status.
-      </FirstRunHint>}
+      {/* No import tip here: an empty schedule shows Import (ScheduleEmptyState), and once there is one it's noise. */}
 
       {/* Progress dashboard — always on top, summarizes everything */}
       {/* Work has it at the top of the board, with what needs you. */}

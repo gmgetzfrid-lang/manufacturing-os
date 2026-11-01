@@ -371,6 +371,9 @@ export default function ExecutionView({
   // report their own (status-reconciled) percent; summaries roll their leaf
   // descendants up, duration-weighted (see lib/scheduleProgress.ts).
   const progressIndex = useMemo(() => buildProgressIndex(items, tz), [items, tz]);
+  // Something on this schedule is theirs (a task they made or finished):
+  // not new here (the guide's "New here?" stays away).
+  const worked = useMemo(() => !!userId && milestones.some((m) => m.createdBy === userId || m.completedBy === userId), [milestones, userId]);
   // The Completion card's counts (Work's summary at the top).
   const metrics = useMemo(() => computeScheduleMetrics(items), [items]);
 
@@ -1232,7 +1235,7 @@ export default function ExecutionView({
     <ShiftClockContext.Provider value={shiftClock}>
     <JobStartContext.Provider value={jobStart}>
     <div className="space-y-3">
-      {mode === "work" && <ExecutionGuide />}
+      {mode === "work" && <ExecutionGuide userId={userId} worked={worked} />}
 
       {/* Non-member feedback: the status dots and bars still render (they
           signal state), but edits are disabled — say why so it doesn't feel

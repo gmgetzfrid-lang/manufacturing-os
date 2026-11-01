@@ -49,7 +49,10 @@ export async function gatherProjectSnapshot(orgId: string, projectId: string): P
   const proj = (projRow ?? {}) as Record<string, unknown>;
 
   // Cost rollup (CPI needs milestone % for pinned accounts).
-  const live = msRows.filter((m) => (m.source as string | null) == null || m.source === "manual" || m.source === "app");
+  // Every task on the schedule: an imported one (MS Project, P6) is as much
+  // the schedule as one typed in. Counting only typed ones told a project
+  // with an imported schedule to "add a schedule" and "set a baseline".
+  const live = msRows;
   const pctIdx = milestonePctIndex(live.map((m) => ({
     id: String(m.id),
     percentComplete: (m.percent_complete as number | null) ?? null,

@@ -13,7 +13,8 @@
 // an interaction, it gets a line here too — this is the contract that
 // keeps the field user from being lost.
 
-import React, { useState, useSyncExternalStore } from "react";
+import React, { useEffect, useState, useSyncExternalStore } from "react";
+import { supabase } from "@/lib/supabase";
 import {
   HelpCircle, X as XIcon, GripVertical, ChevronRight, ChevronLeft,
   CalendarRange, ListTree, CalendarDays, MousePointerClick,
@@ -22,8 +23,30 @@ import {
 const SEEN_KEY = "exec.guide.seen.v1";
 const subscribeNever = () => () => {};
 
-export default function ExecutionGuide() {
+/** Has this person run a schedule before? Something of theirs on it (a
+ *  task they made or finished, a note they wrote) - here or on any
+ *  project. Known from the records, not this browser's memory: a new
+ *  device or link doesn't make anyone new. */
+function useExperienced(userId?: string, here?: boolean): boolean | null {
+  const [state, setState] = useState<{ userId?: string; v: boolean | null }>({ userId, v: null });
+  useEffect(() => {
+    if (here || !userId) return;
+    let live = true;
+    void supabase.from("milestone_notes").select("id").eq("created_by", userId).limit(1)
+      .then(({ data, error }) => { if (live) setState({ userId, v: !error && !!data && data.length > 0 }); });
+    return () => { live = false; };
+  }, [userId, here]);
+  if (here) return true;
+  return state.userId === userId ? state.v : null;
+}
+
+export default function ExecutionGuide({ userId, worked }: {
+  userId?: string;
+  /** Something on this schedule is theirs (a task they made or finished). */
+  worked?: boolean;
+} = {}) {
   const [open, setOpen] = useState(false);
+  const experienced = useExperienced(userId, worked);
   // First-run: show the banner until the user has opened the guide or
   // dismissed it once. Hydration-safe read (server snapshot: seen) — a lazy
   // useState initializer here made the client's first render disagree with
@@ -34,7 +57,8 @@ export default function ExecutionGuide() {
     () => true,
   );
   const [sessionDismissed, setSessionDismissed] = useState(false);
-  const bannerDismissed = seen || sessionDismissed;
+  // Someone who has run a schedule before isn't new; until that's known, nothing shows.
+  const bannerDismissed = seen || sessionDismissed || experienced !== false;
 
   const markSeen = () => {
     try { window.localStorage.setItem(SEEN_KEY, "1"); } catch { /* noop */ }
