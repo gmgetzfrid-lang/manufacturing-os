@@ -962,7 +962,8 @@ export interface CheckoutSession {
 
 export type ProjectStatus = "active" | "paused" | "completed" | "cancelled" | "archived";
 export type ProjectVisibility = "public" | "private";
-export type ProjectMemberRole = "owner" | "collaborator" | "observer";
+/** "collaborator" shows as Editor, "observer" as Viewer (lib/projectAccess). */
+export type ProjectMemberRole = "owner" | "co_owner" | "collaborator" | "observer";
 
 export interface Project {
   id?: string;

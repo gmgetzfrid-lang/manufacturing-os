@@ -80,7 +80,7 @@ import { TryControl, ShipBar } from "@/components/projects/HandoverControls";
 import { PullAheadPicker } from "@/components/projects/PullAheadPicker";
 import { useHandoverDraft } from "@/lib/useHandoverDraft";
 import { scopeOf } from "@/lib/pullAhead";
-import { ShiftHourlyBox, type HourlyCtx, type MeetingCtx } from "@/components/projects/ShiftHourly";
+import { MeetingBox, ShiftHourlyBox, type HourlyCtx, type MeetingCtx } from "@/components/projects/ShiftHourly";
 import { meetingLines, meetingParts, meetingRows, meetingTitle, meetingRecord, meetingEmpty, knownNames, type MeetingParts } from "@/lib/shiftMeeting";
 import { overtimeOf, overtimeEnd, overtimeLine, sentHomeLine, shiftEntries, type HoldOver, type OvertimeWindow } from "@/lib/holdOver";
 import { HourlyLogExport } from "@/components/projects/HourlyLogExport";
@@ -649,8 +649,15 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     try { localStorage.setItem("shiftReport:hidden", JSON.stringify(next)); } catch { /* private mode */ }
     return next;
   }), [meeting]);
-  const sections = useMemo(() => allSections.filter((x) => !(hiddenBy[meeting] ?? []).includes(x.id)), [allSections, hiddenBy, meeting]);
-  const hiddenSecs = useMemo(() => allSections.filter((x) => (hiddenBy[meeting] ?? []).includes(x.id)), [allSections, hiddenBy, meeting]);
+  // The report's items (the agenda-only ones aside), less the hidden ones;
+  // and the meeting's agenda, in its order (Today › Meeting).
+  const reportAll = useMemo(() => allSections.filter((x) => x.agenda !== "only"), [allSections]);
+  const reportSections = useMemo(() => reportAll.filter((x) => !(hiddenBy[meeting] ?? []).includes(x.id)), [reportAll, hiddenBy, meeting]);
+  const hiddenSecs = useMemo(() => reportAll.filter((x) => (hiddenBy[meeting] ?? []).includes(x.id)), [reportAll, hiddenBy, meeting]);
+  const agendaList = useMemo(() => (meeting === "turnover" ? [...allSections.filter((x) => x.agenda === "only"), ...allSections.filter((x) => x.agenda === "also")] : []), [allSections, meeting]);
+  const [screen, setScreenState] = useState<"report" | "meeting">("report");
+  const inMeetingView = screen === "meeting" && agendaList.length > 0;
+  const sections = inMeetingView ? agendaList : reportSections;
   const [showSecs, setShowSecs] = useState(false);
 
   // A step's card: asked about mid-meeting, answered from the schedule.
@@ -826,9 +833,22 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           ))}
         </div>}
 
+        {/* The report, or the meeting's agenda (attendance, the safety topic, what the next shift picks up). */}
+        {meeting === "turnover" && agendaList.length > 0 && (
+          <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-lg p-0.5 gap-0.5" role="tablist" aria-label="Report or meeting">
+            {([["report", "Report"], ["meeting", "Meeting"]] as const).map(([id, label]) => (
+              <button key={id} type="button" role="tab" aria-selected={(id === "meeting") === inMeetingView}
+                onClick={() => { setScreenState(id); setPresenting(null); }}
+                className={`px-3 py-1 rounded-md text-[12px] font-bold transition-colors ${(id === "meeting") === inMeetingView ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {meeting === "turnover" && (
           <>
-            {!meetingFixed && <span className="mx-0.5 w-px h-4 bg-[var(--color-border)]" />}
+            {(!meetingFixed || agendaList.length > 0) && <span className="mx-0.5 w-px h-4 bg-[var(--color-border)]" />}
             <button onClick={() => pick(previousShift(shift, tz, times))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Previous shift"><ChevronLeft className="w-4 h-4" /></button>
             <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-md p-0.5 gap-0.5">
               {(["day", "night"] as const).map((k) => (
@@ -883,7 +903,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
               </div>
             )}
           </div>
-          <div className="relative">
+          {!inMeetingView && <div className="relative">
             <button type="button" onClick={() => setShowSecs((v) => !v)} aria-expanded={showSecs}
               className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border ${hiddenSecs.length ? "border-[var(--color-accent)] text-[var(--color-accent)]" : "border-[var(--color-border-strong)] text-[var(--color-text)]"} hover:bg-[var(--color-surface-2)]`}
               title="Choose what shows on the report - on screen and in print">
@@ -895,7 +915,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                 <div className="absolute right-0 top-full mt-1 z-30 w-64 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-2.5 text-[12px]">
                   <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Show on the report</div>
                   <div className="mt-1.5 space-y-1">
-                    {allSections.map((x) => (
+                    {reportAll.map((x) => (
                       <label key={x.id} className="flex items-center gap-2 cursor-pointer select-none py-0.5">
                         <input type="checkbox" className="accent-[var(--color-accent)] w-4 h-4" checked={!hiddenSecs.includes(x)} onChange={(e) => setHidden(x.id, !e.target.checked)} />
                         <span className="font-semibold text-[var(--color-text)]">{x.title.split(" - ")[0]}</span>
@@ -909,7 +929,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                 </div>
               </>
             )}
-          </div>
+          </div>}
           <button onClick={() => setPresenting(presenting == null ? 0 : null)}
             className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border ${presenting != null ? "bg-slate-900 text-white border-slate-900" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}
             title="Run the meeting one agenda item at a time (← → keys, Esc to leave)">
@@ -1090,7 +1110,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             </>
           )}
           {(() => {
-            const safetyAt = sections.findIndex((s) => s.id === "safety");
+            const safetyAt = sections.findIndex((s) => s.id === "topics");
             const body = (
               <>
                 {head(true)}
@@ -1420,6 +1440,9 @@ interface Sec {
   /** The item as data for a copied report (text / email). Absent for the
    *  talk-track items — prompts and sign-off — which an update leaves out. */
   data?: () => ExportBlock[];
+  /** On the meeting's agenda (Today › Meeting): only there, or there and
+   *  on the report. */
+  agenda?: "only" | "also";
 }
 
 /** Table rows as export rows: same text, tags without the null slots. */
@@ -1713,7 +1736,27 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     </div>
   ) : null);
   const editRow = o.onEdit;
+  // The meeting's agenda (Today › Meeting): who's there and the head
+  // count, then the safety topic, then what the next shift picks up.
+  const endMeeting = meetings?.end;
+  const agendaItems: Sec[] = [
+    ...(endMeeting && sh ? [{
+      id: "attend", title: "Attendance & head count", short: "Attendance", agenda: "only" as const,
+      sub: `${meetingTitle(next.kind)} - who's here from each crew, and how many on site`,
+      body: (print: boolean) => <MeetingBox m={endMeeting} edit={sh.edit && !print} />,
+    }] : []),
+    ...(hazardJobs.length ? [{
+      id: "topics", title: `Safety topic - ${shiftName(next)} ${c.D(next.start)}`, short: "Safety topic", agenda: "only" as const,
+      sub: endMeeting && sh?.edit ? "Pick one for the meeting, or present it full screen" : "Present one full screen",
+      body: (print: boolean) => (
+        <SafetyMomentBox jobs={hazardJobs} shift={next} T={c.T} print={print} project={o.safety?.project} recent={o.safety?.recent} label={`${shiftName(next)} ${c.D(next.start)}`}
+          chosen={endMeeting?.record?.meeting?.safety}
+          onUse={endMeeting && sh?.edit && !print ? (title) => { void endMeeting.save((r) => ({ ...r, meeting: { ...(r.meeting ?? {}), safety: title } })).catch(() => undefined); } : undefined} />
+      ),
+    }] : []),
+  ];
   return [
+    ...agendaItems,
     {
       id: "stand", title: "Where we stand", short: "Status",
       sub: [overall.plannedFinish ? `Day ${overall.daysElapsed} of ${overall.daysTotal} · planned finish ${c.DT(overall.plannedFinish)}` : null,
@@ -1742,10 +1785,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     },
     {
       id: "safety", title: "Safety & people", short: "Safety",
-      sub: "Open every turnover here - then the work.",
+      sub: "Incidents since the last turnover, and what's open across the change. The safety topics are on the meeting's agenda.",
       body: (print) => (
         <div className="space-y-2">
-          <SafetyMomentBox jobs={hazardJobs} shift={next} T={c.T} print={print} project={o.safety?.project} recent={o.safety?.recent} label={`${shiftName(next)} ${c.D(next.start)}`} />
           {sh ? (
             // The incidents line takes the place of its tick-box.
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-1 keep">
@@ -1796,6 +1838,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     {
       // ── Next — one list, each step once, with what happens to it.
       id: "next", title: `Next - ${shiftName(next)} ${c.D(next.start)} ${c.win(next)}`, short: "Next",
+      agenda: "also",
       sub: nextSub,
       count: planList.length,
       flag: null,
@@ -1835,6 +1878,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       // ── Carries to the other shift: its crew's unfinished and ongoing
       // work, and anything blocked — not the next shift's list.
       id: "carries", title: `Carries over to ${otherKind} shift - ${c.D(next.end)}`, short: `To ${otherKind} shift`,
+      agenda: "also",
       sub: laterSub, count: laterCount,
       flag: plan.held.some((r) => r.status === "blocked") ? "rose" : null,
       body: (print: boolean) => (

@@ -1244,8 +1244,7 @@ export default function ExecutionView({
         <div className="flex items-center gap-2 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-[12px] text-amber-800 dark:text-amber-300">
           <Eye className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
           <span>
-            <b>View only.</b> You&apos;re not a member of this project, so status and dates are read-only.
-            Ask the project owner to add you as a member to make changes.
+            <b>View only.</b> You&apos;re a viewer on this project, or not on it. To update the work, ask its owner or a co-owner to make you an editor (Members).
           </span>
         </div>
       )}

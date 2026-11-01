@@ -73,6 +73,9 @@ interface ScheduleTabProps {
    *  their org role — ownership was previously ignored here, so an
    *  Engineer who owned the project could delete it but not plan it. */
   isProjectOwner?: boolean;
+  /** May update the work (owner, co-owner, editor, or an org role that works
+   *  schedules). Unset: the owner or such an org role. */
+  canEditSchedule?: boolean;
   /** The project's own time zone (null = never set) — for Schedule setup. */
   timezone?: string | null;
   /** Owner / admin: may change project settings in Schedule setup. */
@@ -85,10 +88,12 @@ interface ScheduleTabProps {
   onMode: (m: ScheduleMode) => void;
 }
 
-export default function ScheduleTab({ orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole, isProjectOwner, timezone, canManage, onProjectChanged, mode, onMode }: ScheduleTabProps) {
+export default function ScheduleTab({ orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole, isProjectOwner, canEditSchedule, timezone, canManage, onProjectChanged, mode, onMode }: ScheduleTabProps) {
   const view = mode === "plan" ? "planning" : "execution";
   const tz = useScheduleTz();
-  const canEdit = !!isProjectOwner || (!!userRole && ADMIN_ROLES.has(userRole));
+  // The owner, a co-owner or editor on the project, or an org role that works
+  // schedules (lib/projectAccess; the page works it out from the members).
+  const canEdit = canEditSchedule ?? (!!isProjectOwner || (!!userRole && ADMIN_ROLES.has(userRole)));
 
   const [allMilestones, setMilestones] = useState<Milestone[]>([]);
   // Jobs taken off this schedule leave every view (their steps with them);

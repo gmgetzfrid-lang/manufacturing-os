@@ -593,7 +593,9 @@ export async function removeMember(input: {
 
 /** Verify the actor may manage this project — its current owner, or an org
  *  Admin/DocCtrl. Returns the project's core fields. Throws otherwise. */
-export async function assertCanManageProject(projectId: string, actorUserId: string): Promise<{ id: string; orgId: string; ownerUserId: string; name: string }> {
+/** The owner, an org Admin / Document Control, or (unless `ownerOnly`:
+ *  deleting the project, handing over ownership) a co-owner. */
+export async function assertCanManageProject(projectId: string, actorUserId: string, opts: { ownerOnly?: boolean } = {}): Promise<{ id: string; orgId: string; ownerUserId: string; name: string }> {
   const { data, error } = await supabase
     .from("projects").select("id, org_id, owner_user_id, name").eq("id", projectId).maybeSingle();
   if (error || !data) throw new Error("Project not found.");
@@ -607,7 +609,13 @@ export async function assertCanManageProject(projectId: string, actorUserId: str
   if (role === "Admin" || role === "DocCtrl") {
     return { id: p.id, orgId: p.org_id, ownerUserId: p.owner_user_id, name: p.name };
   }
-  throw new Error("Only the project owner or an admin can do this.");
+  // A co-owner on the project manages it as its owner does.
+  const { data: pm } = opts.ownerOnly ? { data: null } : await supabase
+    .from("project_members").select("role").eq("project_id", projectId).eq("user_id", actorUserId).maybeSingle();
+  if ((pm as { role?: string } | null)?.role === "co_owner") {
+    return { id: p.id, orgId: p.org_id, ownerUserId: p.owner_user_id, name: p.name };
+  }
+  throw new Error("Only the project owner, a co-owner or an admin can do this.");
 }
 
 /** Delete a project and its schedule. Owner or org Admin/DocCtrl only.
@@ -615,7 +623,7 @@ export async function assertCanManageProject(projectId: string, actorUserId: str
 export async function deleteProject(input: {
   projectId: string; actorUserId: string; actorEmail?: string; actorRole?: string;
 }): Promise<void> {
-  const p = await assertCanManageProject(input.projectId, input.actorUserId);
+  const p = await assertCanManageProject(input.projectId, input.actorUserId, { ownerOnly: true });
   // Keep document checkouts; just unlink them from the deleted project.
   await supabase.from("checkout_sessions").update({ project_id: null }).eq("project_id", input.projectId);
   await supabase.from("markup_requests").update({ project_id: null }).eq("project_id", input.projectId);
@@ -638,7 +646,7 @@ export async function transferOwnership(input: {
   projectId: string; newOwnerUserId: string; newOwnerName?: string; newOwnerEmail?: string;
   actorUserId: string; actorEmail?: string; actorRole?: string;
 }): Promise<void> {
-  const p = await assertCanManageProject(input.projectId, input.actorUserId);
+  const p = await assertCanManageProject(input.projectId, input.actorUserId, { ownerOnly: true });
   const now = new Date().toISOString();
   const { error } = await supabase.from("projects").update({
     owner_user_id: input.newOwnerUserId,

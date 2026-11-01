@@ -50,6 +50,9 @@ import { getProjectTimeline, type TimelineEvent } from "@/lib/timeline";
 import { openProjectEvidencePack } from "@/lib/evidencePack";
 import TimelineFeed from "@/components/documents/TimelineFeed";
 import ScheduleTab from "@/components/projects/ScheduleTab";
+import { MEMBER_ROLES, projectAccess, roleLabel, needsCoOwnerSql } from "@/lib/projectAccess";
+
+const COOWNER_SQL_NOTE = "Co-owner needs a database change first: run supabase/migrations/20261113_project_co_owners.sql in the Supabase SQL editor. Editor and Viewer work now.";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { supabase } from "@/lib/supabase";
 import type {
@@ -148,7 +151,13 @@ export default function ProjectDetailPage() {
   const isOwner = project && uid && project.ownerUserId === uid;
   const isMember = members.some((m) => m.userId === uid);
   const canComment = isOwner || isMember || isAdmin;
-  const canManage = isOwner || isAdmin;
+  // Their permission on this project (Members: Co-owner, Editor, Viewer)
+  // and their org role decide what they may do (lib/projectAccess).
+  const myMemberRole = members.find((m) => m.userId === uid)?.role ?? null;
+  const access = projectAccess({ isOwner: !!isOwner, memberRole: myMemberRole, orgRoles: [activeRole, ...(["Admin", "DocCtrl", "Manager", "Supervisor"] as const).filter((r) => hasAnyRole([r]))] });
+  const canManage = access.canManage;
+  // Deleting the project and handing over ownership: the owner (or an admin), not a co-owner.
+  const isOwnerOrAdmin = !!isOwner || isAdmin;
 
   const refresh = useCallback(async () => {
     if (!projectId) return;
@@ -414,7 +423,7 @@ export default function ProjectDetailPage() {
             {canManage && (project.status === "completed" || project.status === "cancelled") && (
               <ActionButton icon={<ArchiveIcon className="w-3.5 h-3.5" />} label="Archive" onClick={() => setPendingStatus("archived")} />
             )}
-            {canManage && (
+            {isOwnerOrAdmin && (
               <ActionButton
                 icon={<Trash2 className="w-3.5 h-3.5" />}
                 label="Delete"
@@ -576,6 +585,7 @@ export default function ProjectDetailPage() {
               userEmail={userEmail ?? undefined}
               userRole={activeRole ?? undefined}
               isProjectOwner={!!isOwner}
+              canEditSchedule={access.canEdit}
               timezone={project.timezone}
               canManage={!!canManage}
               onProjectChanged={() => void refresh()}
@@ -589,6 +599,7 @@ export default function ProjectDetailPage() {
             project={project}
             members={members}
             canManage={!!canManage}
+            canTransfer={isOwnerOrAdmin}
             onAdded={() => void refresh()}
             actorUserId={uid!}
             actorEmail={userEmail ?? undefined}
@@ -889,11 +900,13 @@ function ActivityTab({
 }
 
 function MembersTab({
-  project, members, canManage, onAdded, actorUserId, actorEmail,
+  project, members, canManage, canTransfer, onAdded, actorUserId, actorEmail,
 }: {
   project: Project;
   members: ProjectMember[];
   canManage: boolean;
+  /** Hand over ownership: the owner or an admin only. */
+  canTransfer?: boolean;
   onAdded: () => void;
   actorUserId: string;
   actorEmail?: string;
@@ -930,8 +943,23 @@ function MembersTab({
       setAddEmail(""); setAddResp(""); setAddRole("collaborator");
       onAdded();
     } catch (e) {
-      setError((e as Error).message);
+      const msg = (e as Error).message;
+      setError(needsCoOwnerSql(msg) ? COOWNER_SQL_NOTE : msg);
     } finally { setBusy(false); }
+  };
+
+  // A member's permission on the project: Co-owner, Editor or Viewer.
+  const [roleBusy, setRoleBusy] = useState<string | null>(null);
+  const setRole = async (m: ProjectMember, role: ProjectMemberRole) => {
+    if (role === m.role) return;
+    setRoleBusy(m.userId); setError(null);
+    try {
+      await updateMember({ projectId: project.id!, userId: m.userId, role, actorUserId });
+      onAdded();
+    } catch (e) {
+      const msg = (e as Error).message;
+      setError(needsCoOwnerSql(msg) ? COOWNER_SQL_NOTE : msg);
+    } finally { setRoleBusy(null); }
   };
 
   const saveResp = async (m: ProjectMember) => {
@@ -945,7 +973,7 @@ function MembersTab({
   };
 
   const makeOwner = async (m: ProjectMember) => {
-    if (!(await appConfirm(`Transfer ownership to ${m.userName || m.userEmail || m.userId}? You'll become a collaborator.`))) return;
+    if (!(await appConfirm(`Transfer ownership to ${m.userName || m.userEmail || m.userId}? You'll become an editor.`))) return;
     try {
       await transferOwnership({
         projectId: project.id!, newOwnerUserId: m.userId,
@@ -964,9 +992,8 @@ function MembersTab({
           <div className="flex flex-col sm:flex-row gap-2">
             <input value={addEmail} onChange={(e) => setAddEmail(e.target.value)} placeholder="user@example.com"
               className="flex-1 px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
-            <Select value={addRole} onChange={(e) => setAddRole(e.target.value as ProjectMemberRole)}>
-              <option value="collaborator">Collaborator</option>
-              <option value="observer">Observer</option>
+            <Select value={addRole} onChange={(e) => setAddRole(e.target.value as ProjectMemberRole)} aria-label="Permission">
+              {MEMBER_ROLES.map((r) => <option key={r.role} value={r.role}>{r.label}</option>)}
             </Select>
           </div>
           <input value={addResp} onChange={(e) => setAddResp(e.target.value)} placeholder="Responsibility (what they own / will own) - optional"
@@ -992,7 +1019,15 @@ function MembersTab({
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-bold text-[var(--color-text)] truncate">{m.userName || m.userEmail || m.userId.slice(0, 8)}</span>
-                    <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${isOwner ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : m.role === "collaborator" ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{isOwner ? "owner" : m.role}</span>
+                    {canManage && !isOwner ? (
+                      <select value={m.role} disabled={roleBusy === m.userId} onChange={(e) => void setRole(m, e.target.value as ProjectMemberRole)}
+                        aria-label={`Permission for ${m.userName || m.userEmail || "member"}`} title={MEMBER_ROLES.find((r) => r.role === m.role)?.help}
+                        className="h-7 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[11.5px] font-bold text-[var(--color-text)] disabled:opacity-60">
+                        {MEMBER_ROLES.map((r) => <option key={r.role} value={r.role}>{r.label}</option>)}
+                      </select>
+                    ) : (
+                      <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${isOwner || m.role === "co_owner" ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]" : m.role === "collaborator" ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{roleLabel(isOwner ? "owner" : m.role)}</span>
+                    )}
                   </div>
                   {m.userEmail && <div className="text-xs text-[var(--color-text-muted)] truncate">{m.userEmail}</div>}
                   {canManage ? (
@@ -1017,7 +1052,7 @@ function MembersTab({
                   ) : null}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  {canManage && !isOwner && (
+                  {canTransfer && !isOwner && (
                     <button onClick={() => void makeOwner(m)} title="Transfer ownership to this member"
                       className="opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-1.5 py-1 rounded hover:bg-[var(--color-accent-soft)] whitespace-nowrap">
                       Make owner

@@ -444,7 +444,7 @@ function Items({ text, going, closed }: { text: string; going: string[]; closed:
 
 /** The meeting: each crew, who attended (a name each, added sideways) and
  *  its head count on site; the total; then the safety topic. */
-function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
+export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
   const [msg, setMsg] = useState<string | null>(null);
   const crews = m.record?.crews ?? {};
   // The crews on the plan, then any added at the meeting.

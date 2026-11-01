@@ -9,7 +9,7 @@
 // page of their own, one under the other in big type. Built in: no AI.
 
 import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, Maximize2, ShieldAlert, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Maximize2, ShieldAlert, X, Check } from "lucide-react";
 import { rankHazards, type HazardJobInput, type HazardKind } from "@/lib/safetyMoment";
 import { safetyBrief, splitLead, talkSources, projectFacts, RISKS_RANKED, type ProjectBase, type SafetyTopic } from "@/lib/safetyTalk";
 import type { ShiftWindow } from "@/lib/shiftReport";
@@ -21,7 +21,7 @@ const TONE = [
   { bar: "border-t-orange-500", num: "bg-orange-600", kick: "text-orange-800 dark:text-orange-300", dot: "bg-orange-500" },
 ];
 
-export function SafetyMomentBox({ jobs, shift, T, print, project, recent, label }: {
+export function SafetyMomentBox({ jobs, shift, T, print, project, recent, label, onUse, chosen }: {
   jobs: HazardJobInput[];
   /** The shift being planned. */
   shift: ShiftWindow;
@@ -34,6 +34,10 @@ export function SafetyMomentBox({ jobs, shift, T, print, project, recent, label 
   recent?: HazardKind[][];
   /** "Night shift Tue, Oct 27" — whose topics these are. */
   label?: string;
+  /** Make a topic the meeting's safety topic (the meeting agenda). */
+  onUse?: (title: string) => void;
+  /** The meeting's safety topic, as chosen. */
+  chosen?: string;
 }) {
   const topics = useMemo(() => safetyBrief(rankHazards(jobs, { shift, T, max: RISKS_RANKED }), shift,
     { project: projectFacts(project, shift, jobs.map((j) => j.name)), recentRisks: recent }),
@@ -54,7 +58,8 @@ export function SafetyMomentBox({ jobs, shift, T, print, project, recent, label 
       {/* No risky work at all: two topics, side by side at full width. */}
       <div className={print ? "grid grid-cols-1 gap-[7pt]" : `-mx-1 px-1 flex gap-2 overflow-x-auto snap-x snap-mandatory sm:grid ${topics.length === 2 ? "sm:grid-cols-2" : "sm:grid-cols-3"} sm:overflow-visible scroll-quiet`}>
         {topics.map((t, i) => (
-          <TopicCard key={t.key + i} t={t} n={i + 1} tone={TONE[i % TONE.length]} print={print} onPresent={() => setPresenting(i)} />
+          <TopicCard key={t.key + i} t={t} n={i + 1} tone={TONE[i % TONE.length]} print={print} onPresent={() => setPresenting(i)}
+            onUse={onUse ? () => onUse(t.title) : undefined} chosen={!!chosen && chosen.trim().toLowerCase() === t.title.trim().toLowerCase()} />
         ))}
       </div>
       {presenting != null && <Presenter topics={topics} at={presenting} label={label} onMove={setPresenting} onClose={() => setPresenting(null)} />}
@@ -62,7 +67,11 @@ export function SafetyMomentBox({ jobs, shift, T, print, project, recent, label 
   );
 }
 
-function TopicCard({ t, n, tone, print, onPresent }: { t: SafetyTopic; n: number; tone: (typeof TONE)[number]; print: boolean; onPresent: () => void }) {
+function TopicCard({ t, n, tone, print, onPresent, onUse, chosen }: { t: SafetyTopic; n: number; tone: (typeof TONE)[number]; print: boolean; onPresent: () => void;
+  /** Make it the meeting's topic. */
+  onUse?: () => void;
+  /** It is the meeting's topic. */
+  chosen?: boolean }) {
   const sources = talkSources(t);
   return (
     <article
@@ -91,6 +100,18 @@ function TopicCard({ t, n, tone, print, onPresent }: { t: SafetyTopic; n: number
           );
         })}
       </ul>
+      {!print && (onUse || chosen) && (
+        <div className="mt-2">
+          {chosen ? (
+            <span className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-emerald-600 text-white text-[11.5px] font-bold"><Check className="w-3.5 h-3.5" /> The meeting&apos;s topic</span>
+          ) : (
+            <button type="button" onClick={(e) => { e.stopPropagation(); onUse?.(); }}
+              className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-[var(--color-border-strong)] text-[11.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              Use for the meeting
+            </button>
+          )}
+        </div>
+      )}
       {sources.length > 0 && (
         <div className={`mt-auto pt-1.5 text-[var(--color-text-faint)] truncate ${print ? "text-[8pt]" : "text-[10.5px]"}`}>
           From {sources.map((s, i) => (
