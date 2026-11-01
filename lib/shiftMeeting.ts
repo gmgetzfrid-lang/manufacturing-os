@@ -120,9 +120,12 @@ export const meetingTitle = (kind: "day" | "night") => `${kind === "day" ? "Day"
 
 /** Which meeting rows of a shift's notes are off (not held), and which
  *  show before their time (entered already, from the next shift). */
-export function meetingRows(start: ShiftRecord | undefined, end: ShiftRecord | undefined, nextStart: number): { off: string[]; show: string[] } {
+export function meetingRows(start: ShiftRecord | undefined, end: ShiftRecord | undefined, nextStart: number,
+  /** Off unless put back: a meeting a held-over crew stood in place of. */
+  dflt: { startOff?: boolean; endOff?: boolean } = {}): { off: string[]; show: string[] } {
+  const isOff = (r: ShiftRecord | undefined, d?: boolean) => r?.meeting?.off === true || (!!d && r?.meeting?.off !== false);
   return {
-    off: [start?.meeting?.off ? "meeting" : null, end?.meeting?.off ? "meeting:end" : null].filter((x): x is string => !!x),
+    off: [isOff(start, dflt.startOff) ? "meeting" : null, isOff(end, dflt.endOff) ? "meeting:end" : null].filter((x): x is string => !!x),
     show: meetingEntered(end, nextStart) ? ["meeting:end"] : [],
   };
 }

@@ -52,15 +52,23 @@ export interface HourlyNotes {
 
 /** The meeting that starts the shift, permitting, the hours, a break, and
  *  the meeting at its end (the one that starts the next shift). */
-export type SlotKind = "meeting" | "permit" | "work" | "break" | "handover";
+export type SlotKind = "meeting" | "permit" | "work" | "break" | "handover" | "overtime";
 export interface HourSlot {
   key: string; kind: SlotKind; start: number; end: number;
-  /** A break's name ("Lunch") and how long it is. */
+  /** A break's name ("Lunch") and how long it is; an overtime row's words. */
   label?: string; minutes?: number;
   /** The work from the end meeting to the end of the shift (5:30 to 6:00
    *  PM): its own row, shown only when something was logged then. */
   tail?: boolean;
+  /** Part of an hour a break splits: the work before it, or after it (from
+   *  when it ended); shown only when something was logged then. `brk`: its break. */
+  part?: "before" | "after"; brk?: string;
+  /** An hour of a crew held over past the end of the shift. */
+  ot?: boolean;
 }
+
+/** A crew held over: to when (`open`: still on), and its rows' words. */
+export interface SlotOvertime { to: number; open: boolean; label: string; endLabel: string }
 
 /** A break on the shift, as set in the shift times: when, and how long. */
 export interface HourBreak { at: number; minutes: number; label: string }
@@ -73,7 +81,7 @@ const HOUR = 3_600_000;
  *  shift (5:30 AM to 5:30 PM on a 6-to-6 day). The meetings hold no work:
  *  what's logged from 5:30 PM on is its own row after the meeting. Its
  *  breaks sit at their times. */
-export function hourSlots(shift: { start: number; end: number }, meetingBeforeMin: number, breaks: HourBreak[] = []): HourSlot[] {
+export function hourSlots(shift: { start: number; end: number }, meetingBeforeMin: number, breaks: HourBreak[] = [], ot?: SlotOvertime): HourSlot[] {
   const lead = Math.max(0, meetingBeforeMin) * 60_000;
   const until = Math.max(shift.start + HOUR, shift.end - lead);
   const out: HourSlot[] = [{ key: "meeting", kind: "meeting", start: shift.start - lead, end: shift.start }];
@@ -82,13 +90,26 @@ export function hourSlots(shift: { start: number; end: number }, meetingBeforeMi
     out.push({ key: "meeting:end", kind: "handover", start: until, end: shift.end });
     out.push({ key: String(until), kind: "work", start: until, end: shift.end, tail: true });
   }
-  for (const b of breaks) {
+  // A break where it happens: the hour it falls in splits, its work up to
+  // the break above it (logged as it began, too), after it below it, from
+  // when it ended ("11:00 Lunch", then "11:30").
+  for (const b of [...breaks].sort((x, y) => x.at - y.at)) {
     if (!(b.at >= shift.start && b.at < until)) continue;
-    // After the hour it falls in: "12:00 PM" the hour's work, then "Lunch".
-    const i = out.findIndex((x) => (x.kind === "work" || x.kind === "permit") && b.at >= x.start && b.at < x.end);
-    const after = i < 0 ? out.length : out.findIndex((x, j) => j > i && (x.kind !== "break" || x.start > b.at));
-    const slot: HourSlot = { key: `break:${b.at}`, kind: "break", start: b.at, end: b.at + b.minutes * 60_000, label: b.label, minutes: b.minutes };
-    out.splice(after < 0 ? out.length : after, 0, slot);
+    const i = out.findIndex((x) => (x.kind === "work" || x.kind === "permit") && b.at >= x.start && (b.at < x.end || (x.start === x.end && b.at === x.start)));
+    if (i < 0) continue;
+    const h = out[i], key = `break:${b.at}`, bEnd = b.at + b.minutes * 60_000;
+    const parts: HourSlot[] = [
+      { ...h, end: b.at, part: "before", brk: key },
+      { key, kind: "break", start: b.at, end: bEnd, label: b.label, minutes: b.minutes },
+    ];
+    if (bEnd < h.end) parts.push({ key: String(bEnd), kind: b.at > h.start ? "work" : h.kind, start: bEnd, end: h.end, part: "after", brk: key });
+    out.splice(i, 1, ...parts);
+  }
+  // A crew held over: the overtime, hour by hour, and when it was sent home.
+  if (ot && ot.to > shift.end) {
+    out.push({ key: "ot", kind: "overtime", start: shift.end, end: ot.to, label: ot.label });
+    for (let t = shift.end; t < ot.to; t += HOUR) out.push({ key: String(t), kind: "work", start: t, end: Math.min(t + HOUR, ot.to), ot: true });
+    if (!ot.open) out.push({ key: "ot:end", kind: "overtime", start: ot.to, end: ot.to, label: ot.endLabel });
   }
   return out;
 }
@@ -99,7 +120,11 @@ export function hourSlots(shift: { start: number; end: number }, meetingBeforeMi
 export function slotOf(at: number, slots: HourSlot[]): HourSlot {
   const hours = slots.filter((x) => x.kind === "work" || x.kind === "permit");
   if (!hours.length || at < hours[0].start) return slots[0];
-  return hours.find((x) => at >= x.start && at < x.end) ?? hours[hours.length - 1];
+  // Logged as a break began: before it. During a break: after it.
+  return hours.find((x) => x.part === "before" && at >= x.start && at <= x.end)
+    ?? hours.find((x) => at >= x.start && at < x.end)
+    ?? hours.find((x) => x.start > at)
+    ?? hours[hours.length - 1];
 }
 
 /** The lines someone typed: by the hour, or an earlier draft someone
@@ -249,7 +274,7 @@ export function hourParts(rows: TimeLogRow[], hourStart: number, tz: string, clo
     groups.push(ng);
     if (k) byStep.set(k, ng);
   }
-  const off = (r: TimeLogRow) => r.at - hourStart >= 60_000;
+  const off = (r: TimeLogRow) => Math.abs(r.at - hourStart) >= 60_000;
   const lines: string[] = [], progress: string[] = [], closed: string[] = [];
   for (const g of groups) {
     const [r] = g;
@@ -291,7 +316,7 @@ export function hourlyRows(n: HourlyNotes | null | undefined, slots: HourSlot[],
   const show = new Set(opts.show ?? []);
   const rows = slots.filter((x) => !skip.has(x.key) && (x.kind === "meeting" || x.start <= upTo || show.has(x.key))).map((slot) => {
     const meeting = slot.kind === "meeting" || slot.kind === "handover";
-    if (meeting || slot.kind === "break") return { slot, lines: [], progress: [], closed: [], typed: false, text: "", said: "", auto: [] } as HourlyRow;
+    if (meeting || slot.kind === "break" || slot.kind === "overtime") return { slot, lines: [], progress: [], closed: [], typed: false, text: "", said: "", auto: [] } as HourlyRow;
     const auto = hourParts(said.get(slot.key) ?? [], slot.start, tz, opts.closes);
     const all = [...auto.lines, ...auto.progress];
     const base = { slot, said: all.join("\n"), auto: all };
@@ -317,15 +342,18 @@ export function hourlyRows(n: HourlyNotes | null | undefined, slots: HourSlot[],
     const stale = mismatch.length > 0 && (!own || (src != null && src !== base.said));
     return { ...base, lines, progress: auto.progress.filter((x) => !hidden(x)), closed, typed: true, text: lines.join("\n"), ...(stale ? { stale: true, mismatch } : {}) } as HourlyRow;
   }).filter((r) => !r.slot.tail || r.lines.length > 0 || r.progress.length > 0);
-  // An hour with nothing in it and a break in it (lunch): the break's row
-  // says it, one row; the hour is kept on it (to type into or add work at).
-  const empty = (r: HourlyRow) => r.slot.kind === "work" && !r.slot.tail && !r.lines.length && !r.progress.length;
-  const inHour = (b: HourlyRow, r: HourlyRow) => b.slot.kind === "break" && b.slot.start >= r.slot.start && b.slot.start < r.slot.end;
+  // The parts of an hour a break splits show only with something in them;
+  // with nothing, the break's row stands for them (to type into or add
+  // work at: the part after it, else before it).
+  const empty = (r: HourlyRow) => !r.lines.length && !r.progress.length;
   const out: HourlyRow[] = [];
   for (const r of rows) {
-    if (empty(r) && rows.some((b) => inHour(b, r))) continue;
-    const hour = r.slot.kind === "break" ? rows.find((h) => empty(h) && inHour(r, h)) : undefined;
-    out.push(hour && !out.some((x) => x.hour === hour.slot) ? { ...r, hour: hour.slot } : r);
+    if (r.slot.part && empty(r)) continue;
+    if (r.slot.kind === "break") {
+      const near = rows.filter((x) => x.slot.brk === r.slot.key && empty(x));
+      const hour = (near.find((x) => x.slot.part === "after") ?? near[0])?.slot;
+      out.push(hour ? { ...r, hour } : r);
+    } else out.push(r);
   }
   return out;
 }
@@ -383,7 +411,7 @@ export function typedHour(text: string, auto: string[]): { extras: string[]; hid
 }
 
 /** What each kind of hour is called. */
-export const SLOT_LABEL: Record<SlotKind, string> = { meeting: "Shift meeting", permit: "Start of shift - permitting", work: "", break: "Break", handover: "Shift meeting" };
+export const SLOT_LABEL: Record<SlotKind, string> = { meeting: "Shift meeting", permit: "Start of shift - permitting", work: "", break: "Break", handover: "Shift meeting", overtime: "Overtime" };
 
 /** "Lunch, 30 min" - a break as its row says it. */
 export const breakLabel = (x: HourSlot) => `${x.label || "Break"}${x.minutes ? `, ${x.minutes} min` : ""}`;
@@ -402,7 +430,7 @@ export function hourlyClocks(ats: number[], tz: string, full: boolean[] = []): s
 }
 /** The clocks of the rows of the notes, the meetings always with AM or PM. */
 export const slotClocks = (slots: HourSlot[], tz: string) =>
-  hourlyClocks(slots.map((x) => x.start), tz, slots.map((x) => x.kind === "meeting" || x.kind === "handover"));
+  hourlyClocks(slots.map((x) => x.start), tz, slots.map((x) => x.kind === "meeting" || x.kind === "handover" || x.kind === "overtime"));
 
 /** "E-20 - Transmix Charge Exchanger" → "E-20". */
 export const shortTask = (t: string) => t.replace(/\s+[-–—]\s+.*$/, "").trim();

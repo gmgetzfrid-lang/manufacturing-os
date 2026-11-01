@@ -638,7 +638,7 @@ export async function hourlyLogDocx(logs: ShiftLog[], o: LogFileOpts): Promise<U
 
 // ─── Excel ───────────────────────────────────────────────────────────────
 
-const KIND_WORD: Record<LogEntry["kind"], string> = { meeting: "Meeting", permit: "Permitting", work: "Hour", break: "Break", handover: "Meeting" };
+const KIND_WORD: Record<LogEntry["kind"], string> = { meeting: "Meeting", permit: "Permitting", work: "Hour", break: "Break", handover: "Meeting", overtime: "Overtime" };
 
 /** The log as rows: one item a row, every row with its date, shift and time. */
 export function hourlyLogTable(logs: ShiftLog[]): string[][] {
@@ -647,6 +647,7 @@ export function hourlyLogTable(logs: ShiftLog[]): string[][] {
     const at = [l.date, l.title];
     for (const e of l.entries) {
       if (e.kind === "break") { out.push([...at, e.clock, "Break", e.title ?? "Break"]); continue; }
+      if (e.kind === "overtime") { out.push([...at, e.clock, "Overtime", e.title ?? "Overtime"]); continue; }
       const k = KIND_WORD[e.kind];
       for (const x of e.lines) out.push([...at, e.clock, e.closed?.includes(x) ? "Work order done" : k, noEmDash(plainLine(x))]);
       for (const x of e.continuing) out.push([...at, e.clock, "Progress", noEmDash(plainLine(x))]);

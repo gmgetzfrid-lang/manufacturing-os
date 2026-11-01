@@ -78,6 +78,7 @@ import { useHandoverDraft } from "@/lib/useHandoverDraft";
 import { scopeOf } from "@/lib/pullAhead";
 import { ShiftHourlyBox, type HourlyCtx, type MeetingCtx } from "@/components/projects/ShiftHourly";
 import { meetingLines, meetingParts, meetingRows, meetingTitle, meetingRecord, meetingEmpty, knownNames, type MeetingParts } from "@/lib/shiftMeeting";
+import { overtimeOf, overtimeEnd, overtimeLine, sentHomeLine, shiftEntries, type HoldOver, type OvertimeWindow } from "@/lib/holdOver";
 import { HourlyLogExport } from "@/components/projects/HourlyLogExport";
 import { exportedLabel, logSteps, shiftLog } from "@/lib/hourlyLog";
 import { pngInBrowser, saveHourlyLog, type LogFormat } from "@/lib/hourlyLogFiles";
@@ -201,10 +202,24 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     return () => { alive = false; clearTimeout(t); };
   }, [needLog, projectId, liveSig, logTick]);
   const log = logState?.rows;
+  // The shift's own record (crews on site, incidents, notes, the hours), the
+  // next one's and the one before's.
+  const { records, error: recErr } = useShiftRecords(projectId);
+  const thisKey = handoverKey(shift), nextKey = handoverKey(nextShift(shift, tz, times)), prevKey = handoverKey(previousShift(shift, tz, times));
+  // Crews held over past the shift's end (overtime), and the ones the shift
+  // before held over into it: their work counts for the shift that held them.
+  const overtime = useMemo(() => overtimeOf(records.get(thisKey)?.holdOver, shift.end, now, shift.end + (shift.end - shift.start)), [records, thisKey, shift.end, shift.start, now]);
+  const heldIn = useMemo(() => overtimeOf(records.get(prevKey)?.holdOver, shift.start, now, shift.end), [records, prevKey, shift.start, shift.end, now]);
+  const otTo = overtimeEnd(overtime, shift.end);
+  const heldTo = useCallback((w: OvertimeWindow[], m: Milestone) => {
+    const c = m.responsibleParty?.trim().toLowerCase();
+    return c ? w.filter((x) => x.crew.toLowerCase() === c).reduce<number | null>((a, x) => Math.max(a ?? 0, x.to), null) : null;
+  }, []);
   const recordedBy = shift.end + TURNOVER_GRACE_MS;
   const history = useMemo(
-    () => (pastShift && log ? scheduleAt(live, log, recordedBy) : null),
-    [pastShift, log, live, recordedBy],
+    // A held-over crew's work: as it stood when it was sent home.
+    () => (pastShift && log ? scheduleAt(live, log, recordedBy, overtime.length ? (m) => Math.max(recordedBy, heldTo(overtime, m) ?? 0) : undefined) : null),
+    [pastShift, log, live, recordedBy, overtime, heldTo],
   );
   // Only a record that reaches back to the shift replaces today's
   // progress; otherwise it's today's, and the label says so.
@@ -215,12 +230,14 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   // reaches back. Each step's % then; and the critical path then.
   const atStart = useMemo(() => {
     if (!log) return null;
-    const then = scheduleAt(live, log, shift.start);
+    // A crew the shift before held over: where its work stood when it was sent home.
+    const cutOf = (m: Milestone) => heldTo(heldIn, m) ?? shift.start;
+    const then = scheduleAt(live, log, shift.start, heldIn.length ? cutOf : undefined);
     if (!then.complete) return null;
     // Times recorded after it began hadn't happened yet.
-    const later = (v: unknown) => v != null && Date.parse(String(v)) > shift.start;
-    return then.milestones.map((m) => ({ ...m, actualStartAt: later(m.actualStartAt) ? null : m.actualStartAt, actualAt: m.status === "completed" && !later(m.actualAt) ? m.actualAt : null }) as Milestone);
-  }, [log, live, shift.start]);
+    const later = (m: Milestone, v: unknown) => v != null && Date.parse(String(v)) > cutOf(m);
+    return then.milestones.map((m) => ({ ...m, actualStartAt: later(m, m.actualStartAt) ? null : m.actualStartAt, actualAt: m.status === "completed" && !later(m, m.actualAt) ? m.actualAt : null }) as Milestone);
+  }, [log, live, shift.start, heldIn, heldTo]);
   const startPct = useMemo(() => (atStart ? new Map(atStart.filter((m) => m.id).map((m) => [m.id!, m.status === "completed" ? 100 : m.percentComplete ?? 0])) : undefined), [atStart]);
   // The critical path — the project's own setting, through lib/criticalPath
   // like every other view: as of the report, and when the shift began (what
@@ -424,9 +441,6 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     const p = progress?.get(id)?.percent;
     return p == null ? undefined : { pct: p, plan: planByTask.get(id) };
   }, [progress, planByTask]);
-  // The shift's own record: crews on site, incidents, notes & actions.
-  const { records, error: recErr } = useShiftRecords(projectId);
-  const thisKey = handoverKey(shift), nextKey = handoverKey(report.next);
   const [recMsg, setRecMsg] = useState<string | null>(null);
   const saveRec = useCallback(async (key: string, change: (r: ShiftRecord) => ShiftRecord) => {
     if (!userId || !orgId) return;
@@ -437,19 +451,22 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   // hour-by-hour notes to be written from.
   const shiftRows = useCallback(async () => {
     const [rows, notes] = await Promise.all([loadProgressLog(projectId), notesFor(stepIds ? stepIds.split(",") : [])]);
-    return buildTimeLog({ milestones: live, log: rows ?? [], notes, records, tz, times, from: shift.start, to: shift.end });
-  }, [projectId, stepIds, live, records, tz, times, shift.start, shift.end]);
+    return buildTimeLog({ milestones: live, log: rows ?? [], notes, records, tz, times, from: shift.start, to: otTo });
+  }, [projectId, stepIds, live, records, tz, times, shift.start, otTo]);
   const updateHourly = useCallback(async (change: (cur: ShiftRecord["hourly"]) => ShiftRecord["hourly"] | null) => {
     if (!userId || !orgId) throw new Error("Sign in to save the notes.");
     await saveShiftRecord({ orgId, projectId, shiftKey: thisKey, userId, change: (r) => ({ ...r, hourly: change(r.hourly) ?? undefined }) });
   }, [orgId, projectId, userId, thisKey]);
   // The shift's entries as the hours say them: the time log for its window,
   // each comment with the entry it was typed with. Re-read as progress is entered.
-  const entries = useMemo(() => (log ? buildTimeLog({ milestones: live, log, notes: allNotes, records, tz, times, from: shift.start, to: shift.end }) : null),
-    [log, live, allNotes, records, tz, times, shift.start, shift.end]);
+  // Its held-over crews' work after its end is its own; the crews the shift
+  // before held over aren't.
+  const entries = useMemo(() => (log ? shiftEntries(buildTimeLog({ milestones: live, log, notes: allNotes, records, tz, times, from: shift.start, to: otTo }), shift, overtime, heldIn) : null),
+    [log, live, allNotes, records, tz, times, shift, otTo, overtime, heldIn]);
   // The shift by the hour: its meeting (from the shift times), the first
-  // hour (permitting), then each hour.
-  const slots = useMemo(() => hourSlots(shift, meetingLeadMin(times), breaksOn(shift, times.breaks, tz)), [shift, times, tz]);
+  // hour (permitting), then each hour; a crew held over, its overtime.
+  const slots = useMemo(() => hourSlots(shift, meetingLeadMin(times), breaksOn(shift, times.breaks, tz),
+    overtime.length ? { to: otTo, open: overtime.some((x) => x.open), label: overtimeLine(overtime), endLabel: sentHomeLine(overtime) } : undefined), [shift, times, tz, overtime, otTo]);
   // The tables' order as dragged at the meeting — shown at once, kept on
   // the shift's record (the email follows it too).
   const [orderLocal, setOrderLocal] = useState<{ key: string; order: TableOrder } | null>(null);
@@ -493,14 +510,22 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       error: recMsg ?? (recErr && canEdit ? recErr : null),
       tz,
       hourly: orgId ? {
-        notes: recThis?.hourly, update: updateHourly, entries, slots, upTo: Math.min(now, shift.end),
+        notes: recThis?.hourly, update: updateHourly, entries, slots, upTo: Math.min(now, otTo),
+        // Keeping a crew on past the end of the shift (overtime).
+        overtime: canEdit && userId && !locked ? {
+          list: recThis?.holdOver ?? [], crews: allCrews, shiftEnd: shift.end, cap: shift.end + (shift.end - shift.start), tz,
+          save: async (change: (l: HoldOver[]) => HoldOver[]) => {
+            await saveShiftRecord({ orgId, projectId, shiftKey: thisKey, userId, change: (r) => ({ ...r, holdOver: change(r.holdOver ?? []) }) });
+          },
+        } : undefined,
         onAddWork: canEdit && onDiscovery && !locked ? setAddAt : undefined,
         closes: closers,
         meet: {
           start: { title: meetingTitle(shift.kind), lines: meetingLines(mThis.record, shift.start), parts: meetingParts(mThis.record, shift.start), carried: carriedOf(mThis)?.label },
           end: { title: meetingTitle(report.next.kind), lines: meetingLines(mNext.record, shift.end), parts: meetingParts(mNext.record, shift.end), carried: carriedOf(mNext)?.label },
           // The end meeting shows early only for what was entered for it.
-          ...meetingRows(recThis, mNext.from ? { ...(recNext ?? {}), crews: {} } : recNext, shift.end),
+          // A crew held over in place of the next shift: no meeting with it unless put back.
+          ...meetingRows(recThis, mNext.from ? { ...(recNext ?? {}), crews: {} } : recNext, shift.end, { startOff: heldIn.length > 0, endOff: overtime.length > 0 }),
         },
       } : undefined,
       order: tableOrder,
@@ -509,14 +534,14 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         void saveRec(thisKey, (r) => ({ ...r, order: { ...(r.order ?? {}), [table]: ids ?? undefined } }));
       },
     };
-  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, projectId, saveRec, recMsg, recErr, tableOrder, setOrderLocal, updateHourly, entries, shift, slots, now, onDiscovery, report.next.kind, locked, closers]);
+  }, [records, thisKey, nextKey, tz, times, ctx, userName, stamps, timeOf, whyOf, taskPct, canEdit, userId, orgId, projectId, saveRec, recMsg, recErr, tableOrder, setOrderLocal, updateHourly, entries, shift, slots, now, onDiscovery, report.next.kind, locked, closers, allCrews, heldIn.length, otTo, overtime.length]);
   const shiftTitle = `${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`;
   // The hourly log of the shift on screen (any shift, backed up by date),
   // as a file on the letterhead.
   const exportHourly = async (format: LogFormat) => {
     const [rows, progressRows] = await Promise.all([shiftRows(), log ? Promise.resolve(log) : loadProgressLog(projectId)]);
     const a = meetingRecord(records, thisKey), b = meetingRecord(records, nextKey);
-    const one = shiftLog({ shift, tz, times, record: a.record, next: b.record, carried: { start: !!a.from, end: !!b.from }, rows, steps: logSteps(live, tz, times), log: progressRows ?? [], now: Date.now(), closes: closers });
+    const one = shiftLog({ shift, tz, times, record: a.record, next: b.record, prev: records.get(prevKey), carried: { start: !!a.from, end: !!b.from }, rows, steps: logSteps(live, tz, times), log: progressRows ?? [], now: Date.now(), closes: closers });
     const name = (projectName ?? "Schedule").trim() || "Schedule";
     await saveHourlyLog([one], format, { project: name, lh, exported: exportedLabel(Date.now(), tz), toPng: pngInBrowser, fileName: `${name} - hourly log ${shift.dayKey} ${shift.kind}` });
     return "Saved.";
@@ -706,6 +731,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
               const m = r.slot.kind === "meeting" ? h.meet?.start : r.slot.kind === "handover" ? h.meet?.end : undefined;
               // A meeting in the hours: on site and the safety topic (its table is its own section).
               const brief = (p: MeetingParts) => [...(p.rows.some((x) => x.onSite != null) ? [`On site: ${p.rows.reduce((a, x) => a + (x.onSite ?? 0), 0)}`] : []), ...(p.safety ? [`Safety topic: ${p.safety}`] : [])];
+              if (r.slot.kind === "overtime") return { clock: cl[i], kind: r.slot.kind, title: r.slot.label ?? "Overtime", text: "" };
               return { clock: cl[i], kind: r.slot.kind, ...(m ? { title: m.title } : {}), text: m ? (m.parts ? brief(m.parts) : m.lines).join("\n") : r.slot.kind === "break" ? breakLabel(r.slot) : plainLine(r.text), progress: r.progress.map(plainLine), closed: r.closed.map(plainLine) };
             });
           })() : [],

@@ -9,8 +9,9 @@
 import {
   hourSlots, hourlyRows, breaksOn, breakLabel, workOrderClosers, SLOT_LABEL, type SlotKind,
 } from "@/lib/shiftHourly";
-import { meetingLeadMin, nextShift, shiftWindow, shiftWindowsBetween, workShiftOf, type ShiftTimes, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
+import { meetingLeadMin, nextShift, previousShift, shiftWindow, shiftWindowsBetween, workShiftOf, type ShiftTimes, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
 import { meetingLines, meetingParts, meetingRows, meetingTitle, meetingRecord, type MeetingParts } from "@/lib/shiftMeeting";
+import { overtimeOf, overtimeEnd, overtimeLine, sentHomeLine, shiftEntries } from "@/lib/holdOver";
 import { noEmDash } from "@/lib/noEmDash";
 import type { ShiftRecord } from "@/lib/shiftRecord";
 import { stepLabels, type TimeLogRow } from "@/lib/timeLog";
@@ -87,15 +88,23 @@ export function shiftLog(o: {
   carried?: { start?: boolean; end?: boolean };
   /** The entries that finish a whole work order (lib/shiftHourly workOrderClosers). */
   closes?: (r: TimeLogRow) => boolean;
+  /** The shift before's record (its crews held over into this one). */
+  prev?: ShiftRecord;
 }): ShiftLog {
   const { shift, tz } = o;
-  const upTo = Math.min(o.now, shift.end);
-  const slots = hourSlots(shift, meetingLeadMin(o.times), breaksOn(shift, o.times.breaks, tz));
-  const rows = o.rows.filter((r) => r.at >= shift.start && r.at < shift.end);
+  // Crews held over past its end (overtime) and the ones the shift before
+  // held over into it: their work is the shift's that held them.
+  const own = overtimeOf(o.record?.holdOver, shift.end, o.now, shift.end + (shift.end - shift.start));
+  const before = overtimeOf(o.prev?.holdOver, shift.start, o.now, shift.end);
+  const otTo = overtimeEnd(own, shift.end);
+  const upTo = Math.min(o.now, otTo);
+  const slots = hourSlots(shift, meetingLeadMin(o.times), breaksOn(shift, o.times.breaks, tz),
+    own.length ? { to: otTo, open: own.some((x) => x.open), label: overtimeLine(own), endLabel: sentHomeLine(own) } : undefined);
+  const rows = shiftEntries(o.rows, shift, own, before);
   const other = shift.kind === "day" ? "night" : "day";
   // The same hours, and the same lines, as the report shows.
   // The end meeting shows before its time only for what was entered for it.
-  const mr = meetingRows(o.record, o.carried?.end ? { ...(o.next ?? {}), crews: {} } : o.next, shift.end);
+  const mr = meetingRows(o.record, o.carried?.end ? { ...(o.next ?? {}), crews: {} } : o.next, shift.end, { startOff: before.length > 0, endOff: own.length > 0 });
   const entries = hourlyRows(o.record?.hourly, slots, upTo, rows, tz, { ...mr, closes: o.closes }).map(({ slot, lines, progress, closed }): LogEntry => {
     const clock = clockAt(slot.start, tz);
     // The meetings: who attended, head counts, the safety topic, as entered.
@@ -107,14 +116,15 @@ export function shiftLog(o: {
     if (slot.kind === "meeting") return { clock, kind: "meeting", title: meetingTitle(shift.kind), ...meet(o.record, shift.start, o.carried?.start) };
     if (slot.kind === "handover") return { clock, kind: "handover", title: meetingTitle(other), ...meet(o.next, shift.end, o.carried?.end) };
     if (slot.kind === "break") return { clock, kind: "break", title: breakLabel(slot), lines: [], continuing: [] };
+    if (slot.kind === "overtime") return { clock, kind: "overtime", title: slot.label ?? SLOT_LABEL.overtime, lines: [], continuing: [] };
     return { clock, kind: slot.kind, ...(slot.kind === "permit" ? { title: SLOT_LABEL.permit } : {}), lines, continuing: progress.map(noEmDash), ...(closed.length ? { closed } : {}) };
   });
   return {
     key: `${shift.dayKey}:${shift.kind}`, kind: shift.kind,
     title: shift.kind === "day" ? "Day shift" : "Night shift",
     date: dateAt(shift.start, tz),
-    window: `${clockAt(shift.start, tz)} to ${clockAt(shift.end, tz)}`,
-    ...(o.now < shift.end ? { through: clockAt(o.now, tz) } : {}),
+    window: `${clockAt(shift.start, tz)} to ${clockAt(shift.end, tz)}${otTo > shift.end ? `, overtime to ${clockAt(otTo, tz)}` : ""}`,
+    ...(o.now < otTo ? { through: clockAt(o.now, tz) } : {}),
     entries,
   };
 }
@@ -144,10 +154,10 @@ export function jobLogs(o: {
   const from = Math.min(...starts);
   return shiftWindowsBetween(from, o.now + 1, tz, times)
     .map((shift) => {
-      const nx = nextShift(shift, tz, times);
+      const nx = nextShift(shift, tz, times), pv = previousShift(shift, tz, times);
       // Each meeting's crews: its own, or carried from the last same shift.
       const a = meetingRecord(o.records, `${shift.dayKey}:${shift.kind}`), b = meetingRecord(o.records, `${nx.dayKey}:${nx.kind}`);
-      return shiftLog({ shift, tz, times, record: a.record, next: b.record, carried: { start: !!a.from, end: !!b.from }, rows: o.timeLog, steps, log: o.log, now: o.now, closes });
+      return shiftLog({ shift, tz, times, record: a.record, next: b.record, carried: { start: !!a.from, end: !!b.from }, rows: o.timeLog, steps, log: o.log, now: o.now, closes, prev: o.records.get(`${pv.dayKey}:${pv.kind}`) });
     })
     .filter(logHasWork);
 }

@@ -81,7 +81,7 @@ describe("each entry: the work order in bold, who, then the step and what happen
     expect(hourItems([rows[2], row("14:00", { id: "e17", task: "E-17 - Exchanger", wo: "301501", step: "Pull Bundle", crew: "Schultz" })], at("14:00"), tz))
       .toEqual(["**WO 301501 E-17**, Schultz: Pull Bundle started, 0% to 20% 2:30 PM. Pulled 2/5 bundles."]);
     // Two steps: two lines, an entry off the hour with its time.
-    expect(hourItems([rows[2], rows[1]], at("14:00"), tz)).toEqual(["**WO 301502 E-12**, Schultz: Set Blinds started.", "2:30 PM **WO 301501 E-17**, Schultz: Pull Bundle 0% to 20%. Pulled 2/5 bundles."]);
+    expect(hourItems([rows[2], { ...rows[1], at: at("14:00") }], at("14:00"), tz)).toEqual(["**WO 301502 E-12**, Schultz: Set Blinds started.", "2:30 PM **WO 301501 E-17**, Schultz: Pull Bundle 0% to 20%. Pulled 2/5 bundles."]);
     expect(hourItems([rows[1], rows[1]], at("08:00"), tz)).toEqual(["**WO 301502 E-12**, Schultz: Set Blinds started."]);
     expect(hourItems([row("08:00", { task: "E-12 \u2014 Exchanger", step: "Blinds", comment: "in \u2014 out" })], at("08:00"), tz)[0]).not.toContain("\u2014");
   });
@@ -199,15 +199,26 @@ describe("the line that finished a whole work order", () => {
   });
 });
 
-describe("lunch with nothing logged in its hour", () => {
-  it("one row: the break, standing for its hour", () => {
-    const withLunch = hourSlots(shift, 30, [{ at: at("11:00"), minutes: 30, label: "Lunch" }]);
+describe("a break where it happens", () => {
+  const withLunch = hourSlots(shift, 30, [{ at: at("11:00"), minutes: 30, label: "Lunch" }]);
+  const around = (r: ReturnType<typeof hourlyRows>) => r.filter((x) => x.slot.start >= at("11:00") && x.slot.start < at("12:00")).map((x) => [x.slot.kind, slotClocks([x.slot], tz)[0], x.lines]);
+  it("nothing logged in its hour: one row, the break standing for it", () => {
     const r = hourlyRows({ v: 2, lines: [] }, withLunch, at("18:00"), rows, tz);
-    expect(r.filter((x) => x.slot.start === at("11:00")).map((x) => x.slot.kind)).toEqual(["break"]);
-    expect(r.find((x) => x.slot.kind === "break")?.hour?.key).toBe(key("11:00"));
-    // Something logged in the hour: both rows.
-    const busy = hourlyRows({ v: 2, lines: [] }, withLunch, at("18:00"), [...rows, row("11:40", { id: "z", task: "V-9", step: "Pull", crew: "Ancon", what: "Started" })], tz);
-    expect(busy.filter((x) => x.slot.start === at("11:00")).map((x) => x.slot.kind)).toEqual(["work", "break"]);
+    expect(around(r)).toEqual([["break", "11:00 AM", []]]);
+    expect(r.find((x) => x.slot.kind === "break")?.hour?.key).toBe(key("11:30"));
+  });
+  it("work after lunch below it, from when it ended; before it, above it (Oct 31: lunch 11:00, E-12 at 11:30)", () => {
+    const e12 = row("11:30", { id: "z", task: "E-12 - Exchanger", wo: "301502", step: "Shell Side Hydro", crew: "Schultz", what: "Started" });
+    expect(around(hourlyRows(undefined, withLunch, at("18:00"), [e12], tz))).toEqual([["break", "11:00 AM", []], ["work", "11:30 AM", ["**WO 301502 E-12**, Schultz: Shell Side Hydro started."]]]);
+    const late = hourSlots(shift, 30, [{ at: at("11:30"), minutes: 30, label: "Lunch" }]);
+    const both = hourlyRows(undefined, late, at("18:00"), [row("11:10", { id: "a", task: "V-9", step: "Pull", crew: "Ancon", what: "Started" }), row("11:30", { id: "b", task: "V-9", step: "Set", crew: "Ancon", what: "Started" })], tz)
+      .filter((x) => x.slot.start >= at("11:00") && x.slot.start < at("12:00")).map((x) => [x.slot.kind, x.lines]);
+    // Logged as lunch began: before it.
+    expect(both).toEqual([["work", ["11:10 AM **V-9**, Ancon: Pull started.", "11:30 AM **V-9**, Ancon: Set started."]], ["break", []]]);
+  });
+  it("logged during lunch: right after it, with its time", () => {
+    const r = hourlyRows(undefined, withLunch, at("18:00"), [row("11:15", { id: "c", task: "V-9", step: "Pull", crew: "Ancon", what: "Done" })], tz);
+    expect(around(r)).toEqual([["break", "11:00 AM", []], ["work", "11:30 AM", ["11:15 AM **V-9**, Ancon: Pull done."]]]);
   });
 });
 

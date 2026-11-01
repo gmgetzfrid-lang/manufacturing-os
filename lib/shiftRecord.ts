@@ -14,6 +14,7 @@ import { supabase } from "@/lib/supabase";
 import type { TableOrder } from "@/lib/turnoverPlan";
 import type { HourlyNotes } from "@/lib/shiftHourly";
 import type { ShiftMeeting } from "@/lib/shiftMeeting";
+import type { HoldOver } from "@/lib/holdOver";
 
 export interface CrewCount {
   /** Who attended the meeting from the crew (lib/shiftMeeting). */
@@ -52,6 +53,8 @@ export interface ShiftRecord {
   crews?: Record<string, CrewCount>;
   /** That meeting's safety topic and notes, or that it wasn't held. */
   meeting?: ShiftMeeting;
+  /** Crews kept on past the end of the shift (overtime, lib/holdOver). */
+  holdOver?: HoldOver[];
   incidents?: { none?: { at: number; by?: string | null } | null; items?: Incident[] };
   notes?: ShiftNote[];
   /** The report's tables as dragged into order at the meeting. */

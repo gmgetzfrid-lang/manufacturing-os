@@ -50,7 +50,9 @@ const ms = (v: unknown): number =>
  *    was entered later — that's what back-dating is for.
  *  `complete` is false when `at` is before the log began, so some changes
  *  before it can't be known. */
-export function scheduleAt(milestones: Milestone[], log: ProgressLogRow[], at: number): { milestones: Milestone[]; complete: boolean } {
+export function scheduleAt(milestones: Milestone[], log: ProgressLogRow[], at: number,
+  /** A step's own time (a held-over crew's work: when it was sent home). */
+  atFor?: (m: Milestone) => number): { milestones: Milestone[]; complete: boolean } {
   const byTask = new Map<string, ProgressLogRow[]>();
   for (const r of log) byTask.set(r.milestone_id, [...(byTask.get(r.milestone_id) ?? []), r]);
   const firstLogged = log.length ? ms(log[0].at) : NaN;
@@ -66,19 +68,21 @@ export function scheduleAt(milestones: Milestone[], log: ProgressLogRow[], at: n
   };
   const out = milestones.filter((m) => !addedLater(m)).map((m) => {
     if (!m.id) return m;
+    const cut = atFor ? atFor(m) : at;
+    const laterThan = (v: unknown) => v != null && v !== "" && Number.isFinite(ms(v)) && ms(v) > cut;
     const rows = byTask.get(m.id) ?? [];
     let status: MilestoneStatus = m.status;
     let pct: number = m.percentComplete ?? 0;
     let before: ProgressLogRow | undefined, after: ProgressLogRow | undefined;
     for (const r of rows) {
-      if (ms(r.at) <= at) before = r;
+      if (ms(r.at) <= cut) before = r;
       else { after = r; break; }
     }
     if (before) { status = before.new_status; pct = Number(before.new_percent ?? 0); }
     else if (after) { status = after.old_status ?? "planned"; pct = Number(after.old_percent ?? 0); }
     const done = ms(m.actualAt);
-    if (m.status === "completed" && Number.isFinite(done) && done <= at) { status = "completed"; pct = 100; }
-    const startLater = later(m.actualStartAt);
+    if (m.status === "completed" && Number.isFinite(done) && done <= cut) { status = "completed"; pct = 100; }
+    const startLater = laterThan(m.actualStartAt);
     if (status === m.status && pct === (m.percentComplete ?? 0) && !startLater) return m;
     return {
       ...m, status, percentComplete: pct,

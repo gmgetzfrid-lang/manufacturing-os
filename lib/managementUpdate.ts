@@ -90,7 +90,7 @@ export interface UpdateLookups {
    *  `carried`: crews carried from that shift, not updated for this one. */
   meetings?: Array<{ clock: string; title: string; parts: MeetingParts; carried?: string }>;
   /** The hours; a meeting's `text` is what it says, one item a line, under its `title`. */
-  hourly?: Array<{ clock: string; kind?: "meeting" | "permit" | "work" | "break" | "handover"; title?: string; text: string; progress?: string[];
+  hourly?: Array<{ clock: string; kind?: "meeting" | "permit" | "work" | "break" | "handover" | "overtime"; title?: string; text: string; progress?: string[];
     /** Its lines that finished a whole work order (green). */
     closed?: string[] }>;
 }
@@ -408,7 +408,8 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       blocks: [{ k: "table", head: ["Time", "What happened"], align: ["left", "left"], textLabels: ["", ""], nowrap: [0], rows: hl.map((x) => {
         // Each item on its own line; then what crews kept working on.
         const items = [
-          ...(x.kind === "meeting" || x.kind === "handover" ? [x.title || "Shift meeting", ...(x.text.split("\n").filter(Boolean).length ? x.text.split("\n").filter(Boolean) : ["No attendance entered"])]
+          ...(x.kind === "overtime" ? [x.title || "Overtime"]
+            : x.kind === "meeting" || x.kind === "handover" ? [x.title || "Shift meeting", ...(x.text.split("\n").filter(Boolean).length ? x.text.split("\n").filter(Boolean) : ["No attendance entered"])]
             : x.kind === "permit" ? [`Start of shift - permitting`, ...x.text.split("\n").filter(Boolean)]
               : x.text.split("\n").filter(Boolean)),
           ...(x.progress ?? []),

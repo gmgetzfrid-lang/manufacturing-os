@@ -18,6 +18,10 @@ import type { TimeLogRow } from "@/lib/timeLog";
 import {
   slotClocks, hourlyRows, typedLines, typedHour, type HourlyRow, slotOf, SLOT_LABEL, breakLabel, boldRuns, type HourSlot, type HourlyNotes,
 } from "@/lib/shiftHourly";
+import { timeAfter, type HoldOver } from "@/lib/holdOver";
+import { timeOnDay } from "@/lib/shiftReport";
+import { dayKey } from "@/lib/scheduleTz";
+import { TimeChip } from "@/components/projects/DateTimePicker";
 import { cleanName, crewNames, renamed, setNames, totalOnSite, withName, withoutName, earlierMeetingLines, hasOwnRoster, meetingEmpty, type MeetingParts } from "@/lib/shiftMeeting";
 
 const inputCls = "rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1 text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent-ring)]";
@@ -36,6 +40,8 @@ export interface HourlyCtx {
   upTo: number;
   /** Put discovery or added scope into the schedule at this hour (the hour's start). */
   onAddWork?: (at: number) => void;
+  /** Keeping a crew on past the end of the shift (overtime, lib/holdOver). */
+  overtime?: { list: HoldOver[]; crews: string[]; shiftEnd: number; cap: number; tz: string; save: (change: (l: HoldOver[]) => HoldOver[]) => Promise<void> };
   /** The entries that finish a whole work order (lib/shiftHourly workOrderClosers): their lines in green. */
   closes?: (r: TimeLogRow) => boolean;
   /** The two meetings as the log says them (lib/shiftMeeting), which are
@@ -74,6 +80,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [otForm, setOtForm] = useState<"new" | "edit" | "send" | null>(null);
   const rows = hourlyRows(h.notes, h.slots, h.upTo, h.entries, tz, { ...h.meet, closes: h.closes });
   const clocks = slotClocks(rows.map((r) => r.slot), tz);
   const meetingOf = (x: HourSlot) => (x.kind === "meeting" ? meetings?.start : x.kind === "handover" ? meetings?.end : undefined);
@@ -138,7 +145,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
               <tr key={r.slot.key} className="align-top">
                 <td className="w-16 pr-2 py-0.5 font-semibold whitespace-nowrap">{clocks[i]}</td>
                 <td className="py-0.5">
-                  {r.slot.kind === "break" ? <span className="text-slate-500">{breakLabel(r.slot)}</span> : m ? <>
+                  {r.slot.kind === "overtime" ? <b>{r.slot.label}</b> : r.slot.kind === "break" ? <span className="text-slate-500">{breakLabel(r.slot)}</span> : m ? <>
                     <b>{m.title}</b>
                     {m.parts && !meetingEmpty(m.parts) ? <MeetingTable p={m.parts} /> : m.lines.length ? m.lines.map((x, j) => <div key={j}>{x}</div>) : <div className="text-slate-500">No attendance entered</div>}
                   </> : <>
@@ -163,6 +170,25 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
           const isMeeting = r.slot.kind === "meeting" || r.slot.kind === "handover";
           const label = isMeeting ? titleOf(r.slot) : SLOT_LABEL[r.slot.kind];
           // A break: its own quiet row, blocked off.
+          // A crew held over: the overtime starts, and when it was sent home.
+          if (r.slot.kind === "overtime") {
+            const head = r.slot.key === "ot";
+            const ot = h.overtime;
+            return (
+              <li key={r.slot.key} className="flex items-start gap-2 px-3 py-1.5 text-[12.5px] leading-snug bg-[var(--color-surface-2)]">
+                <span className="w-[66px] shrink-0 font-bold text-[var(--color-text)] whitespace-nowrap tabular-nums">{clocks[i]}</span>
+                <span className="min-w-0 flex-1 font-bold text-[var(--color-text)]">{r.slot.label}</span>
+                {head && edit && ot && otForm == null && (
+                  <span className="flex items-center gap-1">
+                    {ot.list.some((x) => x.until == null) && (
+                      <button type="button" onClick={() => setOtForm("send")} className="shrink-0 inline-flex items-center h-6 px-2 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-bold">Sent home</button>
+                    )}
+                    <button type="button" onClick={() => setOtForm("edit")} aria-label="Change the overtime" className={iconBtn}><Pencil className="w-3.5 h-3.5" /></button>
+                  </span>
+                )}
+              </li>
+            );
+          }
           if (r.slot.kind === "break") {
             // Its hour had nothing in it: the break stands for it, and the
             // hour can still be typed into or have work added.
@@ -262,6 +288,17 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
           );
         })}
       </ul>
+      {/* Keeping a crew on past the end of the shift (overtime). */}
+      {edit && h.overtime && (otForm === "send"
+        ? <SentHomeForm ot={h.overtime} onDone={() => setOtForm(null)} onError={setMsg} />
+        : otForm === "edit" || otForm === "new"
+          ? <HoldOverForm ot={h.overtime} adding={otForm === "new"} onDone={() => setOtForm(null)} onError={setMsg} />
+          : !h.overtime.list.length && (
+            <button type="button" onClick={() => setOtForm("new")}
+              className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-dashed border-[var(--color-accent)] text-[11.5px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
+              <Plus className="w-3.5 h-3.5" /> Hold a crew over (overtime)
+            </button>
+          ))}
       {removed.length > 0 && (
         <div className="text-[11.5px] text-[var(--color-text-muted)]">
           Taken off the log: {removed.map((x, i) => (
@@ -270,6 +307,94 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
         </div>
       )}
       {msg && <div role="alert" className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">{msg}</div>}
+    </div>
+  );
+}
+
+type OtCtx = NonNullable<HourlyCtx["overtime"]>;
+/** "21:30" in plant time. */
+const hmOf = (ms: number, tz: string) => new Date(ms).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tz });
+const selCls = "h-7 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12px] text-[var(--color-text)]";
+
+/** A crew held over: which crew, how many, who or why, sent home when
+ *  (or still on), and who takes over after. */
+function HoldOverForm({ ot, adding, onDone, onError }: { ot: OtCtx; adding: boolean; onDone: () => void; onError: (m: string | null) => void }) {
+  type Row = { id: string; crew: string; hands: string; note: string; until: string; takeover: string };
+  const toRow = (x: HoldOver): Row => ({ id: x.id, crew: x.crew, hands: x.hands != null ? String(x.hands) : "", note: x.note ?? "", until: x.until != null ? hmOf(x.until, ot.tz) : "", takeover: x.takeover ?? "" });
+  const blank = (): Row => ({ id: newId(), crew: ot.crews[0] ?? "", hands: "", note: "", until: "", takeover: "" });
+  const [rows, setRows] = useState<Row[]>(() => [...ot.list.map(toRow), ...(adding || !ot.list.length ? [blank()] : [])]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const set = (i: number, v: Partial<Row>) => setRows(rows.map((x, j) => (j === i ? { ...x, ...v } : x)));
+  const save = async () => {
+    const out: HoldOver[] = [];
+    for (const x of rows) {
+      if (!x.crew.trim()) { setErr("Pick the crew held over."); return; }
+      const until = x.until ? timeAfter(ot.shiftEnd, x.until, ot.tz, timeOnDay, dayKey) : null;
+      if (x.until && (until == null || until > ot.cap)) { setErr("Sent home: a time before the next shift ends."); return; }
+      const was = ot.list.find((y) => y.id === x.id);
+      out.push({ id: x.id, crew: x.crew.trim(), hands: x.hands ? Math.max(0, Math.round(Number(x.hands))) : null, note: x.note.trim() || undefined, until, takeover: x.takeover || null, at: was?.at ?? Date.now(), by: was?.by ?? null });
+    }
+    setBusy(true);
+    try { await ot.save(() => out); onError(null); onDone(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] p-2 space-y-2 text-[12px]">
+      <div className="font-bold text-[var(--color-text)]">Crew held over past the end of the shift</div>
+      {rows.map((x, i) => (
+        <div key={x.id} className="flex flex-wrap items-center gap-1.5">
+          <select value={x.crew} onChange={(e) => set(i, { crew: e.target.value })} aria-label="Crew held over" className={`${selCls} max-w-[12rem]`}>
+            {!ot.crews.includes(x.crew) && x.crew && <option value={x.crew}>{x.crew}</option>}
+            {ot.crews.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <input value={x.hands} onChange={(e) => set(i, { hands: e.target.value.replace(/[^0-9]/g, "").slice(0, 3) })} inputMode="numeric" placeholder="Hands" aria-label="How many held over" className={`${inputCls} h-7 w-16`} />
+          <input value={x.note} onChange={(e) => set(i, { note: e.target.value })} placeholder="Who or why (Exchanger hands only)" aria-label="Who or why" className={`${inputCls} h-7 flex-1 min-w-[10rem]`} />
+          <span className="inline-flex items-center gap-1">
+            <span className="text-[11px] text-[var(--color-text-muted)]">Sent home</span>
+            <TimeChip value={x.until} onChange={(v) => set(i, { until: v })} tz={ot.tz} label="Sent home at" />
+            {x.until && <button type="button" onClick={() => set(i, { until: "" })} className="text-[11px] text-[var(--color-text-muted)] hover:underline">Still on</button>}
+          </span>
+          <select value={x.takeover} onChange={(e) => set(i, { takeover: e.target.value })} aria-label="Takes over after" className={`${selCls} max-w-[15rem]`}>
+            <option value="">No one takes over</option>
+            {ot.crews.map((c) => <option key={c} value={c}>{c} takes over</option>)}
+          </select>
+          <button type="button" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label={`Take ${x.crew || "this crew"} off overtime`} className="p-1 rounded text-[var(--color-text-muted)] hover:text-rose-700"><Trash2 className="w-3.5 h-3.5" /></button>
+        </div>
+      ))}
+      <button type="button" onClick={() => setRows([...rows, blank()])} className="text-[11px] font-semibold text-[var(--color-accent)] hover:underline">+ Another crew</button>
+      {err && <div role="alert" className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">{err}</div>}
+      <div className="flex items-center gap-2">
+        <button type="button" disabled={busy} onClick={() => void save()} className={`${btn} bg-[var(--color-accent)] text-[var(--color-accent-fg)]`}>Save</button>
+        <button type="button" onClick={onDone} className="text-[11.5px] text-[var(--color-text-muted)] hover:underline">Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+/** The crew held over goes home: when, and who takes over after. */
+function SentHomeForm({ ot, onDone, onError }: { ot: OtCtx; onDone: () => void; onError: (m: string | null) => void }) {
+  const [at, setAt] = useState(() => hmOf(Math.min(Date.now(), ot.cap), ot.tz));
+  const [takeover, setTakeover] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const save = async () => {
+    const t = timeAfter(ot.shiftEnd, at, ot.tz, timeOnDay, dayKey);
+    if (t == null || t > ot.cap) { setErr("A time before the next shift ends."); return; }
+    try {
+      await ot.save((l) => l.map((x) => (x.until == null ? { ...x, until: t, takeover: takeover || x.takeover || null } : x)));
+      onError(null); onDone();
+    } catch (e) { setErr((e as Error).message); }
+  };
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] p-2 flex flex-wrap items-center gap-1.5 text-[12px]">
+      <b className="text-[var(--color-text)]">Sent home at</b>
+      <TimeChip value={at} onChange={setAt} tz={ot.tz} label="Sent home at" />
+      <select value={takeover} onChange={(e) => setTakeover(e.target.value)} aria-label="Takes over after" className={`${selCls} max-w-[14rem]`}>
+        <option value="">No one takes over</option>
+        {ot.crews.map((c) => <option key={c} value={c}>{c} takes over</option>)}
+      </select>
+      <button type="button" onClick={() => void save()} className={`${btn} bg-[var(--color-accent)] text-[var(--color-accent-fg)]`}>Save</button>
+      <button type="button" onClick={onDone} className="text-[11.5px] text-[var(--color-text-muted)] hover:underline">Cancel</button>
+      {err && <div role="alert" className="w-full text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">{err}</div>}
     </div>
   );
 }
