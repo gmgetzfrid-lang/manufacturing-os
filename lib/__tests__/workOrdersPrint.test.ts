@@ -1,7 +1,7 @@
 // The work orders on paper: every one shown, opened up with all its steps.
 
 import { describe, it, expect } from "vitest";
-import { workOrdersHtml, printTime, stepGaps, type PrintOrder } from "@/lib/workOrdersPrint";
+import { workOrdersHtml, printTime, type PrintOrder } from "@/lib/workOrdersPrint";
 
 const tz = "America/Los_Angeles";
 const at = (s: string) => Date.parse(`2026-10-26T${s}:00-07:00`);
@@ -33,22 +33,6 @@ describe("workOrdersHtml", () => {
     const h = workOrdersHtml({ project: "TA", scope: "All", printedAt: at("17:00"), tz, orders: [order], format: "history" });
     expect(h).toContain("Progress 0% → 20% - Pulled 2/5");
     expect(h).not.toContain("Latest comment");
-  });
-  it("field tracker: lines to write on, spare rows, what should have happened marked", () => {
-    const h = workOrdersHtml({ project: "TA", scope: "All", printedAt: at("17:00"), tz, orders: [order], format: "field" });
-    expect(h).toContain("Field tracker");
-    // Step b: planned 10:00–14:00, nothing recorded by 17:00.
-    expect(h).toContain("⚑ Should have started by Oct 26, 10:00 AM");
-    expect(h).toContain("1 start time · 1 finish time");
-    expect((h.match(/<tr class="spare">/g) ?? []).length).toBe(3);
-    // Recorded times print; the missing ones get a line.
-    expect(h).toContain("11:30 AM");
-    expect((h.match(/class="blank/g) ?? []).length).toBeGreaterThan(10);
-  });
-  it("flags recorded times that look wrong", () => {
-    const s = { ...order.steps[0], actStart: at("06:00") - 18 * 86_400_000 };
-    expect(stepGaps(s, at("17:00")).check).toEqual(["start is 18 days before plan"]);
-    expect(stepGaps({ ...s, actStart: at("12:00"), actFinish: at("11:00") }, at("17:00")).check).toEqual(["finish is before start"]);
   });
   it("times in plant time", () => {
     expect(printTime(at("13:30"), tz)).toBe("Oct 26, 1:30 PM");

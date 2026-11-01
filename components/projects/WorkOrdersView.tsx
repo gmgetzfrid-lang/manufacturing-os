@@ -16,7 +16,7 @@ import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { leafPercent } from "@/lib/scheduleProgress";
 import { expectedFraction, workHours, type ShiftTimes } from "@/lib/shiftReport";
-import { dayKey } from "@/lib/scheduleTz";
+import { dayKey, dayKeyToMs } from "@/lib/scheduleTz";
 import { whenDated } from "@/lib/timeWords";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { woOf } from "@/lib/workOrderCrew";
@@ -29,6 +29,8 @@ import { buildTimeLog, type TimeLogRow } from "@/lib/timeLog";
 import { useLetterhead } from "@/lib/letterheadStore";
 import { letterheadDocument } from "@/lib/letterhead";
 import { workOrdersHtml, PRINT_CSS, type PrintOrder, type PrintFormat } from "@/lib/workOrdersPrint";
+import { fieldTrackerHtml, fieldTrackerDocument, inRange, type FieldOrder } from "@/lib/fieldTracker";
+import FieldTrackerPrint, { type FieldChoice } from "@/components/projects/FieldTrackerPrint";
 import { CancelJobForm } from "@/components/projects/CancelledJobs";
 import AddWorkPicker from "@/components/projects/AddWorkPicker";
 import { saidWithLatest } from "@/lib/stepComment";
@@ -233,7 +235,7 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
       const project = projectName?.trim() || "Schedule";
       const scope = `${SHOW_WORD[show]}${query.trim() ? ` · search “${query.trim()}”` : ""}${history ? " · with each step's history" : ""}`;
       const body = workOrdersHtml({ project, scope, tz, orders, format });
-      const title = `${project} - ${format === "field" ? "Field tracker" : "Work orders"}`;
+      const title = `${project} - Work orders`;
       const doc = lh ? letterheadDocument(lh, title, body, PRINT_CSS)
         : `<!doctype html><html><head><meta charset="utf-8"><title>${title.replace(/</g, "&lt;")}</title><style>@page{size:landscape;margin:10mm}body{margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}${PRINT_CSS}</style></head><body>${body}</body></html>`;
       w.document.open(); w.document.write(doc); w.document.close();
@@ -244,8 +246,33 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
     }
   };
 
+  // ── The field tracker: a blank form to fill in by pen (lib/fieldTracker),
+  // every work order on the schedule, whatever the view shows.
+  const [fieldOpen, setFieldOpen] = useState(false);
+  const fieldOrders = useMemo<FieldOrder[]>(() => orders.map((o) => ({
+    key: o.key, wo: o.wo, name: o.owner.name, crews: o.crews, planStart: o.planStart, planFinish: o.planFinish,
+    steps: o.steps.filter((s) => s.id).map((s) => ({ id: s.id!, name: s.name, crew: s.responsibleParty?.trim() ?? "", planStart: startMsOf(s), planFinish: finishMsOf(s) })),
+  })), [orders]);
+  const printField = (c: FieldChoice) => {
+    setFieldOpen(false); setPrintMsg(null);
+    // Opened at the tap, so the browser doesn't take it for a pop-up.
+    const w = window.open("", "_blank");
+    if (!w) { setPrintMsg("Your browser blocked the print window - allow pop-ups for this site and try again."); return; }
+    const project = projectName?.trim() || "Schedule";
+    const one = (k: string) => fieldOrders.filter((o) => o.key === k);
+    const range = c.kind === "range" ? { from: dayKeyToMs(c.from, tz), to: dayKeyToMs(c.to, tz) + 86_400_000 } : undefined;
+    const body = c.kind === "step" ? fieldTrackerHtml({ project, tz, orders: one(c.key), lines: "auto", step: c.step })
+      : c.kind === "wo" ? fieldTrackerHtml({ project, tz, orders: one(c.key), lines: c.lines })
+        : c.kind === "range" && range ? fieldTrackerHtml({ project, tz, orders: inRange(fieldOrders, range.from, range.to), lines: c.lines, range })
+          : fieldTrackerHtml({ project, tz, orders: fieldOrders, lines: c.kind === "job" ? c.lines : "auto" });
+    w.document.open(); w.document.write(fieldTrackerDocument(`${project} - Field tracker`, body)); w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 300);
+  };
+
   return (
     <div className="space-y-2">
+      {fieldOpen && <FieldTrackerPrint orders={fieldOrders} today={today} onPrint={printField} onClose={() => setFieldOpen(false)} />}
       {picking && onDiscovery && (
         <AddWorkPicker day={today} tz={tz} milestones={milestones}
           onPick={(t) => { setPicking(false); onDiscovery(t); }} onNew={onNewWorkOrder ? () => { setPicking(false); onNewWorkOrder(); } : undefined} onClose={() => setPicking(false)} />
@@ -298,9 +325,9 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
                   <span className="font-semibold">Report with history</span>
                   <span className="block text-[11px] text-[var(--color-text-muted)]">Every start, % update, hold and comment, with its time</span>
                 </button>
-                <button type="button" onClick={() => void printIt("field")} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)]">
+                <button type="button" onClick={() => { setPrintMenu(false); setFieldOpen(true); }} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)]">
                   <span className="font-semibold">Field tracker - fill in by pen</span>
-                  <span className="block text-[11px] text-[var(--color-text-muted)]">Lines to write starts, finishes, % and notes; spare rows for steps not on the schedule; what should have happened by now marked</span>
+                  <span className="block text-[11px] text-[var(--color-text-muted)]">A blank form: the whole job, one work order, one step, or a date range</span>
                 </button>
               </span>
             </>
