@@ -48,7 +48,8 @@ import { clockLabel, fmtInTz, tzAbbrev, toDateTimeInput } from "@/lib/scheduleTz
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { toPlainText, toEmailHtml, type ExportBlock, type ExportCell, type ExportDoc, type ExportStepRow } from "@/lib/reportExport";
 import { turnoverUpdate, withoutEmpty, noteLine, hazardJobsOf, forecastText, discoverySub, discoveryBlock } from "@/lib/managementUpdate";
-import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
+import { useProjectType, useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
+import { typeWord } from "@/lib/projectType";
 import { notesFor } from "@/lib/milestones";
 import { useShiftRecords, saveShiftRecord, openFollowUps, newId, CLOSEOUT_KEY, type CrewCount, type Incident, type ShiftNote, type ShiftRecord, type Lesson } from "@/lib/shiftRecord";
 import { buildLookBack, CAUSE_LABEL, type LookBack, type StepLook } from "@/lib/lookBack";
@@ -65,7 +66,9 @@ import { effectiveSpans } from "@/lib/scheduleTime";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { SafetyMomentBox } from "@/components/projects/SafetyMomentBox";
 import { useLetterhead } from "@/lib/letterheadStore";
-import { letterheadDocument, letterheadLayersHtml, letterheadPrintCss, type Letterhead } from "@/lib/letterhead";
+import { letterheadLayersHtml, letterheadPrintCss, type Letterhead } from "@/lib/letterhead";
+import { copyRich, printHtml, sectionsOff, updatePrintDocument, updateSubject } from "@/lib/updatePrint";
+import type { ReportLink, ShiftPick } from "@/lib/reportLinks";
 import { riskHistory, safetyBrief, projectFacts, RISKS_RANKED, type ProjectBase } from "@/lib/safetyTalk";
 import { rankHazards, type HazardJobInput, type HazardKind } from "@/lib/safetyMoment";
 import { QuickLookCard, QuickLookOpen, TaskSearch, useQuickLookOpen } from "@/components/projects/TaskQuickLook";
@@ -117,9 +120,25 @@ interface Props {
   onPlanNext?: (next: ShiftWindow) => void;
   /** Correct when a step really started / finished. */
   onFixTimes?: (id: string, t: { start?: number | null; finish?: number | null }) => Promise<boolean>;
+  /** Only this meeting, no others to switch to (Today: the turnover;
+   *  Reports: the kick-off or close-out). */
+  meetingFixed?: MeetingKind;
+  /** The shift, chosen outside (Reports); null: the current one. */
+  shiftPick?: ShiftPick | null;
+  /** Reports: nothing on screen, only the update as it goes out (onDoc). */
+  docOnly?: boolean;
+  /** The update as it would be printed or sent, whenever it changes. */
+  onDoc?: (doc: ExportDoc) => void;
+  /** Opens a report in Reports, set to this shift (the hourly log, the
+   *  time log): in place of making the file here. */
+  onOpenReport?: (link: ReportLink) => void;
+  /** Start presenting at once (Reports › Present). */
+  presentOnOpen?: boolean;
 }
 
 const NONE_CANCELLED: CancelledJob[] = [];
+/** "Project / turnaround lead"; for a plain project, "Project lead". */
+const leadOf = (word: string) => (word.toLowerCase() === "project" ? "Project lead" : `Project / ${word} lead`);
 
 const MEETINGS: Array<{ id: MeetingKind; label: string; Icon: typeof Rocket }> = [
   { id: "kickoff", label: "Kick-off", Icon: Rocket },
@@ -127,8 +146,11 @@ const MEETINGS: Array<{ id: MeetingKind; label: string; Icon: typeof Rocket }> =
   { id: "closeout", label: "Close-out", Icon: Trophy },
 ];
 
-export default function ShiftReportView({ milestones: rawLive, progress: liveProgress, projectId, projectName, cancelled = NONE_CANCELLED, userId, userName, canEdit = false, onUpdateStep, onDiscovery, onNewWorkOrder, pathNow, onPlanNext, onFixTimes }: Props) {
+export default function ShiftReportView({ milestones: rawLive, progress: liveProgress, projectId, projectName, cancelled = NONE_CANCELLED, userId, userName, canEdit = false, onUpdateStep, onDiscovery, onNewWorkOrder, pathNow, onPlanNext, onFixTimes, meetingFixed, shiftPick, docOnly, onDoc, onOpenReport, presentOnOpen }: Props) {
   const tz = useScheduleTz();
+  // What kind of project it is: the word the report says (Setup › Project type).
+  const ptype = useProjectType(projectId, projectName);
+  const word = typeWord(ptype);
   // The project's shift-change times — the same on every device.
   const times = useShiftTimes(projectId);
   // Never saved: the day / night split is the app's 05:30 / 17:30 guess.
@@ -156,9 +178,10 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   useEffect(() => { const id = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(id); }, []);
 
   const [meetingPick, setMeetingPick] = useState<MeetingKind | null>(null);
-  const meeting = meetingPick ?? defaultMeeting(live, now, liveProgress, tz);
+  const meeting = meetingFixed ?? meetingPick ?? defaultMeeting(live, now, liveProgress, tz);
 
-  const [sel, setSel] = useState<{ dayKey: string; kind: "day" | "night" } | null>(null);
+  const [ownSel, setSel] = useState<{ dayKey: string; kind: "day" | "night" } | null>(null);
+  const sel = shiftPick !== undefined ? shiftPick : ownSel;
   const shift: ShiftWindow = useMemo(
     () => (sel ? shiftWindow(sel.dayKey, sel.kind, tz, times) : defaultReviewShift(live, now, tz, times)),
     [sel, now, tz, times, live],
@@ -347,7 +370,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   // Each main task's planned % by now — "on plan" or "behind", and "x% of
   // y% planned" next to its progress.
   const planByTask = useMemo(() => expectedByParent(milestones, asOf, tz, times), [milestones, asOf, tz, times]);
-  const ctx = useMemo(() => makeCtx(tz, byId, progress, planByTask), [tz, byId, progress, planByTask]);
+  const ctx = useMemo(() => makeCtx(tz, byId, progress, planByTask, word), [tz, byId, progress, planByTask, word]);
 
   const { update: updateDraft } = hand;
   const setDecision = useCallback((id: string, d: HandoverDecision) => { void updateDraft((cur) => ({ ...cur, [id]: d })); }, [updateDraft]);
@@ -549,9 +572,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   // The same export, from the hour-by-hour section itself.
   const exportRef = useRef(exportHourly);
   useEffect(() => { exportRef.current = exportHourly; });
-  const hourlyExport = useMemo(() => (
-    <HourlyLogExport formats={["pdf", "docx"]} what={`Hourly log - ${shiftTitle}`} letterhead={!!lh} onExport={(f) => exportRef.current(f)} label={lh ? "Export on letterhead" : "Export hourly log"} />
-  ), [shiftTitle, lh]);
+  const shiftDayKey = shift.dayKey, shiftKind = shift.kind;
+  const hourlyExport = useMemo(() => (onOpenReport
+    ? <OpenReportButton label="Hourly log" onClick={() => onOpenReport({ id: "hourly", shift: { dayKey: shiftDayKey, kind: shiftKind } })} />
+    : <HourlyLogExport formats={["pdf", "docx"]} what={`Hourly log - ${shiftTitle}`} letterhead={!!lh} onExport={(f) => exportRef.current(f)} label={lh ? "Export on letterhead" : "Export hourly log"} />
+  ), [shiftTitle, lh, onOpenReport, shiftDayKey, shiftKind]);
   // The time log: every step's times, for the project file — its own
   // export, not part of the update.
   const [logBusy, setLogBusy] = useState(false);
@@ -579,8 +604,9 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       names: [projectName ?? "", ...live.filter((m) => m.isSummary || (m.id && parents.has(m.id))).map((m) => m.name)],
       start: report.overall.plannedStart, finish: report.overall.plannedFinish, tz,
       behind: report.overall.standing === "behind",
+      type: ptype,
     };
-  }, [live, projectName, report.overall.plannedStart, report.overall.plannedFinish, report.overall.standing, tz]);
+  }, [live, projectName, report.overall.plannedStart, report.overall.plannedFinish, report.overall.standing, tz, ptype]);
   // The risk cards of the shifts before the next one, from the schedule —
   // so a kind of work that's led two shifts running steps aside.
   const nextStart = report.next.start;
@@ -590,7 +616,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const [editing, setEditing] = useState<string | null>(null);
   // The close-out's look back (lib/lookBack) — the job as it stands, its
   // whole history of comments and holds — and the lessons the team writes.
-  const lookBack = useMemo(() => (meeting === "closeout" ? buildLookBack({ milestones: live, notes: allNotes, discoveries: discoveryList, now: pathAt, tz }) : null), [meeting, live, allNotes, discoveryList, pathAt, tz]);
+  const lookBack = useMemo(() => (meeting === "closeout" ? buildLookBack({ milestones: live, notes: allNotes, discoveries: discoveryList, now: pathAt, tz, word }) : null), [meeting, live, allNotes, discoveryList, pathAt, tz, word]);
   const lessonsRec = records.get(CLOSEOUT_KEY)?.lessons;
   const lessons = useMemo<LessonsCtx>(() => ({
     items: lessonsRec ?? [],
@@ -636,7 +662,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
 
   // ── live-meeting navigation ──
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [presenting, setPresenting] = useState<number | null>(null);
+  const [presenting, setPresenting] = useState<number | null>(presentOnOpen ? 0 : null);
   const refs = useRef(new Map<string, HTMLElement>());
   const goTo = useCallback((id: string) => {
     if (presenting != null) { setPresenting(Math.max(0, sections.findIndex((s) => s.id === id))); return; }
@@ -706,7 +732,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       // The update management reads, not the meeting's agenda: short
       // tables, one line per main task, and nothing that's empty.
       sections: meeting === "turnover"
-        ? turnoverUpdate(view, { D: ctx.D, DTs: ctx.DTs, T: ctx.T, win: ctx.win, hrs: ctx.hrs }, {
+        ? turnoverUpdate(view, { D: ctx.D, DTs: ctx.DTs, T: ctx.T, win: ctx.win, hrs: ctx.hrs, word: ctx.word }, {
           pctOf: (id) => progress?.get(id)?.percent,
           finishOf: (id) => taskSpans.get(id)?.finish,
           planOf: (id) => planByTask.get(id),
@@ -753,11 +779,21 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     };
   };
 
+  // Reports: the update as it goes out, each time it changes.
+  const lastDoc = useRef("");
+  useEffect(() => {
+    if (!onDoc) return;
+    const d = exportDoc();
+    const k = JSON.stringify(d);
+    if (k !== lastDoc.current) { lastDoc.current = k; onDoc(d); }
+  });
+
   const head = (print: boolean) => (
     <Masthead meeting={meeting} report={report} kickoff={kickoff} closeout={closeout} ctx={ctx} asOf={asOf} now={now}
       rehearsal={rehearsal} historyNote={historyNote} projectName={projectName} print={print} crew={crew} addedOnly={addedOnly} criticalOnly={criticalOnly} />
   );
 
+  if (docOnly) return null;
   return (
     <ReportCrew.Provider value={crew}>
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03]">
@@ -779,18 +815,18 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
 
       {/* ── Toolbar ─────────────────────────────────────────────────── */}
       <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap rounded-t-2xl bg-gradient-to-b from-white to-slate-50/40 dark:from-transparent dark:to-transparent">
-        <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-lg p-0.5 gap-0.5" role="tablist" aria-label="Meeting">
+        {!meetingFixed && <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-lg p-0.5 gap-0.5" role="tablist" aria-label="Meeting">
           {MEETINGS.map(({ id, label, Icon }) => (
             <button key={id} role="tab" aria-selected={meeting === id} onClick={() => { setMeetingPick(id); setPresenting(null); }}
               className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${meeting === id ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
               <Icon className="w-3 h-3" /> {label}
             </button>
           ))}
-        </div>
+        </div>}
 
         {meeting === "turnover" && (
           <>
-            <span className="mx-0.5 w-px h-4 bg-[var(--color-border)]" />
+            {!meetingFixed && <span className="mx-0.5 w-px h-4 bg-[var(--color-border)]" />}
             <button onClick={() => pick(previousShift(shift, tz, times))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Previous shift"><ChevronLeft className="w-4 h-4" /></button>
             <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-md p-0.5 gap-0.5">
               {(["day", "night"] as const).map((k) => (
@@ -884,8 +920,17 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                 className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border ${stamps ? "bg-slate-900 text-white border-slate-900" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                 <Clock className="w-3.5 h-3.5" /> Times {stamps ? "on" : "off"}
               </button>
-              <TimeLogButton busy={logBusy} msg={logMsg} onExport={(sc) => void exportTimeLog(sc)} shiftLabel={shiftTitle} />
-              <HourlyLogExport formats={["pdf", "docx"]} what={`Hourly log - ${shiftTitle}`} letterhead={!!lh} onExport={exportHourly} label="Hourly log" />
+              {onOpenReport ? (
+                <>
+                  <OpenReportButton label="Time log" onClick={() => onOpenReport({ id: "timelog", shift: { dayKey: shift.dayKey, kind: shift.kind }, scope: "shift" })} />
+                  <OpenReportButton label="Hourly log" onClick={() => onOpenReport({ id: "hourly", shift: { dayKey: shift.dayKey, kind: shift.kind } })} />
+                </>
+              ) : (
+                <>
+                  <TimeLogButton busy={logBusy} msg={logMsg} onExport={(sc) => void exportTimeLog(sc)} shiftLabel={shiftTitle} />
+                  <HourlyLogExport formats={["pdf", "docx"]} what={`Hourly log - ${shiftTitle}`} letterhead={!!lh} onExport={exportHourly} label="Hourly log" />
+                </>
+              )}
             </>
           )}
           <CopyUpdate doc={exportDoc} meeting={meeting} lh={lh} stamps={meeting === "turnover" ? { on: stamps, set: setStamps } : undefined} />
@@ -1128,28 +1173,6 @@ function RowEditor({ id, milestones, progress, planNow, tz, times, shift, canEdi
 /** Rich copy: HTML for an email body, plain text alongside for anything
  *  that can't take HTML. Falls back to copying a selection where the
  *  clipboard API can't write HTML. */
-async function copyRich(html: string, text: string): Promise<boolean> {
-  try {
-    if (typeof ClipboardItem !== "undefined" && navigator.clipboard?.write) {
-      await navigator.clipboard.write([new ClipboardItem({
-        "text/html": new Blob([html], { type: "text/html" }),
-        "text/plain": new Blob([text], { type: "text/plain" }),
-      })]);
-      return true;
-    }
-  } catch { /* fall through */ }
-  const el = document.createElement("div");
-  el.innerHTML = html;
-  el.style.cssText = "position:fixed;left:-10000px;top:0;";
-  document.body.appendChild(el);
-  const range = document.createRange();
-  range.selectNodeContents(el);
-  const sel = window.getSelection();
-  sel?.removeAllRanges(); sel?.addRange(range);
-  const ok = document.execCommand("copy");
-  sel?.removeAllRanges(); el.remove();
-  return ok;
-}
 
 async function copyText(text: string): Promise<boolean> {
   try { await navigator.clipboard.writeText(text); return true; } catch { /* fall through */ }
@@ -1159,6 +1182,16 @@ async function copyText(text: string): Promise<boolean> {
   const ok = document.execCommand("copy");
   ta.remove();
   return ok;
+}
+
+/** A button that opens a report in Reports, set to what's on screen. */
+function OpenReportButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} title={`Open the ${label.toLowerCase()} in Reports, set to this shift`}
+      className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+      <FileText className="w-3.5 h-3.5" /> {label}
+    </button>
+  );
 }
 
 /** Copy — the update as it will be sent, with a box per section to leave
@@ -1177,18 +1210,10 @@ function CopyUpdate({ doc, meeting, lh, stamps }: { doc: () => ExportDoc; meetin
   const [off, setOff] = useState<Set<string>>(new Set());
   const [done, setDone] = useState<{ what: "email" | "text"; ok: boolean } | null>(null);
   const open = () => {
-    let saved: string[] = [];
-    try { saved = JSON.parse(localStorage.getItem(key) ?? "[]") as string[]; } catch { /* private mode */ }
-    const fresh = doc();
     // A section that's flagged today (blocked work, things behind) is always
     // ticked when the box opens: unticking it once must not hide tomorrow's
-    // problems from management.
-    // So is Where we stand: the verdict and the bottom line always go.
-    const flagged = new Set(fresh.sections.filter((x) => x.flag || x.id === "stand").map((x) => x.id ?? x.title));
-    let on: string[] = [];
-    try { on = JSON.parse(localStorage.getItem(onKey) ?? "[]") as string[]; } catch { /* private mode */ }
-    const quiet = fresh.sections.filter((x) => x.offByDefault && !on.includes(x.id ?? x.title)).map((x) => x.id ?? x.title);
-    setOff(new Set([...saved.filter((id) => !flagged.has(id)), ...quiet])); setDone(null); setIsOpen(true);
+    // problems from management. So is Where we stand (lib/updatePrint).
+    setOff(sectionsOff(doc(), meeting)); setDone(null); setIsOpen(true);
   };
   const toggle = (id: string) => setOff((cur) => {
     const n = new Set(cur);
@@ -1205,20 +1230,12 @@ function CopyUpdate({ doc, meeting, lh, stamps }: { doc: () => ExportDoc; meetin
   const idOf = (s: ExportDoc["sections"][number]) => s.id ?? s.title;
   const picked = d ? { ...d, sections: d.sections.filter((s) => !off.has(idOf(s))) } : null;
   const html = picked ? toEmailHtml(picked) : "";
-  const subject = d ? `${d.project} - ${d.kind} - ${d.when.split(" → ").pop()}` : "";
+  const subject = d ? updateSubject(d) : "";
 
   // Print what goes in the email — the safety topics on a page of their
   // own at the end, on the company letterhead when there is one.
   const printIt = () => {
-    const w = window.open("", "_blank");
-    if (!w) { setDone({ what: "text", ok: false }); return; }
-    const forPrint = picked ? toEmailHtml({ ...picked, sections: [...picked.sections.filter((s) => s.id !== "safety"), ...picked.sections.filter((s) => s.id === "safety")] }) : html;
-    const ownPage = `table[data-sec="safety"]{break-before:page}`;
-    w.document.write(lh ? letterheadDocument(lh, subject, forPrint, ownPage)
-      : `<!doctype html><html><head><meta charset="utf-8"><title>${subject.replace(/</g, "&lt;")}</title><style>@page{margin:12mm}body{margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}${ownPage}</style></head><body>${forPrint}</body></html>`);
-    w.document.close();
-    w.focus();
-    setTimeout(() => w.print(), 300);
+    if (!picked || !printHtml(updatePrintDocument(picked, lh ?? null))) setDone({ what: "text", ok: false });
   };
 
   const run = async (what: "email" | "text") => {
@@ -1296,6 +1313,8 @@ interface Ctx {
   hrs: (h: number) => string;
   win: (w: ShiftWindow) => string;
   span: (a: number, b: number) => string;
+  /** What kind of project it is, in a sentence ("turnaround"; lib/projectType). */
+  word: string;
   group: (parentId: string | null, parentName: string | null, crumbs: string[], fallback: string) => TGroup;
 }
 
@@ -1318,7 +1337,7 @@ interface HandoverCtx {
   openPicker?: () => void;
 }
 
-function makeCtx(tz: string, byId: Map<string, Milestone>, progress?: Map<string, ProgressInfo>, planOf?: Map<string, number>): Ctx {
+function makeCtx(tz: string, byId: Map<string, Milestone>, progress?: Map<string, ProgressInfo>, planOf?: Map<string, number>, word = "turnaround"): Ctx {
   const D = (ms: number) => fmtInTz(ms, tz, { weekday: "short", month: "short", day: "numeric" });
   const DL = (ms: number) => fmtInTz(ms, tz, { weekday: "long", month: "long", day: "numeric" });
   const T = (ms: number) => clockLabel(ms, tz) || "12:00 AM";
@@ -1328,7 +1347,7 @@ function makeCtx(tz: string, byId: Map<string, Milestone>, progress?: Map<string
   const DTs = (ms: number) => `${DS(ms)} ${T(ms)}`;
   const span = (a: number, b: number) => (!Number.isFinite(a) || !Number.isFinite(b) ? "-" : day(a) === day(b) ? `${DS(a)} ${T(a)}–${T(b)}` : `${DTs(a)} → ${DTs(b)}`);
   return {
-    tz, D, DL, T, DT, DTs, span,
+    tz, D, DL, T, DT, DTs, span, word,
     hrs: (h: number) => `${Math.round(h * 10) / 10} h`,
     win: (w) => `${T(w.start)}–${T(w.end)}${day(w.start) === day(w.end) ? "" : ` (${D(w.end)})`}`,
     group: (parentId, parentName, crumbs, fallback) => {
@@ -1867,7 +1886,7 @@ function discoverySection(shift: ShiftWindow, c: Ctx, list: Discovery[], onAdd?:
   if (!ds.inShift.length && !ds.open.length && !onAdd) return [];
   return [{
     id: "discovery", title: addedTitle([...ds.inShift, ...ds.open].map((d) => kindOf(d.record))), short: "Added work",
-    sub: discoverySub(ds, c.hrs),
+    sub: discoverySub(ds, c.hrs, c.word),
     count: ds.inShift.length,
     flag: ds.shift.critical ? "rose" : null,
     body: (print) => (
@@ -1908,7 +1927,7 @@ function DiscoveryList({ list, c, print }: { list: Discovery[]; c: Ctx; print: b
               </div>
               <div className="break-words"><b className="text-[11px] uppercase tracking-wide text-[var(--color-text-muted)] mr-1">{ADDED[kindOf(d.record)].word}</b>{d.record.what}</div>
               {d.steps.map((m) => <div key={m.id} className="text-[11.5px] text-[var(--color-text-muted)] break-words">{discoveryStepLine(m, c.hrs)}</div>)}
-              <div className={`text-[11.5px] ${impactCls(d)}`}>{impactLine(d.record.impact, c.hrs)}</div>
+              <div className={`text-[11.5px] ${impactCls(d)}`}>{impactLine(d.record.impact, c.hrs, c.word)}</div>
             </div>
           ))}
         </div>
@@ -1927,7 +1946,7 @@ function DiscoveryList({ list, c, print }: { list: Discovery[]; c: Ctx; print: b
                 <td className={`${cell} font-semibold break-words`}>{d.task?.name}{d.task?.workOrderRef && <div className="font-mono font-normal text-[11px] text-[var(--color-text-muted)]">WO {d.task.workOrderRef}</div>}</td>
                 <td className={`${cell} break-words`}><div className="text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">{ADDED[kindOf(d.record)].word}</div>{d.record.what}{d.record.approvedBy && <div className="text-[11px] text-[var(--color-text-muted)]">Approved by {d.record.approvedBy}</div>}</td>
                 <td className={`${cell} break-words`}>{d.steps.map((m) => <div key={m.id}>{discoveryStepLine(m, c.hrs)}</div>)}</td>
-                <td className={`${cell} break-words ${impactCls(d)}`}>{impactLine(d.record.impact, c.hrs)}</td>
+                <td className={`${cell} break-words ${impactCls(d)}`}>{impactLine(d.record.impact, c.hrs, c.word)}</td>
               </tr>
             ))}
           </tbody>
@@ -2039,7 +2058,7 @@ function kickoffSections(k: ReturnType<typeof buildKickoff>, c: Ctx): Sec[] {
       ),
       data: () => [s.rows.length === 0 ? { k: "empty", text: "Nothing scheduled on this shift." } : stepsBlock(shiftRowsOf(s), "Hours")],
     })),
-    closeSection("Close", ["Project / turnaround lead", "Operations", "Safety", "Each contractor lead"], "Attendance and sign-off"),
+    closeSection("Close", [leadOf(c.word), "Operations", "Safety", "Each contractor lead"], "Attendance and sign-off"),
   ];
   return secs;
 }
@@ -2108,7 +2127,7 @@ function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftRep
     // The look back: where the time went, what set the finish, what went
     // well, where to do better.
     ...(lookBack && lookBack.steps.length ? lookBackSections(lookBack, report, c, lessons) : []),
-    closeSection("Sign-off", ["Project / turnaround lead", "Operations", "Safety"]),
+    closeSection("Sign-off", [leadOf(c.word), "Operations", "Safety"]),
   ];
 }
 

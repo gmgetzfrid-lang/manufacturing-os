@@ -6,14 +6,15 @@
 // now filled in, so confirming a right answer is one click.
 
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Check, ChevronLeft, ChevronRight, Clock, Flag, Globe2, Loader2, Moon, Printer, Settings2, Zap } from "lucide-react";
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Clock, Flag, Globe2, Loader2, Moon, Printer, Settings2, Tag, Zap } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { setupChecklist, missingRequired, toDo, OPEN_SETUP_EVENT, type SetupItem, type SetupItemId } from "@/lib/scheduleSetup";
 import { useLetterhead } from "@/lib/letterheadStore";
 import { LetterheadStep } from "@/components/projects/LetterheadSetup";
 import { browserTimeZone, listTimeZones, tzLabel, DEFAULT_SCHEDULE_TZ } from "@/lib/scheduleTz";
 import { updateProjectMeta } from "@/lib/projects";
-import { useShiftTimes, useShiftTimesState, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
+import { useShiftTimes, useShiftTimesState, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem, saveProjectType } from "@/lib/shiftTimesStore";
+import { PROJECT_TYPES, projectTypeOf, projectTypeSet, typeWord, type ProjectType } from "@/lib/projectType";
 import { meetingLeadMin, workShiftOf, shiftAt, shiftWindow, type PullCrew, type ShiftTimes } from "@/lib/shiftReport";
 import { stepBandDays } from "@/lib/shiftBands";
 import { withWorkOrderCrews } from "@/lib/workOrderCrew";
@@ -25,13 +26,15 @@ import { useCriticalMode, useCriticalModeLoaded, saveCriticalMode } from "@/lib/
 import { CRITICAL_MODES, resolveCriticalPath, effectiveCriticalMode, type CriticalMode } from "@/lib/criticalPath";
 import type { Milestone } from "@/types/schema";
 
-const ICON: Record<SetupItemId, typeof Clock> = { timezone: Globe2, shifts: Clock, night: Moon, critical: Zap, baseline: Flag, print: Printer };
+const ICON: Record<SetupItemId, typeof Clock> = { type: Tag, timezone: Globe2, shifts: Clock, night: Moon, critical: Zap, baseline: Flag, print: Printer };
 // Opened by itself once per project on this device — after that the banner
 // (while anything's really missing) and the Setup button are the way in.
 const SHOWN_KEY = (projectId: string) => `scheduleSetup.autoOpened:${projectId}`;
 
 interface Props {
   projectId: string;
+  /** Its name: the project type is read from it until one is set. */
+  projectName?: string;
   /** The project's own zone (null = never set, running on UTC). */
   timezone: string | null | undefined;
   milestones: Milestone[];
@@ -54,9 +57,10 @@ export function ScheduleSetup(p: Props) {
   // no copy yet, and that isn't "not set".
   const nightDecided = st.loaded ? st.times.nightJobs !== undefined : null;
   const letterheadSet = !!useLetterhead(p.projectId).lh;
+  const typeSet = projectTypeSet(st.times.projectType);
   const items = useMemo(() => setupChecklist({
-    timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided, letterheadSet,
-  }), [p.timezone, saved, critical, p.hasBaseline, nightDecided, letterheadSet]);
+    timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided, letterheadSet, typeSet,
+  }), [p.timezone, saved, critical, p.hasBaseline, nightDecided, letterheadSet, typeSet]);
   const missing = missingRequired(items);
   // Opens by itself for someone who can fix it — only once everything has
   // been read (nothing "checking"), and only once on this device.
@@ -105,7 +109,7 @@ export function ScheduleSetupButton(p: Props) {
   const st = useShiftTimesState(p.projectId);
   const nightDecided = st.loaded ? st.times.nightJobs !== undefined : null;
   const letterheadSet = !!useLetterhead(p.projectId).lh;
-  const items = setupChecklist({ timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided, letterheadSet });
+  const items = setupChecklist({ timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided, letterheadSet, typeSet: projectTypeSet(st.times.projectType) });
   const todo = toDo(items).length;
   const [open, setOpen] = useState(false);
   // Opened at a step from elsewhere on the page (the calendar's "Night crews").
@@ -117,7 +121,7 @@ export function ScheduleSetupButton(p: Props) {
   }, []);
   return (
     <>
-      <button onClick={() => setOpen(true)} title="Time zone, shift times, night crews, critical path, baseline, printed reports"
+      <button onClick={() => setOpen(true)} title="Project type, time zone, shift times, night crews, critical path, baseline, printed reports"
         className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border shadow-sm transition-colors ${todo
           ? "text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 hover:bg-amber-100"
           : "text-[var(--color-text)] bg-[var(--color-surface)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
@@ -176,6 +180,7 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
               </div>
               <p className="text-[12.5px] text-[var(--color-text-muted)] mt-0.5">{item.why}</p>
             </div>
+            {at === "type" && <TypeStep {...p} onSaved={() => go(1)} />}
             {at === "timezone" && <TimeZoneStep {...p} done={item.done} onSaved={(z) => { setTzSaved(z); go(1); }} />}
             {at === "shifts" && <ShiftsStep {...p} done={item.done} checking={!!item.checking} onSaved={() => go(1)} />}
             {/* Night crews stay open after saving: they're changed as the job goes. */}
@@ -215,6 +220,55 @@ function Msg({ err }: { err: string | null }) {
 }
 function NoRights() {
   return <div className="text-[12px] text-[var(--color-text-muted)]">Only the project owner or an admin can change this.</div>;
+}
+
+/** Setup › Project type: the word the app says for the project, and its
+ *  short form. Read from the project's name until it's set here. */
+function TypeStep({ projectId, projectName, canManage, onSaved }: Props & { onSaved: () => void }) {
+  const times = useShiftTimes(projectId);
+  const now = projectTypeOf(times.projectType, projectName);
+  const [t, setT] = useState<ProjectType>(now);
+  const known = PROJECT_TYPES.find((x) => x.word === t.word);
+  const [other, setOther] = useState(!PROJECT_TYPES.some((x) => x.word === now.word));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const set = projectTypeSet(times.projectType);
+  const same = set && now.word === t.word.trim() && now.short === t.short.trim();
+  const save = async () => {
+    setBusy(true); setErr(null);
+    try { await saveProjectType(projectId, t); onSaved(); }
+    catch (e) { setErr((e as Error).message); }
+    finally { setBusy(false); }
+  };
+  if (!canManage) return <div className="text-[13px]">This project is a <b>{typeWord(now)}</b> ({now.short}).</div>;
+  const pill = (on: boolean) => `h-9 px-3.5 rounded-full border text-[13px] font-bold ${on ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+  const w = typeWord({ word: t.word.trim() || "project", short: t.short });
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Project type">
+        {PROJECT_TYPES.map((x) => (
+          <button key={x.word} type="button" aria-pressed={!other && t.word === x.word} onClick={() => { setOther(false); setT(x); }} className={pill(!other && t.word === x.word)}>{x.word}</button>
+        ))}
+        <button type="button" aria-pressed={other} onClick={() => { setOther(true); if (known) setT({ word: "", short: "" }); }} className={pill(other)}>Other…</button>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+        {other && (
+          <label className="space-y-1"><span className="block text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Its word</span>
+            <input value={t.word} onChange={(e) => setT({ word: e.target.value, short: t.short })} placeholder="e.g. Tie-in" maxLength={40} className={`${field} w-full`} /></label>
+        )}
+        <label className="space-y-1"><span className="block text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Short form</span>
+          <input value={t.short} onChange={(e) => setT({ word: t.word, short: e.target.value })} placeholder={t.word || "e.g. TA"} maxLength={16} className={`${field} w-full`} /></label>
+      </div>
+      <div className="rounded-lg border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-3 py-2 text-[12px] text-[var(--color-text-muted)]">
+        Shows as: &ldquo;2 h of work · task finish unchanged · <b className="text-[var(--color-text)]">{w}</b> finish unchanged&rdquo; · safety topic &ldquo;<b className="text-[var(--color-text)]">{t.word.trim() || "Project"}</b> · Transmix-1&rdquo; · &ldquo;e.g. <b className="text-[var(--color-text)]">{t.short.trim() || t.word.trim() || "Project"}</b> manager&rdquo;
+      </div>
+      {!set && <p className="text-[12px] text-[var(--color-text-muted)]">Read from the project&apos;s name for now. If it&apos;s right, just confirm.</p>}
+      <Msg err={err} />
+      <button onClick={() => void save()} disabled={busy || !t.word.trim() || same} className={btn}>
+        {busy && <Loader2 className="w-4 h-4 animate-spin" />} {same ? "Saved" : set ? "Save project type" : "This is right - confirm"}
+      </button>
+    </div>
+  );
 }
 
 const US_ZONES = ["America/Los_Angeles", "America/Denver", "America/Phoenix", "America/Chicago", "America/New_York", "America/Anchorage", "Pacific/Honolulu"];

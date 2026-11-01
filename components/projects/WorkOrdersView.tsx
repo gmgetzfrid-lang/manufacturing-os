@@ -12,64 +12,28 @@
 
 import React, { useMemo, useState } from "react";
 import { Search, ChevronRight, Printer, Ban, Plus } from "lucide-react";
-import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
+import type { Milestone } from "@/types/schema";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
-import { leafPercent } from "@/lib/scheduleProgress";
-import { expectedFraction, workHours, type ShiftTimes } from "@/lib/shiftReport";
+import type { ShiftTimes } from "@/lib/shiftReport";
 import { dayKey, dayKeyToMs } from "@/lib/scheduleTz";
 import { whenDated } from "@/lib/timeWords";
-import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
-import { woOf } from "@/lib/workOrderCrew";
-import { discoveryOf, discoveryText, kindOf, ADDED, type AddedKind } from "@/lib/discovery";
+import { ADDED } from "@/lib/discovery";
 import type { PathMarks } from "@/lib/criticalPath";
 import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
-import { notesFor } from "@/lib/milestones";
-import { loadProgressLog } from "@/lib/progressHistory";
-import { buildTimeLog, type TimeLogRow } from "@/lib/timeLog";
 import { useLetterhead } from "@/lib/letterheadStore";
-import { letterheadDocument } from "@/lib/letterhead";
-import { workOrdersHtml, PRINT_CSS, type PrintOrder, type PrintFormat } from "@/lib/workOrdersPrint";
-import { fieldTrackerHtml, fieldTrackerDocument, inRange, type FieldOrder } from "@/lib/fieldTracker";
+import type { PrintFormat } from "@/lib/workOrdersPrint";
+import { groupWorkOrders, showsOrder, findOrders, fieldOrdersOf, workOrdersPrintDocument, SHOW_WORD, STANDING, descOf, type Show, type WorkOrder } from "@/lib/workOrderGroups";
+import { printHtml } from "@/lib/updatePrint";
+import type { ReportLink } from "@/lib/reportLinks";
+import { fieldTrackerFor, type FieldOrder } from "@/lib/fieldTracker";
 import FieldTrackerPrint, { type FieldChoice } from "@/components/projects/FieldTrackerPrint";
 import { CancelJobForm } from "@/components/projects/CancelledJobs";
 import AddWorkPicker from "@/components/projects/AddWorkPicker";
-import { saidWithLatest } from "@/lib/stepComment";
 
-const STEP_STATUS: Record<MilestoneStatus, string> = { planned: "Not started", in_progress: "In progress", completed: "Done", on_hold: "On hold", blocked: "Blocked", missed: "Missed" };
-const SHOW_WORD: Record<string, string> = { all: "All work orders", open: "Open work orders", critical: "Work orders on the critical path", behind: "Work orders behind plan", notStarted: "Work orders not started", held: "Held work orders", done: "Done work orders", added: "Work orders with discovery or added scope" };
-const noteAt = (n: MilestoneNote) => ms(n.happenedAt ?? n.createdAt);
-
-type Standing = "not_started" | "in_progress" | "held" | "done";
-const STANDING: Record<Standing, { word: string; cls: string }> = {
-  not_started: { word: "Not started", cls: "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]" },
-  in_progress: { word: "In progress", cls: "text-blue-700 bg-blue-50 border-blue-200 dark:text-blue-300 dark:bg-blue-950/40 dark:border-blue-900" },
-  held: { word: "Held", cls: "text-amber-800 bg-amber-50 border-amber-200 dark:text-amber-300 dark:bg-amber-950/40 dark:border-amber-900" },
-  done: { word: "Done", cls: "text-emerald-700 bg-emerald-50 border-emerald-200 dark:text-emerald-300 dark:bg-emerald-950/40 dark:border-emerald-900" },
-};
-type Show = "all" | "open" | "critical" | "behind" | "notStarted" | "held" | "done" | "added";
-/** Its description — not the schedule file's "Summary (rolls up children)". */
-const descOf = (m: Milestone) => { const d = m.description?.trim() ?? ""; return /^summary \(rolls up children\)$/i.test(d) ? "" : d; };
-const ms = (v: unknown) => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
-
-interface WorkOrder {
-  key: string;
-  wo: string | null;
-  /** The task (or single step) the WO is on. */
-  owner: Milestone;
-  steps: Milestone[];
-  crews: string[];
-  planStart: number; planFinish: number;
-  actStart: number; actFinish: number;
-  pct: number; plan: number; hours: number;
-  standing: Standing;
-  done: number;
-  /** Put in after the plan — discovery, added scope — steps and hours of each. */
-  added: Array<{ kind: AddedKind; n: number; h: number }>;
-  find: string;
-}
-
-export default function WorkOrdersView({ milestones, childrenByParent, tz, times, progress, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery, onNewWorkOrder, projectId, projectName, user, onCancelled }: {
+export default function WorkOrdersView({ milestones, childrenByParent, tz, times, progress, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery, onNewWorkOrder, projectId, projectName, user, onCancelled, onOpenReport }: {
   milestones: Milestone[];
+  /** Print opens the report in Reports, set to the work orders shown (or one). */
+  onOpenReport?: (link: ReportLink) => void;
   /** For printing: the project's letterhead, history and name. */
   projectId?: string; projectName?: string;
   /** Who's working: cancelling a work order is stamped with it. */
@@ -98,78 +62,12 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
   // Adding discovery or added scope: which work order first.
   const [picking, setPicking] = useState(false);
 
-  const orders = useMemo(() => {
-    const byId = new Map<string, Milestone>();
-    for (const m of milestones) if (m.id) byId.set(m.id, m);
-    const pctOf = (m: Milestone) => (m.id ? progress?.get(m.id)?.percent : undefined) ?? leafPercent(m);
-    // Each step's work order: its own, else the nearest group above with one.
-    const groups = new Map<string, { wo: string | null; owner: Milestone; steps: Milestone[] }>();
-    for (const m of milestones) {
-      if (!m.id || (childrenByParent.get(m.id)?.length ?? 0) > 0) continue;
-      // Added work stays on its equipment's card, even with a WO # of its own.
-      let x: Milestone | undefined = discoveryOf(m) && m.parentId ? byId.get(m.parentId) ?? m : m, wo = "", owner: Milestone | undefined;
-      const seen = new Set<string>();
-      while (x && x.id && !seen.has(x.id)) {
-        seen.add(x.id);
-        wo = woOf(x);
-        if (wo) { owner = x; break; }
-        x = x.parentId ? byId.get(x.parentId) : undefined;
-      }
-      if (!owner) owner = (m.parentId ? byId.get(m.parentId) : undefined) ?? m;
-      const key = `${wo || "-"}:${owner.id}`;
-      const g = groups.get(key) ?? { wo: wo || null, owner, steps: [] };
-      g.steps.push(m);
-      groups.set(key, g);
-    }
-    const out: WorkOrder[] = [];
-    for (const [key, g] of groups) {
-      const steps = [...g.steps].sort((a, b) => startMsOf(a) - startMsOf(b));
-      let wSum = 0, pSum = 0, planSum = 0, hours = 0, done = 0, held = false, started = false;
-      let planStart = Infinity, planFinish = -Infinity, actStart = Infinity, actFinish = -Infinity;
-      for (const s of steps) {
-        const w = Math.max(0.1, s.durationHours != null && s.durationHours > 0 ? s.durationHours : workHours(s, tz));
-        const p = pctOf(s), e = Math.round(expectedFraction(s, now, tz, times) * 100);
-        wSum += w; pSum += p * w; planSum += e * w; hours += ((p - e) / 100) * w;
-        if (s.status === "completed") done++;
-        if (s.status === "on_hold" || s.status === "blocked") held = true;
-        if (s.status !== "planned" && s.status !== "missed") started = true;
-        planStart = Math.min(planStart, startMsOf(s)); planFinish = Math.max(planFinish, finishMsOf(s));
-        const a0 = ms(s.actualStartAt), a1 = s.status === "completed" ? ms(s.actualAt) : NaN;
-        if (Number.isFinite(a0)) actStart = Math.min(actStart, a0);
-        if (Number.isFinite(a1)) actFinish = Math.max(actFinish, a1);
-      }
-      const all = done === steps.length;
-      const crews = [...new Set(steps.map((s) => s.responsibleParty?.trim()).filter((c): c is string => !!c))].sort();
-      const added = (["discovery", "added"] as const).map((kind) => {
-        const xs = steps.filter((s) => { const d = discoveryOf(s); return d && kindOf(d) === kind; });
-        return { kind, n: xs.length, h: Math.round(xs.reduce((a, s) => a + (s.durationHours != null && s.durationHours > 0 ? s.durationHours : workHours(s, tz)), 0) * 10) / 10 };
-      }).filter((x) => x.n > 0);
-      out.push({
-        key, wo: g.wo, owner: g.owner, steps, crews,
-        planStart, planFinish, actStart, actFinish: all ? actFinish : NaN,
-        pct: Math.round(pSum / wSum), plan: Math.round(planSum / wSum), hours: Math.round(hours * 10) / 10,
-        standing: all ? "done" : held ? "held" : started ? "in_progress" : "not_started", done,
-        added,
-        find: [g.wo, g.owner.name, ...crews, ...steps.flatMap((s) => [s.name, s.description, woOf(s), discoveryText(s)]), ...added.map((x) => ADDED[x.kind].lower)].filter(Boolean).join(" ").toLowerCase(),
-      });
-    }
-    return out.sort((a, b) => a.planStart - b.planStart || (a.wo ?? "~").localeCompare(b.wo ?? "~"));
-  }, [milestones, childrenByParent, progress, tz, times, now]);
+  const orders = useMemo(() => groupWorkOrders(milestones, childrenByParent, progress, tz, times, now), [milestones, childrenByParent, progress, tz, times, now]);
 
-  const is: Record<Show, (o: WorkOrder) => boolean> = {
-    all: () => true,
-    open: (o) => o.standing !== "done",
-    critical: (o) => o.standing !== "done" && o.steps.some((s) => !!s.id && !!marks?.ids.has(s.id)),
-    behind: (o) => o.standing !== "done" && o.hours <= -0.5,
-    notStarted: (o) => o.standing === "not_started",
-    held: (o) => o.standing === "held",
-    done: (o) => o.standing === "done",
-    added: (o) => o.added.length > 0,
-  };
-  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const found = orders.filter((o) => words.every((w) => o.find.includes(w)));
+  const is = (k: Show) => (o: WorkOrder) => showsOrder(o, k, marks);
+  const found = findOrders(orders, query);
   // One you have open stays while you work in it, whatever the filter.
-  const shown = found.filter((o) => is[show](o) || open.has(o.key));
+  const shown = found.filter((o) => showsOrder(o, show, marks) || open.has(o.key));
   const today = dayKey(now, tz);
   // Always with its date — a multi-week job has more than one Monday.
   const fmt = (t: number) => whenDated(t, tz);
@@ -180,67 +78,14 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
   const [printMenu, setPrintMenu] = useState(false);
   const [printMsg, setPrintMsg] = useState<string | null>(null);
   const printIt = async (format: PrintFormat) => {
-    const history = format === "history";
     setPrintMenu(false); setPrintMsg(null);
     // Opened at the tap, so the browser doesn't take it for a pop-up.
     const w = window.open("", "_blank");
     if (!w) { setPrintMsg("Your browser blocked the print window - allow pop-ups for this site and try again."); return; }
     w.document.write(`<p style="font:14px Arial,sans-serif;padding:24px">Getting ${shown.length} work order${shown.length === 1 ? "" : "s"} ready to print…</p>`);
     try {
-      const ids = shown.flatMap((o) => o.steps.map((s) => s.id)).filter((id): id is string => !!id);
-      const notes = await notesFor(ids);
-      const latest = new Map<string, { at: number; text: string }>();
-      // Only a comment typed with the step's last change, or after it: a
-      // finished step doesn't carry the comment from an earlier update.
-      const doneAt = new Map(milestones.filter((m) => m.id && m.status === "completed" && m.actualAt).map((m) => [m.id!, Date.parse(String(m.actualAt))]));
-      for (const n of notes) {
-        const text = n.body?.trim();
-        // What people wrote: comments, why it's behind, and hold / block
-        // reasons — not the app's own status lines ("Progress → 67%").
-        const said = n.kind === "note" || n.kind === "field" || n.kind === "behind"
-          || (n.kind === "status" && (n.statusAt === "on_hold" || n.statusAt === "blocked"));
-        if (!text || !said) continue;
-        const at = noteAt(n), cur = latest.get(n.milestoneId);
-        if (Number.isFinite(at) && saidWithLatest(at, doneAt.get(n.milestoneId)) && (!cur || at >= cur.at)) latest.set(n.milestoneId, { at, text });
-      }
-      const hist = new Map<string, TimeLogRow[]>();
-      if (history && projectId) {
-        const log = await loadProgressLog(projectId);
-        for (const r of buildTimeLog({ milestones, log: log ?? [], notes, tz, times })) {
-          if (!r.id) continue;
-          const list = hist.get(r.id);
-          if (list) list.push(r); else hist.set(r.id, [r]);
-        }
-      }
-      const pctOf = (m: Milestone) => (m.id ? progress?.get(m.id)?.percent : undefined) ?? leafPercent(m);
-      const orders: PrintOrder[] = shown.map((o) => ({
-        wo: o.wo, name: o.owner.name, desc: descOf(o.owner), crews: o.crews,
-        standing: STANDING[o.standing].word, pct: o.pct, plan: o.plan, hours: o.hours,
-        planStart: o.planStart, planFinish: o.planFinish, actStart: o.actStart, actFinish: o.actFinish,
-        added: o.added.map((x) => `${x.n} ${ADDED[x.kind].lower} step${x.n === 1 ? "" : "s"} (${x.h} h)`),
-        done: o.done,
-        steps: o.steps.map((s) => {
-          const d = discoveryOf(s);
-          return {
-            id: s.id ?? "", name: s.name, crew: s.responsibleParty?.trim() ?? "",
-            planStart: startMsOf(s), planFinish: finishMsOf(s),
-            actStart: ms(s.actualStartAt), actFinish: s.status === "completed" ? ms(s.actualAt) : NaN,
-            status: STEP_STATUS[s.status] ?? s.status, done: s.status === "completed", pct: Math.round(pctOf(s)),
-            added: d ? ADDED[kindOf(d)].word : undefined,
-            latest: s.id ? latest.get(s.id) ?? null : null,
-            history: s.id ? hist.get(s.id) : undefined,
-          };
-        }),
-      }));
-      const project = projectName?.trim() || "Schedule";
-      const scope = `${SHOW_WORD[show]}${query.trim() ? ` · search “${query.trim()}”` : ""}${history ? " · with each step's history" : ""}`;
-      const body = workOrdersHtml({ project, scope, tz, orders, format });
-      const title = `${project} - Work orders`;
-      const doc = lh ? letterheadDocument(lh, title, body, PRINT_CSS)
-        : `<!doctype html><html><head><meta charset="utf-8"><title>${title.replace(/</g, "&lt;")}</title><style>@page{size:landscape;margin:10mm}body{margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}${PRINT_CSS}</style></head><body>${body}</body></html>`;
-      w.document.open(); w.document.write(doc); w.document.close();
-      w.focus();
-      setTimeout(() => w.print(), 300);
+      const scope = `${SHOW_WORD[show]}${query.trim() ? ` · search “${query.trim()}”` : ""}${format === "history" ? " · with each step's history" : ""}`;
+      printHtml(await workOrdersPrintDocument({ shown, milestones, projectId, projectName, tz, times, progress, format, scope, lh }), w);
     } catch (e) {
       w.document.body.textContent = `Couldn't get the work orders ready: ${(e as Error).message}`;
     }
@@ -249,26 +94,13 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
   // ── The field tracker: a blank form to fill in by pen (lib/fieldTracker),
   // every work order on the schedule, whatever the view shows.
   const [fieldOpen, setFieldOpen] = useState(false);
-  const fieldOrders = useMemo<FieldOrder[]>(() => orders.map((o) => ({
-    key: o.key, wo: o.wo, name: o.owner.name, crews: o.crews, planStart: o.planStart, planFinish: o.planFinish,
-    steps: o.steps.filter((s) => s.id).map((s) => ({ id: s.id!, name: s.name, crew: s.responsibleParty?.trim() ?? "", planStart: startMsOf(s), planFinish: finishMsOf(s) })),
-  })), [orders]);
+  const fieldOrders = useMemo<FieldOrder[]>(() => fieldOrdersOf(orders), [orders]);
   const printField = (c: FieldChoice) => {
     setFieldOpen(false); setPrintMsg(null);
-    // Opened at the tap, so the browser doesn't take it for a pop-up.
-    const w = window.open("", "_blank");
-    if (!w) { setPrintMsg("Your browser blocked the print window - allow pop-ups for this site and try again."); return; }
     const project = projectName?.trim() || "Schedule";
-    const one = (k: string) => fieldOrders.filter((o) => o.key === k);
-    const range = c.kind === "range" ? { from: dayKeyToMs(c.from, tz), to: dayKeyToMs(c.to, tz) + 86_400_000 } : undefined;
-    const body = c.kind === "step" ? fieldTrackerHtml({ project, tz, orders: one(c.key), lines: "auto", step: c.step })
-      : c.kind === "wo" ? fieldTrackerHtml({ project, tz, orders: one(c.key), lines: c.lines })
-        : c.kind === "range" && range ? fieldTrackerHtml({ project, tz, orders: inRange(fieldOrders, range.from, range.to), lines: c.lines, range })
-          : fieldTrackerHtml({ project, tz, orders: fieldOrders, lines: c.kind === "job" ? c.lines : "auto" });
-    w.document.open(); w.document.write(fieldTrackerDocument(`${project} - Field tracker`, body)); w.document.close();
-    w.focus();
-    setTimeout(() => w.print(), 300);
+    if (!printHtml(fieldTrackerFor(c, { project, tz, orders: fieldOrders, dayMs: (d) => dayKeyToMs(d, tz) }))) setPrintMsg("Your browser blocked the print window - allow pop-ups for this site and try again.");
   };
+
 
   return (
     <div className="space-y-2">
@@ -286,7 +118,7 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
         </label>
         <div className="inline-flex flex-wrap gap-1" role="group" aria-label="Show">
           {([["all", "All"], ["open", "Open"], ["critical", "Critical path"], ["behind", "Behind"], ["notStarted", "Not started"], ["held", "Held"], ["done", "Done"], ["added", "Discovery & added"]] as const).map(([k, l]) => {
-            const n = found.filter(is[k]).length;
+            const n = found.filter(is(k)).length;
             return (
               <button key={k} type="button" aria-pressed={show === k} onClick={() => setShow(k)}
                 className={`h-8 px-2.5 rounded-full border text-[12px] font-semibold ${show === k ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
@@ -317,15 +149,15 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
               <span className="fixed inset-0 z-[40]" onClick={() => setPrintMenu(false)} aria-hidden />
               <span className="absolute right-0 top-full mt-1 z-[41] w-72 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-1.5 flex flex-col text-[12px]">
                 <span className="px-2 pt-1 pb-1.5 text-[11px] text-[var(--color-text-muted)]">The {shown.length} work order{shown.length === 1 ? "" : "s"} shown, each opened up with all its steps. Your view here stays as it is.</span>
-                <button type="button" onClick={() => void printIt("report")} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)]">
+                <button type="button" onClick={() => { if (onOpenReport) { setPrintMenu(false); onOpenReport({ id: "workorders", show, query }); } else void printIt("report"); }} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)]">
                   <span className="font-semibold">Report</span>
                   <span className="block text-[11px] text-[var(--color-text-muted)]">Plan, actual, status, % and the latest comment</span>
                 </button>
-                <button type="button" onClick={() => void printIt("history")} disabled={!projectId} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                <button type="button" onClick={() => { if (onOpenReport) { setPrintMenu(false); onOpenReport({ id: "workorders", show, query, history: true }); } else void printIt("history"); }} disabled={!projectId} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)] disabled:opacity-50">
                   <span className="font-semibold">Report with history</span>
                   <span className="block text-[11px] text-[var(--color-text-muted)]">Every start, % update, hold and comment, with its time</span>
                 </button>
-                <button type="button" onClick={() => { setPrintMenu(false); setFieldOpen(true); }} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)]">
+                <button type="button" onClick={() => { setPrintMenu(false); if (onOpenReport) onOpenReport({ id: "field" }); else setFieldOpen(true); }} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)]">
                   <span className="font-semibold">Field tracker - fill in by pen</span>
                   <span className="block text-[11px] text-[var(--color-text-muted)]">A blank form: the whole job, one work order, one step, or a date range</span>
                 </button>
@@ -389,12 +221,20 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
                 </button>
                 {isOpen && (
                   <div className="border-t border-[var(--color-border)]">
-                    {canEdit && onDiscovery && (
-                      <div className="px-3 pt-2">
-                        <button type="button" onClick={() => onDiscovery(o.owner)}
-                          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
-                          <Plus className="w-3.5 h-3.5" /> Add discovery or added scope to this work order
-                        </button>
+                    {((canEdit && onDiscovery) || onOpenReport) && (
+                      <div className="px-3 pt-2 flex flex-wrap gap-1.5">
+                        {canEdit && onDiscovery && (
+                          <button type="button" onClick={() => onDiscovery(o.owner)}
+                            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
+                            <Plus className="w-3.5 h-3.5" /> Add discovery or added scope to this work order
+                          </button>
+                        )}
+                        {onOpenReport && (
+                          <button type="button" onClick={() => onOpenReport({ id: "workorders", wo: o.key })} title="This work order in Reports, ready to print"
+                            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                            <Printer className="w-3.5 h-3.5" /> Print this work order
+                          </button>
+                        )}
                       </div>
                     )}
                     <CalendarQuickView whole task={o.owner} onDay={o.steps} others={[]} dayKey={today} band={null} dayLabel="" marks={marks}

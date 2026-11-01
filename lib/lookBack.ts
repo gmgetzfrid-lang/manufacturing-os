@@ -128,8 +128,11 @@ export function buildLookBack(input: {
   discoveries?: Discovery[];
   now: number;
   tz: string;
+  /** What kind of project it is, in a sentence ("turnaround"; lib/projectType). */
+  word?: string;
 }): LookBack {
   const { milestones, notes, now, tz } = input;
+  const word = input.word ?? "turnaround";
   const { byId, leaves, preds } = linkGraph(milestones);
   const cpm = computeCpm(milestones, { now, tz });
   const notesBy = new Map<string, MilestoneNote[]>();
@@ -261,7 +264,7 @@ export function buildLookBack(input: {
   for (const s of steps) if (s.done && !s.discovery) byName.set(norm(s.name), [...(byName.get(norm(s.name)) ?? []), s]);
   const repeats = [...byName.values()].filter((g) => g.length >= 2);
   for (const g of repeats.map((g) => ({ g, over: g.filter((s) => s.overrunH >= ON_PLAN_H), avg: r1(g.reduce((a, s) => a + s.overrunH, 0) / g.length) })).filter((x) => x.over.length * 2 >= x.g.length && x.avg >= 2).sort((a, b) => b.avg - a.avg).slice(0, 4)) {
-    improve.push(`“${g.g[0].name}” ran long on ${g.over.length} of ${g.g.length} (${g.avg > 0 ? "+" : ""}${g.avg} h on average) - plan more time for it next turnaround.`);
+    improve.push(`“${g.g[0].name}” ran long on ${g.over.length} of ${g.g.length} (${g.avg > 0 ? "+" : ""}${g.avg} h on average) - plan more time for it next ${word}.`);
   }
   for (const g of repeats.map((g) => ({ g, under: g.filter((s) => s.overrunH <= -ON_PLAN_H), avg: r1(g.reduce((a, s) => a + s.overrunH, 0) / g.length) })).filter((x) => x.under.length * 2 >= x.g.length && x.avg <= -2).sort((a, b) => a.avg - b.avg).slice(0, 3)) {
     keep.push(`“${g.g[0].name}” took less than planned on ${g.under.length} of ${g.g.length} (${g.avg} h on average) - it can be planned tighter.`);
@@ -287,7 +290,7 @@ export function buildLookBack(input: {
   }
   if (ahead.length) keep.push(`${ahead.length} step${ahead.length === 1 ? "" : "s"} finished ahead of plan${ahead.length > 1 ? ` (up to ${-ahead[0].finishH} h early)` : ` (${-ahead[0].finishH} h early)`}.`);
   for (const c of crews.filter((c) => c.done >= 3 && c.onPlan === c.done).slice(0, 3)) keep.push(`${c.crew} finished all ${c.done} of their steps on plan.`);
-  if (finish.done && finish.slipH <= ON_PLAN_H) keep.push(`The turnaround finished ${finish.slipH < -ON_PLAN_H ? `${-finish.slipH} h ahead of` : "on"} plan.`);
+  if (finish.done && finish.slipH <= ON_PLAN_H) keep.push(`The ${word} finished ${finish.slipH < -ON_PLAN_H ? `${-finish.slipH} h ahead of` : "on"} plan.`);
 
   return { finish, steps, setbacks, byCause, chain, ahead, quicker, absorbed, crews, improve, keep };
 }

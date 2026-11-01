@@ -8,6 +8,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { DEFAULT_SHIFT_TIMES, readShiftTimes, type ShiftTimes } from "@/lib/shiftReport";
+import { cleanProjectType, projectTypeOf, type ProjectType } from "@/lib/projectType";
 
 const EVENT = "shifttimes:changed";
 const key = (projectId: string) => `shiftTimes:${projectId}`;
@@ -70,9 +71,12 @@ export async function saveProjectShiftTimes(projectId: string, t: ShiftTimes): P
       .filter((b) => (b.shift === "day" || b.shift === "night") && /^\d{1,2}:\d{2}$/.test(b.start?.trim() ?? "") && b.minutes > 0 && b.minutes <= 240)
       .map((b) => ({ shift: b.shift, start: b.start.trim().padStart(5, "0"), minutes: Math.round(b.minutes), label: (b.label?.trim() || "Break").slice(0, 24) })) } : {}),
   };
-  // Keep the letterhead saved beside the times (lib/letterheadStore).
-  const { data: kept } = await supabase.from("projects").select("lh:shift_times->letterhead").eq("id", projectId).maybeSingle();
+  // Keep the letterhead and the project type saved beside the times
+  // (lib/letterheadStore, saveProjectType).
+  const { data: kept } = await supabase.from("projects").select("lh:shift_times->letterhead, pt:shift_times->projectType").eq("id", projectId).maybeSingle();
   const lh = (kept as { lh?: unknown } | null)?.lh;
+  const pt = cleanProjectType((kept as { pt?: unknown } | null)?.pt) ?? cleanProjectType(t.projectType);
+  if (pt) clean.projectType = pt;
   const { data, error } = await supabase.from("projects").update({ shift_times: lh ? { ...clean, letterhead: lh } : clean }).eq("id", projectId).select("id");
   if (error) {
     // The column isn't there yet: keep them on this device meanwhile.
@@ -143,5 +147,25 @@ async function shiftTimesSaved(projectId: string): Promise<boolean | null> {
   if (!data) return null;
   const raw = (data as { shift_times: Partial<ShiftTimes> | null }).shift_times;
   // Stored but unusable is the same as not set: the app is on its guess.
-  return raw != null && !shiftTimesProblem({ ...DEFAULT_SHIFT_TIMES, ...raw });
+  // Only the letterhead or the project type saved isn't the times either.
+  return raw != null && raw.dayStart != null && raw.nightStart != null && !shiftTimesProblem({ ...DEFAULT_SHIFT_TIMES, ...raw });
+}
+
+/** Save what kind of project it is for everyone on the project. The shift
+ *  times beside it are kept as they are (and not taken as set by it). */
+export async function saveProjectType(projectId: string, t: ProjectType): Promise<void> {
+  const pt = cleanProjectType(t);
+  if (!pt) throw new Error("Name the kind of project.");
+  const { data: cur, error: readErr } = await supabase.from("projects").select("shift_times").eq("id", projectId).maybeSingle();
+  if (readErr) throw new Error(`Not saved: ${readErr.message}`);
+  const next: Record<string, unknown> = { ...((cur as { shift_times?: Record<string, unknown> | null } | null)?.shift_times ?? {}), projectType: pt };
+  const { data, error } = await supabase.from("projects").update({ shift_times: next }).eq("id", projectId).select("id");
+  if (error) throw new Error(/shift_times/.test(error.message) ? "Not saved - the project's settings column is missing (migration 20261027_project_shift_times.sql)." : `Not saved: ${error.message}`);
+  if (!data || data.length === 0) throw new Error("Not saved - only the project owner or an admin can change the project type.");
+  cache(projectId, { ...readShiftTimes(projectId), projectType: pt });
+}
+
+/** The project's type (Setup › Project type, else read from its name). */
+export function useProjectType(projectId?: string | null, name?: string | null): ProjectType {
+  return projectTypeOf(useShiftTimes(projectId).projectType, name);
 }

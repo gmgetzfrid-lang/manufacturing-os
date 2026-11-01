@@ -69,7 +69,9 @@ import { appConfirm } from "@/components/providers/DialogProvider";
 import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl, { ShiftClockContext } from "@/components/projects/ProgressControl";
 import ExecutionGuide from "@/components/projects/ExecutionGuide";
-import ExecutionReportView from "@/components/projects/ExecutionReportView";
+import ReportsView from "@/components/projects/ReportsView";
+import type { ReportLink } from "@/lib/reportLinks";
+import { useProjectWord } from "@/components/projects/ProjectTypeContext";
 import { JobStartContext, jobStartOf } from "@/components/projects/JobStartContext";
 import MovePreviewSheet from "@/components/projects/MovePreviewSheet";
 import UndoToastHost from "@/components/projects/UndoToastHost";
@@ -78,7 +80,16 @@ import ScheduleFilterBar from "@/components/projects/ScheduleFilterBar";
 import { Select } from "@/components/ui/Field";
 import { filterMilestones, isFilterActive, EMPTY_FILTER, type ScheduleFilter } from "@/lib/scheduleFilter";
 
+/** Which part of the project this board is showing (the project's tabs):
+ *  Today, the shift's screen; Work, the timeline, calendar and work
+ *  orders; Reports, every report. */
+export type BoardMode = "today" | "work" | "reports";
+
 interface Props {
+  /** Default: Work. */
+  mode?: BoardMode;
+  /** Go to another tab (a report opened from Today or Work orders). */
+  onMode?: (m: BoardMode) => void;
   milestones: Milestone[];
   /** Jobs taken off this schedule — listed on the close-out report. */
   cancelled?: CancelledJob[];
@@ -130,9 +141,10 @@ interface FlatRow {
 
 export default function ExecutionView({
   milestones, cancelled, canEdit, orgId, projectId, projectName, userId, userName, userEmail, userRole,
-  onRefresh, onMoveMany, onSetStatus, onSetProgress, onRestore,
+  onRefresh, onMoveMany, onSetStatus, onSetProgress, onRestore, mode = "work", onMode,
 }: Props) {
   const tz = useScheduleTz();
+  const projectWord = useProjectWord();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [optimistic, setOptimistic] = useState<Map<string, MilestoneStatus>>(new Map());
@@ -157,7 +169,13 @@ export default function ExecutionView({
   // manual multiplier on the fitted width (1 = fit, >1 = zoomed in).
   const [zoomFactor, setZoomFactor] = useState<number | null>(null);
   const [drag, setDrag] = useState<{ id: string; deltaDays: number } | null>(null);
-  const [layout, setLayout] = useState<"timeline" | "calendar" | "wo" | "report" | "shift">("timeline");
+  // Work: the timeline, calendar or work orders (the last one picked).
+  // Today is the shift's screen; Reports, every report.
+  const [workLayout, setLayout] = useState<"timeline" | "calendar" | "wo">("timeline");
+  const layout: "timeline" | "calendar" | "wo" | "reports" | "shift" = mode === "today" ? "shift" : mode === "reports" ? "reports" : workLayout;
+  // A report opened from Today or Work orders, set to its shift or work order.
+  const [reportLink, setReportLink] = useState<ReportLink | null>(null);
+  const openReport = useCallback((l: ReportLink) => { setReportLink({ ...l, n: Date.now() }); onMode?.("reports"); }, [onMode]);
   const [detailId, setDetailId] = useState<string | null>(null);
   // "Edit plan" on a step card: its panel opens on the edit form. The count
   // opens it afresh each time, even on the step already showing.
@@ -809,7 +827,7 @@ export default function ExecutionView({
       // Said where the work is: a comment on the step it follows.
       if (after?.id) await addMilestoneNote({ orgId, milestoneId: after.id, kind: "note", statusAt: after.status, body: addedNote(draft.kind ?? "discovery", draft.what), createdBy: userId, createdByName: userName, happenedAt: new Date(draft.foundAt).toISOString() }).catch(() => undefined);
       onRefresh();
-      announce(`${draft.newTask ? `New work order (${ADDED[draft.kind ?? "discovery"].lower})` : ADDED[draft.kind ?? "discovery"].word} ${draft.newTask ? "" : "on "}${truncate(taskName, 24)}: ${impactLine(plan.impact, (h) => `${h} h`)}`, async () => {
+      announce(`${draft.newTask ? `New work order (${ADDED[draft.kind ?? "discovery"].lower})` : ADDED[draft.kind ?? "discovery"].word} ${draft.newTask ? "" : "on "}${truncate(taskName, 24)}: ${impactLine(plan.impact, (h) => `${h} h`, projectWord)}`, async () => {
         for (const id of made) await deleteMilestone(id, userId).catch(() => undefined);
         if (newTaskId) await deleteMilestone(newTaskId, userId).catch(() => undefined);
         for (const l of linksBefore) await updateMilestone({ id: l.id, ...who, patch: { dependsOn: l.dependsOn } }).catch(() => undefined);
@@ -821,7 +839,7 @@ export default function ExecutionView({
       onRefresh();
       return false;
     }
-  }, [canEdit, items, tz, criticalMode, byId, childrenOf, orgId, projectId, userId, userName, userEmail, userRole, onRefresh, announce, notify]);
+  }, [canEdit, items, tz, criticalMode, byId, childrenOf, orgId, projectId, userId, userName, userEmail, userRole, onRefresh, announce, notify, projectWord]);
 
   // Plan the next shift (PlanNextShift, lib/shiftPlan): a swap, pull-in or
   // push-out moves the planned dates — linked work after it too — so the
@@ -1212,7 +1230,7 @@ export default function ExecutionView({
     <ShiftClockContext.Provider value={shiftClock}>
     <JobStartContext.Provider value={jobStart}>
     <div className="space-y-3">
-      <ExecutionGuide />
+      {mode === "work" && <ExecutionGuide />}
 
       {/* Non-member feedback: the status dots and bars still render (they
           signal state), but edits are disabled — say why so it doesn't feel
@@ -1228,7 +1246,7 @@ export default function ExecutionView({
       )}
 
       {/* On a phone the summary folds to one line so the board is on screen. */}
-      {compact && !showCards ? (
+      {mode !== "work" ? null : compact && !showCards ? (
         <CompactSummary items={items} now={nowDate} shiftTimes={shiftTimes} onOpen={() => setShowCards(true)} />
       ) : (
         <>
@@ -1246,9 +1264,9 @@ export default function ExecutionView({
         </>
       )}
 
-      <div className="flex items-center gap-2 flex-wrap">
+      {mode === "work" && <div className="flex items-center gap-2 flex-wrap">
         <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-lg p-0.5 gap-0.5">
-          {([["timeline", "Timeline"], ["calendar", "Calendar"], ["wo", "Work orders"], ["shift", "Shift report"], ["report", "Report"]] as const).map(([id, label]) => (
+          {([["timeline", "Timeline"], ["calendar", "Calendar"], ["wo", "Work orders"]] as const).map(([id, label]) => (
             <button
               key={id}
               onClick={() => setLayout(id)}
@@ -1293,10 +1311,10 @@ export default function ExecutionView({
             <Replace className="w-3.5 h-3.5" /> Change on many
           </button>
         )}
-      </div>
+      </div>}
 
       {/* Find anything — applies to Timeline & Calendar. */}
-      {layout !== "report" && layout !== "wo" && (
+      {(layout === "timeline" || layout === "calendar") && (
         <ScheduleFilterBar
           filter={filter}
           onChange={setFilter}
@@ -1309,7 +1327,7 @@ export default function ExecutionView({
       {/* Group color key — decodes the phase hues. Uses the color anchors
           (which, under a single overarching project, are its first-level
           phases) so the key shows even for a one-root schedule. */}
-      {layout !== "report" && layout !== "wo" && colors.groups.length > 1 && (
+      {(layout === "timeline" || layout === "calendar") && colors.groups.length > 1 && (
         <div className="flex items-center gap-x-3 gap-y-1 flex-wrap px-1 text-[11px]">
           <span className="font-black uppercase tracking-widest text-[var(--color-text-faint)]">Phases</span>
           {colors.groups.map((g) => {
@@ -1331,11 +1349,13 @@ export default function ExecutionView({
           onUpdate={canEdit ? updateStep : undefined} onFixTimes={canEdit ? fixTimes : undefined}
           onOpenDetail={(m) => m.id && setDetailId(m.id)}
           onMoveDays={(id, days) => { const target = byId.get(id); if (target) void moveByDays(target, days); }}
-          onDiscovery={canEdit ? openDiscovery : undefined} onNewWorkOrder={canEdit ? openNewWorkOrder : undefined} />
-      ) : layout === "report" ? (
-        <ExecutionReportView milestones={items} shiftTimes={shiftTimes} critical={critical} criticalSource={criticalSourceLabel} projectId={projectId} projectName={projectName} />
+          onDiscovery={canEdit ? openDiscovery : undefined} onNewWorkOrder={canEdit ? openNewWorkOrder : undefined} onOpenReport={onMode ? openReport : undefined} />
+      ) : layout === "reports" ? (
+        <ReportsView milestones={items} cancelled={cancelled} childrenByParent={childrenOf} progress={progressIndex} shiftTimes={shiftTimes} projectId={projectId} projectName={projectName}
+          canEdit={canEdit} userId={userId} userName={userName ?? userEmail} critical={critical} criticalSource={criticalSourceLabel} marks={marks} pathNow={cpClock} link={reportLink} />
       ) : layout === "shift" ? (
-        <ShiftReportView milestones={items} cancelled={cancelled} userId={userId} userName={userName ?? userEmail} canEdit={canEdit} progress={progressIndex} projectId={projectId} projectName={projectName} onUpdateStep={updateStep} onDiscovery={canEdit ? openDiscovery : undefined} onNewWorkOrder={canEdit ? openNewWorkOrder : undefined} pathNow={cpClock} onPlanNext={canEdit && onMoveMany ? setPlanNext : undefined} onFixTimes={canEdit ? fixTimes : undefined} />
+        <ShiftReportView milestones={items} cancelled={cancelled} userId={userId} userName={userName ?? userEmail} canEdit={canEdit} progress={progressIndex} projectId={projectId} projectName={projectName} onUpdateStep={updateStep} onDiscovery={canEdit ? openDiscovery : undefined} onNewWorkOrder={canEdit ? openNewWorkOrder : undefined} pathNow={cpClock} onPlanNext={canEdit && onMoveMany ? setPlanNext : undefined} onFixTimes={canEdit ? fixTimes : undefined}
+          meetingFixed="turnover" onOpenReport={onMode ? openReport : undefined} />
       ) : layout === "calendar" ? (
         <ScheduleCalendarTileView
           onDiscovery={canEdit ? openDiscovery : undefined}

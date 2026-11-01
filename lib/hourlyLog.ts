@@ -153,11 +153,23 @@ export function jobLogs(o: {
   if (!starts.length) return [];
   const from = Math.min(...starts);
   return shiftWindowsBetween(from, o.now + 1, tz, times)
-    .map((shift) => {
-      const nx = nextShift(shift, tz, times), pv = previousShift(shift, tz, times);
-      // Each meeting's crews: its own, or carried from the last same shift.
-      const a = meetingRecord(o.records, `${shift.dayKey}:${shift.kind}`), b = meetingRecord(o.records, `${nx.dayKey}:${nx.kind}`);
-      return shiftLog({ shift, tz, times, record: a.record, next: b.record, carried: { start: !!a.from, end: !!b.from }, rows: o.timeLog, steps, log: o.log, now: o.now, closes, prev: o.records.get(`${pv.dayKey}:${pv.kind}`) });
-    })
+    .map((shift) => logOfShift(o, shift, steps, closes))
     .filter(logHasWork);
+}
+
+/** One shift's log, as the job's logs have it (empty or not). */
+export function oneShiftLog(o: {
+  milestones: Milestone[]; timeLog: TimeLogRow[]; records: Map<string, ShiftRecord>; log: LogProgress[];
+  tz: string; times: ShiftTimes; now: number;
+}, shift: ShiftWindow): ShiftLog {
+  return logOfShift(o, shift, logSteps(o.milestones, o.tz, o.times), workOrderClosers(o.milestones));
+}
+
+function logOfShift(o: { timeLog: TimeLogRow[]; records: Map<string, ShiftRecord>; log: LogProgress[]; tz: string; times: ShiftTimes; now: number },
+  shift: ShiftWindow, steps: ReturnType<typeof logSteps>, closes: ReturnType<typeof workOrderClosers>): ShiftLog {
+  const { tz, times } = o;
+  const nx = nextShift(shift, tz, times), pv = previousShift(shift, tz, times);
+  // Each meeting's crews: its own, or carried from the last same shift.
+  const a = meetingRecord(o.records, `${shift.dayKey}:${shift.kind}`), b = meetingRecord(o.records, `${nx.dayKey}:${nx.kind}`);
+  return shiftLog({ shift, tz, times, record: a.record, next: b.record, carried: { start: !!a.from, end: !!b.from }, rows: o.timeLog, steps, log: o.log, now: o.now, closes, prev: o.records.get(`${pv.dayKey}:${pv.kind}`) });
 }

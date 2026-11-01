@@ -271,18 +271,20 @@ export function discoveries(milestones: Milestone[]): Discovery[] {
 /** The task id of a work order not saved yet (DiscoveryDraft.newTask). */
 export const NEW_WO = "new:wo";
 
-export function impactLine(i: DiscoveryImpact, hrs: (h: number) => string): string {
+/** `word`: what kind of project it is, in a sentence ("turnaround",
+ *  "outage", "project"; lib/projectType). */
+export function impactLine(i: DiscoveryImpact, hrs: (h: number) => string, word = "turnaround"): string {
   // A new work order had no finish before (kept as null once saved).
   if (i.taskFinish[0] == null || !Number.isFinite(i.taskFinish[0])) {
     const fin = (i.finish[1] - i.finish[0]) / H;
-    return [`${hrs(i.hours)} of work`, "a new work order", fin >= 0.1 ? `turnaround finish +${hrs(Math.round(fin * 10) / 10)}` : "turnaround finish unchanged", i.critical ? "on the critical path" : null].filter(Boolean).join(" · ");
+    return [`${hrs(i.hours)} of work`, "a new work order", fin >= 0.1 ? `${word} finish +${hrs(Math.round(fin * 10) / 10)}` : `${word} finish unchanged`, i.critical ? "on the critical path" : null].filter(Boolean).join(" · ");
   }
   const task = (i.taskFinish[1] - i.taskFinish[0]) / H;
   const fin = (i.finish[1] - i.finish[0]) / H;
   return [
     `${hrs(i.hours)} of work`,
     task >= 0.1 ? `task finish +${hrs(Math.round(task * 10) / 10)}` : "task finish unchanged",
-    fin >= 0.1 ? `turnaround finish +${hrs(Math.round(fin * 10) / 10)}` : "turnaround finish unchanged",
+    fin >= 0.1 ? `${word} finish +${hrs(Math.round(fin * 10) / 10)}` : `${word} finish unchanged`,
     i.critical ? "on the critical path" : null,
   ].filter(Boolean).join(" · ");
 }

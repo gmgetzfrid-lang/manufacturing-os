@@ -43,7 +43,7 @@ import { buildProgressIndex, type ProgressInfo } from "@/lib/scheduleProgress";
 import RebaseScheduleModal from "@/components/projects/RebaseScheduleModal";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { DEFAULT_SCHEDULE_TZ, fmtInTz, fromDateTimeInput, tzLabel } from "@/lib/scheduleTz";
-import { ClipboardList, PlayCircle } from "lucide-react";
+import { ProjectTypeProvider } from "@/components/projects/ProjectTypeContext";
 import ExecutionView from "@/components/projects/ExecutionView";
 import { CancelledJobsBar } from "@/components/projects/CancelledJobs";
 import { ScheduleSetup, ScheduleSetupButton } from "@/components/projects/ScheduleSetup";
@@ -51,11 +51,10 @@ import { splitCancelled } from "@/lib/cancelledJobs";
 import { applyNightStaffing } from "@/lib/nightStaffing";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
 
-// Two modes only: Planning (build & manage the schedule as a list) and
-// Execution (run it — the timeline/calendar board). The old Gantt and
-// standalone Calendar views were removed: Gantt added no value over the
-// timeline, and the calendar now lives inside Execution.
-type ScheduleView = "planning" | "execution";
+// The project's four schedule tabs: Plan (build the schedule as a list,
+// import it, set it up), Today (the shift's screen), Work (the timeline,
+// calendar and work orders) and Reports (every report).
+export type ScheduleMode = "plan" | "today" | "work" | "reports";
 
 const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);
 const STATUS_OPTIONS: MilestoneStatus[] = ["planned", "in_progress", "completed", "on_hold", "blocked", "missed"];
@@ -81,9 +80,14 @@ interface ScheduleTabProps {
   canManage?: boolean;
   /** Re-read the project after a setting on it changed (time zone). */
   onProjectChanged?: () => void;
+  /** Which tab is showing. */
+  mode: ScheduleMode;
+  /** Go to another of the tabs (a report opened from Today, import from an empty board). */
+  onMode: (m: ScheduleMode) => void;
 }
 
-export default function ScheduleTab({ orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole, isProjectOwner, timezone, canManage, onProjectChanged }: ScheduleTabProps) {
+export default function ScheduleTab({ orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole, isProjectOwner, timezone, canManage, onProjectChanged, mode, onMode }: ScheduleTabProps) {
+  const view = mode === "plan" ? "planning" : "execution";
   const tz = useScheduleTz();
   const canEdit = !!isProjectOwner || (!!userRole && ADMIN_ROLES.has(userRole));
 
@@ -102,7 +106,6 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const [importOpen, setImportOpen] = useState(false);
   const [rebaseOpen, setRebaseOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState<ScheduleView>("execution");
 
   // Background-safe refresh. Crucially it does NOT flip `loading` on its own:
   // the render gate for ExecutionView is `!loading`, so toggling loading here
@@ -282,7 +285,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
 
   // Schedule setup: everything the reports hang on, in one wizard.
   const setupProps = {
-    projectId, timezone, milestones, hasBaseline, canManage: !!canManage, canEdit, userId,
+    projectId, projectName, timezone, milestones, hasBaseline, canManage: !!canManage, canEdit, userId,
     onProjectChanged: () => onProjectChanged?.(),
     onSetBaseline: async () => {
       const res = await setBaseline({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
@@ -292,6 +295,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   };
 
   return (
+    <ProjectTypeProvider projectId={projectId} projectName={projectName}>
     <div className="space-y-4">
       <ScheduleSetup {...setupProps} />
       {error && (
@@ -303,46 +307,29 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
         </div>
       )}
 
-      <FirstRunHint storageKey="schedule.intro.v2" tone="info">
+      {mode === "plan" && <FirstRunHint storageKey="schedule.intro.v2" tone="info">
         Drop an exported schedule file and we&apos;ll parse it - from MS Project (.xml / .csv) or Primavera P6,
         the scheduling tool big projects use (.xml / .xer export). No file? Type a few milestones by hand - that&apos;s
         enough to unlock the board. Drag milestones in the calendar to reschedule; click a pill to advance its status.
-      </FirstRunHint>
+      </FirstRunHint>}
 
       {/* Progress dashboard — always on top, summarizes everything */}
-      <ScheduleProgress milestones={milestones} metrics={metrics} projectId={projectId} />
+      {(mode === "plan" || mode === "work") && <ScheduleProgress milestones={milestones} metrics={metrics} projectId={projectId} />}
 
       {/* Which clock the schedule runs on. Every date and time below is the
           plant's; a project without a zone still reads as UTC, so say so. */}
-      <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
+      {mode === "plan" && <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
         <Clock className="w-3.5 h-3.5 text-[var(--color-accent)] shrink-0" />
         {tz === DEFAULT_SCHEDULE_TZ ? (
           <span>Schedule times are shown in <b className="text-[var(--color-text)]">UTC</b>. Set the plant&apos;s timezone under <b className="text-[var(--color-text)]">Edit project</b> so days and shifts line up for everyone.</span>
         ) : (
           <span>Schedule times are shown in plant time: <b className="text-[var(--color-text)]">{tzLabel(tz)}</b>.</span>
         )}
-      </div>
+      </div>}
 
-      {/* View tabs */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="inline-flex items-center bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-sm p-1 gap-0.5">
-          {([
-            { id: "planning",  label: "Planning",  Icon: ClipboardList },
-            { id: "execution", label: "Execution", Icon: PlayCircle },
-          ] as Array<{ id: ScheduleView; label: string; Icon: typeof PlayCircle }>).map(({ id, label, Icon }) => (
-            <button
-              key={id}
-              onClick={() => setView(id)}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-                view === id
-                  ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm"
-                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-              }`}
-            >
-              <Icon className="w-3.5 h-3.5" /> {label}
-            </button>
-          ))}
-        </div>
+      {/* Plan: build the schedule - import it, set it up, add to it. */}
+      {mode === "plan" && <div className="flex items-center justify-between gap-3 flex-wrap">
+        <span className="text-[12px] text-[var(--color-text-muted)]">The schedule as a list: phases, tasks, steps.</span>
         <div className="inline-flex items-center gap-2">
           <button
             onClick={() => setShowGhost((v) => !v)}
@@ -407,24 +394,24 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
                 onClick={() => setAdding((v) => !v)}
                 className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-2.5 py-1.5 rounded-lg shadow-sm transition-colors"
               >
-                <Plus className="w-3.5 h-3.5" /> Add milestone
+                <Plus className="w-3.5 h-3.5" /> Add task
               </button>
             </>
           )}
         </div>
-      </div>
+      </div>}
 
       {/* Zero-state onboarding — the front door for a new user. */}
       {!loading && milestones.length === 0 && (
         <ScheduleEmptyState
           canEdit={canEdit}
-          onImport={() => setImportOpen(true)}
-          onAdd={() => setAdding(true)}
+          onImport={() => { onMode("plan"); setImportOpen(true); }}
+          onAdd={() => { onMode("plan"); setAdding(true); }}
         />
       )}
 
       {/* Jobs taken off this schedule — still to be done elsewhere. */}
-      {!loading && cancelled.length > 0 && (
+      {!loading && cancelled.length > 0 && (mode === "plan" || mode === "work") && (
         <CancelledJobsBar jobs={cancelled} canEdit={canEdit} userId={userId} userEmail={userEmail} onChanged={refresh} />
       )}
 
@@ -437,6 +424,8 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           // every task.
           milestones={milestones}
           cancelled={cancelled}
+          mode={mode === "plan" ? "work" : mode}
+          onMode={onMode}
           canEdit={canEdit}
           orgId={orgId}
           projectId={projectId}
@@ -639,6 +628,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
         );
       })()}
     </div>
+    </ProjectTypeProvider>
   );
 }
 

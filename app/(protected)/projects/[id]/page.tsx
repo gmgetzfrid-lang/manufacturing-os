@@ -1,9 +1,12 @@
 "use client";
 
-// /projects/[id] — project detail with three tabs:
-//   1. Documents — every checkout attached to this project (released + active)
-//   2. Activity  — chronological feed of comments + system events
-//   3. Members   — who's on the project, with add/remove for owner
+// /projects/[id] — project detail. Its tabs, the work first:
+//   Plan     — the schedule as a list: import it, set it up, add to it
+//   Today    — the shift's screen: meetings, hour by hour, turnover, Lock report
+//   Work     — the timeline, calendar and work orders
+//   Reports  — every report, one name each, and the field forms
+// then Documents, Costs, Quality, Intake, Activity and Members.
+// A project opens on Plan until work starts, then on Today.
 //
 // Project owner gets a settings strip up top with status-transition buttons:
 // Pause / Resume / Complete / Cancel / Archive. Status changes auto-release
@@ -17,7 +20,7 @@ import {
   CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Calendar, Send,
   User as UserIcon, MessageSquare, Users, FileText, Activity as ActivityIcon,
   ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck, Pencil, CircleDollarSign,
-  UploadCloud,
+  UploadCloud, ClipboardList, Sun, FileBarChart,
 } from "lucide-react";
 import IntakePanel from "@/components/projects/IntakePanel";
 import ProjectDocumentsCard from "@/components/projects/ProjectDocumentsCard";
@@ -53,7 +56,13 @@ import type {
   Project, ProjectMember, ProjectMemberRole, ProjectActivity, CheckoutSession, ProjectStatus, Timestamp,
 } from "@/types/schema";
 
-type Tab = "documents" | "intake" | "costs" | "quality" | "activity" | "schedule" | "members";
+type Tab = "plan" | "today" | "work" | "reports" | "documents" | "intake" | "costs" | "quality" | "activity" | "members";
+const SCHEDULE_TABS = ["plan", "today", "work", "reports"] as const;
+type ScheduleTabId = (typeof SCHEDULE_TABS)[number];
+const isScheduleTab = (t: Tab | null): t is ScheduleTabId => !!t && (SCHEDULE_TABS as readonly string[]).includes(t);
+const TABS: readonly Tab[] = ["plan", "today", "work", "reports", "documents", "intake", "costs", "quality", "activity", "members"];
+/** The tab a link asks for; "schedule" (older links) and none: decided by the project. */
+const tabOf = (t: string | null | undefined): Tab | null => (t && (TABS as readonly string[]).includes(t) ? t as Tab : null);
 
 type CheckoutWithDoc = CheckoutSession & {
   docNumber?: string;
@@ -86,14 +95,11 @@ export default function ProjectDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  // Tab lives in the URL (?tab=schedule) so views are linkable and refresh
+  // Tab lives in the URL (?tab=today) so views are linkable and refresh
   // keeps your place.
   const search = useSearchParams();
-  const initialTab = ((): Tab => {
-    const t = search?.get("tab");
-    return t === "intake" || t === "costs" || t === "quality" || t === "activity" || t === "schedule" || t === "members" ? t : "documents";
-  })();
-  const [tab, setTabState] = useState<Tab>(initialTab);
+  // null until the project says where to open: Plan until work starts, then Today.
+  const [tab, setTabState] = useState<Tab | null>(() => tabOf(search?.get("tab")));
   const setTab = useCallback((t: Tab) => {
     setTabState(t);
     try {
@@ -105,11 +111,19 @@ export default function ProjectDetailPage() {
   // Same-page ?tab= navigations (the coach's deep links live on THIS page)
   // must switch the tab too — the state initializer only runs on mount.
   useEffect(() => {
-    const t = search?.get("tab");
-    if (t === "intake" || t === "costs" || t === "quality" || t === "activity" || t === "schedule" || t === "members" || t === "documents") {
-      setTabState(t);
-    }
+    const t = tabOf(search?.get("tab"));
+    if (t) setTabState(t);
   }, [search]);
+  // No tab asked for: Plan until work starts (a step started or any progress), then Today.
+  const decided = tab != null;
+  useEffect(() => {
+    if (decided || !projectId) return;
+    let live = true;
+    void supabase.from("milestones").select("id").eq("project_id", projectId)
+      .or("actual_start_at.not.is.null,percent_complete.gt.0,status.in.(in_progress,completed)").limit(1)
+      .then(({ data, error }) => { if (live) setTabState((cur) => cur ?? (!error && data && data.length > 0 ? "today" : "plan")); });
+    return () => { live = false; };
+  }, [decided, projectId]);
   const [commentDraft, setCommentDraft] = useState("");
   const [posting, setPosting] = useState(false);
 
@@ -418,6 +432,19 @@ export default function ProjectDetailPage() {
 
           {/* TABS */}
           <div className="mt-5 flex items-center gap-1 border-b border-[var(--color-border)] -mb-px overflow-x-auto [scrollbar-width:none]">
+            <TabButton active={tab === "plan"} onClick={() => setTab("plan")} main>
+              <ClipboardList className="w-3.5 h-3.5" /> Plan
+            </TabButton>
+            <TabButton active={tab === "today"} onClick={() => setTab("today")} main>
+              <Sun className="w-3.5 h-3.5" /> Today
+            </TabButton>
+            <TabButton active={tab === "work"} onClick={() => setTab("work")} main>
+              <Flag className="w-3.5 h-3.5" /> Work
+            </TabButton>
+            <TabButton active={tab === "reports"} onClick={() => setTab("reports")} main>
+              <FileBarChart className="w-3.5 h-3.5" /> Reports
+            </TabButton>
+            <span className="shrink-0 self-center w-px h-5 mx-1 bg-[var(--color-border)]" aria-hidden />
             <TabButton active={tab === "documents"} onClick={() => setTab("documents")}>
               <FileText className="w-3.5 h-3.5" /> Documents <span className="text-[10px] text-[var(--color-text-faint)]">{checkouts.length}</span>
             </TabButton>
@@ -433,17 +460,17 @@ export default function ProjectDetailPage() {
             <TabButton active={tab === "activity"} onClick={() => setTab("activity")}>
               <ActivityIcon className="w-3.5 h-3.5" /> Activity <span className="text-[10px] text-[var(--color-text-faint)]">{activity.length}</span>
             </TabButton>
-            <TabButton active={tab === "schedule"} onClick={() => setTab("schedule")}>
-              <Flag className="w-3.5 h-3.5" /> Schedule
-            </TabButton>
             <TabButton active={tab === "members"} onClick={() => setTab("members")}>
               <Users className="w-3.5 h-3.5" /> Members <span className="text-[10px] text-[var(--color-text-faint)]">{members.length}</span>
             </TabButton>
             <div className="ml-1 pb-2">
               <HelpTooltip>
-                <b>Documents</b> - every checkout attached to this project (active + released).
+                <b>Plan</b> - the schedule as a list: import it (P6, MS Project), set it up, add to it.
+                <b className="block mt-1">Today</b> - the shift: meetings, hour by hour, overtime, the turnover, Lock report. Any date.
+                <b className="block mt-1">Work</b> - the timeline, calendar and work orders.
+                <b className="block mt-1">Reports</b> - every report, and the field forms.
+                <b className="block mt-1">Documents</b> - every checkout attached to this project (active + released).
                 <b className="block mt-1">Activity</b> - the project&rsquo;s full timeline: comments, doc events, holds, milestone hits.
-                <b className="block mt-1">Schedule</b> - milestones with planned/actual dates and an Earned-Value rollup. Import P6/MS Project as ghost overlay.
                 <b className="block mt-1">Members</b> - who&rsquo;s on this project. Owner can add/remove.
               </HelpTooltip>
             </div>
@@ -454,10 +481,10 @@ export default function ProjectDetailPage() {
       {/* CONTENT — schedule tab needs full page width to render the
           execution canvas; everything else keeps the comfortable
           reading width. */}
-      <div className={`${tab === "schedule" ? "max-w-[1800px] mx-auto px-4" : "max-w-6xl mx-auto px-6"} py-6`}>
+      <div className={`${isScheduleTab(tab) || !tab ? "max-w-[1800px] mx-auto px-3 sm:px-4" : "max-w-6xl mx-auto px-6"} py-6`}>
         {/* Health + "what do I feed you" — the wizard for the rest of the
             project's life, visible from every tab. */}
-        {project.id && project.orgId && tab !== "schedule" && (
+        {project.id && project.orgId && tab && !isScheduleTab(tab) && (
           <ProjectCoach orgId={project.orgId} projectId={project.id} refreshKey={coachKey} />
         )}
         {tab === "documents" && (
@@ -486,7 +513,7 @@ export default function ProjectDetailPage() {
             )}
           </div>
         )}
-        {(tab === "intake" || tab === "schedule") && !uid && (
+        {(tab === "intake" || isScheduleTab(tab) || !tab) && !uid && (
           <div className="py-10 flex justify-center"><Spinner /></div>
         )}
         {tab === "costs" && project.id && project.orgId && uid && (
@@ -536,7 +563,7 @@ export default function ProjectDetailPage() {
             onPost={handlePostComment}
           />
         )}
-        {tab === "schedule" && uid && (
+        {isScheduleTab(tab) && uid && (
           <ScheduleTzProvider timeZone={project.timezone}>
             <ScheduleTab
               orgId={project.orgId}
@@ -551,6 +578,8 @@ export default function ProjectDetailPage() {
               timezone={project.timezone}
               canManage={!!canManage}
               onProjectChanged={() => void refresh()}
+              mode={tab}
+              onMode={setTab}
             />
           </ScheduleTzProvider>
         )}
@@ -716,12 +745,15 @@ function ActionButton({ icon, label, onClick, color }: { icon: React.ReactNode; 
   );
 }
 
-function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+function TabButton({ active, onClick, children, main }: { active: boolean; onClick: () => void; children: React.ReactNode;
+  /** One of the four work tabs (Plan, Today, Work, Reports): darker when not picked. */
+  main?: boolean }) {
   return (
     <button
       onClick={onClick}
-      className={`px-4 py-2.5 text-xs font-bold inline-flex items-center gap-1.5 border-b-2 transition-colors ${
-        active ? "border-[var(--color-accent)] text-[var(--color-accent)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+      aria-current={active ? "page" : undefined}
+      className={`shrink-0 px-3.5 sm:px-4 py-2.5 text-xs font-bold inline-flex items-center gap-1.5 border-b-2 whitespace-nowrap transition-colors ${
+        active ? "border-[var(--color-accent)] text-[var(--color-accent)]" : main ? "border-transparent text-[var(--color-text)] hover:text-[var(--color-accent)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
       }`}
     >
       {children}

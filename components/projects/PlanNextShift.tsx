@@ -10,6 +10,7 @@
 // follow.
 
 import React, { useMemo, useState } from "react";
+import { useProjectTypeCtx } from "@/components/projects/ProjectTypeContext";
 import { ArrowLeft, ArrowLeftRight, CalendarClock, LogOut, Plus, Search, X } from "lucide-react";
 import { Modal, ModalHeader, ModalBody } from "@/components/ui/Modal";
 import type { Milestone } from "@/types/schema";
@@ -251,6 +252,7 @@ function Confirm({ milestones, action, next, now, tz, times, mode, crews, when, 
   when: (t: number) => string; span: (a: number, b: number) => string; shiftName: (w: ShiftWindow) => string;
   onBack: () => void; onSave: (c: ShiftPlanChange, reason: string) => Promise<boolean>;
 }) {
+  const ptype = useProjectTypeCtx();
   // Who does the step pulled in: in a swap, the crew that was on the one
   // it replaces ("they're already there"); else its own.
   const byId = useMemo(() => new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m])), [milestones]);
@@ -308,7 +310,7 @@ function Confirm({ milestones, action, next, now, tz, times, mode, crews, when, 
       )}
       <div className={`rounded-lg border px-3 py-2 space-y-1 ${plan.impact.critical || (moved && dh > 0) ? "border-rose-300 bg-rose-50 dark:border-rose-900 dark:bg-rose-950/30" : "border-[var(--color-border)] bg-[var(--color-surface-2)]"}`}>
         <div className="font-black text-[11px] uppercase tracking-wider text-[var(--color-text-muted)]">What it does to the schedule</div>
-        <div>Turnaround (forecast): {Number.isFinite(f0) ? `${when(f0)} → ` : ""}<b className={moved && dh > 0 ? "text-rose-700 dark:text-rose-400" : ""}>{Number.isFinite(f1) ? when(f1) : "-"}</b>{!moved ? " - unchanged" : dh > 0 ? ` - ${dh} h later` : ` - ${-dh} h sooner`}</div>
+        <div>{ptype.word} (forecast): {Number.isFinite(f0) ? `${when(f0)} → ` : ""}<b className={moved && dh > 0 ? "text-rose-700 dark:text-rose-400" : ""}>{Number.isFinite(f1) ? when(f1) : "-"}</b>{!moved ? " - unchanged" : dh > 0 ? ` - ${dh} h later` : ` - ${-dh} h sooner`}</div>
         {plan.impact.critical && <div className="font-bold text-rose-700 dark:text-rose-400">Touches the critical path.</div>}
         {plan.pushed.length > 0
           ? <div>Pushes {plan.pushed.length} linked step{plan.pushed.length === 1 ? "" : "s"} later in the forecast (their plan stays): {plan.pushed.slice(0, 5).map((p) => `${p.name} +${p.hours} h`).join(", ")}{plan.pushed.length > 5 ? ` + ${plan.pushed.length - 5} more` : ""}</div>

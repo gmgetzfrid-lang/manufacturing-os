@@ -28,6 +28,8 @@ export interface UpdateFormat {
   /** "17:30–5:30 (Fri, Oct 23)" */
   win: (w: ShiftWindow) => string;
   hrs: (h: number) => string;
+  /** What kind of project it is, in a sentence ("turnaround"; lib/projectType). */
+  word?: string;
 }
 
 export interface UpdateLookups {
@@ -438,7 +440,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   const ds = discoverySummary(look.discovery ?? [], shift.start, shift.end);
   if (ds.inShift.length || ds.open.length) {
     out.push({
-      id: "discovery", title: `${addedTitle([...ds.inShift, ...ds.open].map((d) => addedKind(d.record)))} - ${shiftName(shift)} ${f.D(shift.start)}`, sub: discoverySub(ds, f.hrs),
+      id: "discovery", title: `${addedTitle([...ds.inShift, ...ds.open].map((d) => addedKind(d.record)))} - ${shiftName(shift)} ${f.D(shift.start)}`, sub: discoverySub(ds, f.hrs, f.word),
       blocks: [
         ...(ds.inShift.length ? [discoveryBlock(ds.inShift, f)] : [{ k: "note", text: "Nothing found this shift.", tone: "muted" } as ExportBlock]),
         ...(ds.open.length ? [{ k: "note", text: `Still open from earlier: ${ds.open.map((d) => `${d.task?.name ?? ""} - ${d.record.what} (${d.steps.filter((x) => x.status !== "completed").length} of ${d.steps.length} steps open)`).join("; ")}.`, tone: "amber" } as ExportBlock] : []),
@@ -449,18 +451,18 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
 }
 
 /** "2 found · 14 h added · turnaround +8 h · so far 5, 40 h" */
-export function discoverySub(ds: ReturnType<typeof discoverySummary>, hrs: (h: number) => string): string {
+export function discoverySub(ds: ReturnType<typeof discoverySummary>, hrs: (h: number) => string, word = "turnaround"): string {
   return [
     `${ds.shift.count} added this shift`,
     ds.shift.hours ? `${hrs(ds.shift.hours)} added` : null,
-    ds.shift.finishH ? `turnaround +${hrs(ds.shift.finishH)}` : null,
+    ds.shift.finishH ? `${word} +${hrs(ds.shift.finishH)}` : null,
     ds.shift.critical ? `${ds.shift.critical} on the critical path` : null,
     `so far ${ds.job.count} (${hrs(ds.job.hours)}${ds.job.finishH ? `, finish +${hrs(ds.job.finishH)}` : ""})`,
   ].filter(Boolean).join(" · ");
 }
 
 /** Discovery as a table — the turnover email and the close-out alike. */
-export function discoveryBlock(list: Discovery[], f: { DTs: (ms: number) => string; hrs: (h: number) => string }): ExportBlock {
+export function discoveryBlock(list: Discovery[], f: { DTs: (ms: number) => string; hrs: (h: number) => string; word?: string }): ExportBlock {
   return {
     k: "table", head: ["When", "Task", "What", "Work it added", "What it did"], align: ["left", "left", "left", "left", "left"], nowrap: [0],
     rows: list.map((d) => [
@@ -468,7 +470,7 @@ export function discoveryBlock(list: Discovery[], f: { DTs: (ms: number) => stri
       { t: d.task?.name ?? "", bold: true, ...(d.task?.workOrderRef ? { sub: [{ t: `WO ${d.task.workOrderRef}` }] } : {}) },
       { t: d.record.what, sub: [{ t: ADDED[addedKind(d.record)].word, tone: "slate" as const }, ...(d.record.approvedBy ? [{ t: `Approved by ${d.record.approvedBy}`, tone: "muted" as const }] : [])] },
       { t: `${d.steps.length} step${d.steps.length === 1 ? "" : "s"}:`, lines: d.steps.map((m) => ({ t: discoveryStepLine(m, f.hrs) })) },
-      { t: impactLine(d.record.impact, f.hrs), tone: d.record.impact.critical ? "rose" : "slate", bold: d.record.impact.critical },
+      { t: impactLine(d.record.impact, f.hrs, f.word), tone: d.record.impact.critical ? "rose" : "slate", bold: d.record.impact.critical },
     ] as ExportCell[]),
   } as ExportBlock;
 }

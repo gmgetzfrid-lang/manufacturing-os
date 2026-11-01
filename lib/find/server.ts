@@ -384,7 +384,7 @@ export async function findEstate(admin: SupabaseClient, principal: KnowledgePrin
     if (projIds.size) {
       const { data: ms } = await admin.from("milestones").select("id, name, planned_at, status, project_id").eq("org_id", orgId).in("project_id", [...projIds].slice(0, 50)).neq("status", "done").order("planned_at", { ascending: true, nullsFirst: false }).limit(10);
       for (const m of (ms as Array<{ id: string; name: string; planned_at: string | null; status: string | null; project_id: string | null }> | null) ?? []) {
-        activity.milestones.push({ id: m.id, name: m.name, plannedAt: m.planned_at, status: m.status, projectId: m.project_id, projectName: m.project_id ? projById.get(m.project_id)?.name ?? null : null, href: m.project_id ? `/projects/${m.project_id}?tab=schedule` : "/projects" });
+        activity.milestones.push({ id: m.id, name: m.name, plannedAt: m.planned_at, status: m.status, projectId: m.project_id, projectName: m.project_id ? projById.get(m.project_id)?.name ?? null : null, href: m.project_id ? `/projects/${m.project_id}?tab=work` : "/projects" });
       }
     }
   }

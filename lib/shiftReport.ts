@@ -41,6 +41,8 @@ export interface ShiftTimes {
   helpers?: PullCrew;
   /** Breaks and lunch on each shift: blocked off in the notes by the hour. */
   breaks?: ShiftBreak[];
+  /** What kind of project it is (Setup › Project type, lib/projectType). */
+  projectType?: { word: string; short: string };
 }
 
 /** A break on the day or night shift: when it starts, how long, and what

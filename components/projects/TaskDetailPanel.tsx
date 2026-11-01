@@ -8,6 +8,7 @@
 // activity trail.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useProjectWord } from "@/components/projects/ProjectTypeContext";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { spanLabel, startOf, finishOf, effectiveSpans } from "@/lib/scheduleTime";
 import { workShiftOf, calendarShift, hoursInSpan, type ShiftCredit } from "@/lib/shiftReport";
@@ -80,6 +81,7 @@ export default function TaskDetailPanel({
   milestone, subtasks, allTasks, childCount, ancestors, canEdit, userId, userName, userEmail, userRole,
   onClose, onChanged, onSelectSubtask, onSelectMilestone, onMoveDays, critical, onSetProgressNote, onStartNote, onSetStatus, startEditing,
 }: Props) {
+  const projectWord = useProjectWord();
   const tz = useScheduleTz();
   const [editing, setEditing] = useState(!!startEditing && canEdit);
   const [saving, setSaving] = useState(false);
@@ -454,7 +456,7 @@ export default function TaskDetailPanel({
                     <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
                       {ADDED[kindOf(d)].found[0].toUpperCase() + ADDED[kindOf(d)].found.slice(1)} {fmtInTz(d.foundAt, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}{d.foundBy ? ` by ${d.foundBy}` : ""}{d.approvedBy ? ` · approved by ${d.approvedBy}` : ""}
                     </div>
-                    <div className={`text-[11px] mt-0.5 ${d.impact.critical ? "font-bold text-rose-700 dark:text-rose-400" : "text-[var(--color-text)]"}`}>When added: {impactLine(d.impact, (h) => `${h} h`)}</div>
+                    <div className={`text-[11px] mt-0.5 ${d.impact.critical ? "font-bold text-rose-700 dark:text-rose-400" : "text-[var(--color-text)]"}`}>When added: {impactLine(d.impact, (h) => `${h} h`, projectWord)}</div>
                   </div>
                 );
               })()}

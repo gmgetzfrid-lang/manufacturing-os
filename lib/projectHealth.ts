@@ -175,7 +175,7 @@ export function buildCoachItems(s: ProjectStateSnapshot, projectId: string): Coa
     id: "schedule", kind: "schedule", weight: 95,
     title: "Add a schedule - import a file or type a few milestones",
     payoff: "Unlocks the execution board, overdue alerts, and schedule health (SPI).",
-    href: `${base}?tab=schedule`,
+    href: `${base}?tab=plan`,
   });
   if (s.pendingCostDocs > 0) add({
     id: "confirm-docs", kind: "cost", weight: 92,
@@ -199,7 +199,7 @@ export function buildCoachItems(s: ProjectStateSnapshot, projectId: string): Coa
     id: "baseline", kind: "schedule", weight: 72,
     title: "Set a schedule baseline",
     payoff: "Drift becomes visible - you'll see slips against the original plan.",
-    href: `${base}?tab=schedule`,
+    href: `${base}?tab=plan`,
   });
   if (!s.hasSow) add({
     id: "sow", kind: "setup", weight: 64,

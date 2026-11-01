@@ -10,6 +10,8 @@
 // no other step's planned dates are changed).
 
 import React, { useMemo, useState } from "react";
+import { useProjectTypeCtx } from "@/components/projects/ProjectTypeContext";
+import { typeWord } from "@/lib/projectType";
 import { X, Plus, Trash2 } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import type { ShiftTimes } from "@/lib/shiftReport";
@@ -47,6 +49,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
   onSave: (d: DiscoveryDraft, at: number) => Promise<boolean>;
   onClose: () => void;
 }) {
+  const ptype = useProjectTypeCtx();
   const [now] = useState(() => clockNow ?? Date.now());
   const kids = useMemo(() => {
     const k = new Map<string, Milestone[]>();
@@ -311,7 +314,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
           </div>
           <label className="block">
             <span className={lbl}>Approved by <span className="font-normal text-[var(--color-text-muted)]">- optional</span></span>
-            <input value={approvedBy} onChange={(e) => setApprovedBy(e.target.value)} placeholder="e.g. TA manager / owner rep" className={`${inp} w-full`} />
+            <input value={approvedBy} onChange={(e) => setApprovedBy(e.target.value)} placeholder={`e.g. ${ptype.short} manager / owner rep`} className={`${inp} w-full`} />
           </label>
 
           {/* What it does to the schedule — before it's saved. */}
@@ -319,9 +322,9 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
             <div className="font-black text-[11px] uppercase tracking-wider text-[var(--color-text-muted)]">What it does to the schedule</div>
             {!plan ? <div className="text-[var(--color-text-muted)]">{timeProblem && filled.length ? timeProblem : "Add the work it needs (a step and its hours) to see."}</div> : (
               <>
-                <div className="font-bold">{impactLine(plan.impact, hrs)}</div>
+                <div className="font-bold">{impactLine(plan.impact, hrs, typeWord(ptype))}</div>
                 <div>{isNew ? <>{taskName}: done <b>{fmt(plan.impact.taskFinish[1])}</b></> : <>{taskName}: finish {fmt(plan.impact.taskFinish[0])} → <b>{fmt(plan.impact.taskFinish[1])}</b></>}</div>
-                <div>Turnaround (forecast): {fmt(plan.impact.finish[0])} → <b className={plan.impact.finish[1] > plan.impact.finish[0] + 6 * 60_000 ? "text-rose-700 dark:text-rose-400" : ""}>{fmt(plan.impact.finish[1])}</b>
+                <div>{ptype.word} (forecast): {fmt(plan.impact.finish[0])} → <b className={plan.impact.finish[1] > plan.impact.finish[0] + 6 * 60_000 ? "text-rose-700 dark:text-rose-400" : ""}>{fmt(plan.impact.finish[1])}</b>
                   {!isNew && plan.impact.finish[1] <= plan.impact.finish[0] + 6 * 60_000 && plan.impact.taskFinish[1] > plan.impact.taskFinish[0] ? " - it fits in the float" : ""}</div>
                 <div className="text-[var(--color-text-muted)]">New work: {plan.steps.map((s) => `${s.name} ${fmt(Date.parse(s.plannedStartAt))} → ${fmt(Date.parse(s.plannedAt))}`).join("; ")}</div>
                 {plan.impact.pushed.length > 0 && (

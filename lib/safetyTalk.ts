@@ -7,6 +7,7 @@
 // (lib/safetyLessons). Read in a few minutes. Not a repeat of the schedule.
 
 import { HAZARD_KINDS, rankHazards, sourceLabel, type HazardJobInput, type HazardKind, type RankedHazard, type SafetyLesson } from "@/lib/safetyMoment";
+import { unitsDown, type ProjectType } from "@/lib/projectType";
 import { previousShift, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
 import { stepBandDays } from "@/lib/shiftBands";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
@@ -298,6 +299,8 @@ export interface ProjectFacts {
   phase?: "shutdown" | "startup";
   /** The unit the project is on ("Transmix-1"), from its name. */
   unit?: string;
+  /** What kind of project it is ("Turnaround", "Outage"; lib/projectType). */
+  kind?: string;
 }
 
 /** The project as the report knows it, before the shift is picked. */
@@ -308,6 +311,8 @@ export interface ProjectBase {
   finish: number | null;
   tz: string;
   behind?: boolean;
+  /** What kind of project it is (Setup › Project type). */
+  type?: ProjectType;
 }
 
 const TA_RE = /\bturn[\s-]*arounds?\b|\bshut[\s-]*downs?\b|\boutages?\b/i;
@@ -321,7 +326,8 @@ export function projectFacts(p: ProjectBase | undefined, shift: { start: number;
   const days = p?.start != null && p.finish != null ? Math.max(1, dayDiff(p.start, p.finish, p.tz) + 1) : undefined;
   const day = p?.start != null && days ? dayDiff(p.start, shift.start, p.tz) + 1 : undefined;
   return {
-    turnaround: !!p?.names.some((n) => TA_RE.test(n) || TA_CODE.test(n)),
+    turnaround: p?.type ? unitsDown(p.type) : !!p?.names.some((n) => TA_RE.test(n) || TA_CODE.test(n)),
+    ...(p?.type ? { kind: p.type.word } : {}),
     day: day != null && day >= 1 ? day : undefined,
     days,
     behind: p?.behind,
@@ -520,7 +526,7 @@ export function safetyBrief(hazards: RankedHazard[], shift: { start: number; kin
   const themes = facts.turnaround ? TA_THEMES : PLANT_THEMES;
   const theme = themes[mod(ord, themes.length)];
   const unit = facts.unit ? ` · ${facts.unit}` : "";
-  const kicker = facts.turnaround ? `Turnaround${unit}` : `The job${unit}`;
+  const kicker = facts.kind ? `${facts.kind}${unit}` : facts.turnaround ? `Turnaround${unit}` : `The job${unit}`;
   const dayPart = facts.day != null && facts.days != null
     ? (facts.day <= facts.days ? `Day ${facts.day} of ${facts.days}` : `Day ${facts.day} - past the planned ${facts.days}`) : "";
   // One line on where the job stands (tired, behind, new faces) in place

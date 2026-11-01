@@ -9,6 +9,7 @@ import type { ProgressLogRow } from "@/lib/progressHistory";
 import { shiftAt, TURNOVER_GRACE_MS, type ShiftTimes } from "@/lib/shiftReport";
 import type { ShiftRecord } from "@/lib/shiftRecord";
 import { discoveries, impactLine, ADDED, kindOf } from "@/lib/discovery";
+import { cleanProjectType, typeWord } from "@/lib/projectType";
 import { inheritedWorkOrders, woOf } from "@/lib/workOrderCrew";
 
 export interface TimeLogRow {
@@ -78,8 +79,12 @@ export function buildTimeLog(input: {
   times: ShiftTimes;
   /** Only this window (a shift); default the whole job. */
   from?: number; to?: number;
+  /** What kind of project it is, in a sentence ("turnaround"; lib/projectType). */
+  word?: string;
 }): TimeLogRow[] {
   const { tz, times } = input;
+  const pt = cleanProjectType(times.projectType);
+  const word = input.word ?? (pt ? typeWord(pt) : "turnaround");
   const byId = new Map(input.milestones.filter((m) => m.id).map((m) => [m.id!, m]));
   const parents = new Set(input.milestones.map((m) => m.parentId).filter(Boolean) as string[]);
   // A step's WO is often only on its work order (the group above it).
@@ -180,7 +185,7 @@ export function buildTimeLog(input: {
       // Its own WO # when it was given one, else the task's.
       wo: d.steps[0]?.workOrderRef?.trim() || woFor(d.task) || woFor(d.steps[0]) || "", crew: [...new Set(d.steps.map((s) => s.responsibleParty?.trim()).filter(Boolean))].join(", "),
       what: `${ADDED[kindOf(d.record)].word} ${ADDED[kindOf(d.record)].found}`, pct: "",
-      comment: `${d.record.what} - ${impactLine(d.record.impact, (h) => `${h} h`)}${d.record.approvedBy ? ` · approved by ${d.record.approvedBy}` : ""}`,
+      comment: `${d.record.what} - ${impactLine(d.record.impact, (h) => `${h} h`, word)}${d.record.approvedBy ? ` · approved by ${d.record.approvedBy}` : ""}`,
       enteredBy: d.record.addedBy ?? d.record.foundBy ?? "", enteredAt: d.record.addedAt - at > 5 * 60_000 ? d.record.addedAt : null,
     });
   }

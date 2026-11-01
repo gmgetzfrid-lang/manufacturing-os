@@ -9,8 +9,11 @@
 //   Baseline      the plan progress is measured against
 //   Printed reports  the company letterhead reports print on (optional —
 //                 never counted as something to do)
+//   Project type  turnaround, outage, capital project…: the word the
+//                 reports say for the project (optional, read from the
+//                 project's name until set)
 
-export type SetupItemId = "timezone" | "shifts" | "night" | "critical" | "baseline" | "print";
+export type SetupItemId = "type" | "timezone" | "shifts" | "night" | "critical" | "baseline" | "print";
 
 export interface SetupItem {
   id: SetupItemId;
@@ -35,8 +38,12 @@ export function setupChecklist(s: {
   nightDecided?: boolean | null;
   /** A letterhead saved for printed reports. */
   letterheadSet?: boolean;
+  /** The project type saved (not read from the name). */
+  typeSet?: boolean;
 }): SetupItem[] {
   return [
+    { id: "type", label: "Project type", required: false, extra: true, done: !!s.typeSet,
+      why: "Turnaround, outage, capital project… the word the reports and safety topics say for this project." },
     { id: "timezone", label: "Plant time zone", required: true, done: s.timezoneSet,
       why: "Without it the schedule runs on UTC - plan-by-now, behind / on plan and the current shift are hours off." },
     { id: "shifts", label: "Shift change times", required: true, done: s.shiftTimesSaved === true, checking: s.shiftTimesSaved == null,

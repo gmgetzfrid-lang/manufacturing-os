@@ -125,3 +125,16 @@ export function fieldTrackerHtml(input: {
 export function fieldTrackerDocument(title: string, body: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${FIELD_CSS}</style></head><body>${body}</body></html>`;
 }
+
+/** The form for a choice (whole job, one work order, one step, a date
+ *  range), as a page ready to print. `dayMs`: a plant day's start. */
+export function fieldTrackerFor(c: { kind: "job"; lines: "auto" | number } | { kind: "wo"; key: string; lines: "auto" | number } | { kind: "step"; key: string; step: string } | { kind: "range"; from: string; to: string; lines: "auto" | number },
+  o: { project: string; tz: string; orders: FieldOrder[]; dayMs: (day: string) => number }): string {
+  const { project, tz, orders } = o;
+  const one = (k: string) => orders.filter((x) => x.key === k);
+  const body = c.kind === "step" ? fieldTrackerHtml({ project, tz, orders: one(c.key), lines: "auto", step: c.step })
+    : c.kind === "wo" ? fieldTrackerHtml({ project, tz, orders: one(c.key), lines: c.lines })
+      : c.kind === "range" ? (() => { const range = { from: o.dayMs(c.from), to: o.dayMs(c.to) + 86_400_000 }; return fieldTrackerHtml({ project, tz, orders: inRange(orders, range.from, range.to), lines: c.lines, range }); })()
+        : fieldTrackerHtml({ project, tz, orders, lines: c.lines });
+  return fieldTrackerDocument(`${project} - Field tracker`, body);
+}
