@@ -16,7 +16,7 @@ import type { CrewCount, ShiftRecord } from "@/lib/shiftRecord";
 import { newId } from "@/lib/shiftRecord";
 import type { TimeLogRow } from "@/lib/timeLog";
 import {
-  slotClocks, hourlyRows, typedLines, slotOf, SLOT_LABEL, breakLabel, boldRuns, type HourSlot, type HourlyNotes,
+  slotClocks, hourlyRows, typedLines, typedHour, type HourlyRow, slotOf, SLOT_LABEL, breakLabel, boldRuns, type HourSlot, type HourlyNotes,
 } from "@/lib/shiftHourly";
 import { cleanName, crewNames, renamed, setNames, totalOnSite, withName, withoutName, earlierMeetingLines, hasOwnRoster, meetingEmpty, type MeetingParts } from "@/lib/shiftMeeting";
 
@@ -100,17 +100,21 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
     }
   });
 
-  // An hour as typed: kept as typed (empty puts it back to the entries).
-  // What its entries said is kept with it: if they change after (a time
-  // fixed on the work order), the hour says so.
-  const setHour = (slot: HourSlot, text: string | null, said?: string) => {
+  // An hour as typed: what the person added is kept; the work order's
+  // own lines stay live (one taken out or reworded stays out until it
+  // changes on the work order). Null, or nothing of theirs: the entries.
+  const setHour = (slot: HourSlot, text: string | null, auto: string[] = [], said = "") => {
     setEditing(null);
+    const mine = text == null ? null : typedHour(text, auto);
     return run(() => h.update((cur) => {
       const rest = typedLines(cur).filter((l) => slotOf(l.at, h.slots).key !== slot.key);
-      const t = text?.split("\n").map((x) => x.replace(/\s+/g, " ").trim()).filter(Boolean).join("\n");
-      return { ...(cur?.v === 2 ? cur : {}), v: 2, lines: t ? [...rest, { id: newId(), at: slot.start, text: t, hand: true, ...(said != null ? { src: said } : {}) }] : rest };
+      return { ...(cur?.v === 2 ? cur : {}), v: 2, lines: mine ? [...rest, { id: newId(), at: slot.start, text: mine.extras.join("\n"), hand: true, own: true, hide: mine.hide, src: said }] : rest };
     }));
   };
+  // A typed work order line that isn't on the work order now: taken out,
+  // or the hour kept as it reads.
+  const dropLine = (r: HourlyRow, x: string) => setHour(r.slot, [...r.lines.filter((l) => l !== x), ...r.progress].join("\n"), r.auto, r.said);
+  const keepHour = (r: HourlyRow) => setHour(r.slot, [...r.lines, ...r.progress].join("\n"), r.auto, r.said);
   // The meeting's notes, on its record (what was typed before, folded in).
   const setMeetingNote = (m: MeetingCtx, text: string) => {
     setEditing(null);
@@ -169,7 +173,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                 <div className="min-w-0 flex-1">
                   <span className="font-semibold text-[var(--color-text-muted)]">{breakLabel(r.slot)}</span>
                   {hr && editing === hr.key && (
-                    <HourForm init="" placeholder="What happened this hour" onDone={(t) => void setHour(hr, t, "")} onCancel={() => setEditing(null)} />
+                    <HourForm init="" placeholder="What happened this hour" onDone={(t) => void setHour(hr, t)} onCancel={() => setEditing(null)} />
                   )}
                 </div>
                 {hr && editing !== hr.key && (
@@ -201,20 +205,26 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                 {isMeeting && m && <MeetingBox m={m} edit={edit} />}
                 {isMeeting && !m && (said(r.slot)?.lines ?? []).map((x, j) => <div key={j} className="break-words text-[var(--color-text)]">{x}</div>)}
                 {editing === r.slot.key ? (
-                  <HourForm init={isMeeting ? note.join("\n") : r.text} placeholder={isMeeting ? "Anything else from the meeting" : "What happened this hour"}
-                    onDone={(t) => void (m ? setMeetingNote(m, t) : setHour(r.slot, t, r.said))} onCancel={() => setEditing(null)} />
+                  <HourForm init={isMeeting ? note.join("\n") : [...r.lines, ...r.progress].join("\n")} placeholder={isMeeting ? "Anything else from the meeting" : "What happened this hour"}
+                    onDone={(t) => void (m ? setMeetingNote(m, t) : setHour(r.slot, t, r.auto, r.said))} onCancel={() => setEditing(null)} />
                 ) : isMeeting ? (
                   note.length ? <div className="mt-1 space-y-0.5">{note.map((x, j) => <div key={j} className="break-words text-[var(--color-text)]">{x}</div>)}</div> : null
                 ) : (
                   <Items text={r.text} going={r.progress} closed={r.closed} />
                 )}
-                {/* Typed over, then its entries changed (a time fixed on the work
-                    order, a step moved here or away): say so, one tap to the entries. */}
+                {/* A work order line typed here no longer matches the work order
+                    (a time fixed, an entry moved or changed): say so, one tap to
+                    bring it up to date (what they added stays). */}
                 {edit && r.typed && r.stale && editing !== r.slot.key && (
-                  <div role="status" className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-[11.5px] text-amber-900 dark:text-amber-100">
-                    <span className="min-w-0 flex-1">This hour was typed over, and its entries changed after.</span>
-                    <button type="button" onClick={() => void setHour(r.slot, null)} className="font-bold hover:underline">Use the entries</button>
-                    <button type="button" onClick={() => void setHour(r.slot, r.text, r.said)} className="font-semibold text-amber-800 dark:text-amber-200 hover:underline">Keep as typed</button>
+                  <div role="status" className="mt-1 space-y-1 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-[11.5px] text-amber-900 dark:text-amber-100">
+                    <div className="font-semibold">Typed here, not on the work order now:</div>
+                    {(r.mismatch ?? []).map((x) => (
+                      <div key={x} className="flex items-start gap-2">
+                        <span className="min-w-0 flex-1 break-words italic"><Line text={x} /></span>
+                        <button type="button" onClick={() => void dropLine(r, x)} className="shrink-0 font-bold text-rose-700 dark:text-rose-400 hover:underline">Remove</button>
+                      </div>
+                    ))}
+                    <button type="button" onClick={() => void keepHour(r)} className="font-semibold hover:underline">Keep as typed</button>
                   </div>
                 )}
                 {/* A typed note: a mistake, or now put in as work (its own entry

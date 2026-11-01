@@ -21,6 +21,13 @@ export interface HourlyLine {
   src?: string;
   /** Typed by a person: kept as typed. */
   hand?: boolean;
+  /** Its text is only what the person added; the hour's entries still
+   *  show (live), but for `hide`. Without it (typed earlier), the text is
+   *  the whole hour as it was typed. */
+  own?: boolean;
+  /** Lines from the entries taken out or reworded when it was typed (by
+   *  their words): one that changes on the work order shows again. */
+  hide?: string[];
   /** Said plainly from the entries — worded again the next time. */
   plain?: boolean;
   /** An earlier draft's check (notes before they were by the hour). */
@@ -284,16 +291,31 @@ export function hourlyRows(n: HourlyNotes | null | undefined, slots: HourSlot[],
   const show = new Set(opts.show ?? []);
   const rows = slots.filter((x) => !skip.has(x.key) && (x.kind === "meeting" || x.start <= upTo || show.has(x.key))).map((slot) => {
     const meeting = slot.kind === "meeting" || slot.kind === "handover";
-    const own = meeting ? [] : (typed.get(slot.key) ?? []).flatMap((l) => l.text.split("\n")).map((x) => noEmDash(x).trim()).filter(Boolean);
-    if (meeting || slot.kind === "break") return { slot, lines: [], progress: [], closed: [], typed: false, text: "", said: "" } as HourlyRow;
-    // An hour typed over is all theirs; otherwise its entries say it.
+    if (meeting || slot.kind === "break") return { slot, lines: [], progress: [], closed: [], typed: false, text: "", said: "", auto: [] } as HourlyRow;
     const auto = hourParts(said.get(slot.key) ?? [], slot.start, tz, opts.closes);
-    const now = [...auto.lines, ...auto.progress].join("\n");
-    const parts = own.length ? { lines: own, progress: [], closed: typedClosed(own, auto.closed) } : auto;
-    // Typed over, and its entries changed since (a time fixed, a step added).
-    const src = (typed.get(slot.key) ?? []).map((l) => l.src).find((x) => x != null);
-    return { slot, lines: parts.lines, progress: parts.progress, closed: parts.closed, typed: own.length > 0, text: parts.lines.join("\n"), said: now,
-      ...(own.length && src != null && src !== now ? { stale: true } : {}) } as HourlyRow;
+    const all = [...auto.lines, ...auto.progress];
+    const base = { slot, said: all.join("\n"), auto: all };
+    const ls = typed.get(slot.key) ?? [];
+    const words = ls.flatMap((l) => l.text.split("\n")).map((x) => noEmDash(x).trim()).filter(Boolean);
+    // Nothing typed: its entries say it.
+    if (!ls.length) return { ...base, lines: auto.lines, progress: auto.progress, closed: auto.closed, typed: false, text: auto.lines.join("\n") } as HourlyRow;
+    // The work order's lines stay live (but for what was taken out or
+    // reworded when it was typed); what the person added comes after.
+    const inAuto = (x: string) => all.some((a) => sameLine(a, x));
+    const own = ls.some((l) => l.own);
+    const hide = own ? ls.flatMap((l) => l.hide ?? []) : [];
+    const hidden = (x: string) => hide.some((h) => sameLine(h, x));
+    const extras = words.filter((x) => !inAuto(x));
+    const lines = [...auto.lines.filter((x) => !hidden(x)), ...extras];
+    const closed = [...auto.closed.filter((x) => !hidden(x)), ...typedClosed(extras, auto.closed.filter(hidden))];
+    // A work order line typed here that isn't one of the entries now (a
+    // time fixed, an entry changed or taken back): said, to remove or keep.
+    // Typed earlier (the whole hour as typed): said whenever; since: once
+    // the entries change after it was typed.
+    const mismatch = extras.filter(generated);
+    const src = ls.map((l) => l.src).find((x) => x != null);
+    const stale = mismatch.length > 0 && (!own || (src != null && src !== base.said));
+    return { ...base, lines, progress: auto.progress.filter((x) => !hidden(x)), closed, typed: true, text: lines.join("\n"), ...(stale ? { stale: true, mismatch } : {}) } as HourlyRow;
   }).filter((r) => !r.slot.tail || r.lines.length > 0 || r.progress.length > 0);
   // An hour with nothing in it and a break in it (lunch): the break's row
   // says it, one row; the hour is kept on it (to type into or add work at).
@@ -333,8 +355,31 @@ export interface HourlyRow {
   slot: HourSlot; lines: string[]; progress: string[]; closed: string[]; typed: boolean; text: string; hour?: HourSlot;
   /** What its entries say now (kept with a typed hour, to see if they change). */
   said: string;
-  /** Typed over, and its entries changed after. */
+  /** Its entries' lines now (what moved its % too). */
+  auto: string[];
+  /** A work order line typed into it isn't one of its entries now. */
   stale?: boolean;
+  /** Those lines. */
+  mismatch?: string[];
+}
+
+/** Two lines that say the same, bold and spacing aside. */
+export const sameLine = (a: string, b: string) => {
+  const n = (x: string) => plainLine(x).replace(/\s+/g, " ").trim().toLowerCase();
+  return n(a) === n(b);
+};
+/** A work order line as the app writes it (its WO in bold). */
+export const isWorkOrderLine = (x: string) => /\*\*[^*]+\*\*/.test(x);
+const generated = isWorkOrderLine;
+
+/** An hour as typed, saved: what the person added (not already one of the
+ *  entries' lines), and the entries' lines they took out or reworded. Null:
+ *  nothing of theirs (the hour shows its entries). */
+export function typedHour(text: string, auto: string[]): { extras: string[]; hide: string[] } | null {
+  const lines = text.split("\n").map((x) => noEmDash(x).replace(/\s+/g, " ").trim()).filter(Boolean);
+  const extras = lines.filter((x) => !auto.some((a) => sameLine(a, x)));
+  const hide = auto.filter((a) => !lines.some((x) => sameLine(a, x)));
+  return extras.length || hide.length ? { extras, hide } : null;
 }
 
 /** What each kind of hour is called. */

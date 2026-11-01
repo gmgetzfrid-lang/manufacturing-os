@@ -4,7 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  hourlyClocks, slotClocks, workOrderClosers, typedClosed, hourSlots, slotOf, rowsBySlot, typedLines, hourlyRows, breakLabel, entryLine, hourItems, hourParts, plainLine, boldRuns, type HourlyNotes,
+  hourlyClocks, slotClocks, workOrderClosers, typedClosed, typedHour, hourSlots, slotOf, rowsBySlot, typedLines, hourlyRows, breakLabel, entryLine, hourItems, hourParts, plainLine, boldRuns, type HourlyNotes,
 } from "@/lib/shiftHourly";
 import type { TimeLogRow } from "@/lib/timeLog";
 import type { Milestone } from "@/types/schema";
@@ -212,26 +212,49 @@ describe("lunch with nothing logged in its hour", () => {
 });
 
 
-describe("an hour typed over", () => {
-  it("keeps its green on the typed line that still names the work order that finished", () => {
-    const closed = ["9:30 AM **WO 310505 E-13**, Schultz: QC Complete done."];
-    expect(typedClosed(["Hydro on WO 310505 started", "WO 310505 E-13 QC complete, signed off"], closed)).toEqual(["WO 310505 E-13 QC complete, signed off"]);
-    expect(typedClosed(["E-14 hydro"], closed)).toEqual([]);
-    const r = hourlyRows({ v: 2, lines: [{ id: "t", at: at("09:00"), text: "**WO 310505 E-13**, Schultz: QC done, all signed.", hand: true }] }, slots, at("18:00"),
-      [row("09:30", { id: "q", task: "E-13 - Cooler", wo: "310505", step: "QC Complete", crew: "Schultz", what: "Done", pct: "100%" })], tz, { closes: (x) => x.id === "q" });
-    const nine = r.find((x) => x.slot.start === at("09:00"))!;
-    expect(nine.typed).toBe(true);
-    expect(nine.closed).toEqual(["**WO 310505 E-13**, Schultz: QC done, all signed."]);
+describe("an hour typed into", () => {
+  const qc = (hhmm: string) => row(hhmm, { id: "q", task: "E-13 - Cooler", wo: "310505", step: "QC Complete", crew: "Schultz", what: "Done", pct: "100%" });
+  const nine = (n: HourlyNotes | undefined, rows: TimeLogRow[], closes?: (r: TimeLogRow) => boolean) =>
+    hourlyRows(n, slots, at("18:00"), rows, tz, { closes }).find((x) => x.slot.start === at("09:00") && x.slot.kind === "work")!;
+  it("saves what was added and what was taken out or reworded; nothing of theirs is the entries", () => {
+    const auto = ["**WO 1 V-7**, Ancon: Pull started.", "**WO 2 E-4**, Schultz: QC done."];
+    expect(typedHour(auto.join("\n"), auto)).toBeNull();
+    expect(typedHour(`${auto[0]}\nCrane on site.`, auto)).toEqual({ extras: ["Crane on site."], hide: [auto[1]] });
+    expect(typedHour("**WO 2 E-4**, Schultz: QC done, all signed.", auto)).toEqual({ extras: ["**WO 2 E-4**, Schultz: QC done, all signed."], hide: auto });
   });
-  it("says when its entries changed after it was typed", () => {
-    const e = [row("09:30", { id: "q", task: "E-13 - Cooler", wo: "310505", step: "QC Complete", crew: "Schultz", what: "Done", pct: "100%" })];
-    const said = hourlyRows(undefined, slots, at("18:00"), e, tz).find((x) => x.slot.start === at("09:00"))!.said;
-    const typedAt = (src?: string): HourlyNotes => ({ v: 2, lines: [{ id: "t", at: at("09:00"), text: "QC done", hand: true, ...(src != null ? { src } : {}) }] });
-    const nine = (n: HourlyNotes, rows = e) => hourlyRows(n, slots, at("18:00"), rows, tz).find((x) => x.slot.start === at("09:00"))!;
-    expect(nine(typedAt(said)).stale).toBeUndefined();
-    // The done time fixed to 10:15: it left this hour.
-    expect(nine(typedAt(said), [{ ...e[0], at: at("10:15") }]).stale).toBe(true);
-    // Typed before anyone kept what the entries said: no way to tell, nothing said.
-    expect(nine(typedAt()).stale).toBeUndefined();
+  it("the work order's lines stay live: a time fixed on it shows, what was typed stays", () => {
+    const typed: HourlyNotes = { v: 2, lines: [{ id: "t", at: at("09:00"), text: "Crane on site.", hand: true, own: true, hide: [], src: "" }] };
+    expect(nine(typed, [qc("09:30")]).lines).toEqual(["9:30 AM **WO 310505 E-13**, Schultz: QC Complete done.", "Crane on site."]);
+    // Moved to 10:15 on the work order: gone from 9:00, the note stays.
+    expect(nine(typed, [qc("10:15")]).lines).toEqual(["Crane on site."]);
+  });
+  it("a line taken out stays out until it changes on the work order", () => {
+    const line = "9:30 AM **WO 310505 E-13**, Schultz: QC Complete done.";
+    const typed: HourlyNotes = { v: 2, lines: [{ id: "t", at: at("09:00"), text: "", hand: true, own: true, hide: [line], src: line }] };
+    expect(nine(typed, [qc("09:30")]).lines).toEqual([]);
+    expect(nine(typed, [qc("09:40")]).lines).toEqual(["9:40 AM **WO 310505 E-13**, Schultz: QC Complete done."]);
+  });
+  it("a reworded closing line keeps its green", () => {
+    const line = "9:30 AM **WO 310505 E-13**, Schultz: QC Complete done.";
+    const mine = "**WO 310505 E-13**, Schultz: QC done, all signed.";
+    const typed: HourlyNotes = { v: 2, lines: [{ id: "t", at: at("09:00"), text: mine, hand: true, own: true, hide: [line], src: line }] };
+    const r = nine(typed, [qc("09:30")], (x) => x.id === "q");
+    expect(r.lines).toEqual([mine]);
+    expect(r.closed).toEqual([mine]);
+    expect(typedClosed(["Hydro on WO 310505 started", "WO 310505 E-13 QC complete, signed off"], [line])).toEqual(["WO 310505 E-13 QC complete, signed off"]);
+  });
+  it("a work order line typed here that isn't on the work order now is said, to remove or keep", () => {
+    // Typed earlier (the whole hour): a copied line whose entry moved away.
+    const earlier: HourlyNotes = { v: 2, lines: [{ id: "t", at: at("09:00"), text: "Staging spools.\n9:30 AM **WO 310505 E-13**, Schultz: QC Complete done.", hand: true }] };
+    const r = nine(earlier, [qc("10:15")]);
+    expect(r.lines).toEqual(["Staging spools.", "9:30 AM **WO 310505 E-13**, Schultz: QC Complete done."]);
+    expect(r.stale).toBe(true);
+    expect(r.mismatch).toEqual(["9:30 AM **WO 310505 E-13**, Schultz: QC Complete done."]);
+    // Typed since: said once the entries change after it was typed.
+    const mine = "**WO 310505 E-13**, seals going back in.";
+    const since = (src: string): HourlyNotes => ({ v: 2, lines: [{ id: "t", at: at("09:00"), text: mine, hand: true, own: true, hide: [], src }] });
+    const now = nine(undefined, [qc("09:30")]).said;
+    expect(nine(since(now), [qc("09:30")]).stale).toBeUndefined();
+    expect(nine(since(now), [qc("09:50")]).mismatch).toEqual([mine]);
   });
 });

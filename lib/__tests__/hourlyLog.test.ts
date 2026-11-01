@@ -72,9 +72,9 @@ describe("one shift's hourly log", () => {
     expect(off.entries.some((e) => e.kind === "meeting" || e.kind === "handover")).toBe(false);
   });
 
-  it("an hour typed over, as typed; the others say their entries", () => {
+  it("an hour typed into: its entries (live), then what was typed; the others say their entries", () => {
     const l = one();
-    expect(l.entries.find((e) => e.clock === "7:00 AM")?.lines).toEqual(["Ancon started cleaning the tower on V-7."]);
+    expect(l.entries.find((e) => e.clock === "7:00 AM")?.lines).toEqual(["7:10 AM **V-7**, Ancon: Clean Tower started.", "Ancon started cleaning the tower on V-7."]);
     expect(l.entries.find((e) => e.clock === "9:00 AM")?.lines).toEqual(["9:20 AM **V-7**, Schultz: Install Manways done. All 4 in."]);
   });
 
