@@ -46,13 +46,22 @@ const GUESS: Array<{ re: RegExp[]; t: ProjectType }> = [
   { re: [/\bmaintenance\b/i], t: PROJECT_TYPES[4] },
 ];
 
-/** The project's type: the one set in Setup, else read from its name. */
-export function projectTypeOf(saved: unknown, name?: string | null): ProjectType {
+/** The project's type: the one set in Setup, else read from its name,
+ *  else from its schedule's group names ("TA Execution", "DEC OUTAGE";
+ *  only a turnaround, outage or shutdown: a "Maintenance" phase is part of
+ *  a turnaround, not the kind of project). */
+export function projectTypeOf(saved: unknown, name?: string | null, groups: string[] = []): ProjectType {
   const set = cleanProjectType(saved);
   if (set) return set;
   const n = name ?? "";
-  return GUESS.find((g) => g.re.some((r) => r.test(n)))?.t ?? DEFAULT_PROJECT_TYPE;
+  const byName = GUESS.find((g) => g.re.some((r) => r.test(n)));
+  if (byName) return byName.t;
+  const byGroup = GUESS.slice(0, 3).find((g) => groups.some((x) => g.re.some((r) => r.test(x))));
+  return byGroup?.t ?? DEFAULT_PROJECT_TYPE;
 }
+
+/** Read from the name and groups, nothing found: a plain project. */
+export const isDefaultType = (t: ProjectType) => t === DEFAULT_PROJECT_TYPE;
 
 /** Was it set in Setup (not read from the name)? */
 export const projectTypeSet = (saved: unknown) => cleanProjectType(saved) != null;
@@ -67,5 +76,5 @@ export function typeWord(t: ProjectType): string {
  *  or shutdown (the safety topics for that), not a project beside a
  *  running plant. */
 export function unitsDown(t: ProjectType): boolean {
-  return /turn[\s-]*around|outage|shut[\s-]*down/i.test(t.word);
+  return /turn[\s-]*around|outage|shut[\s-]*down/i.test(t.word) || /^(TA|TAR|T\/A|S\/D)$/.test(t.short.trim()) || /^(TA|TAR|T\/A|S\/D)$/.test(t.word.trim());
 }

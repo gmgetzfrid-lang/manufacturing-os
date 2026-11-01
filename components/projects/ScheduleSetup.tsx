@@ -65,6 +65,14 @@ export function ScheduleSetup(p: Props) {
   // Opens by itself for someone who can fix it — only once everything has
   // been read (nothing "checking"), and only once on this device.
   const [open, setOpen] = useState<SetupItemId | null>(null);
+  // Opened at a step from elsewhere on the page (the calendar's "Night
+  // crews"), on whichever tab it is: this part is on all of them.
+  useEffect(() => {
+    const on = (e: Event) => setOpen((e as CustomEvent<SetupItemId>).detail ?? missing[0]?.id ?? "timezone");
+    window.addEventListener(OPEN_SETUP_EVENT, on);
+    return () => window.removeEventListener(OPEN_SETUP_EVENT, on);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- the step asked for; the first missing one is only a fallback
+  }, []);
   const settled = !items.some((i) => i.checking);
   const first = p.canManage && settled ? missing[0]?.id : undefined;
   useEffect(() => {
@@ -112,13 +120,6 @@ export function ScheduleSetupButton(p: Props) {
   const items = setupChecklist({ timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided, letterheadSet, typeSet: projectTypeSet(st.times.projectType) });
   const todo = toDo(items).length;
   const [open, setOpen] = useState(false);
-  // Opened at a step from elsewhere on the page (the calendar's "Night crews").
-  const [at, setAt] = useState<SetupItemId | null>(null);
-  useEffect(() => {
-    const on = (e: Event) => { const id = (e as CustomEvent<SetupItemId>).detail; setAt(id ?? null); setOpen(true); };
-    window.addEventListener(OPEN_SETUP_EVENT, on);
-    return () => window.removeEventListener(OPEN_SETUP_EVENT, on);
-  }, []);
   return (
     <>
       <button onClick={() => setOpen(true)} title="Project type, time zone, shift times, night crews, critical path, baseline, printed reports"
@@ -127,7 +128,7 @@ export function ScheduleSetupButton(p: Props) {
           : "text-[var(--color-text)] bg-[var(--color-surface)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
         <Settings2 className="w-3.5 h-3.5" /> Setup{todo ? ` · ${todo} to do` : <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />}
       </button>
-      {open && <SetupWizard {...p} items={items} start={at ?? items.find((i) => !i.done && !i.extra)?.id ?? "timezone"} critical={critical} onClose={() => { setOpen(false); setAt(null); }} />}
+      {open && <SetupWizard {...p} items={items} start={items.find((i) => !i.done && !i.extra)?.id ?? "timezone"} critical={critical} onClose={() => setOpen(false)} />}
     </>
   );
 }

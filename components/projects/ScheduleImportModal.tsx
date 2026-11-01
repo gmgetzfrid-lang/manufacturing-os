@@ -679,7 +679,7 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
       )}
       {!noHierarchy && noDurations && (
         <div className="text-[11px] text-emerald-900 dark:text-emerald-200 mt-1">
-          Note: most rows don&apos;t carry start dates - only finish. Tasks will render as single-day on their finish date. Use the per-task <b>Set duration</b> action in the Execution view to expand the ones that take multiple days.
+          Note: most rows don&apos;t carry start dates - only finish. Tasks will render as single-day on their finish date. Use the per-task <b>Set duration</b> action on the Work tab to expand the ones that take multiple days.
         </div>
       )}
     </div>

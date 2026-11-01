@@ -61,8 +61,9 @@ const SCHEDULE_TABS = ["plan", "today", "work", "reports"] as const;
 type ScheduleTabId = (typeof SCHEDULE_TABS)[number];
 const isScheduleTab = (t: Tab | null): t is ScheduleTabId => !!t && (SCHEDULE_TABS as readonly string[]).includes(t);
 const TABS: readonly Tab[] = ["plan", "today", "work", "reports", "documents", "intake", "costs", "quality", "activity", "members"];
-/** The tab a link asks for; "schedule" (older links) and none: decided by the project. */
-const tabOf = (t: string | null | undefined): Tab | null => (t && (TABS as readonly string[]).includes(t) ? t as Tab : null);
+/** The tab a link asks for (older links' "schedule" opened the board: Work).
+ *  None: decided by the project. */
+const tabOf = (t: string | null | undefined): Tab | null => (t === "schedule" ? "work" : t && (TABS as readonly string[]).includes(t) ? t as Tab : null);
 
 type CheckoutWithDoc = CheckoutSession & {
   docNumber?: string;
@@ -484,7 +485,7 @@ export default function ProjectDetailPage() {
       <div className={`${isScheduleTab(tab) || !tab ? "max-w-[1800px] mx-auto px-3 sm:px-4" : "max-w-6xl mx-auto px-6"} py-6`}>
         {/* Health + "what do I feed you" — the wizard for the rest of the
             project's life, visible from every tab. */}
-        {project.id && project.orgId && tab && !isScheduleTab(tab) && (
+        {project.id && project.orgId && tab && (!isScheduleTab(tab) || tab === "plan") && (
           <ProjectCoach orgId={project.orgId} projectId={project.id} refreshKey={coachKey} />
         )}
         {tab === "documents" && (

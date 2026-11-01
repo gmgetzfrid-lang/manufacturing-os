@@ -454,7 +454,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
 
           {step === 4 && (
             <>
-              <StepIntro text="A few dated milestones are enough to start - they unlock the schedule board, overdue alerts, and the planned-pace line on the cost curve. Import a full P6/MS Project XML later from the Schedule tab." />
+              <StepIntro text="A few dated milestones are enough to start - they unlock the schedule board, overdue alerts, and the planned-pace line on the cost curve. Import a full P6/MS Project XML later from the Plan tab." />
               <div className="space-y-2">
                 {milestoneRows.map((r, i) => (
                   <div key={i} className="flex items-center gap-2">

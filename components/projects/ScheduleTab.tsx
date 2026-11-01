@@ -199,6 +199,8 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   }, [visible]);
 
   const metrics = useMemo(() => computeScheduleMetrics(milestones), [milestones]);
+  // The schedule's groups (phases, tasks with steps): what kind of project it is, until Setup says.
+  const groupNames = useMemo(() => { const parents = new Set(milestones.map((m) => m.parentId).filter(Boolean)); return milestones.filter((m) => m.isSummary || (m.id && parents.has(m.id))).map((m) => m.name); }, [milestones]);
   // Per-task effective progress + derived status for the Planning list, so a
   // phase shows a rolled-up status/% and can't be marked done directly.
   const planProgress = useMemo(() => buildProgressIndex(ghostFiltered, tz), [ghostFiltered, tz]);
@@ -295,7 +297,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   };
 
   return (
-    <ProjectTypeProvider projectId={projectId} projectName={projectName}>
+    <ProjectTypeProvider projectId={projectId} projectName={projectName} groups={groupNames}>
     <div className="space-y-4">
       <ScheduleSetup {...setupProps} />
       {error && (

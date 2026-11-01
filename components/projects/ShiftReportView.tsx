@@ -48,8 +48,9 @@ import { clockLabel, fmtInTz, tzAbbrev, toDateTimeInput } from "@/lib/scheduleTz
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { toPlainText, toEmailHtml, type ExportBlock, type ExportCell, type ExportDoc, type ExportStepRow } from "@/lib/reportExport";
 import { turnoverUpdate, withoutEmpty, noteLine, hazardJobsOf, forecastText, discoverySub, discoveryBlock } from "@/lib/managementUpdate";
-import { useProjectType, useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
-import { typeWord } from "@/lib/projectType";
+import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
+import { isDefaultType, typeWord } from "@/lib/projectType";
+import { useProjectTypeCtx } from "@/components/projects/ProjectTypeContext";
 import { notesFor } from "@/lib/milestones";
 import { useShiftRecords, saveShiftRecord, openFollowUps, newId, CLOSEOUT_KEY, type CrewCount, type Incident, type ShiftNote, type ShiftRecord, type Lesson } from "@/lib/shiftRecord";
 import { buildLookBack, CAUSE_LABEL, type LookBack, type StepLook } from "@/lib/lookBack";
@@ -149,7 +150,7 @@ const MEETINGS: Array<{ id: MeetingKind; label: string; Icon: typeof Rocket }> =
 export default function ShiftReportView({ milestones: rawLive, progress: liveProgress, projectId, projectName, cancelled = NONE_CANCELLED, userId, userName, canEdit = false, onUpdateStep, onDiscovery, onNewWorkOrder, pathNow, onPlanNext, onFixTimes, meetingFixed, shiftPick, docOnly, onDoc, onOpenReport, presentOnOpen }: Props) {
   const tz = useScheduleTz();
   // What kind of project it is: the word the report says (Setup › Project type).
-  const ptype = useProjectType(projectId, projectName);
+  const ptype = useProjectTypeCtx();
   const word = typeWord(ptype);
   // The project's shift-change times — the same on every device.
   const times = useShiftTimes(projectId);
@@ -474,8 +475,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   // hour-by-hour notes to be written from.
   const shiftRows = useCallback(async () => {
     const [rows, notes] = await Promise.all([loadProgressLog(projectId), notesFor(stepIds ? stepIds.split(",") : [])]);
-    return buildTimeLog({ milestones: live, log: rows ?? [], notes, records, tz, times, from: shift.start, to: otTo });
-  }, [projectId, stepIds, live, records, tz, times, shift.start, otTo]);
+    return buildTimeLog({ milestones: live, log: rows ?? [], notes, records, tz, times, from: shift.start, to: otTo, word });
+  }, [projectId, stepIds, live, records, tz, times, shift.start, otTo, word]);
   const updateHourly = useCallback(async (change: (cur: ShiftRecord["hourly"]) => ShiftRecord["hourly"] | null) => {
     if (!userId || !orgId) throw new Error("Sign in to save the notes.");
     await saveShiftRecord({ orgId, projectId, shiftKey: thisKey, userId, change: (r) => ({ ...r, hourly: change(r.hourly) ?? undefined }) });
@@ -484,8 +485,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   // each comment with the entry it was typed with. Re-read as progress is entered.
   // Its held-over crews' work after its end is its own; the crews the shift
   // before held over aren't.
-  const entries = useMemo(() => (log ? shiftEntries(buildTimeLog({ milestones: live, log, notes: allNotes, records, tz, times, from: shift.start, to: otTo }), shift, overtime, heldIn) : null),
-    [log, live, allNotes, records, tz, times, shift, otTo, overtime, heldIn]);
+  const entries = useMemo(() => (log ? shiftEntries(buildTimeLog({ milestones: live, log, notes: allNotes, records, tz, times, from: shift.start, to: otTo, word }), shift, overtime, heldIn) : null),
+    [log, live, allNotes, records, tz, times, shift, otTo, overtime, heldIn, word]);
   // The shift by the hour: its meeting (from the shift times), the first
   // hour (permitting), then each hour; a crew held over, its overtime.
   const slots = useMemo(() => hourSlots(shift, meetingLeadMin(times), breaksOn(shift, times.breaks, tz),
@@ -585,7 +586,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     setLogBusy(true); setLogMsg(null);
     try {
       const [rows, allNotes] = await Promise.all([loadProgressLog(projectId), notesFor(stepIds ? stepIds.split(",") : [])]);
-      const out = buildTimeLog({ milestones: live, log: rows ?? [], notes: allNotes, records, tz, times, ...(scope === "shift" ? { from: shift.start, to: shift.end } : {}) });
+      const out = buildTimeLog({ milestones: live, log: rows ?? [], notes: allNotes, records, tz, times, word, ...(scope === "shift" ? { from: shift.start, to: shift.end } : {}) });
       const name = (projectName ?? "Schedule").replace(/[\\/:*?"<>|]/g, "").trim() || "Schedule";
       await downloadTimeLog(out, {
         project: projectName ?? "Schedule", tz,
@@ -604,7 +605,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       names: [projectName ?? "", ...live.filter((m) => m.isSummary || (m.id && parents.has(m.id))).map((m) => m.name)],
       start: report.overall.plannedStart, finish: report.overall.plannedFinish, tz,
       behind: report.overall.standing === "behind",
-      type: ptype,
+      // Nothing set or read from the name and groups: the safety topics read the names themselves, as always.
+      ...(isDefaultType(ptype) ? {} : { type: ptype }),
     };
   }, [live, projectName, report.overall.plannedStart, report.overall.plannedFinish, report.overall.standing, tz, ptype]);
   // The risk cards of the shifts before the next one, from the schedule —

@@ -10,7 +10,7 @@
 // back to the list.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, Download, Loader2, Mail, Presentation, Printer, X } from "lucide-react";
+import { ChevronLeft, Download, Loader2, Mail, Maximize2, Presentation, Printer, X } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import type { CancelledJob } from "@/lib/cancelledJobs";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
@@ -34,7 +34,8 @@ import { fieldTrackerFor } from "@/lib/fieldTracker";
 import { FieldTrackerOptions, type FieldChoice } from "@/components/projects/FieldTrackerPrint";
 import ShiftReportView from "@/components/projects/ShiftReportView";
 import ExecutionReportView from "@/components/projects/ExecutionReportView";
-import type { MeetingKind } from "@/lib/meetingPlan";
+import { defaultMeeting, type MeetingKind } from "@/lib/meetingPlan";
+import { useProjectWord } from "@/components/projects/ProjectTypeContext";
 
 interface Props {
   milestones: Milestone[];
@@ -53,7 +54,13 @@ interface Props {
   pathNow?: number;
   /** Opened from elsewhere, set to its shift or work order. */
   link?: ReportLink | null;
+  /** The link has been applied: it isn't applied again on the next visit. */
+  onLinkUsed?: () => void;
 }
+
+// The report last open on each project (this visit): back on Reports, it's
+// still there.
+const lastOpen = new Map<string, ReportId>();
 
 const SHOWS: Array<[Show, string]> = [["all", "All"], ["open", "Open"], ["behind", "Behind"], ["critical", "Critical path"], ["notStarted", "Not started"], ["held", "Held"], ["done", "Done"], ["added", "Discovery & added"]];
 const MEETING_OF: Partial<Record<ReportId, MeetingKind>> = { turnover: "turnover", kickoff: "kickoff", closeout: "closeout" };
@@ -68,11 +75,15 @@ function readMade(projectId: string): Made[] {
 
 export default function ReportsView(p: Props) {
   const tz = useScheduleTz();
+  const word = useProjectWord();
   const { projectId, shiftTimes: times } = p;
   const live = useMemo(() => withWorkOrderCrews(p.milestones), [p.milestones]);
   const { lh } = useLetterhead(projectId);
 
-  const [sel, setSel] = useState<ReportId>("turnover");
+  // First time in: the meeting the job is at (kick-off before it starts,
+  // close-out once it's done), else the shift turnover.
+  const [sel, setSelState] = useState<ReportId>(() => lastOpen.get(projectId) ?? defaultMeeting(live, Date.now(), p.progress, tz));
+  const setSel = useCallback((id: ReportId) => { lastOpen.set(projectId, id); setSelState(id); }, [projectId]);
   // Phone: the report open full screen (the list behind it).
   const [phoneOpen, setPhoneOpen] = useState(false);
   // The shift (turnover, hourly log, time log); null: the current one.
@@ -85,6 +96,8 @@ export default function ReportsView(p: Props) {
   const [woQuery, setWoQuery] = useState("");
   const [woKey, setWoKey] = useState("");
   const [woHistory, setWoHistory] = useState(false);
+  // Work orders left open on Work orders, printed with the ones the filter finds.
+  const [woAlso, setWoAlso] = useState<string[]>([]);
   const [fieldStart, setFieldStart] = useState<{ wo?: string; n: number }>({ n: 0 });
   const [field, setField] = useState<FieldChoice | null>(null);
 
@@ -102,6 +115,8 @@ export default function ReportsView(p: Props) {
       setWoHistory(!!l.history);
     }
     if (l.id === "field") setFieldStart({ wo: l.wo, n: Date.now() });
+    if (l.id === "workorders") setWoAlso(l.also ?? []);
+    p.onLinkUsed?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per link
   }, [linkN]);
 
@@ -157,22 +172,23 @@ export default function ReportsView(p: Props) {
   const hourlyLogs = useCallback(async (): Promise<ShiftLog[]> => {
     const { log, records, notes } = await loadJob();
     const at = Date.now();
-    const timeLog = buildTimeLog({ milestones: live, log: log ?? [], notes, records, tz, times });
+    const timeLog = buildTimeLog({ milestones: live, log: log ?? [], notes, records, tz, times, word });
     const o = { milestones: live, timeLog, records, log: log ?? [], tz, times, now: at };
     return every ? jobLogs(o) : [oneShiftLog(o, shift)];
-  }, [loadJob, live, tz, times, every, shift]);
+  }, [loadJob, live, tz, times, every, shift, word]);
   const hourlyName = every ? `${name} - hourly log, whole job` : `${name} - hourly log ${shift.dayKey} ${shift.kind}`;
 
   // ── Time log ──
   const timeRows = useCallback(async (): Promise<TimeLogRow[]> => {
     const { log, records, notes } = await loadJob();
-    return buildTimeLog({ milestones: live, log: log ?? [], notes, records, tz, times, ...(scope === "shift" ? { from: shift.start, to: shift.end } : {}) });
-  }, [loadJob, live, tz, times, scope, shift]);
+    return buildTimeLog({ milestones: live, log: log ?? [], notes, records, tz, times, word, ...(scope === "shift" ? { from: shift.start, to: shift.end } : {}) });
+  }, [loadJob, live, tz, times, scope, shift, word]);
   const timeTitle = scope === "shift" ? `Time log - ${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}` : "Time log - whole job to date";
 
   // ── Work orders and the field tracker ──
   const orders = useMemo(() => groupWorkOrders(p.milestones, p.childrenByParent, p.progress, tz, times, now), [p.milestones, p.childrenByParent, p.progress, tz, times, now]);
-  const woShown = useMemo(() => (woShow === "one" ? orders.filter((o) => o.key === woKey) : findOrders(orders, woQuery).filter((o) => showsOrder(o, woShow, p.marks))), [orders, woShow, woKey, woQuery, p.marks]);
+  const woShown = useMemo(() => (woShow === "one" ? orders.filter((o) => o.key === woKey)
+    : orders.filter((o) => woAlso.includes(o.key) || (findOrders([o], woQuery).length > 0 && showsOrder(o, woShow, p.marks)))), [orders, woShow, woKey, woQuery, woAlso, p.marks]);
   const fieldOrders = useMemo(() => fieldOrdersOf(orders), [orders]);
   const woScope = woShow === "one" ? (woShown[0] ? `${woShown[0].wo ? `WO ${woShown[0].wo}` : "No WO"} · ${woShown[0].owner.name}` : "One work order")
     : `${SHOW_WORD[woShow]}${woQuery.trim() ? ` · search “${woQuery.trim()}”` : ""}`;
@@ -182,14 +198,15 @@ export default function ReportsView(p: Props) {
   // Comes from the meeting's report, made off screen (below); a different
   // meeting or shift sends its own.
   const [doc, setDoc] = useState<ExportDoc | null>(null);
-  const [presenting, setPresenting] = useState(false);
+  // The meeting on screen, full size: to work in it, or to present it.
+  const [onScreen, setOnScreen] = useState<null | "open" | "present">(null);
 
   // ── Page 1, as it will come out ──
   const [preview, setPreview] = useState<{ kind: "html"; html: string; landscape?: boolean } | { kind: "img"; src: string; pages: number } | { kind: "rows"; head: string[]; rows: string[][]; total: number } | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
   const lhOn = useLh && !!lh ? lh : null;
-  const previewSig = JSON.stringify([sel, shift.dayKey, shift.kind, every, format, !!lhOn, scope, woShow, woKey, woQuery, woHistory, field, tick, live.length, meeting ? doc : null]);
+  const previewSig = JSON.stringify([sel, shift.dayKey, shift.kind, every, format, !!lhOn, scope, woShow, woKey, woQuery, woAlso, woHistory, field, tick, live.length, meeting ? doc : null]);
   useEffect(() => {
     let alive = true;
     const t = setTimeout(async () => {
@@ -218,7 +235,7 @@ export default function ReportsView(p: Props) {
           const tm = (at: number) => fmtInTz(at, tz, { hour: "numeric", minute: "2-digit", hour12: true });
           if (alive) setPreview({ kind: "rows", head: ["Date", "Time", "Shift", "Task / equipment", "WO", "Step", "Crew", "What happened", "%", "Comment"], rows: rows.slice(0, 40).map((r) => [d(r.at), tm(r.at), r.shift, r.task, r.wo, r.step, r.crew, r.what, r.pct, r.comment]), total: rows.length });
         } else if (sel === "workorders") {
-          const html = await workOrdersPrintDocument({ shown: woShown, milestones: p.milestones, projectId, projectName: p.projectName, tz, times, progress: p.progress, format: woHistory ? "history" : "report", scope: `${woScope}${woHistory ? " · with each step's history" : ""}`, lh: lhOn });
+          const html = await workOrdersPrintDocument({ shown: woShown, milestones: p.milestones, projectId, projectName: p.projectName, tz, times, progress: p.progress, format: woHistory ? "history" : "report", word, scope: `${woScope}${woHistory ? " · with each step's history" : ""}`, lh: lhOn });
           if (alive) setPreview({ kind: "html", html, landscape: true });
         } else if (sel === "field") {
           if (alive) setPreview(field ? { kind: "html", html: fieldTrackerFor(field, { project: name, tz, orders: fieldOrders, dayMs: (x) => dayKeyToMs(x, tz) }), landscape: true } : null);
@@ -270,7 +287,7 @@ export default function ReportsView(p: Props) {
         setMsg(`${rows.length} entr${rows.length === 1 ? "y" : "ies"} exported.`);
         remember({ report: "timelog", label: scope === "shift" ? shiftLabel : "whole job", shift: shiftPick, scope });
       } else if (sel === "workorders") {
-        const html = await workOrdersPrintDocument({ shown: woShown, milestones: p.milestones, projectId, projectName: p.projectName, tz, times, progress: p.progress, format: woHistory ? "history" : "report", scope: `${woScope}${woHistory ? " · with each step's history" : ""}`, lh: lhOn });
+        const html = await workOrdersPrintDocument({ shown: woShown, milestones: p.milestones, projectId, projectName: p.projectName, tz, times, progress: p.progress, format: woHistory ? "history" : "report", word, scope: `${woScope}${woHistory ? " · with each step's history" : ""}`, lh: lhOn });
         printHtml(html, w);
         remember({ report: "workorders", label: woScope });
       } else if (sel === "field" && field) {
@@ -352,14 +369,14 @@ export default function ReportsView(p: Props) {
       {sel === "workorders" && (
         <>
           {row("Which", <>
-            <select value={woShow} onChange={(e) => { const v = e.target.value as Show | "one"; setWoShow(v); if (v === "one" && !woKey) setWoKey(orders[0]?.key ?? ""); }} aria-label="Which work orders"
+            <select value={woShow} onChange={(e) => { const v = e.target.value as Show | "one"; setWoShow(v); setWoAlso([]); if (v === "one" && !woKey) setWoKey(orders[0]?.key ?? ""); }} aria-label="Which work orders"
               className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]">
               {SHOWS.map(([k, l]) => <option key={k} value={k}>{l} ({findOrders(orders, woQuery).filter((o) => showsOrder(o, k, p.marks)).length})</option>)}
               <option value="one">One work order</option>
             </select>
             {woShow !== "one" && woQuery.trim() && (
               <span className="inline-flex items-center gap-1 h-7 px-2 rounded-full bg-[var(--color-surface-2)] text-[12px] font-semibold">“{woQuery.trim()}”
-                <button type="button" onClick={() => setWoQuery("")} aria-label="Clear the search" className="text-[var(--color-text-muted)]"><X className="w-3.5 h-3.5" /></button>
+                <button type="button" onClick={() => { setWoQuery(""); setWoAlso([]); }} aria-label="Clear the search" className="text-[var(--color-text-muted)]"><X className="w-3.5 h-3.5" /></button>
               </span>
             )}
           </>)}
@@ -395,7 +412,12 @@ export default function ReportsView(p: Props) {
         </button>
       )}
       {meeting && <button type="button" disabled={busy || !doc} onClick={() => void run("email")} className={secondary}><Mail className="w-4 h-4" /> Copy for email</button>}
-      {(meeting === "kickoff" || meeting === "closeout") && <button type="button" onClick={() => setPresenting(true)} className={secondary}><Presentation className="w-4 h-4" /> Present</button>}
+      {(meeting === "kickoff" || meeting === "closeout") && (
+        <>
+          <button type="button" onClick={() => setOnScreen("open")} className={secondary} title="The whole meeting on screen: hide sections, lessons, copy as text"><Maximize2 className="w-4 h-4" /> Open</button>
+          <button type="button" onClick={() => setOnScreen("present")} className={secondary}><Presentation className="w-4 h-4" /> Present</button>
+        </>
+      )}
       {msg && <span role="status" className={`text-[12px] font-semibold ${/^Not made|blocked/.test(msg) ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{msg}</span>}
     </div>
   );
@@ -464,14 +486,14 @@ export default function ReportsView(p: Props) {
         ))}
       </nav>
       <div className={`${phoneOpen ? "" : "hidden sm:block"} flex-1 min-w-0 p-4 sm:p-6`}>{detail}</div>
-      {presenting && meeting && (
+      {onScreen && meeting && (
         <div className="fixed inset-0 z-[300] bg-[var(--color-bg,#f8fafc)] overflow-y-auto">
           <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2">
             <b className="text-[14px]">{meta.name}</b>
-            <button type="button" onClick={() => setPresenting(false)} className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12.5px] font-bold"><X className="w-4 h-4" /> Close</button>
+            <button type="button" onClick={() => setOnScreen(null)} className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12.5px] font-bold"><X className="w-4 h-4" /> Close</button>
           </div>
           <div className="max-w-[1400px] mx-auto p-3 sm:p-5">
-            <ShiftReportView {...base} meetingFixed={meeting} presentOnOpen />
+            <ShiftReportView {...base} meetingFixed={meeting} presentOnOpen={onScreen === "present"} />
           </div>
         </div>
       )}

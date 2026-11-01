@@ -1352,7 +1352,7 @@ export default function ExecutionView({
           onDiscovery={canEdit ? openDiscovery : undefined} onNewWorkOrder={canEdit ? openNewWorkOrder : undefined} onOpenReport={onMode ? openReport : undefined} />
       ) : layout === "reports" ? (
         <ReportsView milestones={items} cancelled={cancelled} childrenByParent={childrenOf} progress={progressIndex} shiftTimes={shiftTimes} projectId={projectId} projectName={projectName}
-          canEdit={canEdit} userId={userId} userName={userName ?? userEmail} critical={critical} criticalSource={criticalSourceLabel} marks={marks} pathNow={cpClock} link={reportLink} />
+          canEdit={canEdit} userId={userId} userName={userName ?? userEmail} critical={critical} criticalSource={criticalSourceLabel} marks={marks} pathNow={cpClock} link={reportLink} onLinkUsed={() => setReportLink(null)} />
       ) : layout === "shift" ? (
         <ShiftReportView milestones={items} cancelled={cancelled} userId={userId} userName={userName ?? userEmail} canEdit={canEdit} progress={progressIndex} projectId={projectId} projectName={projectName} onUpdateStep={updateStep} onDiscovery={canEdit ? openDiscovery : undefined} onNewWorkOrder={canEdit ? openNewWorkOrder : undefined} pathNow={cpClock} onPlanNext={canEdit && onMoveMany ? setPlanNext : undefined} onFixTimes={canEdit ? fixTimes : undefined}
           meetingFixed="turnover" onOpenReport={onMode ? openReport : undefined} />

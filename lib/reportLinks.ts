@@ -36,6 +36,8 @@ export interface ReportLink {
   /** Work order report: which work orders ("open", "behind"…) and a search. */
   show?: string;
   query?: string;
+  /** Work order report: work orders left open there, printed as well. */
+  also?: string[];
   /** Each opening applies afresh, even of the same report. */
   n?: number;
 }

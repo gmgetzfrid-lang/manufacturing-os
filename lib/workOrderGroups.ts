@@ -147,6 +147,8 @@ export async function workOrdersPrintDocument(o: {
   shown: WorkOrder[]; milestones: Milestone[]; projectId?: string; projectName?: string;
   tz: string; times: ShiftTimes; progress?: Map<string, ProgressInfo>;
   format: PrintFormat; scope: string; lh: Letterhead | null;
+  /** What kind of project it is, in a sentence ("turnaround"; lib/projectType). */
+  word?: string;
 }): Promise<string> {
   const { shown, milestones, projectId, tz, times, progress, format } = o;
   const history = format === "history";
@@ -169,7 +171,7 @@ export async function workOrdersPrintDocument(o: {
   const hist = new Map<string, TimeLogRow[]>();
   if (history && projectId) {
     const log = await loadProgressLog(projectId);
-    for (const r of buildTimeLog({ milestones, log: log ?? [], notes, tz, times })) {
+    for (const r of buildTimeLog({ milestones, log: log ?? [], notes, tz, times, word: o.word })) {
       if (!r.id) continue;
       const list = hist.get(r.id);
       if (list) list.push(r); else hist.set(r.id, [r]);

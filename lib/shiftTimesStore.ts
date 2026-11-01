@@ -44,7 +44,8 @@ export async function loadProjectShiftTimes(projectId: string): Promise<ShiftTim
   // The letterhead lives beside the times (lib/letterheadStore) — not carried here.
   const { letterhead: _letterhead, ...times } = raw ?? {};
   const t = raw ? { ...DEFAULT_SHIFT_TIMES, ...times } : DEFAULT_SHIFT_TIMES;
-  const safe = shiftTimesProblem(t) ? DEFAULT_SHIFT_TIMES : t;
+  // Times that don't check out fall back to the defaults; the project type beside them stays.
+  const safe = shiftTimesProblem(t) ? { ...DEFAULT_SHIFT_TIMES, ...(t.projectType ? { projectType: t.projectType } : {}) } : t;
   const prev = readShiftTimes(projectId);
   if (JSON.stringify(prev) !== JSON.stringify(safe)) cache(projectId, safe);
   return safe;
@@ -165,7 +166,8 @@ export async function saveProjectType(projectId: string, t: ProjectType): Promis
   cache(projectId, { ...readShiftTimes(projectId), projectType: pt });
 }
 
-/** The project's type (Setup › Project type, else read from its name). */
-export function useProjectType(projectId?: string | null, name?: string | null): ProjectType {
-  return projectTypeOf(useShiftTimes(projectId).projectType, name);
+/** The project's type (Setup › Project type, else read from its name and
+ *  its schedule's group names: "TA Execution", "DEC OUTAGE"). */
+export function useProjectType(projectId?: string | null, name?: string | null, groups: string[] = []): ProjectType {
+  return projectTypeOf(useShiftTimes(projectId).projectType, name, groups);
 }

@@ -24,6 +24,19 @@ describe("project type", () => {
     expect(projectTypeOf(null, "Spring 2027 outage").word).toBe("Outage");
     expect(projectTypeOf(null, "Crude unit S/D").word).toBe("Shutdown");
   });
+  it("nothing in the name: the schedule's groups say it (only a turnaround, outage or shutdown)", () => {
+    expect(projectTypeOf(null, "Transmix-1 2026", ["TA Execution", "Maintenance"]).word).toBe("Turnaround");
+    expect(projectTypeOf(null, "Unit 3 2027", ["DEC OUTAGE"]).word).toBe("Outage");
+    // A "Maintenance" phase is part of the job, not its kind.
+    expect(projectTypeOf(null, "Unit 3 2027", ["Transmix-1 - Maintenance"])).toEqual(DEFAULT_PROJECT_TYPE);
+    // The name decides first.
+    expect(projectTypeOf(null, "Spring outage", ["Transmix-1 Turnaround"]).word).toBe("Outage");
+  });
+  it("its own word in capitals still means units down", () => {
+    expect(unitsDown({ word: "TAR", short: "TAR" })).toBe(true);
+    expect(unitsDown({ word: "Unit 3 work", short: "T/A" })).toBe(true);
+    expect(unitsDown({ word: "Tie-in", short: "Tie-in" })).toBe(false);
+  });
   it("\"ta\" in lower case is a word, not a turnaround", () => {
     expect(projectTypeOf(null, "Pump data cleanup")).toEqual(DEFAULT_PROJECT_TYPE);
   });

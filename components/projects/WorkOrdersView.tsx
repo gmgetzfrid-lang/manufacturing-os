@@ -25,6 +25,7 @@ import type { PrintFormat } from "@/lib/workOrdersPrint";
 import { groupWorkOrders, showsOrder, findOrders, fieldOrdersOf, workOrdersPrintDocument, SHOW_WORD, STANDING, descOf, type Show, type WorkOrder } from "@/lib/workOrderGroups";
 import { printHtml } from "@/lib/updatePrint";
 import type { ReportLink } from "@/lib/reportLinks";
+import { useProjectWord } from "@/components/projects/ProjectTypeContext";
 import { fieldTrackerFor, type FieldOrder } from "@/lib/fieldTracker";
 import FieldTrackerPrint, { type FieldChoice } from "@/components/projects/FieldTrackerPrint";
 import { CancelJobForm } from "@/components/projects/CancelledJobs";
@@ -54,6 +55,7 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
   onNewWorkOrder?: () => void;
 }) {
   const [now] = useState(() => Date.now());
+  const word = useProjectWord();
   const [query, setQuery] = useState("");
   const [show, setShow] = useState<Show>("all");
   const [open, setOpen] = useState<Set<string>>(new Set());
@@ -85,7 +87,7 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
     w.document.write(`<p style="font:14px Arial,sans-serif;padding:24px">Getting ${shown.length} work order${shown.length === 1 ? "" : "s"} ready to print…</p>`);
     try {
       const scope = `${SHOW_WORD[show]}${query.trim() ? ` · search “${query.trim()}”` : ""}${format === "history" ? " · with each step's history" : ""}`;
-      printHtml(await workOrdersPrintDocument({ shown, milestones, projectId, projectName, tz, times, progress, format, scope, lh }), w);
+      printHtml(await workOrdersPrintDocument({ shown, milestones, projectId, projectName, tz, times, progress, format, scope, lh, word }), w);
     } catch (e) {
       w.document.body.textContent = `Couldn't get the work orders ready: ${(e as Error).message}`;
     }
@@ -149,11 +151,11 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
               <span className="fixed inset-0 z-[40]" onClick={() => setPrintMenu(false)} aria-hidden />
               <span className="absolute right-0 top-full mt-1 z-[41] w-72 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-1.5 flex flex-col text-[12px]">
                 <span className="px-2 pt-1 pb-1.5 text-[11px] text-[var(--color-text-muted)]">The {shown.length} work order{shown.length === 1 ? "" : "s"} shown, each opened up with all its steps. Your view here stays as it is.</span>
-                <button type="button" onClick={() => { if (onOpenReport) { setPrintMenu(false); onOpenReport({ id: "workorders", show, query }); } else void printIt("report"); }} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)]">
+                <button type="button" onClick={() => { if (onOpenReport) { setPrintMenu(false); onOpenReport({ id: "workorders", show, query, also: [...open] }); } else void printIt("report"); }} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)]">
                   <span className="font-semibold">Report</span>
                   <span className="block text-[11px] text-[var(--color-text-muted)]">Plan, actual, status, % and the latest comment</span>
                 </button>
-                <button type="button" onClick={() => { if (onOpenReport) { setPrintMenu(false); onOpenReport({ id: "workorders", show, query, history: true }); } else void printIt("history"); }} disabled={!projectId} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                <button type="button" onClick={() => { if (onOpenReport) { setPrintMenu(false); onOpenReport({ id: "workorders", show, query, also: [...open], history: true }); } else void printIt("history"); }} disabled={!projectId} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)] disabled:opacity-50">
                   <span className="font-semibold">Report with history</span>
                   <span className="block text-[11px] text-[var(--color-text-muted)]">Every start, % update, hold and comment, with its time</span>
                 </button>

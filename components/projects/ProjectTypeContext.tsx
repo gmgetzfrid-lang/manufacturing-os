@@ -9,8 +9,10 @@ import { useProjectType } from "@/lib/shiftTimesStore";
 
 const Ctx = createContext<ProjectType>(DEFAULT_PROJECT_TYPE);
 
-export function ProjectTypeProvider({ projectId, projectName, children }: { projectId: string; projectName?: string; children: React.ReactNode }) {
-  const t = useProjectType(projectId, projectName);
+export function ProjectTypeProvider({ projectId, projectName, groups, children }: { projectId: string; projectName?: string;
+  /** The schedule's group names (phases, tasks with steps): read for the type until it's set. */
+  groups?: string[]; children: React.ReactNode }) {
+  const t = useProjectType(projectId, projectName, groups);
   return <Ctx.Provider value={t}>{children}</Ctx.Provider>;
 }
 
