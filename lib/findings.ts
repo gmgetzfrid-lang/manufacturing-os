@@ -26,7 +26,7 @@ export type FindingKind = "problem" | "lesson" | "material" | "missed_scope";
 export type AppliesTo = "equipment" | "unit" | "project" | "all";
 export const TOPICS = ["Materials", "Planning", "Contractors", "Permits", "Staffing", "Safety", "Scheduling", "Other"] as const;
 export type Topic = (typeof TOPICS)[number];
-export type FindingSource = "manual" | "discovery" | "note" | "hold" | "lesson" | "lessons_learned";
+export type FindingSource = "manual" | "discovery" | "note" | "hold" | "lesson" | "lessons_learned" | "record";
 export type FindingStatus = "open" | "kept" | "dropped";
 
 export const KINDS: FindingKind[] = ["problem", "lesson", "material", "missed_scope"];
@@ -35,8 +35,12 @@ export const APPLIES: AppliesTo[] = ["equipment", "unit", "project", "all"];
 export const APPLIES_WORD: Record<AppliesTo, string> = { equipment: "Equipment", unit: "Unit", project: "This project", all: "All jobs" };
 /** Where a suggestion came from, as the review says it. */
 export const SOURCE_WORD: Record<FindingSource, string> = {
-  manual: "+ Finding", discovery: "Added to the schedule", note: "Comment", hold: "On hold", lesson: "Close-out lesson", lessons_learned: "Lessons learned",
+  manual: "+ Finding", discovery: "Added to the schedule", note: "Comment", hold: "On hold", lesson: "Close-out lesson", lessons_learned: "Lessons learned", record: "Project records",
 };
+
+/** What the project's records say (cost, change orders, late work,
+ *  rejected turnover items, missing evidence; lib/projectReport). */
+export interface RecordLesson { ref: string; kind: FindingKind; topic: Topic; text: string; nextTime: string }
 
 export interface FindingFields {
   kind: FindingKind;
@@ -214,6 +218,8 @@ export interface SuggestInput {
   lessons?: Lesson[];
   /** The old "Lessons learned" box (projects.lessons_learned). */
   lessonsLearned?: string | null;
+  /** What the project's records say (lib/projectReport recordLessons). */
+  records?: RecordLesson[];
   /** The project's unit (Setup › Unit & equipment). */
   unitCode?: string | null;
 }
@@ -306,6 +312,15 @@ export function suggestFindings(input: SuggestInput): FindingDraft[] {
     const text = clean(raw.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, ""));
     if (text.length < 12 || /:$/.test(text)) continue;
     out.push(base(undefined, text, "lessons_learned", hashOf(text.toLowerCase()), Date.now(), null));
+  }
+
+  // 6. The project's records: cost, change orders, late work, rejected
+  //    turnover items, missing evidence (what the old box drafted).
+  for (const r of input.records ?? []) {
+    const text = clean(r.text);
+    if (!text) continue;
+    const x = base(undefined, text, "record", r.ref, Date.now(), null);
+    out.push({ ...x, kind: r.kind, topic: r.topic, appliesTo: "project", assetTag: null, assetId: null, nextTime: clean(r.nextTime) });
   }
 
   return out.sort((a, b) => a.foundAt - b.foundAt);

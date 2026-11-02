@@ -11,6 +11,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import type { Milestone, MilestoneNote } from "@/types/schema";
 import { listMilestones, notesFor } from "@/lib/milestones";
+import { recordLessons } from "@/lib/projectReport";
 import { useShiftRecords, CLOSEOUT_KEY } from "@/lib/shiftRecord";
 import { fmtInTz, normalizeTimeZone } from "@/lib/scheduleTz";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
@@ -22,7 +23,7 @@ import {
   APPLIES, APPLIES_WORD, KINDS, KIND_WORD, TOPICS, FINDINGS_SQL, ACK_WORD,
   suggestFindings, reviewState, fieldsProblem, equipmentOf, guessKind, guessTopic, tagKey, findingLine, pastJobsFor,
   listFindings, listKeptFindings, saveFinding, listAcks, setAck, FindingsMissing,
-  type AckStatus, type Equipment, type Finding, type FindingDraft, type FindingFields, type ReviewState,
+  type AckStatus, type Equipment, type Finding, type FindingDraft, type FindingFields, type RecordLesson, type ReviewState,
 } from "@/lib/findings";
 
 export const NEW_FINDING_EVENT = "finding:new";
@@ -118,18 +119,20 @@ export function useFindingsReview(orgId: string | null | undefined, projectId: s
   const { rows, missing, loaded, reload } = useProjectFindings(projectId);
   const { records } = useShiftRecords(projectId);
   const unit = useProjectUnit(orgId, projectId);
-  const [base, setBase] = useState<{ milestones: Milestone[]; notes: MilestoneNote[]; lessonsLearned: string | null } | null>(null);
+  const [base, setBase] = useState<{ milestones: Milestone[]; notes: MilestoneNote[]; lessonsLearned: string | null; records: RecordLesson[] } | null>(null);
   useEffect(() => {
     if (!orgId) return;
     let alive = true;
     const read = async () => {
       const milestones = await listMilestones({ orgId, projectId });
       const ids = milestones.map((m) => m.id).filter(Boolean) as string[];
-      const [notes, ll] = await Promise.all([
+      const [notes, ll, records] = await Promise.all([
         ids.length ? notesFor(ids) : Promise.resolve([] as MilestoneNote[]),
         supabase.from("projects").select("lessons_learned").eq("id", projectId).maybeSingle().then((r) => ((r.data as { lessons_learned?: string | null } | null)?.lessons_learned ?? null), () => null),
+        // Cost, change orders, late work, rejected turnover, missing evidence.
+        recordLessons(orgId, projectId).catch(() => [] as RecordLesson[]),
       ]);
-      if (alive) setBase({ milestones, notes, lessonsLearned: ll });
+      if (alive) setBase({ milestones, notes, lessonsLearned: ll, records });
     };
     void read().catch(() => undefined);
     const on = () => void read().catch(() => undefined);
@@ -137,7 +140,7 @@ export function useFindingsReview(orgId: string | null | undefined, projectId: s
     return () => { alive = false; window.removeEventListener("milestone-notes:changed", on); };
   }, [orgId, projectId]);
   const lessons = records.get(CLOSEOUT_KEY)?.lessons;
-  const drafts = useMemo(() => (base ? suggestFindings({ milestones: base.milestones, notes: base.notes, lessons, lessonsLearned: base.lessonsLearned, unitCode: unit?.code ?? null }) : []), [base, lessons, unit]);
+  const drafts = useMemo(() => (base ? suggestFindings({ milestones: base.milestones, notes: base.notes, lessons, lessonsLearned: base.lessonsLearned, records: base.records, unitCode: unit?.code ?? null }) : []), [base, lessons, unit]);
   const state = useMemo<ReviewState>(() => reviewState(drafts, rows), [drafts, rows]);
   const equipment = useMemo(() => (base ? projectEquipmentList(base.milestones) : []), [base]);
   return { state, missing, ready: !!base && loaded, unit, equipment, milestones: base?.milestones ?? [], reload };

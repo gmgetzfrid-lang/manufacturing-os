@@ -1,13 +1,13 @@
-// lib/projectReport.ts — the PROJECT REPORT (boss brief) and the
-// lessons-learned draft.
+// lib/projectReport.ts — the PROJECT REPORT (boss brief) and what the
+// records say as lessons for the close-out review.
 //
 // One click, one printable page that answers the boss's four questions:
 // what is this, where's the money, where's the schedule, is the quality
 // program clean. Every number comes from rows the platform already holds —
-// the report is a view, never a second bookkeeping system. The
-// lessons-learned draft is auto-written from the project's exhaust (change
-// orders by reason, schedule slips, rejected turnover, punch history) so
-// closeout starts from facts, and a human edits it into the record.
+// the report is a view, never a second bookkeeping system. The same facts
+// (cost, change orders by reason, late work, rejected turnover, missing
+// evidence) are suggested as lessons in the close-out's Lessons & findings
+// review, where a person edits, keeps or drops each.
 
 import { activeOnly } from "@/lib/activeMilestones";
 import { supabase } from "@/lib/supabase";
@@ -17,6 +17,7 @@ import { listTurnoverItems, computeTurnoverProgress } from "@/lib/turnover";
 import { listChecklists, listChecklistItems, computeChecklistProgress } from "@/lib/checklists";
 import { computeForecast } from "@/lib/costSeries";
 import { openPrintWindow } from "@/lib/evidencePack";
+import type { RecordLesson } from "@/lib/findings";
 
 const FINDING_KIND: Record<string, string> = { problem: "Problem", lesson: "Lesson", material: "Material", missed_scope: "Missed scope" };
 
@@ -194,64 +195,38 @@ export async function openProjectReport(orgId: string, projectId: string): Promi
 
 // ── Lessons learned ──────────────────────────────────────────────────────
 
-/** Draft lessons learned from the project's exhaust — facts first, for a
- *  human to edit. Returns plain text ready for the projects.lessons_learned
- *  column. */
-export async function draftLessonsLearned(orgId: string, projectId: string): Promise<string> {
+/** The same facts as lessons for the close-out review (Lessons & findings):
+ *  one each, with what to do next time. Status lines (punch items still
+ *  open, turnover outstanding) and "a clean job" are left out: they aren't
+ *  lessons. */
+export async function recordLessons(orgId: string, projectId: string): Promise<RecordLesson[]> {
   const d = await gatherReportData(orgId, projectId);
   const cur = d.rollup.currencies[0] ?? "USD";
   const money = (n: number) => fmtMoney(n, cur);
-  const lines: string[] = [];
-
+  const out: RecordLesson[] = [];
   if (d.rollup.budget > 0) {
-    const overUnder = d.rollup.remaining >= 0 ? "under" : "over";
-    lines.push(`COST: Finished ${money(Math.abs(d.rollup.remaining))} ${overUnder} the ${money(d.rollup.budget)} budget${d.rollup.cpi != null ? ` (CPI ${d.rollup.cpi.toFixed(2)})` : ""}.`);
+    const over = d.rollup.remaining < 0;
+    out.push({
+      ref: "cost", kind: over ? "problem" : "lesson", topic: "Other",
+      text: `Finished ${money(Math.abs(d.rollup.remaining))} ${over ? "over" : "under"} the ${money(d.rollup.budget)} budget${d.rollup.cpi != null ? ` (CPI ${d.rollup.cpi.toFixed(2)})` : ""}`,
+      nextTime: over ? "Check which accounts ran over and budget them closer next time" : "",
+    });
   }
+  const NEXT: Record<CoReason, string> = {
+    scope_gap: "Tighten the RFQ scope description and the bid-tab gap check",
+    field_condition: "More up-front inspection on similar jobs",
+    owner_request: "Lock scope earlier or budget an allowance",
+    design_error: "Review the design check that let it through",
+    other: "Review each one",
+  };
   for (const r of d.cos.byReason) {
-    const why: Record<CoReason, string> = {
-      scope_gap: "the bid missed scope - tighten the RFQ scope description and the bid-tab gap check next time",
-      field_condition: "conditions found during work - consider more up-front inspection on similar jobs",
-      owner_request: "we asked for more after award - lock scope earlier or budget an allowance",
-      design_error: "our drawings/scope were wrong - review the design check that let it through",
-      other: "review individually",
-    };
-    lines.push(`CHANGE ORDERS (${CO_REASON_LABEL[r.reason]}): ${r.count} for ${money(r.amount)} - ${why[r.reason]}.`);
+    out.push({ ref: `co:${r.reason}`, kind: "problem", topic: r.reason === "field_condition" ? "Planning" : r.reason === "design_error" ? "Planning" : "Contractors",
+      text: `${r.count} change order${r.count === 1 ? "" : "s"} for ${money(r.amount)}: ${CO_REASON_LABEL[r.reason].toLowerCase()}`, nextTime: NEXT[r.reason] });
   }
-  if (d.overdue > 0) {
-    lines.push(`SCHEDULE: ${d.overdue} milestone${d.overdue === 1 ? "" : "s"} finished (or sat) past their planned date - check which activities slipped and why.`);
-  } else if (d.milestones.length > 0) {
-    lines.push("SCHEDULE: No overdue milestones at report time.");
-  }
-  if (d.turnover.rejected > 0) {
-    lines.push(`QUALITY: ${d.turnover.rejected} turnover item${d.turnover.rejected === 1 ? "" : "s"} rejected on first submission - feed the rejection reasons back to the contractor's record.`);
-  }
-  if (d.turnover.outstanding.length > 0) {
-    lines.push(`CLOSEOUT: Turnover still outstanding at draft time: ${d.turnover.outstanding.join(", ")}.`);
-  }
-  const evidenceGaps = d.checklistLines.reduce((s, c) => s + c.needsEvidence, 0);
-  if (evidenceGaps > 0) {
-    lines.push(`EVIDENCE: ${evidenceGaps} checklist item${evidenceGaps === 1 ? "" : "s"} closed without system-held evidence - capture those documents next job so proof is automatic.`);
-  }
-  if (d.punchOpen > 0) {
-    lines.push(`PUNCH: ${d.punchOpen} item${d.punchOpen === 1 ? "" : "s"} still open.`);
-  }
-  if (lines.length === 0) {
-    lines.push("Clean job on the record: budget held, schedule held, quality program closed out. Note anything the numbers can't see (crew, coordination, vendor performance) by hand.");
-  }
-  return lines.join("\n\n");
+  if (d.overdue > 0) out.push({ ref: "overdue", kind: "problem", topic: "Scheduling", text: `${d.overdue} milestone${d.overdue === 1 ? "" : "s"} finished (or sat) past the planned date`, nextTime: "Check which activities slipped and why before planning the next one" });
+  if (d.turnover.rejected > 0) out.push({ ref: "quality", kind: "problem", topic: "Contractors", text: `${d.turnover.rejected} turnover item${d.turnover.rejected === 1 ? "" : "s"} rejected on first submission`, nextTime: "Feed the rejection reasons back to the contractor's record" });
+  const gaps = d.checklistLines.reduce((s, c) => s + c.needsEvidence, 0);
+  if (gaps > 0) out.push({ ref: "evidence", kind: "problem", topic: "Other", text: `${gaps} checklist item${gaps === 1 ? "" : "s"} closed without the evidence held in the system`, nextTime: "Capture those documents during the job so the proof is automatic" });
+  return out;
 }
 
-export async function saveLessonsLearned(input: {
-  orgId: string; projectId: string; text: string; actorId: string; actorEmail?: string | null;
-}): Promise<{ ok: boolean; error?: string }> {
-  const { error } = await supabase.from("projects")
-    .update({ lessons_learned: input.text.trim() || null })
-    .eq("id", input.projectId);
-  if (error) return { ok: false, error: error.message };
-  await supabase.from("audit_logs").insert({
-    action: "PROJECT_LESSONS_SAVED", resource_type: "project", resource_id: input.projectId,
-    org_id: input.orgId, user_id: input.actorId, user_email: input.actorEmail ?? null,
-    details: { length: input.text.length },
-  }).then(() => undefined, () => undefined);
-  return { ok: true };
-}

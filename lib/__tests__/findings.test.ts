@@ -108,6 +108,10 @@ describe("suggestions from the record", () => {
     const d = suggestFindings({ milestones: [], notes: [], lessonsLearned: "Change orders:\n- Scaffold requests went in a day late\n- ok" });
     expect(d.map((x) => x.body)).toEqual(["Scaffold requests went in a day late"]);
   });
+  it("the project's records (what the old Lessons learned box drafted): project-wide, with next time", () => {
+    const d = suggestFindings({ milestones: [], notes: [], records: [{ ref: "co:scope_gap", kind: "problem", topic: "Contractors", text: "3 change orders for $12,000: scope gap", nextTime: "Tighten the RFQ scope description" }] });
+    expect(d).toEqual([expect.objectContaining({ source: "record", sourceRef: "co:scope_gap", appliesTo: "project", kind: "problem", topic: "Contractors", nextTime: "Tighten the RFQ scope description", from: "Project records" })]);
+  });
   it("stable keys: the same record makes the same suggestion", () => {
     const again = suggestFindings({ milestones: ms, notes, unitCode: "55" });
     expect(again.map((d) => d.key)).toEqual(drafts.filter((d) => d.source !== "lesson").map((d) => d.key));
