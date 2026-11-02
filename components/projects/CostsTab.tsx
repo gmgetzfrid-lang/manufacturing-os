@@ -37,6 +37,8 @@ import { BudgetDocDrop, BudgetImportSheet } from "@/components/projects/cost/Bud
 import type { BudgetReadResult } from "@/lib/budgetImport";
 import { resolveFileUrl } from "@/lib/storage";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import { AfeCard, LineEditor, BudgetHistory, EntryRevise } from "@/components/projects/cost/CostEdits";
+import { loadBudgetHistory, type BudgetChange } from "@/lib/costRevisions";
 
 const COST_TYPES = ["labor", "material", "equipment", "subcontract", "other"] as const;
 type CostView = "overview" | "budget" | "quotes" | "invoices" | "changes";
@@ -73,6 +75,9 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   const [importing, setImporting] = useState<BudgetReadResult | null>(null);
   const [showDrop, setShowDrop] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // A budget line being edited, and each line's budget changes.
+  const [editingLine, setEditingLine] = useState<string | null>(null);
+  const [budgetHistory, setBudgetHistory] = useState<Map<string, BudgetChange[]>>(new Map());
 
   const actor = useMemo(() => ({ uid, email: userEmail ?? null }), [uid, userEmail]);
 
@@ -119,6 +124,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         authorized: pb.authorized_amount == null ? null : Number(pb.authorized_amount),
         docId: (pb.budget_doc_id as string | null) ?? null,
       } : null);
+      setBudgetHistory(await loadBudgetHistory(projectId));
     } catch (e) {
       setErr((e as Error).message);
     } finally { setLoading(false); }
@@ -272,19 +278,20 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
           <FileCheck2 className="w-4 h-4 text-[var(--color-accent)]" />
           <span className="text-sm font-bold text-[var(--color-text)]">Budget basis</span>
-          {basis?.afeNumber && <span className="text-[11px] font-mono text-[var(--color-text-muted)]">{basis.afeNumber}</span>}
-          {basis?.chargeAccount && <span className="text-[11px] text-[var(--color-text-muted)]">· A/C <span className="font-mono">{basis.chargeAccount}</span></span>}
-          {basis?.authorized != null && <span className="text-[11px] text-[var(--color-text-muted)]">· authorized <span className="font-black text-[var(--color-text)] tabular-nums">{fmtMoney(basis.authorized, cur)}</span></span>}
-          {basisDoc?.fileUrl && (
-            <button onClick={() => void openBasisDoc()} className="text-[11px] font-bold text-[var(--color-accent)] hover:underline">view document</button>
-          )}
           {canManage && !importing && accounts.length > 0 && (
             <button onClick={() => setShowDrop((v) => !v)}
               className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
-              <FileUp className="w-3 h-3" /> Add from a document
+              <FileUp className="w-3 h-3" /> Read a revised AFE or budget sheet
             </button>
           )}
         </div>
+        {/* How the money is tracked, in one line. */}
+        <div className="px-4 pt-2.5 text-[11.5px] text-[var(--color-text-muted)]">
+          <b className="text-[var(--color-text)]">AFE</b> (what&apos;s authorized) → <b className="text-[var(--color-text)]">Budget lines</b> (how it&apos;s split, by contractor or scope) → <b className="text-[var(--color-text)]">Quotes / POs</b> (awarded, committed) → <b className="text-[var(--color-text)]">Invoices</b> (spent). Each can be changed; every change is kept with why.
+        </div>
+        <AfeCard orgId={orgId} projectId={projectId} afe={basis} linesTotal={rollup.budget} cur={cur} canManage={canManage} actor={actor}
+          onOpenDoc={basisDoc?.fileUrl ? () => void openBasisDoc() : undefined}
+          onSaved={(msg) => { setNotice(msg); void refresh(); }} />
         {importing ? (
           <BudgetImportSheet orgId={orgId} projectId={projectId} actor={actor} result={importing}
             accounts={accounts} parties={parties}
@@ -294,10 +301,6 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
           <div className="p-4">
             <BudgetDocDrop orgId={orgId} projectId={projectId} onRead={setImporting}
               label={accounts.length === 0 ? "Drop the AFE, estimate, or budget sheet - the cost model builds itself" : undefined} />
-          </div>
-        ) : !basis?.afeNumber && basis?.authorized == null ? (
-          <div className="px-4 py-3 text-[11px] text-[var(--color-text-muted)]">
-            No authorization document on file. {canManage ? "Use \u201cAdd from a document\u201d to attach the AFE / estimate this project is approved under." : ""}
           </div>
         ) : null}
       </div>
@@ -344,7 +347,8 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
               const accEntries = entriesByAccount.get(r.account.id) ?? [];
               return (
                 <div key={r.account.id} className={r.overBudget ? "bg-rose-500/[0.04]" : undefined}>
-                  <button onClick={() => setOpenAccount(isOpen ? null : r.account.id)} className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
+                  <div className="flex items-stretch">
+                  <button onClick={() => setOpenAccount(isOpen ? null : r.account.id)} className="flex-1 min-w-0 px-4 py-3 flex items-center gap-3 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
                     {isOpen ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -381,11 +385,27 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
                       )}
                     </div>
                   </button>
+                  {canManage && (
+                    <button onClick={() => setEditingLine(editingLine === r.account.id ? null : r.account.id)} aria-label={`Edit ${r.account.name}`}
+                      title="Change the budget, contractor, name or type"
+                      className="shrink-0 self-center mr-3 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[11.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      Edit
+                    </button>
+                  )}
+                  </div>
+                  {editingLine === r.account.id && (
+                    <div className="px-4 pb-3">
+                      <LineEditor orgId={orgId} projectId={projectId} account={r.account} parties={parties} actor={actor}
+                        onCancel={() => setEditingLine(null)}
+                        onSaved={(msg) => { setEditingLine(null); setNotice(msg); void refresh(); }} />
+                    </div>
+                  )}
 
                   {isOpen && (
                     <AccountDetail
                       orgId={orgId} projectId={projectId} actor={actor}
                       rollup={r} entries={accEntries} parties={parties} milestones={milestones}
+                      history={budgetHistory.get(r.account.id) ?? []} onNotice={setNotice}
                       canManage={canManage} busy={busy} setBusy={setBusy}
                       onChanged={() => void refresh()} setErr={setErr}
                     />
@@ -539,27 +559,18 @@ function StatCard({ icon, label, value, sub, tone }: {
   );
 }
 
-function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, milestones, canManage, busy, setBusy, onChanged, setErr }: {
+function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, milestones, history, onNotice, canManage, busy, setBusy, onChanged, setErr }: {
   orgId: string; projectId: string; actor: { uid: string; email: string | null };
   rollup: import("@/lib/costs").AccountRollup;
   entries: CostEntry[]; parties: CostParty[]; milestones: Array<{ id: string; name: string; pct: number }>;
+  history: BudgetChange[]; onNotice: (m: string) => void;
   canManage: boolean; busy: string | null; setBusy: (v: string | null) => void;
   onChanged: () => void; setErr: (m: string | null) => void;
 }) {
   const a = r.account;
-  const [budgetDraft, setBudgetDraft] = useState(String(a.budget));
   const [pinDraft, setPinDraft] = useState(a.wbsMilestoneId ?? "");
+  const [revising, setRevising] = useState<string | null>(null);
   const cur = a.currency ?? "USD";
-
-  const saveBudget = async () => {
-    const n = Number(budgetDraft);
-    if (!Number.isFinite(n) || n < 0) { setErr("Budget must be a non-negative number."); return; }
-    if (n === a.budget) return;
-    setBusy(a.id);
-    const res = await saveAccount({ orgId, projectId, id: a.id, patch: { budget: n }, actor });
-    setBusy(null);
-    if (!res.ok) setErr(res.error ?? "Couldn't save the budget."); else onChanged();
-  };
   const savePin = async (v: string) => {
     setPinDraft(v);
     setBusy(a.id);
@@ -572,13 +583,6 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
     <div className="px-4 pb-4 pt-1 space-y-3 border-t border-dashed border-[var(--color-border)]">
       {canManage && (
         <div className="flex items-end gap-3 flex-wrap pt-2">
-          <label className="block">
-            <span className="text-[9px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Budget ({cur})</span>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <input value={budgetDraft} onChange={(e) => setBudgetDraft(e.target.value)} onBlur={() => void saveBudget()}
-                className="h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono tabular-nums" />
-            </div>
-          </label>
           <label className="block">
             <span className="text-[9px] font-black uppercase tracking-wider text-[var(--color-text-muted)]" title="Earned value = budget × the pinned task's % complete">Pin to schedule task (for EV)</span>
             <select value={pinDraft} onChange={(e) => void savePin(e.target.value)}
@@ -593,6 +597,8 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
         </div>
       )}
 
+      <BudgetHistory changes={history} cur={cur} />
+
       {canManage && <EntryForm orgId={orgId} projectId={projectId} accountId={a.id} parties={parties} actor={actor} onDone={onChanged} setErr={setErr} />}
 
       {entries.length === 0 ? (
@@ -600,7 +606,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
       ) : (
         <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
           {entries.map((e) => (
-            <li key={e.id} className={`px-3 py-2 flex items-center gap-2 text-xs ${e.status === "void" ? "opacity-50" : ""}`}>
+            <li key={e.id} className={`px-3 py-2 flex flex-wrap items-center gap-2 text-xs ${e.status === "void" ? "opacity-50" : ""}`}>
               <span className={`shrink-0 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${
                 e.entryType === "commitment" ? "text-sky-700 dark:text-sky-300 border-sky-500/40 bg-sky-500/10"
                 : e.entryType === "actual" ? "text-violet-700 dark:text-violet-300 border-violet-500/40 bg-violet-500/10"
@@ -630,6 +636,17 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
                 >
                   <Ban className="w-3 h-3" /> Void
                 </button>
+              )}
+              {canManage && e.status !== "void" && revising !== e.id && (
+                <button onClick={() => setRevising(e.id)} title="A revised quote, PO or invoice: the old amount stays on the record, struck through"
+                  className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                  Change amount
+                </button>
+              )}
+              {revising === e.id && (
+                <EntryRevise orgId={orgId} projectId={projectId} entry={e} cur={cur} actor={actor}
+                  onCancel={() => setRevising(null)}
+                  onDone={(msg) => { setRevising(null); onNotice(msg); onChanged(); }} />
               )}
             </li>
           ))}

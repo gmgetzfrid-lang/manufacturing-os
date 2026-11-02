@@ -26,6 +26,8 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { createProject } from "@/lib/projects";
 import { seedTurnoverItems } from "@/lib/turnover";
+import { PROJECT_TYPES, projectTypeOf, isDefaultType } from "@/lib/projectType";
+import { saveProjectType } from "@/lib/shiftTimesStore";
 import { listCompanies, type Company } from "@/lib/companies";
 import type { ProjectVisibility } from "@/types/schema";
 import { BudgetDocDrop } from "@/components/projects/cost/BudgetImport";
@@ -67,6 +69,9 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [jobKind, setJobKind] = useState<string>("standard");
+  // The kind of project (Setup › Project type): read from the name until
+  // picked; "Other" saves nothing.
+  const [kindPick, setKindPick] = useState<string | null>(null);
   const [moc, setMoc] = useState("");
   const [targetDate, setTargetDate] = useState("");
   // The plant's zone — prefilled from this device, which is usually at the
@@ -256,6 +261,15 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
         }))).then(() => undefined, () => undefined);
       }
 
+      // The kind of project, as picked (or read from the name): the
+      // Projects page groups by it and the reports say it.
+      {
+        const guessed = projectTypeOf(null, name);
+        const word = kindPick ?? (isDefaultType(guessed) ? (jobKind === "capital" ? "Capital project" : null) : guessed.word);
+        const t = word && word !== "Other" ? PROJECT_TYPES.find((x) => x.word === word) : null;
+        if (t) await saveProjectType(projectId, t).catch(() => undefined);
+      }
+
       // Turnover package seeds, sized to the job. Failure is non-fatal —
       // the Quality tab can seed on demand.
       await seedTurnoverItems({
@@ -312,6 +326,22 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                 <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2}
                   placeholder="What is this project about? What will the team do?"
                   className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y bg-[var(--color-surface)]" />
+              </Field>
+              <Field label="Kind of project - groups it on the Projects page">
+                {(() => {
+                  const guessed = projectTypeOf(null, name);
+                  const kind = kindPick ?? (isDefaultType(guessed) ? (jobKind === "capital" ? "Capital project" : "Other") : guessed.word);
+                  return (
+                    <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Kind of project">
+                      {[...PROJECT_TYPES.map((t) => t.word), "Other"].map((w) => (
+                        <button key={w} type="button" role="radio" aria-checked={kind === w} onClick={() => setKindPick(w)}
+                          className={`rounded-lg border px-2.5 py-1.5 text-xs font-bold ${kind === w ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]/50 text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}>
+                          {w}
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })()}
               </Field>
               <Field label="Job size - sets sensible defaults, never permissions">
                 <div className="grid sm:grid-cols-3 gap-2">

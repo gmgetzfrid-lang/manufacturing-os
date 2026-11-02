@@ -102,6 +102,10 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
   const recon = useMemo(() => reconcileBudget({ ...p, lines: included }), [p, included]);
   const plan = useMemo(() => planBudgetApply(included, accounts, parties), [included, accounts, parties]);
   const skipped = useMemo(() => new Set(plan.accountsSkipped.map((s) => s.name.toLowerCase())), [plan]);
+  // Existing lines whose budget the document changes: changed unless unticked.
+  const updates = useMemo(() => new Map(plan.accountsToUpdate.map((u) => [u.name.toLowerCase(), u])), [plan]);
+  const [keepBudgets, setKeepBudgets] = useState<Set<string>>(new Set());
+  const updating = plan.accountsToUpdate.filter((u) => !keepBudgets.has(u.name.toLowerCase())).length;
 
   const patch = (key: string, v: Partial<EditLine>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...v } : l)));
 
@@ -110,13 +114,14 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
     try {
       const registry = await listCompanies(orgId).catch(() => []);
       const parsed: ParsedBudgetDoc = { ...p, lines: included.map(({ key: _k, include: _i, ...l }) => l) };
-      const res = await applyBudgetToProject({ orgId, projectId, parsed, source: result.source, registry, actor });
+      const res = await applyBudgetToProject({ orgId, projectId, parsed, source: result.source, registry, actor, keepBudgets: [...keepBudgets] });
       if (!res.ok) { setError(res.error ?? "Couldn't apply the budget."); return; }
       onApplied([
         `${res.accountsCreated} budget line${res.accountsCreated === 1 ? "" : "s"}`,
         res.partiesCreated ? `${res.partiesCreated} compan${res.partiesCreated === 1 ? "y" : "ies"}` : null,
       ].filter(Boolean).join(" and ") + " created"
-        + (res.skipped.length ? ` · ${res.skipped.length} already existed (left as is)` : "")
+        + (res.updated ? ` · ${res.updated} budget${res.updated === 1 ? "" : "s"} changed` : "")
+        + (res.skipped.length ? ` · ${res.skipped.length} unchanged` : "")
         + (res.error ? ` · note: ${res.error}` : ""));
     } catch (e) {
       setError((e as Error).message);
@@ -182,6 +187,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
           <tbody className="divide-y divide-[var(--color-border)]">
             {lines.map((l) => {
               const exists = l.include && skipped.has(l.name.trim().toLowerCase());
+              const upd = l.include ? updates.get(l.name.trim().toLowerCase()) : undefined;
               const known = l.supplier ? matchParty(l.supplier, parties) : null;
               return (
                 <tr key={l.key} className={l.include ? "" : "opacity-45"}>
@@ -192,9 +198,16 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                   <td className="py-1.5 pr-2">
                     <input value={l.name} onChange={(e) => patch(l.key, { name: e.target.value })}
                       className="w-full h-7 rounded-md border border-transparent hover:border-[var(--color-border)] focus:border-[var(--color-border-strong)] bg-transparent px-1.5 text-xs font-bold text-[var(--color-text)]" />
-                    {(exists || l.note) && (
+                    {(exists || upd || l.note) && (
                       <div className="px-1.5 text-[10px] text-[var(--color-text-muted)]">
-                        {exists && <span className="font-bold text-amber-700 dark:text-amber-300">Already a budget line - left as is. </span>}
+                        {exists && <span className="font-bold text-[var(--color-text-muted)]">Already a budget line, same budget. </span>}
+                        {upd && (
+                          <label className="inline-flex items-center gap-1 font-bold text-amber-800 dark:text-amber-300">
+                            <input type="checkbox" checked={!keepBudgets.has(upd.name.toLowerCase())} className="accent-[var(--color-accent)]"
+                              onChange={(e) => setKeepBudgets((k) => { const n = new Set(k); if (e.target.checked) n.delete(upd.name.toLowerCase()); else n.add(upd.name.toLowerCase()); return n; })} />
+                            Change its budget {fmtMoney(upd.from, cur)} → {fmtMoney(upd.to, cur)}
+                          </label>
+                        )}
                         {l.note}
                       </div>
                     )}
@@ -238,16 +251,16 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
       <div className="px-4 py-2.5 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <span className="text-[10px] text-[var(--color-text-muted)] inline-flex items-center gap-1">
           <Building2 className="w-3 h-3" />
-          Creates {plan.accountsToCreate.length} budget line{plan.accountsToCreate.length === 1 ? "" : "s"}
+          Creates {plan.accountsToCreate.length} budget line{plan.accountsToCreate.length === 1 ? "" : "s"}{updating ? `, changes ${updating} budget${updating === 1 ? "" : "s"}` : ""}
           {plan.partiesToCreate.length > 0 ? ` and ${plan.partiesToCreate.length} compan${plan.partiesToCreate.length === 1 ? "y" : "ies"} (${plan.partiesToCreate.join(", ")})` : ""}.
           {" "}No money is posted - quotes and invoices do that.
         </span>
         {error && <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300">{error}</span>}
         <span className="ml-auto flex items-center gap-2">
           <button onClick={onClose} disabled={applying} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1">Cancel</button>
-          <button onClick={() => void apply()} disabled={applying || (plan.accountsToCreate.length === 0 && recon.authorized == null)}
+          <button onClick={() => void apply()} disabled={applying || (plan.accountsToCreate.length === 0 && updating === 0 && recon.authorized == null)}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
-            {applying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} Build cost model
+            {applying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} {accounts.length ? "Apply" : "Build cost model"}
           </button>
         </span>
       </div>

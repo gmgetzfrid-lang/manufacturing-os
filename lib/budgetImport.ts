@@ -16,6 +16,7 @@
 import { supabase } from "@/lib/supabase";
 import { uploadToPath } from "@/lib/storage";
 import { listAccounts, listParties, type Actor } from "@/lib/costs";
+import { reviseAccount, readAfe, appendAfeHistory } from "@/lib/costRevisions";
 import {
   planBudgetApply, matchParty, sameCompany,
   type BudgetLine, type BudgetReconciliation, type ParsedBudgetDoc, type CostType,
@@ -173,8 +174,11 @@ export async function applyBudgetToProject(input: {
   parsed: ParsedBudgetDoc;          // with the reviewer's edits applied to .lines
   source: BudgetSource | null;
   registry?: Array<{ id: string; name: string }>;
+  /** Existing budget lines whose budget the reviewer chose NOT to change
+   *  (by name, lower case); every other changed line is updated. */
+  keepBudgets?: string[];
   actor: Actor;
-}): Promise<{ ok: boolean; error?: string; accountsCreated: number; partiesCreated: number; skipped: string[] }> {
+}): Promise<{ ok: boolean; error?: string; accountsCreated: number; partiesCreated: number; skipped: string[]; updated: number }> {
   const [accounts, parties] = await Promise.all([
     listAccounts(input.orgId, input.projectId),
     listParties(input.orgId, input.projectId),
@@ -197,22 +201,39 @@ export async function applyBudgetToProject(input: {
       created_by: input.actor.uid,
     }))).select("id");
     if (error) {
-      return { ok: false, error: `Budget lines not saved: ${error.message}`, accountsCreated: 0, partiesCreated: parties2.created, skipped: [] };
+      return { ok: false, error: `Budget lines not saved: ${error.message}`, accountsCreated: 0, partiesCreated: parties2.created, skipped: [], updated: 0 };
     }
     accountsCreated = (data ?? []).length;
   }
 
+  // A revised AFE or budget sheet: the existing lines whose budget changed,
+  // as the reviewer left them ticked, each kept in the line's history.
+  const keep = new Set((input.keepBudgets ?? []).map((n) => n.toLowerCase()));
+  const label = [input.parsed.docType, input.parsed.docNumber].filter(Boolean).join(" ") || input.source?.fileName || "the revised budget";
+  let updated = 0;
+  const updateErrors: string[] = [];
+  for (const u of plan.accountsToUpdate) {
+    if (keep.has(u.name.toLowerCase())) continue;
+    const account = accounts.find((a) => (u.id && a.id === u.id) || a.name.trim().toLowerCase() === u.name.toLowerCase());
+    if (!account) continue;
+    const res = await reviseAccount({ orgId: input.orgId, projectId: input.projectId, account, patch: { budget: u.to }, note: `From ${label}`, actor: input.actor });
+    if (res.ok) updated++; else updateErrors.push(`${u.name}: ${res.error}`);
+  }
+
+  const afeBefore = await readAfe(input.projectId);
   const { docId, error: basisError } = await recordBudgetBasis({
     orgId: input.orgId, projectId: input.projectId, parsed: input.parsed, source: input.source, actor: input.actor,
   });
+  const afeAfter = await readAfe(input.projectId);
+  if (afeBefore && afeAfter) await appendAfeHistory(input.projectId, afeBefore, afeAfter, `Read from ${label}`, input.actor);
   await audit("COST_BUDGET_IMPORTED", input.orgId, docId ?? input.projectId, input.actor, {
     projectId: input.projectId, docNumber: input.parsed.docNumber, authorized: input.parsed.authorizedAmount,
     accountsCreated, partiesCreated: parties2.created,
     skipped: plan.accountsSkipped.map((s) => s.name), fileName: input.source?.fileName ?? null,
   });
   return {
-    ok: true, error: [parties2.error, basisError].filter(Boolean).join("; ") || undefined,
+    ok: true, error: [parties2.error, basisError, ...updateErrors].filter(Boolean).join("; ") || undefined,
     accountsCreated, partiesCreated: parties2.created,
-    skipped: plan.accountsSkipped.map((s) => s.name),
+    skipped: plan.accountsSkipped.map((s) => s.name), updated,
   };
 }

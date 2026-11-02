@@ -981,6 +981,11 @@ export interface Project {
   /** IANA zone the schedule is read and written in ("America/Chicago").
    *  Null = UTC, the pre-timezone behaviour. See lib/scheduleTz.ts. */
   timezone?: string | null;
+  /** Setup › Project type as saved (projects.shift_times.projectType); read
+   *  with lib/projectType projectTypeOf. */
+  projectTypeSaved?: unknown;
+  /** The wizard's job size: small | standard | capital. */
+  jobKind?: string | null;
   completedAt?: Timestamp;
   cancelledAt?: Timestamp;
   cancelledReason?: string;

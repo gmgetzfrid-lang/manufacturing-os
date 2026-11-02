@@ -524,7 +524,9 @@ export default function ProjectDetailPage() {
           <CostsTab
             orgId={project.orgId}
             projectId={project.id}
-            canManage={!!isAdmin || !!isOwner}
+            // The owner, a co-owner or an org Admin / Document Control (the
+            // database lets co-owners in after 20261116_cost_controls.sql).
+            canManage={!!isAdmin || !!access.canManage}
             uid={uid}
             userEmail={userEmail}
             onDataChanged={() => setCoachKey((k) => k + 1)}

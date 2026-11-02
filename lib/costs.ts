@@ -128,7 +128,7 @@ export async function saveParty(input: {
   orgId: string; projectId: string; id?: string | null;
   patch: Partial<Pick<CostParty, "name" | "kind" | "trade" | "defaultRate" | "contractValue" | "contactName" | "contactEmail" | "status">>;
   actor: Actor;
-}): Promise<{ ok: boolean; error?: string }> {
+}): Promise<{ ok: boolean; error?: string; id?: string }> {
   const row: Record<string, unknown> = {};
   if (input.patch.name !== undefined) row.name = input.patch.name?.trim();
   if (input.patch.kind !== undefined) row.kind = input.patch.kind || null;
@@ -150,7 +150,7 @@ export async function saveParty(input: {
     .select("id").single();
   if (error || !data) return { ok: false, error: error?.message ?? "Couldn't create the party." };
   await audit("COST_PARTY_CREATED", input.orgId, String(data.id), input.actor, { name: row.name });
-  return { ok: true };
+  return { ok: true, id: String(data.id) };
 }
 
 // ── accounts ────────────────────────────────────────────────────────────

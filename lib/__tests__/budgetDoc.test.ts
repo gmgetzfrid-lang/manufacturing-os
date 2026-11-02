@@ -155,19 +155,29 @@ describe("money and names", () => {
 });
 
 describe("planBudgetApply", () => {
-  it("creates new lines and companies, skips existing lines, reuses existing companies", () => {
+  it("creates new lines and companies, offers a changed budget on an existing line, reuses existing companies", () => {
     const doc = validateParsedBudgetDoc(AFE_RAW);
+    const scaffold = doc.lines.find((l) => l.name === "Scaffolding")!;
     const plan = planBudgetApply(
       doc.lines,
-      [{ name: "scaffolding", budget: 40_000 }],
+      [{ id: "a-scaf", name: "scaffolding", budget: 40_000 }],
       [{ id: "p1", name: "SWAT Industrial LLC" }, { id: "p2", name: "Ancon" }],
     );
-    expect(plan.accountsSkipped).toEqual([{ name: "Scaffolding", existingBudget: 40_000 }]);
+    // A revised AFE: the line exists, its budget changed - offered, not skipped.
+    expect(plan.accountsToUpdate).toEqual([{ id: "a-scaf", name: "Scaffolding", from: 40_000, to: scaffold.amount }]);
+    expect(plan.accountsSkipped).toEqual([]);
     expect(plan.accountsToCreate).toHaveLength(11);
     expect(plan.partiesToCreate).not.toContain("Ancon");
     expect(plan.partiesToCreate).not.toContain("SWAT");
     expect(plan.partiesToCreate).not.toContain("Brand"); // its only line was skipped
     expect(plan.partiesToCreate).toContain("JVG");
+  });
+  it("the same budget on an existing line: nothing to do", () => {
+    const doc = validateParsedBudgetDoc(AFE_RAW);
+    const scaffold = doc.lines.find((l) => l.name === "Scaffolding")!;
+    const plan = planBudgetApply(doc.lines, [{ id: "a-scaf", name: "Scaffolding", budget: scaffold.amount ?? 0 }], []);
+    expect(plan.accountsSkipped).toEqual([{ name: "Scaffolding", existingBudget: scaffold.amount }]);
+    expect(plan.accountsToUpdate).toEqual([]);
   });
 });
 

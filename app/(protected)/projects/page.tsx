@@ -5,13 +5,17 @@
 // Public projects are visible to every user in the org; private projects
 // surface only for members + owners. Admin / DocCtrl always see everything.
 // Default sort is most-recent-activity. Filters across status / owner / text.
+// Grouped by the kind of project (Turnarounds, Capital projects…: Setup ›
+// Project type, else read from the name), with a chip per kind to narrow
+// the list to one.
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Briefcase, Plus, Search, Lock, Globe, AlertTriangle,
-  Calendar, User as UserIcon, Layers, ChevronRight, Download,
+  Calendar, User as UserIcon, Layers, ChevronRight, ChevronDown, Download,
 } from "lucide-react";
+import { listedTypeOf, typePlural, typeOrder } from "@/lib/projectType";
 import { useRole } from "@/components/providers/RoleContext";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
@@ -90,6 +94,36 @@ export default function ProjectsPage() {
   useEffect(() => { void refresh(); }, [refresh]);
   const filterActive = statusFilter !== "active" || searchQ.length > 0;
 
+  // The kinds of project on screen, each with its projects (most recent
+  // activity first, as listed). A kind picked narrows the list to it.
+  const groups = useMemo(() => {
+    const m = new Map<string, { key: string; label: string; order: number; items: Project[] }>();
+    for (const p of projects) {
+      const t = listedTypeOf(p);
+      const key = typePlural(t).toLowerCase();
+      const g = m.get(key) ?? { key, label: typePlural(t), order: typeOrder(t), items: [] };
+      g.items.push(p);
+      m.set(key, g);
+    }
+    return [...m.values()].sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
+  }, [projects]);
+  const [typePick, setTypeFilter] = useState<string | null>(null);
+  // A kind with nothing left on screen (another status, a search) lets go.
+  const typeFilter = typePick && groups.some((g) => g.key === typePick) ? typePick : null;
+  const shownGroups = typeFilter ? groups.filter((g) => g.key === typeFilter) : groups;
+  // Groups folded away on this device.
+  const foldKey = `projects.folded:${activeOrgId ?? ""}`;
+  const [folded, setFolded] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    try { setFolded(new Set(JSON.parse(localStorage.getItem(foldKey) ?? "[]") as string[])); } catch { /* private mode */ }
+  }, [foldKey]);
+  const toggleFold = (key: string) => setFolded((f) => {
+    const n = new Set(f);
+    if (n.has(key)) n.delete(key); else n.add(key);
+    try { localStorage.setItem(foldKey, JSON.stringify([...n])); } catch { /* private mode */ }
+    return n;
+  });
+
   return (
     <PageShell width="work">
         <StaleCheckoutBanner userId={uid ?? undefined} />
@@ -141,6 +175,23 @@ export default function ProjectsPage() {
           ))}
         </div>
 
+        {/* KINDS OF PROJECT */}
+        {groups.length > 1 && (
+          <div className="flex flex-wrap items-center gap-1.5 mb-3" role="group" aria-label="Kind of project">
+            <button onClick={() => setTypeFilter(null)} aria-pressed={!typeFilter}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${!typeFilter ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
+              All kinds
+            </button>
+            {groups.map((g) => (
+              <button key={g.key} onClick={() => setTypeFilter(typeFilter === g.key ? null : g.key)} aria-pressed={typeFilter === g.key}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${typeFilter === g.key ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
+                {g.label}
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono ${typeFilter === g.key ? "bg-white/20" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{g.items.length}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* SEARCH */}
         <div className="mb-6 relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
@@ -177,8 +228,28 @@ export default function ProjectsPage() {
             <EmptyState onCreate={() => setShowCreate(true)} />
           )
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {projects.map((p) => <ProjectCard key={p.id} project={p} />)}
+          <div className="space-y-6">
+            {shownGroups.map((g) => {
+              const open = !folded.has(g.key) || !!typeFilter;
+              return (
+                <section key={g.key} aria-label={g.label}>
+                  <button onClick={() => toggleFold(g.key)} aria-expanded={open}
+                    className="w-full flex items-center gap-2 mb-3 pb-1.5 border-b border-[var(--color-border)] text-left">
+                    {open ? <ChevronDown className="w-4 h-4 text-[var(--color-text-muted)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)]" />}
+                    <h2 className="text-sm font-black text-[var(--color-text)]">{g.label}</h2>
+                    <span className="text-[11px] font-mono text-[var(--color-text-muted)]">{g.items.length}</span>
+                  </button>
+                  {open && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {g.items.map((p) => <ProjectCard key={p.id} project={p} />)}
+                    </div>
+                  )}
+                </section>
+              );
+            })}
+            {groups.some((g) => g.label === "Other projects") && (
+              <p className="text-[11px] text-[var(--color-text-faint)]">A project goes under its kind from its name, or from Setup › Project type on the project.</p>
+            )}
           </div>
         )}
 

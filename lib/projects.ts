@@ -44,6 +44,8 @@ export function rowToProject(r: Record<string, unknown>): Project {
     startedAt: r.started_at as Timestamp,
     targetCompletionDate: r.target_completion_date as Timestamp,
     timezone: (r.timezone as string | null | undefined) ?? null,
+    projectTypeSaved: (r.shift_times as { projectType?: unknown } | null | undefined)?.projectType ?? null,
+    jobKind: (r.job_kind as string | null | undefined) ?? null,
     completedAt: r.completed_at as Timestamp,
     cancelledAt: r.cancelled_at as Timestamp,
     cancelledReason: r.cancelled_reason as string | undefined,

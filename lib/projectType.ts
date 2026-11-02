@@ -78,3 +78,28 @@ export function typeWord(t: ProjectType): string {
 export function unitsDown(t: ProjectType): boolean {
   return /turn[\s-]*around|outage|shut[\s-]*down/i.test(t.word) || /^(TA|TAR|T\/A|S\/D)$/.test(t.short.trim()) || /^(TA|TAR|T\/A|S\/D)$/.test(t.word.trim());
 }
+
+/** A project's type on the projects list: as set in Setup, else read from
+ *  its name, else a capital-sized job is a capital project. */
+export function listedTypeOf(p: { projectTypeSaved?: unknown; name: string; jobKind?: string | null }): ProjectType {
+  const t = projectTypeOf(p.projectTypeSaved, p.name);
+  if (isDefaultType(t) && p.jobKind === "capital") return PROJECT_TYPES[3];
+  return t;
+}
+
+/** The heading for a group of them: "Turnarounds", "Capital projects";
+ *  a word that doesn't take an s ("Maintenance") stays as it is. */
+export function typePlural(t: ProjectType): string {
+  if (isDefaultType(t)) return "Other projects";
+  const w = t.word;
+  if (/(maintenance|construction|work)$/i.test(w) || /s$/i.test(w) || /^[A-Z0-9/ -]+$/.test(w)) return w;
+  return `${w}s`;
+}
+
+/** Order the groups: the usual kinds first, then the project's own words,
+ *  plain projects last. */
+export function typeOrder(t: ProjectType): number {
+  if (isDefaultType(t)) return 1000;
+  const i = PROJECT_TYPES.findIndex((x) => x.word.toLowerCase() === t.word.toLowerCase());
+  return i >= 0 ? i : 100;
+}

@@ -264,24 +264,32 @@ const tokens = (s: string): Set<string> =>
 export interface BudgetApplyPlan {
   partiesToCreate: string[];
   accountsToCreate: Array<{ name: string; budget: number; costType: CostType; supplier: string | null; note: string | null }>;
-  /** Lines whose budget line already exists by name — left untouched; the
-   *  existing line's budget changes only through a change order. */
+  /** Lines whose budget line already exists by name with the same budget:
+   *  nothing to do. */
   accountsSkipped: Array<{ name: string; existingBudget: number }>;
+  /** Lines whose budget line already exists by name with a different
+   *  budget (a revised AFE or budget sheet): offered as a budget change. */
+  accountsToUpdate: Array<{ id: string | null; name: string; from: number; to: number }>;
 }
 
 export function planBudgetApply(
   lines: BudgetLine[],
-  existingAccounts: Array<{ name: string; budget: number }>,
+  existingAccounts: Array<{ id?: string; name: string; budget: number }>,
   existingParties: Array<{ id: string; name: string }>,
 ): BudgetApplyPlan {
-  const plan: BudgetApplyPlan = { partiesToCreate: [], accountsToCreate: [], accountsSkipped: [] };
+  const plan: BudgetApplyPlan = { partiesToCreate: [], accountsToCreate: [], accountsSkipped: [], accountsToUpdate: [] };
   const seen = new Set<string>();
   for (const l of lines) {
     const key = l.name.trim().toLowerCase();
     if (!key || seen.has(key)) continue;
     seen.add(key);
     const existing = existingAccounts.find((a) => a.name.trim().toLowerCase() === key);
-    if (existing) { plan.accountsSkipped.push({ name: l.name, existingBudget: existing.budget }); continue; }
+    if (existing) {
+      const to = l.amount != null ? Math.max(0, l.amount) : null;
+      if (to != null && Math.abs(to - existing.budget) >= 0.005) plan.accountsToUpdate.push({ id: existing.id ?? null, name: l.name.trim(), from: existing.budget, to });
+      else plan.accountsSkipped.push({ name: l.name, existingBudget: existing.budget });
+      continue;
+    }
     plan.accountsToCreate.push({
       name: l.name.trim(), budget: Math.max(0, l.amount ?? 0), costType: l.costType,
       supplier: l.supplier, note: l.note,
