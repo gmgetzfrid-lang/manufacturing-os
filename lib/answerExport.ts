@@ -249,7 +249,8 @@ export function buildAnswerExport(question: string, answer: KnowledgeAnswer): An
 
   // Web sources (only when the Web switch was on): kept apart from the
   // documents, each with its page and the text it relied on.
-  const web = answer.citations.filter((c) => !!c.url);
+  // Past jobs (a link inside the app) are listed on their own, below.
+  const web = answer.citations.filter((c) => !!c.url && !c.url.startsWith("/"));
   if (web.length > 0) {
     rows.push(heading("From the web - not your controlled documents"));
     rows.push(`<tr><td style="padding-bottom:8px;${FONT};font-size:12px;color:${MUTED}">A web page about a code is not the code - verify against the publication.</td></tr>`);
@@ -262,6 +263,19 @@ export function buildAnswerExport(question: string, answer: KnowledgeAnswer): An
         `</table></td></tr>`);
       text.push(`[${c.n}] ${c.title ?? c.url} - ${c.url}`);
       if (c.quote) text.push(`    "${c.quote.trim()}"`);
+    }
+    text.push("");
+  }
+
+  // Past jobs: findings kept at earlier close-out reviews, with the project
+  // and date in their own words (the link only works inside the app).
+  const jobs = answer.citations.filter((c) => !!c.url && c.url.startsWith("/"));
+  if (jobs.length > 0) {
+    rows.push(heading("From past jobs"));
+    text.push("FROM PAST JOBS - kept at the close-out reviews of earlier projects");
+    for (const c of jobs) {
+      rows.push(`<tr><td style="padding-bottom:8px;${FONT};font-size:13px;line-height:1.55;color:#334155"><sup style="color:#c2410c">[${c.n}]</sup> ${esc(c.quote ?? c.title ?? "")}</td></tr>`);
+      text.push(`[${c.n}] ${c.quote ?? c.title ?? ""}`);
     }
     text.push("");
   }

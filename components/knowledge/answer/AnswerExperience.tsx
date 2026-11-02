@@ -1247,7 +1247,10 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
   const [shaping, setShaping] = useState(false);
   const [proof, setProof] = useState<ProofState | null>(null);
   const libraryCitations = useMemo(() => answer.citations.filter((c) => !c.url), [answer.citations]);
-  const webCitations = useMemo(() => answer.citations.filter((c) => !!c.url && answer.knowledgeSource === "documents_and_web"), [answer.citations, answer.knowledgeSource]);
+  // A link inside the app ("/projects/…") is a past job (findings kept at a
+  // close-out review), not a web page.
+  const webCitations = useMemo(() => answer.citations.filter((c) => !!c.url && !c.url.startsWith("/") && answer.knowledgeSource === "documents_and_web"), [answer.citations, answer.knowledgeSource]);
+  const jobCitations = useMemo(() => answer.citations.filter((c) => !!c.url && c.url.startsWith("/")), [answer.citations]);
   const hasRoles = libraryCitations.some((c) => c.role);
 
   // ── The proof trail's state lives here so a cite tap can drive it ──
@@ -1589,6 +1592,23 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
                     </div>
                   );
                 })}
+              </div>
+            )}
+            {jobCitations.length > 0 && (
+              <div className="mt-5 space-y-2">
+                <div className="flex items-center gap-2 font-mono text-[10.5px] font-bold uppercase tracking-[0.12em] text-orange-700 dark:text-orange-300">
+                  From past jobs <span className="text-[var(--color-text-faint)]">{jobCitations.length}</span>
+                </div>
+                <p className="text-[11px] text-[var(--color-text-muted)]">Kept at the close-out reviews of earlier projects.</p>
+                {jobCitations.map((c) => (
+                  <div key={c.n} className={`rounded-xl border bg-[var(--color-surface)] px-3 py-2.5 space-y-1.5 ${flashN === c.n ? "border-orange-500" : "border-[var(--color-border)]"}`}>
+                    <div className="flex items-start gap-2">
+                      <span className="mt-0.5 min-w-[1.375rem] h-[1.375rem] px-1 rounded-md bg-orange-100 dark:bg-orange-950/60 text-orange-700 dark:text-orange-300 font-mono text-[11px] font-bold flex items-center justify-center">{c.n}</span>
+                      <span className="min-w-0 text-[12.5px] leading-relaxed text-[var(--color-text)]">{c.quote ?? c.title}</span>
+                    </div>
+                    <a href={c.url} className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text)] hover:border-orange-400">Open the project</a>
+                  </div>
+                ))}
               </div>
             )}
           </aside>

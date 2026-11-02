@@ -12,10 +12,11 @@ import { supabase } from "@/lib/supabase";
 import type { Milestone, MilestoneNote } from "@/types/schema";
 import { listMilestones, notesFor } from "@/lib/milestones";
 import { recordLessons } from "@/lib/projectReport";
-import { useShiftRecords, CLOSEOUT_KEY } from "@/lib/shiftRecord";
+import { useShiftRecords, saveShiftRecord, newId, CLOSEOUT_KEY } from "@/lib/shiftRecord";
 import { fmtInTz, normalizeTimeZone } from "@/lib/scheduleTz";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { useProjectTypeCtx } from "@/components/projects/ProjectTypeContext";
+import { useProjectType } from "@/lib/shiftTimesStore";
 import { listEdgesFor } from "@/lib/estate/client";
 import { nid } from "@/lib/estate/ids";
 import { setupOrders } from "@/lib/projectEquipment";
@@ -146,6 +147,22 @@ export function useFindingsReview(orgId: string | null | undefined, projectId: s
   return { state, missing, ready: !!base && loaded, unit, equipment, milestones: base?.milestones ?? [], reload };
 }
 
+/** Before the database update: kept with the close-out's team lessons (a
+ *  record that already exists), so nothing typed is lost. It comes into the
+ *  Lessons & findings review as a suggestion once the update is run. */
+async function saveAsTeamLesson(input: { orgId: string; projectId: string; userId: string | null; userName: string | null; v: FindingFields }): Promise<boolean> {
+  if (!input.userId) return false;
+  const v = input.v;
+  const what = v.appliesTo === "equipment" && v.assetTag ? `${v.assetTag}: ${v.body.trim()}` : v.body.trim();
+  const text = [what, v.nextTime.trim() ? `Next time: ${v.nextTime.trim()}` : ""].filter(Boolean).join(". ");
+  await saveShiftRecord({
+    orgId: input.orgId, projectId: input.projectId, shiftKey: CLOSEOUT_KEY, userId: input.userId,
+    change: (r) => ({ ...r, lessons: [...(r.lessons ?? []), { id: newId(), kind: "improve", text, by: input.userName, at: Date.now() }] }),
+  });
+  return true;
+}
+const SAVED_AS_LESSON = "Saved with the close-out's team lessons. It joins the Lessons & findings review once the database update is run.";
+
 // ─── The fields ────────────────────────────────────────────────────
 
 function Chips<T extends string>({ value, options, word, onPick, name }: { value: T; options: readonly T[]; word: (t: T) => string; onPick: (t: T) => void; name: string }) {
@@ -260,6 +277,7 @@ function FindingDialog({ orgId, projectId, projectType, milestones, canEdit, mil
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
   const save = async () => {
     const problem = fieldsProblem({ ...v, unitCode: unit?.code ?? null });
     if (problem) { setErr(problem); return; }
@@ -272,7 +290,11 @@ function FindingDialog({ orgId, projectId, projectType, milestones, canEdit, mil
       });
       setSaved(true);
       setTimeout(onClose, 900);
-    } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
+    } catch (e) {
+      if (e instanceof FindingsMissing && await saveAsTeamLesson({ orgId, projectId, userId: uid ?? null, userName: userEmail ?? null, v }).catch(() => false)) {
+        setSaved(true); setNote(SAVED_AS_LESSON); setTimeout(onClose, 3500);
+      } else setErr(errText(e));
+    } finally { setBusy(false); }
   };
   return (
     <Modal onClose={onClose} size="md">
@@ -285,6 +307,7 @@ function FindingDialog({ orgId, projectId, projectType, milestones, canEdit, mil
           </>
         )}
         {err && <div className="mt-2 text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
+        {note && <div role="status" className="mt-2 text-[12px] font-semibold text-emerald-700 dark:text-emerald-400">{note}</div>}
       </ModalBody>
       <ModalFooter>
         <div className="flex w-full items-center justify-end gap-2">
@@ -313,11 +336,19 @@ export function AddFindingButton({ milestoneId, at, compact, className = "" }: {
 
 // ─── The close-out review ──────────────────────────────────────────
 
-export function FindingsReview({ orgId, projectId, projectType, canEdit, timeZone }: { orgId: string; projectId: string; projectType: string; canEdit: boolean; timeZone?: string | null }) {
+export function FindingsReview({ orgId, projectId, projectType: given, projectName, canEdit, timeZone }: { orgId: string; projectId: string;
+  /** The project's type as the schedule reads it; left out (the project's
+   *  header), it's read here the same way: Setup, else the name, else the
+   *  schedule's group names. */
+  projectType?: string; projectName?: string | null; canEdit: boolean; timeZone?: string | null }) {
   const { uid, userEmail } = useRole();
+  const [note, setNote] = useState<string | null>(null);
   const ctxTz = useScheduleTz();
   const tz = timeZone ? normalizeTimeZone(timeZone) : ctxTz;
   const r = useFindingsReview(orgId, projectId);
+  const groups = useMemo(() => { const parents = new Set(r.milestones.map((m) => m.parentId).filter(Boolean)); return r.milestones.filter((m) => m.isSummary || (m.id && parents.has(m.id))).map((m) => m.name); }, [r.milestones]);
+  const readType = useProjectType(projectId, projectName, groups).word;
+  const projectType = given ?? readType;
   const [editing, setEditing] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -357,7 +388,8 @@ export function FindingsReview({ orgId, projectId, projectType, canEdit, timeZon
       </div>
       <p className="text-[12px] text-[var(--color-text-faint)]">From added scope and discoveries, comments, hold reasons, + Finding and the team&apos;s lessons. Edit any one, then keep it or drop it. Only kept ones go to the Intelligence graph, Ask and the next job&apos;s plan.</p>
 
-      {adding && <AddRow orgId={orgId} projectId={projectId} projectType={projectType} equipment={r.equipment} unit={r.unit} actor={actor} onDone={() => setAdding(false)} />}
+      {adding && <AddRow orgId={orgId} projectId={projectId} projectType={projectType} equipment={r.equipment} unit={r.unit} actor={actor} onDone={() => setAdding(false)} onNote={setNote} />}
+      {note && <div role="status" className="text-[12px] font-semibold text-emerald-700 dark:text-emerald-400">{note}</div>}
 
       {left > 0 && (
         <ul className="space-y-2">
@@ -477,9 +509,9 @@ function RowEditor({ draft, busy, kept, equipment, unitLabel, onKeep, onDrop, on
   );
 }
 
-function AddRow({ orgId, projectId, projectType, equipment, unit, actor, onDone }: {
+function AddRow({ orgId, projectId, projectType, equipment, unit, actor, onDone, onNote }: {
   orgId: string; projectId: string; projectType: string; equipment: Equipment[]; unit: { code: string; label: string } | null;
-  actor: { id: string | null; name: string | null }; onDone: () => void;
+  actor: { id: string | null; name: string | null }; onDone: () => void; onNote: (t: string) => void;
 }) {
   const [v, setV] = useState<FindingFields>({ kind: "lesson", appliesTo: "all", topic: "Other", body: "", nextTime: "", assetId: null, assetTag: null, unitCode: null });
   const [busy, setBusy] = useState(false);
@@ -490,7 +522,10 @@ function AddRow({ orgId, projectId, projectType, equipment, unit, actor, onDone 
     if (p) { setErr(p); return; }
     setBusy(true); setErr(null);
     try { await saveFinding({ ...f, orgId, projectId, projectType, source: "manual", status: "kept", actor }); onDone(); }
-    catch (e) { setErr(errText(e)); } finally { setBusy(false); }
+    catch (e) {
+      if (e instanceof FindingsMissing && await saveAsTeamLesson({ orgId, projectId, userId: actor.id, userName: actor.name, v: f }).catch(() => false)) { onNote(SAVED_AS_LESSON); onDone(); }
+      else setErr(errText(e));
+    } finally { setBusy(false); }
   };
   return (
     <div className="rounded-lg border border-[var(--color-accent)] bg-[var(--color-surface)] px-3 py-2.5 space-y-2">
@@ -506,11 +541,11 @@ function AddRow({ orgId, projectId, projectType, equipment, unit, actor, onDone 
 }
 
 /** The review in a window of its own (the Complete gate, Reports). */
-export function FindingsReviewModal({ orgId, projectId, projectType, canEdit, timeZone, onClose }: { orgId: string; projectId: string; projectType: string; canEdit: boolean; timeZone?: string | null; onClose: () => void }) {
+export function FindingsReviewModal({ orgId, projectId, projectType, projectName, canEdit, timeZone, onClose }: { orgId: string; projectId: string; projectType?: string; projectName?: string | null; canEdit: boolean; timeZone?: string | null; onClose: () => void }) {
   return (
     <Modal onClose={onClose} size="xl">
       <ModalHeader icon={Lightbulb} title="Lessons & findings" subtitle="The close-out review: what this job taught, kept for the next one" onClose={onClose} />
-      <ModalBody><FindingsReview orgId={orgId} projectId={projectId} projectType={projectType} canEdit={canEdit} timeZone={timeZone} /></ModalBody>
+      <ModalBody><FindingsReview orgId={orgId} projectId={projectId} projectType={projectType} projectName={projectName} canEdit={canEdit} timeZone={timeZone} /></ModalBody>
       <ModalFooter><div className="flex w-full justify-end"><button type="button" onClick={onClose} className={quiet}>Done</button></div></ModalFooter>
     </Modal>
   );
@@ -584,6 +619,16 @@ export function usePastJobs(orgId: string | null | undefined, projectId: string,
     })().catch(() => undefined);
     return () => { alive = false; };
   }, [orgId, projectId, tick]);
+  // An answer given anywhere (the plan, the kick-off on screen) shows in
+  // every list, and in the kick-off's print and email.
+  useEffect(() => {
+    const on = (e: Event) => {
+      if ((e as CustomEvent).detail?.projectId !== projectId) return;
+      void listAcks(projectId).then(setAcks).catch(() => undefined);
+    };
+    window.addEventListener("findings:acks", on);
+    return () => window.removeEventListener("findings:acks", on);
+  }, [projectId]);
   const equipment = useMemo(() => projectEquipmentList(milestones), [milestones]);
   const list = useMemo<PastJob[]>(() => (all ? pastJobsFor(all.rows, { projectId, unitCode: unit?.code ?? null, equipment, projectType }).map((f) => ({
     finding: f, project: all.names.get(f.projectId) ?? "Another project", at: f.foundAt, ack: acks.get(f.id) ?? null,

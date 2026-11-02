@@ -172,7 +172,10 @@ const actorOf = (a: { id: string | null; name: string | null }) => ({ userId: a.
 /** Set the project's unit: one scope link to it (the one set here before
  *  is taken off). */
 export async function setProjectUnit(input: { orgId: string; projectId: string; projectName: string; unit: UnitChoice; before: EstateEdge[]; actor: { id: string | null; name: string | null } }): Promise<void> {
-  await declareEdge({
+  // Linked already (by hand in Documents › Scope, or here): left as it is,
+  // so a link someone drew is never taken over and later removed.
+  const had = input.before.some((e) => e.b === nid.cbunit(input.unit.code) && e.status === "applied");
+  if (!had) await declareEdge({
     orgId: input.orgId, a: nid.proj(input.projectId), b: nid.cbunit(input.unit.code), type: "project_scope",
     summary: `Project "${input.projectName}" is on ${unitName(input.unit)} - set in Setup`,
     evidence: { source: "setup" }, actor: actorOf(input.actor),
@@ -184,7 +187,10 @@ export async function setProjectUnit(input: { orgId: string; projectId: string; 
 
 /** Save a work order's equipment (null: on no equipment) and link the
  *  equipment to the project for the graph. */
-export async function setWorkOrderEquipment(input: { orgId: string; projectId: string; projectName: string; ownerId: string; title: string; equipment: Equipment | null; actor: { id: string | null; name: string | null } }): Promise<void> {
+export async function setWorkOrderEquipment(input: { orgId: string; projectId: string; projectName: string; ownerId: string; title: string; equipment: Equipment | null; actor: { id: string | null; name: string | null };
+  /** The project's scope links now: one to this equipment already (drawn by
+   *  hand or here) is left as it is. */
+  existing?: EstateEdge[] }): Promise<void> {
   const { data, error } = await supabase.from("milestones").select("attributes").eq("id", input.ownerId).maybeSingle();
   if (error) throw new Error(error.message);
   const attrs = { ...(((data as { attributes?: Record<string, unknown> | null } | null)?.attributes) ?? {}) };
@@ -195,7 +201,8 @@ export async function setWorkOrderEquipment(input: { orgId: string; projectId: s
   } else attrs[EQUIP_NONE] = true;
   const { error: e2 } = await supabase.from("milestones").update({ attributes: attrs, updated_at: new Date().toISOString(), updated_by: input.actor.id }).eq("id", input.ownerId);
   if (e2) throw new Error(e2.message);
-  if (input.equipment?.assetId) {
+  const assetNode = input.equipment?.assetId ? nid.asset(input.equipment.assetId) : null;
+  if (input.equipment?.assetId && !(input.existing ?? []).some((e) => e.b === assetNode && e.status === "applied")) {
     await declareEdge({
       orgId: input.orgId, a: nid.proj(input.projectId), b: nid.asset(input.equipment.assetId), type: "project_scope",
       summary: `Work order "${input.title}" on project "${input.projectName}" is on ${input.equipment.tag}`,

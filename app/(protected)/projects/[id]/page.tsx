@@ -32,7 +32,6 @@ import QualityTab from "@/components/projects/QualityTab";
 import ProjectCoach from "@/components/projects/ProjectCoach";
 import { openProjectReport } from "@/lib/projectReport";
 import { FindingsReviewModal, FindingsGate } from "@/components/projects/Findings";
-import { useProjectType } from "@/lib/shiftTimesStore";
 import { gatherProjectSnapshot } from "@/lib/projectSnapshot";
 import type { ProjectStateSnapshot } from "@/lib/projectHealth";
 import { exportProjectToCsv } from "@/lib/projectExport";
@@ -161,9 +160,6 @@ export default function ProjectDetailPage() {
   const canManage = access.canManage;
   // Deleting the project and handing over ownership: the owner (or an admin), not a co-owner.
   const isOwnerOrAdmin = !!isOwner || isAdmin;
-  // The word findings are filed under ("Turnaround"), so an every-job
-  // lesson reaches the next project of the same kind.
-  const projectType = useProjectType(projectId ?? "", project?.name);
 
   const refresh = useCallback(async () => {
     if (!projectId) return;
@@ -607,7 +603,7 @@ export default function ProjectDetailPage() {
 
       {/* Lessons & findings: the close-out review, from the header or the Complete step. */}
       {reviewOpen && project.id && project.orgId && (
-        <FindingsReviewModal orgId={project.orgId} projectId={project.id} projectType={projectType.word} canEdit={!!canManage || !!access.canEdit} timeZone={project.timezone} onClose={() => setReviewOpen(false)} />
+        <FindingsReviewModal orgId={project.orgId} projectId={project.id} projectName={project.name} canEdit={!!canManage || !!access.canEdit} timeZone={project.timezone} onClose={() => setReviewOpen(false)} />
       )}
 
       {showEdit && uid && (

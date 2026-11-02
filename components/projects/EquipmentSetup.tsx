@@ -96,7 +96,7 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
     if (!orgId) return;
     setBusy(what); setErr(null);
     try { await fn(); }
-    catch (e) { setErr(/permission|policy|row-level/i.test((e as Error).message) ? "Linking to the graph needs an org Admin, Manager, Supervisor or Document Control." : (e as Error).message); }
+    catch (e) { setErr(/permission|policy|row-level/i.test((e as Error).message) ? `Linking the project to its unit and equipment needs the database update (20261115_project_findings.sql), or an org Admin, Manager, Supervisor or Document Control.` : (e as Error).message); }
     finally { setBusy(null); inflight.delete(projectId); window.dispatchEvent(new CustomEvent(EQUIPMENT_CHANGED)); }
   };
 
@@ -104,13 +104,13 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
    *  unit) or on no equipment. `made` keeps a tag added once per run. */
   const saveOne = async (m: WorkOrderMatch, tag: string | null, made = new Map<string, RegistryAsset>()) => {
     if (!orgId) return;
-    if (!tag) { await setWorkOrderEquipment({ orgId, projectId, projectName: name, ownerId: m.ownerId, title: m.title, equipment: null, actor }); noteSaved(projectId, m.ownerId, null); return; }
+    if (!tag) { await setWorkOrderEquipment({ orgId, projectId, projectName: name, ownerId: m.ownerId, title: m.title, equipment: null, actor, existing: data?.edges }); noteSaved(projectId, m.ownerId, null); return; }
     const k = tagKey(tag);
     const hits = (data?.registry ?? []).filter((a) => registryTagKey(a.tag) === k);
     let asset = (m.asset && registryTagKey(m.asset.tag) === k ? m.asset : null) ?? hits.find((a) => a.unitCode === unit?.code) ?? hits[0] ?? made.get(k) ?? null;
     if (!asset && unit) { asset = await addToRegistry({ orgId, tag, unitCode: unit.code, createdBy: userId }); made.set(k, asset); }
     const equipment = { assetId: asset?.id ?? null, tag: asset ? asset.tag.replace(/\s*\(.*$/, "") : tag.trim() };
-    await setWorkOrderEquipment({ orgId, projectId, projectName: name, ownerId: m.ownerId, title: m.title, equipment, actor });
+    await setWorkOrderEquipment({ orgId, projectId, projectName: name, ownerId: m.ownerId, title: m.title, equipment, actor, existing: data?.edges });
     noteSaved(projectId, m.ownerId, equipment);
   };
 

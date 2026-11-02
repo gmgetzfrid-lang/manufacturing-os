@@ -353,6 +353,7 @@ export const CONFLICT_TARGETS: Record<string, string> = {
   archive_settings: "org_id",
   org_configurations: "org_id,key",
   chat_user_profiles: "org_id,user_id",
+  finding_acks: "finding_id,project_id",
 };
 
 /** The ON CONFLICT target to use when additively restoring `table`. */

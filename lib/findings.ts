@@ -211,6 +211,18 @@ const tms = (v: unknown) => (v == null ? NaN : typeof v === "number" ? v : Date.
 const clean = (s: string | null | undefined) => noEmDash((s ?? "").replace(/\s+/g, " ").trim());
 const HOLD = new Set(["on_hold", "blocked"]);
 
+/** The old "Lessons learned" box as lines, each with the ref it's
+ *  reviewed under (headings and scraps left out). */
+export function lessonsLearnedLines(text: string | null | undefined): Array<{ ref: string; text: string }> {
+  const out: Array<{ ref: string; text: string }> = [];
+  for (const raw of (text ?? "").split(/\n+/)) {
+    const t = clean(raw.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, ""));
+    if (t.length < 12 || /:$/.test(t)) continue;
+    out.push({ ref: hashOf(t.toLowerCase()), text: t });
+  }
+  return out;
+}
+
 export interface SuggestInput {
   milestones: Milestone[];
   notes: MilestoneNote[];
@@ -293,8 +305,15 @@ export function suggestFindings(input: SuggestInput): FindingDraft[] {
   // The same thing said twice on the same equipment (a note copied to the
   // next shift): once, the fuller wording.
   for (const x of said.sort((a, b) => a.foundAt - b.foundAt)) {
-    const same = out.find((y) => (y.source === "note" || y.source === "hold") && tagKey(y.assetTag) === tagKey(x.assetTag) && alike(y.body, x.body));
-    if (same) { if (x.body.length > same.body.length) same.body = x.body; if (x.hours && !same.hours) same.hours = x.hours; continue; }
+    // The very same words on the same step (one key), or nearly the same on
+    // the same equipment: one suggestion; time on hold adds up.
+    const same = out.find((y) => y.key === x.key)
+      ?? out.find((y) => (y.source === "note" || y.source === "hold") && tagKey(y.assetTag) === tagKey(x.assetTag) && alike(y.body, x.body));
+    if (same) {
+      if (x.body.length > same.body.length) same.body = x.body;
+      if (x.hours) same.hours = same.source === "hold" && x.source === "hold" && same.hours ? Math.round((same.hours + x.hours) * 10) / 10 : same.hours ?? x.hours;
+      continue;
+    }
     out.push(x);
   }
 
@@ -308,11 +327,7 @@ export function suggestFindings(input: SuggestInput): FindingDraft[] {
   }
 
   // 5. The old "Lessons learned" box: a line each, headings left out.
-  for (const raw of (input.lessonsLearned ?? "").split(/\n+/)) {
-    const text = clean(raw.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, ""));
-    if (text.length < 12 || /:$/.test(text)) continue;
-    out.push(base(undefined, text, "lessons_learned", hashOf(text.toLowerCase()), Date.now(), null));
-  }
+  for (const l of lessonsLearnedLines(input.lessonsLearned)) out.push(base(undefined, l.text, "lessons_learned", l.ref, Date.now(), null));
 
   // 6. The project's records: cost, change orders, late work, rejected
   //    turnover items, missing evidence (what the old box drafted).
@@ -390,7 +405,8 @@ export function pastJobsFor(findings: Finding[], ctx: PastJobsContext): Finding[
   const ids = new Set(ctx.equipment.map((e) => e.assetId).filter(Boolean) as string[]);
   const tags = new Set(ctx.equipment.map((e) => tagKey(e.tag)));
   return findings.filter((f) => {
-    if (f.status !== "kept" || f.projectId === ctx.projectId) return false;
+    // "This project": about that project only.
+    if (f.status !== "kept" || f.projectId === ctx.projectId || f.appliesTo === "project") return false;
     if (f.assetId && ids.has(f.assetId)) return true;
     // By tag alone only within the unit: V-7 on another unit is another V-7.
     if (f.assetTag && tags.has(tagKey(f.assetTag)) && (!f.unitCode || !ctx.unitCode || f.unitCode === ctx.unitCode)) return true;
@@ -448,8 +464,18 @@ export async function listFindings(projectId: string): Promise<{ rows: Finding[]
   return { rows: rows.map(findingFromRow), missing: false };
 }
 
-/** Kept findings across the organization (From past jobs, the graph). */
-export async function listKeptFindings(orgId: string): Promise<{ rows: Finding[]; missing: boolean }> {
+/** Kept findings across the organization (From past jobs, the graph): one
+ *  read shared by everything that asks within a few seconds. */
+const keptInflight = new Map<string, { at: number; p: Promise<{ rows: Finding[]; missing: boolean }> }>();
+export function listKeptFindings(orgId: string): Promise<{ rows: Finding[]; missing: boolean }> {
+  const had = keptInflight.get(orgId);
+  if (had && Date.now() - had.at < 5_000) return had.p;
+  const p = readKeptFindings(orgId);
+  keptInflight.set(orgId, { at: Date.now(), p });
+  p.catch(() => keptInflight.delete(orgId));
+  return p;
+}
+async function readKeptFindings(orgId: string): Promise<{ rows: Finding[]; missing: boolean }> {
   const { rows, error } = await fetchAllRows<Row>((from, to) => supabase.from("project_findings").select("*").eq("org_id", orgId).eq("status", "kept").order("found_at", { ascending: false }).order("id").range(from, to) as unknown as Page);
   if (error) { if (missingMsg(error)) return { rows: [], missing: true }; throw new Error(error); }
   return { rows: rows.map(findingFromRow), missing: false };
@@ -478,7 +504,9 @@ export async function saveFinding(f: SaveFinding): Promise<Finding> {
     org_id: f.orgId, project_id: f.projectId, kind: f.kind, applies_to: f.appliesTo, topic: f.topic,
     body: noEmDash(f.body.trim()), next_time: noEmDash(f.nextTime.trim()) || null,
     asset_id: f.appliesTo === "equipment" ? f.assetId : null,
-    asset_tag: f.appliesTo === "equipment" ? f.assetTag?.trim() || null : f.assetTag?.trim() || null,
+    // The equipment only when it's about the equipment: "This project" or
+    // "All jobs" isn't carried to that equipment's next job.
+    asset_tag: f.appliesTo === "equipment" ? f.assetTag?.trim() || null : null,
     unit_code: f.unitCode, project_type: f.projectType,
     milestone_id: f.milestoneId ?? null, work_order_ref: f.workOrderRef ?? null, hours: f.hours ?? null,
     source: f.source, source_ref: f.sourceRef || null, status: f.status,
@@ -493,6 +521,7 @@ export async function saveFinding(f: SaveFinding): Promise<Finding> {
       : supabase.from("project_findings").insert({ ...row, created_by: f.actor.id, created_by_name: f.actor.name }).select("*").single();
   const { data, error } = await q;
   if (error) { if (missingTable(error)) throw new FindingsMissing(); throw new Error(error.message); }
+  keptInflight.delete(f.orgId);
   if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("findings:changed", { detail: { projectId: f.projectId } }));
   return findingFromRow(data as Row);
 }
@@ -521,4 +550,6 @@ export async function setAck(input: { orgId: string; projectId: string; findingI
     }, { onConflict: "finding_id,project_id" })
     : await supabase.from("finding_acks").delete().eq("finding_id", input.findingId).eq("project_id", input.projectId);
   if (error) { if (missingTable(error)) throw new FindingsMissing(); throw new Error(error.message); }
+  // Every list of past jobs open for this project shows the answer.
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("findings:acks", { detail: { projectId: input.projectId } }));
 }

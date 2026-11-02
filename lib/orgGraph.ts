@@ -415,10 +415,11 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
         });
         const proj = `proj:${f.project_id}`;
         const hits = byTag.get(tagKeyOf(f.asset_tag)) ?? [];
-        const asset = f.asset_id && nodes.has(`asset:${f.asset_id}`) ? `asset:${f.asset_id}`
+        // On its equipment only when it's about the equipment.
+        const asset = f.applies_to !== "equipment" ? null : f.asset_id && nodes.has(`asset:${f.asset_id}`) ? `asset:${f.asset_id}`
           : (() => { const a = hits.find((x) => !f.unit_code || !x.unit_code || x.unit_code === f.unit_code); return a ? `asset:${a.id}` : null; })();
         if (asset) addEdge(id, asset, "finding", `Kept at the close-out of ${L(proj)}: about ${L(asset)}`);
-        if (f.unit_code && (f.applies_to === "unit" || !asset)) addEdge(id, `cbunit:${f.unit_code}`, "finding", `Kept at the close-out of ${L(proj)} for ${L(`cbunit:${f.unit_code}`)}`);
+        if (f.unit_code && (f.applies_to === "unit" || (f.applies_to === "equipment" && !asset))) addEdge(id, `cbunit:${f.unit_code}`, "finding", `Kept at the close-out of ${L(proj)} for ${L(`cbunit:${f.unit_code}`)}`);
         addEdge(proj, id, "finding", `Found on project ${L(proj)}`);
       }
     }

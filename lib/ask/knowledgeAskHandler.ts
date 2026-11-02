@@ -2392,7 +2392,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
           emit({ t: "status", text: `Found ${chunks.length - firstNew + 1} more passage${chunks.length - firstNew + 1 === 1 ? "" : "s"} - answering again` });
           answerOut = await call({
             system: baseAnswerSystem + orgInstructions + buildPagesNote(pageImages) + chaseNote,
-            user: `${conversationBlock}PASSAGES:\n\n${buildPassages(chunks)}${providedInputs}\n\nQUESTION: ${question}`,
+            user: `${conversationBlock}PASSAGES:\n\n${buildPassages(chunks)}${pastJobsNote}${providedInputs}\n\nQUESTION: ${question}`,
             maxTokens: webOn ? 5000 : 4000,
             ...(webOn ? { webSearch: true, markWebCitations: true } : {}),
             ...(answerImages(pageImages).length > 0 ? { images: answerImages(pageImages) } : {}),

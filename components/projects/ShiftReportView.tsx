@@ -52,7 +52,7 @@ import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesPro
 import { isDefaultType, typeWord } from "@/lib/projectType";
 import { useProjectTypeCtx } from "@/components/projects/ProjectTypeContext";
 import { notesFor } from "@/lib/milestones";
-import { useShiftRecords, saveShiftRecord, openFollowUps, newId, type CrewCount, type Incident, type ShiftNote, type ShiftRecord } from "@/lib/shiftRecord";
+import { useShiftRecords, saveShiftRecord, openFollowUps, newId, CLOSEOUT_KEY, type CrewCount, type Incident, type ShiftNote, type ShiftRecord } from "@/lib/shiftRecord";
 import { buildLookBack, CAUSE_LABEL, type LookBack, type StepLook } from "@/lib/lookBack";
 import { IncidentsLine, ShiftNotesBox, TimeLogButton } from "@/components/projects/ShiftRecordParts";
 import { useSortRows, Grip } from "@/components/projects/SortRows";
@@ -625,7 +625,16 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   // this equipment and unit taught (the kick-off).
   const { rows: findingRows } = useProjectFindings(meeting === "closeout" ? projectId : null);
   const { list: pastJobs } = usePastJobs(meeting === "kickoff" ? orgId : null, projectId, ptype.word, live);
-  const findingsCtx = useMemo<FindingsCtx>(() => ({ orgId, projectId, projectType: ptype.word, canEdit: canEdit && !!userId, kept: findingRows.filter((f) => f.status === "kept"), past: pastJobs, live }), [orgId, projectId, ptype.word, canEdit, userId, findingRows, pastJobs, live]);
+  // The team's close-out lessons not reviewed yet: still in print and the
+  // email, under their own heading, until each is kept or dropped.
+  const teamLessons = records.get(CLOSEOUT_KEY)?.lessons;
+  const findingsCtx = useMemo<FindingsCtx>(() => {
+    const reviewed = new Set(findingRows.filter((f) => f.source === "lesson" && f.sourceRef).map((f) => f.sourceRef));
+    return {
+      orgId, projectId, projectType: ptype.word, canEdit: canEdit && !!userId, kept: findingRows.filter((f) => f.status === "kept"), past: pastJobs, live,
+      team: (teamLessons ?? []).filter((l) => !reviewed.has(l.id)).map((l) => ({ text: l.text, by: l.by ?? null })),
+    };
+  }, [orgId, projectId, ptype.word, canEdit, userId, findingRows, pastJobs, live, teamLessons]);
   const allSections = useMemo(() => meeting === "kickoff"
     ? kickoffSections(kickoff, ctx, findingsCtx)
     : meeting === "closeout"
@@ -2122,6 +2131,8 @@ interface FindingsCtx {
   /** From past jobs (the kick-off). */
   past: PastJob[];
   live: Milestone[];
+  /** The team's close-out lessons not reviewed yet. */
+  team: Array<{ text: string; by: string | null }>;
 }
 
 /** Kick-off › From past jobs: what earlier jobs on this equipment and
@@ -2150,7 +2161,8 @@ function findingsSection(f: FindingsCtx, c: Ctx): Sec {
     id: "findings", title: "Lessons & findings", short: "Lessons", count: f.kept.length || undefined, flag: null,
     sub: "What this job taught - kept for the next one",
     body: (print) => print ? (
-      f.kept.length === 0 ? <Empty>None kept yet.</Empty> : (
+      <div className="space-y-2">
+      {f.kept.length === 0 && f.team.length === 0 ? <Empty>None kept yet.</Empty> : f.kept.length > 0 && (
         <ul className="space-y-1.5 text-[8.5pt]">
           {f.kept.map((x) => (
             <li key={x.id} className="keep flex items-start gap-2">
@@ -2163,12 +2175,23 @@ function findingsSection(f: FindingsCtx, c: Ctx): Sec {
             </li>
           ))}
         </ul>
-      )
+      )}
+      {f.team.length > 0 && (
+        <div className="keep text-[8.5pt]">
+          <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">From the team - not reviewed yet</div>
+          <ul className="list-disc pl-4">{f.team.map((l, i) => <li key={i}>{l.text}{l.by ? <span className="text-[var(--color-text-muted)]"> - {l.by}</span> : null}</li>)}</ul>
+        </div>
+      )}
+      </div>
     ) : <FindingsReview orgId={f.orgId} projectId={f.projectId} projectType={f.projectType} canEdit={f.canEdit} timeZone={c.tz} />,
-    data: () => [f.kept.length === 0 ? { k: "empty", text: "None kept yet." } : {
-      k: "table", head: ["Type", "What happened", "Next time", "Applies to"],
-      rows: f.kept.map((x) => [KIND_WORD[x.kind], `${x.body}${x.hours ? ` (${x.hours} h)` : ""}`, x.nextTime || "", `${applies(x)} · ${x.topic}`]),
-    }],
+    data: () => [
+      ...(f.kept.length === 0 && f.team.length === 0 ? [{ k: "empty", text: "None kept yet." } as ExportBlock] : []),
+      ...(f.kept.length ? [{
+        k: "table", head: ["Type", "What happened", "Next time", "Applies to"],
+        rows: f.kept.map((x) => [KIND_WORD[x.kind], `${x.body}${x.hours ? ` (${x.hours} h)` : ""}`, x.nextTime || "", `${applies(x)} · ${x.topic}`]),
+      } as ExportBlock] : []),
+      ...(f.team.length ? [{ k: "label", text: "From the team - not reviewed yet" } as ExportBlock, { k: "list", items: f.team.map((l) => ({ text: l.text, ...(l.by ? { note: l.by } : {}) })) } as ExportBlock] : []),
+    ],
   };
 }
 
@@ -2216,9 +2239,12 @@ function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftRep
     ...(cancelled.length ? [cancelledSection(cancelled, c)] : []),
     {
       id: "lessons", title: "Hand-back", short: "Hand-back",
+      // On paper, room to write what went well and what didn't (on screen
+      // that's the Lessons & findings review).
       body: (print) => <Prompts print={print} lines={2} items={[
         "Equipment handed back to operations - isolations removed, blinds out, permits closed",
         "Punch list and turnover documents - what's outstanding and who owns it",
+        ...(print ? ["What went well - keep doing", "What didn't - change next time"] : []),
       ]} />,
     },
     // Discovery over the whole job: what was found, the work it added, and

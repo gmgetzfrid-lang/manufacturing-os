@@ -97,6 +97,15 @@ describe("suggestions from the record", () => {
   it("a hold reason, with the hours it sat", () => {
     expect(byBody("Leaks on shell side")).toMatchObject({ source: "hold", hours: 3, assetTag: "E-12" });
   });
+  it("the same short words twice on one step: one suggestion, the hold hours added up", () => {
+    const step = mk({ id: "s1", name: "E-12 - Exchanger" });
+    const d = suggestFindings({ milestones: [step], notes: [
+      note("a", "s1", "status", 0, "Waiting on scaffold", "on_hold"), note("b", "s1", "status", 2, "Progress → 10%", "in_progress"),
+      note("c", "s1", "status", 5, "Waiting on scaffold", "on_hold"), note("d", "s1", "status", 8, "Progress → 20%", "in_progress"),
+    ] });
+    expect(d).toHaveLength(1);
+    expect(d[0]).toMatchObject({ source: "hold", hours: 5 });
+  });
   it("the same thing said twice on the same equipment: once", () => {
     expect(drafts.filter((d) => /Caltrol/.test(d.body))).toHaveLength(1);
     expect(byBody("Caltrol")?.assetTag).toBe("H-1");
@@ -206,6 +215,9 @@ describe("from past jobs", () => {
     f({ id: "own", projectId: "new", assetTag: "E-12", body: "This project's own" }),
     f({ id: "open", status: "open", assetTag: "E-12", body: "Not reviewed" }),
   ];
+  it("a finding about one project only never reaches the next one, even on the same equipment", () => {
+    expect(pastJobsFor([f({ id: "p1", appliesTo: "project", assetTag: "E-12" })], { projectId: "new", unitCode: "55", equipment: [{ assetId: null, tag: "E-12" }], projectType: "Turnaround" })).toEqual([]);
+  });
   it("this project's equipment and unit, and every-job lessons of its kind; never its own or unreviewed", () => {
     const got = pastJobsFor(all, { projectId: "new", unitCode: "55", equipment: [{ assetId: null, tag: "E-12" }], projectType: "Turnaround" }).map((x) => x.id);
     expect(got.sort()).toEqual(["all", "seal", "unit"]);
@@ -224,5 +236,6 @@ describe("Ask reads tags as people type them", () => {
     expect(questionTags("what about E-12 and e-17, E12?")).toEqual(["E-12", "E-17"]);
     expect(questionTags("warn me about the next Transmix TA in unit 55, WO 311388, October 2026")).toEqual([]);
     expect(questionTags("V 7 downcomers")).toEqual(["V-7"]);
+    expect(questionTags("per B31.3 and API 610, H2S on Q4 near P-101A")).toEqual(["P-101A"]);
   });
 });

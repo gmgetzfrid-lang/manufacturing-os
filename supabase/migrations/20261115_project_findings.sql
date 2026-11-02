@@ -14,7 +14,9 @@
 -- Reading: any active member of the organization. Writing: the project's
 -- owner, a co-owner or editor, or an org Admin, Manager, Supervisor or
 -- Document Control (can_edit_project, from 20261114; created here if that
--- one hasn't been run). Safe to run more than once. Changes no existing data.
+-- one hasn't been run). Also lets a project's owner, co-owners and editors
+-- link it to its unit and equipment (Setup). Safe to run more than once.
+-- Changes no existing data.
 
 -- 1. Who may change a project's work (same as 20261114).
 CREATE OR REPLACE FUNCTION can_edit_project(p_project uuid)
@@ -80,8 +82,12 @@ CREATE TABLE IF NOT EXISTS project_findings (
   CONSTRAINT project_findings_status_check CHECK (status IN ('open', 'kept', 'dropped'))
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS project_findings_source_uidx
-  ON project_findings(project_id, source, source_ref) WHERE source_ref IS NOT NULL;
+-- A suggestion is reviewed once: one row per project, source and record.
+-- A plain unique index, not a partial one: keeping a suggestion saves with
+-- ON CONFLICT on these three columns, which only a plain index can answer.
+-- Findings written by hand have no source_ref, and NULLs never clash.
+DROP INDEX IF EXISTS project_findings_source_uidx;
+CREATE UNIQUE INDEX project_findings_source_uidx ON project_findings(project_id, source, source_ref);
 CREATE INDEX IF NOT EXISTS project_findings_project_idx ON project_findings(project_id, status);
 CREATE INDEX IF NOT EXISTS project_findings_org_idx ON project_findings(org_id, status);
 CREATE INDEX IF NOT EXISTS project_findings_asset_idx ON project_findings(asset_id) WHERE asset_id IS NOT NULL;
@@ -138,5 +144,18 @@ CREATE POLICY finding_acks_delete ON finding_acks FOR DELETE TO authenticated
   USING (can_edit_project(project_id));
 
 COMMENT ON TABLE finding_acks IS 'A project''s answer to a past finding shown on its plan: planned for it, or not relevant.';
+
+-- 4. Setup › Unit & equipment: the project's owner, co-owners and editors
+--    may link their own project to its unit and equipment (project_scope
+--    links from proj:<id>), not only org Admins, Managers, Supervisors and
+--    Document Control. Nothing else about the links changes.
+DROP POLICY IF EXISTS estate_edges_project_scope_editors ON estate_edges;
+CREATE POLICY estate_edges_project_scope_editors ON estate_edges FOR ALL TO authenticated
+  USING (CASE WHEN type = 'project_scope' AND a ~ '^proj:[0-9a-fA-F-]{36}$'
+              THEN can_edit_project(substring(a FROM 6)::uuid) ELSE false END)
+  WITH CHECK (CASE WHEN type = 'project_scope' AND a ~ '^proj:[0-9a-fA-F-]{36}$'
+                   THEN can_edit_project(substring(a FROM 6)::uuid)
+                        AND EXISTS (SELECT 1 FROM projects p WHERE p.id = substring(a FROM 6)::uuid AND p.org_id = estate_edges.org_id)
+                   ELSE false END);
 
 NOTIFY pgrst, 'reload schema';

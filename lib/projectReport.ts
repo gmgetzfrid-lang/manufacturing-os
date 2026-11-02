@@ -17,7 +17,7 @@ import { listTurnoverItems, computeTurnoverProgress } from "@/lib/turnover";
 import { listChecklists, listChecklistItems, computeChecklistProgress } from "@/lib/checklists";
 import { computeForecast } from "@/lib/costSeries";
 import { openPrintWindow } from "@/lib/evidencePack";
-import type { RecordLesson } from "@/lib/findings";
+import { lessonsLearnedLines, type RecordLesson } from "@/lib/findings";
 
 const FINDING_KIND: Record<string, string> = { problem: "Problem", lesson: "Lesson", material: "Material", missed_scope: "Missed scope" };
 
@@ -37,7 +37,7 @@ interface ReportData {
   punchOpen: number;
   parties: Array<{ name: string; kind: string | null; trade: string | null }>;
   /** Kept at the close-out's Lessons & findings review. */
-  findings: Array<{ kind: string; body: string; next_time: string | null; asset_tag: string | null; applies_to: string; topic: string }>;
+  findings: Array<{ kind: string; body: string; next_time: string | null; asset_tag: string | null; applies_to: string; topic: string; status: string; source: string; source_ref: string | null }>;
 }
 
 async function gatherReportData(orgId: string, projectId: string): Promise<ReportData> {
@@ -58,7 +58,7 @@ async function gatherReportData(orgId: string, projectId: string): Promise<Repor
     safe(supabase.from("project_parties").select("name, kind, trade").eq("project_id", projectId).limit(100)
       .then((r) => (r.error ? [] : ((r.data ?? []) as Array<{ name: string; kind: string | null; trade: string | null }>))), []),
     // Before 20261115_project_findings.sql: none.
-    safe(supabase.from("project_findings").select("kind, body, next_time, asset_tag, applies_to, topic").eq("project_id", projectId).eq("status", "kept").order("found_at").limit(300)
+    safe(supabase.from("project_findings").select("kind, body, next_time, asset_tag, applies_to, topic, status, source, source_ref").eq("project_id", projectId).neq("status", "open").order("found_at").limit(500)
       .then((r) => (r.error ? [] : ((r.data ?? []) as ReportData["findings"]))), []),
   ]);
   const project = (projRow ?? {}) as Record<string, unknown>;
@@ -179,9 +179,16 @@ ${row("Punch list", d.punchOpen === 0 ? `<span class="ok">Clear</span>` : `<span
 ${d.parties.length ? `<h2>Companies on the job</h2><ul>${d.parties.map((x) =>
   `<li>${esc(x.name)}${x.kind ? ` <span class="muted">(${esc(x.kind)}${x.trade ? `, ${esc(x.trade)}` : ""})</span>` : ""}</li>`).join("")}</ul>` : ""}
 
-${d.findings.length ? `<h2>Lessons &amp; findings</h2><ul>${d.findings.map((f) =>
-  `<li><b>${esc(FINDING_KIND[f.kind] ?? "Finding")}</b>${f.asset_tag ? ` · ${esc(f.asset_tag)}` : ""} · ${esc(f.body)}${f.next_time ? ` <span class="muted">Next time: ${esc(f.next_time)}</span>` : ""}</li>`).join("")}</ul>`
-  : p.lessons_learned ? `<h2>Lessons learned</h2><p>${esc(p.lessons_learned).replace(/\n/g, "<br>")}</p>` : ""}
+${(() => {
+  // Kept findings; and the old Lessons learned text, less the lines the
+  // close-out review has already kept or dropped.
+  const kept = d.findings.filter((f) => f.status === "kept");
+  const reviewed = new Set(d.findings.filter((f) => f.source === "lessons_learned").map((f) => f.source_ref));
+  const old = lessonsLearnedLines(p.lessons_learned as string | null).filter((l) => !reviewed.has(l.ref));
+  return (kept.length ? `<h2>Lessons &amp; findings</h2><ul>${kept.map((f) =>
+    `<li><b>${esc(FINDING_KIND[f.kind] ?? "Finding")}</b>${f.asset_tag ? ` · ${esc(f.asset_tag)}` : ""} · ${esc(f.body)}${f.next_time ? ` <span class="muted">Next time: ${esc(f.next_time)}</span>` : ""}</li>`).join("")}</ul>` : "")
+    + (old.length ? `<h2>Lessons learned</h2><ul>${old.map((l) => `<li>${esc(l.text)}</li>`).join("")}</ul>` : "");
+})()}
 <p class="muted" style="margin-top:28px">Every figure above is drawn live from the platform's records - cost entries, change orders, milestones, checklist evidence, and turnover reviews.</p>
 <script>window.print()</script>
 </body></html>`;

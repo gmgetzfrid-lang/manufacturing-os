@@ -44,7 +44,9 @@ const ORPHANABLE: ReadonlySet<GraphNodeType> = new Set(["document", "asset"] as 
 
 /** Preference order for naming a region: the unit anchors the neighborhood
  *  if one is present, then the dominant library/project/asset. */
-const REGION_ANCHOR_ORDER: GraphNodeType[] = ["unit", "library", "project", "asset", "plant", "document"];
+// Plot plans and findings never name a region (a region of a unit's
+// equipment is that unit, not a finding about one of them).
+const REGION_ANCHOR_ORDER: GraphNodeType[] = ["unit", "library", "project", "asset", "plant", "document", "plot", "finding"];
 
 export function computeInsights(
   nodes: GraphNode[], edges: GraphEdge[],

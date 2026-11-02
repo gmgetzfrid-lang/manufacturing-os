@@ -40,12 +40,15 @@ const TYPE_RX: Array<[string, RegExp]> = [
 ];
 const GENERIC = new Set(["unit", "units", "turnaround", "project", "october", "november", "december", "january", "february", "march", "april", "june", "july", "august", "september", "plant", "area", "system", "outage", "shutdown", "maintenance", "the", "and", "old"]);
 /** Tags as people type them: "E-12", "E12", "e-12"; not "unit 55" or "WO 311388". */
-const NOT_TAG = new Set(["unit", "wo", "no", "ta", "tar", "rev", "page", "pg", "oct", "nov", "dec", "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "day", "days", "hour", "shift", "step", "week"]);
+const NOT_TAG = new Set(["api", "asme", "astm", "ansi", "nfpa", "osha", "iso", "nace", "unit", "wo", "no", "ta", "tar", "rev", "page", "pg", "oct", "nov", "dec", "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "day", "days", "hour", "shift", "step", "week"]);
 export function questionTags(q: string): string[] {
   const out: string[] = [];
   for (const m of q.matchAll(/\b([A-Za-z]{1,4})(\s?-\s?|\s|)(\d{1,5}[A-Za-z]{0,2})\b/g)) {
     const [, pre, sep, num] = m;
     if (NOT_TAG.has(pre.toLowerCase())) continue;
+    // Not equipment: a code section (B31.3), a gas (H2S, CO2), a quarter (Q4).
+    if (/^\.\d/.test(q.slice((m.index ?? 0) + m[0].length))) continue;
+    if (!sep && /^(H2S?|CO2?|SO2|NH3|O2|N2|Q[1-4])$/i.test(`${pre}${num}`)) continue;
     // "e-12" is a tag; "a 5" and "e12" in lower case may not be.
     if (!sep.includes("-") && pre !== pre.toUpperCase()) continue;
     const t = `${pre.toUpperCase()}-${num.toUpperCase()}`;
@@ -90,7 +93,7 @@ export async function pastJobsForQuestion(orgId: string, question: string, opts:
   const tags = new Set(qTags.map(tagKey));
   const unitCodes = new Set<string>();
   for (const u of (units ?? []) as Array<{ code: string; label: string }>) {
-    if (wordsOf(u.label).some((w) => qWords.has(w)) || new RegExp(`\\bunit\\s*${u.code}\\b`, "i").test(q)) unitCodes.add(u.code);
+    if (wordsOf(u.label).some((w) => qWords.has(w)) || new RegExp(`\\bunit\\s*${u.code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(q)) unitCodes.add(u.code);
   }
   const projHit = new Set<string>();
   for (const p of projName.values()) if (wordsOf(p.name).some((w) => qWords.has(w))) projHit.add(p.id);
