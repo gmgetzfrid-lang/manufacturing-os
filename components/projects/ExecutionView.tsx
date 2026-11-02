@@ -61,6 +61,7 @@ import { startMsOf as plannedStartMsOf } from "@/lib/calendarPlacement";
 import { effectiveSpans, byStart, spanLabel, barGeometry, xAt, hourStep, startOf as timedStart, finishOf as timedFinish } from "@/lib/scheduleTime";
 import { expectedByParent, expectedFraction, isOverdue, shiftAt, workHours, workShiftOf, type ShiftCredit, type ShiftTimes, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
 import type { StepUpdate } from "@/components/projects/CalendarQuickView";
+import { CrewChoices } from "@/components/projects/StepCard";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
 import { linkOf } from "@/lib/scheduleLinks";
 import ShiftMark from "@/components/projects/ShiftMark";
@@ -752,6 +753,13 @@ export default function ExecutionView({
       if (cur !== u.status || u.note !== (m.statusReason ?? "")) ok = await setStatus(id, u.status, u.note, undefined, w);
     } else if (cur !== u.status) ok = await setStatus(id, u.status, undefined, undefined, w);
     if (!ok) return false;
+    // Another crew did the work (or back to the planned one).
+    if (u.doneBy !== undefined) {
+      try {
+        await updateMilestone({ id, updatedBy: userId, updatedByName: userName, updatedByEmail: userEmail, updatedByRole: userRole, patch: { actualParty: u.doneBy } });
+        onRefresh();
+      } catch (e) { notify(`Saved, but not who did it: ${(e as Error).message}`, "warning"); }
+    }
     // What got done goes on the report (a hold's reason already did).
     if (u.status !== "on_hold" && u.status !== "blocked" && u.note.trim()) await addNote(id, u.note, u.at, u.status);
     if (u.why) {
@@ -759,7 +767,7 @@ export default function ExecutionView({
       catch (e) { notify((e as Error).message, "warning"); }
     }
     return true;
-  }, [byId, tz, setProgress, setStatus, addNote, orgId, userId, userName, notify]);
+  }, [byId, tz, setProgress, setStatus, addNote, orgId, userId, userName, userEmail, userRole, notify, onRefresh]);
   // When a step really started / finished, corrected (the calendar shows it
   // where it happened; the reports measure it from there).
   const fixTimes = useCallback(async (id: string, t: { start?: number | null; finish?: number | null }): Promise<boolean> => {
@@ -1232,6 +1240,7 @@ export default function ExecutionView({
   }
 
   return (
+    <CrewChoices.Provider value={crewNames}>
     <ShiftClockContext.Provider value={shiftClock}>
     <JobStartContext.Provider value={jobStart}>
     <div className="space-y-3">
@@ -1604,6 +1613,7 @@ export default function ExecutionView({
     </div>
     </JobStartContext.Provider>
     </ShiftClockContext.Provider>
+    </CrewChoices.Provider>
   );
 }
 

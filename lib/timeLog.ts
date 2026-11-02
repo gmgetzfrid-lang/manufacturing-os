@@ -102,7 +102,7 @@ export function buildTimeLog(input: {
     const p = m?.parentId ? byId.get(m.parentId) : undefined;
     return {
       task: p?.name ?? m?.name ?? "", step: m && p ? label.get(id) ?? m.name : "",
-      wo: woFor(m) || woFor(p) || "", crew: m?.responsibleParty?.trim() || "",
+      wo: woFor(m) || woFor(p) || "", crew: m?.actualParty?.trim() || m?.responsibleParty?.trim() || "",
     };
   };
   // Notes by step, oldest first; each used once.

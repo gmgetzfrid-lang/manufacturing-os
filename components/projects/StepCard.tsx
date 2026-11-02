@@ -38,7 +38,13 @@ export interface StepUpdate {
   comment?: boolean;
   /** `at` is later than now, and the person confirmed it (signing off ahead). */
   ahead?: boolean;
+  /** Who's doing (did) the work, when it isn't the planned crew: saved as
+   *  the step's resource that did it. Null: back to the planned crew. */
+  doneBy?: string | null;
 }
+
+/** The crews on the schedule, to pick who did a step (ExecutionView provides them). */
+export const CrewChoices = React.createContext<string[]>([]);
 
 type Action = "start" | "progress" | "finish" | "hold" | "resume" | "edit" | "reopen" | "comment";
 /** Something in the history, and what moves when its time is fixed: its
@@ -344,6 +350,12 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   const [why, setWhy] = useState("");
   const [showWhy, setShowWhy] = useState(false);
   const [holdKind, setHoldKind] = useState<"on_hold" | "blocked">("on_hold");
+  // Who's doing it: the planned crew unless another one did the work.
+  const planned = m.responsibleParty?.trim() ?? "";
+  const doer = m.actualParty?.trim() || planned;
+  const [by, setBy] = useState(doer);
+  const [byOther, setByOther] = useState(false);
+  const crewChoices = React.useContext(CrewChoices);
   // After a save the form closes up, but what you're looking at stays put:
   // near the bottom of a scrolling list the browser would pull everything
   // down to fill the room the form took, so that room stays, out of sight
@@ -363,6 +375,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   const [busy, setBusy] = useState(false);
   const open = (a: Action) => {
     setAction(a); setMsg(null); setSaved(null); setNote(""); setWhy(""); setShowWhy(false); setP(null); setAheadAsk(null); aheadOk.current = false;
+    setBy(doer); setByOther(false);
     // Opens on now (entering it as it happens); earlier is a tap away.
     setAtV(a === "edit" ? (Number.isFinite(af) ? toDateTimeInput(af, tz) : "") : toDateTimeInput(Date.now(), tz));
     setStartV(a === "edit" && Number.isFinite(as) ? toDateTimeInput(as, tz) : "");
@@ -386,7 +399,10 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     if (!action || busy) return;
     // Past the "Save anyway?" (need): a time later than now goes as asked.
     const run = async (u: StepUpdate) => (onUpdate ? onUpdate({ ...u, ...(u.at > Date.now() + 60_000 ? { ahead: true } : {}) }) : false);
-    const extra = showWhy && why.trim() ? { why: why.trim() } : {};
+    // Another crew did the work: saved with it (back to the planned crew: cleared).
+    const byNow = by.trim();
+    const who = byNow && byNow !== doer ? { doneBy: byNow === planned ? null : byNow } : {};
+    const extra = { ...(showWhy && why.trim() ? { why: why.trim() } : {}), ...who };
     let ok = false, said = "";
     setMsg(null);
     setBusy(true);
@@ -396,7 +412,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         if (typeof t === "string") { setMsg(t); return; }
         const late = beforeLast(t); if (late) { setMsg(late); return; }
         ok = await run({ status: "in_progress", pct: null, note: note.trim(), at: t, ...extra });
-        said = `Started ${when(t)}`;
+        said = `Started ${when(t)}${who.doneBy ? ` · ${who.doneBy}` : ""}`;
       } else if (action === "comment") {
         if (!note.trim()) { setMsg("Type the comment."); return; }
         const t = need(atV, "when");
@@ -432,7 +448,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         // Not started yet: its start goes in first.
         if (s != null && !(await run({ status: "in_progress", pct: null, note: "", at: s }))) { setMsg("Not saved."); return; }
         ok = await run({ status: "completed", pct: null, note: note.trim(), at: f, ...extra });
-        said = `Finished ${when(f)}`;
+        said = `Finished ${when(f)}${who.doneBy ? ` · ${who.doneBy}` : ""}`;
       } else if (action === "hold") {
         if (!note.trim()) { setMsg("Say why."); return; }
         const t = need(atV, "when it stopped");
@@ -634,7 +650,9 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         </div>
       )}
       {m.description?.trim() && <div className="text-[var(--color-text-muted)] line-clamp-2 break-words">{m.description.trim()}</div>}
-      <div className="text-[var(--color-text-muted)]">{[wo ? `WO ${wo}` : null, m.responsibleParty?.trim() || null, `${allotted} h`].filter(Boolean).join(" · ")}</div>
+      <div className="text-[var(--color-text-muted)]">{[wo ? `WO ${wo}` : null, planned || null, `${allotted} h`].filter(Boolean).join(" · ")}
+        {m.actualParty?.trim() && m.actualParty.trim() !== planned && <> · <span className="font-semibold text-[var(--color-text)]">done by {m.actualParty.trim()}</span></>}
+      </div>
       <table className="text-[12.5px]">
         <thead><tr className="text-[11px] text-[var(--color-text-muted)]"><th /><th className={`${cell} text-left font-medium`}>Start</th><th className={`${cell} text-left font-medium`}>Finish</th></tr></thead>
         <tbody>
@@ -688,6 +706,23 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
             <DateTimePicker label={pickLabel} value={atV} onChange={(v) => { setAtV(v); setMsg(null); setAheadAsk(null); }} tz={tz} times={times}
               planned={action === "finish" ? pf : ps}
               shortcuts={[{ label: "Planned", at: action === "finish" ? pf : action === "start" || action === "resume" ? ps : NaN }]} />
+          )}
+          {(action === "start" || action === "resume" || action === "progress" || action === "finish") && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11.5px] font-semibold text-[var(--color-text-muted)]">Resource</span>
+              {byOther ? (
+                <input value={by} onChange={(e) => { setBy(e.target.value); setMsg(null); }} autoFocus placeholder="Crew or company" aria-label="Resource"
+                  className="h-8 flex-1 min-w-[10rem] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px]" />
+              ) : (
+                <select value={by} onChange={(e) => { if (e.target.value === "__other__") { setByOther(true); setBy(""); } else setBy(e.target.value); setMsg(null); }} aria-label="Resource"
+                  className="h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] font-semibold text-[var(--color-text)]">
+                  {[...new Set([doer, planned, ...crewChoices].filter(Boolean))].map((c) => <option key={c} value={c}>{c}{c === planned && doer !== planned ? " (planned)" : ""}</option>)}
+                  {!doer && <option value="">No crew named</option>}
+                  <option value={"__other__"}>Other…</option>
+                </select>
+              )}
+              {by.trim() && by.trim() !== planned && <span className="text-[11px] text-[var(--color-text-muted)]">planned: {planned || "no crew"}</span>}
+            </div>
           )}
           {action !== "edit" && (
             <input value={note} onChange={(e) => { setNote(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") void save(); }}

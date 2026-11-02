@@ -63,3 +63,18 @@ describe("WO numbers", () => {
     expect(woOf(ms("x", null, { attributes: { "Work Order": 4410041 } }))).toBe("4410041");
   });
 });
+
+describe("another crew did the work", () => {
+  const wo = mk({ id: "wo", name: "E-12", responsibleParty: "Schultz", workOrderRef: "301502" });
+  const qc = mk({ id: "qc", name: "QC Complete", parentId: "wo", responsibleParty: "Schultz", actualParty: "Maintenance (KE)" });
+  const hydro = mk({ id: "h", name: "Hydro", parentId: "wo", responsibleParty: "Schultz" });
+  it("the reports name the crew that did it; the others keep theirs", () => {
+    const out = withWorkOrderCrews([wo, qc, hydro]);
+    expect(out.find((m) => m.id === "qc")!.responsibleParty).toBe("Maintenance (KE)");
+    expect(out.find((m) => m.id === "h")!.responsibleParty).toBe("Schultz");
+  });
+  it("the step's planned crew is never changed", () => {
+    withWorkOrderCrews([wo, qc, hydro]);
+    expect(qc.responsibleParty).toBe("Schultz");
+  });
+});

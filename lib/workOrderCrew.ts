@@ -72,9 +72,17 @@ export function inheritedWorkOrders(milestones: Milestone[]): Map<string, string
 export function withWorkOrderCrews(milestones: Milestone[]): Milestone[] {
   const got = inheritedCrews(milestones);
   const wos = inheritedWorkOrders(milestones);
-  if (got.size === 0 && wos.size === 0) return milestones;
+  // Another crew did the work (picked when updating the step): the reports
+  // name that crew. The step's own planned crew stays as it is saved.
+  const did = (m: Milestone) => m.actualParty?.trim() || "";
+  if (got.size === 0 && wos.size === 0 && !milestones.some(did)) return milestones;
   return milestones.map((m) => {
-    if (!m.id || (!got.has(m.id) && !wos.has(m.id))) return m;
-    return { ...m, ...(got.has(m.id) ? { responsibleParty: got.get(m.id)! } : {}), ...(wos.has(m.id) ? { workOrderRef: wos.get(m.id)! } : {}) };
+    if (!m.id || (!got.has(m.id) && !wos.has(m.id) && !did(m))) return m;
+    return {
+      ...m,
+      ...(got.has(m.id) ? { responsibleParty: got.get(m.id)! } : {}),
+      ...(did(m) ? { responsibleParty: did(m) } : {}),
+      ...(wos.has(m.id) ? { workOrderRef: wos.get(m.id)! } : {}),
+    };
   });
 }
