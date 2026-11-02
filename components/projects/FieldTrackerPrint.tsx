@@ -2,20 +2,20 @@
 
 // The field tracker's print window: the whole job, one work order, one step
 // (a sheet of its own, full of lines), or the work planned in a date range
-// (a long job, printed a week or two at a time). Lines a step: from the
-// plan, or a set number. The form is blank: nothing recorded on it
-// (lib/fieldTracker).
+// (a long job, printed a week or two at a time). Order: WO number or plan.
+// Lines a step: from its plan, or a set number. The form is blank: nothing
+// recorded on it (lib/fieldTracker).
 
 import React, { useEffect, useState } from "react";
 import { Printer } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
-import type { FieldOrder } from "@/lib/fieldTracker";
+import type { FieldLines, FieldOrder, FieldSort } from "@/lib/fieldTracker";
 
 export type FieldChoice =
-  | { kind: "job"; lines: "auto" | number }
-  | { kind: "wo"; key: string; lines: "auto" | number }
+  | { kind: "job"; lines: FieldLines; sort: FieldSort }
+  | { kind: "wo"; key: string; lines: FieldLines }
   | { kind: "step"; key: string; step: string }
-  | { kind: "range"; from: string; to: string; lines: "auto" | number };
+  | { kind: "range"; from: string; to: string; lines: FieldLines; sort: FieldSort };
 
 const selCls = "w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[13px] text-[var(--color-text)]";
 const woLabel = (o: FieldOrder) => `${o.wo ? `WO ${o.wo} · ` : ""}${o.name}`;
@@ -34,14 +34,15 @@ export function FieldTrackerOptions({ orders, today, start, onChoice }: {
   const [woKey, setWoKey] = useState(start?.wo && orders.some((o) => o.key === start.wo) ? start.wo : orders[0]?.key ?? "");
   const wo = orders.find((o) => o.key === woKey);
   const [stepId, setStepId] = useState(wo?.steps[0]?.id ?? "");
-  const [lines, setLines] = useState<"auto" | number>("auto");
+  const [lines, setLines] = useState<FieldLines>("auto");
+  const [sort, setSort] = useState<FieldSort>("wo");
   const plus = (days: number) => { const d = new Date(`${today}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); };
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(plus(6));
   const pickWo = (k: string) => { setWoKey(k); setStepId(orders.find((o) => o.key === k)?.steps[0]?.id ?? ""); };
   const ok = kind === "job" || (kind === "wo" && !!wo) || (kind === "step" && !!wo && !!stepId) || (kind === "range" && !!from && !!to && to >= from);
   const choice: FieldChoice | null = !ok ? null
-    : kind === "job" ? { kind, lines } : kind === "wo" ? { kind, key: woKey, lines } : kind === "step" ? { kind, key: woKey, step: stepId } : { kind, from, to, lines };
+    : kind === "job" ? { kind, lines, sort } : kind === "wo" ? { kind, key: woKey, lines } : kind === "step" ? { kind, key: woKey, step: stepId } : { kind, from, to, lines, sort };
   const sig = JSON.stringify(choice);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- `sig` is the choice
   useEffect(() => { onChoice(choice); }, [sig]);
@@ -80,6 +81,20 @@ export function FieldTrackerOptions({ orders, today, start, onChoice }: {
           <input type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} aria-label="To" className={`${selCls} w-auto`} />
         </div>
       </>)}
+      {(kind === "job" || kind === "range") && (
+        <div className="flex flex-wrap items-center gap-2 pt-1 text-[12.5px]">
+          <span className="font-semibold">Order</span>
+          <div className="inline-flex rounded-lg border border-[var(--color-border-strong)] overflow-hidden" role="group" aria-label="Order">
+            {([["wo", "WO number"], ["plan", "Plan"]] as const).map(([v, label]) => (
+              <button key={v} type="button" aria-pressed={sort === v} onClick={() => setSort(v)}
+                className={`h-7 px-2.5 text-[12px] font-bold ${sort === v ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "hover:bg-[var(--color-surface-2)]"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="text-[11.5px] text-[var(--color-text-muted)]">{sort === "wo" ? "Lowest WO number first, like a phone book" : "In the order the work is planned"}</span>
+        </div>
+      )}
       {kind !== "step" && (
         <div className="flex flex-wrap items-center gap-2 pt-1 text-[12.5px]">
           <span className="font-semibold">Lines a step</span>
@@ -91,7 +106,7 @@ export function FieldTrackerOptions({ orders, today, start, onChoice }: {
               </button>
             ))}
           </div>
-          <span className="text-[11.5px] text-[var(--color-text-muted)]">{lines === "auto" ? "From the plan: a few hours 2, a day 4, a week or more 8" : `${lines} for every step`}</span>
+          <span className="text-[11.5px] text-[var(--color-text-muted)]">{lines === "auto" ? "From each step's plan: a few hours 2, a day 4, a week or more 8" : `${lines} for every step`}</span>
         </div>
       )}
     </div>

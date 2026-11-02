@@ -31,7 +31,7 @@ import { buildTimeLog, downloadTimeLog, type TimeLogRow } from "@/lib/timeLog";
 import { jobLogs, oneShiftLog, type ShiftLog } from "@/lib/hourlyLog";
 import { hourlyLogPdf, hourlyLogTable, pngInBrowser, saveHourlyLog, type LogFormat } from "@/lib/hourlyLogFiles";
 import { groupWorkOrders, findOrders, showsOrder, fieldOrdersOf, workOrdersPrintDocument, SHOW_WORD, type Show } from "@/lib/workOrderGroups";
-import { fieldTrackerFor } from "@/lib/fieldTracker";
+import { fieldTrackerFor, fieldPages } from "@/lib/fieldTracker";
 import { FieldTrackerOptions, type FieldChoice } from "@/components/projects/FieldTrackerPrint";
 import ShiftReportView from "@/components/projects/ShiftReportView";
 import ExecutionReportView from "@/components/projects/ExecutionReportView";
@@ -222,7 +222,7 @@ export default function ReportsView(p: Props) {
   const [onScreen, setOnScreen] = useState<null | "open" | "present">(null);
 
   // ── Page 1, as it will come out ──
-  const [preview, setPreview] = useState<{ kind: "html"; html: string; landscape?: boolean } | { kind: "img"; src: string; pages: number } | { kind: "rows"; head: string[]; rows: string[][]; total: number } | null>(null);
+  const [preview, setPreview] = useState<{ kind: "html"; html: string; landscape?: boolean; pages?: number } | { kind: "img"; src: string; pages: number } | { kind: "rows"; head: string[]; rows: string[][]; total: number } | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
   const lhOn = useLh && !!lh ? lh : null;
@@ -258,7 +258,8 @@ export default function ReportsView(p: Props) {
           const html = await workOrdersPrintDocument({ shown: woShown, milestones: p.milestones, projectId, projectName: p.projectName, tz, times, progress: p.progress, format: woHistory ? "history" : "report", word, scope: `${woScope}${woHistory ? " · with each step's history" : ""}`, lh: lhOn });
           if (alive) setPreview({ kind: "html", html, landscape: true });
         } else if (sel === "field") {
-          if (alive) setPreview(field ? { kind: "html", html: fieldTrackerFor(field, { project: name, tz, orders: fieldOrders, dayMs: (x) => dayKeyToMs(x, tz) }), landscape: true } : null);
+          const html = field ? fieldTrackerFor(field, { project: name, tz, orders: fieldOrders, dayMs: (x) => dayKeyToMs(x, tz) }) : null;
+          if (alive) setPreview(html ? { kind: "html", html, landscape: true, pages: fieldPages(html) } : null);
         }
       } catch (e) {
         if (alive) { setPreview(null); setPreviewErr((e as Error).message); }
@@ -562,7 +563,7 @@ async function pdfPage1(bytes: Uint8Array): Promise<{ src: string; pages: number
   } finally { void doc.destroy(); }
 }
 
-type Preview = { kind: "html"; html: string; landscape?: boolean } | { kind: "img"; src: string; pages: number } | { kind: "rows"; head: string[]; rows: string[][]; total: number } | null;
+type Preview = { kind: "html"; html: string; landscape?: boolean; pages?: number } | { kind: "img"; src: string; pages: number } | { kind: "rows"; head: string[]; rows: string[][]; total: number } | null;
 
 /** Page 1 as it will come out, scaled to the pane. */
 function PreviewPane({ preview, busy, err }: { preview: Preview; busy: boolean; err: string | null }) {
@@ -610,7 +611,7 @@ function PreviewPane({ preview, busy, err }: { preview: Preview; busy: boolean; 
         )}
       </div>
       <div className="mt-2 text-center text-[11.5px] text-slate-600 dark:text-slate-300">
-        {preview?.kind === "img" ? `Page 1 of ${preview.pages} · what you'll get`
+        {preview?.kind === "img" || (preview?.kind === "html" && preview.pages) ? `Page 1 of ${preview.pages} · what you'll get`
           : preview?.kind === "rows" ? `${preview.total > preview.rows.length ? `First ${preview.rows.length} of ${preview.total} rows` : `${preview.total} row${preview.total === 1 ? "" : "s"}`} · what you'll get`
             : "Page 1 · what you'll get"}
       </div>
