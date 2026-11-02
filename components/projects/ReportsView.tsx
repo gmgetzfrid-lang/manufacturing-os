@@ -67,7 +67,10 @@ const MEETING_OF: Partial<Record<ReportId, MeetingKind>> = { turnover: "turnover
 const FORMAT_NAME: Record<LogFormat, string> = { pdf: "PDF", docx: "Word", xlsx: "Excel" };
 
 // ── Made lately: this device's last few, to make again with a tap ──
-interface Made { report: ReportId; label: string; at: number; shift?: ShiftPick | null; every?: boolean; format?: LogFormat; scope?: "shift" | "job" }
+/** What the hourly log and the time log cover: the whole project, some
+ *  days, or one shift. */
+type Cover = "job" | "range" | "shift";
+interface Made { report: ReportId; label: string; at: number; shift?: ShiftPick | null; cover?: Cover; range?: { from: string; to: string }; format?: LogFormat }
 const madeKey = (projectId: string) => `reports:made:${projectId}`;
 function readMade(projectId: string): Made[] {
   try { const v = JSON.parse(localStorage.getItem(madeKey(projectId)) ?? "[]"); return Array.isArray(v) ? v as Made[] : []; } catch { return []; }
@@ -88,10 +91,12 @@ export default function ReportsView(p: Props) {
   const [phoneOpen, setPhoneOpen] = useState(false);
   // The shift (turnover, hourly log, time log); null: the current one.
   const [shiftPick, setShiftPick] = useState<ShiftPick | null>(null);
-  const [every, setEvery] = useState(false);
+  // Opened from the list: the whole project; from Today, that shift.
+  const [cover, setCover] = useState<Cover>("job");
   const [format, setFormat] = useState<LogFormat>("pdf");
   const [useLh, setUseLh] = useState(true);
-  const [scope, setScope] = useState<"shift" | "job">("shift");
+  // Some days: both shifts of each (a night is its start day's).
+  const [range, setRange] = useState<{ from: string; to: string } | null>(null);
   const [woShow, setWoShow] = useState<Show | "one">("all");
   const [woQuery, setWoQuery] = useState("");
   const [woKey, setWoKey] = useState("");
@@ -107,8 +112,8 @@ export default function ReportsView(p: Props) {
     const l = p.link;
     if (!l) return;
     setSel(l.id); setPhoneOpen(true);
-    if (l.shift) { setShiftPick(l.shift); setEvery(false); }
-    if (l.scope) setScope(l.scope);
+    if (l.shift) { setShiftPick(l.shift); setCover("shift"); }
+    if (l.scope) setCover(l.scope === "job" ? "job" : "shift");
     if (l.id === "workorders") {
       if (l.wo) { setWoShow("one"); setWoKey(l.wo); setWoQuery(""); }
       else { setWoShow((SHOWS.some(([k]) => k === l.show) ? l.show : "all") as Show); setWoQuery(l.query ?? ""); }
@@ -126,6 +131,13 @@ export default function ReportsView(p: Props) {
   const current = useMemo(() => defaultReviewShift(live, now, tz, times), [live, now, tz, times]);
   const shift = useMemo(() => (shiftPick ? shiftWindow(shiftPick.dayKey, shiftPick.kind, tz, times) : current), [shiftPick, current, tz, times]);
   const shiftLabel = `${shift.kind === "day" ? "Day" : "Night"} shift ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`;
+  // The days picked; until then the last week, ending on the current shift's day.
+  const days = useMemo(() => {
+    if (range) return range;
+    const d = new Date(`${current.dayKey}T12:00:00Z`); d.setUTCDate(d.getUTCDate() - 6);
+    return { from: d.toISOString().slice(0, 10), to: current.dayKey };
+  }, [range, current.dayKey]);
+  const coverLabel = cover === "job" ? "whole project" : cover === "range" ? `${days.from} to ${days.to}` : shiftLabel;
   const name = (p.projectName ?? "Schedule").trim() || "Schedule";
   const fileBase = name.replace(/[\\/:*?"<>|]/g, "").trim() || "Schedule";
 
@@ -140,9 +152,9 @@ export default function ReportsView(p: Props) {
   const again = (m: Made) => {
     setSel(m.report);
     if (m.shift !== undefined) setShiftPick(m.shift);
-    if (m.every != null) setEvery(m.every);
+    if (m.cover) setCover(m.cover);
+    if (m.range) setRange(m.range);
     if (m.format) setFormat(m.format);
-    if (m.scope) setScope(m.scope);
   };
 
   // ── The job's records, read when a report needs them ──
@@ -174,16 +186,23 @@ export default function ReportsView(p: Props) {
     const at = Date.now();
     const timeLog = buildTimeLog({ milestones: live, log: log ?? [], notes, records, tz, times, word });
     const o = { milestones: live, timeLog, records, log: log ?? [], tz, times, now: at };
-    return every ? jobLogs(o) : [oneShiftLog(o, shift)];
-  }, [loadJob, live, tz, times, every, shift, word]);
-  const hourlyName = every ? `${name} - hourly log, whole job` : `${name} - hourly log ${shift.dayKey} ${shift.kind}`;
+    if (cover === "shift") return [oneShiftLog(o, shift)];
+    const all = jobLogs(o);
+    // Some days: each shift whose day is in them (its key: "2026-10-30:night").
+    return cover === "range" ? all.filter((l) => { const d = l.key.slice(0, 10); return d >= days.from && d <= days.to; }) : all;
+  }, [loadJob, live, tz, times, cover, shift, word, days.from, days.to]);
+  const hourlyName = cover === "job" ? `${name} - hourly log, whole project` : cover === "range" ? `${name} - hourly log ${days.from} to ${days.to}` : `${name} - hourly log ${shift.dayKey} ${shift.kind}`;
 
   // ── Time log ──
   const timeRows = useCallback(async (): Promise<TimeLogRow[]> => {
     const { log, records, notes } = await loadJob();
-    return buildTimeLog({ milestones: live, log: log ?? [], notes, records, tz, times, word, ...(scope === "shift" ? { from: shift.start, to: shift.end } : {}) });
-  }, [loadJob, live, tz, times, scope, shift, word]);
-  const timeTitle = scope === "shift" ? `Time log - ${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}` : "Time log - whole job to date";
+    const win = cover === "shift" ? { from: shift.start, to: shift.end }
+      : cover === "range" ? { from: shiftWindow(days.from, "day", tz, times).start, to: shiftWindow(days.to, "night", tz, times).end } : {};
+    return buildTimeLog({ milestones: live, log: log ?? [], notes, records, tz, times, word, ...win });
+  }, [loadJob, live, tz, times, cover, shift, word, days.from, days.to]);
+  const dayLabel = (d: string) => fmtInTz(shiftWindow(d, "day", tz, times).start, tz, { month: "short", day: "numeric" });
+  const timeTitle = cover === "shift" ? `Time log - ${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`
+    : cover === "range" ? `Time log - ${dayLabel(days.from)} to ${dayLabel(days.to)}` : "Time log - whole project to date";
 
   // ── Work orders and the field tracker ──
   const orders = useMemo(() => groupWorkOrders(p.milestones, p.childrenByParent, p.progress, tz, times, now), [p.milestones, p.childrenByParent, p.progress, tz, times, now]);
@@ -206,7 +225,7 @@ export default function ReportsView(p: Props) {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
   const lhOn = useLh && !!lh ? lh : null;
-  const previewSig = JSON.stringify([sel, shift.dayKey, shift.kind, every, format, !!lhOn, scope, woShow, woKey, woQuery, woAlso, woHistory, field, tick, live.length, meeting ? doc : null]);
+  const previewSig = JSON.stringify([sel, shift.dayKey, shift.kind, cover, days.from, days.to, format, !!lhOn, woShow, woKey, woQuery, woAlso, woHistory, field, tick, live.length, meeting ? doc : null]);
   useEffect(() => {
     let alive = true;
     const t = setTimeout(async () => {
@@ -280,12 +299,12 @@ export default function ReportsView(p: Props) {
           await saveHourlyLog(logs, format, { project: name, lh: lhOn, toPng: pngInBrowser, fileName: hourlyName });
           setMsg(`${logs.length} shift${logs.length === 1 ? "" : "s"} saved.`);
         }
-        remember({ report: "hourly", label: `${every ? "every shift" : shiftLabel} · ${what === "print" ? "printed" : FORMAT_NAME[format]}`, shift: shiftPick, every, format });
+        remember({ report: "hourly", label: `${coverLabel} · ${what === "print" ? "printed" : FORMAT_NAME[format]}`, shift: shiftPick, cover, range: cover === "range" ? days : undefined, format });
       } else if (sel === "timelog") {
         const rows = await timeRows();
-        await downloadTimeLog(rows, { project: name, tz, title: timeTitle, fileName: `${fileBase} - time log${scope === "shift" ? ` ${shift.dayKey} ${shift.kind}` : ""}.xlsx` });
+        await downloadTimeLog(rows, { project: name, tz, title: timeTitle, fileName: `${fileBase} - time log${cover === "shift" ? ` ${shift.dayKey} ${shift.kind}` : cover === "range" ? ` ${days.from} to ${days.to}` : ", whole project"}.xlsx` });
         setMsg(`${rows.length} entr${rows.length === 1 ? "y" : "ies"} exported.`);
-        remember({ report: "timelog", label: scope === "shift" ? shiftLabel : "whole job", shift: shiftPick, scope });
+        remember({ report: "timelog", label: coverLabel, shift: shiftPick, cover, range: cover === "range" ? days : undefined });
       } else if (sel === "workorders") {
         const html = await workOrdersPrintDocument({ shown: woShown, milestones: p.milestones, projectId, projectName: p.projectName, tz, times, progress: p.progress, format: woHistory ? "history" : "report", word, scope: `${woScope}${woHistory ? " · with each step's history" : ""}`, lh: lhOn });
         printHtml(html, w);
@@ -324,6 +343,27 @@ export default function ReportsView(p: Props) {
       {shiftPick && <button type="button" onClick={() => setShiftPick(null)} className="h-8 px-2.5 rounded-lg border border-[var(--color-border)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Current shift</button>}
     </>)
   );
+  // What the hourly log and the time log cover: the whole project, some days, one shift.
+  const coverRows = (
+    <>
+      {row("Covers", <>
+        <span className="inline-flex flex-wrap rounded-lg border border-[var(--color-border-strong)] overflow-hidden" role="group" aria-label="Covers">
+          {([["job", "Whole project"], ["range", "Date range"], ["shift", "One shift"]] as const).map(([k, l]) => (
+            <button key={k} type="button" aria-pressed={cover === k} onClick={() => setCover(k)} className={seg(cover === k)}>{l}</button>
+          ))}
+        </span>
+      </>)}
+      {cover === "range" && row("Days", <>
+        <input type="date" value={days.from} max={days.to} onChange={(e) => { if (e.target.value) setRange({ from: e.target.value, to: days.to < e.target.value ? e.target.value : days.to }); }} aria-label="From"
+          className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]" />
+        <span className="text-[12px] text-[var(--color-text-muted)]">to</span>
+        <input type="date" value={days.to} min={days.from} onChange={(e) => { if (e.target.value) setRange({ from: days.from > e.target.value ? e.target.value : days.from, to: e.target.value }); }} aria-label="To"
+          className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]" />
+        <span className="text-[11.5px] text-[var(--color-text-muted)]">day and night shifts</span>
+      </>)}
+      {cover === "shift" && shiftRow}
+    </>
+  );
   const lhRow = lh && sel !== "field" && sel !== "timelog" && !(sel === "hourly" && format === "xlsx") ? (
     row("Letterhead", <>
       <label className="inline-flex items-center gap-2 text-[12.5px] cursor-pointer select-none">
@@ -340,13 +380,7 @@ export default function ReportsView(p: Props) {
       {sel === "turnover" && shiftRow}
       {sel === "hourly" && (
         <>
-          {row("Shifts", <>
-            <span className="inline-flex rounded-lg border border-[var(--color-border-strong)] overflow-hidden" role="group" aria-label="Shifts">
-              <button type="button" aria-pressed={!every} onClick={() => setEvery(false)} className={seg(!every)}>One shift</button>
-              <button type="button" aria-pressed={every} onClick={() => setEvery(true)} className={seg(every)}>Every shift</button>
-            </span>
-          </>)}
-          {!every && shiftRow}
+          {coverRows}
           {row("Format", <>
             <span className="inline-flex rounded-lg border border-[var(--color-border-strong)] overflow-hidden" role="group" aria-label="Format">
               {(["pdf", "docx", "xlsx"] as const).map((f) => <button key={f} type="button" aria-pressed={format === f} onClick={() => setFormat(f)} className={seg(format === f)}>{FORMAT_NAME[f]}</button>)}
@@ -356,13 +390,7 @@ export default function ReportsView(p: Props) {
       )}
       {sel === "timelog" && (
         <>
-          {row("Covers", <>
-            <span className="inline-flex rounded-lg border border-[var(--color-border-strong)] overflow-hidden" role="group" aria-label="Covers">
-              <button type="button" aria-pressed={scope === "shift"} onClick={() => setScope("shift")} className={seg(scope === "shift")}>One shift</button>
-              <button type="button" aria-pressed={scope === "job"} onClick={() => setScope("job")} className={seg(scope === "job")}>Whole job</button>
-            </span>
-          </>)}
-          {scope === "shift" && shiftRow}
+          {coverRows}
           {row("Format", <><span className="text-[12.5px] font-semibold">Excel</span></>)}
         </>
       )}
