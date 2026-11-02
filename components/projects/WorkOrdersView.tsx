@@ -11,7 +11,8 @@
 // (lib/workOrdersPrint) — without changing the view.
 
 import React, { useMemo, useState } from "react";
-import { Search, ChevronRight, Printer, Ban, Plus } from "lucide-react";
+import { Search, ChevronRight, Printer, Ban, Plus, Lightbulb } from "lucide-react";
+import { newFinding } from "@/components/projects/Findings";
 import type { Milestone } from "@/types/schema";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import type { ShiftTimes } from "@/lib/shiftReport";
@@ -223,7 +224,7 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
                 </button>
                 {isOpen && (
                   <div className="border-t border-[var(--color-border)]">
-                    {((canEdit && onDiscovery) || onOpenReport) && (
+                    {(canEdit || onOpenReport) && (
                       <div className="px-3 pt-2 flex flex-wrap gap-1.5">
                         {canEdit && onDiscovery && (
                           <button type="button" onClick={() => onDiscovery(o.owner)}
@@ -235,6 +236,12 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
                           <button type="button" onClick={() => onOpenReport({ id: "workorders", wo: o.key })} title="This work order in Reports, ready to print"
                             className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                             <Printer className="w-3.5 h-3.5" /> Print this work order
+                          </button>
+                        )}
+                        {canEdit && o.owner.id && (
+                          <button type="button" onClick={() => newFinding({ milestoneId: o.owner.id })} title="A problem, a lesson, a material shortfall or missed scope on this work order - kept for the next job"
+                            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                            <Lightbulb className="w-3.5 h-3.5" /> + Finding
                           </button>
                         )}
                       </div>

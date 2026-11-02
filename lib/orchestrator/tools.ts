@@ -24,6 +24,7 @@ import type { ParamSpec } from "@/lib/orchestrator/protocol";
 import { tracePath, traceNeighbourhood, normalizeTag, type LineEdge } from "@/lib/pidTrace";
 import { orIlike } from "@/lib/orFilter";
 import { fetchAllRows } from "@/lib/fetchAllRows";
+import { pastJobsForQuestion } from "@/lib/findingsAsk";
 
 export interface ToolContext {
   orgId: string;
@@ -229,6 +230,20 @@ const equipmentMentions: ToolDef = {
         }),
       },
     };
+  },
+};
+
+const pastJobFindings: ToolDef = {
+  name: "past_job_findings",
+  description:
+    "What past jobs taught: problems, lessons, material shortfalls and missed scope kept at earlier "
+    + "close-out reviews, each with its project and date, and how named equipment's work ran against "
+    + "its plan. Use for 'warn me about the next Transmix turnaround', 'what about E-12', 'what went wrong last time'.",
+  params: [{ name: "about", type: "string", required: true, description: "Equipment tags, a unit name or the kind of job, in the asker's words." }],
+  async run(args, ctx) {
+    const found = await pastJobsForQuestion(ctx.orgId, `${String(args.about)} lessons`, { always: true, limit: 20 }).catch(() => null);
+    if (!found) return { data: { found: false, note: "No kept findings from past jobs match. Findings are kept at a project's close-out review." } };
+    return { data: { found: true, items: found.hits.map((h) => ({ project: h.projectName, kind: h.kind, equipment: h.tag, line: h.line, link: `/projects/${h.projectId}` })) } };
   },
 };
 
@@ -559,7 +574,7 @@ const logAuditCompletion: ToolDef = {
 };
 
 export const TOOLS: readonly ToolDef[] = [
-  findDocuments, searchDocuments, queryEquipmentByUnit, equipmentMentions,
+  findDocuments, searchDocuments, queryEquipmentByUnit, equipmentMentions, pastJobFindings,
   checkPermissions, checkAuditHistory, tracePidLines,
   checkoutDocument, notifyPersonnel, logAuditCompletion,
 ];

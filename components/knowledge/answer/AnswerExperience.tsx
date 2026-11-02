@@ -116,6 +116,8 @@ function ProofCard({ proof, onClose, onOpenPage }: {
   onOpenPage: (c: KnowledgeCitation) => void;
 }) {
   const { citation: c, context } = proof;
+  // A past job (Ask's findings from close-out reviews): a project, not a page.
+  const pastJob = !!c.url && c.url.startsWith("/");
   const hits = useMemo(
     () => c.highlight ? 0 : highlightQuote(c.quote ?? "", proofTerms(context)).filter((s) => s.hit).length,
     [c.highlight, c.quote, context],
@@ -145,7 +147,7 @@ function ProofCard({ proof, onClose, onOpenPage }: {
             <FileText className="w-3.5 h-3.5 text-orange-600 shrink-0" />
             <span className="text-xs font-black text-[var(--color-text)] truncate">{c.documentName ?? "Document"}</span>
             <span className="text-[10px] font-bold text-[var(--color-text-muted)] shrink-0">
-              p.{c.page}{c.section ? ` · ${c.section.slice(0, 30)}` : ""}
+              {pastJob ? "Past job" : <>p.{c.page}{c.section ? ` · ${c.section.slice(0, 30)}` : ""}</>}
             </span>
             <button onClick={onClose} aria-label="Close proof"
               className="ml-auto shrink-0 p-1 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
@@ -158,10 +160,16 @@ function ProofCard({ proof, onClose, onOpenPage }: {
           <ProofQuote c={c} context={context}
             className="border-l-2 border-orange-400 pl-3 py-1 text-[12px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap max-h-52 overflow-y-auto" />
           <div className="mt-2.5 flex items-center gap-2 flex-wrap">
+            {pastJob ? (
+              <a href={c.url} className="inline-flex items-center gap-1.5 text-[11px] font-black px-3 py-1.5 rounded-lg bg-orange-600 text-white shadow-sm hover:bg-orange-700 transition-colors">
+                <Eye className="w-3.5 h-3.5" /> Open the project
+              </a>
+            ) : (
             <button onClick={() => onOpenPage(c)}
               className="inline-flex items-center gap-1.5 text-[11px] font-black px-3 py-1.5 rounded-lg bg-orange-600 text-white shadow-sm hover:bg-orange-700 transition-colors">
               <Eye className="w-3.5 h-3.5" /> Open the page - highlighted
             </button>
+            )}
             {c.highlight ? (
               <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1">
                 <CheckCircle2 className="w-3 h-3" /> Exact wording from the page
@@ -244,7 +252,7 @@ export function InlineAnswer({ text, citations, onCite }: {
             // page's own quoted text and the link to it are.
             return (
               <button key={i} onClick={(e) => { if (showProof) showProof(c, text, e.currentTarget.getBoundingClientRect()); }}
-                title={`From the web: ${c.title ?? c.url}`}
+                title={c.url.startsWith("/") ? `From a past job: ${c.title ?? ""}` : `From the web: ${c.title ?? c.url}`}
                 className="align-super text-[10px] font-black text-sky-700 dark:text-sky-400 underline decoration-dotted decoration-sky-400/70 underline-offset-2 hover:text-sky-900 p-1.5 -m-1 cursor-pointer">
                 {cite[1]}
               </button>
@@ -1737,7 +1745,13 @@ export function CitationChips({ citations, onOpen }: {
   if (citations.length === 0) return null;
   return (
     <div className="mt-3 space-y-1.5">
-      {citations.map((c) => c.url ? (
+      {citations.map((c) => c.url?.startsWith("/") ? (
+        // A past job → its project.
+        <a key={c.n} href={c.url} title={c.quote ?? c.title}
+          className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-lg border border-orange-300 bg-orange-50 dark:bg-orange-950/30 dark:border-orange-800 text-orange-800 dark:text-orange-300 hover:bg-orange-100 transition-colors mr-1.5">
+          [{c.n}] {(c.title ?? "Past job").slice(0, 40)}
+        </a>
+      ) : c.url ? (
         // Internet citation → the web source itself.
         <a key={c.n} href={c.url} target="_blank" rel="noopener noreferrer"
           title={c.url}

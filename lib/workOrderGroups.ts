@@ -53,12 +53,11 @@ export interface WorkOrder {
   find: string;
 }
 
-/** The work orders, earliest planned first. */
-export function groupWorkOrders(milestones: Milestone[], childrenByParent: Map<string, Milestone[]>, progress: Map<string, ProgressInfo> | undefined, tz: string, times: ShiftTimes, now: number): WorkOrder[] {
+/** Each step's work order: its own, else the nearest group above with
+ *  one; with none, the task it's under. Keyed `${wo}:${owner id}`. */
+export function workOrderGroupsOf(milestones: Milestone[], childrenByParent: Map<string, Milestone[]>): Map<string, { wo: string | null; owner: Milestone; steps: Milestone[] }> {
   const byId = new Map<string, Milestone>();
   for (const m of milestones) if (m.id) byId.set(m.id, m);
-  const pctOf = (m: Milestone) => (m.id ? progress?.get(m.id)?.percent : undefined) ?? leafPercent(m);
-  // Each step's work order: its own, else the nearest group above with one.
   const groups = new Map<string, { wo: string | null; owner: Milestone; steps: Milestone[] }>();
   for (const m of milestones) {
     if (!m.id || (childrenByParent.get(m.id)?.length ?? 0) > 0) continue;
@@ -77,6 +76,13 @@ export function groupWorkOrders(milestones: Milestone[], childrenByParent: Map<s
     g.steps.push(m);
     groups.set(key, g);
   }
+  return groups;
+}
+
+/** The work orders, earliest planned first. */
+export function groupWorkOrders(milestones: Milestone[], childrenByParent: Map<string, Milestone[]>, progress: Map<string, ProgressInfo> | undefined, tz: string, times: ShiftTimes, now: number): WorkOrder[] {
+  const pctOf = (m: Milestone) => (m.id ? progress?.get(m.id)?.percent : undefined) ?? leafPercent(m);
+  const groups = workOrderGroupsOf(milestones, childrenByParent);
   const out: WorkOrder[] = [];
   for (const [key, g] of groups) {
     const steps = [...g.steps].sort((a, b) => startMsOf(a) - startMsOf(b));

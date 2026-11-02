@@ -30,7 +30,9 @@ import { ScheduleTzProvider } from "@/components/projects/ScheduleTzContext";
 import CostsTab from "@/components/projects/CostsTab";
 import QualityTab from "@/components/projects/QualityTab";
 import ProjectCoach from "@/components/projects/ProjectCoach";
-import { openProjectReport, draftLessonsLearned, saveLessonsLearned } from "@/lib/projectReport";
+import { openProjectReport } from "@/lib/projectReport";
+import { FindingsReviewModal, FindingsGate } from "@/components/projects/Findings";
+import { useProjectType } from "@/lib/shiftTimesStore";
 import { gatherProjectSnapshot } from "@/lib/projectSnapshot";
 import type { ProjectStateSnapshot } from "@/lib/projectHealth";
 import { exportProjectToCsv } from "@/lib/projectExport";
@@ -143,8 +145,9 @@ export default function ProjectDetailPage() {
   // Wizard fields the typed Project doesn't carry — fetched tolerantly.
   const [jobKind, setJobKind] = useState<string | null>(null);
   // Lessons-learned editor
-  const [lessonsDraft, setLessonsDraft] = useState<string | null>(null);
-  const [lessonsBusy, setLessonsBusy] = useState(false);
+  // Lessons & findings (the close-out review), and how many are left to review.
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewLeft, setReviewLeft] = useState<number | null>(null);
   // Coach re-gathers when page data changes.
   const [coachKey, setCoachKey] = useState(0);
 
@@ -158,6 +161,9 @@ export default function ProjectDetailPage() {
   const canManage = access.canManage;
   // Deleting the project and handing over ownership: the owner (or an admin), not a co-owner.
   const isOwnerOrAdmin = !!isOwner || isAdmin;
+  // The word findings are filed under ("Turnaround"), so an every-job
+  // lesson reaches the next project of the same kind.
+  const projectType = useProjectType(projectId ?? "", project?.name);
 
   const refresh = useCallback(async () => {
     if (!projectId) return;
@@ -380,21 +386,13 @@ export default function ProjectDetailPage() {
                 catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
               }}
             />
+            {/* What the job taught: the close-out's one review (the old
+                Lessons learned box folds into it). */}
             {canManage && (project.status === "completed" || project.status === "active" || project.status === "paused") && (
               <ActionButton
                 icon={<Target className="w-3.5 h-3.5" />}
-                label="Lessons learned"
-                onClick={async () => {
-                  if (!project.id || !project.orgId) return;
-                  setLessonsBusy(true);
-                  try {
-                    const existing = await supabase.from("projects").select("lessons_learned").eq("id", project.id).maybeSingle();
-                    const stored = (existing.data as { lessons_learned?: string | null } | null)?.lessons_learned ?? null;
-                    setLessonsDraft(stored || await draftLessonsLearned(project.orgId, project.id));
-                  } catch (e) {
-                    await appAlert({ message: (e as Error).message, tone: "danger" });
-                  } finally { setLessonsBusy(false); }
-                }}
+                label="Lessons & findings"
+                onClick={() => setReviewOpen(true)}
               />
             )}
             {project.id && project.orgId && uid && (
@@ -607,41 +605,9 @@ export default function ProjectDetailPage() {
         )}
       </div>
 
-      {/* Lessons-learned editor — auto-drafted from the project's exhaust
-          (change orders by reason, slips, rejections), edited by a human. */}
-      {lessonsDraft !== null && (
-        <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-          <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 border-b border-[var(--color-border)]">
-              <div className="text-sm font-black text-[var(--color-text)]">Lessons learned</div>
-              <div className="text-xs text-[var(--color-text-muted)] mt-1">
-                Drafted from this project&apos;s own records - change orders, slips, rejections. Edit it into what the next job should know; it saves to the project and prints on the report.
-              </div>
-            </div>
-            <div className="px-6 py-4">
-              <textarea value={lessonsDraft} onChange={(e) => setLessonsDraft(e.target.value)} rows={12}
-                className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-xs font-mono resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
-            </div>
-            <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-              <button onClick={() => setLessonsDraft(null)} disabled={lessonsBusy}
-                className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
-              <button
-                onClick={async () => {
-                  if (!project?.id || !project.orgId || !uid) return;
-                  setLessonsBusy(true);
-                  const res = await saveLessonsLearned({ orgId: project.orgId, projectId: project.id, text: lessonsDraft, actorId: uid, actorEmail: userEmail });
-                  setLessonsBusy(false);
-                  if (!res.ok) { setActionError(res.error ?? "Couldn't save lessons learned."); return; }
-                  setLessonsDraft(null);
-                }}
-                disabled={lessonsBusy}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
-                {lessonsBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                Save to project
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* Lessons & findings: the close-out review, from the header or the Complete step. */}
+      {reviewOpen && project.id && project.orgId && (
+        <FindingsReviewModal orgId={project.orgId} projectId={project.id} projectType={projectType.word} canEdit={!!canManage || !!access.canEdit} timeZone={project.timezone} onClose={() => setReviewOpen(false)} />
       )}
 
       {showEdit && uid && (
@@ -673,6 +639,10 @@ export default function ProjectDetailPage() {
                   : "No checkouts will be affected."}
               </div>
             </div>
+            {/* Lessons & findings first: what the job taught, reviewed before it closes. */}
+            {pendingStatus === "completed" && project.id && project.orgId && (
+              <FindingsGate orgId={project.orgId} projectId={project.id} onCount={setReviewLeft} onOpen={() => setReviewOpen(true)} />
+            )}
             {/* Closeout gates — what a finished job should have closed out.
                 Warnings, not walls: the owner can complete anyway, on the record. */}
             {pendingStatus === "completed" && gates && (() => {
@@ -717,10 +687,22 @@ export default function ProjectDetailPage() {
             </div>
             <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
               <button onClick={() => { setPendingStatus(null); setStatusReason(""); setActionError(null); }} disabled={transitionBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
-              <button onClick={handleTransition} disabled={transitionBusy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
-                {transitionBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                Confirm
-              </button>
+              {pendingStatus === "completed" && (reviewLeft ?? 0) > 0 ? (
+                <>
+                  <button onClick={handleTransition} disabled={transitionBusy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">
+                    {transitionBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                    Complete anyway
+                  </button>
+                  <button onClick={() => setReviewOpen(true)} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]">
+                    Finish the review
+                  </button>
+                </>
+              ) : (
+                <button onClick={handleTransition} disabled={transitionBusy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
+                  {transitionBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  Confirm
+                </button>
+              )}
             </div>
           </div>
         </div>

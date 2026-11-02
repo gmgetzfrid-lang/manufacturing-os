@@ -52,7 +52,7 @@ import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesPro
 import { isDefaultType, typeWord } from "@/lib/projectType";
 import { useProjectTypeCtx } from "@/components/projects/ProjectTypeContext";
 import { notesFor } from "@/lib/milestones";
-import { useShiftRecords, saveShiftRecord, openFollowUps, newId, CLOSEOUT_KEY, type CrewCount, type Incident, type ShiftNote, type ShiftRecord, type Lesson } from "@/lib/shiftRecord";
+import { useShiftRecords, saveShiftRecord, openFollowUps, newId, type CrewCount, type Incident, type ShiftNote, type ShiftRecord } from "@/lib/shiftRecord";
 import { buildLookBack, CAUSE_LABEL, type LookBack, type StepLook } from "@/lib/lookBack";
 import { IncidentsLine, ShiftNotesBox, TimeLogButton } from "@/components/projects/ShiftRecordParts";
 import { useSortRows, Grip } from "@/components/projects/SortRows";
@@ -84,6 +84,8 @@ import { MeetingBox, ShiftHourlyBox, type HourlyCtx, type MeetingCtx } from "@/c
 import { meetingLines, meetingParts, meetingRows, meetingTitle, meetingRecord, meetingEmpty, knownNames, type MeetingParts } from "@/lib/shiftMeeting";
 import { overtimeOf, overtimeEnd, overtimeLine, sentHomeLine, shiftEntries, type HoldOver, type OvertimeWindow } from "@/lib/holdOver";
 import { HourlyLogExport } from "@/components/projects/HourlyLogExport";
+import { FindingsReview, PastJobsPanel, KindChip, useProjectFindings, usePastJobs, pastJobLines, type PastJob } from "@/components/projects/Findings";
+import { APPLIES_WORD, KIND_WORD, type Finding } from "@/lib/findings";
 import { exportedLabel, logSteps, shiftLog } from "@/lib/hourlyLog";
 import { pngInBrowser, saveHourlyLog, type LogFormat } from "@/lib/hourlyLogFiles";
 import { slotClocks, hourlyRows, hourSlots, breaksOn, breakLabel, plainLine, workOrderClosers } from "@/lib/shiftHourly";
@@ -619,22 +621,20 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   // The close-out's look back (lib/lookBack) — the job as it stands, its
   // whole history of comments and holds — and the lessons the team writes.
   const lookBack = useMemo(() => (meeting === "closeout" ? buildLookBack({ milestones: live, notes: allNotes, discoveries: discoveryList, now: pathAt, tz, word }) : null), [meeting, live, allNotes, discoveryList, pathAt, tz, word]);
-  const lessonsRec = records.get(CLOSEOUT_KEY)?.lessons;
-  const lessons = useMemo<LessonsCtx>(() => ({
-    items: lessonsRec ?? [],
-    add: canEdit && userId && orgId ? (kind, text) => void saveRec(CLOSEOUT_KEY, (r) => ({ ...r, lessons: [...(r.lessons ?? []), { id: newId(), kind, text, by: userName ?? null, at: Date.now() }] })) : undefined,
-    remove: canEdit && userId && orgId ? (id) => void saveRec(CLOSEOUT_KEY, (r) => ({ ...r, lessons: (r.lessons ?? []).filter((x) => x.id !== id) })) : undefined,
-    msg: recMsg ?? recErr,
-  }), [lessonsRec, canEdit, userId, orgId, saveRec, userName, recMsg, recErr]);
+  // Lessons & findings (the close-out's one review), and what past jobs on
+  // this equipment and unit taught (the kick-off).
+  const { rows: findingRows } = useProjectFindings(meeting === "closeout" ? projectId : null);
+  const { list: pastJobs } = usePastJobs(meeting === "kickoff" ? orgId : null, projectId, ptype.word, live);
+  const findingsCtx = useMemo<FindingsCtx>(() => ({ orgId, projectId, projectType: ptype.word, canEdit: canEdit && !!userId, kept: findingRows.filter((f) => f.status === "kept"), past: pastJobs, live }), [orgId, projectId, ptype.word, canEdit, userId, findingRows, pastJobs, live]);
   const allSections = useMemo(() => meeting === "kickoff"
-    ? kickoffSections(kickoff, ctx)
+    ? kickoffSections(kickoff, ctx, findingsCtx)
     : meeting === "closeout"
-      ? closeoutSections(closeout, report, ctx, cancelled, discoveryList, lookBack, lessons)
+      ? closeoutSections(closeout, report, ctx, cancelled, discoveryList, lookBack, findingsCtx)
       : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet, hourlyExport, onEdit: canEdit && onUpdateStep && !locked ? setEditing : undefined, forecast, pathSource, discovery: discoveryList, why, taskSteps: (id) => stepTally.get(id),
         onDiscovery: onDiscovery && !locked ? () => { const first = view.goals.all[0]?.parentId ?? view.review.done[0]?.parentId; const t = (first ? live.find((m) => m.id === first) : undefined) ?? live.find((m) => live.some((k) => k.parentId === m.id)); if (t) onDiscovery(t); } : undefined,
         // Only while the next shift is still ahead (or on).
         onPlanNext: onPlanNext && report.next.end > now && !locked ? () => onPlanNext(report.next) : undefined }),
-  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, lessons, hourlyExport, locked]);
+  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, hourlyExport, locked, findingsCtx]);
   // Sections left off the report, on screen and in print — the viewer's own
   // choice for each meeting, remembered like the email's. Each comes back
   // with a tap (listed at the bottom); the email keeps its own choice.
@@ -2006,7 +2006,7 @@ function DiscoveryList({ list, c, print }: { list: Discovery[]; c: Ctx; print: b
   );
 }
 
-function kickoffSections(k: ReturnType<typeof buildKickoff>, c: Ctx): Sec[] {
+function kickoffSections(k: ReturnType<typeof buildKickoff>, c: Ctx, f?: FindingsCtx): Sec[] {
   const jobStats = [
     { label: "Days", value: `${k.daysTotal}`, tone: "slate" as const },
     { label: "Steps", value: `${k.steps}`, tone: "slate" as const },
@@ -2108,12 +2108,71 @@ function kickoffSections(k: ReturnType<typeof buildKickoff>, c: Ctx): Sec[] {
       ),
       data: () => [s.rows.length === 0 ? { k: "empty", text: "Nothing scheduled on this shift." } : stepsBlock(shiftRowsOf(s), "Hours")],
     })),
+    ...(f && f.past.length ? [pastJobsSection(f, c)] : []),
     closeSection("Close", [leadOf(c.word), "Operations", "Safety", "Each contractor lead"], "Attendance and sign-off"),
   ];
   return secs;
 }
 
-function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftReport, c: Ctx, cancelled: CancelledJob[], found: Discovery[] = [], lookBack: LookBack | null = null, lessons?: LessonsCtx): Sec[] {
+/** The project's findings for the close-out and kick-off. */
+interface FindingsCtx {
+  orgId: string; projectId: string; projectType: string; canEdit: boolean;
+  /** Kept at the close-out review. */
+  kept: Finding[];
+  /** From past jobs (the kick-off). */
+  past: PastJob[];
+  live: Milestone[];
+}
+
+/** Kick-off › From past jobs: what earlier jobs on this equipment and
+ *  unit taught, each planned for or not relevant. */
+function pastJobsSection(f: FindingsCtx, c: Ctx): Sec {
+  const open = f.past.filter((x) => !x.ack).length;
+  return {
+    id: "pastjobs", title: "From past jobs", short: "Past jobs", count: f.past.length, flag: open ? "amber" : null,
+    sub: open ? `${open} not planned for yet` : "Each one planned for or set aside",
+    body: (print) => print ? (
+      <ul className="space-y-1 text-[8.5pt]">
+        {f.past.map((x) => (
+          <li key={x.finding.id} className="keep"><b>{KIND_WORD[x.finding.kind]}</b> · {pastJobLines([x], c.tz)[0].text} <span className="text-[var(--color-text-muted)]">({pastJobLines([x], c.tz)[0].note})</span></li>
+        ))}
+      </ul>
+    ) : <PastJobsPanel orgId={f.orgId} projectId={f.projectId} projectType={f.projectType} milestones={f.live} canEdit={f.canEdit} title="From past jobs on this equipment and unit" />,
+    data: () => [{ k: "list", items: pastJobLines(f.past, c.tz) }],
+  };
+}
+
+/** Close-out › Lessons & findings: the one review on screen (edit, keep,
+ *  drop, add); what was kept in print and the email. */
+function findingsSection(f: FindingsCtx, c: Ctx): Sec {
+  const applies = (x: Finding) => (x.appliesTo === "equipment" ? x.assetTag ?? "Equipment" : APPLIES_WORD[x.appliesTo]);
+  return {
+    id: "findings", title: "Lessons & findings", short: "Lessons", count: f.kept.length || undefined, flag: null,
+    sub: "What this job taught - kept for the next one",
+    body: (print) => print ? (
+      f.kept.length === 0 ? <Empty>None kept yet.</Empty> : (
+        <ul className="space-y-1.5 text-[8.5pt]">
+          {f.kept.map((x) => (
+            <li key={x.id} className="keep flex items-start gap-2">
+              <KindChip kind={x.kind} />
+              <span className="min-w-0">
+                <span className="text-[var(--color-text)]">{x.body}{x.hours ? ` (${x.hours} h)` : ""}</span>
+                {x.nextTime && <span className="block"><b>Next time:</b> {x.nextTime}</span>}
+                <span className="block text-[var(--color-text-muted)]">{applies(x)} · {x.topic}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )
+    ) : <FindingsReview orgId={f.orgId} projectId={f.projectId} projectType={f.projectType} canEdit={f.canEdit} timeZone={c.tz} />,
+    data: () => [f.kept.length === 0 ? { k: "empty", text: "None kept yet." } : {
+      k: "table", head: ["Type", "What happened", "Next time", "Applies to"],
+      rows: f.kept.map((x) => [KIND_WORD[x.kind], `${x.body}${x.hours ? ` (${x.hours} h)` : ""}`, x.nextTime || "", `${applies(x)} · ${x.topic}`]),
+    }],
+  };
+}
+
+function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftReport, c: Ctx, cancelled: CancelledJob[], found: Discovery[] = [], lookBack: LookBack | null = null, findings?: FindingsCtx): Sec[] {
   const finalStats = [
     { label: "Complete", value: `${co.actualPct}%`, tone: (co.actualPct >= 100 ? "emerald" : "amber") as "emerald" | "amber" },
     { label: "Steps done", value: `${co.done}/${co.steps}`, tone: "slate" as const },
@@ -2156,12 +2215,10 @@ function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftRep
     },
     ...(cancelled.length ? [cancelledSection(cancelled, c)] : []),
     {
-      id: "lessons", title: "Hand-back & lessons", short: "Lessons",
+      id: "lessons", title: "Hand-back", short: "Hand-back",
       body: (print) => <Prompts print={print} lines={2} items={[
         "Equipment handed back to operations - isolations removed, blinds out, permits closed",
         "Punch list and turnover documents - what's outstanding and who owns it",
-        "What went well - keep doing",
-        "What didn't - change next time",
       ]} />,
     },
     // Discovery over the whole job: what was found, the work it added, and
@@ -2176,17 +2233,14 @@ function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftRep
     } as Sec] : []),
     // The look back: where the time went, what set the finish, what went
     // well, where to do better.
-    ...(lookBack && lookBack.steps.length ? lookBackSections(lookBack, report, c, lessons) : []),
+    ...(lookBack && lookBack.steps.length ? lookBackSections(lookBack, report, c) : []),
+    // What went well and what didn't, the team's lessons, the problems in
+    // the record: one review, kept for the next job.
+    ...(findings ? [findingsSection(findings, c)] : []),
     closeSection("Sign-off", [leadOf(c.word), "Operations", "Safety"]),
   ];
 }
 
-interface LessonsCtx {
-  items: Lesson[];
-  add?: (kind: Lesson["kind"], text: string) => void;
-  remove?: (id: string) => void;
-  msg?: string | null;
-}
 
 /** What a step lost, and why — in words. */
 function whyLost(s: StepLook, c: Ctx): string[] {
@@ -2203,7 +2257,7 @@ function whyLost(s: StepLook, c: Ctx): string[] {
   return out;
 }
 
-function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx, lessons?: LessonsCtx): Sec[] {
+function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
   const signed = (h: number) => `${h > 0 ? "+" : h < 0 ? "−" : ""}${c.hrs(Math.abs(h))}`;
   const f = lb.finish;
   const stats = [
@@ -2234,11 +2288,6 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx, lessons?: L
       {items.map((x) => <li key={x} className="flex gap-2"><span className={`mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full ${tone === "emerald" ? "bg-emerald-500" : "bg-amber-500"}`} /><span className="text-[var(--color-text)]">{x}</span></li>)}
     </ul>
   );
-  const teamNotes = (kind: Lesson["kind"], print: boolean) => <LessonNotes kind={kind} ctx={lessons} print={print} c={c} />;
-  const noteData = (kind: Lesson["kind"]): ExportBlock[] => {
-    const xs = (lessons?.items ?? []).filter((l) => l.kind === kind);
-    return xs.length ? [{ k: "label", text: "From the team" }, { k: "list", items: xs.map((l) => ({ text: l.text, ...(l.by ? { note: l.by } : {}) })) }] : [];
-  };
   return [
     {
       id: "lookback", title: "Look back - where the time went", short: "Look back",
@@ -2353,14 +2402,12 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx, lessons?: L
               ))}
             </div>
           )}
-          {teamNotes("keep", print)}
         </div>
       ),
       data: () => [
         ...(lb.keep.length ? [{ k: "list", items: lb.keep.map((t) => ({ text: t })) } as ExportBlock] : []),
         ...(lb.ahead.length ? [{ k: "table", head: ["Finished ahead of plan", "Crew", "Early"], align: ["left", "left", "right"], rows: lb.ahead.slice(0, 8).map((s) => [{ t: s.name, note: s.task || undefined }, s.crew, { t: c.hrs(-s.finishH), tone: "emerald", bold: true }]) } as ExportBlock] : []),
         ...(lb.crews.length ? [{ k: "table", head: ["Crew", "On plan", ""], align: ["left", "right", "right"], rows: lb.crews.map((x) => [x.crew, `${x.onPlan} of ${x.done}`, `${Math.round((x.onPlan / x.done) * 100)}%`]) } as ExportBlock] : []),
-        ...noteData("keep"),
       ],
     },
     {
@@ -2369,41 +2416,11 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx, lessons?: L
       body: (print) => (
         <div className="space-y-2">
           {lb.improve.length ? bullets(lb.improve, "amber", print) : <Empty>Nothing in the record stands out.</Empty>}
-          {teamNotes("improve", print)}
         </div>
       ),
-      data: () => [...(lb.improve.length ? [{ k: "list", items: lb.improve.map((t) => ({ text: t })) } as ExportBlock] : [{ k: "empty", text: "Nothing in the record stands out." } as ExportBlock]), ...noteData("improve")],
+      data: () => [...(lb.improve.length ? [{ k: "list", items: lb.improve.map((t) => ({ text: t })) } as ExportBlock] : [{ k: "empty", text: "Nothing in the record stands out." } as ExportBlock])],
     },
   ];
-}
-
-/** The team's own lessons — kept with the close-out, on the screen, the
- *  print and the email. */
-function LessonNotes({ kind, ctx, print, c }: { kind: Lesson["kind"]; ctx?: LessonsCtx; print: boolean; c: Ctx }) {
-  const [text, setText] = useState("");
-  const items = (ctx?.items ?? []).filter((l) => l.kind === kind);
-  if (print && !items.length) return null;
-  return (
-    <div className={`keep rounded-md border border-[var(--color-border)] px-2.5 py-1.5 space-y-1 ${print ? "text-[8.5pt]" : "text-[12.5px]"}`}>
-      <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">{kind === "keep" ? "Keep doing - from the team" : "Do better - from the team"}</div>
-      {items.map((l) => (
-        <div key={l.id} className="flex items-start gap-2">
-          <span className="flex-1 min-w-0 break-words text-[var(--color-text)]">{l.text}<span className="text-[11px] text-[var(--color-text-faint)]">{l.by ? ` - ${l.by}` : ""} · {c.D(l.at)}</span></span>
-          {!print && ctx?.remove && <button type="button" onClick={() => ctx.remove!(l.id)} aria-label="Remove" className="text-[var(--color-text-faint)] hover:text-rose-600 print:hidden"><X className="w-3.5 h-3.5" /></button>}
-        </div>
-      ))}
-      {!print && ctx?.add && (
-        <form className="flex items-center gap-1.5 print:hidden" onSubmit={(e) => { e.preventDefault(); if (text.trim()) { ctx.add!(kind, text.trim()); setText(""); } }}>
-          <input value={text} onChange={(e) => setText(e.target.value)} placeholder={kind === "keep" ? "e.g. Staging bundles the night before saved hours" : "e.g. Get hot-work permits signed before the shift starts"}
-            aria-label={kind === "keep" ? "Something to keep doing" : "Something to do better"}
-            className="flex-1 min-w-0 h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]" />
-          <button type="submit" disabled={!text.trim()} className="h-8 px-3 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12px] font-bold disabled:opacity-50">Add</button>
-        </form>
-      )}
-      {!print && ctx?.msg && <div className="text-[11.5px] text-rose-700 dark:text-rose-300">{ctx.msg}</div>}
-      {!print && !items.length && !ctx?.add && <div className="text-[var(--color-text-faint)]">None written yet.</div>}
-    </div>
-  );
 }
 
 /** Jobs taken off this schedule that still get done somewhere else —

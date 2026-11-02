@@ -13,6 +13,7 @@ export const NODE_COLORS: Record<GraphNodeType, string> = {
   project:  "#f43f5e",
   plant:    "#64748b",
   plot:     "#d946ef",
+  finding:  "#f97316",
 };
 
 /** Edge colours as "r,g,b" so the 2D renderer can compose rgba() strings and
@@ -28,6 +29,7 @@ export const EDGE_RGB: Record<GraphEdgeType, string> = {
   mention:      "16,185,129",  // emerald — the text says so, with the sentence
   flow:         "6,182,212",   // cyan — process flow: one thing FEEDS another
   plot:         "217,70,239", // fuchsia — pinned on a plot plan
+  finding:      "249,115,22", // orange — what a job taught, on its equipment
 };
 
 export const EDGE_LABELS: Record<GraphEdgeType, string> = {
@@ -41,6 +43,7 @@ export const EDGE_LABELS: Record<GraphEdgeType, string> = {
   mention: "Mentioned in the text",
   flow: "Feeds (process flow)",
   plot: "Marked on plot plan",
+  finding: "Finding from a past job",
 };
 
 /** Highlight colours used by both renderers for the same meanings. */

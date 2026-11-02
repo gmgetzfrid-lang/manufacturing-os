@@ -6,7 +6,7 @@
 // now filled in, so confirming a right answer is one click.
 
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Check, ChevronLeft, ChevronRight, Clock, Flag, Globe2, Loader2, Moon, Printer, Settings2, Tag, Zap } from "lucide-react";
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Clock, Factory, Flag, Globe2, Loader2, Moon, Printer, Settings2, Tag, Zap } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { setupChecklist, missingRequired, toDo, OPEN_SETUP_EVENT, type SetupItem, type SetupItemId } from "@/lib/scheduleSetup";
 import { useLetterhead } from "@/lib/letterheadStore";
@@ -25,8 +25,9 @@ import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { useCriticalMode, useCriticalModeLoaded, saveCriticalMode } from "@/lib/criticalModeStore";
 import { CRITICAL_MODES, resolveCriticalPath, effectiveCriticalMode, type CriticalMode } from "@/lib/criticalPath";
 import type { Milestone } from "@/types/schema";
+import { EquipmentStep, useProjectEquipment } from "@/components/projects/EquipmentSetup";
 
-const ICON: Record<SetupItemId, typeof Clock> = { type: Tag, timezone: Globe2, shifts: Clock, night: Moon, critical: Zap, baseline: Flag, print: Printer };
+const ICON: Record<SetupItemId, typeof Clock> = { type: Tag, equipment: Factory, timezone: Globe2, shifts: Clock, night: Moon, critical: Zap, baseline: Flag, print: Printer };
 // Opened by itself once per project on this device — after that the banner
 // (while anything's really missing) and the Setup button are the way in.
 const SHOWN_KEY = (projectId: string) => `scheduleSetup.autoOpened:${projectId}`;
@@ -48,6 +49,15 @@ interface Props {
   onSetBaseline: () => Promise<void>;
 }
 
+/** Setup › Unit & equipment done: the unit picked, every work order's
+ *  equipment confirmed (a codebook with no units: nothing to pick). */
+function useEquipmentSet(p: Props): boolean | null {
+  const orgId = p.milestones.find((m) => m.orgId)?.orgId ?? null;
+  const eq = useProjectEquipment(orgId, p.projectId, p.milestones);
+  if (!orgId) return true;
+  return eq.data && eq.data.units.length === 0 ? true : eq.set;
+}
+
 /** The banner (while anything required is missing) and the wizard. */
 export function ScheduleSetup(p: Props) {
   const saved = useShiftTimesSaved(p.projectId);
@@ -58,9 +68,10 @@ export function ScheduleSetup(p: Props) {
   const nightDecided = st.loaded ? st.times.nightJobs !== undefined : null;
   const letterheadSet = !!useLetterhead(p.projectId).lh;
   const typeSet = projectTypeSet(st.times.projectType);
+  const equipmentSet = useEquipmentSet(p);
   const items = useMemo(() => setupChecklist({
-    timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided, letterheadSet, typeSet,
-  }), [p.timezone, saved, critical, p.hasBaseline, nightDecided, letterheadSet, typeSet]);
+    timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided, letterheadSet, typeSet, equipmentSet,
+  }), [p.timezone, saved, critical, p.hasBaseline, nightDecided, letterheadSet, typeSet, equipmentSet]);
   const missing = missingRequired(items);
   // Opens by itself for someone who can fix it — only once everything has
   // been read (nothing "checking"), and only once on this device.
@@ -117,12 +128,13 @@ export function ScheduleSetupButton(p: Props) {
   const st = useShiftTimesState(p.projectId);
   const nightDecided = st.loaded ? st.times.nightJobs !== undefined : null;
   const letterheadSet = !!useLetterhead(p.projectId).lh;
-  const items = setupChecklist({ timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided, letterheadSet, typeSet: projectTypeSet(st.times.projectType) });
+  const equipmentSet = useEquipmentSet(p);
+  const items = setupChecklist({ timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided, letterheadSet, typeSet: projectTypeSet(st.times.projectType), equipmentSet });
   const todo = toDo(items).length;
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button onClick={() => setOpen(true)} title="Project type, time zone, shift times, night crews, critical path, baseline, printed reports"
+      <button onClick={() => setOpen(true)} title="Project type, unit & equipment, time zone, shift times, night crews, critical path, baseline, printed reports"
         className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border shadow-sm transition-colors ${todo
           ? "text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 hover:bg-amber-100"
           : "text-[var(--color-text)] bg-[var(--color-surface)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
@@ -148,7 +160,7 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
   const counted = items.filter((i) => !i.extra);
   const allDone = counted.every((i) => i.done);
   return (
-    <Modal onClose={onClose} size={at === "night" ? "full" : at === "print" ? "xl" : "lg"}>
+    <Modal onClose={onClose} size={at === "night" ? "full" : at === "print" || at === "equipment" ? "xl" : "lg"}>
       <ModalHeader icon={Settings2} title="Schedule setup" subtitle="What the schedule's reports hang on - set once for everyone on the project." onClose={onClose} />
       <ModalBody className="p-0">
         <div className="flex flex-col sm:flex-row">
@@ -182,6 +194,7 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
               <p className="text-[12.5px] text-[var(--color-text-muted)] mt-0.5">{item.why}</p>
             </div>
             {at === "type" && <TypeStep {...p} onSaved={() => go(1)} />}
+            {at === "equipment" && <EquipmentStep projectId={p.projectId} projectName={p.projectName} milestones={p.milestones} canManage={p.canManage} userId={p.userId} />}
             {at === "timezone" && <TimeZoneStep {...p} done={item.done} onSaved={(z) => { setTzSaved(z); go(1); }} />}
             {at === "shifts" && <ShiftsStep {...p} done={item.done} checking={!!item.checking} onSaved={() => go(1)} />}
             {/* Night crews stay open after saving: they're changed as the job goes. */}

@@ -21,7 +21,7 @@ import { supabase } from "@/lib/supabase";
 import { loadCodebook } from "@/lib/codebook";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 
-export type GraphNodeType = "document" | "asset" | "unit" | "library" | "project" | "plant" | "plot";
+export type GraphNodeType = "document" | "asset" | "unit" | "library" | "project" | "plant" | "plot" | "finding";
 
 export type GraphEdgeType =
   | "tag"          // document ↔ asset
@@ -33,7 +33,8 @@ export type GraphEdgeType =
   | "proposed"     // discovered, awaiting review — drawn as a ghost
   | "mention"      // the document's text names the equipment, quote attached
   | "flow"         // process flow: from FEEDS to (directional in meaning)
-  | "plot";        // the asset is MARKED on this plot plan — spatial truth
+  | "plot"         // the asset is MARKED on this plot plan — spatial truth
+  | "finding";     // a finding kept at a close-out → its equipment, unit, project
 
 export interface GraphNode {
   id: string;            // namespaced: "doc:<id>", "asset:<id>", "cbunit:<code>", …
@@ -391,6 +392,37 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
       "documents with no controlled counterpart - see the equipment page for those.",
     );
   }
+
+  // Findings kept at a close-out review (project_findings, 20261115): what a
+  // job taught, tied to its equipment (by id, else by tag within its unit),
+  // its unit, and the project it came from. None before that update.
+  try {
+    const { rows: fr, error: fe } = await fetchAllRows<Record<string, unknown>>((from, to) => supabase.from("project_findings")
+      .select("id, project_id, kind, body, next_time, asset_id, asset_tag, unit_code, applies_to")
+      .eq("org_id", orgId).eq("status", "kept").order("found_at", { ascending: false }).order("id").range(from, to) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>);
+    if (!fe) {
+      const KIND: Record<string, string> = { problem: "Problem", lesson: "Lesson", material: "Material", missed_scope: "Missed scope" };
+      const tagKeyOf = (t: string | null | undefined) => (t ?? "").replace(/\s*\(.*$/, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const byTag = new Map<string, AssetRowLite[]>();
+      for (const a of assets) { const k = tagKeyOf(a.tag); if (k) byTag.set(k, [...(byTag.get(k) ?? []), a]); }
+      for (const f of fr as unknown as Array<{ id: string; project_id: string; kind: string; body: string; next_time: string | null; asset_id: string | null; asset_tag: string | null; unit_code: string | null; applies_to: string }>) {
+        const id = `finding:${f.id}`;
+        const body = f.body.length > 70 ? `${f.body.slice(0, 67)}…` : f.body;
+        nodes.set(id, {
+          id, type: "finding", label: `${KIND[f.kind] ?? "Finding"}: ${body}`,
+          sub: [f.asset_tag, f.next_time ? `Next time: ${f.next_time}` : null].filter(Boolean).join(" · ") || undefined,
+          href: `/projects/${f.project_id}`, degree: 0,
+        });
+        const proj = `proj:${f.project_id}`;
+        const hits = byTag.get(tagKeyOf(f.asset_tag)) ?? [];
+        const asset = f.asset_id && nodes.has(`asset:${f.asset_id}`) ? `asset:${f.asset_id}`
+          : (() => { const a = hits.find((x) => !f.unit_code || !x.unit_code || x.unit_code === f.unit_code); return a ? `asset:${a.id}` : null; })();
+        if (asset) addEdge(id, asset, "finding", `Kept at the close-out of ${L(proj)}: about ${L(asset)}`);
+        if (f.unit_code && (f.applies_to === "unit" || !asset)) addEdge(id, `cbunit:${f.unit_code}`, "finding", `Kept at the close-out of ${L(proj)} for ${L(`cbunit:${f.unit_code}`)}`);
+        addEdge(proj, id, "finding", `Found on project ${L(proj)}`);
+      }
+    }
+  } catch { /* pre-migration: no findings to draw */ }
 
   // Drop grouping nodes that connect nothing (a plant with no units, a
   // codebook unit with no equipment yet) — they'd float as noise. Documents,

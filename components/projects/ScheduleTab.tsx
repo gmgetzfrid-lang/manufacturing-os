@@ -46,6 +46,7 @@ import { ProjectTypeProvider } from "@/components/projects/ProjectTypeContext";
 import ExecutionView from "@/components/projects/ExecutionView";
 import { CancelledJobsBar } from "@/components/projects/CancelledJobs";
 import { ScheduleSetup, ScheduleSetupButton } from "@/components/projects/ScheduleSetup";
+import { FindingHost, FindingsReviewHost, PastJobsPanel } from "@/components/projects/Findings";
 import { splitCancelled } from "@/lib/cancelledJobs";
 import { applyNightStaffing } from "@/lib/nightStaffing";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
@@ -304,6 +305,11 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
     <ProjectTypeProvider projectId={projectId} projectName={projectName} groups={groupNames}>
     <div className="space-y-4">
       <ScheduleSetup {...setupProps} />
+      {/* + Finding (a step, a work order, an hour) and the close-out review, on every tab. */}
+      <FindingHost orgId={orgId} projectId={projectId} milestones={allMilestones} canEdit={canEdit} />
+      <FindingsReviewHost orgId={orgId} projectId={projectId} canEdit={canEdit} timeZone={tz} />
+      {/* What earlier jobs on this equipment and unit taught. */}
+      {mode === "plan" && <PastJobsPanel orgId={orgId} projectId={projectId} milestones={allMilestones} canEdit={canEdit} />}
       {error && (
         // Above every panel and day list, so a failed save is never hidden
         // behind the thing you were working in.
@@ -333,7 +339,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       {/* Plan: build the schedule - import it, set it up, add to it. */}
       {mode === "plan" && <div className="flex items-center justify-between gap-3 flex-wrap">
         <span className="text-[12px] text-[var(--color-text-muted)]">The schedule as a list: phases, tasks, steps.</span>
-        <div className="inline-flex items-center gap-2">
+        <div className="inline-flex flex-wrap items-center gap-2">
           <button
             onClick={() => setShowGhost((v) => !v)}
             title={showGhost

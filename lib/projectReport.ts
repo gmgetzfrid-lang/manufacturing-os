@@ -18,6 +18,8 @@ import { listChecklists, listChecklistItems, computeChecklistProgress } from "@/
 import { computeForecast } from "@/lib/costSeries";
 import { openPrintWindow } from "@/lib/evidencePack";
 
+const FINDING_KIND: Record<string, string> = { problem: "Problem", lesson: "Lesson", material: "Material", missed_scope: "Missed scope" };
+
 async function safe<T>(p: PromiseLike<T>, fallback: T): Promise<T> {
   try { return await p; } catch { return fallback; }
 }
@@ -33,10 +35,12 @@ interface ReportData {
   checklistLines: Array<{ title: string; kind: string; satisfied: number; applicable: number; needsEvidence: number; complete: boolean }>;
   punchOpen: number;
   parties: Array<{ name: string; kind: string | null; trade: string | null }>;
+  /** Kept at the close-out's Lessons & findings review. */
+  findings: Array<{ kind: string; body: string; next_time: string | null; asset_tag: string | null; applies_to: string; topic: string }>;
 }
 
 async function gatherReportData(orgId: string, projectId: string): Promise<ReportData> {
-  const [projRow, accounts, entries, coList, msRows, turnoverItems, checklists, punchRows, partyRows] = await Promise.all([
+  const [projRow, accounts, entries, coList, msRows, turnoverItems, checklists, punchRows, partyRows, findingRows] = await Promise.all([
     safe(supabase.from("projects").select("*").eq("id", projectId).maybeSingle().then((r) => r.data), null),
     safe(listAccounts(orgId, projectId), []),
     safe(listEntries(orgId, projectId), []),
@@ -52,6 +56,9 @@ async function gatherReportData(orgId: string, projectId: string): Promise<Repor
       .then((r) => (r.error ? [] : ((r.data ?? []) as Array<{ status: string }>))), []),
     safe(supabase.from("project_parties").select("name, kind, trade").eq("project_id", projectId).limit(100)
       .then((r) => (r.error ? [] : ((r.data ?? []) as Array<{ name: string; kind: string | null; trade: string | null }>))), []),
+    // Before 20261115_project_findings.sql: none.
+    safe(supabase.from("project_findings").select("kind, body, next_time, asset_tag, applies_to, topic").eq("project_id", projectId).eq("status", "kept").order("found_at").limit(300)
+      .then((r) => (r.error ? [] : ((r.data ?? []) as ReportData["findings"]))), []),
   ]);
   const project = (projRow ?? {}) as Record<string, unknown>;
 
@@ -98,6 +105,7 @@ async function gatherReportData(orgId: string, projectId: string): Promise<Repor
     checklistLines,
     punchOpen: punchRows.filter((p) => p.status === "open").length,
     parties: partyRows,
+    findings: findingRows,
   };
 }
 
@@ -170,7 +178,9 @@ ${row("Punch list", d.punchOpen === 0 ? `<span class="ok">Clear</span>` : `<span
 ${d.parties.length ? `<h2>Companies on the job</h2><ul>${d.parties.map((x) =>
   `<li>${esc(x.name)}${x.kind ? ` <span class="muted">(${esc(x.kind)}${x.trade ? `, ${esc(x.trade)}` : ""})</span>` : ""}</li>`).join("")}</ul>` : ""}
 
-${p.lessons_learned ? `<h2>Lessons learned</h2><p>${esc(p.lessons_learned).replace(/\n/g, "<br>")}</p>` : ""}
+${d.findings.length ? `<h2>Lessons &amp; findings</h2><ul>${d.findings.map((f) =>
+  `<li><b>${esc(FINDING_KIND[f.kind] ?? "Finding")}</b>${f.asset_tag ? ` · ${esc(f.asset_tag)}` : ""} · ${esc(f.body)}${f.next_time ? ` <span class="muted">Next time: ${esc(f.next_time)}</span>` : ""}</li>`).join("")}</ul>`
+  : p.lessons_learned ? `<h2>Lessons learned</h2><p>${esc(p.lessons_learned).replace(/\n/g, "<br>")}</p>` : ""}
 <p class="muted" style="margin-top:28px">Every figure above is drawn live from the platform's records - cost entries, change orders, milestones, checklist evidence, and turnover reviews.</p>
 <script>window.print()</script>
 </body></html>`;

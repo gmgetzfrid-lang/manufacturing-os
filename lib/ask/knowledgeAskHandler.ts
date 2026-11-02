@@ -64,6 +64,7 @@ import { isSelectionQuestion, catalogsNamedIn, filterCandidates, selectionBlock,
 import { leadsFor } from "@/lib/searchLeads";
 import type { EntryRecord } from "@/lib/knowledgeCatalog";
 import { settleItems, keywordsOf, dropLibraryAsks, loosened } from "@/lib/ask/settleItems";
+import { pastJobsForQuestion, pastJobsAnswer, type PastJobs } from "@/lib/findingsAsk";
 import {
   buildCatalogBlock, entryFacts, findClassMentions, formsForGoal, matchCatalogName, FORM_PURPOSES,
   type CatalogEntry,
@@ -1643,6 +1644,27 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       });
     }
 
+    // Past jobs: findings kept at earlier close-out reviews on the equipment,
+    // unit or kind of job the question names (lib/findingsAsk). Cited as
+    // [J1]…; nothing before 20261115_project_findings.sql.
+    const pastJobs: PastJobs | null = evalMode ? null : await pastJobsForQuestion(orgId, question).catch(() => null);
+    const jobCitation = (h: PastJobs["hits"][number], n: number) => ({
+      n, documentId: "", documentName: h.projectName, page: 0, section: null, quote: h.line,
+      url: `/projects/${h.projectId}`, title: h.projectName, role: "context" as const, claim: h.line,
+    });
+    if (chunks.length === 0 && !drawingFacts && pastJobs) {
+      // The documents have nothing; the close-out reviews do.
+      const answer = pastJobsAnswer(pastJobs, (h) => h.n);
+      const citations = pastJobs.hits.map((h) => jobCitation(h, h.n));
+      trace.stage("answer", { citations: citations.length, pastJobs: pastJobs.hits.length, nothingFound: true });
+      if (!evalMode) await supabaseAdmin.from("knowledge_questions").insert({
+        org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
+        question, answer, citations, provider, model,
+      });
+      await meter(true);
+      return ok({ answer, citations, provider, model, mode: "library", missingDocs, budget: budget() });
+    }
+
     if (chunks.length === 0 && !drawingFacts) {
       // Diagnose WHY before shrugging: "your search terms missed" and "your
       // documents contain no machine-readable text at all" need completely
@@ -2239,7 +2261,10 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       catalogNote + pipeClassNote + selectionNote + sweepNote + pressureClassNote(rating, ratings) + precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + anchorFacts +
       tableNote + wholeDocNote + graphHopNote + needsDirective + decisionPathProtocol + calcProtocol +
       fetchDirective;
-    const answerUser = `${conversationBlock}PASSAGES:\n\n${passages}${providedInputs}\n\nQUESTION: ${question}`;
+    const pastJobsNote = pastJobs
+      ? `\n\n${pastJobs.block}\nUse PAST JOBS when the question asks what to watch for, what went wrong before, lessons, problems or how the work went: say each one plainly with its project and date, cite it [J#], and keep it apart from what the documents say. Otherwise leave them out.`
+      : "";
+    const answerUser = `${conversationBlock}PASSAGES:\n\n${passages}${pastJobsNote}${providedInputs}\n\nQUESTION: ${question}`;
 
     // ── Answer + Fetch loop: the model can request pages it needs to SEE
     //    (one round). The tool does the reading — the user is never sent to
@@ -2475,6 +2500,18 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
         return `[${n}]`;
       });
     }
+    // Past jobs become numbered citations past the passages and web sources.
+    const jobCitations: Array<ReturnType<typeof jobCitation>> = [];
+    if (pastJobs) {
+      const base = Math.max(chunks.length, ...webCitations.map((w) => w.n), webOn ? chunks.length + answerOut.webSources.length : 0);
+      answer = answer.replace(/\[J(\d{1,2})\]/g, (_m, k: string) => {
+        const h = pastJobs.hits[Number(k) - 1];
+        if (!h) return "";
+        const n = base + h.n;
+        if (!jobCitations.some((c) => c.n === n)) jobCitations.push(jobCitation(h, n));
+        return `[${n}]`;
+      });
+    }
     if (webRefused) {
       answer += "\n\n! Web search is available with a Claude key only - this answer used your documents only.";
     }
@@ -2559,6 +2596,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       });
 
     citations.push(...webCitations.map((w) => ({ ...w, page: 0, documentId: "", section: null, quote: w.quote ?? "" })));
+    citations.push(...jobCitations);
 
     // ── SHOW-ME GUARANTEE for drawings ────────────────────────────────────
     // Text citations exist only where RETRIEVAL found passages. On a P&ID

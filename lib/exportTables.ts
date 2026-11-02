@@ -128,6 +128,10 @@ export const ORG_SCOPED_TABLES = [
   "milestone_notes",
   "milestone_progress_log",
   "shift_handovers",
+  // Findings: what each job taught (kept at its close-out review), and a
+  // later project's answer to each one (planned for / not relevant).
+  "project_findings",
+  "finding_acks",
 
   // Equipment + operational scope
   "assets",

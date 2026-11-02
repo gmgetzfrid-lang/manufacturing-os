@@ -23,7 +23,7 @@ import type { GlobeInfo, GlobeKind } from "@/lib/estate3d";
 type Three = typeof import("three");
 
 const BASE_R: Record<GraphNodeType, number> = {
-  document: 3.2, asset: 3.8, unit: 7, library: 6, project: 6, plant: 8, plot: 6,
+  document: 3.2, asset: 3.8, unit: 7, library: 6, project: 6, plant: 8, plot: 6, finding: 4.5,
 };
 
 /** The globe's own vocabulary: one colour and one size per KIND of thing,

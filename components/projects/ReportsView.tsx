@@ -9,8 +9,9 @@
 // On a phone the list comes first; a report opens full screen with a way
 // back to the list.
 
+import { openFindingsReview } from "@/components/projects/Findings";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, Download, Loader2, Mail, Maximize2, Presentation, Printer, X } from "lucide-react";
+import { ChevronLeft, Download, Loader2, Mail, Maximize2, Presentation, Printer, X, Lightbulb } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import type { CancelledJob } from "@/lib/cancelledJobs";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
@@ -446,6 +447,8 @@ export default function ReportsView(p: Props) {
           <button type="button" onClick={() => setOnScreen("present")} className={secondary}><Presentation className="w-4 h-4" /> Present</button>
         </>
       )}
+      {/* What the job taught: kept for the next one before the project closes. */}
+      {meeting === "closeout" && <button type="button" onClick={openFindingsReview} className={secondary}><Lightbulb className="w-4 h-4" /> Lessons &amp; findings</button>}
       {msg && <span role="status" className={`text-[12px] font-semibold ${/^Not made|blocked/.test(msg) ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{msg}</span>}
     </div>
   );
@@ -536,7 +539,7 @@ const DESCRIBE: Record<ReportId, string> = {
   schedule: "Complete, pace and the forecast finish, with what's blocked and overdue.",
   workorders: "Each work order opened up with all its steps: plan against actual, status, % and the latest comment.",
   kickoff: "The start of the project: the job, the first shifts, readiness and safety.",
-  closeout: "The end of the project: how it went, what was added, what's open, lessons for next time.",
+  closeout: "The end of the project: how it went, what was added, what's open, and the Lessons & findings review for next time.",
   field: "A blank form for the field: the work orders, steps, resources and plan, with lines to write starts, finishes, % and notes by pen.",
 };
 

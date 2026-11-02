@@ -9,6 +9,7 @@
 // typed. A meeting that wasn't held comes off the log (and can be put
 // back). Work logged during the end meeting gets its own row after it.
 
+import { newFinding } from "@/components/projects/Findings";
 import React, { useId, useRef, useState } from "react";
 import { AlertTriangle, Check, Pencil, Plus, Trash2, X as XIcon } from "lucide-react";
 import { AddCompany } from "@/components/projects/ShiftRecordParts";
@@ -205,11 +206,18 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                 {hr && editing !== hr.key && (
                   <div className="flex items-center justify-end gap-1">
                     {h.onAddWork && (
+                      <>
                       <button type="button" onClick={() => h.onAddWork?.(hr.start)} aria-label={`Add discovery or added scope at ${clocks[i]}`}
                         title="Add discovery or added scope at this hour - it goes into the schedule"
                         className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-dashed border-[var(--color-accent)] text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
                         <Plus className="w-3 h-3" /> Add work
                       </button>
+                    <button type="button" onClick={() => newFinding({ at: hr.start })} aria-label={`Add a finding at ${clocks[i]}`}
+                      title="A problem, a lesson, a material shortfall or missed scope - kept for the next job"
+                      className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
+                      <Plus className="w-3 h-3" /> Finding
+                    </button>
+                      </>
                     )}
                     {edit && (
                       <button type="button" onClick={() => setEditing(hr.key)} aria-label={`Edit ${clocks[i]}`} className={iconBtn}>
@@ -264,11 +272,18 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
               </div>
               <div className="flex items-center justify-end gap-1">
               {h.onAddWork && editing !== r.slot.key && !isMeeting && (
+                <>
                 <button type="button" onClick={() => h.onAddWork?.(r.slot.start)} aria-label={`Add discovery or added scope at ${clocks[i]}`}
                   title="Add discovery or added scope at this hour - it goes into the schedule"
                   className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-dashed border-[var(--color-accent)] text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
                   <Plus className="w-3 h-3" /> Add work
                 </button>
+                    <button type="button" onClick={() => newFinding({ at: r.slot.start })} aria-label={`Add a finding at ${clocks[i]}`}
+                      title="A problem, a lesson, a material shortfall or missed scope - kept for the next job"
+                      className="shrink-0 inline-flex items-center gap-0.5 h-6 px-1.5 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
+                      <Plus className="w-3 h-3" /> Finding
+                    </button>
+                </>
               )}
               {edit && editing !== r.slot.key && isMeeting && (
                 <button type="button" onClick={() => void setOff(r.slot, true)} aria-label={`Remove the ${label.toLowerCase()} from the log`}

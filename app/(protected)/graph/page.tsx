@@ -47,9 +47,9 @@ const OrgGraph3D = React.lazy(() => import("@/components/graph/OrgGraph3D"));
 
 const TYPE_LABELS: Record<GraphNodeType, string> = {
   document: "Documents", asset: "Equipment", unit: "Units",
-  library: "Libraries", project: "Projects", plant: "Plants", plot: "Plot plans",
+  library: "Libraries", project: "Projects", plant: "Plants", plot: "Plot plans", finding: "Findings",
 };
-const TYPE_ORDER: GraphNodeType[] = ["unit", "asset", "document", "library", "project", "plant", "plot"];
+const TYPE_ORDER: GraphNodeType[] = ["unit", "asset", "document", "library", "project", "plant", "plot", "finding"];
 
 interface GraphAsk {
   question: string;
@@ -509,9 +509,9 @@ function GraphPageInner() {
   // the plant as flow, the paper as a web, or everything at once.
   const LENSES: Array<{ key: string; label: string; hidden: GraphNodeType[]; libEdges: boolean; title: string }> = [
     { key: "all", label: "Everything", hidden: [], libEdges: false, title: "Every entity and relationship the org knows" },
-    { key: "process", label: "Process", hidden: ["document", "library", "project", "plot"], libEdges: false, title: "Units and equipment only - the plant as flow. Draw flows with Connect; read them off a PFD in the unit hub." },
+    { key: "process", label: "Process", hidden: ["document", "library", "project", "plot", "finding"], libEdges: false, title: "Units and equipment only - the plant as flow. Draw flows with Connect; read them off a PFD in the unit hub." },
     { key: "equipment", label: "Equipment ↔ Docs", hidden: ["unit", "plant", "project", "library"], libEdges: false, title: "Equipment and the documents that govern it" },
-    { key: "documents", label: "Documents", hidden: ["asset", "unit", "plant", "plot"], libEdges: true, title: "The paper web - documents, libraries, projects" },
+    { key: "documents", label: "Documents", hidden: ["asset", "unit", "plant", "plot", "finding"], libEdges: true, title: "The paper web - documents, libraries, projects" },
   ];
   const activeLens = LENSES.find((l) =>
     l.hidden.length === settings.hiddenTypes.length &&
