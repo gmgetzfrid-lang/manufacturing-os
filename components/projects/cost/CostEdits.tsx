@@ -12,6 +12,7 @@ import {
   saveAfe, loadAfeHistory, reviseAccount, reviseEntry, parseMoney, COST_CONTROLS_SQL,
   type Afe, type AfeRevision, type BudgetChange,
 } from "@/lib/costRevisions";
+import { PreviewButton, type PreviewFile } from "@/components/projects/cost/FilePreview";
 
 const field = "h-9 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-[13px] text-[var(--color-text)]";
 const label = "block text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1";
@@ -25,9 +26,10 @@ const dateOf = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(u
 /** The AFE at the top of Budget: what's authorized, how much of it the
  *  budget lines use, Edit (a supplement, a correction, a new document) and
  *  every change so far. */
-export function AfeCard({ orgId, projectId, afe, linesTotal, cur, canManage, actor, onOpenDoc, onSaved }: {
+export function AfeCard({ orgId, projectId, afe, linesTotal, cur, canManage, actor, fileOf, onSaved }: {
   orgId: string; projectId: string; afe: Afe | null; linesTotal: number; cur: string; canManage: boolean; actor: Actor;
-  onOpenDoc?: () => void; onSaved: (msg: string) => void;
+  /** A document id as a file to preview (the current AFE, older ones). */
+  fileOf: (docId: string | null) => PreviewFile | null; onSaved: (msg: string) => void;
 }) {
   const a: Afe = afe ?? { afeNumber: null, chargeAccount: null, authorized: null, docId: null };
   const [editing, setEditing] = useState(false);
@@ -61,7 +63,7 @@ export function AfeCard({ orgId, projectId, afe, linesTotal, cur, canManage, act
           </div>
         </div>
         <div className="ml-auto flex items-center gap-1.5">
-          {onOpenDoc && <button type="button" onClick={onOpenDoc} className={quiet}>View document</button>}
+          {fileOf(a.docId) && <PreviewButton file={fileOf(a.docId)} label="See the AFE" className="!text-[12px] !px-2.5 !py-1.5 border border-[var(--color-border-strong)] !text-[var(--color-text)]" />}
           {canManage && !editing && <button type="button" onClick={() => setEditing(true)} className={quiet}><Pencil className="w-3.5 h-3.5" /> Edit AFE</button>}
         </div>
       </div>
@@ -84,6 +86,7 @@ export function AfeCard({ orgId, projectId, afe, linesTotal, cur, canManage, act
                   {h.afeNumber && <span className="font-mono text-[var(--color-text-muted)]">{h.afeNumber}</span>}
                   {h.note && <span className="text-[var(--color-text)]">· {h.note}</span>}
                   {h.by && <span className="text-[var(--color-text-faint)]">· {h.by}</span>}
+                  {fileOf(h.docId) && <PreviewButton file={fileOf(h.docId)} label="Document" />}
                 </li>
               ))}
             </ol>

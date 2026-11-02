@@ -642,38 +642,70 @@ export async function deleteProject(input: {
   });
 }
 
-/** Transfer project ownership to another user (who is made an 'owner' member).
- *  Current owner or org Admin/DocCtrl only. Audited + notifies the new owner. */
+/** Hand the project to someone else, and say what the previous owner
+ *  becomes: a co-owner, an editor, a viewer, or off the project. The new
+ *  owner is made an 'owner' member. Owner or org Admin/DocCtrl only.
+ *
+ *  The memberships change first, while the person doing it is still the
+ *  owner (the database lets the owner change the member list); the owner
+ *  last. Audited; the new owner is told. */
 export async function transferOwnership(input: {
   projectId: string; newOwnerUserId: string; newOwnerName?: string; newOwnerEmail?: string;
+  /** What the previous owner becomes. Default: an editor. */
+  keepAs?: ProjectMemberRole | "leave";
+  /** The previous owner's name and email, for their member row. */
+  previousOwnerName?: string; previousOwnerEmail?: string;
   actorUserId: string; actorEmail?: string; actorRole?: string;
-}): Promise<void> {
+}): Promise<{ note?: string }> {
   const p = await assertCanManageProject(input.projectId, input.actorUserId, { ownerOnly: true });
-  const now = new Date().toISOString();
-  const { error } = await supabase.from("projects").update({
-    owner_user_id: input.newOwnerUserId,
-    owner_user_name: input.newOwnerName || null,
-    updated_at: now, updated_by: input.actorUserId,
-  }).eq("id", input.projectId);
-  if (error) throw new Error(error.message);
-  // Make the new owner an 'owner' member; demote the prior owner to collaborator.
-  await supabase.from("project_members").upsert({
+  if (String(p.ownerUserId) === String(input.newOwnerUserId)) throw new Error("They already own this project.");
+  const keepAs = input.keepAs ?? "collaborator";
+  let note: string | undefined;
+
+  // 1. The new owner, as an 'owner' member.
+  const { error: e1 } = await supabase.from("project_members").upsert({
     project_id: input.projectId, user_id: input.newOwnerUserId,
     user_name: input.newOwnerName || null, user_email: input.newOwnerEmail || null, role: "owner",
   }, { onConflict: "project_id,user_id" });
-  if (String(p.ownerUserId) !== String(input.newOwnerUserId)) {
-    await supabase.from("project_members").update({ role: "collaborator" })
-      .eq("project_id", input.projectId).eq("user_id", p.ownerUserId).eq("role", "owner");
+  if (e1) throw new Error(`Not transferred: ${e1.message}`);
+
+  // 2. The previous owner: what they chose to become.
+  if (keepAs === "leave") {
+    await supabase.from("project_members").delete().eq("project_id", input.projectId).eq("user_id", p.ownerUserId);
+  } else {
+    const row = {
+      project_id: input.projectId, user_id: p.ownerUserId,
+      user_name: input.previousOwnerName || null, user_email: input.previousOwnerEmail || null,
+    };
+    let { error: e2 } = await supabase.from("project_members").upsert({ ...row, role: keepAs }, { onConflict: "project_id,user_id" });
+    // Co-owner before 20261113_project_co_owners.sql: an editor instead.
+    if (e2 && keepAs === "co_owner" && /check|role/i.test(e2.message)) {
+      ({ error: e2 } = await supabase.from("project_members").upsert({ ...row, role: "collaborator" }, { onConflict: "project_id,user_id" }));
+      if (!e2) note = "You were kept as an editor: co-owner needs the database update 20261113_project_co_owners.sql.";
+    }
+    if (e2) throw new Error(`Not transferred: ${e2.message}`);
   }
+
+  // 3. The owner.
+  const now = new Date().toISOString();
+  const { data: moved, error } = await supabase.from("projects").update({
+    owner_user_id: input.newOwnerUserId,
+    owner_user_name: input.newOwnerName || null,
+    updated_at: now, updated_by: input.actorUserId,
+  }).eq("id", input.projectId).select("id");
+  if (error) throw new Error(error.message);
+  if (!moved?.length) throw new Error("Not transferred - only the owner or an admin can hand over the project.");
+
+  const kept = keepAs === "leave" ? "left the project" : keepAs === "co_owner" ? "stays as co-owner" : keepAs === "observer" ? "stays as viewer" : "stays as editor";
   await writeActivity({
     projectId: input.projectId, orgId: p.orgId, userId: input.actorUserId, userName: input.actorEmail,
     type: "ownership_transferred",
-    body: `Ownership transferred to ${input.newOwnerName || input.newOwnerEmail || input.newOwnerUserId}`,
+    body: `Ownership transferred to ${input.newOwnerName || input.newOwnerEmail || input.newOwnerUserId}; the previous owner ${kept}`,
   });
   await logAuditAction({
     action: "PROJECT_OWNERSHIP_TRANSFERRED", resourceId: input.projectId, resourceType: "project",
     orgId: p.orgId, userId: input.actorUserId, userEmail: input.actorEmail, userRole: input.actorRole,
-    details: { from: p.ownerUserId, to: input.newOwnerUserId },
+    details: { from: p.ownerUserId, to: input.newOwnerUserId, previousOwnerNow: keepAs },
   });
   void notify({
     orgId: p.orgId, userId: input.newOwnerUserId, actorUserId: input.actorUserId, actorName: input.actorEmail,
@@ -681,6 +713,7 @@ export async function transferOwnership(input: {
     body: `${input.actorEmail || "Someone"} transferred ownership of "${p.name}" to you.`,
     link: `/projects/${input.projectId}`, resourceType: "project", resourceId: input.projectId,
   });
+  return { note };
 }
 
 /** Update a member's role and/or responsibility. Owner or org Admin only. */

@@ -27,6 +27,7 @@ import ProjectDocumentsCard from "@/components/projects/ProjectDocumentsCard";
 import ProjectScopePanel from "@/components/projects/ProjectScopePanel";
 import EditProjectModal from "@/components/projects/EditProjectModal";
 import { ScheduleTzProvider } from "@/components/projects/ScheduleTzContext";
+import { TransferOwnershipModal } from "@/components/projects/TransferOwnership";
 import CostsTab from "@/components/projects/CostsTab";
 import QualityTab from "@/components/projects/QualityTab";
 import ProjectCoach from "@/components/projects/ProjectCoach";
@@ -45,7 +46,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import {
   getProject, listMembers, listActivity, listProjectCheckouts,
   postComment, transitionProjectStatus, addMember, removeMember,
-  deleteProject, transferOwnership, updateMember,
+  deleteProject, updateMember,
 } from "@/lib/projects";
 import { getProjectTimeline, type TimelineEvent } from "@/lib/timeline";
 import { openProjectEvidencePack } from "@/lib/evidencePack";
@@ -952,17 +953,10 @@ function MembersTab({
     } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
   };
 
-  const makeOwner = async (m: ProjectMember) => {
-    if (!(await appConfirm(`Transfer ownership to ${m.userName || m.userEmail || m.userId}? You'll become an editor.`))) return;
-    try {
-      await transferOwnership({
-        projectId: project.id!, newOwnerUserId: m.userId,
-        newOwnerName: m.userName ?? undefined, newOwnerEmail: m.userEmail ?? undefined,
-        actorUserId, actorEmail,
-      });
-      onAdded();
-    } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
-  };
+  // Transfer ownership: to a member (preselected from their row) or
+  // anyone in the org, and what the current owner becomes.
+  const [transferTo, setTransferTo] = useState<string | null | undefined>(undefined);
+  const [transferNote, setTransferNote] = useState<string | null>(null);
 
   return (
     <div className="space-y-4">
@@ -985,6 +979,21 @@ function MembersTab({
           </div>
           {error && <div className="mt-2 text-xs text-red-600">{error}</div>}
         </div>
+      )}
+
+      {canTransfer && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => setTransferTo(null)} title="Hand the project to someone else and choose what you become"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">
+            Transfer ownership
+          </button>
+          {transferNote && <span role="status" className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">{transferNote}</span>}
+        </div>
+      )}
+      {transferTo !== undefined && (
+        <TransferOwnershipModal project={project} members={members} preselect={transferTo} actorUserId={actorUserId} actorEmail={actorEmail}
+          onClose={() => setTransferTo(undefined)}
+          onDone={(note) => { setTransferTo(undefined); setTransferNote(note ?? "Ownership transferred."); onAdded(); }} />
       )}
 
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
@@ -1033,8 +1042,8 @@ function MembersTab({
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   {canTransfer && !isOwner && (
-                    <button onClick={() => void makeOwner(m)} title="Transfer ownership to this member"
-                      className="opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-1.5 py-1 rounded hover:bg-[var(--color-accent-soft)] whitespace-nowrap">
+                    <button onClick={() => setTransferTo(m.userId)} title="Hand the project to this member"
+                      className="text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-1.5 py-1 rounded hover:bg-[var(--color-accent-soft)] whitespace-nowrap">
                       Make owner
                     </button>
                   )}

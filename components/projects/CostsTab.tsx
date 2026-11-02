@@ -35,9 +35,9 @@ import QuotesPanel from "@/components/projects/cost/QuotesPanel";
 import ChangeOrdersPanel from "@/components/projects/cost/ChangeOrdersPanel";
 import { BudgetDocDrop, BudgetImportSheet } from "@/components/projects/cost/BudgetImport";
 import type { BudgetReadResult } from "@/lib/budgetImport";
-import { resolveFileUrl } from "@/lib/storage";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { AfeCard, LineEditor, BudgetHistory, EntryRevise } from "@/components/projects/cost/CostEdits";
+import { FilePreviewModal, fileOfDoc, type PreviewFile } from "@/components/projects/cost/FilePreview";
 import { loadBudgetHistory, type BudgetChange } from "@/lib/costRevisions";
 
 const COST_TYPES = ["labor", "material", "equipment", "subcontract", "other"] as const;
@@ -75,6 +75,8 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   const [importing, setImporting] = useState<BudgetReadResult | null>(null);
   const [showDrop, setShowDrop] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // A document open in the preview window.
+  const [preview, setPreview] = useState<PreviewFile | null>(null);
   // A budget line being edited, and each line's budget changes.
   const [editingLine, setEditingLine] = useState<string | null>(null);
   const [budgetHistory, setBudgetHistory] = useState<Map<string, BudgetChange[]>>(new Map());
@@ -167,16 +169,13 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   const quoteCount = docs.filter((d) => d.kind === "quote" && d.status !== "void").length;
   const invoiceOpen = docs.filter((d) => (d.kind === "invoice" || d.kind === "po") && (d.status === "draft" || d.status === "parsed")).length;
   const basisDoc = basis?.docId ? docs.find((d) => d.id === basis.docId) ?? null : null;
-  const openBasisDoc = async () => {
-    if (!basisDoc?.fileUrl) return;
-    const url = await resolveFileUrl(basisDoc.fileUrl).catch(() => null);
-    if (url) window.open(url, "_blank", "noopener"); else setErr("Couldn't open the document.");
-  };
+
 
   if (loading) return <div className="py-12 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
 
   return (
     <div className="space-y-4">
+      {preview && <FilePreviewModal file={preview} onClose={() => setPreview(null)} />}
       {err && (
         <div className="flex items-center gap-2 rounded-xl border border-rose-500/50 bg-rose-500/[0.08] px-3 py-2.5 text-xs font-bold text-rose-700 dark:text-rose-300">
           <AlertTriangle className="w-4 h-4 shrink-0" /> {err}
@@ -220,7 +219,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       </div>
 
       {basis && (basis.afeNumber || basis.authorized != null) && (
-        <BasisLine basis={basis} budget={rollup.budget} spent={outlook.estimatedToDate} cur={cur} onOpen={basisDoc?.fileUrl ? () => void openBasisDoc() : undefined} />
+        <BasisLine basis={basis} budget={rollup.budget} spent={outlook.estimatedToDate} cur={cur} onOpen={basisDoc?.fileUrl ? () => setPreview(fileOfDoc(basisDoc)) : undefined} />
       )}
 
       {/* ── Burn bar: spent (solid) + committed (hatched ghost) vs budget ── */}
@@ -290,7 +289,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
           <b className="text-[var(--color-text)]">AFE</b> (what&apos;s authorized) → <b className="text-[var(--color-text)]">Budget lines</b> (how it&apos;s split, by contractor or scope) → <b className="text-[var(--color-text)]">Quotes / POs</b> (awarded, committed) → <b className="text-[var(--color-text)]">Invoices</b> (spent). Each can be changed; every change is kept with why.
         </div>
         <AfeCard orgId={orgId} projectId={projectId} afe={basis} linesTotal={rollup.budget} cur={cur} canManage={canManage} actor={actor}
-          onOpenDoc={basisDoc?.fileUrl ? () => void openBasisDoc() : undefined}
+          fileOf={(id) => fileOfDoc(id ? docs.find((d) => d.id === id) : null)}
           onSaved={(msg) => { setNotice(msg); void refresh(); }} />
         {importing ? (
           <BudgetImportSheet orgId={orgId} projectId={projectId} actor={actor} result={importing}

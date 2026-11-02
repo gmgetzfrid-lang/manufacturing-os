@@ -14,6 +14,7 @@
 // arrival, routed to their vendor's budget line, checked for duplicates,
 // and the confident matches posted together after one confirmation.
 
+import { PreviewButton, fileOfDoc } from "@/components/projects/cost/FilePreview";
 import React, { useMemo, useState } from "react";
 import {
   FileText, UploadCloud, Loader2, Sparkles, Trophy, Link2, Copy, AlertTriangle,
@@ -252,6 +253,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                     {isOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                   </button>
                   <span className="font-bold text-[var(--color-text)] truncate">{doc.vendorName ?? doc.fileName ?? "Invoice"}</span>
+                  <PreviewButton file={fileOfDoc(doc)} />
                   {doc.docNumber && <span className="font-mono text-[10px] text-[var(--color-text-muted)]">{doc.docNumber}</span>}
                   {doc.docDate && <span className="text-[10px] text-[var(--color-text-muted)]">{doc.docDate}</span>}
                   {doc.totalAmount != null && <span className="font-black tabular-nums text-[var(--color-text)]">{fmtMoney(doc.totalAmount, doc.currency ?? "USD")}</span>}
@@ -434,6 +436,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
               {unread.map((d) => (
                 <span key={d.id} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] px-2 py-1">
                   <span className="font-bold text-[var(--color-text)] max-w-40 truncate">{d.vendorName ?? d.fileName}</span>
+                  <PreviewButton file={fileOfDoc(d)} />
                   {canManage && <ReadButton busy={busy === d.id} onClick={() => void readDoc(d)} />}
                   {canManage && <button onClick={() => void typeTotal(d)} className="text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">type total</button>}
                 </span>
@@ -467,6 +470,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                         <tr className={isAwarded ? "bg-emerald-500/[0.05]" : isDeclined ? "opacity-55" : undefined}>
                           <td className="px-3 py-2">
                             <span className="font-bold text-[var(--color-text)]">{e.vendorName}</span>
+                            <PreviewButton file={fileOfDoc(doc)} className="ml-1" />
                             {known && (
                               <Link href={`/companies/${known.id}`}
                                 className="ml-1.5 inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent-ring)] transition-colors"
@@ -537,6 +541,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
               {manualBids.map((d) => (
                 <li key={d.id} className={`px-3 py-2 flex items-center gap-2 flex-wrap text-xs ${d.status === "declined" ? "opacity-55" : ""}`}>
                   <span className="font-bold text-[var(--color-text)]">{d.vendorName ?? d.fileName ?? "Bid"}</span>
+                  <PreviewButton file={fileOfDoc(d)} />
                   <span className="font-black tabular-nums text-[var(--color-text)]">{fmtMoney(d.totalAmount ?? 0)}</span>
                   <span className="text-[10px] text-[var(--color-text-muted)]" title="The AI couldn't read line detail from this file - it competes on price only, with no manpower or coverage score.">
                     typed total - price only
