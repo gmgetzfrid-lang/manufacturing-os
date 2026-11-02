@@ -71,6 +71,7 @@ import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl, { ShiftClockContext } from "@/components/projects/ProgressControl";
 import ExecutionGuide from "@/components/projects/ExecutionGuide";
 import ReportsView from "@/components/projects/ReportsView";
+import { RemoveStepDialog, REMOVE_STEP_EVENT } from "@/components/projects/RemoveStep";
 import type { ReportLink } from "@/lib/reportLinks";
 import { useProjectWord } from "@/components/projects/ProjectTypeContext";
 import { JobStartContext, jobStartOf } from "@/components/projects/JobStartContext";
@@ -314,6 +315,14 @@ export default function ExecutionView({
     };
     window.addEventListener("step:edit-plan", on);
     return () => window.removeEventListener("step:edit-plan", on);
+  }, []);
+  // Remove a step from any view (the step card's Remove): delete it with
+  // Undo, or cancel it on the record (components/projects/RemoveStep).
+  const [removeId, setRemoveId] = useState<string | null>(null);
+  useEffect(() => {
+    const on = (e: Event) => { const id = (e as CustomEvent<{ id?: string }>).detail?.id; if (id) setRemoveId(id); };
+    window.addEventListener(REMOVE_STEP_EVENT, on);
+    return () => window.removeEventListener(REMOVE_STEP_EVENT, on);
   }, []);
     // The latest of each step, for a save made in two parts (started, then
   // finished): the second part sees what the first did.
@@ -924,6 +933,22 @@ export default function ExecutionView({
       });
     } catch (e) { notify((e as Error).message, "warning"); onRefresh(); }
   }, [canEdit, selectedIds, childrenOf, orgId, projectId, userId, userEmail, onRefresh, announce, notify]);
+
+  // One step deleted from its card, with Undo.
+  const removeStep = useCallback(async (id: string) => {
+    if (!canEdit) return;
+    const name = byId.get(id)?.name ?? "Step";
+    try {
+      const removed = await deleteMilestones({ orgId, projectId, ids: [id], withChildren: true, actorUserId: userId, actorUserEmail: userEmail });
+      if (detailId === id) setDetailId(null);
+      onRefresh();
+      if (removed.notDeleted || removed.rows.length === 0) { notify("It wasn't deleted - you may not have permission for it.", "warning"); return; }
+      announce(`Deleted “${truncate(name)}”`, async () => {
+        try { await restoreDeletedMilestones(removed); } catch (e) { notify(`Undo failed: ${(e as Error).message}`, "warning"); }
+        onRefresh();
+      });
+    } catch (e) { notify((e as Error).message, "warning"); onRefresh(); }
+  }, [canEdit, byId, orgId, projectId, userId, userEmail, detailId, onRefresh, announce, notify]);
 
   // Bulk status across the selection (with one undo that restores each
   // task's prior status).
@@ -1537,6 +1562,13 @@ export default function ExecutionView({
         />
       )}
 
+      {removeId && byId.get(removeId) && canEdit && (
+        <RemoveStepDialog m={byId.get(removeId)!} under={(childrenOf.get(removeId) ?? []).length}
+          userId={userId} userName={userName} userEmail={userEmail}
+          onClose={() => setRemoveId(null)}
+          onCancelled={() => { const name = byId.get(removeId)?.name ?? "Step"; setRemoveId(null); onRefresh(); notify(`Cancelled “${truncate(name)}”: it's listed on the close-out report.`); }}
+          onDelete={() => { const id = removeId; setRemoveId(null); void removeStep(id); }} />
+      )}
       {detailId && byId.get(detailId) && (
         <TaskDetailPanel
           key={planEdit?.id === detailId ? `${detailId}:edit${planEdit.n}` : detailId}

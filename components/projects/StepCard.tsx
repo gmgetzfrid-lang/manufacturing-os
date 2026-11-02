@@ -18,6 +18,7 @@ import { discoveryOf, kindOf, ADDED, type AddedKind } from "@/lib/discovery";
 import { ADDED_TONE } from "@/components/projects/DiscoveryTag";
 import PctSlider from "@/components/projects/PctSlider";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
+import { askRemoveStep } from "@/components/projects/RemoveStep";
 import { newFinding } from "@/components/projects/Findings";
 import { updateMilestoneNote, setProgressTime, setNoteTime, updateDiscoveryRecord, deleteDiscovery, deleteMilestoneNote, undoLastProgress, resetStepProgress, setProgressPercent, removeProgressEntry, AHEAD_MAX_MS } from "@/lib/milestones";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -677,6 +678,9 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
           {canEdit && m.id && <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("step:edit-plan", { detail: { id: m.id } }))} className="font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">Edit plan</button>}
           {/* A problem, a lesson, a shortfall: kept for the next job. */}
           {canEdit && m.id && <button type="button" onClick={() => newFinding({ milestoneId: m.id })} title="A problem, a lesson, a material shortfall or missed scope - kept for the next job" className="font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline">+ Finding</button>}
+          {/* Not supposed to be there: delete it, or cancel it on the record
+              (added work has its own Delete, above). */}
+          {canEdit && m.id && !found && <button type="button" onClick={() => askRemoveStep(m.id!)} title="Delete it (put in by mistake) or cancel it (not done on this job)" className="font-semibold text-rose-700 dark:text-rose-400 hover:underline">Remove</button>}
         </div>
       )}
 
