@@ -3,7 +3,7 @@
 // exchangers). Everything else is day work.
 
 import { describe, it, expect } from "vitest";
-import { applyNightStaffing, crewEntry, nightCrewChoices, parseEntry, toCrewEntries } from "@/lib/nightStaffing";
+import { applyNightStaffing, crewEntry, nightCrewChoices, parseEntry, toCrewEntries, nightJobChoices, jobNightCrews, jobNightEntries } from "@/lib/nightStaffing";
 import type { Milestone } from "@/types/schema";
 
 const mk = (p: Partial<Milestone> & { id: string; name: string }): Milestone => ({ orgId: "o", weight: 1, status: "planned", source: "manual", createdBy: "u", ...p } as Milestone);
@@ -53,5 +53,40 @@ describe("night crews by crew and equipment", () => {
     expect(c[0].jobs.map((j) => j.name)).toEqual(["E-12 Exchanger", "E-17 Exchanger"]);
     expect(c.find((x) => x.crew === "Schultz")!.jobs.map((j) => j.name)).toEqual(["E-17 Exchanger", "T-101 Tower"]);
     expect(c[c.length - 1].crew).toBe(""); // no crew named, last
+  });
+});
+
+describe("night setup by job: days only, or days and nights", () => {
+  // The file puts the tower and E-12's PSV in night hours.
+  const nightHours = (m: Milestone) => m.id === "t1" || m.id === "p1";
+  const jobs = nightJobChoices(ms, nightHours);
+  it("only the jobs the schedule puts in night hours, each with its crews", () => {
+    expect(jobs.map((j) => j.name)).toEqual(["E-12 Exchanger", "T-101 Tower"]);
+    expect(jobs[0]).toMatchObject({ crews: ["Ancon Hydroblasting", "Valve Shop", ""], steps: 3, nightSteps: 1 });
+  });
+  it("days and nights with all its crews saves the job; some crews save each", () => {
+    expect(jobNightEntries(new Map([["t", new Set(["*"])]]))).toEqual(["t"]);
+    expect(jobNightEntries(new Map([["e12", new Set(["Valve Shop"])]]))).toEqual([crewEntry("Valve Shop", "e12")]);
+  });
+  it("the tower on nights: its work is night work; E-12 stays days", () => {
+    const night = jobNightEntries(new Map([["t", new Set(["*"])]]));
+    expect(dayIds(night)).not.toContain("t1");
+    expect(dayIds(night)).toContain("p1");
+  });
+  it("only the valve shop on nights at E-12: the hydroblast there is day work", () => {
+    const night = jobNightEntries(new Map([["e12", new Set(["Valve Shop"])]]));
+    expect(dayIds(night)).not.toContain("p1");
+    expect(dayIds(night)).toContain("h2");
+  });
+  it("what was saved before reads back by job: a crew on nights for all its work counts on each of its jobs", () => {
+    expect(jobNightCrews(jobs, ["t"]).get("t")).toEqual(new Set(["*"]));
+    expect(jobNightCrews(jobs, [crewEntry("Schultz", "t")]).get("t")).toEqual(new Set(["*"]));
+    expect(jobNightCrews(jobs, [crewEntry("Valve Shop", null)]).get("e12")).toEqual(new Set(["Valve Shop"]));
+    expect(jobNightCrews(jobs, [crewEntry("Valve Shop", "e12")]).has("t")).toBe(false);
+    // Saved the new way, the work in night hours comes out as before (work
+    // the file has on days is day work either way).
+    const old = [crewEntry("Schultz", null)];
+    const inNightHours = (ids: Array<string | undefined>) => ids.filter((id) => id === "t1" || id === "p1");
+    expect(inNightHours(dayIds(jobNightEntries(jobNightCrews(jobs, old))))).toEqual(inNightHours(dayIds(old)));
   });
 });

@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { projectTypeOf, cleanProjectType, typeWord, unitsDown, projectTypeSet, PROJECT_TYPES, DEFAULT_PROJECT_TYPE } from "@/lib/projectType";
 import { REPORTS, reportName } from "@/lib/reportLinks";
-import { groupWorkOrders, showsOrder, findOrders, fieldOrdersOf } from "@/lib/workOrderGroups";
+import { groupWorkOrders, showsOrder, findOrders } from "@/lib/workOrderGroups";
 import { sectionsOff, updateToSend, updatePrintDocument, offKey, onKey } from "@/lib/updatePrint";
 import { impactLine } from "@/lib/discovery";
 import { discoverySub } from "@/lib/managementUpdate";
@@ -96,7 +96,7 @@ describe("the word replaces \"turnaround\"", () => {
 describe("one name per report", () => {
   it("the reports, then the forms", () => {
     expect(REPORTS.filter((r) => !r.form).map((r) => r.name)).toEqual(["Shift turnover", "Hourly log", "Time log", "Schedule report", "Work order report", "Kick-off", "Close-out"]);
-    expect(REPORTS.filter((r) => r.form).map((r) => r.name)).toEqual(["Field tracker"]);
+    expect(REPORTS.filter((r) => r.form).map((r) => r.name)).toEqual(["Shift sheet"]);
     expect(new Set(REPORTS.map((r) => r.name)).size).toBe(REPORTS.length);
     expect(reportName("hourly")).toBe("Hourly log");
   });
@@ -128,12 +128,6 @@ describe("work orders: the Work tab and the report read the same", () => {
     expect(orders.filter((o) => showsOrder(o, "open")).length).toBe(2);
     expect(findOrders(orders, "hydro").map((o) => o.wo)).toEqual(["301582"]);
     expect(findOrders(orders, "ancon trays").map((o) => o.wo)).toEqual(["301235"]);
-  });
-  it("the field tracker's work orders: steps, resource and plan only", () => {
-    const f = fieldOrdersOf(orders);
-    expect(f[0]).toMatchObject({ wo: "301582", name: "E-12", crews: ["Schultz"] });
-    expect(f[0].steps.map((s) => s.name)).toEqual(["Pull bundle", "Hydro"]);
-    expect(Object.keys(f[0].steps[0]).sort()).toEqual(["crew", "id", "name", "planFinish", "planStart"]);
   });
 });
 

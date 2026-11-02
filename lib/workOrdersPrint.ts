@@ -6,7 +6,7 @@
 //             plan, actual, status, % and the latest comment.
 //   history - the same with each step's whole history (lib/timeLog).
 //
-// The pen-and-paper field tracker is its own blank form (lib/fieldTracker).
+// The shift sheet for the field is its own form (lib/shiftSheet).
 //
 // Plain HTML with its own styles, for a print window (on the company
 // letterhead when there is one).

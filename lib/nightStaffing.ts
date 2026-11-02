@@ -140,3 +140,89 @@ export function toCrewEntries(milestones: Milestone[], night: string[]): string[
   }
   return [...out];
 }
+
+// ── By job: the way the setup asks it now ──
+// Every job works days. A job the schedule puts in night hours either
+// stays on days, or runs days and nights: with all its crews on nights, or
+// only some of them. Saved in the same entries: all its crews as the job
+// itself ("<jobId>", which also covers crews added to it later), some as
+// "crew:<jobId>:<crew>" each.
+
+export interface JobChoice {
+  /** The job: each step's own parent (the equipment's task). */
+  id: string;
+  name: string;
+  crumbs: string;
+  /** The crews with steps under it, as written ("" = no crew named). */
+  crews: string[];
+  steps: number;
+  /** Steps the schedule file puts in night hours. */
+  nightSteps: number;
+}
+
+/** The jobs to decide: those the schedule puts in night hours, in the
+ *  schedule's order. */
+export function nightJobChoices(milestones: Milestone[], isNightStep: (m: Milestone) => boolean): JobChoice[] {
+  const woCrew = inheritedCrews(milestones);
+  const byId = new Map<string, Milestone>();
+  const parents = new Set<string>();
+  for (const m of milestones) { if (m.id) byId.set(m.id, m); if (m.parentId) parents.add(m.parentId); }
+  const crumbsOf = (m: Milestone) => {
+    const out: string[] = [];
+    for (let p = m.parentId ? byId.get(m.parentId) : undefined, g = 0; p && g < 60; p = p.parentId ? byId.get(p.parentId) : undefined, g++) out.unshift(p.name);
+    return out.join(" › ");
+  };
+  const jobs = new Map<string, JobChoice & { wbs: string; first: number }>();
+  for (const m of milestones) {
+    if (!m.id || parents.has(m.id) || !m.parentId) continue;
+    const job = byId.get(m.parentId);
+    if (!job?.id) continue;
+    const j = jobs.get(job.id) ?? { id: job.id, name: job.name, crumbs: crumbsOf(job), crews: [], steps: 0, nightSteps: 0, wbs: job.wbs ?? "", first: Infinity };
+    const crew = m.responsibleParty?.trim() || woCrew.get(m.id) || "";
+    if (!j.crews.some((c) => norm(c) === norm(crew))) j.crews.push(crew);
+    j.steps++;
+    if (isNightStep(m)) j.nightSteps++;
+    jobs.set(job.id, j);
+  }
+  return [...jobs.values()]
+    .filter((j) => j.nightSteps > 0)
+    .sort((a, b) => a.wbs.localeCompare(b.wbs, undefined, { numeric: true }) || a.name.localeCompare(b.name, undefined, { numeric: true }))
+    .map(({ wbs: _w, first: _f, ...j }) => ({ ...j, crews: j.crews.sort((a, b) => Number(a === "") - Number(b === "") || a.localeCompare(b, undefined, { numeric: true })) }));
+}
+
+/** Each job's crews on nights, from what's saved: "*" for all of them. A
+ *  crew saved on nights for all its work counts on every job it has. */
+export function jobNightCrews(jobs: JobChoice[], night: string[]): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  const everywhere = new Set<string>();
+  const ids = new Set(jobs.map((j) => j.id));
+  for (const e of night) {
+    const x = parseEntry(e);
+    if (!("crew" in x)) { if (ids.has(x.job)) out.set(x.job, new Set(["*"])); continue; }
+    if (x.job == null) { everywhere.add(norm(x.crew)); continue; }
+    if (!ids.has(x.job)) continue;
+    const cur = out.get(x.job) ?? new Set<string>();
+    if (!cur.has("*")) cur.add(x.crew);
+    out.set(x.job, cur);
+  }
+  for (const j of jobs) {
+    const cur = out.get(j.id);
+    if (cur?.has("*")) continue;
+    const on = new Set(cur ?? []);
+    for (const c of j.crews) if (everywhere.has(norm(c))) on.add(c);
+    // Every one of its crews: the job as a whole.
+    if (j.crews.length > 0 && j.crews.every((c) => [...on].some((o) => norm(o) === norm(c)))) out.set(j.id, new Set(["*"]));
+    else if (on.size) out.set(j.id, on);
+  }
+  return out;
+}
+
+/** The setting to save for each job's night crews. */
+export function jobNightEntries(picks: Map<string, Set<string>>): string[] {
+  const out: string[] = [];
+  for (const [job, crews] of picks) {
+    if (crews.has("*")) out.push(job);
+    else for (const c of crews) out.push(crewEntry(c, job));
+  }
+  return out.sort();
+}

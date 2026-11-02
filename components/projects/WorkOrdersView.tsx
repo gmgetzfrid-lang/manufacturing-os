@@ -7,8 +7,8 @@
 // card: start, %, finish, fix times, and the history with Edit. Steps with
 // no WO are listed under their equipment. Print puts the work orders shown
 // on paper, every one opened up with all its steps, in a format of its own
-// — report, report with history, or the pen-and-paper field tracker
-// (lib/workOrdersPrint) — without changing the view.
+// — report, or report with history (lib/workOrdersPrint) — without
+// changing the view; the shift sheet for the field is in Reports.
 
 import React, { useMemo, useState } from "react";
 import { Search, ChevronRight, Printer, Ban, Plus, Lightbulb } from "lucide-react";
@@ -16,19 +16,17 @@ import { newFinding } from "@/components/projects/Findings";
 import type { Milestone } from "@/types/schema";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import type { ShiftTimes } from "@/lib/shiftReport";
-import { dayKey, dayKeyToMs } from "@/lib/scheduleTz";
+import { dayKey } from "@/lib/scheduleTz";
 import { whenDated } from "@/lib/timeWords";
 import { ADDED } from "@/lib/discovery";
 import type { PathMarks } from "@/lib/criticalPath";
 import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
 import { useLetterhead } from "@/lib/letterheadStore";
 import type { PrintFormat } from "@/lib/workOrdersPrint";
-import { groupWorkOrders, showsOrder, findOrders, fieldOrdersOf, workOrdersPrintDocument, SHOW_WORD, STANDING, descOf, type Show, type WorkOrder } from "@/lib/workOrderGroups";
+import { groupWorkOrders, showsOrder, findOrders, workOrdersPrintDocument, SHOW_WORD, STANDING, descOf, type Show, type WorkOrder } from "@/lib/workOrderGroups";
 import { printHtml } from "@/lib/updatePrint";
 import type { ReportLink } from "@/lib/reportLinks";
 import { useProjectWord } from "@/components/projects/ProjectTypeContext";
-import { fieldTrackerFor, type FieldOrder } from "@/lib/fieldTracker";
-import FieldTrackerPrint, { type FieldChoice } from "@/components/projects/FieldTrackerPrint";
 import { CancelJobForm } from "@/components/projects/CancelledJobs";
 import AddWorkPicker from "@/components/projects/AddWorkPicker";
 
@@ -94,20 +92,8 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
     }
   };
 
-  // ── The field tracker: a blank form to fill in by pen (lib/fieldTracker),
-  // every work order on the schedule, whatever the view shows.
-  const [fieldOpen, setFieldOpen] = useState(false);
-  const fieldOrders = useMemo<FieldOrder[]>(() => fieldOrdersOf(orders), [orders]);
-  const printField = (c: FieldChoice) => {
-    setFieldOpen(false); setPrintMsg(null);
-    const project = projectName?.trim() || "Schedule";
-    if (!printHtml(fieldTrackerFor(c, { project, tz, orders: fieldOrders, dayMs: (d) => dayKeyToMs(d, tz) }))) setPrintMsg("Your browser blocked the print window - allow pop-ups for this site and try again.");
-  };
-
-
   return (
     <div className="space-y-2">
-      {fieldOpen && <FieldTrackerPrint orders={fieldOrders} today={today} onPrint={printField} onClose={() => setFieldOpen(false)} />}
       {picking && onDiscovery && (
         <AddWorkPicker day={today} tz={tz} milestones={milestones}
           onPick={(t) => { setPicking(false); onDiscovery(t); }} onNew={onNewWorkOrder ? () => { setPicking(false); onNewWorkOrder(); } : undefined} onClose={() => setPicking(false)} />
@@ -160,10 +146,12 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
                   <span className="font-semibold">Report with history</span>
                   <span className="block text-[11px] text-[var(--color-text-muted)]">Every start, % update, hold and comment, with its time</span>
                 </button>
-                <button type="button" onClick={() => { setPrintMenu(false); if (onOpenReport) onOpenReport({ id: "field" }); else setFieldOpen(true); }} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)]">
-                  <span className="font-semibold">Field tracker - fill in by pen</span>
-                  <span className="block text-[11px] text-[var(--color-text-muted)]">A blank form: the whole job, one work order, one step, or a date range</span>
-                </button>
+                {onOpenReport && (
+                  <button type="button" onClick={() => { setPrintMenu(false); onOpenReport({ id: "sheet" }); }} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)]">
+                    <span className="font-semibold">Shift sheet - fill in by pen</span>
+                    <span className="block text-[11px] text-[var(--color-text-muted)]">One page for the coming shift: only its work, by equipment</span>
+                  </button>
+                )}
               </span>
             </>
           )}

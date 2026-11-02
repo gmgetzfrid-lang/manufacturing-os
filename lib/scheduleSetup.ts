@@ -4,7 +4,7 @@
 //
 //   Time zone     "now" vs the plan — plan-by-now, behind, which shift
 //   Shift times   the day / night split, the turnover meeting time
-//   Night crews   which jobs have hands on nights (the rest is day work)
+//   Night shifts  which jobs run days and nights (the rest is day work)
 //   Critical path where it comes from (the file can mark everything)
 //   Baseline      the plan progress is measured against
 //   Printed reports  the company letterhead reports print on (optional —
@@ -59,8 +59,8 @@ export function setupChecklist(s: {
     // Required: a schedule file puts work in night hours that nights may not
     // staff — the turnover would hand day work to nights. One choice settles
     // it ("follow the file" is a choice too).
-    { id: "night", label: "Night crews", required: true, done: s.nightDecided === true, checking: s.nightDecided === null,
-      why: "Until it's set, every step the file put in night hours is handed to nights - even on jobs nights don't staff." },
+    { id: "night", label: "Night shifts", required: true, done: s.nightDecided === true, checking: s.nightDecided === null,
+      why: "Until it's set, every step the file put in night hours is handed to nights - even on jobs that only work days." },
     { id: "critical", label: "Critical path source", required: false, done: s.criticalChosen,
       why: "Schedule files often mark nearly everything critical - choose where it comes from." },
     { id: "baseline", label: "Baseline", required: false, done: s.hasBaseline,
@@ -77,5 +77,5 @@ export const missingRequired = (items: SetupItem[]) => items.filter((i) => i.req
 export const toDo = (items: SetupItem[]) => items.filter((i) => !i.done && !i.checking && !i.extra);
 
 /** Opens Schedule setup at a step from anywhere on the page (the calendar's
- *  "Night crews"): window.dispatchEvent(new CustomEvent(OPEN_SETUP_EVENT, { detail: "night" })). */
+ *  "Night shifts"): window.dispatchEvent(new CustomEvent(OPEN_SETUP_EVENT, { detail: "night" })). */
 export const OPEN_SETUP_EVENT = "schedule-setup:open";

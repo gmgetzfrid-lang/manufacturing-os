@@ -6,7 +6,7 @@
 // now filled in, so confirming a right answer is one click.
 
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Check, ChevronLeft, ChevronRight, Clock, Factory, Flag, Globe2, Loader2, Moon, Printer, Settings2, Tag, Zap } from "lucide-react";
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Clock, Factory, Flag, Globe2, Loader2, Moon, Printer, Settings2, Sun, Tag, Zap } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { setupChecklist, missingRequired, toDo, OPEN_SETUP_EVENT, type SetupItem, type SetupItemId } from "@/lib/scheduleSetup";
 import { useLetterhead } from "@/lib/letterheadStore";
@@ -17,9 +17,10 @@ import { useShiftTimes, useShiftTimesState, useShiftTimesSaved, saveProjectShift
 import { PROJECT_TYPES, projectTypeOf, projectTypeSet, typeWord, type ProjectType } from "@/lib/projectType";
 import { meetingLeadMin, workShiftOf, shiftAt, shiftWindow, type PullCrew, type ShiftTimes } from "@/lib/shiftReport";
 import { stepBandDays } from "@/lib/shiftBands";
+import { splitTag } from "@/lib/shiftSheet";
 import { withWorkOrderCrews } from "@/lib/workOrderCrew";
 import { dayKey, dayKeyToMs, addDays } from "@/lib/scheduleTz";
-import { applyNightStaffing, nightCrewChoices, toCrewEntries, crewEntry, parseEntry, type NightJobs } from "@/lib/nightStaffing";
+import { applyNightStaffing, nightJobChoices, jobNightCrews, jobNightEntries, type JobChoice, type NightJobs } from "@/lib/nightStaffing";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { useCriticalMode, useCriticalModeLoaded, saveCriticalMode } from "@/lib/criticalModeStore";
@@ -134,7 +135,7 @@ export function ScheduleSetupButton(p: Props) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button onClick={() => setOpen(true)} title="Project type, unit & equipment, time zone, shift times, night crews, critical path, baseline, printed reports"
+      <button onClick={() => setOpen(true)} title="Project type, unit & equipment, time zone, shift times, night shifts, critical path, baseline, printed reports"
         className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border shadow-sm transition-colors ${todo
           ? "text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 hover:bg-amber-100"
           : "text-[var(--color-text)] bg-[var(--color-surface)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
@@ -197,7 +198,7 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
             {at === "equipment" && <EquipmentStep projectId={p.projectId} projectName={p.projectName} milestones={p.milestones} canManage={p.canManage} userId={p.userId} />}
             {at === "timezone" && <TimeZoneStep {...p} done={item.done} onSaved={(z) => { setTzSaved(z); go(1); }} />}
             {at === "shifts" && <ShiftsStep {...p} done={item.done} checking={!!item.checking} onSaved={() => go(1)} />}
-            {/* Night crews stay open after saving: they're changed as the job goes. */}
+            {/* Night shifts stay open after saving: they're changed as the job goes. */}
             {at === "night" && <NightStep {...p} done={item.done} onSaved={() => undefined} />}
             {at === "critical" && <CriticalStep {...p} critical={critical} onSaved={() => go(1)} />}
             {at === "baseline" && <BaselineStep {...p} done={item.done} />}
@@ -357,14 +358,13 @@ function ShiftsStep({ projectId, canManage, done, checking, onSaved }: Props & {
   );
 }
 
-type CrewPick = { all: boolean; jobs: Set<string> };
-type NightMode = "none" | "all" | "some";
+type JobMode = "day" | "all" | "some";
 
-/** Night crews, the way the site thinks about them: every crew works days;
- *  some also have a night crew — on all their work (Ancon), or only on
- *  certain jobs (Schultz on the V-7 tower). Beside it, the nights as they'll
- *  come out — every step each night crew has, night by night — and the
- *  night work nobody's on, which waits for the day shift. */
+/** Night setup, by job: every job works days; a job the schedule puts in
+ *  night hours either stays on days (its night hours wait for the day
+ *  crew) or runs days and nights, with all its crews on nights or only
+ *  some. Beside it, the shifts as they'll come out: each date's day shift
+ *  and night shift side by side, so a round-the-clock job shows on both. */
 function NightStep({ projectId, milestones: given, canManage, done, onSaved }: Props & { done: boolean; onSaved: () => void }) {
   const tz = useScheduleTz();
   const { times, loaded } = useShiftTimesState(projectId);
@@ -372,17 +372,19 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
   // The schedule as the file has it: the saved night setting off, so what's
   // shown follows the choices made here, not the last ones saved.
   const milestones = useMemo(() => given.map((m) => (m.staffedShift ? { ...m, staffedShift: null } : m)), [given]);
+  const fileShift = useMemo(() => (m: Milestone) => workShiftOf(m, tz, times), [tz, times]);
+  const jobs = useMemo(() => nightJobChoices(milestones, (m) => fileShift(m) !== "day"), [milestones, fileShift]);
   const [fileMode, setFileMode] = useState(saved === "file");
-  const [picks, setPicks] = useState<Map<string, CrewPick>>(() => fromEntries(Array.isArray(saved) ? toCrewEntries(milestones, saved) : []));
+  const [picks, setPicks] = useState<Map<string, Set<string>>>(() => jobNightCrews(jobs, Array.isArray(saved) ? saved : []));
   // The saved setting can arrive after this opens (a new device): until a
   // choice is made here, show what's saved.
   const [touched, setTouched] = useState(false);
-  const savedKey = JSON.stringify(saved ?? null);
+  const savedKey = JSON.stringify(saved ?? null) + jobs.length;
   const [shownKey, setShownKey] = useState(savedKey);
   if (!touched && savedKey !== shownKey) {
     setShownKey(savedKey);
     setFileMode(saved === "file");
-    setPicks(fromEntries(Array.isArray(saved) ? toCrewEntries(milestones, saved) : []));
+    setPicks(jobNightCrews(jobs, Array.isArray(saved) ? saved : []));
   }
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -394,28 +396,16 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
   const setHelpers = (p: PullCrew) => setEdited(p);
   const [showHelpers, setShowHelpers] = useState(!!times.helpers);
   const crews = useMemo(() => [...new Set(milestones.map((m) => m.responsibleParty?.trim()).filter((x): x is string => !!x))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), [milestones]);
-  const fileShift = useMemo(() => (m: Milestone) => workShiftOf(m, tz, times), [tz, times]);
-  const choices = useMemo(() => nightCrewChoices(milestones, (m) => fileShift(m) !== "day"), [milestones, fileShift]);
-  const key = (crew: string) => crew.trim().toLowerCase();
-  const pickOf = (crew: string) => picks.get(key(crew));
-  const modeOf = (crew: string): NightMode => { const p = pickOf(crew); return !p ? "none" : p.all ? "all" : "some"; };
-  const isOn = (crew: string) => { const p = pickOf(crew); return !!p && (p.all || p.jobs.size > 0); };
-  const update = (crew: string, fn: (cur: CrewPick | undefined) => CrewPick | undefined) => {
+  const modeOf = (j: JobChoice): JobMode => { const p = picks.get(j.id); return !p || p.size === 0 ? "day" : p.has("*") ? "all" : "some"; };
+  const setJob = (id: string, v: Set<string> | null) => {
     setSavedNow(false); setTouched(true);
-    setPicks((cur) => { const n = new Map(cur); const v = fn(cur.get(key(crew))); if (v) n.set(key(crew), v); else n.delete(key(crew)); return n; });
+    setPicks((cur) => { const n = new Map(cur); if (v && v.size) n.set(id, v); else n.delete(id); return n; });
   };
-  const entries: string[] = [];
-  for (const c of choices) {
-    const p = pickOf(c.crew);
-    if (!p) continue;
-    if (p.all) entries.push(crewEntry(c.crew, null));
-    else for (const j of c.jobs) if (p.jobs.has(j.id)) entries.push(crewEntry(c.crew, j.id));
-  }
-  entries.sort();
+  const entries = jobNightEntries(picks);
   const next: NightJobs = fileMode ? "file" : entries;
-  const savedNorm = saved === "file" ? "file" : Array.isArray(saved) ? toCrewEntries(milestones, saved).sort() : undefined;
+  const savedNorm = saved === "file" ? "file" : Array.isArray(saved) ? jobNightEntries(jobNightCrews(jobs, saved)) : undefined;
   const helpersSame = JSON.stringify(chosen) === JSON.stringify(times.helpers ?? null);
-  const same = helpersSame && JSON.stringify(next) === JSON.stringify(savedNorm) && !(Array.isArray(saved) && saved.some((e) => !e.startsWith("crew:")));
+  const same = helpersSame && JSON.stringify(next) === JSON.stringify(savedNorm) && JSON.stringify(saved) === JSON.stringify(savedNorm);
   const save = async () => {
     setBusy(true); setErr(null);
     try { await saveProjectShiftTimes(projectId, { ...times, nightJobs: next, helpers: chosen ?? undefined }); setEdited(undefined); setSavedNow(true); onSaved(); }
@@ -423,7 +413,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
     finally { setBusy(false); }
   };
 
-  // ── The nights as they'll come out: the same rule the calendar and the
+  // ── The shifts as they'll come out: the same rule the calendar and the
   // turnover use (lib/shiftBands), on the choices made here.
   const entriesKey = entries.join("|");
   const parents = useMemo(() => new Set(milestones.map((m) => m.parentId).filter(Boolean) as string[]), [milestones]);
@@ -432,80 +422,88 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
     const staffed = withWorkOrderCrews(applyNightStaffing(milestones, fileMode ? "file" : entriesKey ? entriesKey.split("|") : []));
     return staffed.filter((m) => m.id && !parents.has(m.id)).map((m) => ({ m, bands: stepBandDays(m, tz, times), now: workShiftOf(m, tz, times) }));
   }, [milestones, fileMode, entriesKey, parents, tz, times]);
-  const tonight = useMemo(() => shiftAt(Date.now(), tz, times).dayKey, [tz, times]);
+  // Start on today, or the job's first day when it hasn't started.
+  const firstDay = useMemo(() => {
+    const today = shiftAt(Date.now(), tz, times).dayKey;
+    const starts = plan.map((x) => startMsOf(x.m)).filter(Number.isFinite);
+    const first = starts.length ? dayKey(Math.min(...starts), tz) : today;
+    return first > today ? first : today;
+  }, [plan, tz, times]);
   const [offset, setOffset] = useState(0);
-  const nightKeys = [0, 1, 2].map((i) => dayKey(addDays(dayKeyToMs(tonight, tz), offset + i, tz), tz));
-  // Night work the file plans that no night crew is on: the day shift's.
+  const dayKeys = [0, 1, 2].map((i) => dayKey(addDays(dayKeyToMs(firstDay, tz), offset + i, tz), tz));
+  // Night hours in the file that no night crew is on: they wait for days.
   const waiting = plan.filter((x) => fileShift(x.m) !== "day" && x.now === "day" && x.m.status !== "completed" && finishMsOf(x.m) > Date.now());
   const dayF = useMemo(() => new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", month: "short", day: "numeric" }), [tz]);
   const clockF = useMemo(() => new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit", hour12: true }), [tz]);
-  const hoursIn = (m: Milestone, a: number, b: number) => {
-    const s = startMsOf(m), f = finishMsOf(m);
-    if (!Number.isFinite(s) || !Number.isFinite(f)) return "";
-    const from = s >= a ? clockF.format(s) : "…", to = f <= b ? clockF.format(f) : "…";
-    return from === "…" && to === "…" ? "all night" : `${from}–${to}`;
-  };
   const crewName = (c: string) => c || "No crew named";
-  const onCrews = choices.filter((c) => isOn(c.crew));
-  const order = [...choices].sort((a, b) => Number(isOn(b.crew)) - Number(isOn(a.crew)));
+  const jobOf = (m: Milestone) => (m.parentId ? byId.get(m.parentId) : undefined);
+  // "E-12" for "E-12 - Transmix Feed..."; a name with no tag in front, whole.
+  const short = (name: string) => splitTag(name).tag ?? name;
+  // One shift's jobs: each with its crews and steps.
+  const shiftJobs = (k: string, band: "day" | "night") => {
+    const rows = plan.filter((x) => x.bands[band].has(k) && x.m.status !== "completed");
+    const by = new Map<string, { name: string; crews: Set<string>; steps: number }>();
+    for (const { m } of rows) {
+      const j = jobOf(m);
+      const key = j?.id ?? m.id!;
+      const cur = by.get(key) ?? { name: short(j?.name ?? m.name), crews: new Set<string>(), steps: 0 };
+      cur.crews.add(crewName(m.responsibleParty?.trim() ?? "")); cur.steps++;
+      by.set(key, cur);
+    }
+    return [...by.values()];
+  };
+  const onJobs = jobs.filter((j) => modeOf(j) !== "day");
+  const seg = (on: boolean, night: boolean) => `px-2.5 py-1.5 border-l first:border-l-0 border-[var(--color-border-strong)] ${on ? (night ? "bg-violet-700 text-white" : "bg-sky-700 text-white") : "bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`;
 
   return (
     <div className="space-y-3">
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-3 text-[13px] leading-relaxed text-[var(--color-text)]">
-        <b>Everyone works days.</b> Put a crew on nights - on <b>all its work</b>, or only on <b>the jobs you pick</b>.
-        A night crew takes its steps the schedule has in night hours; round-the-clock jobs (the tower) run both shifts.
-        The nights on the right change as you choose.
+        <b>Every job works days.</b> These jobs also have work the schedule puts in night hours. For each: keep it on <b>days only</b> (its night hours wait for the day crew), or run it <b>days and nights</b>. The shifts shown here change as you choose.
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3">
-        {/* Crews */}
+        {/* Jobs */}
         <div className="space-y-2 min-w-0">
-          <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Who works nights</div>
+          <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Jobs with night hours</div>
           <div className={`rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] ${fileMode ? "opacity-50 pointer-events-none" : ""}`}>
-            {choices.length === 0 && <div className="px-3 py-3 text-[13px] text-[var(--color-text-muted)]">No steps yet - import the schedule first.</div>}
-            {order.map((c) => {
-              const mode = modeOf(c.crew);
-              const p = pickOf(c.crew);
+            {jobs.length === 0 && <div className="px-3 py-3 text-[13px] text-[var(--color-text-muted)]">{milestones.length ? "Nothing on the schedule is in night hours: it's all day work." : "No steps yet - import the schedule first."}</div>}
+            {jobs.map((j) => {
+              const mode = modeOf(j);
+              const p = picks.get(j.id);
               return (
-                <div key={c.crew || "__none"} className={`px-3 py-2.5 space-y-2 ${isOn(c.crew) ? "bg-violet-50/70 dark:bg-violet-950/25" : ""}`}>
+                <div key={j.id} className={`px-3 py-2.5 space-y-2 ${mode !== "day" ? "bg-violet-50/70 dark:bg-violet-950/25" : ""}`}>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                    <div className="min-w-[140px] flex-1">
-                      <div className={`text-[14px] font-bold ${c.crew ? "text-[var(--color-text)]" : "italic text-[var(--color-text-muted)]"}`}>{crewName(c.crew)}</div>
+                    <div className="min-w-[160px] flex-1">
+                      <div className="text-[14px] font-bold text-[var(--color-text)]" title={j.crumbs}>{j.name}</div>
                       <div className="text-[11.5px] text-[var(--color-text-muted)]">
-                        {c.steps} step{c.steps === 1 ? "" : "s"} on {c.jobs.length} job{c.jobs.length === 1 ? "" : "s"}
-                        {c.nightSteps > 0 && <> · <span className="text-violet-700 dark:text-violet-300">{c.nightSteps} planned in night hours</span></>}
+                        {j.crews.map(crewName).join(", ")} · <span className="text-violet-700 dark:text-violet-300">{j.nightSteps} of {j.steps} step{j.steps === 1 ? "" : "s"} in night hours</span>
                       </div>
                     </div>
-                    <div className="inline-flex rounded-lg border border-[var(--color-border-strong)] overflow-hidden text-[12px] font-bold" role="radiogroup" aria-label={`${crewName(c.crew)} at night`}>
-                      {([["none", "Days only"], ["all", "Nights: all its work"], ["some", "Nights: some jobs"]] as const).map(([v, t]) => (
-                        <button key={v} type="button" role="radio" aria-checked={mode === v} disabled={!canManage}
-                          onClick={() => update(c.crew, (x) => (v === "none" ? undefined : v === "all" ? { all: true, jobs: x?.jobs ?? new Set() } : { all: false, jobs: x?.jobs ?? new Set() }))}
-                          className={`px-2.5 py-1.5 border-l first:border-l-0 border-[var(--color-border-strong)] ${mode === v ? (v === "none" ? "bg-slate-700 text-white dark:bg-slate-200 dark:text-slate-900" : "bg-violet-700 text-white") : "bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
-                          {t}
-                        </button>
-                      ))}
+                    <div className="inline-flex rounded-lg border border-[var(--color-border-strong)] overflow-hidden text-[12px] font-bold" role="radiogroup" aria-label={`${j.name}: shifts`}>
+                      <button type="button" role="radio" aria-checked={mode === "day"} disabled={!canManage} onClick={() => setJob(j.id, null)} className={seg(mode === "day", false)}>Days only</button>
+                      <button type="button" role="radio" aria-checked={mode !== "day"} disabled={!canManage} onClick={() => { if (mode === "day") setJob(j.id, new Set(["*"])); }} className={seg(mode !== "day", true)}>Days and nights</button>
                     </div>
                   </div>
-                  {mode === "some" && (
+                  {mode !== "day" && j.crews.length > 1 && (
                     <div className="space-y-1">
-                      <div className="text-[11.5px] text-[var(--color-text-muted)]">Tap the jobs {crewName(c.crew)} works at night:</div>
+                      <div className="text-[11.5px] text-[var(--color-text-muted)]">On nights:</div>
                       <div className="flex flex-wrap gap-1.5">
-                        {c.jobs.map((j) => {
-                          const on = !!p?.jobs.has(j.id);
+                        {j.crews.map((c) => {
+                          const on = mode === "all" || [...(p ?? [])].some((x) => x.trim().toLowerCase() === c.trim().toLowerCase());
                           return (
-                            <button key={j.id} type="button" disabled={!canManage} title={j.crumbs} aria-pressed={on}
-                              onClick={() => update(c.crew, (x) => { const jobs = new Set(x && !x.all ? x.jobs : []); if (jobs.has(j.id)) jobs.delete(j.id); else jobs.add(j.id); return { all: false, jobs }; })}
+                            <button key={c || "__none"} type="button" disabled={!canManage} aria-pressed={on}
+                              onClick={() => {
+                                const cur = mode === "all" ? new Set(j.crews) : new Set([...(p ?? [])]);
+                                const has = [...cur].find((x) => x.trim().toLowerCase() === c.trim().toLowerCase());
+                                if (has != null) cur.delete(has); else cur.add(c);
+                                setJob(j.id, cur.size === 0 ? null : j.crews.every((x) => [...cur].some((y) => y.trim().toLowerCase() === x.trim().toLowerCase())) ? new Set(["*"]) : cur);
+                              }}
                               className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-semibold ${on ? "bg-violet-700 border-violet-700 text-white" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
-                              {on ? <Moon className="w-3 h-3" aria-hidden /> : null}{j.name}
-                              <span className={`text-[10.5px] font-bold ${on ? "text-violet-200" : "text-[var(--color-text-faint)]"}`}>{j.steps}</span>
+                              {on ? <Moon className="w-3 h-3" aria-hidden /> : null}{crewName(c)}
                             </button>
                           );
                         })}
                       </div>
-                      {p && p.jobs.size === 0 && <div className="text-[11.5px] font-semibold text-amber-700 dark:text-amber-300">None picked yet - still days only.</div>}
-                      {p && c.jobs.length > 1 && c.jobs.every((j) => p.jobs.has(j.id)) && (
-                        <div className="text-[11.5px] text-[var(--color-text-muted)]">That&apos;s all its jobs - <button type="button" disabled={!canManage} onClick={() => update(c.crew, () => ({ all: true, jobs: new Set() }))} className="font-bold text-violet-700 dark:text-violet-300 underline">Nights: all its work</button> also covers jobs added later.</div>
-                      )}
                     </div>
                   )}
                 </div>
@@ -514,67 +512,61 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
           </div>
           <label className="flex items-start gap-2 text-[12px] text-[var(--color-text-muted)] cursor-pointer">
             <input type="checkbox" className="mt-0.5" disabled={!canManage} checked={fileMode} onChange={(e) => { setFileMode(e.target.checked); setSavedNow(false); setTouched(true); }} />
-            <span>Skip the crews - anything the schedule file puts in night hours is night work.</span>
+            <span>Skip this - anything the schedule file puts in night hours is night work.</span>
           </label>
         </div>
 
-        {/* The nights as they'll come out — kept in view while the crews scroll. */}
+        {/* The shifts as they'll come out — kept in view while the jobs scroll. */}
         <div className="order-first xl:order-none space-y-2 min-w-0 xl:sticky xl:top-0 xl:self-start xl:max-h-[calc(100vh-220px)] xl:overflow-y-auto">
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">The nights</span>
+            <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">The shifts</span>
             <span className="ml-auto inline-flex items-center gap-1">
-              <button type="button" onClick={() => setOffset((o) => o - 3)} className="w-7 h-7 inline-flex items-center justify-center rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]" aria-label="Earlier nights"><ChevronLeft className="w-4 h-4" /></button>
-              {offset !== 0 && <button type="button" onClick={() => setOffset(0)} className="px-2 h-7 rounded-md border border-[var(--color-border)] text-[11px] font-bold hover:bg-[var(--color-surface-2)]">Tonight</button>}
-              <button type="button" onClick={() => setOffset((o) => o + 3)} className="w-7 h-7 inline-flex items-center justify-center rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]" aria-label="Later nights"><ChevronRight className="w-4 h-4" /></button>
+              <button type="button" onClick={() => setOffset((o) => o - 3)} className="w-7 h-7 inline-flex items-center justify-center rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]" aria-label="Earlier days"><ChevronLeft className="w-4 h-4" /></button>
+              {offset !== 0 && <button type="button" onClick={() => setOffset(0)} className="px-2 h-7 rounded-md border border-[var(--color-border)] text-[11px] font-bold hover:bg-[var(--color-surface-2)]">Back</button>}
+              <button type="button" onClick={() => setOffset((o) => o + 3)} className="w-7 h-7 inline-flex items-center justify-center rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]" aria-label="Later days"><ChevronRight className="w-4 h-4" /></button>
             </span>
           </div>
-          {nightKeys.map((k) => {
-            const w = shiftWindow(k, "night", tz, times);
-            const rows = plan.filter((x) => x.bands.night.has(k)).sort((a, b) => startMsOf(a.m) - startMsOf(b.m));
-            const open = rows.filter((x) => x.m.status !== "completed");
-            const byCrew = new Map<string, typeof rows>();
-            for (const x of open) { const c = x.m.responsibleParty?.trim() || ""; byCrew.set(c, [...(byCrew.get(c) ?? []), x]); }
-            return (
-              <div key={k} className="rounded-lg border border-violet-200 dark:border-violet-900 overflow-hidden">
-                <div className="px-3 py-1.5 flex items-center gap-2 bg-violet-800 text-white">
-                  <Moon className="w-3.5 h-3.5 text-violet-200" aria-hidden />
-                  <span className="text-[12.5px] font-black">{k === tonight ? "Tonight - " : ""}{dayF.format(w.start)}</span>
-                  <span className="text-[11px] text-violet-200">{clockF.format(w.start)} → {dayF.format(w.end).split(",")[0]} {clockF.format(w.end)}</span>
-                  <span className="ml-auto text-[11px] font-semibold text-violet-200">{open.length} step{open.length === 1 ? "" : "s"}{rows.length > open.length ? ` · ${rows.length - open.length} done` : ""}</span>
-                </div>
-                {open.length === 0 ? (
-                  <div className="px-3 py-2 text-[12px] text-[var(--color-text-muted)] bg-violet-50/60 dark:bg-violet-950/20">No night work.</div>
-                ) : (
-                  <div className="divide-y divide-violet-100 dark:divide-violet-950 bg-violet-50/60 dark:bg-violet-950/20">
-                    {[...byCrew.entries()].map(([crew, list]) => (
-                      <div key={crew || "__none"} className="px-3 py-1.5">
-                        <div className="text-[12px] font-black text-violet-900 dark:text-violet-200">{crewName(crew)} <span className="font-semibold text-violet-700/80 dark:text-violet-300/80">· {list.length}</span></div>
-                        <ul className="mt-0.5 space-y-0.5">
-                          {list.map(({ m }) => (
-                            <li key={m.id} className="grid grid-cols-[1fr_auto] gap-2 text-[12px]">
-                              <span className="min-w-0 truncate text-[var(--color-text)]" title={`${m.parentId ? `${byId.get(m.parentId)?.name ?? ""} · ` : ""}${m.name}`}>
-                                {m.parentId && byId.get(m.parentId) ? <span className="text-[var(--color-text-muted)]">{byId.get(m.parentId)!.name.split(" - ")[0]} · </span> : null}{m.name}
-                              </span>
-                              <span className="font-mono text-[11px] text-[var(--color-text-muted)] tabular-nums">{hoursIn(m, w.start, w.end)}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
+          {dayKeys.map((k) => {
+            const dw = shiftWindow(k, "day", tz, times), nw = shiftWindow(k, "night", tz, times);
+            const band = (b: "day" | "night", w: { start: number; end: number }) => {
+              const list = shiftJobs(k, b);
+              const night = b === "night";
+              return (
+                <div className={`min-w-0 rounded-md border ${night ? "border-violet-200 dark:border-violet-900 bg-violet-50/60 dark:bg-violet-950/20" : "border-sky-200 dark:border-sky-900 bg-sky-50/60 dark:bg-sky-950/20"}`}>
+                  <div className={`px-2.5 py-1 flex items-center gap-1.5 text-[11.5px] font-black ${night ? "text-violet-900 dark:text-violet-200" : "text-sky-900 dark:text-sky-200"}`}>
+                    {night ? <Moon className="w-3.5 h-3.5" aria-hidden /> : <Sun className="w-3.5 h-3.5" aria-hidden />}{night ? "Night" : "Day"}
+                    <span className="font-semibold opacity-80">{clockF.format(w.start)}</span>
+                    <span className="ml-auto font-semibold opacity-80">{list.reduce((n, x) => n + x.steps, 0)} step{list.reduce((n, x) => n + x.steps, 0) === 1 ? "" : "s"}</span>
                   </div>
-                )}
+                  {list.length === 0 ? <div className="px-2.5 pb-1.5 text-[11.5px] text-[var(--color-text-muted)]">No work.</div> : (
+                    <ul className="px-2.5 pb-1.5 space-y-0.5">
+                      {list.map((x) => (
+                        <li key={x.name} className="grid grid-cols-[1fr_auto] gap-2 text-[12px]">
+                          <span className="min-w-0 truncate"><b>{x.name}</b> <span className="text-[var(--color-text-muted)]">{[...x.crews].join(", ")}</span></span>
+                          <span className="text-[11px] text-[var(--color-text-muted)] tabular-nums">{x.steps}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            };
+            return (
+              <div key={k} className="rounded-lg border border-[var(--color-border)] overflow-hidden">
+                <div className="px-3 py-1.5 text-[12.5px] font-black bg-[var(--color-surface-2)]">{dayF.format(dw.start)}</div>
+                <div className="p-2 grid grid-cols-1 sm:grid-cols-2 gap-2">{band("day", dw)}{band("night", nw)}</div>
               </div>
             );
           })}
           {waiting.length > 0 && (
             <details className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/30">
               <summary className="cursor-pointer px-3 py-2 text-[12.5px] font-bold text-amber-900 dark:text-amber-200">
-                {waiting.length} night step{waiting.length === 1 ? "" : "s"} nobody&apos;s on - they wait for the day shift
+                {waiting.length} step{waiting.length === 1 ? "" : "s"} in night hours on days-only jobs - they wait for the day shift
               </summary>
               <ul className="px-3 pb-2 space-y-0.5">
                 {waiting.sort((a, b) => startMsOf(a.m) - startMsOf(b.m)).map(({ m }) => (
                   <li key={m.id} className="grid grid-cols-[1fr_auto] gap-2 text-[12px]">
-                    <span className="min-w-0 truncate text-[var(--color-text)]"><b>{crewName(m.responsibleParty?.trim() ?? "")}</b> · {m.parentId && byId.get(m.parentId) ? `${byId.get(m.parentId)!.name.split(" - ")[0]} · ` : ""}{m.name}</span>
+                    <span className="min-w-0 truncate text-[var(--color-text)]"><b>{short(jobOf(m)?.name ?? "")}</b> · {m.name} · {crewName(m.responsibleParty?.trim() ?? "")}</span>
                     <span className="font-mono text-[11px] text-[var(--color-text-muted)]">{dayF.format(startMsOf(m)).split(",")[0]} {clockF.format(startMsOf(m))}</span>
                   </li>
                 ))}
@@ -586,9 +578,9 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
 
       {/* The whole choice, in a line */}
       <div className="rounded-lg border-2 border-violet-200 dark:border-violet-900 bg-violet-50/60 dark:bg-violet-950/30 px-4 py-2.5 text-[13px] text-[var(--color-text)]">
-        <b>On nights:</b> {fileMode ? "whatever the schedule file puts in night hours." : onCrews.length === 0 ? "nobody - all work is day work." : onCrews.map((c) => {
-          const p = pickOf(c.crew)!;
-          return `${crewName(c.crew)} (${p.all ? "all its work" : c.jobs.filter((j) => p.jobs.has(j.id)).map((j) => j.name.split(" - ")[0]).join(", ")})`;
+        <b>Days and nights:</b> {fileMode ? "whatever the schedule file puts in night hours." : onJobs.length === 0 ? "none - every job works days only." : onJobs.map((j) => {
+          const p = picks.get(j.id)!;
+          return `${short(j.name)}${p.has("*") ? "" : ` (${[...p].map(crewName).join(", ")} on nights)`}`;
         }).join("; ")}
       </div>
 
@@ -618,27 +610,13 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
       {canManage ? (
         <div className="flex items-center gap-3">
           <button onClick={() => void save()} disabled={busy || !loaded || (done && same)} className={btn}>
-            {(busy || !loaded) && <Loader2 className="w-4 h-4 animate-spin" />} {!loaded ? "Reading your saved night crews…" : done && same ? "Saved" : "Save night crews"}
+            {(busy || !loaded) && <Loader2 className="w-4 h-4 animate-spin" />} {!loaded ? "Reading your saved night setup…" : done && same ? "Saved" : "Save"}
           </button>
-          {savedNow && <span className="text-[12px] font-semibold text-emerald-700 dark:text-emerald-400">Saved - the calendar and the turnover follow it now.</span>}
+          {savedNow && <span className="text-[12px] font-semibold text-emerald-700 dark:text-emerald-400">Saved - the calendar, the turnover and the shift sheet follow it now.</span>}
         </div>
       ) : <NoRights />}
     </div>
   );
-}
-
-/** Saved entries as the picker's state, by crew. */
-function fromEntries(entries: string[]): Map<string, { all: boolean; jobs: Set<string> }> {
-  const out = new Map<string, { all: boolean; jobs: Set<string> }>();
-  for (const e of entries) {
-    const x = parseEntry(e);
-    if (!("crew" in x)) continue;
-    const k = x.crew.trim().toLowerCase();
-    const cur = out.get(k) ?? { all: false, jobs: new Set<string>() };
-    if (x.job == null) cur.all = true; else cur.jobs.add(x.job);
-    out.set(k, cur);
-  }
-  return out;
 }
 
 function CriticalStep({ projectId, milestones, canManage, critical, onSaved }: Props & { critical: CriticalMode | null; onSaved: () => void }) {

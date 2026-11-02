@@ -1,8 +1,8 @@
 // workOrderGroups - the job by work order: each step under its work
 // order (its own WO #, else the nearest group above with one; added work
 // on its equipment's card), with plan against actual, % and hours ahead
-// or behind. The Work orders view and the Work order report read it, and
-// the field tracker is made from it, so they can't disagree.
+// or behind. The Work orders view and the Work order report read it, so
+// they can't disagree.
 
 import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
@@ -17,7 +17,6 @@ import { loadProgressLog } from "@/lib/progressHistory";
 import { buildTimeLog, type TimeLogRow } from "@/lib/timeLog";
 import { letterheadDocument, type Letterhead } from "@/lib/letterhead";
 import { workOrdersHtml, PRINT_CSS, type PrintOrder, type PrintFormat } from "@/lib/workOrdersPrint";
-import type { FieldOrder } from "@/lib/fieldTracker";
 import { saidWithLatest } from "@/lib/stepComment";
 
 export const STEP_STATUS: Record<MilestoneStatus, string> = { planned: "Not started", in_progress: "In progress", completed: "Done", on_hold: "On hold", blocked: "Blocked", missed: "Missed" };
@@ -136,14 +135,6 @@ export function showsOrder(o: WorkOrder, show: Show, marks?: PathMarks): boolean
 export function findOrders(orders: WorkOrder[], query: string): WorkOrder[] {
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   return orders.filter((o) => words.every((w) => o.find.includes(w)));
-}
-
-/** The field tracker's work orders: each with its steps, resources and plan. */
-export function fieldOrdersOf(orders: WorkOrder[]): FieldOrder[] {
-  return orders.map((o) => ({
-    key: o.key, wo: o.wo, name: o.owner.name, crews: o.crews, planStart: o.planStart, planFinish: o.planFinish,
-    steps: o.steps.filter((s) => s.id).map((s) => ({ id: s.id!, name: s.name, crew: s.responsibleParty?.trim() ?? "", planStart: startMsOf(s), planFinish: finishMsOf(s) })),
-  }));
 }
 
 /** The work order report, ready to print: each work order opened up with

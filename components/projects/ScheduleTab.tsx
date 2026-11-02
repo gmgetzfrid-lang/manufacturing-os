@@ -101,7 +101,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   // the close-out report and the Cancelled list keep them in sight.
   const { active, cancelled } = useMemo(() => splitCancelled(allMilestones), [allMilestones]);
   // Jobs with no night crew are day work, whatever hours the file gave
-  // them (Schedule setup → Night crews). A view-only mark, never saved.
+  // them (Schedule setup → Night shifts). A view-only mark, never saved.
   const shiftTimes = useShiftTimes(projectId);
   const milestones = useMemo(() => applyNightStaffing(active, shiftTimes.nightJobs), [active, shiftTimes.nightJobs]);
   const [loading, setLoading] = useState(true);

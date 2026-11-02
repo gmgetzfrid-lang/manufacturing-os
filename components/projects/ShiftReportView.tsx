@@ -955,6 +955,9 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                 <>
                   <OpenReportButton label="Time log" onClick={() => onOpenReport({ id: "timelog", shift: { dayKey: shift.dayKey, kind: shift.kind }, scope: "shift" })} />
                   <OpenReportButton label="Hourly log" onClick={() => onOpenReport({ id: "hourly", shift: { dayKey: shift.dayKey, kind: shift.kind } })} />
+                  {/* The shift sheet: entered for the shift ending, printed for the one starting. */}
+                  <OpenReportButton label="Enter shift sheet" title="Enter what's written on this shift's sheet" onClick={() => onOpenReport({ id: "sheet", shift: { dayKey: shift.dayKey, kind: shift.kind }, enter: true })} />
+                  <OpenReportButton label="Shift sheet" title="Print the next shift's sheet" onClick={() => onOpenReport({ id: "sheet", shift: { dayKey: report.next.dayKey, kind: report.next.kind } })} />
                 </>
               ) : (
                 <>
@@ -1216,9 +1219,9 @@ async function copyText(text: string): Promise<boolean> {
 }
 
 /** A button that opens a report in Reports, set to what's on screen. */
-function OpenReportButton({ label, onClick }: { label: string; onClick: () => void }) {
+function OpenReportButton({ label, onClick, title }: { label: string; onClick: () => void; title?: string }) {
   return (
-    <button type="button" onClick={onClick} title={`Open the ${label.toLowerCase()} in Reports, set to this shift`}
+    <button type="button" onClick={onClick} title={title ?? `Open the ${label.toLowerCase()} in Reports, set to this shift`}
       className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
       <FileText className="w-3.5 h-3.5" /> {label}
     </button>
@@ -1856,7 +1859,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           {next.kind === "night" && o.times.nightJobs === undefined && (
             // Not decided: the list follows the schedule file's hours.
             <div role="alert" className="rounded-md border-2 border-rose-400 dark:border-rose-700 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-[12px] text-rose-900 dark:text-rose-100">
-              <b>Night crews aren&apos;t set</b> - this list follows the schedule file&apos;s hours, which can hand day work to nights. Set them once in <b>Schedule setup → Night crews</b>.
+              <b>Night shifts aren&apos;t set</b> - this list follows the schedule file&apos;s hours, which can hand day work to nights. Set them once in <b>Schedule setup → Night shifts</b>: which jobs run days and nights.
             </div>
           )}
           {planList.length + tryList.length > 0 && putBack(print, "next")}

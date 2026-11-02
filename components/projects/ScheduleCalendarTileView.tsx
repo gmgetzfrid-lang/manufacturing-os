@@ -613,11 +613,11 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                 </button>
               ))}
             </div>
-            {/* Who works nights, and on what — changed as the job goes. */}
+            {/* Which jobs run days and nights — changed as the job goes. */}
             <button type="button" onClick={() => window.dispatchEvent(new CustomEvent(OPEN_SETUP_EVENT, { detail: "night" }))}
-              title="Who works nights, and on what - see each night's work before you save"
+              title="Which jobs run days and nights - see each day's and night's work before you save"
               className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-violet-300 dark:border-violet-800 text-[11px] font-bold text-violet-800 dark:text-violet-200 hover:bg-violet-50 dark:hover:bg-violet-950/40">
-              <Moon className="w-3 h-3" /> Night crews
+              <Moon className="w-3 h-3" /> Night shifts
             </button>
           </>}
           <span className="text-[10px] font-semibold text-[var(--color-text-faint)] uppercase tracking-wide">Show</span>

@@ -1,8 +1,8 @@
 // reportLinks - the project's reports, one name each, and how a button
-// elsewhere (the hour-by-hour export on Today, Print on Work orders) opens
-// one in Reports already set to its shift or work order.
+// elsewhere (the hour-by-hour export and the shift sheet on Today, Print on
+// Work orders) opens one in Reports already set to its shift or work order.
 
-export type ReportId = "turnover" | "hourly" | "timelog" | "schedule" | "workorders" | "kickoff" | "closeout" | "field";
+export type ReportId = "turnover" | "hourly" | "timelog" | "schedule" | "workorders" | "kickoff" | "closeout" | "sheet";
 
 export interface ReportMeta { id: ReportId; name: string; sub: string; form?: boolean }
 
@@ -15,7 +15,7 @@ export const REPORTS: ReportMeta[] = [
   { id: "workorders", name: "Work order report", sub: "Plan against actual, each work order · print" },
   { id: "kickoff", name: "Kick-off", sub: "Start of the project · present, print, email" },
   { id: "closeout", name: "Close-out", sub: "End of the project · present, print, email" },
-  { id: "field", name: "Field tracker", sub: "Starts, finishes, % and notes, by pen", form: true },
+  { id: "sheet", name: "Shift sheet", sub: "One page a shift, by pen · print, enter", form: true },
 ];
 
 export const reportName = (id: ReportId) => REPORTS.find((r) => r.id === id)?.name ?? "";
@@ -25,13 +25,15 @@ export interface ShiftPick { dayKey: string; kind: "day" | "night" }
 /** A report opened from elsewhere, set to what was on screen there. */
 export interface ReportLink {
   id: ReportId;
-  /** The shift (turnover, hourly log, time log). */
+  /** The shift (turnover, hourly log, time log, shift sheet). */
   shift?: ShiftPick;
+  /** Shift sheet: open its entry screen. */
+  enter?: boolean;
   /** Time log: this shift, or the whole job. */
   scope?: "shift" | "job";
   /** Work order report: with each step's history. */
   history?: boolean;
-  /** Work order report / field tracker: one work order (its key). */
+  /** Work order report: one work order (its key). */
   wo?: string;
   /** Work order report: which work orders ("open", "behind"…) and a search. */
   show?: string;

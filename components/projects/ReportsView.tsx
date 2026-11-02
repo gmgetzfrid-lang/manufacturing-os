@@ -11,28 +11,29 @@
 
 import { openFindingsReview } from "@/components/projects/Findings";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, Download, Loader2, Mail, Maximize2, Presentation, Printer, X, Lightbulb } from "lucide-react";
+import { ChevronLeft, ClipboardPen, Download, Loader2, Mail, Maximize2, Presentation, Printer, X, Lightbulb } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import type { CancelledJob } from "@/lib/cancelledJobs";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import type { CriticalPathResult, PathMarks } from "@/lib/criticalPath";
-import { defaultReviewShift, shiftWindow, type ShiftTimes } from "@/lib/shiftReport";
+import { defaultReviewShift, shiftWindow, shiftAt, meetingLeadMin, type ShiftTimes } from "@/lib/shiftReport";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
-import { dayKey, dayKeyToMs, fmtInTz } from "@/lib/scheduleTz";
+import { dayKey, fmtInTz } from "@/lib/scheduleTz";
 import { useLetterhead } from "@/lib/letterheadStore";
 import { REPORTS, type ReportId, type ReportLink, type ShiftPick } from "@/lib/reportLinks";
 import type { ExportDoc } from "@/lib/reportExport";
 import { copyUpdateForEmail, printHtml, updatePrintDocument, updateToSend } from "@/lib/updatePrint";
 import { withWorkOrderCrews } from "@/lib/workOrderCrew";
 import { loadProgressLog } from "@/lib/progressHistory";
-import { loadShiftRecords, type ShiftRecord } from "@/lib/shiftRecord";
+import { loadShiftRecords, saveShiftRecord, type ShiftRecord } from "@/lib/shiftRecord";
+import { loadHandover, handoverKey, type HandoverDecision } from "@/lib/shiftHandover";
 import { notesFor } from "@/lib/milestones";
 import { buildTimeLog, downloadTimeLog, type TimeLogRow } from "@/lib/timeLog";
 import { jobLogs, oneShiftLog, type ShiftLog } from "@/lib/hourlyLog";
 import { hourlyLogPdf, hourlyLogTable, pngInBrowser, saveHourlyLog, type LogFormat } from "@/lib/hourlyLogFiles";
-import { groupWorkOrders, findOrders, showsOrder, fieldOrdersOf, workOrdersPrintDocument, SHOW_WORD, type Show } from "@/lib/workOrderGroups";
-import { fieldTrackerFor, fieldPages } from "@/lib/fieldTracker";
-import { FieldTrackerOptions, type FieldChoice } from "@/components/projects/FieldTrackerPrint";
+import { groupWorkOrders, findOrders, showsOrder, workOrdersPrintDocument, SHOW_WORD, type Show } from "@/lib/workOrderGroups";
+import { buildShiftSheet, shiftSheetHtml, shiftSheetDocument, sheetPages, sheetIds, sheetTitle } from "@/lib/shiftSheet";
+import ShiftSheetEntry from "@/components/projects/ShiftSheetEntry";
 import ShiftReportView from "@/components/projects/ShiftReportView";
 import ExecutionReportView from "@/components/projects/ExecutionReportView";
 import { defaultMeeting, type MeetingKind } from "@/lib/meetingPlan";
@@ -104,8 +105,10 @@ export default function ReportsView(p: Props) {
   const [woHistory, setWoHistory] = useState(false);
   // Work orders left open on Work orders, printed with the ones the filter finds.
   const [woAlso, setWoAlso] = useState<string[]>([]);
-  const [fieldStart, setFieldStart] = useState<{ wo?: string; n: number }>({ n: 0 });
-  const [field, setField] = useState<FieldChoice | null>(null);
+  // The shift sheet: the shift it's for (null: the coming one), and its
+  // entry screen open.
+  const [sheetPick, setSheetPick] = useState<ShiftPick | null>(null);
+  const [sheetEntry, setSheetEntry] = useState(false);
 
   // A report opened from elsewhere: set to what was on screen there.
   const linkN = p.link?.n;
@@ -120,7 +123,7 @@ export default function ReportsView(p: Props) {
       else { setWoShow((SHOWS.some(([k]) => k === l.show) ? l.show : "all") as Show); setWoQuery(l.query ?? ""); }
       setWoHistory(!!l.history);
     }
-    if (l.id === "field") setFieldStart({ wo: l.wo, n: Date.now() });
+    if (l.id === "sheet") { setSheetPick(l.shift ?? null); setSheetEntry(!!l.enter); }
     if (l.id === "workorders") setWoAlso(l.also ?? []);
     p.onLinkUsed?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per link
@@ -205,13 +208,33 @@ export default function ReportsView(p: Props) {
   const timeTitle = cover === "shift" ? `Time log - ${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`
     : cover === "range" ? `Time log - ${dayLabel(days.from)} to ${dayLabel(days.to)}` : "Time log - whole project to date";
 
-  // ── Work orders and the field tracker ──
+  // ── Work orders ──
   const orders = useMemo(() => groupWorkOrders(p.milestones, p.childrenByParent, p.progress, tz, times, now), [p.milestones, p.childrenByParent, p.progress, tz, times, now]);
   const woShown = useMemo(() => (woShow === "one" ? orders.filter((o) => o.key === woKey)
     : orders.filter((o) => woAlso.includes(o.key) || (findOrders([o], woQuery).length > 0 && showsOrder(o, woShow, p.marks)))), [orders, woShow, woKey, woQuery, woAlso, p.marks]);
-  const fieldOrders = useMemo(() => fieldOrdersOf(orders), [orders]);
   const woScope = woShow === "one" ? (woShown[0] ? `${woShown[0].wo ? `WO ${woShown[0].wo}` : "No WO"} · ${woShown[0].owner.name}` : "One work order")
     : `${SHOW_WORD[woShow]}${woQuery.trim() ? ` · search “${woQuery.trim()}”` : ""}`;
+
+  // ── The shift sheet (lib/shiftSheet) ──
+  // The coming shift: from its start meeting on, the next one.
+  const sheetShift = useMemo(() => (sheetPick ? shiftWindow(sheetPick.dayKey, sheetPick.kind, tz, times) : shiftAt(now + (meetingLeadMin(times) + 1) * 60_000, tz, times)), [sheetPick, now, tz, times]);
+  // What its turnover decided: steps pulled forward, the other crew's to try.
+  const [sheetDec, setSheetDec] = useState<Record<string, HandoverDecision>>({});
+  const sheetKey = handoverKey(sheetShift);
+  useEffect(() => {
+    if (sel !== "sheet") return;
+    let alive = true;
+    loadHandover(projectId, sheetKey).then((h) => { if (alive) setSheetDec(h?.decisions ?? {}); }).catch(() => { if (alive) setSheetDec({}); });
+    return () => { alive = false; };
+  }, [sel, projectId, sheetKey, tick]);
+  const sheet = useMemo(() => {
+    if (sel !== "sheet") return null;
+    const pulls = Object.entries(sheetDec).filter(([, d]) => d.tryIt && d.pulled).map(([id]) => id);
+    const tries = new Set(Object.entries(sheetDec).filter(([, d]) => d.tryIt && !d.pulled).map(([id]) => id));
+    return buildShiftSheet({ milestones: live, progress: p.progress, criticalIds: p.critical?.ids, tz, times, target: sheetShift, now, pullIds: pulls, tryIds: tries });
+  }, [sel, live, p.progress, p.critical, tz, times, sheetShift, now, sheetDec]);
+  const sheetDoc = useMemo(() => (sheet ? shiftSheetDocument(`${name} - ${sheetTitle(sheet.shift, tz)}`, shiftSheetHtml(sheet, { project: name, tz, times })) : null), [sheet, name, tz, times]);
+  const sheetLabel = `${sheetShift.kind === "day" ? "Day" : "Night"} shift ${fmtInTz(sheetShift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`;
 
   // ── The meetings' update (turnover, kick-off, close-out) ──
   const meeting = MEETING_OF[sel];
@@ -226,7 +249,7 @@ export default function ReportsView(p: Props) {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
   const lhOn = useLh && !!lh ? lh : null;
-  const previewSig = JSON.stringify([sel, shift.dayKey, shift.kind, cover, days.from, days.to, format, !!lhOn, woShow, woKey, woQuery, woAlso, woHistory, field, tick, live.length, meeting ? doc : null]);
+  const previewSig = JSON.stringify([sel, shift.dayKey, shift.kind, cover, days.from, days.to, format, !!lhOn, woShow, woKey, woQuery, woAlso, woHistory, sel === "sheet" ? sheetDoc : null, tick, live.length, meeting ? doc : null]);
   useEffect(() => {
     let alive = true;
     const t = setTimeout(async () => {
@@ -257,9 +280,8 @@ export default function ReportsView(p: Props) {
         } else if (sel === "workorders") {
           const html = await workOrdersPrintDocument({ shown: woShown, milestones: p.milestones, projectId, projectName: p.projectName, tz, times, progress: p.progress, format: woHistory ? "history" : "report", word, scope: `${woScope}${woHistory ? " · with each step's history" : ""}`, lh: lhOn });
           if (alive) setPreview({ kind: "html", html, landscape: true });
-        } else if (sel === "field") {
-          const html = field ? fieldTrackerFor(field, { project: name, tz, orders: fieldOrders, dayMs: (x) => dayKeyToMs(x, tz) }) : null;
-          if (alive) setPreview(html ? { kind: "html", html, landscape: true, pages: fieldPages(html) } : null);
+        } else if (sel === "sheet") {
+          if (alive) setPreview(sheetDoc ? { kind: "html", html: sheetDoc, pages: sheetPages(sheetDoc) } : null);
         }
       } catch (e) {
         if (alive) { setPreview(null); setPreviewErr((e as Error).message); }
@@ -311,9 +333,14 @@ export default function ReportsView(p: Props) {
         const html = await workOrdersPrintDocument({ shown: woShown, milestones: p.milestones, projectId, projectName: p.projectName, tz, times, progress: p.progress, format: woHistory ? "history" : "report", word, scope: `${woScope}${woHistory ? " · with each step's history" : ""}`, lh: lhOn });
         printHtml(html, w);
         remember({ report: "workorders", label: woScope });
-      } else if (sel === "field" && field) {
-        printHtml(fieldTrackerFor(field, { project: name, tz, orders: fieldOrders, dayMs: (x) => dayKeyToMs(x, tz) }), w);
-        remember({ report: "field", label: field.kind === "job" ? "whole project" : field.kind === "wo" ? "one work order" : field.kind === "step" ? "one step" : `${field.from} to ${field.to}` });
+      } else if (sel === "sheet" && sheet && sheetDoc) {
+        printHtml(sheetDoc, w);
+        // Kept with the shift: entering it shows these lines, in this order.
+        const orgId = live[0]?.orgId;
+        if (p.canEdit && p.userId && orgId) {
+          void saveShiftRecord({ orgId, projectId, shiftKey: sheetKey, userId: p.userId, change: (r) => ({ ...r, sheet: { ids: sheetIds(sheet), printedAt: Date.now(), by: p.userName ?? null } }) }).catch(() => undefined);
+        }
+        remember({ report: "sheet", label: sheetLabel, shift: sheetPick });
       }
     } catch (e) {
       w?.close();
@@ -366,7 +393,7 @@ export default function ReportsView(p: Props) {
       {cover === "shift" && shiftRow}
     </>
   );
-  const lhRow = lh && sel !== "field" && sel !== "timelog" && !(sel === "hourly" && format === "xlsx") ? (
+  const lhRow = lh && sel !== "sheet" && sel !== "timelog" && !(sel === "hourly" && format === "xlsx") ? (
     row("Letterhead", <>
       <label className="inline-flex items-center gap-2 text-[12.5px] cursor-pointer select-none">
         <input type="checkbox" checked={useLh} onChange={(e) => setUseLh(e.target.checked)} className="w-4 h-4 accent-[var(--color-accent)]" />
@@ -426,7 +453,23 @@ export default function ReportsView(p: Props) {
           </>)}
         </>
       )}
-      {sel === "field" && <FieldTrackerOptions key={fieldStart.n} orders={fieldOrders} today={today} start={fieldStart} onChoice={setField} />}
+      {sel === "sheet" && (
+        <>
+          {row("Shift", <>
+            <span className="inline-flex rounded-lg border border-[var(--color-border-strong)] overflow-hidden" role="group" aria-label="Day or night">
+              {(["day", "night"] as const).map((k) => (
+                <button key={k} type="button" aria-pressed={sheetShift.kind === k} onClick={() => setSheetPick({ dayKey: sheetShift.dayKey, kind: k })} className={seg(sheetShift.kind === k)}>{k === "day" ? "Day" : "Night"}</button>
+              ))}
+            </span>
+            <input type="date" value={sheetShift.dayKey} onChange={(e) => { if (e.target.value) setSheetPick({ dayKey: e.target.value, kind: sheetShift.kind }); }} aria-label="Date"
+              className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]" />
+            {sheetPick && <button type="button" onClick={() => setSheetPick(null)} className="h-8 px-2.5 rounded-lg border border-[var(--color-border)] text-[12px] font-semibold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Coming shift</button>}
+          </>)}
+          <div className="text-[12px] text-[var(--color-text-muted)] pl-0 sm:pl-[108px]">
+            {sheet ? `${sheet.count} job${sheet.count === 1 ? "" : "s"}: carried over, going, planned, pulled ahead at the turnover, and ready to start early. Print it at the shift's start meeting.` : null}
+          </div>
+        </>
+      )}
       {lhRow}
     </div>
   );
@@ -436,11 +479,12 @@ export default function ReportsView(p: Props) {
       {sel === "hourly" && <button type="button" disabled={busy} onClick={() => void run("download")} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download</button>}
       {sel === "hourly" && format !== "xlsx" && <button type="button" disabled={busy} onClick={() => void run("print")} className={secondary}><Printer className="w-4 h-4" /> Print</button>}
       {sel === "timelog" && <button type="button" disabled={busy} onClick={() => void run("download")} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download</button>}
-      {(meeting || sel === "workorders" || sel === "field") && (
-        <button type="button" disabled={busy || (!!meeting && !doc) || (sel === "field" && !field) || (sel === "workorders" && woShown.length === 0)} onClick={() => void run("print")} className={primary}>
+      {(meeting || sel === "workorders" || sel === "sheet") && (
+        <button type="button" disabled={busy || (!!meeting && !doc) || (sel === "sheet" && !sheetDoc) || (sel === "workorders" && woShown.length === 0)} onClick={() => void run("print")} className={primary}>
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />} Print
         </button>
       )}
+      {sel === "sheet" && <button type="button" onClick={() => setSheetEntry(true)} className={secondary}><ClipboardPen className="w-4 h-4" /> Enter what&apos;s written</button>}
       {meeting && <button type="button" disabled={busy || !doc} onClick={() => void run("email")} className={secondary}><Mail className="w-4 h-4" /> Copy for email</button>}
       {(meeting === "kickoff" || meeting === "closeout") && (
         <>
@@ -518,6 +562,11 @@ export default function ReportsView(p: Props) {
         ))}
       </nav>
       <div className={`${phoneOpen ? "" : "hidden sm:block"} flex-1 min-w-0 p-4 sm:p-6`}>{detail}</div>
+      {sheetEntry && sel === "sheet" && (
+        <ShiftSheetEntry milestones={live} progress={p.progress} tz={tz} times={times} target={sheetShift} projectId={projectId}
+          userId={p.userId} userName={p.userName} canEdit={p.canEdit} onClose={() => setSheetEntry(false)}
+          onSaved={() => window.dispatchEvent(new CustomEvent("schedule:changed"))} />
+      )}
       {onScreen && meeting && (
         <div className="fixed inset-0 z-[300] bg-[var(--color-bg,#f8fafc)] overflow-y-auto">
           <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2">
@@ -541,7 +590,7 @@ const DESCRIBE: Record<ReportId, string> = {
   workorders: "Each work order opened up with all its steps: plan against actual, status, % and the latest comment.",
   kickoff: "The start of the project: the job, the first shifts, readiness and safety.",
   closeout: "The end of the project: how it went, what was added, what's open, and the Lessons & findings review for next time.",
-  field: "A blank form for the field: the work orders, steps, resources and plan, with lines to write starts, finishes, % and notes by pen.",
+  sheet: "One page for the field, for one shift: only that shift's work, by equipment. Write start, % at lunch, % at the end of the shift and done by pen, then enter it here line for line.",
 };
 
 /** Page 1 of a PDF as a picture (pdf.js), and how many pages it has. */
