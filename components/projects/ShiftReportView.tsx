@@ -53,7 +53,7 @@ import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesPro
 import { isDefaultType, typeWord } from "@/lib/projectType";
 import { useProjectTypeCtx } from "@/components/projects/ProjectTypeContext";
 import { notesFor } from "@/lib/milestones";
-import { useShiftRecords, saveShiftRecord, openFollowUps, newId, CLOSEOUT_KEY, type CrewCount, type Incident, type ShiftNote, type ShiftRecord } from "@/lib/shiftRecord";
+import { useShiftRecords, saveShiftRecord, openFollowUps, newId, CLOSEOUT_KEY, editIncident, editNote, unclearNote, restoreIncident, restoreNote, type CrewCount, type Incident, type IncidentKind, type ShiftNote, type ShiftRecord } from "@/lib/shiftRecord";
 import { buildLookBack, CAUSE_LABEL, type LookBack, type StepLook } from "@/lib/lookBack";
 import { IncidentsLine, ShiftNotesBox, TimeLogButton } from "@/components/projects/ShiftRecordParts";
 import { useSortRows, Grip } from "@/components/projects/SortRows";
@@ -545,10 +545,15 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       setNone: (none) => void saveRec(thisKey, (r) => ({ ...r, incidents: { ...(r.incidents ?? {}), none: none ? { at: Date.now(), by } : null } })),
       addIncident: (x) => void saveRec(thisKey, (r) => ({ ...r, incidents: { none: null, items: [...(r.incidents?.items ?? []), { id: newId(), ...x, by }] } })),
       removeIncident: (id) => void saveRec(thisKey, (r) => ({ ...r, incidents: { ...(r.incidents ?? {}), items: (r.incidents?.items ?? []).filter((x) => x.id !== id) } })),
+      editIncident: (id, x) => void saveRec(thisKey, (r) => editIncident(r, id, x, by)),
+      restoreIncident: (x) => void saveRec(thisKey, (r) => restoreIncident(r, x)),
       notes: [...(recThis?.notes ?? []).map((n) => ({ ...n, shiftKey: thisKey })), ...openFollowUps(records, thisKey).map((n) => ({ ...n, from: labelOf(n.shiftKey) }))],
       addNote: (x) => void saveRec(thisKey, (r) => ({ ...r, notes: [...(r.notes ?? []), { id: newId(), ...x, by }] })),
       clearNote: (n) => void saveRec(n.shiftKey, (r) => ({ ...r, notes: (r.notes ?? []).map((y) => (y.id === n.id ? { ...y, cleared: { at: Date.now(), by } } : y)) })),
       removeNote: (n) => void saveRec(n.shiftKey, (r) => ({ ...r, notes: (r.notes ?? []).filter((y) => y.id !== n.id) })),
+      editNote: (n, x) => void saveRec(n.shiftKey, (r) => editNote(r, n.id, x, by)),
+      unclearNote: (n) => void saveRec(n.shiftKey, (r) => unclearNote(r, n.id)),
+      restoreNote: (n) => { const { shiftKey, ...note } = n; void saveRec(shiftKey, (r) => restoreNote(r, note)); },
       error: recMsg ?? (recErr && canEdit ? recErr : null),
       tz,
       hourly: orgId ? {
@@ -1547,10 +1552,15 @@ interface SheetCtx {
   setNone: (none: boolean) => void;
   addIncident: (x: Omit<Incident, "id" | "by">) => void;
   removeIncident: (id: string) => void;
+  editIncident: (id: string, x: { at: number; kind: IncidentKind; text: string }) => void;
+  restoreIncident: (x: Incident) => void;
   notes: Array<ShiftNote & { from?: string; shiftKey: string }>;
   addNote: (x: { at: number; text: string; followUp: boolean }) => void;
   clearNote: (n: ShiftNote & { shiftKey: string }) => void;
   removeNote: (n: ShiftNote & { shiftKey: string }) => void;
+  editNote: (n: ShiftNote & { shiftKey: string }, x: { at: number; text: string; followUp: boolean }) => void;
+  unclearNote: (n: ShiftNote & { shiftKey: string }) => void;
+  restoreNote: (n: ShiftNote & { shiftKey: string }) => void;
   error: string | null;
   tz: string;
   /** Shift notes, hour by hour: the record's, how to write and save them. */
@@ -1845,7 +1855,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           {sh ? (
             // The incidents line takes the place of its tick-box.
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-1 keep">
-              <IncidentsLine incidents={sh.incidents} edit={sh.edit} print={print} shift={shift} tz={sh.tz} T={c.T} onNone={sh.setNone} onAdd={sh.addIncident} onRemove={sh.removeIncident} />
+              <IncidentsLine incidents={sh.incidents} edit={sh.edit} print={print} shift={shift} tz={sh.tz} T={c.T} onNone={sh.setNone} onAdd={sh.addIncident} onRemove={sh.removeIncident} onEdit={sh.editIncident} onRestore={sh.restoreIncident} />
               <div className="sm:col-span-2"><Prompts print={print} items={["Permits and lock-outs open across the change", "Manpower and equipment - short, down, arriving"]} /></div>
             </div>
           ) : (
@@ -1953,7 +1963,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     ...discoverySection(shift, c, o.discovery ?? [], o.onDiscovery),
     ...(sh?.hourly ? [hourlySection(sh, sh.hourly, meetings, o.hourlyExport)] : []),
     closeSection("Close", ["Outgoing supervisor", "Incoming supervisor", "Crew lead"], undefined, sh ? (print) => (
-      <ShiftNotesBox notes={sh.notes} edit={sh.edit} print={print} shift={shift} tz={sh.tz} T={c.T} D={c.D} onAdd={sh.addNote} onClear={sh.clearNote} onRemove={sh.removeNote} />
+      <ShiftNotesBox notes={sh.notes} edit={sh.edit} print={print} shift={shift} tz={sh.tz} T={c.T} D={c.D} onAdd={sh.addNote} onClear={sh.clearNote} onRemove={sh.removeNote} onEdit={sh.editNote} onUnclear={sh.unclearNote} onRestore={sh.restoreNote} />
     ) : undefined),
   ];
 }

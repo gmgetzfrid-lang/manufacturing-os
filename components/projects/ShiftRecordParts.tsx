@@ -111,12 +111,14 @@ const inputCls = "h-7 rounded-md border border-[var(--color-border-strong)] bg-[
 
 /** "Safety incidents this shift: None / Report one" — in place of the old
  *  tick-box, with each one reported listed under it. */
-export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, onAdd, onRemove, onEdit }: {
+export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, onAdd, onRemove, onEdit, onRestore }: {
   incidents?: { none?: { at: number; by?: string | null } | null; items?: Incident[] };
   edit: boolean; print: boolean; shift: ShiftWindow; tz: string; T: (ms: number) => string;
   onNone: (none: boolean) => void; onAdd: (x: { at: number; kind: IncidentKind; text: string }) => void; onRemove: (id: string) => void;
   /** Change one in place. Unset: written from here (or remove-then-add). */
   onEdit?: (id: string, x: { at: number; kind: IncidentKind; text: string }) => void;
+  /** Put a removed one back exactly (Undo). Unset: written from here (or re-added). */
+  onRestore?: (x: Incident) => void;
 }) {
   const items = incidents?.items ?? [];
   const none = !!incidents?.none && items.length === 0;
@@ -159,7 +161,8 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
     setRemoved(null);
     if (!x) return;
     // Back exactly as it was when this page can write the record; else re-added.
-    if (write) void write(key, (rec) => restoreIncident(rec, x)).catch((e) => setMsg((e as Error).message));
+    if (onRestore) onRestore(x);
+    else if (write) void write(key, (rec) => restoreIncident(rec, x)).catch((e) => setMsg((e as Error).message));
     else onAdd({ at: x.at, kind: x.kind, text: x.text });
   };
   const btn = (on: boolean) => `px-2 py-0.5 text-[11px] font-semibold ${on ? "bg-emerald-700 text-white" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
@@ -218,7 +221,7 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
 
 /** Notes & actions in Close: anything that happened, with its time, and
  *  follow-ups — those stay on every report until cleared. */
-export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onClear, onRemove, onEdit, onUnclear }: {
+export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onClear, onRemove, onEdit, onUnclear, onRestore }: {
   notes: Array<ShiftNote & { from?: string; shiftKey: string }>;
   edit: boolean; print: boolean; shift: ShiftWindow; tz: string; T: (ms: number) => string; D: (ms: number) => string;
   onAdd: (x: { at: number; text: string; followUp: boolean }) => void;
@@ -229,6 +232,8 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
   onEdit?: (n: ShiftNote & { shiftKey: string }, x: { at: number; text: string; followUp: boolean }) => void;
   /** Open a cleared follow-up again. Unset: written from here. */
   onUnclear?: (n: ShiftNote & { shiftKey: string }) => void;
+  /** Put a removed note back exactly (Undo). Unset: written from here (or re-added). */
+  onRestore?: (n: ShiftNote & { shiftKey: string }) => void;
 }) {
   const [clock, setClock] = useState("");
   const [text, setText] = useState("");
@@ -269,7 +274,8 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
     setRemoved(null);
     if (!n) return;
     const { shiftKey, ...note } = n;
-    if (write) void write(shiftKey, (rec) => restoreNote(rec, note)).catch(fail);
+    if (onRestore) onRestore(n);
+    else if (write) void write(shiftKey, (rec) => restoreNote(rec, note)).catch(fail);
     else onAdd({ at: n.at, text: n.text, followUp: !!n.followUp });
   };
   const clear = (n: ShiftNote & { shiftKey: string; from?: string }) => { onClear(n); setCleared(n); };
