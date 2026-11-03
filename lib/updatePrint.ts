@@ -39,9 +39,11 @@ export const updateSubject = (d: ExportDoc) => `${d.project} - ${d.kind} - ${d.w
 export function updatePrintDocument(picked: ExportDoc, lh: Letterhead | null): string {
   const subject = updateSubject(picked);
   const body = toEmailHtml({ ...picked, sections: [...picked.sections.filter((s) => s.id !== "safety"), ...picked.sections.filter((s) => s.id === "safety")] });
-  const ownPage = `table[data-sec="safety"]{break-before:page}`;
+  // On paper the update fills the page (the email keeps its 820px for a
+  // mail app); on screen, the print window centers it.
+  const ownPage = `table[data-sec="safety"]{break-before:page}@media print{table{max-width:none!important}}`;
   return lh ? letterheadDocument(lh, subject, body, ownPage)
-    : `<!doctype html><html><head><meta charset="utf-8"><title>${subject.replace(/</g, "&lt;")}</title><style>@page{margin:12mm}body{margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}${ownPage}</style></head><body>${body}</body></html>`;
+    : `<!doctype html><html><head><meta charset="utf-8"><title>${subject.replace(/</g, "&lt;")}</title><style>@page{margin:12mm}body{margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}${ownPage}@media screen{body>div{max-width:820px;margin:0 auto;padding:16px}}</style></head><body>${body}</body></html>`;
 }
 
 /** Copy as an email body: tables and colors kept (Outlook, Gmail…), plain

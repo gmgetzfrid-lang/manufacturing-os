@@ -453,6 +453,18 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
     return [...by.values()];
   };
   const onJobs = jobs.filter((j) => modeOf(j) !== "day");
+  // Saved for crews that aren't on the schedule (renamed, or from another
+  // file): they put nothing on nights, and Save drops them.
+  const stale = useMemo(() => {
+    if (!Array.isArray(saved)) return [];
+    const have = new Set([...crews, ...jobs.flatMap((j) => j.crews)].map((c) => c.trim().toLowerCase()));
+    const out = new Set<string>();
+    for (const e of saved) {
+      const m = /^crew:[^:]*:(.*)$/.exec(e);
+      if (m && m[1].trim() && !have.has(m[1].trim().toLowerCase())) out.add(m[1].trim());
+    }
+    return [...out];
+  }, [saved, crews, jobs]);
   const seg = (on: boolean, night: boolean) => `px-2.5 py-1.5 border-l first:border-l-0 border-[var(--color-border-strong)] ${on ? (night ? "bg-violet-700 text-white" : "bg-sky-700 text-white") : "bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`;
 
   return (
@@ -460,6 +472,12 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-3 text-[13px] leading-relaxed text-[var(--color-text)]">
         <b>Every job works days.</b> These jobs also have work the schedule puts in night hours. For each: keep it on <b>days only</b> (its night hours wait for the day crew), or run it <b>days and nights</b>. The shifts shown here change as you choose.
       </div>
+
+      {stale.length > 0 && (
+        <div role="alert" className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-4 py-2.5 text-[12.5px] text-amber-900 dark:text-amber-200">
+          <b>Saved for crews that aren&apos;t on this schedule:</b> {stale.join(", ")}. They put nothing on nights. Set the jobs below and Save - these names are dropped then.
+        </div>
+      )}
 
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3">
         {/* Jobs */}
@@ -481,7 +499,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
                     </div>
                     <div className="inline-flex rounded-lg border border-[var(--color-border-strong)] overflow-hidden text-[12px] font-bold" role="radiogroup" aria-label={`${j.name}: shifts`}>
                       <button type="button" role="radio" aria-checked={mode === "day"} disabled={!canManage} onClick={() => setJob(j.id, null)} className={seg(mode === "day", false)}>Days only</button>
-                      <button type="button" role="radio" aria-checked={mode !== "day"} disabled={!canManage} onClick={() => { if (mode === "day") setJob(j.id, new Set(["*"])); }} className={seg(mode !== "day", true)}>Days and nights</button>
+                      <button type="button" role="radio" aria-checked={mode !== "day"} disabled={!canManage} onClick={() => { if (mode !== "all") setJob(j.id, new Set(["*"])); }} title="All its crews on nights (tap a crew below to leave one on days)" className={seg(mode !== "day", true)}>Days and nights</button>
                     </div>
                   </div>
                   {mode !== "day" && j.crews.length > 1 && (

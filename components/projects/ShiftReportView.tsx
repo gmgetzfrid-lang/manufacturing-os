@@ -32,6 +32,7 @@ import {
   Zap, Presentation, X, Settings2, Rocket, ArrowLeftRight, Trophy,
   Mail, FileText, Hourglass, Clock, Pencil, Plus, CalendarClock, Eye, EyeOff,
 } from "lucide-react";
+import { OPEN_SETUP_EVENT } from "@/lib/scheduleSetup";
 import type { Milestone, MilestoneNote } from "@/types/schema";
 import { buildProgressIndex, leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
 import { behindWhy, chainText, CAUSE_ORDER, CAUSE_WORD, type BehindWhy, type BehindCause } from "@/lib/behindWhy";
@@ -955,6 +956,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                 <>
                   <OpenReportButton label="Time log" onClick={() => onOpenReport({ id: "timelog", shift: { dayKey: shift.dayKey, kind: shift.kind }, scope: "shift" })} />
                   <OpenReportButton label="Hourly log" onClick={() => onOpenReport({ id: "hourly", shift: { dayKey: shift.dayKey, kind: shift.kind } })} />
+                  {/* Which jobs run days and nights: what the next shift's list follows. */}
+                  <button type="button" onClick={() => window.dispatchEvent(new CustomEvent(OPEN_SETUP_EVENT, { detail: "night" }))} title="Which jobs run days and nights - what the night's list follows"
+                    className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-violet-300 dark:border-violet-800 text-violet-800 dark:text-violet-200 hover:bg-violet-50 dark:hover:bg-violet-950/40">
+                    <Moon className="w-3.5 h-3.5" /> Night shifts
+                  </button>
                   {/* The shift sheet: entered for the shift ending, printed for the one starting. */}
                   <OpenReportButton label="Enter shift sheet" title="Enter what's written on this shift's sheet" onClick={() => onOpenReport({ id: "sheet", shift: { dayKey: shift.dayKey, kind: shift.kind }, enter: true })} />
                   <OpenReportButton label="Shift sheet" title="Print the next shift's sheet" onClick={() => onOpenReport({ id: "sheet", shift: { dayKey: report.next.dayKey, kind: report.next.kind } })} />
@@ -3027,7 +3033,7 @@ function DoneTasks({ rows, print, stamps = false, T, sort, onEdit }: { rows: Don
           {rows.map((x) => (
             <div key={x.ids.join(",")} data-sort-id={x.key} className={`group/sort px-3 py-2 text-[12.5px] space-y-0.5 ${moving(x.key) ? "opacity-40" : ""}`}>
               <div className="flex items-start justify-between gap-2">
-                <b className="text-[var(--color-text)] break-words"><Grip props={grip([x.key], x.task)} />{x.task}{x.critical && <CriticalTag />}{x.wo && <span className="ml-1.5 font-mono font-semibold text-[11px] text-[var(--color-text-muted)]">WO {x.wo}</span>}</b>
+                <b className="text-[var(--color-text)] break-words"><Grip props={grip([x.key], x.task)} />{x.task}{x.critical && <CriticalTag />}{x.woShown && <span className="ml-1.5 font-mono font-semibold text-[11px] text-[var(--color-text-muted)]">{/^\d+ WOs$/.test(x.woShown) ? x.woShown : `WO ${x.woShown}`}</span>}</b>
                 {x.vs.text && <b className={`shrink-0 font-mono text-[12px] ${vsCls(x.vs.tone)}`}>{x.vs.text}</b>}
               </div>
               {pctLine(x) && <div className="text-[11px] text-[var(--color-text-muted)]">{pctLine(x)}</div>}
@@ -3051,7 +3057,7 @@ function DoneTasks({ rows, print, stamps = false, T, sort, onEdit }: { rows: Don
             {rows.map((x) => (
               <tr key={x.ids.join(",")} data-sort-id={x.key} className={`group/sort border-b border-slate-100 dark:border-slate-800 align-top ${moving(x.key) ? "opacity-40" : ""}`}>
                 <td className={`${cell} font-semibold break-words`}><Grip props={grip([x.key], x.task)} />{x.task}{x.critical && <CriticalTag print={print} />}{pctLine(x) && <div className={`font-normal text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-[11px]"}`}>{pctLine(x)}</div>}</td>
-                {hasWo && <td className={`${cell} font-mono text-[11px] break-words`}>{x.wo.split(/,\s*/).map((w, i) => <span key={i} className="block">{w}</span>)}</td>}
+                {hasWo && <td className={`${cell} font-mono text-[11px] break-words`}>{x.woShown.split(/,\s*/).map((w, i) => <span key={i} className="block">{w}</span>)}</td>}
                 <td className={`${cell} break-words`}><DoneLines x={x} stamps={stamps} T={T} print={print} onEdit={onEdit} /></td>
                 <td className={`${cell} text-[11.5px] text-[var(--color-text-muted)] break-words`}>{x.who}</td>
                 <td className={`${cell} font-bold break-words ${resultCls(x.result.tone)}`}>{x.result.text}{whyLine(x)}</td>

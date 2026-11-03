@@ -339,7 +339,11 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
   /** The task's steps: how many are done, of how many (not cancelled). */
   taskSteps?: (taskId: string) => { done: number; total: number } | undefined;
 } = {}): Array<{
-  task: string; wo: string; steps: string; who: string; result: { text: string; tone: NextTone }; vs: { text: string; tone?: "emerald" | "rose" }; ids: string[];
+  task: string; wo: string;
+  /** The WO cell as shown: the number (or two); a task over several work
+   *  orders says how many ("11 WOs"), each step's line has its own. */
+  woShown: string;
+  steps: string; who: string; result: { text: string; tone: NextTone }; vs: { text: string; tone?: "emerald" | "rose" }; ids: string[];
   /** "3 done", "2 done, 1 in progress" — then a line per step. */
   head: string; lines: DoneLine[];
   /** The step done last on the shift, and how many more were done. */
@@ -426,7 +430,8 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
       taskPct: parentId ? o.taskPct?.(parentId) : undefined,
       task: rows[0].parentName ?? rows[0].leaf.name,
       // The work order number(s) — one for most work orders.
-      wo: [...new Set(rows.map((r) => r.leaf.workOrderRef?.trim()).filter(Boolean))].join(", "),
+      wo: wos.join(", "),
+      woShown: wos.length > 2 ? `${wos.length} WOs` : wos.join(", "),
       // The steps, as the table shows them.
       steps: [lastDone ? `Last done: ${lastDone.name}${lastDone.note ? ` “${lastDone.note}”` : ""}` : "", going ? `In progress: ${going.name}${going.note ? ` “${going.note}”` : ""}` : ""].filter(Boolean).join("; "),
       who,

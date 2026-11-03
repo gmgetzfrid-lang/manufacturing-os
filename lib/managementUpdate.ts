@@ -238,7 +238,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
           k: "table", head: ["Task", "WO", "Last done · In progress", "Who", "What it means", "vs plan"], align: ["left", "left", "left", "left", "left", "right"],
           textLabels: ["", "WO", "", "by", "", "vs plan"], nowrap: [1, 5],
           rows: byTaskDone.map((x) => [
-            { t: x.task, bold: true, ...(x.taskPct || x.count || x.critical ? { sub: [...(x.critical ? [{ t: "Critical path", tone: "rose" as const }] : []), ...(x.taskPct || x.count ? [{ t: [x.taskPct ? pctText(x.taskPct)! : null, x.count ?? null].filter(Boolean).join(" · ") }] : [])] } : {}) }, x.wo,
+            { t: x.task, bold: true, ...(x.taskPct || x.count || x.critical ? { sub: [...(x.critical ? [{ t: "Critical path", tone: "rose" as const }] : []), ...(x.taskPct || x.count ? [{ t: [x.taskPct ? pctText(x.taskPct)! : null, x.count ?? null].filter(Boolean).join(" · ") }] : [])] } : {}) }, x.woShown,
             // The step done last and the one still going, labeled: its time when
             // times are on, its WO when the task has several, its own comment.
             (() => {
