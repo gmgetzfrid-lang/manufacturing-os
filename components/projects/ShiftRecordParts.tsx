@@ -4,13 +4,60 @@
 // and its notes & actions (lib/shiftRecord). Inputs on screen, plain text
 // on paper. The meetings' attendance is in the notes, hour by hour
 // (components/projects/ShiftHourly).
+//
+// What a shift wrote can be changed: an incident or a note is edited in
+// place, a removal is asked first and can be undone, and a cleared
+// follow-up can be opened again. The report hands these parts add, clear
+// and remove; edit, put back and undo clear write the shift's record from
+// here (useRecordWriter) until the report passes its own (onEdit,
+// onUnclear), and fall back to remove-then-add where neither can.
 
-import React, { useState } from "react";
-import { FileSpreadsheet } from "lucide-react";
-import { INCIDENT_KINDS, type Incident, type IncidentKind, type ShiftNote } from "@/lib/shiftRecord";
+import React, { useMemo, useState } from "react";
+import { useParams } from "next/navigation";
+import { FileSpreadsheet, RotateCcw } from "lucide-react";
+import {
+  INCIDENT_KINDS, saveShiftRecord, editIncident, restoreIncident, editNote, restoreNote, unclearNote,
+  type Incident, type IncidentKind, type ShiftNote, type ShiftRecord,
+} from "@/lib/shiftRecord";
 import { parseClock, timeInShift, timeOnDay, shiftAt, DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
-import { dayKey } from "@/lib/scheduleTz";
+import { handoverKey } from "@/lib/shiftHandover";
+import { dayKey, toDateTimeInput } from "@/lib/scheduleTz";
 import { TimeChip } from "@/components/projects/DateTimePicker";
+import { useRole } from "@/components/providers/RoleContext";
+import { appConfirm } from "@/components/providers/DialogProvider";
+
+type RecordWriter = (shiftKey: string, change: (r: ShiftRecord) => ShiftRecord) => Promise<void>;
+
+/** Write a shift's record from here: the project from the page it's on
+ *  (/projects/[id]), the person from their sign-in. Null when either isn't
+ *  known. */
+function useRecordWriter(): { write: RecordWriter | null; by: string | null } {
+  const params = useParams<{ id?: string | string[] }>();
+  const { uid, activeOrgId, userEmail } = useRole();
+  const projectId = typeof params?.id === "string" ? params.id : null;
+  const by = userEmail?.split("@")[0] ?? null;
+  const write = useMemo<RecordWriter | null>(() => (projectId && uid && activeOrgId
+    ? async (shiftKey, change) => { await saveShiftRecord({ orgId: activeOrgId, projectId, shiftKey, userId: uid, change }); }
+    : null), [projectId, uid, activeOrgId]);
+  return { write, by };
+}
+
+/** The clock a stored instant reads on the shift ("14:30", for the time
+ *  chip, which shows it as 2:30 PM). */
+const clockOf = (at: number, tz: string) => toDateTimeInput(at, tz).slice(11, 16);
+
+const smallBtn = "px-1.5 py-1 text-[10.5px] font-semibold rounded hover:bg-[var(--color-surface-2)]";
+
+/** "Removed. Undo" - right after a removal, until dismissed. */
+function UndoLine({ text, onUndo, onDismiss }: { text: string; onUndo: () => void; onDismiss: () => void }) {
+  return (
+    <div role="status" className="mt-1 flex items-center gap-2 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-[11px] text-amber-900 dark:text-amber-200">
+      <span className="min-w-0 flex-1 truncate">{text}</span>
+      <button type="button" onClick={onUndo} className="inline-flex items-center gap-1 px-2 py-1 rounded font-bold bg-amber-600 text-white hover:bg-amber-700"><RotateCcw className="w-3 h-3" /> Undo</button>
+      <button type="button" onClick={onDismiss} className="px-1.5 py-1 font-semibold hover:underline">Dismiss</button>
+    </div>
+  );
+}
 
 /** A time typed 24-hour on the shift ("14:30", "1430"): the instant, or
  *  why it isn't one. */
@@ -64,10 +111,12 @@ const inputCls = "h-7 rounded-md border border-[var(--color-border-strong)] bg-[
 
 /** "Safety incidents this shift: None / Report one" — in place of the old
  *  tick-box, with each one reported listed under it. */
-export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, onAdd, onRemove }: {
+export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, onAdd, onRemove, onEdit }: {
   incidents?: { none?: { at: number; by?: string | null } | null; items?: Incident[] };
   edit: boolean; print: boolean; shift: ShiftWindow; tz: string; T: (ms: number) => string;
   onNone: (none: boolean) => void; onAdd: (x: { at: number; kind: IncidentKind; text: string }) => void; onRemove: (id: string) => void;
+  /** Change one in place. Unset: written from here (or remove-then-add). */
+  onEdit?: (id: string, x: { at: number; kind: IncidentKind; text: string }) => void;
 }) {
   const items = incidents?.items ?? [];
   const none = !!incidents?.none && items.length === 0;
@@ -76,12 +125,42 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
   const [kind, setKind] = useState<IncidentKind>("Near miss");
   const [text, setText] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
+  // The incident being edited (the form above fills with it), and the one
+  // just removed (Undo).
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [removed, setRemoved] = useState<Incident | null>(null);
+  const { write, by } = useRecordWriter();
+  const key = handoverKey(shift);
+  const reset = () => { setClock(""); setText(""); setMsg(null); setOpen(false); setEditingId(null); setKind("Near miss"); };
   const add = () => {
     const r = clockOnShift(shift, clock, tz);
     if ("error" in r) { setMsg(r.error); return; }
     if (!text.trim()) { setMsg("Say what happened."); return; }
-    onAdd({ at: r.at, kind, text: text.trim() });
-    setClock(""); setText(""); setMsg(null); setOpen(false);
+    const x = { at: r.at, kind, text: text.trim() };
+    if (editingId) {
+      const id = editingId;
+      if (onEdit) onEdit(id, x);
+      else if (write) void write(key, (rec) => editIncident(rec, id, x, by)).catch((e) => setMsg((e as Error).message));
+      else { onRemove(id); onAdd(x); }
+    } else onAdd(x);
+    reset();
+  };
+  const startEdit = (x: Incident) => {
+    setEditingId(x.id); setClock(clockOf(x.at, tz)); setKind(x.kind); setText(x.text); setMsg(null); setOpen(true); setRemoved(null);
+  };
+  const remove = async (x: Incident) => {
+    if (!(await appConfirm({ title: "Remove this incident?", message: `${x.kind}: "${x.text}" comes off the shift's record. You can undo right after.`, confirmLabel: "Remove", tone: "danger" }))) return;
+    onRemove(x.id);
+    setRemoved(x);
+    if (editingId === x.id) reset();
+  };
+  const undoRemove = () => {
+    const x = removed;
+    setRemoved(null);
+    if (!x) return;
+    // Back exactly as it was when this page can write the record; else re-added.
+    if (write) void write(key, (rec) => restoreIncident(rec, x)).catch((e) => setMsg((e as Error).message));
+    else onAdd({ at: x.at, kind: x.kind, text: x.text });
   };
   const btn = (on: boolean) => `px-2 py-0.5 text-[11px] font-semibold ${on ? "bg-emerald-700 text-white" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
   return (
@@ -95,21 +174,29 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
         ) : (
           <span className="inline-flex overflow-hidden rounded-md border border-[var(--color-border-strong)] divide-x divide-[var(--color-border-strong)]">
             <button type="button" aria-pressed={none} disabled={items.length > 0} onClick={() => onNone(!none)} className={`${btn(none)} disabled:opacity-50`}>None</button>
-            <button type="button" aria-pressed={open} onClick={() => setOpen((v) => !v)} className={btn(false)}>Report one</button>
+            <button type="button" aria-pressed={open && !editingId} onClick={() => { if (editingId) reset(); else setOpen((v) => !v); }} className={btn(false)}>Report one</button>
           </span>
         )}
       </div>
       {items.length > 0 && (
         <ul className="mt-1 space-y-0.5">
           {[...items].sort((a, b) => a.at - b.at).map((x) => (
-            <li key={x.id} className="flex items-baseline gap-1.5">
+            <li key={x.id} className={`flex items-baseline gap-1.5 ${editingId === x.id ? "rounded bg-[var(--color-accent-soft)]/50" : ""}`}>
               <span className="shrink-0 font-mono text-[11px] text-[var(--color-text-muted)]">{T(x.at)}</span>
               <b className="shrink-0 whitespace-nowrap text-rose-700 dark:text-rose-400">{x.kind}</b>
               <span className="min-w-0 break-words">{x.text}</span>
-              {edit && !print && <button type="button" onClick={() => onRemove(x.id)} className="ml-auto text-[10.5px] text-[var(--color-text-muted)] hover:text-rose-700">Remove</button>}
+              {edit && !print && (
+                <span className="ml-auto flex gap-1 shrink-0">
+                  <button type="button" onClick={() => startEdit(x)} className={`${smallBtn} text-[var(--color-text-muted)] hover:text-[var(--color-text)]`}>Edit</button>
+                  <button type="button" onClick={() => void remove(x)} className={`${smallBtn} text-[var(--color-text-muted)] hover:text-rose-700`}>Remove</button>
+                </span>
+              )}
             </li>
           ))}
         </ul>
+      )}
+      {removed && edit && !print && (
+        <UndoLine text={`Removed: ${removed.kind}, ${removed.text}`} onUndo={undoRemove} onDismiss={() => setRemoved(null)} />
       )}
       {open && edit && !print && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
@@ -119,33 +206,81 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
             {INCIDENT_KINDS.map((k) => <option key={k}>{k}</option>)}
           </select>
           <input value={text} onChange={(e) => { setText(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="What happened, who, what was done" aria-label="What happened" className={`${inputCls} flex-1 min-w-[180px]`} />
-          <button type="button" onClick={add} className="h-7 px-2.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-bold">Add</button>
+          <button type="button" onClick={add} className="h-7 px-2.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-bold">{editingId ? "Save" : "Add"}</button>
+          {editingId && <button type="button" onClick={reset} className="h-7 px-2 text-[11px] font-semibold text-[var(--color-text-muted)]">Cancel</button>}
           {msg && <span className="basis-full text-rose-700 dark:text-rose-400 font-semibold">{msg}</span>}
         </div>
       )}
+      {!open && msg && <div className="mt-1 text-rose-700 dark:text-rose-400 font-semibold">{msg}</div>}
     </div>
   );
 }
 
 /** Notes & actions in Close: anything that happened, with its time, and
  *  follow-ups — those stay on every report until cleared. */
-export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onClear, onRemove }: {
+export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onClear, onRemove, onEdit, onUnclear }: {
   notes: Array<ShiftNote & { from?: string; shiftKey: string }>;
   edit: boolean; print: boolean; shift: ShiftWindow; tz: string; T: (ms: number) => string; D: (ms: number) => string;
   onAdd: (x: { at: number; text: string; followUp: boolean }) => void;
   onClear: (n: ShiftNote & { shiftKey: string }) => void;
   onRemove: (n: ShiftNote & { shiftKey: string }) => void;
+  /** Change one of this shift's notes in place. Unset: written from here
+   *  (or remove-then-add). */
+  onEdit?: (n: ShiftNote & { shiftKey: string }, x: { at: number; text: string; followUp: boolean }) => void;
+  /** Open a cleared follow-up again. Unset: written from here. */
+  onUnclear?: (n: ShiftNote & { shiftKey: string }) => void;
 }) {
   const [clock, setClock] = useState("");
   const [text, setText] = useState("");
   const [follow, setFollow] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  // The note being edited (the line below fills with it), the one just
+  // removed, and the follow-up just cleared (each can be undone).
+  const [editing, setEditing] = useState<(ShiftNote & { shiftKey: string }) | null>(null);
+  const [removed, setRemoved] = useState<(ShiftNote & { shiftKey: string }) | null>(null);
+  const [cleared, setCleared] = useState<(ShiftNote & { shiftKey: string; from?: string }) | null>(null);
+  const { write, by } = useRecordWriter();
+  const reset = () => { setClock(""); setText(""); setFollow(false); setMsg(null); setEditing(null); };
+  const fail = (e: unknown) => setMsg((e as Error).message);
   const add = () => {
     const r = clockOnShift(shift, clock, tz);
     if ("error" in r) { setMsg(r.error); return; }
     if (!text.trim()) { setMsg("Type the note."); return; }
-    onAdd({ at: r.at, text: text.trim(), followUp: follow });
-    setClock(""); setText(""); setFollow(false); setMsg(null);
+    const x = { at: r.at, text: text.trim(), followUp: follow };
+    if (editing) {
+      const n = editing;
+      if (onEdit) onEdit(n, x);
+      else if (write) void write(n.shiftKey, (rec) => editNote(rec, n.id, x, by)).catch(fail);
+      else { onRemove(n); onAdd(x); }
+    } else onAdd(x);
+    reset();
+  };
+  const startEdit = (n: ShiftNote & { shiftKey: string }) => {
+    setEditing(n); setClock(clockOf(n.at, tz)); setText(n.text); setFollow(!!n.followUp); setMsg(null); setRemoved(null);
+  };
+  const remove = async (n: ShiftNote & { shiftKey: string }) => {
+    if (!(await appConfirm({ title: "Remove this note?", message: `"${n.text}" comes off the shift's record. You can undo right after.`, confirmLabel: "Remove", tone: "danger" }))) return;
+    onRemove(n);
+    setRemoved(n);
+    if (editing?.id === n.id) reset();
+  };
+  const undoRemove = () => {
+    const n = removed;
+    setRemoved(null);
+    if (!n) return;
+    const { shiftKey, ...note } = n;
+    if (write) void write(shiftKey, (rec) => restoreNote(rec, note)).catch(fail);
+    else onAdd({ at: n.at, text: n.text, followUp: !!n.followUp });
+  };
+  const clear = (n: ShiftNote & { shiftKey: string; from?: string }) => { onClear(n); setCleared(n); };
+  // A follow-up cleared by mistake: back on every report.
+  const canUnclear = (n: ShiftNote & { from?: string }) => !!onUnclear || !!write || !n.from;
+  const unclear = (n: ShiftNote & { shiftKey: string; from?: string }) => {
+    setCleared(null);
+    if (onUnclear) onUnclear(n);
+    else if (write) void write(n.shiftKey, (rec) => unclearNote(rec, n.id)).catch(fail);
+    // This shift's own note, and nothing else to write with: put it back open.
+    else if (!n.from) { onRemove(n); onAdd({ at: n.at, text: n.text, followUp: true }); }
   };
   const sorted = [...notes].sort((a, b) => a.at - b.at);
   return (
@@ -154,21 +289,31 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
       {sorted.length > 0 && (
         <ul className={`space-y-0.5 ${print ? "text-[8pt]" : "text-[12px]"}`}>
           {sorted.map((n) => (
-            <li key={`${n.shiftKey}:${n.id}`} className="flex items-baseline gap-1.5">
+            <li key={`${n.shiftKey}:${n.id}`} className={`flex items-baseline gap-1.5 ${editing?.id === n.id ? "rounded bg-[var(--color-accent-soft)]/50" : ""}`}>
               <span className="font-mono text-[11px] text-[var(--color-text-muted)] whitespace-nowrap">{n.from ? `${D(n.at)} ${T(n.at)}` : T(n.at)}</span>
               <span className="min-w-0 break-words">
                 {n.text}
-                {n.followUp && <span className="ml-1.5 text-[10.5px] font-bold text-amber-800 dark:text-amber-300">{n.from ? `follow-up, open since ${n.from}` : "follow-up"}</span>}
+                {n.followUp && !n.cleared && <span className="ml-1.5 text-[10.5px] font-bold text-amber-800 dark:text-amber-300">{n.from ? `follow-up, open since ${n.from}` : "follow-up"}</span>}
+                {n.followUp && n.cleared && <span className="ml-1.5 text-[10.5px] font-bold text-emerald-700 dark:text-emerald-400">follow-up, cleared{n.cleared.by ? ` by ${n.cleared.by}` : ""}</span>}
               </span>
               {edit && !print && (
-                <span className="ml-auto flex gap-2 shrink-0">
-                  {n.followUp && <button type="button" onClick={() => onClear(n)} className="text-[10.5px] font-semibold text-emerald-700 dark:text-emerald-400 hover:underline">Clear</button>}
-                  {!n.from && <button type="button" onClick={() => onRemove(n)} className="text-[10.5px] text-[var(--color-text-muted)] hover:text-rose-700">Remove</button>}
+                <span className="ml-auto flex gap-1 shrink-0">
+                  {n.followUp && !n.cleared && <button type="button" onClick={() => clear(n)} className={`${smallBtn} text-emerald-700 dark:text-emerald-400`}>Clear</button>}
+                  {n.followUp && n.cleared && canUnclear(n) && <button type="button" onClick={() => unclear(n)} className={`${smallBtn} text-[var(--color-text-muted)] hover:text-[var(--color-text)]`}>Undo clear</button>}
+                  {!n.from && <button type="button" onClick={() => startEdit(n)} className={`${smallBtn} text-[var(--color-text-muted)] hover:text-[var(--color-text)]`}>Edit</button>}
+                  {!n.from && <button type="button" onClick={() => void remove(n)} className={`${smallBtn} text-[var(--color-text-muted)] hover:text-rose-700`}>Remove</button>}
                 </span>
               )}
             </li>
           ))}
         </ul>
+      )}
+      {removed && edit && !print && (
+        <UndoLine text={`Removed: ${removed.text}`} onUndo={undoRemove} onDismiss={() => setRemoved(null)} />
+      )}
+      {/* An earlier shift's follow-up leaves this list when it's cleared: say so, with Undo. */}
+      {cleared && cleared.from && canUnclear(cleared) && edit && !print && (
+        <UndoLine text={`Cleared: ${cleared.text}`} onUndo={() => unclear(cleared)} onDismiss={() => setCleared(null)} />
       )}
       {edit && !print && (
         <div className="flex flex-wrap items-center gap-1.5 pt-1">
@@ -176,7 +321,8 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
           <button type="button" onClick={() => setClock(nowClock(tz))} className="h-7 px-2 rounded-md border border-[var(--color-border-strong)] text-[11px] font-semibold">Now</button>
           <input value={text} onChange={(e) => { setText(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="What happened, or what needs doing" aria-label="Note" className={`${inputCls} flex-1 min-w-[160px]`} />
           <label className="inline-flex items-center gap-1 text-[11px]"><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> Follow-up</label>
-          <button type="button" onClick={add} className="h-7 px-2.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-bold">Add</button>
+          <button type="button" onClick={add} className="h-7 px-2.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-bold">{editing ? "Save" : "Add"}</button>
+          {editing && <button type="button" onClick={reset} className="h-7 px-2 text-[11px] font-semibold text-[var(--color-text-muted)]">Cancel</button>}
           {msg && <span className="basis-full text-[11px] text-rose-700 dark:text-rose-400 font-semibold">{msg}</span>}
         </div>
       )}

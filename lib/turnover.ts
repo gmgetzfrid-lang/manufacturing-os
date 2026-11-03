@@ -8,6 +8,11 @@
 // rates roll up to the contractor's permanent scorecard, and accepted items
 // become evidence the checklist engine can cite. The punch list is the
 // closeout snag list — small, dated, and visible until it's empty.
+//
+// Decisions aren't final by accident: an accepted or waived turnover item
+// can be reopened (the earlier decision stays in its note), its row edited,
+// and the submitted document attached. A punch item can be edited, given a
+// location, a person and a contractor, and reopened after Done or Void.
 
 import { supabase } from "@/lib/supabase";
 import type { Actor } from "@/lib/costs";
@@ -46,10 +51,18 @@ export interface PunchItem {
   title: string;
   status: "open" | "done" | "void";
   dueDate: string | null;
+  /** Where it is: "E-301 north nozzle", "Pipe rack 3, level 2". */
+  location: string | null;
+  /** Who is on it (a name as the crew says it). */
+  assignee: string | null;
   closedAt: string | null;
   createdByName: string | null;
   createdAt: string | null;
 }
+
+export const PUNCH_FIELDS_SQL = "20261117_boxed_in.sql";
+const missingColumn = (e: { code?: string; message?: string } | null) =>
+  !!e && (e.code === "PGRST204" || e.code === "42703" || /location|assignee|schema cache/i.test(e.message ?? ""));
 
 /** What a turnover package must contain, sized by job kind — each seed
  *  explains itself in plain terms so a rookie knows what to chase. The
@@ -112,6 +125,8 @@ function mapPunch(r: Record<string, unknown>): PunchItem {
     title: String(r.title ?? ""),
     status: (r.status as PunchItem["status"]) ?? "open",
     dueDate: (r.due_date as string | null) ?? null,
+    location: (r.location as string | null) ?? null,
+    assignee: (r.assignee as string | null) ?? null,
     closedAt: (r.closed_at as string | null) ?? null,
     createdByName: (r.created_by_name as string | null) ?? null,
     createdAt: (r.created_at as string | null) ?? null,
@@ -211,6 +226,76 @@ export async function reviewTurnoverItem(input: {
   return { ok: true };
 }
 
+/** Where a reopened item goes, and the note that keeps the decision it
+ *  undoes: accepted goes back to awaiting review (it was received), waived
+ *  back to not received unless a document is on it. */
+export function reopenedTurnover(item: Pick<TurnoverItem, "status" | "documentId" | "reviewedByName" | "reviewedAt" | "reviewNote">): { status: TurnoverStatus; note: string } {
+  const status: TurnoverStatus = item.status === "waived" && !item.documentId ? "open" : "received";
+  const by = item.reviewedByName ? ` by ${item.reviewedByName}` : "";
+  const on = item.reviewedAt ? ` on ${item.reviewedAt.slice(0, 10)}` : "";
+  const said = item.reviewNote ? ` ("${item.reviewNote}")` : "";
+  return { status, note: `Reopened - was ${item.status}${by}${on}${said}` };
+}
+
+/** Take back an accepted or waived item: it goes back into the review,
+ *  and the earlier decision is kept in its note (and the audit log). */
+export async function reopenTurnoverItem(input: { item: TurnoverItem; actor: Actor }): Promise<{ ok: boolean; error?: string }> {
+  const { item } = input;
+  if (item.status !== "accepted" && item.status !== "waived") return { ok: false, error: "Only an accepted or waived item can be reopened." };
+  const back = reopenedTurnover(item);
+  const { data, error } = await supabase.from("turnover_items").update({
+    status: back.status, reviewed_at: null, reviewed_by: null, reviewed_by_name: null, review_note: back.note,
+  }).eq("id", item.id).eq("status", item.status).select("id");
+  if (error) return { ok: false, error: error.message };
+  if (!data || data.length === 0) return { ok: false, error: "Someone else just changed this item - refresh to see it." };
+  await audit("TURNOVER_REOPENED", item.orgId, item.projectId, input.actor, {
+    itemId: item.id, name: item.name, was: item.status, now: back.status,
+    reviewedBy: item.reviewedByName, reviewNote: item.reviewNote,
+  });
+  return { ok: true };
+}
+
+/** Change a turnover row: its name, what it means, whether it's required
+ *  and which contractor owes it. */
+export async function updateTurnoverItem(input: {
+  item: TurnoverItem;
+  patch: { name?: string; description?: string | null; required?: boolean; partyId?: string | null };
+  actor: Actor;
+}): Promise<{ ok: boolean; error?: string }> {
+  const p = input.patch;
+  const row: Record<string, unknown> = {};
+  if (p.name !== undefined) {
+    if (!p.name.trim()) return { ok: false, error: "Name the turnover item." };
+    row.name = p.name.trim();
+  }
+  if (p.description !== undefined) row.description = p.description?.trim() || null;
+  if (p.required !== undefined) row.required = p.required;
+  if (p.partyId !== undefined) row.party_id = p.partyId || null;
+  if (Object.keys(row).length === 0) return { ok: true };
+  const { error } = await supabase.from("turnover_items").update(row).eq("id", input.item.id);
+  if (error) return { ok: false, error: error.message };
+  await audit("TURNOVER_ITEM_EDITED", input.item.orgId, input.item.projectId, input.actor, {
+    itemId: input.item.id, before: { name: input.item.name, description: input.item.description, required: input.item.required, partyId: input.item.partyId }, after: p,
+  });
+  return { ok: true };
+}
+
+/** Attach (or take off) the document the contractor submitted for it. An
+ *  open item with a document attached counts as received. */
+export async function attachTurnoverDocument(input: {
+  item: TurnoverItem; documentId: string | null; documentLabel?: string | null; actor: Actor;
+}): Promise<{ ok: boolean; error?: string }> {
+  const row: Record<string, unknown> = { document_id: input.documentId };
+  if (input.documentId && input.item.status === "open") row.status = "received";
+  const { error } = await supabase.from("turnover_items").update(row).eq("id", input.item.id);
+  if (error) return { ok: false, error: error.message };
+  await audit(input.documentId ? "TURNOVER_DOC_ATTACHED" : "TURNOVER_DOC_REMOVED", input.item.orgId, input.item.projectId, input.actor, {
+    itemId: input.item.id, name: input.item.name, documentId: input.documentId, document: input.documentLabel ?? null,
+    before: input.item.documentId,
+  });
+  return { ok: true };
+}
+
 export interface TurnoverProgress {
   required: number;
   accepted: number;
@@ -245,18 +330,59 @@ export async function listPunchItems(orgId: string, projectId: string): Promise<
 export async function addPunchItem(input: {
   orgId: string; projectId: string;
   title: string; dueDate?: string | null; partyId?: string | null;
+  location?: string | null; assignee?: string | null;
   actor: Actor;
 }): Promise<{ ok: boolean; error?: string }> {
   if (!input.title.trim()) return { ok: false, error: "Describe the punch item." };
-  const { error } = await supabase.from("punch_items").insert({
+  const row: Record<string, unknown> = {
     org_id: input.orgId, project_id: input.projectId,
     party_id: input.partyId ?? null,
     title: input.title.trim(), due_date: input.dueDate || null,
     created_by: input.actor.uid,
     created_by_name: input.actor.email?.split("@")[0] ?? null,
-  });
-  if (error) return { ok: false, error: error.message };
+  };
+  if (input.location?.trim()) row.location = input.location.trim();
+  if (input.assignee?.trim()) row.assignee = input.assignee.trim();
+  const { error } = await supabase.from("punch_items").insert(row);
+  if (error) {
+    return { ok: false, error: missingColumn(error) && (row.location || row.assignee)
+      ? `Location and who's on it need the database update (${PUNCH_FIELDS_SQL}) run first.`
+      : /row-level security/i.test(error.message)
+      ? `Not added - you may not have permission to change the punch list yet (${PUNCH_FIELDS_SQL} lets editors in).`
+      : error.message };
+  }
   await audit("PUNCH_ADDED", input.orgId, input.projectId, input.actor, { title: input.title.trim() });
+  return { ok: true };
+}
+
+/** Change a punch item: what it is, where, when it's due, who's on it and
+ *  the contractor. */
+export async function updatePunchItem(input: {
+  item: PunchItem;
+  patch: { title?: string; location?: string | null; dueDate?: string | null; assignee?: string | null; partyId?: string | null };
+  actor: Actor;
+}): Promise<{ ok: boolean; error?: string }> {
+  const p = input.patch;
+  const row: Record<string, unknown> = {};
+  if (p.title !== undefined) {
+    if (!p.title.trim()) return { ok: false, error: "Describe the punch item." };
+    row.title = p.title.trim();
+  }
+  if (p.dueDate !== undefined) row.due_date = p.dueDate || null;
+  if (p.partyId !== undefined) row.party_id = p.partyId || null;
+  if (p.location !== undefined) row.location = p.location?.trim() || null;
+  if (p.assignee !== undefined) row.assignee = p.assignee?.trim() || null;
+  if (Object.keys(row).length === 0) return { ok: true };
+  const { data, error } = await supabase.from("punch_items").update(row).eq("id", input.item.id).select("id");
+  if (error) {
+    return { ok: false, error: missingColumn(error) ? `Location and who's on it need the database update (${PUNCH_FIELDS_SQL}) run first.` : error.message };
+  }
+  if (!data || data.length === 0) return { ok: false, error: `Not saved - you may not have permission to change the punch list yet (${PUNCH_FIELDS_SQL} lets editors in).` };
+  await audit("PUNCH_EDITED", input.item.orgId, input.item.projectId, input.actor, {
+    itemId: input.item.id,
+    before: { title: input.item.title, location: input.item.location, dueDate: input.item.dueDate, assignee: input.item.assignee, partyId: input.item.partyId },
+    after: p,
+  });
   return { ok: true };
 }
 
@@ -271,8 +397,9 @@ export async function setPunchStatus(input: {
     row.closed_at = null;
     row.closed_by = null;
   }
-  const { error } = await supabase.from("punch_items").update(row).eq("id", input.item.id);
+  const { data, error } = await supabase.from("punch_items").update(row).eq("id", input.item.id).select("id");
   if (error) return { ok: false, error: error.message };
+  if (!data || data.length === 0) return { ok: false, error: `Not saved - you may not have permission to change the punch list yet (${PUNCH_FIELDS_SQL} lets editors in).` };
   await audit("PUNCH_STATUS", input.item.orgId, input.item.projectId, input.actor, {
     itemId: input.item.id, title: input.item.title, status: input.status,
   });

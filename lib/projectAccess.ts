@@ -42,5 +42,10 @@ export function projectAccess(o: {
   return { canEdit: edit, canManage: manage };
 }
 
+/** Any of someone's org roles (headline or additional) manages every
+ *  project: Admin or Document Control. */
+export const orgRolesManage = (roles: Array<string | null | undefined>): boolean =>
+  roles.some((r) => !!r && ORG_MANAGE.includes(r));
+
 /** The database hasn't been given the co-owner permission yet. */
 export const needsCoOwnerSql = (message: string) => /project_members_role_check|violates check constraint/i.test(message);

@@ -201,17 +201,18 @@ export function buildCoachItems(s: ProjectStateSnapshot, projectId: string): Coa
     payoff: "Drift becomes visible - you'll see slips against the original plan.",
     href: `${base}?tab=plan`,
   });
+  // Both are set under Edit project (the link opens it).
   if (!s.hasSow) add({
     id: "sow", kind: "setup", weight: 64,
     title: "Attach a Summary of Work",
     payoff: "Feeds RFQs, checklist assessments, and the project report.",
-    href: `${base}?tab=quality`,
+    href: `${base}?edit=1`,
   });
   if (!s.hasPurpose || !s.hasGoals) add({
     id: "purpose", kind: "setup", weight: 58,
     title: "Write the purpose & goals (from the wizard's skipped step)",
     payoff: "Everyone who opens the project knows why it exists.",
-    href: base,
+    href: `${base}?edit=1`,
   });
   if (s.checklistCount === 0) add({
     id: "checklist", kind: "quality", weight: 55,

@@ -33,7 +33,11 @@ export interface CrewCount {
 export const INCIDENT_KINDS = ["Near miss", "First aid", "Recordable", "Spill / release", "Evacuation / alarm", "Stop work", "Property damage"] as const;
 export type IncidentKind = (typeof INCIDENT_KINDS)[number];
 
-export interface Incident { id: string; at: number; kind: IncidentKind; text: string; by?: string | null }
+export interface Incident {
+  id: string; at: number; kind: IncidentKind; text: string; by?: string | null;
+  /** Changed after it was first written: when and by whom. */
+  edited?: { at: number; by?: string | null } | null;
+}
 
 export interface ShiftNote {
   id: string;
@@ -44,6 +48,8 @@ export interface ShiftNote {
   followUp?: boolean;
   by?: string | null;
   cleared?: { at: number; by?: string | null } | null;
+  /** Changed after it was first written: when and by whom. */
+  edited?: { at: number; by?: string | null } | null;
 }
 
 /** A lesson for next time, written at the close-out. */
@@ -107,6 +113,40 @@ export function openFollowUps(records: Map<string, ShiftRecord>, shiftKey: strin
     for (const n of r.notes ?? []) if (n.followUp && !n.cleared) out.push({ ...n, shiftKey: k });
   }
   return out.sort((a, b) => a.at - b.at);
+}
+
+// Changes to what a shift already wrote, kept honest: an edit keeps the
+// item's id and who first wrote it and stamps the edit; a removed item put
+// back (Undo) comes back as it was; a cleared follow-up opens again.
+
+/** An incident changed in place. */
+export function editIncident(r: ShiftRecord, id: string, x: { at: number; kind: IncidentKind; text: string }, by: string | null, now = Date.now()): ShiftRecord {
+  const items = (r.incidents?.items ?? []).map((i) => (i.id === id ? { ...i, ...x, edited: { at: now, by } } : i));
+  return { ...r, incidents: { ...(r.incidents ?? {}), items } };
+}
+
+/** A removed incident put back exactly (Undo), unless it's there already. */
+export function restoreIncident(r: ShiftRecord, x: Incident): ShiftRecord {
+  const items = r.incidents?.items ?? [];
+  if (items.some((i) => i.id === x.id)) return r;
+  return { ...r, incidents: { none: null, items: [...items, x] } };
+}
+
+/** A note changed in place. */
+export function editNote(r: ShiftRecord, id: string, x: { at: number; text: string; followUp: boolean }, by: string | null, now = Date.now()): ShiftRecord {
+  return { ...r, notes: (r.notes ?? []).map((n) => (n.id === id ? { ...n, ...x, edited: { at: now, by } } : n)) };
+}
+
+/** A removed note put back exactly (Undo), unless it's there already. */
+export function restoreNote(r: ShiftRecord, x: ShiftNote): ShiftRecord {
+  const notes = r.notes ?? [];
+  if (notes.some((n) => n.id === x.id)) return r;
+  return { ...r, notes: [...notes, x] };
+}
+
+/** A cleared follow-up open again (Undo clear): back on every report. */
+export function unclearNote(r: ShiftRecord, id: string): ShiftRecord {
+  return { ...r, notes: (r.notes ?? []).map((n) => (n.id === id ? { ...n, cleared: null } : n)) };
 }
 
 /** Every shift's record on the project, by shift key. Throws a plain

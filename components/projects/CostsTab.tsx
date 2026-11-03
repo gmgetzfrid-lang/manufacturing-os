@@ -19,6 +19,7 @@ import {
   CircleDollarSign, Plus, X, Loader2, Check, ChevronDown, ChevronRight,
   Landmark, HardHat, Scale, TrendingUp, TrendingDown, AlertTriangle, Ban,
   LayoutDashboard, ScanSearch, Receipt, GitPullRequestArrow, FileCheck2, FileUp, Gauge, Hourglass,
+  Pencil, RotateCcw,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -38,7 +39,7 @@ import type { BudgetReadResult } from "@/lib/budgetImport";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { AfeCard, LineEditor, BudgetHistory, EntryRevise } from "@/components/projects/cost/CostEdits";
 import { FilePreviewModal, fileOfDoc, type PreviewFile } from "@/components/projects/cost/FilePreview";
-import { loadBudgetHistory, type BudgetChange } from "@/lib/costRevisions";
+import { loadBudgetHistory, parseMoney, type BudgetChange } from "@/lib/costRevisions";
 
 const COST_TYPES = ["labor", "material", "equipment", "subcontract", "other"] as const;
 type CostView = "overview" | "budget" | "quotes" | "invoices" | "changes";
@@ -261,7 +262,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       {/* ── Inbound quotes → AI read → bid tabulation → award ── */}
       {(view === "quotes" || view === "invoices") && (
         <QuotesPanel orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
-          section={view} parties={parties}
+          section={view} parties={parties} entries={entries}
           accounts={accounts} docs={docs} onChanged={() => void refresh()} setErr={setErr} />
       )}
 
@@ -701,7 +702,7 @@ function EntryForm({ orgId, projectId, accountId, parties, actor, onDone, setErr
       {parties.length > 0 && (
         <select value={party} onChange={(e) => setParty(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
           <option value="">Party…</option>
-          {parties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          {parties.filter((p) => p.status !== "inactive").map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
       )}
       <input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="PO / invoice #"
@@ -756,7 +757,7 @@ function AccountForm({ orgId, projectId, actor, parties, milestones, onDone, onC
         <input value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="Budget (USD)" inputMode="decimal" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono tabular-nums" />
         <select value={party} onChange={(e) => setParty(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
           <option value="">Party…</option>
-          {parties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          {parties.filter((p) => p.status !== "inactive").map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
@@ -786,6 +787,23 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
   const [contract, setContract] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A company being edited, and one being switched on or off the job.
+  const [editing, setEditing] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  // Never deleted: their quotes, invoices and entries still point at them.
+  const setStatus = async (p: CostParty, status: "active" | "inactive") => {
+    if (status === "inactive" && !(await appConfirm({
+      title: `Deactivate ${p.name}?`,
+      message: "They stay on everything already recorded (quotes, invoices, change orders), but aren't offered for new entries. Reactivate any time.",
+      confirmLabel: "Deactivate",
+    }))) return;
+    setBusyId(p.id); setError(null);
+    const res = await saveParty({ orgId, projectId, id: p.id, patch: { status }, actor });
+    setBusyId(null);
+    if (!res.ok) { setError(res.error ?? "Couldn't change it."); return; }
+    onChanged();
+  };
 
   const add = async () => {
     if (!name.trim()) { setError("Name is required."); return; }
@@ -808,15 +826,34 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
     <div className="px-4 pb-4 space-y-2 border-t border-[var(--color-border)]">
       {parties.length > 0 && (
         <ul className="pt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {parties.map((p) => (
-            <li key={p.id} className="rounded-xl border border-[var(--color-border)] px-3 py-2">
+          {parties.map((p) => editing === p.id ? (
+            <li key={p.id} className="sm:col-span-2">
+              <PartyEditor orgId={orgId} projectId={projectId} actor={actor} party={p}
+                onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); onChanged(); }} />
+            </li>
+          ) : (
+            <li key={p.id} className={`rounded-xl border border-[var(--color-border)] px-3 py-2 ${p.status === "inactive" ? "opacity-60" : ""}`}>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold text-[var(--color-text)] truncate">{p.name}</span>
                 {p.kind && <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{p.kind}</span>}
                 {p.status === "inactive" && <span className="text-[9px] font-bold text-[var(--color-text-faint)]">inactive</span>}
+                {canManage && (
+                  <span className="ml-auto flex items-center gap-1 shrink-0">
+                    <button onClick={() => setEditing(p.id)} title="Change the name, kind, trade or contact"
+                      className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      <Pencil className="w-3 h-3" /> Edit
+                    </button>
+                    <button onClick={() => void setStatus(p, p.status === "inactive" ? "active" : "inactive")} disabled={busyId === p.id}
+                      title={p.status === "inactive" ? "Put them back on the job's pick lists" : "Off the job: they stay on everything already recorded, but aren't offered for new entries"}
+                      className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                      {busyId === p.id ? <Loader2 className="w-3 h-3 animate-spin" /> : p.status === "inactive" ? <RotateCcw className="w-3 h-3" /> : <Ban className="w-3 h-3" />}
+                      {p.status === "inactive" ? "Reactivate" : "Deactivate"}
+                    </button>
+                  </span>
+                )}
               </div>
               <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-                {[p.trade, p.contractValue != null ? `contract ${fmtMoney(p.contractValue)}` : null].filter(Boolean).join(" · ") || "-"}
+                {[p.trade, p.contractValue != null ? `contract ${fmtMoney(p.contractValue)}` : null, p.contactName, p.contactEmail].filter(Boolean).join(" · ") || "-"}
               </div>
             </li>
           ))}
@@ -838,6 +875,75 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
           {error && <span className="text-[11px] font-bold text-rose-700">{error}</span>}
         </div>
       )}
+    </div>
+  );
+}
+
+/** One company's details, changed in place. */
+function PartyEditor({ orgId, projectId, actor, party, onCancel, onSaved }: {
+  orgId: string; projectId: string; actor: { uid: string; email: string | null };
+  party: CostParty; onCancel: () => void; onSaved: () => void;
+}) {
+  const [name, setName] = useState(party.name);
+  const [kind, setKind] = useState(party.kind ?? "contractor");
+  const [trade, setTrade] = useState(party.trade ?? "");
+  const [contract, setContract] = useState(party.contractValue != null ? String(party.contractValue) : "");
+  const [contactName, setContactName] = useState(party.contactName ?? "");
+  const [contactEmail, setContactEmail] = useState(party.contactEmail ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const field = "h-8 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs";
+  const label = "text-[9px] font-black uppercase tracking-wider text-[var(--color-text-muted)]";
+
+  const save = async () => {
+    if (!name.trim()) { setError("Name is required."); return; }
+    const cv = contract.trim() ? parseMoney(contract) : null;
+    if (contract.trim() && (cv == null || cv < 0)) { setError("Contract value should be a number."); return; }
+    setSaving(true); setError(null);
+    const res = await saveParty({
+      orgId, projectId, id: party.id,
+      patch: {
+        name: name.trim(), kind, trade: trade || null, contractValue: cv,
+        contactName: contactName || null, contactEmail: contactEmail || null,
+      },
+      actor,
+    });
+    setSaving(false);
+    if (!res.ok) { setError(res.error ?? "Couldn't save."); return; }
+    onSaved();
+  };
+
+  return (
+    <div className="rounded-xl border border-[var(--color-accent-ring)]/50 bg-[var(--color-accent-soft)]/30 p-3 space-y-2">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <label className="block sm:col-span-2"><span className={label}>Company name</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} className={`mt-0.5 ${field}`} /></label>
+        <label className="block"><span className={label}>Kind</span>
+          <select value={kind} onChange={(e) => setKind(e.target.value)} className={`mt-0.5 ${field}`}>
+            <option value="contractor">contractor</option>
+            <option value="vendor">vendor</option>
+            <option value="rental">rental</option>
+            <option value="internal">internal</option>
+          </select></label>
+        <label className="block"><span className={label}>Trade</span>
+          <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Piping, E&I…" className={`mt-0.5 ${field}`} /></label>
+        <label className="block"><span className={label}>Contract value</span>
+          <input value={contract} onChange={(e) => setContract(e.target.value)} inputMode="decimal" className={`mt-0.5 ${field} font-mono tabular-nums`} /></label>
+        <span className="hidden sm:block" />
+        <label className="block"><span className={label}>Contact name</span>
+          <input value={contactName} onChange={(e) => setContactName(e.target.value)} placeholder="Who you call" className={`mt-0.5 ${field}`} /></label>
+        <label className="block sm:col-span-2"><span className={label}>Contact email</span>
+          <input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} type="email" inputMode="email" placeholder="name@company.com" className={`mt-0.5 ${field}`} /></label>
+      </div>
+      <div className="flex items-center gap-2">
+        {error && <span className="text-[11px] font-bold text-rose-700">{error}</span>}
+        <span className="ml-auto flex items-center gap-2">
+          <button onClick={onCancel} className="px-2 py-1.5 text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+          <button onClick={() => void save()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Save
+          </button>
+        </span>
+      </div>
     </div>
   );
 }

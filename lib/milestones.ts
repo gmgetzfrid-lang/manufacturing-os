@@ -1241,7 +1241,8 @@ export async function restoreDeletedMilestones(d: DeletedTasks): Promise<void> {
 
 /** Delete EVERY milestone on a project (notes cascade with them) so the
  *  schedule can be rebuilt from a fresh import. Audited with the count.
- *  Irreversible — callers confirm first. */
+ *  Callers confirm first, and take a snapshotSchedule() before it so
+ *  restoreClearedSchedule() can put it all back (Undo). */
 export async function clearProjectSchedule(input: {
   orgId: string; projectId: string;
   actorUserId: string; actorUserEmail?: string; actorUserRole?: string;
@@ -1317,6 +1318,68 @@ export async function resetProjectProgress(input: {
   });
   await setBaseline({ orgId: input.orgId, projectId: input.projectId, actorUserId: input.actorUserId, actorUserEmail: input.actorUserEmail, actorUserRole: input.actorUserRole });
   return { reset: ids.length };
+}
+
+/** Undo a Clear schedule: every task comes back with its ids, comments and
+ *  links, from the copy taken just before. Tasks added since stay. */
+export async function restoreClearedSchedule(input: {
+  orgId: string; projectId: string; snapshot: ScheduleSnapshot;
+  actorUserId: string; actorUserEmail?: string;
+}): Promise<void> {
+  // Rows that are back already (a second Undo, a re-import of the same
+  // ids) are skipped rather than failing the whole restore.
+  const { rows: here } = await fetchAllRows<{ id: string }>((from, to) => supabase.from("milestones").select("id")
+    .eq("org_id", input.orgId).eq("project_id", input.projectId).order("id").range(from, to));
+  const have = new Set(here.map((r) => r.id));
+  const rows = input.snapshot.rows.filter((r) => !have.has(r.id));
+  const ids = new Set(rows.map((r) => r.id));
+  await restoreDeletedMilestones({ rows, notes: input.snapshot.notes.filter((n) => ids.has(n.milestone_id)), orphans: [] });
+  await logAuditAction({
+    action: "SCHEDULE_CLEAR_UNDONE", resourceType: "project", resourceId: input.projectId,
+    orgId: input.orgId, userId: input.actorUserId, userEmail: input.actorUserEmail,
+    details: { restored: rows.length },
+  }).catch(() => undefined);
+}
+
+/** The status notes a progress reset removed, to put back: those in the
+ *  copy taken before it that aren't there now. */
+export function statusNotesToRestore<T extends { id: string; kind: string }>(before: T[], nowIds: Set<string>): T[] {
+  return before.filter((n) => n.kind === "status" && !nowIds.has(n.id));
+}
+
+/** Undo a Reset progress: each task's status, %, actual times, who
+ *  completed it and its baseline go back as they were, and the status
+ *  notes the reset removed come back. Planned dates are written back too,
+ *  as they were at the reset. */
+export async function undoProgressReset(input: {
+  orgId: string; projectId: string; snapshot: ScheduleSnapshot;
+  actorUserId: string; actorUserEmail?: string;
+}): Promise<{ failed: number }> {
+  let failed = 0;
+  for (const r of input.snapshot.rows) {
+    const { id, created_at: _c, ...rest } = r as MilestoneRow & { created_at?: string };
+    void _c;
+    const { error } = await supabase.from("milestones").update(rest).eq("id", id);
+    if (error) failed++;
+  }
+  const ids = input.snapshot.rows.map((r) => r.id);
+  const nowIds = new Set<string>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { rows: n } = await fetchAllRows<{ id: string }>((from, to) => supabase.from("milestone_notes").select("id")
+      .in("milestone_id", ids.slice(i, i + 200)).order("id").range(from, to));
+    n.forEach((x) => nowIds.add(x.id));
+  }
+  const back = statusNotesToRestore(input.snapshot.notes, nowIds);
+  for (let i = 0; i < back.length; i += 200) {
+    const { error } = await supabase.from("milestone_notes").insert(back.slice(i, i + 200));
+    if (error) failed++;
+  }
+  await logAuditAction({
+    action: "SCHEDULE_PROGRESS_RESET_UNDONE", resourceType: "project", resourceId: input.projectId,
+    orgId: input.orgId, userId: input.actorUserId, userEmail: input.actorUserEmail,
+    details: { tasks: input.snapshot.rows.length, notesBack: back.length, failed },
+  }).catch(() => undefined);
+  return { failed };
 }
 
 // ─── Reads ──────────────────────────────────────────────────────

@@ -162,7 +162,7 @@ export async function reviseEntry(input: {
   const res = await addEntry({
     orgId: input.orgId, projectId: input.projectId, costAccountId: e.costAccountId, entryType: e.entryType,
     amount: input.amount, entryDate: e.entryDate ?? new Date().toISOString().slice(0, 10), partyId: e.partyId,
-    reference: e.reference,
+    reference: e.reference, sourceDocumentId: e.sourceDocumentId,
     description: [e.description, `Revised from ${fmtMoney(e.amount, input.currency)}${why ? `: ${why}` : ""}`].filter(Boolean).join(" · "),
     actor: input.actor,
   });

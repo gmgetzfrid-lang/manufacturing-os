@@ -1203,11 +1203,15 @@ function Chip({
       )}
 
       {selectable && (
+        // Hover shows it with a mouse; on a touch screen there's no hover,
+        // so it's always there (and big enough for a finger).
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); onToggleSelect?.(); }}
           title={selected ? "Deselect" : "Select for bulk actions"}
-          className={`absolute top-0.5 right-0.5 z-10 w-4 h-4 pointer-coarse:w-6 pointer-coarse:h-6 rounded border flex items-center justify-center transition-opacity ${selected ? "bg-[var(--color-accent)] border-[var(--color-accent)] text-[var(--color-accent-fg)] opacity-100" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-transparent opacity-0 group-hover/chip:opacity-100"}`}
+          aria-label={selected ? "Deselect" : "Select for bulk actions"}
+          aria-pressed={!!selected}
+          className={`absolute top-0.5 right-0.5 z-10 w-4 h-4 pointer-coarse:w-6 pointer-coarse:h-6 rounded border flex items-center justify-center transition-opacity ${selected ? "bg-[var(--color-accent)] border-[var(--color-accent)] text-[var(--color-accent-fg)] opacity-100" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-transparent opacity-0 group-hover/chip:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"}`}
         >
           <CheckSquare className="w-3 h-3" />
         </button>

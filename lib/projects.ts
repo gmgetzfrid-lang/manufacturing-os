@@ -11,6 +11,8 @@ import { DEFAULT_SCHEDULE_TZ, isValidTimeZone, normalizeTimeZone } from "@/lib/s
 import { shiftScheduleTimeZone } from "@/lib/milestones";
 import { notify, notifyMany } from "@/lib/inAppNotifications";
 import { listFollowerIds } from "@/lib/subscriptions";
+import { isReopen, statusActivityBody, statusChangePatch } from "@/lib/projectStatus";
+import { orgRolesManage } from "@/lib/projectAccess";
 import {
   ensureActiveEpisode,
   postEpisodeSystemMessage,
@@ -278,20 +280,21 @@ export async function transitionProjectStatus(input: StatusTransitionInput): Pro
   // Defense in depth alongside the 20260906 RLS: owner/controller only.
   await assertCanManageProject(input.projectId, input.actorUserId);
   const now = new Date().toISOString();
+  if (input.toStatus === "cancelled" && !input.reason?.trim()) throw new Error("Cancellation reason is required");
+  // Where it's coming from decides a reopen (completed, cancelled or
+  // archived back to active): the closed-out stamps are cleared.
+  const { data: cur } = await supabase.from("projects").select("status").eq("id", input.projectId).maybeSingle();
+  const fromStatus = ((cur as { status?: ProjectStatus } | null)?.status) ?? null;
+  const reopen = isReopen(fromStatus, input.toStatus);
   const update: Record<string, unknown> = {
-    status: input.toStatus,
+    ...statusChangePatch(fromStatus, input.toStatus, input.reason, now),
     updated_at: now,
     updated_by: input.actorUserId,
   };
-  if (input.toStatus === "completed") update.completed_at = now;
-  if (input.toStatus === "cancelled") {
-    if (!input.reason?.trim()) throw new Error("Cancellation reason is required");
-    update.cancelled_at = now;
-    update.cancelled_reason = input.reason.trim();
-  }
 
-  const { error } = await supabase.from("projects").update(update).eq("id", input.projectId);
+  const { data: saved, error } = await supabase.from("projects").update(update).eq("id", input.projectId).select("id");
   if (error) throw new Error(error.message);
+  if (!saved?.length) throw new Error("Not changed - only the project owner, a co-owner or an admin can change its status.");
 
   await writeActivity({
     projectId: input.projectId,
@@ -299,19 +302,19 @@ export async function transitionProjectStatus(input: StatusTransitionInput): Pro
     userId: input.actorUserId,
     userName: input.actorEmail,
     type: "status_changed",
-    body: `Project ${input.toStatus}${input.reason ? `: ${input.reason}` : ""}`,
-    metadata: { toStatus: input.toStatus, reason: input.reason },
+    body: statusActivityBody(fromStatus, input.toStatus, input.reason),
+    metadata: { toStatus: input.toStatus, fromStatus, reason: input.reason, reopened: reopen || undefined },
   });
 
   await logAuditAction({
-    action: `PROJECT_${input.toStatus.toUpperCase()}`,
+    action: reopen ? "PROJECT_REOPENED" : `PROJECT_${input.toStatus.toUpperCase()}`,
     resourceId: input.projectId,
     resourceType: "project",
     orgId: input.orgId,
     userId: input.actorUserId,
     userEmail: input.actorEmail,
     userRole: input.actorRole,
-    details: { reason: input.reason || null },
+    details: { reason: input.reason || null, fromStatus },
   });
 
   // Cancelling or archiving releases every active checkout on the project.
@@ -330,7 +333,7 @@ export async function transitionProjectStatus(input: StatusTransitionInput): Pro
     projectId: input.projectId, orgId: input.orgId,
     actorUserId: input.actorUserId, actorName: input.actorEmail?.split("@")[0],
     kind: "project_status",
-    title: `Project ${input.toStatus}: ${(pj?.name as string) ?? "project"}`,
+    title: `Project ${reopen ? "reopened" : input.toStatus}: ${(pj?.name as string) ?? "project"}`,
     body: input.reason ? `Reason: ${input.reason}` : (input.toStatus === "cancelled" || input.toStatus === "completed" || input.toStatus === "archived" ? "Any active checkouts on the project were released." : undefined),
   });
 }
@@ -605,10 +608,15 @@ export async function assertCanManageProject(projectId: string, actorUserId: str
   if (String(p.owner_user_id) === String(actorUserId)) {
     return { id: p.id, orgId: p.org_id, ownerUserId: p.owner_user_id, name: p.name };
   }
-  const { data: mem } = await supabase
-    .from("org_members").select("role").eq("org_id", p.org_id).eq("uid", actorUserId).eq("status", "active").maybeSingle();
-  const role = (mem as { role?: string } | null)?.role;
-  if (role === "Admin" || role === "DocCtrl") {
+  // The headline role and the extra roles someone holds (org_members.roles):
+  // an Engineer who is also Document Control manages like Document Control,
+  // as the database's is_org_controller() already says.
+  const memberQuery = (cols: string) => supabase
+    .from("org_members").select(cols).eq("org_id", p.org_id).eq("uid", actorUserId).eq("status", "active").maybeSingle();
+  const first = await memberQuery("role, roles");
+  const mem = first.error ? (await memberQuery("role")).data : first.data; // no roles column yet
+  const m = (mem ?? null) as { role?: string | null; roles?: string[] | null } | null;
+  if (orgRolesManage([m?.role, ...(m?.roles ?? [])])) {
     return { id: p.id, orgId: p.org_id, ownerUserId: p.owner_user_id, name: p.name };
   }
   // A co-owner on the project manages it as its owner does.
@@ -778,6 +786,15 @@ export async function updateProjectMeta(input: {
     targetCompletionDate?: string | null; visibility?: ProjectVisibility;
     /** IANA zone; null/"UTC" clears it. */
     timezone?: string | null;
+    /** When the work started (projects.started_at; set at creation). */
+    startedAt?: string | null;
+    /** The new-project wizard's fields (20261013): why the project exists,
+     *  its goals, what done well means, the job size and the Summary of Work. */
+    purpose?: string | null;
+    goals?: string[] | null;
+    successCriteria?: string | null;
+    jobKind?: string | null;
+    sowDocumentId?: string | null;
   };
   /** When the zone changes, re-anchor every planned/baseline time so the
    *  wall clock the team sees stays as written ("8:00 stays 8:00").
@@ -788,7 +805,7 @@ export async function updateProjectMeta(input: {
 }): Promise<void> {
   const proj = await assertCanManageProject(input.projectId, input.actorUserId);
   const { data: beforeRow } = await supabase.from("projects")
-    .select("name, description, moc_reference, target_completion_date, visibility, timezone")
+    .select("name, description, moc_reference, target_completion_date, visibility, timezone, started_at")
     .eq("id", input.projectId).maybeSingle();
   const update: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
@@ -803,6 +820,18 @@ export async function updateProjectMeta(input: {
   if (input.patch.mocReference !== undefined) update.moc_reference = input.patch.mocReference?.trim() || null;
   if (input.patch.targetCompletionDate !== undefined) update.target_completion_date = input.patch.targetCompletionDate || null;
   if (input.patch.visibility !== undefined) update.visibility = input.patch.visibility;
+  if (input.patch.startedAt !== undefined && input.patch.startedAt) update.started_at = input.patch.startedAt;
+  // The wizard's fields, written apart so a database without them (before
+  // 20261013_project_controls_program.sql) still saves everything else.
+  const wizard: Record<string, unknown> = {};
+  if (input.patch.purpose !== undefined) wizard.purpose = input.patch.purpose?.trim() || null;
+  if (input.patch.goals !== undefined) {
+    const g = (input.patch.goals ?? []).map((x) => x.trim()).filter(Boolean);
+    wizard.goals = g.length ? g : null;
+  }
+  if (input.patch.successCriteria !== undefined) wizard.success_criteria = input.patch.successCriteria?.trim() || null;
+  if (input.patch.jobKind !== undefined) wizard.job_kind = input.patch.jobKind || null;
+  if (input.patch.sowDocumentId !== undefined) wizard.sow_document_id = input.patch.sowDocumentId || null;
   // Zone: validate, store null for UTC, and remember before/after so the
   // schedule can be re-anchored below.
   const prevTz = normalizeTimeZone((beforeRow as { timezone?: string | null } | null)?.timezone);
@@ -825,6 +854,15 @@ export async function updateProjectMeta(input: {
     const res = await shiftScheduleTimeZone({ orgId: proj.orgId, projectId: input.projectId, fromTimeZone: prevTz, toTimeZone: nextTz });
     if (res.errors.length > 0) throw new Error(`Timezone saved, but ${res.errors.length} task(s) couldn't be re-anchored: ${res.errors[0]}`);
   }
+  let wizardError: string | null = null;
+  if (Object.keys(wizard).length > 0) {
+    const { error: wErr } = await supabase.from("projects").update(wizard).eq("id", input.projectId);
+    if (wErr) {
+      wizardError = /purpose|goals|success_criteria|job_kind|sow_document_id|column|schema cache/i.test(wErr.message)
+        ? "The rest is saved, but purpose, goals, success criteria, job size and the Summary of Work need the database update 20261013_project_controls_program.sql run first."
+        : wErr.message;
+    }
+  }
 
   await writeActivity({
     projectId: input.projectId, orgId: proj.orgId,
@@ -840,6 +878,7 @@ export async function updateProjectMeta(input: {
     userEmail: input.actorEmail, userRole: input.actorRole,
     details: { before: beforeRow ?? null, after: input.patch },
   });
+  if (wizardError) throw new Error(wizardError);
 }
 
 // ─── STALE-CHECKOUT WARNINGS ─────────────────────────────────────────────

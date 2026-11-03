@@ -55,6 +55,9 @@ export interface CostEntry {
   status: "posted" | "void";
   createdByName?: string | null;
   createdAt?: string | null;
+  /** The quote or invoice this entry was posted from (cost_documents), so
+   *  an award or a posting can be taken back exactly. */
+  sourceDocumentId?: string | null;
 }
 
 export interface Actor { uid: string; email: string | null; role?: string | null }
@@ -105,6 +108,7 @@ function mapEntry(r: Record<string, unknown>): CostEntry {
     status: (r.status as CostEntry["status"]) ?? "posted",
     createdByName: (r.created_by_name as string | null) ?? null,
     createdAt: (r.created_at as string | null) ?? null,
+    sourceDocumentId: (r.source_document_id as string | null) ?? null,
   };
 }
 
@@ -212,6 +216,8 @@ export async function addEntry(input: {
   orgId: string; projectId: string; costAccountId: string;
   entryType: CostEntryType; amount: number; entryDate: string;
   partyId?: string | null; description?: string | null; reference?: string | null;
+  /** The quote or invoice it came from. */
+  sourceDocumentId?: string | null;
   actor: Actor;
 }): Promise<{ ok: boolean; error?: string; entryId?: string }> {
   if (!Number.isFinite(input.amount) || input.amount === 0) {
@@ -223,7 +229,7 @@ export async function addEntry(input: {
   if (input.entryType === "actual" && input.amount < 0) {
     return { ok: false, error: "Actuals can't be negative - post a credit as an adjustment (or a commitment credit for descoped awards)." };
   }
-  const { data, error } = await supabase.from("cost_entries").insert({
+  const row: Record<string, unknown> = {
     org_id: input.orgId, project_id: input.projectId,
     cost_account_id: input.costAccountId,
     party_id: input.partyId || null,
@@ -235,7 +241,15 @@ export async function addEntry(input: {
     status: "posted",
     created_by: input.actor.uid,
     created_by_name: input.actor.email?.split("@")[0] ?? null,
-  }).select("id").single();
+  };
+  if (input.sourceDocumentId) row.source_document_id = input.sourceDocumentId;
+  let { data, error } = await supabase.from("cost_entries").insert(row).select("id").single();
+  if (error && row.source_document_id && (error.code === "PGRST204" || error.code === "42703")) {
+    // A database without the link column: post the money anyway; Undo
+    // then finds the entry by its description and amount.
+    delete row.source_document_id;
+    ({ data, error } = await supabase.from("cost_entries").insert(row).select("id").single());
+  }
   if (error || !data) return { ok: false, error: error?.message ?? "Couldn't post the entry." };
   await audit("COST_ENTRY_POSTED", input.orgId, String(data.id), input.actor, {
     accountId: input.costAccountId, type: input.entryType, amount: input.amount, reference: input.reference ?? null,
@@ -254,6 +268,29 @@ export async function voidEntry(input: {
   if (error) return { ok: false, error: error.message };
   await audit("COST_ENTRY_VOIDED", input.orgId, input.entryId, input.actor, { before: before ?? null });
   return { ok: true };
+}
+
+/** The live entries a quote's award or an invoice's posting made: those
+ *  linked to the document, else (posted before the link was kept) the one
+ *  that matches what the posting wrote - its type, reference and the
+ *  "Award - vendor" / "Invoice - vendor" description, the amount deciding
+ *  between look-alikes. Empty when nothing can be told apart for sure. */
+export function findDocEntries(
+  doc: { id: string; kind: string; vendorName: string | null; docNumber: string | null; fileName: string | null; totalAmount: number | null },
+  entries: CostEntry[],
+): CostEntry[] {
+  const type: CostEntryType = doc.kind === "quote" ? "commitment" : "actual";
+  const live = entries.filter((e) => e.status !== "void" && e.entryType === type);
+  const linked = live.filter((e) => e.sourceDocumentId === doc.id);
+  if (linked.length > 0) return linked;
+  const ref = (doc.docNumber ?? doc.fileName ?? "").trim();
+  const said = `${doc.kind === "quote" ? "Award" : "Invoice"} - ${doc.vendorName ?? "vendor"}`;
+  const look = live.filter((e) => !e.sourceDocumentId
+    && (e.description ?? "").startsWith(said)
+    && (e.reference ?? "").trim() === ref);
+  if (look.length === 1) return look;
+  const same = look.filter((e) => doc.totalAmount != null && Math.abs(e.amount - doc.totalAmount) < 0.005);
+  return same.length === 1 ? same : [];
 }
 
 // ── rollup (pure — unit-tested) ─────────────────────────────────────────

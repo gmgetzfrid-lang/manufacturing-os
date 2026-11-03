@@ -125,6 +125,8 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   { table: "projects", column: "authorized_amount", migration: "20261020_project_budget_basis.sql", feature: "Project budget basis (AFE number, charge account, authorized amount)" },
   { table: "projects", column: "afe_history", migration: "20261116_cost_controls.sql", feature: "AFE change history (Costs › Budget › Edit AFE)" },
   { table: "cost_accounts", column: "budget_history", migration: "20261116_cost_controls.sql", feature: "Budget line change history (Costs › Budget › Edit)" },
+  { table: "punch_items", column: "location", migration: "20261117_boxed_in.sql", feature: "Punch items: where it is and who's on it (Quality › Punch list › Edit)" },
+  { table: "cost_entries", column: "source_document_id", migration: "20261117_boxed_in.sql", feature: "Undo award and Move to line find the exact cost entry" },
   { table: "transmittals", column: "portal_token", migration: "20260910_transmittal_portal.sql", feature: "Transmittal recipient portal + issue emails" },
   { table: "ai_connections", column: "embedding_api_key", migration: "20260930_semantic_layer.sql", feature: "Meaning-based (semantic) search" },
   { table: "ai_connections", column: "job_models", migration: "20261108_job_models.sql", feature: "A model per AI job (AI settings)" },

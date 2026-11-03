@@ -9,8 +9,9 @@
 // A project opens on Plan until work starts, then on Today.
 //
 // Project owner gets a settings strip up top with status-transition buttons:
-// Pause / Resume / Complete / Cancel / Archive. Status changes auto-release
-// every active checkout (handled in lib/projects.ts).
+// Pause / Resume / Complete / Cancel / Archive, and Reopen on a completed,
+// cancelled or archived project. Status changes auto-release every active
+// checkout (handled in lib/projects.ts).
 
 import React, { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -20,8 +21,9 @@ import {
   CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Calendar, Send,
   User as UserIcon, MessageSquare, Users, FileText, Activity as ActivityIcon,
   ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck, Pencil, CircleDollarSign,
-  UploadCloud, ClipboardList, Sun, FileBarChart,
+  UploadCloud, ClipboardList, Sun, FileBarChart, RotateCcw,
 } from "lucide-react";
+import { canReopen } from "@/lib/projectStatus";
 import IntakePanel from "@/components/projects/IntakePanel";
 import ProjectDocumentsCard from "@/components/projects/ProjectDocumentsCard";
 import ProjectScopePanel from "@/components/projects/ProjectScopePanel";
@@ -161,6 +163,22 @@ export default function ProjectDetailPage() {
   const canManage = access.canManage;
   // Deleting the project and handing over ownership: the owner (or an admin), not a co-owner.
   const isOwnerOrAdmin = !!isOwner || isAdmin;
+
+  // ?edit=1 (the coach's "write the purpose", "attach a Summary of Work")
+  // opens Edit project, then drops out of the URL.
+  const wantsEdit = search?.get("edit") === "1";
+  const editAsked = React.useRef(false);
+  useEffect(() => {
+    if (!wantsEdit) { editAsked.current = false; return; }
+    if (!project || !canManage || editAsked.current) return;
+    editAsked.current = true;
+    setShowEdit(true);
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.delete("edit");
+      window.history.replaceState(null, "", u.toString());
+    } catch { /* URL sync is best-effort */ }
+  }, [wantsEdit, project, canManage]);
 
   const refresh = useCallback(async () => {
     if (!projectId) return;
@@ -331,7 +349,8 @@ export default function ProjectDetailPage() {
               )}
               <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-[var(--color-text-muted)]">
                 <span className="inline-flex items-center gap-1"><UserIcon className="w-3 h-3" /> {project.ownerUserName || "-"}</span>
-                {project.targetCompletionDate && <span className="inline-flex items-center gap-1"><Calendar className="w-3 h-3" /> Target {formatDate(project.targetCompletionDate)}</span>}
+                {project.startedAt && <span className="inline-flex items-center gap-1"><Calendar className="w-3 h-3" /> Started {formatDate(project.startedAt)}</span>}
+                {project.targetCompletionDate &&<span className="inline-flex items-center gap-1"><Calendar className="w-3 h-3" /> Target {formatDate(project.targetCompletionDate)}</span>}
                 {project.mocReference && <span className="inline-flex items-center gap-1 font-mono"><Layers className="w-3 h-3" /> {project.mocReference}</span>}
                 {project.cancelledReason && <span className="inline-flex items-center gap-1 text-red-600"><AlertTriangle className="w-3 h-3" /> Cancelled: {project.cancelledReason}</span>}
                 {project.linkedTicketId && (
@@ -417,6 +436,10 @@ export default function ProjectDetailPage() {
             )}
             {canManage && (project.status === "completed" || project.status === "cancelled") && (
               <ActionButton icon={<ArchiveIcon className="w-3.5 h-3.5" />} label="Archive" onClick={() => setPendingStatus("archived")} />
+            )}
+            {/* Closed by mistake, or the work came back: active again. */}
+            {canManage && canReopen(project.status) && (
+              <ActionButton icon={<RotateCcw className="w-3.5 h-3.5" />} label="Reopen" onClick={() => setPendingStatus("active")} color="emerald" />
             )}
             {isOwnerOrAdmin && (
               <ActionButton
@@ -538,6 +561,9 @@ export default function ProjectDetailPage() {
             orgId={project.orgId}
             projectId={project.id}
             canManage={!!canManage}
+            // The punch list is the crew's: editors and org roles that work
+            // schedules write it too (20261117_boxed_in.sql opens the database).
+            canEditPunch={!!canManage || access.canEdit}
             uid={uid}
             userEmail={userEmail}
             jobKind={jobKind}
@@ -630,11 +656,14 @@ export default function ProjectDetailPage() {
                  pendingStatus === "completed" ? "Mark project complete" :
                  pendingStatus === "archived" ? "Archive project" :
                  pendingStatus === "paused" ? "Pause project" :
+                 canReopen(project.status) ? "Reopen project" :
                  "Resume project"}
               </div>
               <div className="text-xs text-[var(--color-text-muted)] mt-1">
                 {pendingStatus === "cancelled" || pendingStatus === "completed" || pendingStatus === "archived"
                   ? "Every active checkout on this project will be released."
+                  : pendingStatus === "active" && canReopen(project.status)
+                  ? `It goes back to active. The ${project.cancelledReason ? "cancel date and reason are" : "completed date is"} cleared; that it was ${project.status} stays in Activity. Released checkouts aren't taken out again.`
                   : "No checkouts will be affected."}
               </div>
             </div>
@@ -1057,7 +1086,8 @@ function MembersTab({
                         } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
                       }}
                       title="Remove from project"
-                      className="opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50"
+                      // Shown on hover with a mouse; always there on a touch screen.
+                      className="opacity-60 sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1.5 pointer-coarse:p-2.5 rounded-md text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>

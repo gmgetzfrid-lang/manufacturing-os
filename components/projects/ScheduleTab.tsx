@@ -25,6 +25,7 @@ import { Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown, Up
 import {
   listMilestones, createMilestone, setMilestoneStatus, setMilestoneProgress, restoreMilestoneStates, deleteMilestone, clearProjectSchedule, resetProjectProgress,
   applyMilestoneMoves, computeScheduleMetrics, setBaseline, addMilestoneNote, creditProgressTo,
+  snapshotSchedule, restoreClearedSchedule, undoProgressReset, type ScheduleSnapshot,
 } from "@/lib/milestones";
 import MarkSheet from "@/components/projects/MarkSheet";
 import type { ShiftCredit } from "@/lib/shiftReport";
@@ -231,18 +232,26 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
     finally { setBusy(false); }
   };
 
+  // What Clear schedule or Reset progress just did, with the copy of the
+  // schedule taken right before it, so it can be put back (Undo). Stays
+  // until it's dismissed or undone.
+  const [undoable, setUndoable] = useState<{ kind: "clear" | "reset"; snapshot: ScheduleSnapshot; count: number } | null>(null);
+  const [undoing, setUndoing] = useState(false);
+
   // Wipe the whole schedule so it can be rebuilt from a fresh import.
   const [clearing, setClearing] = useState(false);
   const onClearSchedule = async () => {
     const n = allMilestones.length;
     const ok = await appConfirm({
-      message: `Delete all ${n} task${n === 1 ? "" : "s"} on this project's schedule? Notes on them go too. This can't be undone - import the schedule file again afterwards to rebuild it. This action is audited.`,
+      message: `Delete all ${n} task${n === 1 ? "" : "s"} on this project's schedule? Notes on them go too. Undo is offered right after; once you leave the page, import the schedule file again to rebuild it. This action is audited.`,
       tone: "danger",
     });
     if (!ok) return;
     setClearing(true); setError(null);
     try {
-      await clearProjectSchedule({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
+      const snapshot = await snapshotSchedule(orgId, projectId);
+      const { deleted } = await clearProjectSchedule({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
+      setUndoable(deleted > 0 ? { kind: "clear", snapshot, count: deleted } : null);
       await refresh();
     } catch (e) { setError((e as Error).message); }
     finally { setClearing(false); }
@@ -254,16 +263,34 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const onResetProgress = async () => {
     const n = allMilestones.length;
     const ok = await appConfirm({
-      message: `Reset progress on all ${n} task${n === 1 ? "" : "s"}? Every task goes back to 0% and "planned", and its actual start / completion stamps are cleared, so the real outage starts clean after testing. Planned dates, the baseline, dependencies and notes stay (status-change notes from the rehearsal are removed). This action is audited.`,
+      message: `Reset progress on all ${n} task${n === 1 ? "" : "s"}? Every task goes back to 0% and "planned", and its actual start / completion stamps are cleared, so the real outage starts clean after testing. Planned dates, the baseline, dependencies and notes stay (status-change notes from the rehearsal are removed). Undo is offered right after. This action is audited.`,
       tone: "danger",
     });
     if (!ok) return;
     setResetting(true); setError(null);
     try {
-      await resetProjectProgress({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
+      const snapshot = await snapshotSchedule(orgId, projectId);
+      const { reset } = await resetProjectProgress({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
+      setUndoable(reset > 0 ? { kind: "reset", snapshot, count: reset } : null);
       await refresh();
     } catch (e) { setError((e as Error).message); }
     finally { setResetting(false); }
+  };
+
+  const onUndo = async () => {
+    if (!undoable) return;
+    setUndoing(true); setError(null);
+    try {
+      if (undoable.kind === "clear") {
+        await restoreClearedSchedule({ orgId, projectId, snapshot: undoable.snapshot, actorUserId: userId, actorUserEmail: userEmail });
+      } else {
+        const { failed } = await undoProgressReset({ orgId, projectId, snapshot: undoable.snapshot, actorUserId: userId, actorUserEmail: userEmail });
+        if (failed > 0) setError(`Undo couldn't put back ${failed} task${failed === 1 ? "" : "s"} or note${failed === 1 ? "" : "s"} - check them on the list.`);
+      }
+      setUndoable(null);
+      await refresh();
+    } catch (e) { setError(`Couldn't undo: ${(e as Error).message}`); }
+    finally { setUndoing(false); }
   };
 
   const onDelete = async (id: string) => {
@@ -409,6 +436,24 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           )}
         </div>
       </div>}
+
+      {/* Right after Clear schedule or Reset progress: put it back. */}
+      {undoable && canEdit && (
+        <div role="status" className="flex items-center gap-2 flex-wrap rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2.5 text-[12px] text-amber-900 dark:text-amber-200">
+          <RotateCcw className="w-4 h-4 shrink-0" />
+          <span className="flex-1 min-w-48">
+            {undoable.kind === "clear"
+              ? `Schedule cleared - ${undoable.count} task${undoable.count === 1 ? "" : "s"} deleted.`
+              : `Progress reset on ${undoable.count} task${undoable.count === 1 ? "" : "s"}.`}
+            {" "}Undo puts {undoable.kind === "clear" ? "every task back with its notes" : "each task's status, %, times and baseline back as they were"}.
+          </span>
+          <button onClick={() => void onUndo()} disabled={undoing}
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-600 text-white text-[12px] font-bold hover:bg-amber-700 disabled:opacity-50">
+            {undoing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />} Undo
+          </button>
+          <button onClick={() => setUndoable(null)} disabled={undoing} className="px-2 py-1.5 text-[12px] font-bold text-amber-800 dark:text-amber-300 hover:underline">Dismiss</button>
+        </div>
+      )}
 
       {/* Zero-state onboarding — the front door for a new user. */}
       {!loading && milestones.length === 0 && (

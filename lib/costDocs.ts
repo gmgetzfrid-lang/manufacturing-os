@@ -11,10 +11,15 @@
 // Lifecycle:  uploaded(draft) → parsed → awarded/declined (quotes)
 //                                      → posted (invoices)     … or void.
 // Money moves through lib/costs.addEntry only — never a direct insert.
+// Every step can be taken back on the record: an award is undone (its
+// commitment voided, the bids back to read), a posted invoice moves to the
+// right budget line (old entry voided, a new one posted), and a read
+// document's total, vendor and RFQ group can be corrected before money
+// moves. Cost entries are voided, never deleted.
 
 import { supabase } from "@/lib/supabase";
 import { uploadToPath } from "@/lib/storage";
-import { addEntry, type Actor } from "@/lib/costs";
+import { addEntry, voidEntry, listEntries, findDocEntries, type Actor, type CostEntry } from "@/lib/costs";
 import { validateParsedQuote, type ParsedQuote } from "@/lib/bidTab";
 
 /** budget = the authorization paper (AFE / estimate) a project is built
@@ -240,6 +245,7 @@ export async function awardQuote(input: {
     entryDate: new Date().toISOString().slice(0, 10),
     description: `Award - ${fresh.vendorName ?? "vendor"}${fresh.rfqGroup ? ` (${fresh.rfqGroup})` : ""}`,
     reference: fresh.docNumber ?? fresh.fileName ?? undefined,
+    sourceDocumentId: fresh.id,
     actor: input.actor,
   });
   if (!posted.ok) {
@@ -295,6 +301,7 @@ export async function postInvoice(input: {
     entryDate: fresh.docDate ?? new Date().toISOString().slice(0, 10),
     description: `Invoice - ${fresh.vendorName ?? "vendor"}`,
     reference: fresh.docNumber ?? fresh.fileName ?? undefined,
+    sourceDocumentId: fresh.id,
     actor: input.actor,
   });
   if (!posted.ok) {
@@ -321,6 +328,162 @@ export async function voidCostDoc(input: { doc: CostDocument; actor: Actor }): P
   return { ok: true };
 }
 
+/** The entries this document's award or posting made, read fresh. */
+async function entriesOfDoc(doc: CostDocument): Promise<CostEntry[]> {
+  return findDocEntries(doc, await listEntries(doc.orgId, doc.projectId));
+}
+
+/**
+ * Take an award back: the quote goes back to read (awaiting your review),
+ * the commitment it posted is voided (struck through, kept), and the bids
+ * it beat in the same RFQ group come back into the comparison. Claimed
+ * first, like the award, so two people can't undo it twice. Says so when
+ * no commitment could be found to void (voided by hand already, or posted
+ * before awards kept their link).
+ */
+export async function unawardQuote(input: {
+  doc: CostDocument;
+  siblings: CostDocument[];
+  actor: Actor;
+}): Promise<{ ok: boolean; error?: string; note?: string }> {
+  const { doc } = input;
+  if (doc.kind !== "quote") return { ok: false, error: "Only an awarded quote can be un-awarded." };
+  const { data: claimed, error } = await supabase.from("cost_documents")
+    .update({ status: "parsed", posted_at: null, posted_by: null })
+    .eq("id", doc.id).eq("status", "awarded").select("id");
+  if (error) return { ok: false, error: error.message };
+  if (!claimed || claimed.length === 0) return { ok: false, error: "This quote isn't awarded any more - refresh to see the latest." };
+
+  const found = await entriesOfDoc(doc);
+  for (const e of found) {
+    const v = await voidEntry({ orgId: doc.orgId, entryId: e.id, actor: input.actor });
+    if (!v.ok) {
+      // The money didn't come off, so the award stands and the record adds up.
+      await supabase.from("cost_documents").update({ status: "awarded" }).eq("id", doc.id).then(() => undefined, () => undefined);
+      return { ok: false, error: `The award stands - its commitment couldn't be voided (${v.error}).` };
+    }
+  }
+
+  // The bids it beat come back: read ones to "read", never-read ones to
+  // "uploaded". A rival someone voided meanwhile stays void.
+  const rivals = input.siblings.filter((d) =>
+    d.id !== doc.id && d.kind === "quote" && d.status === "declined" && !!doc.rfqGroup && d.rfqGroup === doc.rfqGroup);
+  for (const r of rivals) {
+    const back: CostDocStatus = r.parsed || (r.totalAmount ?? 0) > 0 ? "parsed" : "draft";
+    await supabase.from("cost_documents").update({ status: back })
+      .eq("id", r.id).eq("status", "declined")
+      .then(() => undefined, () => undefined);
+  }
+
+  await audit("COST_DOC_UNAWARDED", doc.orgId, doc.id, input.actor, {
+    vendor: doc.vendorName, total: doc.totalAmount, rfqGroup: doc.rfqGroup,
+    voidedEntries: found.map((e) => e.id), rivalsBack: rivals.map((d) => d.vendorName ?? d.id),
+  });
+  return {
+    ok: true,
+    note: found.length === 0 ? "The award is undone. No commitment for it was found to void - check the budget line and void it there if it's still on." : undefined,
+  };
+}
+
+/**
+ * Move a posted invoice to the budget line it belongs on: a new actual is
+ * posted on that line first, then the old one is voided (struck through,
+ * kept), so the money is never missing in between. The invoice stays
+ * posted; the move is on the record.
+ */
+export async function moveInvoiceToLine(input: {
+  doc: CostDocument;
+  costAccountId: string;
+  actor: Actor;
+}): Promise<{ ok: boolean; error?: string }> {
+  const { doc } = input;
+  if (doc.status !== "posted") return { ok: false, error: "Only a posted invoice can be moved." };
+  const found = await entriesOfDoc(doc);
+  if (found.length !== 1) {
+    return { ok: false, error: found.length === 0
+      ? "Couldn't find the entry this invoice posted - move it by hand on the budget line (void it there, then post it on the right line)."
+      : "This invoice posted more than one entry - move them by hand on the budget line." };
+  }
+  const old = found[0];
+  if (old.costAccountId === input.costAccountId) return { ok: false, error: "It's already on that budget line." };
+  const posted = await addEntry({
+    orgId: doc.orgId, projectId: doc.projectId,
+    costAccountId: input.costAccountId,
+    partyId: old.partyId,
+    entryType: old.entryType,
+    amount: old.amount,
+    entryDate: old.entryDate ?? new Date().toISOString().slice(0, 10),
+    description: old.description,
+    reference: old.reference,
+    sourceDocumentId: doc.id,
+    actor: input.actor,
+  });
+  if (!posted.ok) return { ok: false, error: posted.error ?? "Couldn't post it on the new line." };
+  const v = await voidEntry({ orgId: doc.orgId, entryId: old.id, actor: input.actor });
+  if (!v.ok) {
+    // Never counted twice: take the new one back off.
+    if (posted.entryId) await voidEntry({ orgId: doc.orgId, entryId: posted.entryId, actor: input.actor });
+    return { ok: false, error: `Not moved - the old entry couldn't be voided (${v.error}).` };
+  }
+  await audit("COST_DOC_MOVED", doc.orgId, doc.id, input.actor, {
+    vendor: doc.vendorName, amount: old.amount, fromAccountId: old.costAccountId, toAccountId: input.costAccountId,
+    voidedEntry: old.id, newEntry: posted.entryId ?? null,
+  });
+  return { ok: true };
+}
+
+/** The budget line a posted invoice (or an awarded quote) sits on now. */
+export function lineOfDoc(doc: CostDocument, entries: CostEntry[]): string | null {
+  const found = findDocEntries(doc, entries);
+  return found.length === 1 ? found[0].costAccountId : null;
+}
+
+/**
+ * Correct what the AI read (or what was typed) before money moves: the
+ * total, the vendor, and for a quote its RFQ group. Not on an awarded or
+ * posted document - undo the award, or move the invoice, instead.
+ */
+export async function correctCostDoc(input: {
+  doc: CostDocument;
+  total?: number | null;
+  vendorName?: string | null;
+  rfqGroup?: string | null;
+  actor: Actor;
+}): Promise<{ ok: boolean; error?: string }> {
+  const { doc } = input;
+  if (doc.status === "awarded") return { ok: false, error: "Undo the award first, then correct it." };
+  if (doc.status === "posted") return { ok: false, error: "This invoice is posted - move it to the right line, or void its entry on the budget line." };
+  if (doc.status === "void") return { ok: false, error: "This document is void." };
+  const patch: Record<string, unknown> = {};
+  if (input.total !== undefined) {
+    if (input.total == null || !Number.isFinite(input.total) || input.total <= 0) return { ok: false, error: "Enter the total as a positive number." };
+    patch.total_amount = input.total;
+  }
+  if (input.vendorName !== undefined) patch.vendor_name = input.vendorName?.trim() || null;
+  if (input.rfqGroup !== undefined && doc.kind === "quote") patch.rfq_group = input.rfqGroup?.trim() || null;
+  if (Object.keys(patch).length === 0) return { ok: true };
+  // A typed total makes an unread document reviewable, like "type total".
+  if (doc.status === "draft" && patch.total_amount != null) patch.status = "parsed";
+  // The bid comparison reads a quote's extraction: the correction goes in
+  // there too, so the table shows what the person fixed (the audit keeps
+  // what was read before).
+  if (doc.kind === "quote" && doc.parsed && typeof doc.parsed === "object" && !Array.isArray(doc.parsed)) {
+    const next: Record<string, unknown> = { ...(doc.parsed as Record<string, unknown>) };
+    if (patch.total_amount != null) next.total = patch.total_amount;
+    if (typeof patch.vendor_name === "string") next.vendorName = patch.vendor_name;
+    patch.parsed = next;
+  }
+  const { data, error } = await supabase.from("cost_documents").update(patch)
+    .eq("id", doc.id).in("status", ["draft", "parsed", "declined"]).select("id");
+  if (error) return { ok: false, error: error.message };
+  if (!data || data.length === 0) return { ok: false, error: "Someone else just acted on this document - refresh to see the latest." };
+  await audit("COST_DOC_CORRECTED", doc.orgId, doc.id, input.actor, {
+    before: { total: doc.totalAmount, vendor: doc.vendorName, rfqGroup: doc.rfqGroup },
+    after: { total: patch.total_amount, vendor: patch.vendor_name, rfqGroup: patch.rfq_group },
+  });
+  return { ok: true };
+}
+
 /** Manual total entry for when the AI can't read a scan — the human types
  *  what the paper says, and that becomes the awardable number. */
 export async function setManualTotal(input: {
@@ -332,6 +495,6 @@ export async function setManualTotal(input: {
   if (input.doc.status === "draft") patch.status = "parsed";
   const { error } = await supabase.from("cost_documents").update(patch).eq("id", input.doc.id);
   if (error) return { ok: false, error: error.message };
-  await audit("COST_DOC_MANUAL_TOTAL", input.doc.orgId, input.doc.id, input.actor, { total: input.total });
+  await audit("COST_DOC_MANUAL_TOTAL", input.doc.orgId, input.doc.id, input.actor, { total: input.total, vendor: input.vendorName?.trim() || null });
   return { ok: true };
 }

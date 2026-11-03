@@ -8,16 +8,20 @@
 // renders as a donut: a project bleeding scope-gap COs has a bidding
 // problem; one bleeding owner requests has a scoping problem — the chart
 // says which.
+//
+// A proposed CO can be edited or withdrawn; an approved one can be voided
+// (its money comes off the line, the paper stays).
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  GitPullRequestArrow, Plus, Loader2, Check, X as XIcon, AlertTriangle,
+  GitPullRequestArrow, Plus, Loader2, Check, X as XIcon, AlertTriangle, Pencil, Ban,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { fmtMoney, type CostAccount, type CostParty, type Actor } from "@/lib/costs";
 import {
   type ChangeOrder, type CoReason, CO_REASON_LABEL,
   listChangeOrders, proposeChangeOrder, decideChangeOrder, summarizeChangeOrders,
+  editChangeOrder, voidApprovedChangeOrder,
 } from "@/lib/changeOrders";
 import { Donut } from "@/components/ui/ChartKit";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
@@ -32,6 +36,9 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
   const [cos, setCos] = useState<ChangeOrder[] | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  // The proposed CO being edited in place.
+  const [editing, setEditing] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try { setCos(await listChangeOrders(projectId)); }
@@ -67,11 +74,36 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       note = await appPrompt({ title: `Reject ${co.coNumber}`, message: "Why? The reason goes on the record for the contractor and the audit trail.", placeholder: "e.g. Covered by the original scope, section 3.2" });
       if (note === null) return;
     }
+    if (decision === "void") {
+      // Withdrawing a proposal: it stays on the list as void, with why.
+      note = await appPrompt({ title: `Withdraw ${co.coNumber}?`, message: "It stays on the record as void and never posts money. Say why (optional).", placeholder: "e.g. Folded into CO-004", confirmLabel: "Withdraw", tone: "danger" });
+      if (note === null) return;
+    }
     setBusy(co.id); setErr(null);
     try {
       await decideChangeOrder({ co: target, decision, note, actorId: actor.uid, actorName: actor.email?.split("@")[0] ?? null });
       await refresh();
       if (decision === "approved") onMoneyMoved();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally { setBusy(null); }
+  };
+
+  // An approval made in error: the money comes off, the CO goes void.
+  const voidApproved = async (co: ChangeOrder) => {
+    const reason = await appPrompt({
+      title: `Void ${co.coNumber}?`,
+      message: `This takes ${co.amount < 0 ? `the ${fmtMoney(Math.abs(co.amount))} credit` : fmtMoney(co.amount)} back off "${accountName.get(co.costAccountId ?? "") ?? "its budget line"}". The entry stays on the record, struck through, and the CO shows as void with your reason.`,
+      placeholder: "Why? e.g. Approved on the wrong job",
+      confirmLabel: "Void it", tone: "danger",
+    });
+    if (reason === null) return;
+    setBusy(co.id); setErr(null); setNotice(null);
+    try {
+      const res = await voidApprovedChangeOrder({ co, reason, actorId: actor.uid, actorName: actor.email?.split("@")[0] ?? null });
+      if (res.note) setNotice(res.note);
+      await refresh();
+      onMoneyMoved();
     } catch (e) {
       setErr((e as Error).message);
     } finally { setBusy(null); }
@@ -108,6 +140,13 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
           onDone={() => { setShowForm(false); void refresh(); }} onCancel={() => setShowForm(false)} />
       )}
 
+      {notice && (
+        <div className="px-4 py-2 border-b border-[var(--color-border)] flex items-center gap-2 text-[11px] font-bold text-amber-800 dark:text-amber-300 bg-amber-500/[0.06]">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {notice}
+          <button onClick={() => setNotice(null)} className="ml-auto p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]" aria-label="Dismiss"><XIcon className="w-3.5 h-3.5" /></button>
+        </div>
+      )}
+
       {(cos ?? []).length === 0 ? (
         <div className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">
           No change orders. When scope grows (or shrinks), propose it here with a reason -
@@ -127,11 +166,17 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
             </div>
           )}
           <ul className="divide-y divide-[var(--color-border)]">
-            {[...open, ...decided].map((co) => (
+            {[...open, ...decided].map((co) => editing === co.id && co.status === "proposed" ? (
+              <li key={co.id}>
+                <ProposeForm orgId={orgId} projectId={projectId} actor={actor} accounts={accounts} parties={parties} editing={co}
+                  onDone={() => { setEditing(null); void refresh(); }} onCancel={() => setEditing(null)} />
+              </li>
+            ) : (
               <CoRow key={co.id} co={co} canManage={canManage} busy={busy === co.id}
                 partyName={co.partyId ? partyName.get(co.partyId) ?? null : null}
                 accountLabel={co.costAccountId ? accountName.get(co.costAccountId) ?? null : null}
-                accounts={accounts} decide={decide} />
+                accounts={accounts} decide={decide}
+                onEdit={() => setEditing(co.id)} onVoidApproved={() => void voidApproved(co)} />
             ))}
           </ul>
         </>
@@ -140,11 +185,13 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
   );
 }
 
-function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide }: {
+function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide, onEdit, onVoidApproved }: {
   co: ChangeOrder; canManage: boolean; busy: boolean;
   partyName: string | null; accountLabel: string | null;
   accounts: CostAccount[];
   decide: (co: ChangeOrder, decision: "approved" | "rejected" | "void", accountId?: string) => Promise<void>;
+  onEdit: () => void;
+  onVoidApproved: () => void;
 }) {
   const [accountPick, setAccountPick] = useState(co.costAccountId ?? "");
   const isOpen = co.status === "proposed";
@@ -184,7 +231,21 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide 
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-rose-500/50 text-rose-700 dark:text-rose-300 text-[10px] font-black hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
               <XIcon className="w-3 h-3" /> Reject
             </button>
+            <button onClick={onEdit} disabled={busy} title="Change the title, amount, reason or where it posts"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text-muted)] text-[10px] font-bold hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
+              <Pencil className="w-3 h-3" /> Edit
+            </button>
+            <button onClick={() => void decide(co, "void")} disabled={busy} title="Take the proposal back - it stays on the record as void"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[var(--color-text-faint)] text-[10px] font-bold hover:text-rose-600 hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
+              <Ban className="w-3 h-3" /> Withdraw
+            </button>
           </span>
+        )}
+        {co.status === "approved" && canManage && (
+          <button onClick={onVoidApproved} disabled={busy} title="Approved in error: its money comes off the budget line and the CO shows as void"
+            className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[var(--color-text-faint)] text-[10px] font-bold hover:text-rose-600 hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
+            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />} Void
+          </button>
         )}
       </div>
       <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">
@@ -200,26 +261,43 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide 
   );
 }
 
-function ProposeForm({ orgId, projectId, actor, accounts, parties, onDone, onCancel }: {
+function ProposeForm({ orgId, projectId, actor, accounts, parties, onDone, onCancel, editing }: {
   orgId: string; projectId: string; actor: Actor;
   accounts: CostAccount[]; parties: CostParty[];
   onDone: () => void; onCancel: () => void;
+  /** A proposed CO to change, in place of a new one. */
+  editing?: ChangeOrder;
 }) {
-  const [title, setTitle] = useState("");
-  const [amount, setAmount] = useState("");
-  const [reason, setReason] = useState<CoReason>("field_condition");
-  const [accountId, setAccountId] = useState("");
-  const [partyId, setPartyId] = useState("");
-  const [desc, setDesc] = useState("");
+  const [title, setTitle] = useState(editing?.title ?? "");
+  const [amount, setAmount] = useState(editing ? String(editing.amount) : "");
+  const [reason, setReason] = useState<CoReason>(editing?.reasonCode ?? "field_condition");
+  const [accountId, setAccountId] = useState(editing?.costAccountId ?? "");
+  const [partyId, setPartyId] = useState(editing?.partyId ?? "");
+  const [desc, setDesc] = useState(editing?.description ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Companies taken off the job aren't offered for new paper; the one
+  // already on this CO stays.
+  const pickParties = parties.filter((p) => p.status !== "inactive" || p.id === editing?.partyId);
 
   const submit = async () => {
-    const n = Number(amount);
+    const n = Number(amount.replace(/[$,\s]/g, ""));
     if (!title.trim()) { setError("Give the change a title."); return; }
     if (!Number.isFinite(n) || n === 0) { setError("Enter the amount (negative = credit back)."); return; }
     setSaving(true); setError(null);
     try {
+      if (editing) {
+        await editChangeOrder({
+          co: editing,
+          patch: {
+            title, description: desc || null, amount: n, reasonCode: reason,
+            costAccountId: accountId || null, partyId: partyId || null,
+          },
+          actorId: actor.uid, actorName: actor.email?.split("@")[0] ?? null,
+        });
+        onDone();
+        return;
+      }
       await proposeChangeOrder({
         orgId, projectId,
         costAccountId: accountId || null, partyId: partyId || null,
@@ -253,7 +331,7 @@ function ProposeForm({ orgId, projectId, actor, accounts, parties, onDone, onCan
         <select value={partyId} onChange={(e) => setPartyId(e.target.value)}
           className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
           <option value="">Contractor / vendor…</option>
-          {parties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          {pickParties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Detail (goes on the record)"
           className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
@@ -264,7 +342,7 @@ function ProposeForm({ orgId, projectId, actor, accounts, parties, onDone, onCan
           <button onClick={onCancel} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1">Cancel</button>
           <button onClick={() => void submit()} disabled={saving}
             className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
-            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Propose
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} {editing ? `Save ${editing.coNumber}` : "Propose"}
           </button>
         </span>
       </div>

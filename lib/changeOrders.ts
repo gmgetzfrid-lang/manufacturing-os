@@ -6,10 +6,14 @@
 // paper trail (who proposed, who decided, why), and the reason codes score
 // both sides: scope_gap lands on the contractor's record, design_error and
 // owner_request land on ours.
+//
+// Nothing is final by accident: a proposed CO can be edited or withdrawn
+// (voided), and an approved one can be voided - its posted entry is voided
+// with it (struck through, kept) and the approval stays in the note.
 
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
-import { addEntry } from "@/lib/costs";
+import { addEntry, voidEntry } from "@/lib/costs";
 
 export type CoReason = "scope_gap" | "field_condition" | "owner_request" | "design_error" | "other";
 export type CoStatus = "proposed" | "approved" | "rejected" | "void";
@@ -39,6 +43,8 @@ export interface ChangeOrder {
   decisionNote: string | null;
   createdByName: string | null;
   createdAt: string | null;
+  /** The cost entry its approval posted. */
+  postedEntryId: string | null;
 }
 
 function rowToCo(r: Record<string, unknown>): ChangeOrder {
@@ -59,6 +65,7 @@ function rowToCo(r: Record<string, unknown>): ChangeOrder {
     decisionNote: (r.decision_note as string | null) ?? null,
     createdByName: (r.created_by_name as string | null) ?? null,
     createdAt: (r.created_at as string | null) ?? null,
+    postedEntryId: (r.posted_entry_id as string | null) ?? null,
   };
 }
 
@@ -194,6 +201,124 @@ export async function decideChangeOrder(input: {
     orgId: co.orgId, userId: input.actorId,
     details: { coNumber: co.coNumber, amount: co.amount, reasonCode: co.reasonCode },
   });
+}
+
+/** Change a proposed CO before it's decided: what changed, the amount, the
+ *  reason, where it posts and who it's with. Only while still proposed -
+ *  a decided one is voided instead. */
+export async function editChangeOrder(input: {
+  co: ChangeOrder;
+  patch: {
+    title?: string; description?: string | null; amount?: number; reasonCode?: CoReason;
+    costAccountId?: string | null; partyId?: string | null;
+  };
+  actorId: string;
+  actorName?: string | null;
+}): Promise<void> {
+  const p = input.patch;
+  const row: Record<string, unknown> = {};
+  if (p.title !== undefined) {
+    if (!p.title.trim()) throw new Error("Give the change order a title.");
+    row.title = p.title.trim();
+  }
+  if (p.description !== undefined) row.description = p.description?.trim() || null;
+  if (p.amount !== undefined) {
+    if (!p.amount || !Number.isFinite(p.amount)) throw new Error("Amount is required (negative = credit).");
+    row.amount = p.amount;
+  }
+  if (p.reasonCode !== undefined) row.reason_code = p.reasonCode;
+  if (p.costAccountId !== undefined) row.cost_account_id = p.costAccountId || null;
+  if (p.partyId !== undefined) row.party_id = p.partyId || null;
+  if (Object.keys(row).length === 0) return;
+  const { data, error } = await supabase.from("change_orders").update(row)
+    .eq("id", input.co.id).eq("status", "proposed").select("id");
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) throw new Error("This change order was just decided - refresh to see it.");
+  await logAuditAction({
+    action: "CHANGE_ORDER_EDITED", resourceType: "project", resourceId: input.co.projectId,
+    orgId: input.co.orgId, userId: input.actorId,
+    details: {
+      coNumber: input.co.coNumber,
+      before: { title: input.co.title, amount: input.co.amount, reasonCode: input.co.reasonCode, costAccountId: input.co.costAccountId, partyId: input.co.partyId },
+      after: p,
+    },
+  });
+}
+
+/** The note a voided approval leaves: why it was voided, and the approval
+ *  it replaces (who, when, their note), so the paper still tells it all. */
+export function voidedApprovalNote(co: Pick<ChangeOrder, "decidedByName" | "decidedAt" | "decisionNote">, reason: string): string {
+  const when = co.decidedAt ? ` on ${co.decidedAt.slice(0, 10)}` : "";
+  const was = `approved${co.decidedByName ? ` by ${co.decidedByName}` : ""}${when}${co.decisionNote ? ` ("${co.decisionNote}")` : ""}`;
+  return `Voided after it was ${was}${reason.trim() ? `: ${reason.trim()}` : ""}`;
+}
+
+/**
+ * Void an approved CO: the money it posted comes off (its entry is voided,
+ * struck through, kept) and the CO is marked void with why. Claimed first
+ * (approved → void) so it can't happen twice; if the entry won't void, the
+ * CO goes back to approved and nothing changed.
+ */
+export async function voidApprovedChangeOrder(input: {
+  co: ChangeOrder;
+  reason: string;
+  actorId: string;
+  actorName?: string | null;
+}): Promise<{ note?: string }> {
+  const { data: row, error: readErr } = await supabase
+    .from("change_orders").select("*").eq("id", input.co.id).maybeSingle();
+  if (readErr || !row) throw new Error(readErr?.message ?? "Change order not found.");
+  const co = rowToCo(row as Record<string, unknown>);
+  if (co.status !== "approved") throw new Error(`This change order is ${co.status}, not approved - refresh to see it.`);
+
+  // The entry it posted, while it's still live. Older approvals (no link),
+  // or an amount changed since (Change amount voids the linked entry and
+  // posts a new one with the same reference): the one live entry that
+  // carries its number, the amount deciding between two.
+  let entryId: string | null = null;
+  if (co.postedEntryId) {
+    const { data: linked } = await supabase.from("cost_entries").select("id, status").eq("id", co.postedEntryId).maybeSingle();
+    if ((linked as { status?: string } | null)?.status === "posted") entryId = co.postedEntryId;
+  }
+  if (!entryId) {
+    const { data: found } = await supabase.from("cost_entries").select("id, amount")
+      .eq("project_id", co.projectId).eq("entry_type", "commitment").eq("status", "posted")
+      .eq("reference", co.coNumber);
+    const rows = (found ?? []) as Array<{ id: string; amount: number | string }>;
+    const pick = rows.length > 1 ? rows.filter((r) => Number(r.amount) === co.amount) : rows;
+    if (pick.length > 1 || (rows.length > 1 && pick.length === 0)) {
+      throw new Error(`More than one entry carries ${co.coNumber} - void the right one on the budget line, then void the change order.`);
+    }
+    entryId = pick[0]?.id ?? null;
+  }
+
+  const { data: claimed, error } = await supabase.from("change_orders").update({
+    status: "void",
+    decided_at: new Date().toISOString(),
+    decided_by: input.actorId,
+    decided_by_name: input.actorName ?? null,
+    decision_note: voidedApprovalNote(co, input.reason),
+  }).eq("id", co.id).eq("status", "approved").select("id");
+  if (error) throw new Error(error.message);
+  if (!claimed || claimed.length === 0) throw new Error("Someone else just changed this change order - refresh to see it.");
+
+  if (entryId) {
+    const v = await voidEntry({ orgId: co.orgId, entryId, actor: { uid: input.actorId, email: input.actorName ?? null } });
+    if (!v.ok) {
+      await supabase.from("change_orders").update({
+        status: "approved", decided_at: co.decidedAt, decided_by: (row as { decided_by?: string | null }).decided_by ?? null,
+        decided_by_name: co.decidedByName, decision_note: co.decisionNote,
+      }).eq("id", co.id).then(() => undefined, () => undefined);
+      throw new Error(`Not voided - the money it posted couldn't be taken off (${v.error}).`);
+    }
+  }
+
+  await logAuditAction({
+    action: "CHANGE_ORDER_APPROVAL_VOIDED", resourceType: "project", resourceId: co.projectId,
+    orgId: co.orgId, userId: input.actorId,
+    details: { coNumber: co.coNumber, amount: co.amount, voidedEntry: entryId, reason: input.reason.trim() || null },
+  });
+  return { note: entryId ? undefined : `${co.coNumber} is void. No posted entry was found for it - check its budget line.` };
 }
 
 /** Per-project CO rollup for tiles + health. */

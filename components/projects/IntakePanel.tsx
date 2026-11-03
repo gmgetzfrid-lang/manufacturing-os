@@ -6,13 +6,16 @@
 // approve (promotes via the same finalize pipeline as any reviewed
 // revision — supersede notices, ack rosters, the works) or reject with the
 // reason on the record. Trusted links (auto-supersede own work) are marked.
+// A link that ran out (or is about to) can be extended instead of making
+// the company a new one.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Link2, Loader2, Check, X, UploadCloud, Copy, Ban, ShieldCheck, Clock,
-  FilePlus2, Search,
+  FilePlus2, Search, CalendarPlus,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { dayOfIso, endOfDayIso, extendedExpiry, isExpired } from "@/lib/intakeExpiry";
 import { finalizeReviewedRevision } from "@/lib/reviewControl";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import TransitionInPanel from "@/components/projects/TransitionInPanel";
@@ -180,6 +183,31 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     } finally { setBusy(null); }
   };
 
+  // Move a link's end date out (or take it off). The company keeps the same
+  // link - nothing to resend.
+  const [extendOpen, setExtendOpen] = useState<string | null>(null);
+  const [extendDay, setExtendDay] = useState("");
+  const extend = async (l: IntakeLink, expiresAt: string | null) => {
+    setBusy(l.id); setMsg(null);
+    try {
+      const { data, error } = await supabase.from("project_intake_links").update({ expires_at: expiresAt }).eq("id", l.id).select("id");
+      if (error) throw new Error(`Couldn't extend: ${error.message}`);
+      if (!data || data.length === 0) throw new Error("Not extended - only the project's owner, a co-owner or Document Control can change its links.");
+      await supabase.from("audit_logs").insert({
+        action: "INTAKE_LINK_EXTENDED",
+        resource_type: "project_intake_link", resource_id: l.id,
+        org_id: orgId, user_id: uid, user_email: userEmail ?? null,
+        details: { company: l.companyName, projectId, from: l.expiresAt, to: expiresAt },
+      }).then(() => undefined, () => undefined);
+      setExtendOpen(null);
+      await refresh();
+      setMsg(expiresAt
+        ? `${l.companyName}'s link now works through ${new Date(expiresAt).toLocaleDateString()} - same link, nothing to resend.`
+        : `${l.companyName}'s link no longer expires.`);
+    } catch (e) { setMsg((e as Error).message); }
+    finally { setBusy(null); }
+  };
+
   // Assign an existing controlled document to a link. Assigned docs show on
   // the company's portal register and accept revision submissions — always
   // through review (auto-supersede never applies to org-authored documents).
@@ -345,9 +373,19 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-bold text-[var(--color-text)]">{l.companyName}</span>
                 {l.allowAutoSupersede && <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300"><ShieldCheck className="w-3 h-3" /> trusted</span>}
-                <span className="text-[var(--color-text-faint)]">{l.submissionCount} submission{l.submissionCount === 1 ? "" : "s"}{l.expiresAt ? ` · expires ${new Date(l.expiresAt).toLocaleDateString()}` : ""}{l.revokedAt ? " · REVOKED" : ""}</span>
+                <span className="text-[var(--color-text-faint)]">{l.submissionCount} submission{l.submissionCount === 1 ? "" : "s"}{l.expiresAt && !isExpired(l.expiresAt) ? ` · expires ${new Date(l.expiresAt).toLocaleDateString()}` : ""}{l.revokedAt ? " · REVOKED" : ""}</span>
+                {l.expiresAt && isExpired(l.expiresAt) && !l.revokedAt && (
+                  <span className="text-[10px] font-black uppercase text-rose-700 dark:text-rose-300">expired {new Date(l.expiresAt).toLocaleDateString()}</span>
+                )}
                 {!l.revokedAt && (
-                  <span className="ml-auto flex items-center gap-1">
+                  <span className="ml-auto flex items-center gap-1 flex-wrap">
+                    {canManage && l.expiresAt && (
+                      <button onClick={() => { setExtendOpen(extendOpen === l.id ? null : l.id); setExtendDay(dayOfIso(extendedExpiry(l.expiresAt, 7))); }}
+                        title="Give the company more time - same link, nothing to resend"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]">
+                        <CalendarPlus className="w-3 h-3" /> Extend
+                      </button>
+                    )}
                     {canManage && (!l.expiresAt || Date.parse(l.expiresAt) > Date.now()) && (
                       <button onClick={() => { void navigator.clipboard.writeText(portalUrl(l.token)); setMsg(`Copied ${l.companyName}'s link.`); }} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] font-bold hover:border-[var(--color-accent-ring)]"><Copy className="w-3 h-3" /> Copy link</button>
                     )}
@@ -360,6 +398,22 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                   </span>
                 )}
               </div>
+              {extendOpen === l.id && canManage && !l.revokedAt && (
+                <div className="mt-1.5 pt-1.5 border-t border-[var(--color-border)] flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] font-bold text-[var(--color-text-muted)]">Works through:</span>
+                  <button onClick={() => void extend(l, extendedExpiry(l.expiresAt, 7))} disabled={busy === l.id}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+                    {busy === l.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <CalendarPlus className="w-3 h-3" />} 7 more days
+                  </button>
+                  <input type="date" value={extendDay} onChange={(e) => setExtendDay(e.target.value)} min={dayOfIso(new Date().toISOString())} aria-label="New end date"
+                    className="h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
+                  <button onClick={() => extendDay && void extend(l, endOfDayIso(extendDay))} disabled={busy === l.id || !extendDay}
+                    className="px-2 py-1 rounded-md border border-[var(--color-border-strong)] text-[11px] font-bold hover:border-[var(--color-accent-ring)] disabled:opacity-50">Set date</button>
+                  <button onClick={() => void extend(l, null)} disabled={busy === l.id}
+                    className="px-2 py-1 rounded-md text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">No end date</button>
+                  <button onClick={() => setExtendOpen(null)} className="px-2 py-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+                </div>
+              )}
               {/* Assigned org documents — visible on the company's portal, revisions always come to review. */}
               {(l.assignedDocIds.length > 0 || assignOpen === l.id) && !l.revokedAt && (
                 <div className="mt-1.5 pt-1.5 border-t border-[var(--color-border)] space-y-1.5">

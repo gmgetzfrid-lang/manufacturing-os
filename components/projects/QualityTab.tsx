@@ -17,15 +17,21 @@
 //   reviewer's name on the record. Acceptance rates score the contractor.
 //
 //   Punch list: the closeout snag list, visible until it's empty.
+//
+// Nothing is final by accident: a completed checklist reopens and one added
+// by mistake can be removed (Undo right after), a satisfied item can be
+// taken back, an accepted or waived turnover item reopens, and a punch item
+// can be edited, reopened, or voided (with a confirm and an Undo).
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   ClipboardCheck, FileText, Loader2, Sparkles, Search, X, Plus, Check,
   ChevronDown, ChevronRight, AlertTriangle, ShieldCheck, PackageCheck,
-  ListChecks, Ban, Wand2,
+  ListChecks, Ban, Wand2, Pencil, RotateCcw, Paperclip, Trash2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import type { Actor } from "@/lib/costs";
+import { listParties, type Actor, type CostParty } from "@/lib/costs";
 import {
   type Checklist, type ChecklistItem, type ChecklistKind, CHECKLIST_KIND_LABEL,
   listChecklists, listChecklistItems, createChecklist, applyAssessment,
@@ -35,17 +41,25 @@ import {
   type TurnoverItem, type PunchItem, TURNOVER_STATUS_LABEL,
   listTurnoverItems, seedTurnoverItems, addTurnoverItem, reviewTurnoverItem,
   listPunchItems, addPunchItem, setPunchStatus, computeTurnoverProgress,
+  reopenTurnoverItem, updateTurnoverItem, attachTurnoverDocument, updatePunchItem,
 } from "@/lib/turnover";
 import type { SegmentedItem } from "@/lib/checklistEngine";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
+import UndoToastHost from "@/components/projects/UndoToastHost";
+import { useUndoableActions } from "@/components/projects/useUndoableActions";
+
+type Announce = (message: string, undo: () => void | Promise<void>) => void;
 
 async function authHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
   return data.session?.access_token ? { Authorization: `Bearer ${data.session.access_token}` } : {};
 }
 
-export default function QualityTab({ orgId, projectId, canManage, uid, userEmail, jobKind, onDataChanged }: {
+export default function QualityTab({ orgId, projectId, canManage, canEditPunch, uid, userEmail, jobKind, onDataChanged }: {
   orgId: string; projectId: string; canManage: boolean;
+  /** May write the punch list (owner, co-owner, editor, or an org role that
+   *  works schedules). Unset: the same as canManage. */
+  canEditPunch?: boolean;
   uid: string; userEmail?: string | null;
   jobKind: string | null;
   /** Fires after each data reload so the page's coach/health re-gathers. */
@@ -56,16 +70,27 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
   const [checklists, setChecklists] = useState<Checklist[]>([]);
   const [turnover, setTurnover] = useState<TurnoverItem[]>([]);
   const [punch, setPunch] = useState<PunchItem[]>([]);
+  // The project's companies (a punch item's contractor, who owes a turnover
+  // item) and its people (who's on a punch item).
+  const [parties, setParties] = useState<CostParty[]>([]);
+  const [people, setPeople] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  // Undo, right after a removal (a checklist, a voided punch item).
+  const { toasts, announce, dismiss, runUndo } = useUndoableActions();
 
   const refresh = useCallback(async () => {
     try {
-      const [cl, to, pu] = await Promise.all([
+      const [cl, to, pu, pa, { data: mem }] = await Promise.all([
         listChecklists(orgId, projectId),
         listTurnoverItems(orgId, projectId),
         listPunchItems(orgId, projectId),
+        listParties(orgId, projectId).catch(() => [] as CostParty[]),
+        supabase.from("project_members").select("user_name, user_email").eq("project_id", projectId),
       ]);
-      setChecklists(cl); setTurnover(to); setPunch(pu);
+      setChecklists(cl); setTurnover(to); setPunch(pu); setParties(pa);
+      setPeople([...new Set(((mem ?? []) as Array<{ user_name: string | null; user_email: string | null }>)
+        .map((m) => (m.user_name && !m.user_name.includes("@") ? m.user_name : m.user_email?.split("@")[0] ?? ""))
+        .filter(Boolean))]);
     } catch (e) {
       setErr((e as Error).message);
     } finally { setLoading(false); }
@@ -86,20 +111,25 @@ export default function QualityTab({ orgId, projectId, canManage, uid, userEmail
       )}
 
       <ChecklistsSection orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
-        checklists={checklists} onChanged={() => void refresh()} setErr={setErr} />
+        checklists={checklists} onChanged={() => void refresh()} setErr={setErr} announce={announce} />
       <TurnoverSection orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
-        items={turnover} jobKind={jobKind} onChanged={() => void refresh()} setErr={setErr} />
-      <PunchSection orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
-        items={punch} onChanged={() => void refresh()} setErr={setErr} />
+        items={turnover} jobKind={jobKind} parties={parties} onChanged={() => void refresh()} setErr={setErr} />
+      <PunchSection orgId={orgId} projectId={projectId} canManage={canEditPunch ?? canManage} actor={actor}
+        items={punch} parties={parties} people={people} onChanged={() => void refresh()} setErr={setErr} announce={announce} />
+      <UndoToastHost toasts={toasts} onUndo={(t) => void runUndo(t)} onDismiss={dismiss} />
     </div>
   );
 }
 
+const quietBtn = "inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
+const fieldCls = "h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs";
+
 // ── Checklists ───────────────────────────────────────────────────────────
 
-function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onChanged, setErr }: {
+function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onChanged, setErr, announce }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor;
   checklists: Checklist[]; onChanged: () => void; setErr: (m: string | null) => void;
+  announce: Announce;
 }) {
   const [showNew, setShowNew] = useState(false);
   return (
@@ -134,7 +164,7 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onC
         <div className="divide-y divide-[var(--color-border)]">
           {checklists.filter((c) => c.status !== "void").map((c) => (
             <ChecklistCard key={c.id} orgId={orgId} projectId={projectId} checklist={c}
-              canManage={canManage} actor={actor} onChanged={onChanged} setErr={setErr} />
+              canManage={canManage} actor={actor} onChanged={onChanged} setErr={setErr} announce={announce} />
           ))}
         </div>
       )}
@@ -274,10 +304,11 @@ function NewChecklistFlow({ orgId, projectId, actor, onDone, onCancel, setErr }:
   );
 }
 
-function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChanged, setErr }: {
+function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChanged, setErr, announce }: {
   orgId: string; projectId: string; checklist: Checklist;
   canManage: boolean; actor: Actor;
   onChanged: () => void; setErr: (m: string | null) => void;
+  announce: Announce;
 }) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<ChecklistItem[] | null>(null);
@@ -340,6 +371,36 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
     onChanged();
   };
 
+  // Complete wasn't the end after all: open it again.
+  const reopen = async () => {
+    setBusy("reopen");
+    const res = await setChecklistStatus({ orgId, projectId, checklist, status: "open", actor });
+    setBusy(null);
+    if (!res.ok) { setErr(res.error ?? "Couldn't reopen."); return; }
+    onChanged();
+  };
+
+  // The wrong document, or a duplicate: off the list (kept on the record
+  // as void), with Undo right after.
+  const remove = async () => {
+    if (!(await appConfirm({
+      title: `Remove "${checklist.title}"?`,
+      message: "It leaves the Quality tab and the close-out gates. It's kept on the record (void), and you can undo right after.",
+      confirmLabel: "Remove", tone: "danger",
+    }))) return;
+    const was = checklist.status;
+    setBusy("remove");
+    const res = await setChecklistStatus({ orgId, projectId, checklist, status: "void", actor });
+    setBusy(null);
+    if (!res.ok) { setErr(res.error ?? "Couldn't remove it."); return; }
+    onChanged();
+    announce(`Removed "${checklist.title}".`, async () => {
+      const back = await setChecklistStatus({ orgId, projectId, checklist, status: was, actor });
+      if (!back.ok) throw new Error(back.error ?? "couldn't put it back");
+      onChanged();
+    });
+  };
+
   // Group items by section for rendering.
   const sections = useMemo(() => {
     const by = new Map<string, ChecklistItem[]>();
@@ -380,9 +441,26 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
                 title="Deterministic - no AI. Greens items the platform can PROVE (accepted turnover, documents on file), citation attached; flags the rest needs-evidence.">
                 {busy === "sweep" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ListChecks className="w-3 h-3" />} Check evidence we already hold
               </button>
+              <button onClick={() => void remove()} disabled={busy != null} title="Added by mistake? Take it off the list - kept on the record, Undo right after"
+                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)] hover:text-rose-600 hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
+                {busy === "remove" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} Remove
+              </button>
               <button onClick={() => void complete()} disabled={busy != null}
-                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-[11px] font-black hover:bg-emerald-700 disabled:opacity-50 transition-colors">
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-[11px] font-black hover:bg-emerald-700 disabled:opacity-50 transition-colors">
                 {busy === "complete" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3 h-3" />} Mark complete
+              </button>
+            </div>
+          )}
+          {canManage && checklist.status === "complete" && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] text-[var(--color-text-muted)]">Complete - its items are locked. Reopen it to change one.</span>
+              <button onClick={() => void remove()} disabled={busy != null}
+                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)] hover:text-rose-600 hover:bg-rose-500/10 disabled:opacity-50 transition-colors">
+                {busy === "remove" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} Remove
+              </button>
+              <button onClick={() => void reopen()} disabled={busy != null}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
+                {busy === "reopen" ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />} Reopen
               </button>
             </div>
           )}
@@ -469,6 +547,14 @@ function ChecklistItemRow({ orgId, projectId, item, canManage, actor, onChanged,
               <button onClick={() => void override({ status: "satisfied" }, "Mark satisfied")}
                 className="px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10" title="Mark satisfied with your note on the record">✓ Satisfied</button>
             )}
+            {!na && item.status === "satisfied" && (
+              // One tap back to open. It stays human-decided, so the
+              // evidence sweep won't green it again on its own.
+              <button onClick={() => void override({ status: "open", manualNote: "Satisfied taken back - not done yet" }, null)}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Not satisfied after all - back to open">
+                <RotateCcw className="w-3 h-3" /> Undo satisfied
+              </button>
+            )}
             {!na && (
               <button onClick={() => void override({ applicability: "na", status: "na" }, "Mark not applicable")}
                 className="px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Not applicable to this job - your reason goes on the record">N/A</button>
@@ -498,14 +584,56 @@ function StatusDot({ status }: { status: ChecklistItem["status"] }) {
 
 // ── Turnover package ─────────────────────────────────────────────────────
 
-function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, onChanged, setErr }: {
+function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, parties, onChanged, setErr }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor;
-  items: TurnoverItem[]; jobKind: string | null;
+  items: TurnoverItem[]; jobKind: string | null; parties: CostParty[];
   onChanged: () => void; setErr: (m: string | null) => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [addName, setAddName] = useState("");
   const progress = useMemo(() => computeTurnoverProgress(items), [items]);
+  // A row being edited, and one whose document is being picked.
+  const [editing, setEditing] = useState<string | null>(null);
+  const [attaching, setAttaching] = useState<string | null>(null);
+  // The attached documents' names and where they open.
+  const [docs, setDocs] = useState<Map<string, { label: string; href: string }>>(new Map());
+  const docKey = useMemo(() => [...new Set(items.map((i) => i.documentId).filter((x): x is string => !!x))].sort().join(","), [items]);
+  useEffect(() => {
+    if (!docKey) return;
+    let live = true;
+    void supabase.from("documents").select("id, document_number, title, name, library_id").in("id", docKey.split(","))
+      .then(({ data }) => {
+        if (!live) return;
+        setDocs(new Map((((data ?? []) as Array<Record<string, unknown>>)).map((d) => [String(d.id), {
+          label: String(d.document_number || d.title || d.name || "Document"),
+          href: `/documents/${String(d.library_id ?? "")}?doc=${String(d.id)}`,
+        }])));
+      });
+    return () => { live = false; };
+  }, [docKey]);
+  const partyName = useMemo(() => new Map(parties.map((p) => [p.id, p.name])), [parties]);
+
+  // Accepted or waived by mistake: back into the review.
+  const reopen = async (item: TurnoverItem) => {
+    if (!(await appConfirm({
+      title: `Reopen "${item.name}"?`,
+      message: `It goes back to ${item.status === "waived" && !item.documentId ? "not received" : "awaiting review"}. The ${item.status} decision stays in its note and on the record.`,
+      confirmLabel: "Reopen",
+    }))) return;
+    setBusy(item.id);
+    const res = await reopenTurnoverItem({ item, actor });
+    setBusy(null);
+    if (!res.ok) setErr(res.error ?? "Couldn't reopen."); else onChanged();
+  };
+
+  const attach = async (item: TurnoverItem, doc: { id: string; label: string } | null) => {
+    setBusy(item.id);
+    const res = await attachTurnoverDocument({ item, documentId: doc?.id ?? null, documentLabel: doc?.label ?? null, actor });
+    setBusy(null);
+    if (!res.ok) { setErr(res.error ?? "Couldn't attach it."); return; }
+    setAttaching(null);
+    onChanged();
+  };
 
   const seed = async () => {
     setBusy("seed");
@@ -559,14 +687,36 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, o
         </div>
       ) : (
         <ul className="divide-y divide-[var(--color-border)]">
-          {items.map((it) => (
+          {items.map((it) => editing === it.id ? (
+            <li key={it.id} className="px-4 py-2.5">
+              <TurnoverEditor item={it} parties={parties} actor={actor} setErr={setErr}
+                onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); onChanged(); }} />
+            </li>
+          ) : (
             <li key={it.id} className="px-4 py-2.5 text-xs">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-bold text-[var(--color-text)]">{it.name}</span>
                 {!it.required && <span className="text-[9px] font-bold text-[var(--color-text-faint)]">optional</span>}
                 <TurnoverChip status={it.status} />
+                {it.partyId && partyName.get(it.partyId) && <span className="text-[10px] text-[var(--color-text-muted)]">{partyName.get(it.partyId)}</span>}
+                {it.documentId && (
+                  docs.get(it.documentId)
+                    ? <Link href={docs.get(it.documentId)!.href} className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-accent)] hover:underline"><Paperclip className="w-3 h-3" /> {docs.get(it.documentId)!.label}</Link>
+                    : <span className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]"><Paperclip className="w-3 h-3" /> document attached</span>
+                )}
                 {canManage && busy !== it.id && (
-                  <span className="ml-auto flex items-center gap-1">
+                  <span className="ml-auto flex items-center gap-1 flex-wrap">
+                    {(it.status === "accepted" || it.status === "waived") && (
+                      <button onClick={() => void reopen(it)} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Back into the review - the decision stays on the record">
+                        <RotateCcw className="w-3 h-3" /> Reopen
+                      </button>
+                    )}
+                    <button onClick={() => setAttaching(attaching === it.id ? null : it.id)} className={quietBtn} title="The document the contractor submitted for this">
+                      <Paperclip className="w-3 h-3" /> {it.documentId ? "Change document" : "Attach document"}
+                    </button>
+                    <button onClick={() => setEditing(it.id)} className={quietBtn} title="Change the name, what it means, required or not, who owes it">
+                      <Pencil className="w-3 h-3" /> Edit
+                    </button>
                     {it.status === "open" && (
                       <button onClick={() => void review(it, "received")} className="px-1.5 py-0.5 rounded text-[10px] font-bold text-sky-700 dark:text-sky-300 hover:bg-sky-500/10">Received</button>
                     )}
@@ -590,6 +740,12 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, o
                   it.reviewNote ? `“${it.reviewNote}”` : null,
                 ].filter(Boolean).join(" · ")}
               </div>
+              {attaching === it.id && canManage && (
+                <DocPicker orgId={orgId} busy={busy === it.id}
+                  onPick={(d) => void attach(it, d)}
+                  onClear={it.documentId ? () => void attach(it, null) : undefined}
+                  onCancel={() => setAttaching(null)} />
+              )}
             </li>
           ))}
         </ul>
@@ -624,27 +780,158 @@ function TurnoverChip({ status }: { status: TurnoverItem["status"] }) {
   );
 }
 
+/** One turnover row, changed in place. */
+function TurnoverEditor({ item, parties, actor, setErr, onCancel, onSaved }: {
+  item: TurnoverItem; parties: CostParty[]; actor: Actor;
+  setErr: (m: string | null) => void; onCancel: () => void; onSaved: () => void;
+}) {
+  const [name, setName] = useState(item.name);
+  const [description, setDescription] = useState(item.description ?? "");
+  const [required, setRequired] = useState(item.required);
+  const [partyId, setPartyId] = useState(item.partyId ?? "");
+  const [saving, setSaving] = useState(false);
+  const pick = parties.filter((p) => p.status !== "inactive" || p.id === item.partyId);
+  const save = async () => {
+    setSaving(true);
+    const res = await updateTurnoverItem({ item, patch: { name, description, required, partyId: partyId || null }, actor });
+    setSaving(false);
+    if (!res.ok) { setErr(res.error ?? "Couldn't save."); return; }
+    onSaved();
+  };
+  return (
+    <div className="space-y-2 text-xs">
+      <div className="flex items-center gap-2 flex-wrap">
+        <input value={name} onChange={(e) => setName(e.target.value)} aria-label="Name" autoFocus className={`${fieldCls} flex-1 min-w-48 font-bold`} />
+        {pick.length > 0 && (
+          <select value={partyId} onChange={(e) => setPartyId(e.target.value)} aria-label="Who owes it" className={fieldCls}>
+            <option value="">Any contractor</option>
+            {pick.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        )}
+        <label className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text)]">
+          <input type="checkbox" checked={required} onChange={(e) => setRequired(e.target.checked)} className="w-4 h-4" /> Required
+        </label>
+      </div>
+      <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What it is, in plain words" aria-label="What it is" className={`${fieldCls} w-full`} />
+      <div className="flex items-center justify-end gap-2">
+        <button onClick={onCancel} className="px-2 py-1.5 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+        <button onClick={() => void save()} disabled={saving}
+          className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Save
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Find a document in document control by number or title. */
+function DocPicker({ orgId, busy, onPick, onClear, onCancel }: {
+  orgId: string; busy: boolean;
+  onPick: (d: { id: string; label: string }) => void;
+  onClear?: () => void;
+  onCancel: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<Array<{ id: string; label: string }>>([]);
+  useEffect(() => {
+    // Characters that are grammar in a PostgREST filter can't come from typing.
+    const q = query.trim().replace(/[,().\\%]/g, " ").replace(/\s+/g, " ").trim();
+    if (q.length < 2) return;
+    let live = true;
+    const t = setTimeout(async () => {
+      const { data } = await supabase.from("documents").select("id, document_number, title, name")
+        .eq("org_id", orgId)
+        .or(`document_number.ilike.%${q}%,title.ilike.%${q}%,name.ilike.%${q}%`)
+        .limit(8);
+      if (live) setResults((((data ?? []) as Array<Record<string, unknown>>)).map((d) => ({
+        id: String(d.id), label: String(d.document_number || d.title || d.name || "Document"),
+      })));
+    }, 250);
+    return () => { live = false; clearTimeout(t); };
+  }, [query, orgId]);
+  const shown = query.trim().length >= 2 ? results : [];
+  return (
+    <div className="mt-2 space-y-1.5">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="relative flex-1 min-w-56">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} autoFocus placeholder="Find the submitted document (by number or title)…"
+            className="w-full h-8 pl-8 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs" />
+        </span>
+        {onClear && <button onClick={onClear} disabled={busy} className={quietBtn}>Take it off</button>}
+        <button onClick={onCancel} className={quietBtn}>Cancel</button>
+      </div>
+      {shown.length > 0 && (
+        <ul className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
+          {shown.map((d) => (
+            <li key={d.id}>
+              <button onClick={() => onPick(d)} disabled={busy} className="w-full px-3 py-2 text-left text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2 disabled:opacity-50">
+                <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> {d.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="text-[10px] text-[var(--color-text-faint)]">From document control. A submission through the contractor&apos;s link lands there once it&apos;s approved under Intake.</div>
+    </div>
+  );
+}
+
 // ── Punch list ───────────────────────────────────────────────────────────
 
-function PunchSection({ orgId, projectId, canManage, actor, items, onChanged, setErr }: {
+function PunchSection({ orgId, projectId, canManage, actor, items, parties, people, onChanged, setErr, announce }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor;
-  items: PunchItem[]; onChanged: () => void; setErr: (m: string | null) => void;
+  items: PunchItem[]; parties: CostParty[]; people: string[];
+  onChanged: () => void; setErr: (m: string | null) => void;
+  announce: Announce;
 }) {
   const [title, setTitle] = useState("");
   const [due, setDue] = useState("");
+  const [location, setLocation] = useState("");
+  const [partyId, setPartyId] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  // The item being edited in place.
+  const [editing, setEditing] = useState<string | null>(null);
   const open = items.filter((i) => i.status === "open");
   const closed = items.filter((i) => i.status !== "open");
   // Captured once at mount — render stays pure.
   const [now] = useState(() => Date.now());
+  const partyName = useMemo(() => new Map(parties.map((p) => [p.id, p.name])), [parties]);
+  // Companies taken off the job aren't offered for new items.
+  const pickParties = parties.filter((p) => p.status !== "inactive");
 
   const add = async () => {
     if (!title.trim()) return;
     setBusy("add");
-    const res = await addPunchItem({ orgId, projectId, title, dueDate: due || null, actor });
+    const res = await addPunchItem({ orgId, projectId, title, dueDate: due || null, location: location || null, partyId: partyId || null, actor });
     setBusy(null);
     if (!res.ok) { setErr(res.error ?? "Couldn't add."); return; }
-    setTitle(""); setDue(""); onChanged();
+    setTitle(""); setDue(""); setLocation(""); setPartyId(""); onChanged();
+  };
+
+  const setStatus = async (it: PunchItem, status: PunchItem["status"]) => {
+    setBusy(it.id);
+    const r = await setPunchStatus({ item: it, status, actor });
+    setBusy(null);
+    if (!r.ok) { setErr(r.error ?? null); return false; }
+    onChanged();
+    return true;
+  };
+
+  // Void: not a real snag. Asked first, and Undo right after.
+  const voidItem = async (it: PunchItem) => {
+    if (!(await appConfirm({
+      title: "Void this punch item?",
+      message: `"${it.title}" comes off the open list as not a real snag. It stays on the record, and you can reopen it.`,
+      confirmLabel: "Void", tone: "danger",
+    }))) return;
+    if (await setStatus(it, "void")) {
+      announce(`Voided "${it.title}".`, async () => {
+        const r = await setPunchStatus({ item: { ...it, status: "void" }, status: "open", actor });
+        if (!r.ok) throw new Error(r.error ?? "couldn't reopen it");
+        onChanged();
+      });
+    }
   };
 
   return (
@@ -664,8 +951,16 @@ function PunchSection({ orgId, projectId, canManage, actor, items, onChanged, se
             onKeyDown={(e) => { if (e.key === "Enter") void add(); }}
             placeholder="e.g. Reinstall insulation at E-301 north nozzle"
             className="h-8 flex-1 min-w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
-          <input type="date" value={due} onChange={(e) => setDue(e.target.value)}
+          <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Where (optional)" aria-label="Where"
+            className={`${fieldCls} w-36`} />
+          <input type="date" value={due} onChange={(e) => setDue(e.target.value)} aria-label="Due"
             className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
+          {pickParties.length > 0 && (
+            <select value={partyId} onChange={(e) => setPartyId(e.target.value)} aria-label="Contractor" className={fieldCls}>
+              <option value="">Contractor…</option>
+              {pickParties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          )}
           <button onClick={() => void add()} disabled={busy === "add"}
             className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy === "add" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add
@@ -678,26 +973,45 @@ function PunchSection({ orgId, projectId, canManage, actor, items, onChanged, se
       ) : (
         <ul className="divide-y divide-[var(--color-border)]">
           {[...open, ...closed].map((it) => {
+            if (editing === it.id) {
+              return (
+                <li key={it.id} className="px-4 py-2.5">
+                  <PunchEditor item={it} parties={parties} people={people} actor={actor} setErr={setErr}
+                    onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); onChanged(); }} />
+                </li>
+              );
+            }
             // Overdue starts AFTER the due day ends, in the viewer's timezone
             // — an item due today is due, not late.
             const overdue = it.status === "open" && it.dueDate && new Date(`${it.dueDate}T23:59:59`).getTime() < now;
+            const where = [it.location, it.assignee ? `on it: ${it.assignee}` : null, it.partyId ? partyName.get(it.partyId) ?? null : null].filter(Boolean).join(" · ");
             return (
-              <li key={it.id} className={`px-4 py-2 flex items-center gap-2 text-xs ${it.status !== "open" ? "opacity-55" : ""}`}>
+              <li key={it.id} className={`px-4 py-2 flex items-center gap-2 flex-wrap text-xs ${it.status !== "open" ? "opacity-55" : ""}`}>
                 <span className={`w-2 h-2 rounded-full shrink-0 ${it.status === "done" ? "bg-emerald-500" : it.status === "void" ? "bg-[var(--color-border-strong)]" : overdue ? "bg-rose-500" : "bg-amber-500"}`} />
                 <span className={`text-[var(--color-text)] ${it.status !== "open" ? "line-through" : ""}`}>{it.title}</span>
+                {where && <span className="text-[10px] text-[var(--color-text-muted)]">{where}</span>}
                 {it.dueDate && it.status === "open" && (
                   <span className={`text-[10px] font-bold ${overdue ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
                     due {new Date(it.dueDate + "T00:00:00").toLocaleDateString()}{overdue ? " - overdue" : ""}
                   </span>
                 )}
+                {it.status === "void" && <span className="text-[9px] font-black uppercase text-[var(--color-text-faint)]">void</span>}
                 {it.createdByName && <span className="text-[10px] text-[var(--color-text-faint)]">by {it.createdByName}</span>}
                 {canManage && it.status === "open" && busy !== it.id && (
                   <span className="ml-auto flex items-center gap-1">
-                    <button onClick={async () => { setBusy(it.id); const r = await setPunchStatus({ item: it, status: "done", actor }); setBusy(null); if (!r.ok) setErr(r.error ?? null); else onChanged(); }}
-                      className="px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10">Done</button>
-                    <button onClick={async () => { setBusy(it.id); const r = await setPunchStatus({ item: it, status: "void", actor }); setBusy(null); if (!r.ok) setErr(r.error ?? null); else onChanged(); }}
-                      className="px-1 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10" title="Void - not a real snag"><Ban className="w-3 h-3" /></button>
+                    <button onClick={() => setEditing(it.id)} className={quietBtn} title="Change what it is, where, when it's due, who's on it">
+                      <Pencil className="w-3 h-3" /> Edit
+                    </button>
+                    <button onClick={() => void setStatus(it, "done")}
+                      className="px-2 py-1 rounded text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10">Done</button>
+                    <button onClick={() => void voidItem(it)}
+                      className="p-1.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10" title="Void - not a real snag" aria-label="Void - not a real snag"><Ban className="w-3.5 h-3.5" /></button>
                   </span>
+                )}
+                {canManage && it.status !== "open" && busy !== it.id && (
+                  <button onClick={() => void setStatus(it, "open")} className={`ml-auto ${quietBtn}`} title="Back on the open list">
+                    <RotateCcw className="w-3 h-3" /> Reopen
+                  </button>
                 )}
                 {busy === it.id && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-accent)] ml-auto" />}
               </li>
@@ -705,6 +1019,52 @@ function PunchSection({ orgId, projectId, canManage, actor, items, onChanged, se
           })}
         </ul>
       )}
+    </div>
+  );
+}
+
+/** One punch item, changed in place. */
+function PunchEditor({ item, parties, people, actor, setErr, onCancel, onSaved }: {
+  item: PunchItem; parties: CostParty[]; people: string[]; actor: Actor;
+  setErr: (m: string | null) => void; onCancel: () => void; onSaved: () => void;
+}) {
+  const [title, setTitle] = useState(item.title);
+  const [location, setLocation] = useState(item.location ?? "");
+  const [due, setDue] = useState(item.dueDate ?? "");
+  const [assignee, setAssignee] = useState(item.assignee ?? "");
+  const [partyId, setPartyId] = useState(item.partyId ?? "");
+  const [saving, setSaving] = useState(false);
+  const pick = parties.filter((p) => p.status !== "inactive" || p.id === item.partyId);
+  const listId = `punch-people-${item.id}`;
+  const save = async () => {
+    setSaving(true);
+    const res = await updatePunchItem({ item, patch: { title, location, dueDate: due || null, assignee, partyId: partyId || null }, actor });
+    setSaving(false);
+    if (!res.ok) { setErr(res.error ?? "Couldn't save."); return; }
+    onSaved();
+  };
+  return (
+    <div className="space-y-2 text-xs">
+      <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="What it is" autoFocus className={`${fieldCls} w-full`} />
+      <div className="flex items-center gap-2 flex-wrap">
+        <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Where" aria-label="Where" className={`${fieldCls} flex-1 min-w-36`} />
+        <input type="date" value={due} onChange={(e) => setDue(e.target.value)} aria-label="Due" className={`${fieldCls} [color-scheme:light] dark:[color-scheme:dark]`} />
+        <input value={assignee} onChange={(e) => setAssignee(e.target.value)} placeholder="Who's on it" aria-label="Who's on it" list={listId} className={`${fieldCls} w-40`} />
+        <datalist id={listId}>{people.map((p) => <option key={p} value={p} />)}</datalist>
+        {pick.length > 0 && (
+          <select value={partyId} onChange={(e) => setPartyId(e.target.value)} aria-label="Contractor" className={fieldCls}>
+            <option value="">No contractor</option>
+            {pick.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        )}
+      </div>
+      <div className="flex items-center justify-end gap-2">
+        <button onClick={onCancel} className="px-2 py-1.5 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+        <button onClick={() => void save()} disabled={saving}
+          className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Save
+        </button>
+      </div>
     </div>
   );
 }

@@ -13,22 +13,29 @@
 // the same read-review-post path as actuals — dropped in a stack, read on
 // arrival, routed to their vendor's budget line, checked for duplicates,
 // and the confident matches posted together after one confirmation.
+//
+// Nothing here is final by accident: an award can be undone (the bids come
+// back), a read document's total, vendor and RFQ group can be corrected,
+// a read quote can be voided, and a posted invoice can be moved to the
+// budget line it belongs on.
 
 import { PreviewButton, fileOfDoc } from "@/components/projects/cost/FilePreview";
 import React, { useMemo, useState } from "react";
 import {
   FileText, UploadCloud, Loader2, Sparkles, Trophy, Link2, Copy, AlertTriangle,
   CheckCircle2, ScanSearch, Ban, Receipt, ChevronDown, ChevronRight, Wand2, Copy as CopyIcon,
+  Pencil, RotateCcw, ArrowRightLeft,
 } from "lucide-react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { listCompanies, type Company } from "@/lib/companies";
-import { fmtMoney, type CostAccount, type CostParty, type Actor } from "@/lib/costs";
+import { fmtMoney, type CostAccount, type CostEntry, type CostParty, type Actor } from "@/lib/costs";
+import { parseMoney } from "@/lib/costRevisions";
 import { suggestAccountForInvoice, findDuplicateInvoice, type AccountSuggestion } from "@/lib/budgetDoc";
 import {
   type CostDocument, COST_DOC_STATUS_LABEL,
   uploadCostDoc, awardQuote, postInvoice, voidCostDoc, setManualTotal,
-  parsedQuoteFrom, quoteGroups,
+  parsedQuoteFrom, quoteGroups, unawardQuote, moveInvoiceToLine, correctCostDoc, lineOfDoc,
 } from "@/lib/costDocs";
 import { computeBidEconomics, scoreBids, DEFAULT_WEIGHTS, type ParsedQuote } from "@/lib/bidTab";
 import { downloadStarterRfq } from "@/lib/rfqDocx";
@@ -52,13 +59,15 @@ async function readCostDoc(orgId: string, projectId: string, costDocId: string):
 
 const INVOICE_ACCEPT = ".pdf,application/pdf,.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp";
 
-export default function QuotesPanel({ orgId, projectId, canManage, actor, accounts, docs, onChanged, setErr, section, parties = [] }: {
+export default function QuotesPanel({ orgId, projectId, canManage, actor, accounts, docs, onChanged, setErr, section, parties = [], entries = [] }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor;
   accounts: CostAccount[];
   /** Render only one half (the Costs sub-tabs); omitted = both. */
   section?: "quotes" | "invoices";
   /** Project companies — invoices route to their vendor's budget line. */
   parties?: CostParty[];
+  /** The project's cost entries: which line an award or invoice sits on. */
+  entries?: CostEntry[];
   docs: CostDocument[];
   onChanged: () => void;
   setErr: (m: string | null) => void;
@@ -95,8 +104,14 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
     if (!v) return;
     const n = Number(String(v).replace(/[^0-9.]/g, ""));
     if (!Number.isFinite(n) || n <= 0) { setErr("That didn't read as a positive number."); return; }
+    // No vendor on it yet (the AI never read it): ask, so the bid has a name.
+    let vendorName: string | null = null;
+    if (!doc.vendorName) {
+      const who = await appPrompt({ title: "Who sent it?", message: "The vendor's name as it should show in the comparison (leave blank to skip).", placeholder: "e.g. Brand Scaffold" });
+      vendorName = who?.trim() || null;
+    }
     setBusy(doc.id);
-    const res = await setManualTotal({ doc, total: n, actor });
+    const res = await setManualTotal({ doc, total: n, vendorName, actor });
     setBusy(null);
     if (!res.ok) setErr(res.error ?? "Couldn't save the total."); else onChanged();
   };
@@ -142,6 +157,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
             <BidGroup key={group} group={group} docs={groupDocs} allDocs={docs}
               accounts={accounts} parties={parties} companies={companies} canManage={canManage} actor={actor}
               busy={busy} setBusy={setBusy} readDoc={readDoc} typeTotal={typeTotal}
+              entries={entries} existingGroups={existingGroups}
               onChanged={onChanged} setErr={setErr} />
           ))}
         </div>
@@ -152,7 +168,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
       {/* ── Invoices ── */}
       {section !== "quotes" && (
         <InvoicesSection orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
-          accounts={accounts} parties={parties} docs={docs} invoices={invoices}
+          accounts={accounts} parties={parties} docs={docs} invoices={invoices} entries={entries}
           framed={section !== "invoices"} busy={busy} setBusy={setBusy}
           readDoc={readDoc} typeTotal={typeTotal} onChanged={onChanged} setErr={setErr} />
       )}
@@ -171,9 +187,10 @@ function invoiceLines(doc: CostDocument): Array<{ description: string; total: nu
     .map((x) => ({ description: String(x.description), total: typeof x.total === "number" ? x.total : null }));
 }
 
-function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties, docs, invoices, framed, busy, setBusy, readDoc, typeTotal, onChanged, setErr }: {
+function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties, docs, invoices, entries, framed, busy, setBusy, readDoc, typeTotal, onChanged, setErr }: {
   orgId: string; projectId: string; canManage: boolean; actor: Actor;
   accounts: CostAccount[]; parties: CostParty[]; docs: CostDocument[]; invoices: CostDocument[];
+  entries: CostEntry[];
   framed: boolean; busy: string | null; setBusy: (v: string | null) => void;
   readDoc: (d: CostDocument) => Promise<void>;
   typeTotal: (d: CostDocument) => Promise<void>;
@@ -181,6 +198,25 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
 }) {
   const [open, setOpen] = useState<string | null>(null);
   const [batch, setBatch] = useState<string | null>(null);
+  // An invoice being corrected, or one being moved to another line.
+  const [correcting, setCorrecting] = useState<string | null>(null);
+  const [moving, setMoving] = useState<string | null>(null);
+
+  const move = async (doc: CostDocument, fromId: string | null, toId: string) => {
+    const from = accounts.find((a) => a.id === fromId)?.name ?? "the line it's on";
+    const to = accounts.find((a) => a.id === toId)?.name ?? "the new line";
+    if (!(await appConfirm({
+      title: "Move this invoice?",
+      message: `${doc.vendorName ?? "This invoice"}${doc.totalAmount != null ? ` (${fmtMoney(doc.totalAmount, doc.currency ?? "USD")})` : ""} moves from "${from}" to "${to}". The old entry stays on the record, struck through.`,
+      confirmLabel: "Move it",
+    }))) return;
+    setBusy(doc.id); setErr(null);
+    const res = await moveInvoiceToLine({ doc, costAccountId: toId, actor });
+    setBusy(null);
+    if (!res.ok) { setErr(res.error ?? "Couldn't move it."); return; }
+    setMoving(null);
+    onChanged();
+  };
 
   const rows = useMemo(() => invoices.map((doc) => ({
     doc,
@@ -246,6 +282,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
           {rows.map(({ doc, lines, suggestion, duplicate }) => {
             const isOpen = open === doc.id;
             const p = (doc.parsed ?? {}) as { poNumber?: unknown; dueDate?: unknown; subtotal?: unknown; tax?: unknown };
+            const onLine = doc.status === "posted" ? lineOfDoc(doc, entries) : null;
             return (
               <li key={doc.id} className="px-4 py-2.5 text-xs">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -281,10 +318,33 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                         if (!res.ok) setErr(res.error ?? "Couldn't post."); else onChanged();
                       }} label="Post as actual" />
                   )}
+                  {canManage && doc.status === "parsed" && correcting !== doc.id && (
+                    <CorrectButton onClick={() => setCorrecting(doc.id)} />
+                  )}
+                  {doc.status === "posted" && onLine && (
+                    <span className="text-[10px] text-[var(--color-text-muted)]">on {accounts.find((a) => a.id === onLine)?.name ?? "a budget line"}</span>
+                  )}
+                  {canManage && doc.status === "posted" && moving !== doc.id && accounts.length > 1 && (
+                    <button onClick={() => setMoving(doc.id)} title="Posted to the wrong budget line? Move it - the old entry stays on the record, struck through."
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      <ArrowRightLeft className="w-3 h-3" /> Move to line
+                    </button>
+                  )}
+                  {canManage && moving === doc.id && (
+                    <span className="inline-flex items-center gap-1.5">
+                      <PostControls accounts={accounts.filter((a) => a.id !== onLine)} busy={busy === doc.id}
+                        onPost={(accountId) => move(doc, onLine, accountId)} label="Move here" />
+                      <button onClick={() => setMoving(null)} className="px-1.5 py-1 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+                    </span>
+                  )}
                   {canManage && (doc.status === "draft" || doc.status === "parsed") && (
                     <VoidButton doc={doc} actor={actor} busy={busy === doc.id} setBusy={setBusy} onChanged={onChanged} setErr={setErr} />
                   )}
                 </div>
+                {correcting === doc.id && (
+                  <CorrectForm doc={doc} actor={actor} groups={[]} onCancel={() => setCorrecting(null)}
+                    onDone={() => { setCorrecting(null); onChanged(); }} setErr={setErr} />
+                )}
                 {isOpen && (
                   <div className="mt-2 ml-6 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 px-3 py-2 space-y-1">
                     <div className="text-[10px] text-[var(--color-text-muted)] flex flex-wrap gap-x-3">
@@ -367,15 +427,18 @@ function InvoiceDrop({ orgId, projectId, actor, onDone, setErr }: {
 
 // ── One RFQ group: the tabulation ────────────────────────────────────────
 
-function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companies, canManage, actor, busy, setBusy, readDoc, typeTotal, onChanged, setErr }: {
+function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companies, canManage, actor, busy, setBusy, readDoc, typeTotal, entries, existingGroups, onChanged, setErr }: {
   group: string; docs: CostDocument[]; allDocs: CostDocument[];
   accounts: CostAccount[]; parties: CostParty[]; companies: Company[]; canManage: boolean; actor: Actor;
   busy: string | null; setBusy: (v: string | null) => void;
   readDoc: (d: CostDocument) => Promise<void>;
   typeTotal: (d: CostDocument) => Promise<void>;
+  entries: CostEntry[]; existingGroups: string[];
   onChanged: () => void; setErr: (m: string | null) => void;
 }) {
   const [open, setOpen] = useState(true);
+  // The bid being corrected (total, vendor, RFQ group).
+  const [correcting, setCorrecting] = useState<string | null>(null);
   const parsed = useMemo(() => {
     const out: Array<{ doc: CostDocument; quote: ParsedQuote }> = [];
     for (const d of groupDocs) {
@@ -414,6 +477,33 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
     if (!res.ok) setErr(res.error ?? "Couldn't award."); else onChanged();
   };
 
+  // Awarded to the wrong bid (or the job changed): take it back.
+  const awardedLine = awarded ? lineOfDoc(awarded, entries) : null;
+  const unaward = async (doc: CostDocument) => {
+    const total = doc.totalAmount ?? parsedQuoteFrom(doc)?.total ?? null;
+    const line = accounts.find((a) => a.id === awardedLine)?.name;
+    if (!(await appConfirm({
+      title: `Undo the award to ${doc.vendorName ?? "this vendor"}?`,
+      message: `The ${total != null ? `${fmtMoney(total)} ` : ""}commitment${line ? ` on "${line}"` : ""} is voided (it stays on the record, struck through), and every bid in "${group}" comes back into the comparison so you can award again.`,
+      confirmLabel: "Undo award", tone: "danger",
+    }))) return;
+    setBusy(doc.id); setErr(null);
+    const res = await unawardQuote({ doc, siblings: allDocs, actor });
+    setBusy(null);
+    if (!res.ok) { setErr(res.error ?? "Couldn't undo the award."); return; }
+    if (res.note) setErr(res.note);
+    onChanged();
+  };
+
+  // What a person can do to one bid besides award it: correct what was
+  // read, or void it. Not on the awarded one (undo the award first).
+  const bidTools = (doc: CostDocument | undefined) => canManage && doc && doc.status !== "awarded" && correcting !== doc.id ? (
+    <span className="ml-1.5 inline-flex items-center gap-1 align-middle">
+      {doc.status !== "draft" && <CorrectButton onClick={() => setCorrecting(doc.id)} />}
+      <VoidButton doc={doc} actor={actor} busy={busy === doc.id} setBusy={setBusy} onChanged={onChanged} setErr={setErr} />
+    </span>
+  ) : null;
+
   return (
     <div>
       <button onClick={() => setOpen((v) => !v)} className="w-full px-4 py-2.5 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
@@ -429,6 +519,21 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
 
       {open && (
         <div className="px-4 pb-4 space-y-2">
+          {awarded && canManage && (
+            <div className="flex items-center gap-2 flex-wrap rounded-lg border border-emerald-500/30 bg-emerald-500/[0.05] px-3 py-2 text-[11px]">
+              <Trophy className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span className="text-[var(--color-text)]">
+                Awarded to <b>{awarded.vendorName ?? "vendor"}</b>
+                {(awarded.totalAmount ?? parsedQuoteFrom(awarded)?.total) != null ? ` for ${fmtMoney((awarded.totalAmount ?? parsedQuoteFrom(awarded)?.total) as number)}` : ""}
+                {awardedLine ? ` on ${accounts.find((a) => a.id === awardedLine)?.name ?? "a budget line"}` : ""}.
+              </span>
+              <button onClick={() => void unaward(awarded)} disabled={busy === awarded.id}
+                title="Void the commitment it posted and bring the other bids back"
+                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                {busy === awarded.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />} Undo award
+              </button>
+            </div>
+          )}
           {unread.length > 0 && (
             <div className="flex items-center gap-2 flex-wrap text-[11px] text-[var(--color-text-muted)]">
               <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
@@ -438,7 +543,8 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                   <span className="font-bold text-[var(--color-text)] max-w-40 truncate">{d.vendorName ?? d.fileName}</span>
                   <PreviewButton file={fileOfDoc(d)} />
                   {canManage && <ReadButton busy={busy === d.id} onClick={() => void readDoc(d)} />}
-                  {canManage && <button onClick={() => void typeTotal(d)} className="text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">type total</button>}
+                  {canManage && <button onClick={() => void typeTotal(d)} className="px-1 py-1 text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">type total</button>}
+                  {bidTools(d)}
                 </span>
               ))}
             </div>
@@ -487,6 +593,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                             )}
                             {isAwarded && <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] font-black uppercase text-emerald-700 dark:text-emerald-300"><Trophy className="w-2.5 h-2.5" /> awarded</span>}
                             {isDeclined && <span className="ml-1.5 text-[9px] font-bold uppercase text-[var(--color-text-faint)]">not selected</span>}
+                            {bidTools(doc)}
                           </td>
                           <td className="px-3 py-2 text-right font-black tabular-nums text-[var(--color-text)]">{fmtMoney(e.total)}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{e.laborHours > 0 ? e.laborHours.toLocaleString() : <span className="text-[var(--color-text-faint)]" title="This bid doesn't state labor hours - undisclosed manpower scores at the field's floor.">not stated</span>}</td>
@@ -508,6 +615,14 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                             </td>
                           )}
                         </tr>
+                        {doc && correcting === doc.id && (
+                          <tr>
+                            <td colSpan={canManage && !awarded ? 7 : 6} className="px-3 pb-2 pt-0">
+                              <CorrectForm doc={doc} actor={actor} groups={existingGroups} onCancel={() => setCorrecting(null)}
+                                onDone={() => { setCorrecting(null); onChanged(); }} setErr={setErr} />
+                            </td>
+                          </tr>
+                        )}
                         {(e.exclusionCount > 0 || e.missingScope.length > 0) && (
                           <tr className={isDeclined ? "opacity-55" : undefined}>
                             <td colSpan={canManage && !awarded ? 7 : 6} className="px-3 pb-2 pt-0">
@@ -539,7 +654,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
           {manualBids.length > 0 && (
             <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
               {manualBids.map((d) => (
-                <li key={d.id} className={`px-3 py-2 flex items-center gap-2 flex-wrap text-xs ${d.status === "declined" ? "opacity-55" : ""}`}>
+                <li key={d.id} className={`px-3 py-2 flex items-center gap-2 flex-wrap text-xs ${d.status === "declined" && correcting !== d.id ? "opacity-55" : ""}`}>
                   <span className="font-bold text-[var(--color-text)]">{d.vendorName ?? d.fileName ?? "Bid"}</span>
                   <PreviewButton file={fileOfDoc(d)} />
                   <span className="font-black tabular-nums text-[var(--color-text)]">{fmtMoney(d.totalAmount ?? 0)}</span>
@@ -551,8 +666,12 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                     <PostControls accounts={accounts} busy={busy === d.id} suggested={suggestFor(d)}
                       onPost={(accountId) => award(d, accountId)} label="Award" />
                   )}
-                  {canManage && d.status === "parsed" && (
-                    <VoidButton doc={d} actor={actor} busy={busy === d.id} setBusy={setBusy} onChanged={onChanged} setErr={setErr} />
+                  {bidTools(d)}
+                  {correcting === d.id && (
+                    <div className="basis-full">
+                      <CorrectForm doc={d} actor={actor} groups={existingGroups} onCancel={() => setCorrecting(null)}
+                        onDone={() => { setCorrecting(null); onChanged(); }} setErr={setErr} />
+                    </div>
                   )}
                 </li>
               ))}
@@ -643,6 +762,72 @@ function VoidButton({ doc, actor, busy, setBusy, onChanged, setErr }: {
       className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-500/10 transition-colors">
       <Ban className="w-3 h-3" /> Void
     </button>
+  );
+}
+
+function CorrectButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button onClick={onClick} title="Fix what was read: the total, the vendor, the RFQ group"
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+      <Pencil className="w-3 h-3" /> Correct
+    </button>
+  );
+}
+
+/** Fix what the AI read, or what was typed, before money moves: the
+ *  total, the vendor and (quotes) which RFQ group it's compared in. */
+function CorrectForm({ doc, actor, groups, onDone, onCancel, setErr }: {
+  doc: CostDocument; actor: Actor; groups: string[];
+  onDone: () => void; onCancel: () => void; setErr: (m: string | null) => void;
+}) {
+  const [total, setTotal] = useState(doc.totalAmount != null ? String(doc.totalAmount) : "");
+  const [vendor, setVendor] = useState(doc.vendorName ?? "");
+  const [group, setGroup] = useState(doc.rfqGroup ?? "");
+  const [saving, setSaving] = useState(false);
+  const listId = `rfq-groups-${doc.id}`;
+
+  const save = async () => {
+    const n = parseMoney(total);
+    if (total.trim() && (n == null || n <= 0)) { setErr("The total should be a positive number."); return; }
+    setSaving(true); setErr(null);
+    const res = await correctCostDoc({
+      doc, actor,
+      total: total.trim() ? n : undefined,
+      vendorName: vendor,
+      rfqGroup: doc.kind === "quote" ? group : undefined,
+    });
+    setSaving(false);
+    if (!res.ok) { setErr(res.error ?? "Couldn't save the correction."); return; }
+    onDone();
+  };
+
+  return (
+    <div className="mt-1.5 rounded-lg border border-[var(--color-accent-ring)]/50 bg-[var(--color-accent-soft)]/30 px-2.5 py-2 flex items-end gap-2 flex-wrap text-xs">
+      <label className="block">
+        <span className="text-[9px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Total</span>
+        <input value={total} onChange={(e) => setTotal(e.target.value)} inputMode="decimal" placeholder="e.g. 182,000"
+          className="mt-0.5 block h-8 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono tabular-nums" />
+      </label>
+      <label className="block">
+        <span className="text-[9px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Vendor</span>
+        <input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Company name"
+          className="mt-0.5 block h-8 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+      </label>
+      {doc.kind === "quote" && (
+        <label className="block">
+          <span className="text-[9px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">RFQ group</span>
+          <input value={group} onChange={(e) => setGroup(e.target.value)} list={listId} placeholder="The scope being bid"
+            title="Quotes with the same group name are compared side by side."
+            className="mt-0.5 block h-8 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+          <datalist id={listId}>{groups.map((g) => <option key={g} value={g} />)}</datalist>
+        </label>
+      )}
+      <button onClick={() => void save()} disabled={saving}
+        className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+        {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />} Save
+      </button>
+      <button onClick={onCancel} className="h-8 px-2 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+    </div>
   );
 }
 
