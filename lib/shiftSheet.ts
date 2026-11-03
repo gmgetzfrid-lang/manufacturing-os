@@ -29,7 +29,7 @@ import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { leafPercent } from "@/lib/scheduleProgress";
 import {
   buildShiftReport, previousShift, meetingLeadMin, timeInShift,
-  type ShiftReport, type ShiftRow, type ShiftTimes, type ShiftWindow,
+  type ShiftPlan, type ShiftReport, type ShiftRow, type ShiftTimes, type ShiftWindow,
 } from "@/lib/shiftReport";
 import { woOf } from "@/lib/workOrderCrew";
 import { startMsOf } from "@/lib/calendarPlacement";
@@ -96,6 +96,8 @@ export function sheetLines(report: ShiftReport, tryIds?: Set<string>): SheetLine
   for (const r of report.goals.all) add(r, r.carryOver ? "late" : "due");
   for (const r of report.goals.pulled) add(r, "pulled");
   if (tryIds?.size) for (const r of [...report.goals.otherShift, ...report.goals.movedOff, ...report.goals.paused]) if (r.leaf.id && tryIds.has(r.leaf.id)) add(r, "try");
+  // A plan set by hand is the whole list: nothing else is added to it.
+  if (report.goals.byPlan) return out;
   // Under way and this crew's, wherever the plan has it: a job started
   // ahead of plan is still being worked.
   for (const r of report.review.inProgress) if (r.work === "both" || r.work === target.kind) add(r, "going");
@@ -105,21 +107,23 @@ export function sheetLines(report: ShiftReport, tryIds?: Set<string>): SheetLine
 
 /** The lines by work order: WO number order (numbers as numbers), work with
  *  no WO last; in each, by plan, the ones that could start early last. */
+/** A step's work order: the WO number (its own, or the nearest above), and
+ *  the highest task carrying that number (the equipment's), not the step a
+ *  copied-down number sits on. No WO: its parent task. */
+export function workOrderOfStep(id: string, byId: Map<string, Milestone>): { key: string; wo: string | null; owner: Milestone } | null {
+  const m = byId.get(id);
+  if (!m) return null;
+  let wo = "", at: Milestone | undefined = m;
+  const seen = new Set<string>();
+  for (; at?.id && !seen.has(at.id); at = at.parentId ? byId.get(at.parentId) : undefined) { seen.add(at.id); wo = woOf(at); if (wo) break; }
+  let owner = wo && at ? at : (m.parentId ? byId.get(m.parentId) : undefined) ?? m;
+  if (wo) for (let up = owner.parentId ? byId.get(owner.parentId) : undefined; up?.id && !seen.has(up.id) && woOf(up) === wo; up = up.parentId ? byId.get(up.parentId) : undefined) { seen.add(up.id); owner = up; }
+  return { key: `${wo || "-"}:${owner.id}`, wo: wo || null, owner };
+}
+
 export function groupSheet(lines: SheetLine[], milestones: Milestone[]): SheetGroup[] {
   const byId = new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m]));
-  // Its work order: the WO number (its own, or the nearest above), and the
-  // highest task carrying that number (the equipment's), not the step a
-  // copied-down number sits on.
-  const groupOf = (id: string): { key: string; wo: string | null; owner: Milestone } | null => {
-    const m = byId.get(id);
-    if (!m) return null;
-    let wo = "", at: Milestone | undefined = m;
-    const seen = new Set<string>();
-    for (; at?.id && !seen.has(at.id); at = at.parentId ? byId.get(at.parentId) : undefined) { seen.add(at.id); wo = woOf(at); if (wo) break; }
-    let owner = wo && at ? at : (m.parentId ? byId.get(m.parentId) : undefined) ?? m;
-    if (wo) for (let up = owner.parentId ? byId.get(owner.parentId) : undefined; up?.id && !seen.has(up.id) && woOf(up) === wo; up = up.parentId ? byId.get(up.parentId) : undefined) { seen.add(up.id); owner = up; }
-    return { key: `${wo || "-"}:${owner.id}`, wo: wo || null, owner };
-  };
+  const groupOf = (id: string) => workOrderOfStep(id, byId);
   const groups = new Map<string, SheetGroup>();
   for (const l of lines) {
     const g = groupOf(l.id);
@@ -145,11 +149,13 @@ export function buildShiftSheet(input: {
   /** Pulled forward for this shift at the meeting (its turnover's decisions). */
   pullIds?: Iterable<string>;
   tryIds?: Set<string>;
+  /** The shift's plan, set by hand (its record's plan): the sheet's list. */
+  plan?: ShiftPlan;
 }): ShiftSheet {
   const { milestones, tz, times, target } = input;
   const prev = previousShift(target, tz, times);
   const meetingAt = prev.end - meetingLeadMin(times) * 60_000;
-  const report = buildShiftReport({ milestones, progress: input.progress, criticalIds: input.criticalIds, tz, times, shift: prev, now: Math.max(input.now, meetingAt), pullIds: input.pullIds });
+  const report = buildShiftReport({ milestones, progress: input.progress, criticalIds: input.criticalIds, tz, times, shift: prev, now: Math.max(input.now, meetingAt), pullIds: input.pullIds, plan: input.plan });
   const groups = groupSheet(sheetLines(report, input.tryIds), milestones);
   return { shift: target, groups, count: groups.reduce((n, g) => n + g.lines.length, 0) };
 }
@@ -165,7 +171,7 @@ export const sheetIds = (s: ShiftSheet) => s.groups.flatMap((g) => g.lines.map((
 export function entryLines(input: {
   milestones: Milestone[]; progress?: Map<string, ProgressInfo>; criticalIds?: Set<string>;
   tz: string; times: ShiftTimes; target: ShiftWindow; now: number;
-  printed?: SheetRecord | null; pullIds?: Iterable<string>; tryIds?: Set<string>;
+  printed?: SheetRecord | null; pullIds?: Iterable<string>; tryIds?: Set<string>; plan?: ShiftPlan;
 }): SheetGroup[] {
   const { milestones, target } = input;
   const byId = new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m]));

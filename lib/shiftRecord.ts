@@ -16,6 +16,7 @@ import type { HourlyNotes } from "@/lib/shiftHourly";
 import type { ShiftMeeting } from "@/lib/shiftMeeting";
 import type { HoldOver } from "@/lib/holdOver";
 import type { SheetRecord } from "@/lib/shiftSheet";
+import type { ShiftPlan } from "@/lib/shiftReport";
 
 export interface CrewCount {
   /** Who attended the meeting from the crew (lib/shiftMeeting). */
@@ -70,6 +71,9 @@ export interface ShiftRecord {
   /** The shift sheet as printed (lib/shiftSheet): its lines, in order, so
    *  entering it shows the same lines. */
   sheet?: SheetRecord;
+  /** The shift's plan, set by hand before it (Shift tab › Plan the night):
+   *  the steps it's given, and the % expected of each by its end. */
+  plan?: ShiftPlan;
 }
 
 export const SHIFT_RECORD_MIGRATION = "20261105_shift_record.sql";

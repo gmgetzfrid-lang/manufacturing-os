@@ -90,7 +90,7 @@ export type BoardMode = "today" | "work" | "reports";
 interface Props {
   /** Default: Work. */
   mode?: BoardMode;
-  /** Go to another tab (a report opened from Today or Work orders). */
+  /** Go to another tab (a report opened from the Shift tab or Work orders). */
   onMode?: (m: BoardMode) => void;
   milestones: Milestone[];
   /** Jobs taken off this schedule — listed on the close-out report. */
@@ -175,7 +175,7 @@ export default function ExecutionView({
   // Today is the shift's screen; Reports, every report.
   const [workLayout, setLayout] = useState<"timeline" | "calendar" | "wo">("timeline");
   const layout: "timeline" | "calendar" | "wo" | "reports" | "shift" = mode === "today" ? "shift" : mode === "reports" ? "reports" : workLayout;
-  // A report opened from Today or Work orders, set to its shift or work order.
+  // A report opened from the Shift tab or Work orders, set to its shift or work order.
   const [reportLink, setReportLink] = useState<ReportLink | null>(null);
   const openReport = useCallback((l: ReportLink) => { setReportLink({ ...l, n: Date.now() }); onMode?.("reports"); }, [onMode]);
   const [detailId, setDetailId] = useState<string | null>(null);

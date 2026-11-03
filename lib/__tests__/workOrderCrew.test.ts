@@ -23,6 +23,15 @@ describe("a blank crew takes the work order's", () => {
   it("two different crews on the work order: still unknown, never a guess", () => {
     expect(inheritedCrews([uit, blinds, { ...remove, responsibleParty: "Schultz" }, cal]).has("c")).toBe(false);
   });
+  it("several steps left blank (crews taken off at once): no guess, the one crew still named isn't spread to them", () => {
+    const tower = mk({ id: "v1", name: "V-01 - De-Butanizer Column" });
+    const pull = mk({ id: "p", name: "Remove Trays", parentId: "v1" });
+    const reinstall = mk({ id: "ri", name: "Re-Install Trays", parentId: "v1" });
+    const blast = mk({ id: "hb", name: "Clean Tower (Orbijet)", parentId: "v1", responsibleParty: "Ancon" });
+    const got = inheritedCrews([tower, pull, reinstall, blast]);
+    expect(got.has("p")).toBe(false);
+    expect(got.has("ri")).toBe(false);
+  });
   it("a step's own crew is never replaced", () => {
     expect(inheritedCrews([uit, blinds, remove, cal]).has("b")).toBe(false);
   });

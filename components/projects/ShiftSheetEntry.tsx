@@ -39,13 +39,14 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
 }) {
   const { records } = useShiftRecords(projectId);
   const printed = records.get(handoverKey(target))?.sheet ?? null;
+  const plan = records.get(handoverKey(target))?.plan;
   const byId = useMemo(() => new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m])), [milestones]);
   const pctOf = (m: Milestone) => (m.id ? progress?.get(m.id)?.percent : undefined) ?? leafPercent(m);
   // The lines as printed (or as they'd print), and those added here. Kept
   // as first worked out: a save mustn't reshuffle the list under the pen.
   const [now] = useState(() => Date.now());
-  const sheetKey = printed ? printed.ids.join(",") : "";
-  const base = useMemo(() => entryLines({ milestones, progress, tz, times, target, now, printed }),
+  const sheetKey = printed ? printed.ids.join(",") : plan ? `plan:${plan.ids.join(",")}` : "";
+  const base = useMemo(() => entryLines({ milestones, progress, tz, times, target, now, printed, plan }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the list is fixed once open (and when the printed record arrives)
     [sheetKey, target.start]);
   const [added, setAdded] = useState<SheetLine[]>([]);

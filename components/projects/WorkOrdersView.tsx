@@ -57,6 +57,8 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
   const word = useProjectWord();
   const [query, setQuery] = useState("");
   const [show, setShow] = useState<Show>("all");
+  // Who: the crew named on the steps ("" = steps with no crew named).
+  const [who, setWho] = useState<string | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
   // The work order being taken off the schedule (its key).
   const [cancelling, setCancelling] = useState<string | null>(null);
@@ -66,7 +68,17 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
   const orders = useMemo(() => groupWorkOrders(milestones, childrenByParent, progress, tz, times, now), [milestones, childrenByParent, progress, tz, times, now]);
 
   const is = (k: Show) => (o: WorkOrder) => showsOrder(o, k, marks);
-  const found = findOrders(orders, query);
+  // Each step's own crew, as named on it: a blank one is "no crew named",
+  // so names taken off by mistake can be found and put right.
+  const crewOf = (m: Milestone) => m.responsibleParty?.trim() ?? "";
+  const crewKey = (c: string) => c.trim().toLowerCase();
+  const whoList = useMemo(() => {
+    const n = new Map<string, { name: string; steps: number }>();
+    for (const o of orders) for (const st of o.steps) { const c = crewOf(st); const k = crewKey(c); const cur = n.get(k) ?? { name: c, steps: 0 }; cur.steps++; n.set(k, cur); }
+    return [...n.entries()].sort((a, b) => Number(a[0] === "") - Number(b[0] === "") || a[1].name.localeCompare(b[1].name, undefined, { numeric: true }));
+  }, [orders]);
+  const byWho = (o: WorkOrder) => who == null || o.steps.some((st) => crewKey(crewOf(st)) === who);
+  const found = findOrders(orders, query).filter(byWho);
   // One you have open stays while you work in it, whatever the filter.
   const shown = found.filter((o) => showsOrder(o, show, marks) || open.has(o.key));
   const today = dayKey(now, tz);
@@ -105,6 +117,11 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
             className="flex-1 min-w-0 bg-transparent text-[13px] outline-none" />
           {query && <button type="button" onClick={() => setQuery("")} className="text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Clear</button>}
         </label>
+        <select value={who ?? "__all"} onChange={(e) => setWho(e.target.value === "__all" ? null : e.target.value)} aria-label="Who"
+          className={`h-8 rounded-lg border px-2 text-[12px] font-semibold ${who != null ? "border-[var(--color-accent)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text)]"} bg-[var(--color-surface)]`}>
+          <option value="__all">Everyone</option>
+          {whoList.map(([k, x]) => <option key={k || "__none"} value={k}>{k ? x.name : "No crew named"} ({x.steps} step{x.steps === 1 ? "" : "s"})</option>)}
+        </select>
         <div className="inline-flex flex-wrap gap-1" role="group" aria-label="Show">
           {([["all", "All"], ["open", "Open"], ["critical", "Critical path"], ["behind", "Behind"], ["notStarted", "Not started"], ["held", "Held"], ["done", "Done"], ["added", "Discovery & added"]] as const).map(([k, l]) => {
             const n = found.filter(is(k)).length;
@@ -178,7 +195,7 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-baseline gap-x-2">
                         <span className={`font-mono text-[12.5px] font-bold ${o.wo ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{o.wo ? `WO ${o.wo}` : "No WO"}</span>
-                        <span className="text-[13px] font-semibold text-[var(--color-text)] break-words">{o.owner.name}</span>
+                        <span className="text-[13px] font-semibold text-[var(--color-text)] break-words">{o.owner.name}{o.also?.map((x) => <span key={x.id} className="text-[var(--color-text-muted)]"> · {x.name}</span>)}</span>
                       </div>
                       {descOf(o.owner) && <div className="text-[12px] text-[var(--color-text)] line-clamp-2 break-words">{descOf(o.owner)}</div>}
                       <div className="text-[11.5px] text-[var(--color-text-muted)]">

@@ -4,7 +4,7 @@
 // Left, the list: reports filled in from the project, then forms filled in
 // by hand. Right, the one picked: its few choices (which shift, the
 // format, the letterhead), page 1 as it will come out, and Download or
-// Print. A button elsewhere (Hourly log on Today, Print on a work order)
+// Print. A button elsewhere (Hourly log on the Shift tab, Print on a work order)
 // opens the same report here, already set to its shift or work order.
 // On a phone the list comes first; a report opens full screen with a way
 // back to the list.
@@ -25,7 +25,7 @@ import type { ExportDoc } from "@/lib/reportExport";
 import { copyUpdateForEmail, printHtml, updatePrintDocument, updateToSend } from "@/lib/updatePrint";
 import { withWorkOrderCrews } from "@/lib/workOrderCrew";
 import { loadProgressLog } from "@/lib/progressHistory";
-import { loadShiftRecords, saveShiftRecord, type ShiftRecord } from "@/lib/shiftRecord";
+import { loadShiftRecords, saveShiftRecord, useShiftRecords, type ShiftRecord } from "@/lib/shiftRecord";
 import { loadHandover, handoverKey, type HandoverDecision } from "@/lib/shiftHandover";
 import { notesFor } from "@/lib/milestones";
 import { buildTimeLog, downloadTimeLog, type TimeLogRow } from "@/lib/timeLog";
@@ -93,7 +93,7 @@ export default function ReportsView(p: Props) {
   const [phoneOpen, setPhoneOpen] = useState(false);
   // The shift (turnover, hourly log, time log); null: the current one.
   const [shiftPick, setShiftPick] = useState<ShiftPick | null>(null);
-  // Opened from the list: the whole project; from Today, that shift.
+  // Opened from the list: the whole project; from the Shift tab, that shift.
   const [cover, setCover] = useState<Cover>("job");
   const [format, setFormat] = useState<LogFormat>("pdf");
   const [useLh, setUseLh] = useState(true);
@@ -227,12 +227,15 @@ export default function ReportsView(p: Props) {
     loadHandover(projectId, sheetKey).then((h) => { if (alive) setSheetDec(h?.decisions ?? {}); }).catch(() => { if (alive) setSheetDec({}); });
     return () => { alive = false; };
   }, [sel, projectId, sheetKey, tick]);
+  // The shift's plan, set by hand on the Shift tab: the sheet's list.
+  const { records: sheetRecords } = useShiftRecords(sel === "sheet" ? projectId : null);
+  const sheetPlan = sheetRecords.get(sheetKey)?.plan;
   const sheet = useMemo(() => {
     if (sel !== "sheet") return null;
     const pulls = Object.entries(sheetDec).filter(([, d]) => d.tryIt && d.pulled).map(([id]) => id);
     const tries = new Set(Object.entries(sheetDec).filter(([, d]) => d.tryIt && !d.pulled).map(([id]) => id));
-    return buildShiftSheet({ milestones: live, progress: p.progress, criticalIds: p.critical?.ids, tz, times, target: sheetShift, now, pullIds: pulls, tryIds: tries });
-  }, [sel, live, p.progress, p.critical, tz, times, sheetShift, now, sheetDec]);
+    return buildShiftSheet({ milestones: live, progress: p.progress, criticalIds: p.critical?.ids, tz, times, target: sheetShift, now, pullIds: pulls, tryIds: tries, plan: sheetPlan });
+  }, [sel, live, p.progress, p.critical, tz, times, sheetShift, now, sheetDec, sheetPlan]);
   const sheetDoc = useMemo(() => (sheet ? shiftSheetDocument(`${name} - ${sheetTitle(sheet.shift, tz)}`, shiftSheetHtml(sheet, { project: name, tz, times })) : null), [sheet, name, tz, times]);
   const sheetLabel = `${sheetShift.kind === "day" ? "Day" : "Night"} shift ${fmtInTz(sheetShift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`;
 
@@ -583,7 +586,7 @@ export default function ReportsView(p: Props) {
 }
 
 const DESCRIBE: Record<ReportId, string> = {
-  turnover: "Where the job stands, done, next, safety and the meetings, for one shift. The same update Today sends.",
+  turnover: "Where the job stands, done, next, safety and the meetings, for one shift. The same update the Shift tab sends.",
   hourly: "The shift hour by hour: the meetings, each hour's work, breaks and overtime.",
   timelog: "Every step and the time each thing was done, for the project file.",
   schedule: "Complete, pace and the forecast finish, with what's blocked and overdue.",

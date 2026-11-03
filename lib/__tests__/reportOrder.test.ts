@@ -64,3 +64,23 @@ describe("dragging", () => {
     expect(moveIds(["a", "b", "c", "d"], ["c", "d"], 1)).toEqual(["a", "c", "d", "b"]);
   });
 });
+
+describe("Done: one row per work order", () => {
+  // PSVs: a folder of relief valves, each its own WO. E-12: one WO on every step.
+  const psvs = mk({ id: "psvs", name: "PSVs" });
+  const psv = (id: string, wo: string) => mk({ id, name: `Pull ${id}`, parentId: "psvs", workOrderRef: wo, status: "completed", percentComplete: 100, actualAt: at("2026-10-27", "10:00"), plannedStartAt: at("2026-10-27", "08:00"), plannedAt: at("2026-10-27", "10:00") });
+  const e12 = mk({ id: "e12", name: "E-12 Exchanger" });
+  const e12s = (id: string) => mk({ id, name: `Step ${id}`, parentId: "e12", workOrderRef: "301502", status: "completed", percentComplete: 100, actualAt: at("2026-10-27", "10:00"), plannedStartAt: at("2026-10-27", "08:00"), plannedAt: at("2026-10-27", "10:00") });
+  const list = [psvs, psv("PSV-1", "310001"), psv("PSV-2", "310002"), psv("PSV-3", "310003"), e12, e12s("x"), e12s("y")];
+  const r = buildShiftReport({ milestones: list, tz: LA, times, shift: day, now: day.end, startPct: new Map(list.map((m) => [m.id!, 0])) });
+  const rows = doneByTask(r, turnoverPlan(r, () => false), f);
+  it("each PSV its own row, under the folder's name; E-12 one row", () => {
+    expect(rows).toHaveLength(4);
+    const psvRows = rows.filter((x) => x.folder === "PSVs");
+    expect(psvRows.map((x) => x.task).sort()).toEqual(["Pull PSV-1", "Pull PSV-2", "Pull PSV-3"]);
+    expect(psvRows.map((x) => x.wo).sort()).toEqual(["310001", "310002", "310003"]);
+    const e = rows.find((x) => !x.folder);
+    expect(e?.task).toBe("E-12 Exchanger");
+    expect(e?.head).toBe("2 done");
+  });
+});

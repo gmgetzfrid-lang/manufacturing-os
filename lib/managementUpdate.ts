@@ -12,7 +12,8 @@ import { capacityOf, askedResult } from "@/lib/shiftHandover";
 import { turnoverPlan, nextOf, askedLine, vsPlan, doneByTask, shareOf, pathNote, competition, type TableOrder } from "@/lib/turnoverPlan";
 import { behindWhyBlocks, type BehindWhy } from "@/lib/behindWhy";
 import { discoveryOf, discoverySummary, discoveryStepLine, impactLine, ADDED, kindOf as addedKind, addedTitle, type Discovery } from "@/lib/discovery";
-import { type PullCrew, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
+import { type PullCrew, type Pace, type ShiftPlan, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
+import { planSetText, offPlanText, planCheckText } from "@/lib/nightPlan";
 import { rankHazards, type HazardJobInput, type HazardKind } from "@/lib/safetyMoment";
 import { safetyBrief, talkSources, projectFacts, RISKS_RANKED, type ProjectBase } from "@/lib/safetyTalk";
 import type { ExportBlock, ExportCell, ExportSection } from "@/lib/reportExport";
@@ -33,6 +34,8 @@ export interface UpdateFormat {
 }
 
 export interface UpdateLookups {
+  /** The next shift's plan, set by hand (lib/nightPlan): who set it, when. */
+  plan?: ShiftPlan;
   /** A main task's rolled-up % complete. */
   pctOf: (id: string) => number | undefined;
   /** A main task's planned finish (its last step's finish). */
@@ -220,7 +223,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
         title: "", lines: [],
       },
       // Why: the hours behind by cause, and what holds each chain up.
-      ...(look.why && look.why.total >= 0.5 ? behindWhyBlocks(look.why, f) : []),
+      ...(look.why && look.why.total >= 0.5 ? behindWhyBlocks(look.why, f, 8, overall.standing === "behind") : []),
     ],
   });
 
@@ -229,7 +232,8 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   const byTaskDone = doneByTask(report, plan, t, (id) => note(id), { timeOf: look.timeOf, taskPct: look.taskPct, whyOf: look.whyOf, taskSteps: (id) => { const s = look.stepsOf?.(id); return s ? { done: s.filter((x) => x.percent >= 100).length, total: s.length } : undefined; } });
   const pctText = (p?: { pct: number; plan?: number }) => (p ? `task ${p.pct}% done${p.plan != null ? ` · plan ${p.plan}%` : ""}` : undefined);
   const taskSub = (r: ShiftRow) => (r.parentId ? pctText(look.taskPct?.(r.parentId)) : undefined);
-  if (doneRows.length || asked.length) {
+  const checkText = planCheckText(report);
+  if (doneRows.length || asked.length || checkText) {
     out.push({
       id: "done", title: `Done - ${shiftName(shift)} ${f.D(shift.start)}`,
       sub: [`${plan.done.length} finished`, plan.moved.length ? `${plan.moved.length} moved forward` : null].filter(Boolean).join(" · "),
@@ -238,7 +242,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
           k: "table", head: ["Task", "WO", "Last done · In progress", "Who", "What it means", "vs plan"], align: ["left", "left", "left", "left", "left", "right"],
           textLabels: ["", "WO", "", "by", "", "vs plan"], nowrap: [1, 5],
           rows: byTaskDone.map((x) => [
-            { t: x.task, bold: true, ...(x.taskPct || x.count || x.critical ? { sub: [...(x.critical ? [{ t: "Critical path", tone: "rose" as const }] : []), ...(x.taskPct || x.count ? [{ t: [x.taskPct ? pctText(x.taskPct)! : null, x.count ?? null].filter(Boolean).join(" · ") }] : [])] } : {}) }, x.woShown,
+            { t: x.folder ? `${x.folder}: ${x.task}` : x.task, bold: true, ...(x.taskPct || x.count || x.critical ? { sub: [...(x.critical ? [{ t: "Critical path", tone: "rose" as const }] : []), ...(x.taskPct || x.count ? [{ t: [x.taskPct ? pctText(x.taskPct)!.replace(/^task /, x.folder ? "" : "task ") : null, x.count ?? null].filter(Boolean).join(" · ") }] : [])] } : {}) }, x.woShown,
             // The step done last and the one still going, labeled: its time when
             // times are on, its WO when the task has several, its own comment.
             (() => {
@@ -255,6 +259,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
             { t: x.vs.text, tone: x.vs.tone, bold: true }] as ExportCell[]),
         } as ExportBlock] : []),
         ...(asked.length ? [{ k: "note", text: `Asked to try last turnover: ${askedLine(asked, askedResult)}` } as ExportBlock] : []),
+        ...(checkText ? [{ k: "note", text: checkText } as ExportBlock] : []),
       ],
     });
   }
@@ -330,7 +335,9 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
           k: "table", head: ["Task", "Step", "WO", "Who", "When", "Done", "Goal", "vs plan"], align: ["left", "left", "left", "left", "left", "right", "right", "right"],
           textLabels: ["", "", "WO", "by", "", "done", "goal", "vs plan"], nowrap: [2, 5, 6, 7],
           rows: [...byTask(shown, (r) => [stepCell(r), wo(r), who(r), planCell(r), `${r.percent}%`, goalCell(r), vsCell(r)], taskSub, !!look.order?.next?.length), ...more(tonight.length - shown.length, 8)],
-        } as ExportBlock : { k: "note", text: `Nothing planned for the ${shiftName(next).toLowerCase()}.` } as ExportBlock,
+        } as ExportBlock : { k: "note", text: report.goals.byPlan ? "Nothing left open on the plan." : `Nothing planned for the ${shiftName(next).toLowerCase()}.` } as ExportBlock,
+        ...(report.goals.byPlan && planSetText(look.plan, f) ? [{ k: "note", text: planSetText(look.plan, f)! } as ExportBlock] : []),
+        ...(offPlanText(report) ? [{ k: "note", text: offPlanText(report)! } as ExportBlock] : []),
         ...(tried.length ? [{ k: "note", text: `Could try if there's time: ${tried.length} step${tried.length === 1 ? "" : "s"}, ${f.hrs(capa.used)}${capa.hours > 0 && ps ? ` of ${f.hrs(capa.hours)}${capa.over ? " - over" : ""} (${ps.crew ? `${ps.crew}, ` : ""}${ps.hands} × ${Math.min(ps.hours, shiftHrs)} h)` : ""}.`, tone: "amber" } as ExportBlock] : []),
         ...(finishing.length ? [{ k: "note", text: `Planned to finish on the ${shiftName(next).toLowerCase()}: ${finishing.slice(0, 4).map((x) => `${x.name} (${f.T(x.at)})`).join(", ")}${finishing.length > 4 ? ` + ${finishing.length - 4} more` : ""}.` } as ExportBlock] : []),
       ],

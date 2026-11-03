@@ -188,6 +188,8 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
                 if (b.kind === "started") return `Started ${fmt(b.start)}${planned ? ` · planned ${planned}` : ""}`;
                 return planned;
               })()}{m.status !== "completed" ? ` · plan ${plan}% by now` : ""}{m.workOrderRef && wos.length > 1 ? ` · WO ${m.workOrderRef}` : ""}
+              {/* Who it's on: a blank one stands out (a name taken off by mistake). */}
+              {m.responsibleParty?.trim() ? <> · {m.responsibleParty.trim()}</> : <> · <span className="font-semibold text-amber-700 dark:text-amber-400">no crew named</span></>}
             </span>
             {held && (
               <span className="block text-[11px] font-semibold text-amber-800 dark:text-amber-300">
@@ -216,7 +218,23 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
       {!whole && header}
       {here.main.length === 0
         ? <div className="px-3 py-3 text-[11px] text-[var(--color-text-faint)]">Nothing under this task is scheduled on {dayLabel}.</div>
-        : <ul>{here.main.map((m) => stepRow(m))}</ul>}
+        : whole ? (
+          // The whole work order: its steps under the day each is planned,
+          // the days ahead in view, today marked.
+          <ul>{here.main.map((m, i) => {
+            const d = dayOf(startMsOf(m), tz), prev = i > 0 ? dayOf(startMsOf(here.main[i - 1]), tz) : null;
+            return (
+              <React.Fragment key={m.id ?? m.name}>
+                {d !== prev && Number.isFinite(startMsOf(m)) && (
+                  <li className={`px-3 pt-2 pb-0.5 text-[10.5px] font-black uppercase tracking-wider ${d === dayKey ? "text-[var(--color-accent)]" : "text-[var(--color-text-muted)]"}`}>
+                    {fmtInTz(startMsOf(m), tz, { weekday: "short", month: "short", day: "numeric" })}{d === dayKey ? " · today" : ""}
+                  </li>
+                )}
+                {stepRow(m)}
+              </React.Fragment>
+            );
+          })}</ul>
+        ) : <ul>{here.main.map((m) => stepRow(m))}</ul>}
       {here.rest.length > 0 && (
         <div className="border-t border-[var(--color-border)]">
           <button type="button" onClick={() => setShowOthers((v) => !v)} className="w-full px-3 py-1.5 text-left text-[10.5px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-1">

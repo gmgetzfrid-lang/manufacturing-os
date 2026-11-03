@@ -1,7 +1,7 @@
 // updatePrint - the shift turnover, kick-off or close-out as it goes out:
 // the sections chosen in the Email / Print box (remembered on this device),
 // as an email body or a printed page (on the letterhead when the project
-// has one). Today's Email / Print and Reports print the same thing.
+// has one). The Shift tab's Email / Print and Reports print the same thing.
 
 import { toEmailHtml, toPlainText, type ExportDoc } from "@/lib/reportExport";
 import { letterheadDocument, type Letterhead } from "@/lib/letterhead";

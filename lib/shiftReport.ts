@@ -654,6 +654,9 @@ export interface ShiftReport {
     /** The shift's start state was known (progress log), so "this shift"
      *  is exact as entered; otherwise ahead = any progress on later work. */
     knownStart: boolean;
+    /** The plan the shift was given, and how it went: done, moved, not
+     *  touched, and what it did that wasn't on it. */
+    plan?: { planned: number; done: ShiftRow[]; moved: ShiftRow[]; untouched: ShiftRow[]; extra: ShiftRow[] };
   };
   goals: {
     /** MUST DO — everything the next shift should work to hold the plan:
@@ -685,6 +688,10 @@ export interface ShiftReport {
     pulled: ShiftRow[];
     /** Pulled forward, then blocked or put on hold since: off the list. */
     pulledHeld: ShiftRow[];
+    /** The list is a plan set by hand (input.plan). */
+    byPlan: boolean;
+    /** With a plan: what the schedule had for the shift that isn't on it. */
+    offPlan: ShiftRow[];
     /** STRETCH — work planned for the following shifts that is ready to
      *  pull forward (its predecessors done or on the must-do list), in
      *  schedule order. Doing it banks time or claws back a deficit. */
@@ -732,7 +739,16 @@ export interface BuildShiftReportInput {
   /** Each step's % at the start of the shift (from the progress log), to
    *  say what progress was made on it during the shift. Absent: unknown. */
   startPct?: Map<string, number>;
+  /** The next shift's plan, set by hand (lib/shiftPlan): its list is the
+   *  shift's list, in place of the schedule's. */
+  plan?: ShiftPlan;
+  /** The plan the shift under review was given: checked against what it did. */
+  reviewPlan?: ShiftPlan;
 }
+
+/** A shift's work, picked by hand at the turnover: the steps, and the %
+ *  each is expected to reach by the end of the shift when one was said. */
+export interface ShiftPlan { ids: string[]; expect?: Record<string, number>; setAt?: number; by?: string | null }
 
 /** How ready a step is to be pulled forward onto the next shift. */
 export type Readiness =
@@ -974,12 +990,24 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   const carriedAll = carryOver.filter((r) => !held(r.leaf)).map((r) => ({ ...rowFor(r.leaf, next), carryOver: true }))
     .sort((a, b) => Number(b.critical) - Number(a.critical) || cmp(a, b));
   const goalsCarry = carriedAll.filter(forNext);
-  const otherShift = carriedAll.filter((r) => !forNext(r));
+  // A plan set by hand: its steps are the shift's list, whatever crews
+  // the schedule says are on; the schedule's own list for the shift is kept
+  // apart (offPlan), not handed to the shift.
+  const planIds = input.plan ? new Set(input.plan.ids) : null;
+  const onPlan = (id: string | undefined) => !!planIds && !!id && planIds.has(id);
+  const otherShift = carriedAll.filter((r) => !forNext(r) && !onPlan(r.leaf.id));
   // The critical path leads the next crew's list; then carried-over work,
   // then the rest (each in time order).
-  const all = [...goalsCarry, ...planned].sort((a, b) => Number(b.critical) - Number(a.critical));
+  const scheduleAll = [...goalsCarry, ...planned].sort((a, b) => Number(b.critical) - Number(a.critical));
+  const carriedIds = new Set(carriedAll.map((r) => r.leaf.id ?? ""));
+  const all = !input.plan ? scheduleAll : input.plan.ids
+    .map((id) => byId.get(id))
+    .filter((m): m is Milestone => !!m && isLeaf(m) && !DONE({ status: m.status, percent: pctOf(m) }))
+    .map((m) => { const r = rowFor(m, next); if (m.id && carriedIds.has(m.id)) r.carryOver = true; return r; })
+    .sort((a, b) => Number(b.critical) - Number(a.critical) || cmp(a, b));
+  const offPlan = planIds ? scheduleAll.filter((r) => !onPlan(r.leaf.id)) : [];
   const movedOff = leaves
-    .filter((m) => !held(m) && !DONE({ status: m.status, percent: pctOf(m) }) && !otherShift.some((r) => r.leaf.id === m.id))
+    .filter((m) => !held(m) && !DONE({ status: m.status, percent: pctOf(m) }) && !otherShift.some((r) => r.leaf.id === m.id) && !onPlan(m.id))
     .map((m) => rowFor(m, next))
     .filter((r) => r.reflowed && !forNext(r) && r.start < next.end && r.finish > next.start)
     .sort(cmp);
@@ -1004,12 +1032,19 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   };
   for (const r of all) {
     r.hoursNext = hoursIn(r);
+    // On a plan set by hand outside its planned hours (day work put on
+    // nights, a step started early): as far as one shift's hours take it.
+    const outside = !!input.plan && !r.carryOver && (r.hoursNext ?? 0) <= 0;
+    if (outside) r.hoursNext = Math.min(r.hoursLeft, shiftHours);
     // Past due: finish it, or as far as one shift's hours take it. Planned:
     // where the current plan has it at the shift's end.
-    const goal = r.carryOver
+    const goal = r.carryOver || outside
       ? (r.hours > 0 ? r.percent + ((r.hoursNext ?? 0) / r.hours) * 100 : 100)
       : plannedFraction(r.leaf, next.end, tz, times) * 100;
     r.goalPct = Math.max(r.percent, Math.min(100, Math.round(goal)));
+    // Expected by the end of the shift, as said when the plan was set.
+    const said = r.leaf.id ? input.plan?.expect?.[r.leaf.id] : undefined;
+    if (said != null && Number.isFinite(said)) r.goalPct = Math.max(r.percent, Math.min(100, Math.round(said)));
   }
   const mustDoHours = Math.round(all.reduce((acc, r) => acc + (r.hoursNext ?? 0), 0) * 10) / 10;
 
@@ -1055,7 +1090,8 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     .filter((r) => r.crewFinish > next.start && r.crewStart < input.lookAheadUntil!)
     .map((row) => ({ row, ...readinessOf(row.leaf) }))
     .sort((a, b) => RANK[a.readiness] - RANK[b.readiness] || Number(b.row.critical) - Number(a.row.critical) || a.row.crewStart - b.row.crewStart || cmp(a.row, b.row));
-  const pullSet = new Set(input.pullIds ?? []);
+  // With a plan, it is the shift's list: nothing more pulled in beside it.
+  const pullSet = new Set(planIds ? [] : input.pullIds ?? []);
   const pulledHeld = pullSet.size === 0 ? [] : leaves
     .filter((m) => m.id && pullSet.has(m.id) && !onLists.has(m.id) && !doneIds.has(m.id) && held(m))
     .map((m) => rowFor(m, next));
@@ -1073,6 +1109,22 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     let acc = 0;
     for (let i = 0; i < stretch.length; i++) { acc += stretch[i].hoursLeft; if (acc >= gapHours) { backOnTrackAt = i + 1; break; } }
   }
+
+  // ── The plan the shift was given, against what it did ──
+  const planCheck = (() => {
+    const rp = input.reviewPlan;
+    if (!rp) return undefined;
+    const ids = new Set(rp.ids);
+    const doneSet = new Set(done.map((r) => r.leaf.id ?? ""));
+    const moved = (r: ShiftRow) => knownStart ? r.pctStart != null && r.percent > r.pctStart : r.percent > 0 || r.status === "in_progress";
+    const rowsOf = rp.ids.map((id) => byId.get(id)).filter((m): m is Milestone => !!m && isLeaf(m)).map((m) => rowFor(m, shift));
+    const planDone = rowsOf.filter((r) => doneSet.has(r.leaf.id ?? ""));
+    const planMoved = rowsOf.filter((r) => !doneSet.has(r.leaf.id ?? "") && moved(r));
+    const untouched = rowsOf.filter((r) => !doneSet.has(r.leaf.id ?? "") && !moved(r));
+    // Done or moved on the shift, not on its plan: the crew went another way.
+    const extra = [...done, ...(knownStart ? progressed : [])].filter((r, i, a) => !ids.has(r.leaf.id ?? "") && a.findIndex((x) => x.leaf.id === r.leaf.id) === i);
+    return { planned: rowsOf.length, done: planDone, moved: planMoved, untouched, extra };
+  })();
 
   // ── 4. Blocked / on hold ─────────────────────────────────────────
   const blocked = leaves
@@ -1093,8 +1145,8 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       planBasis: baselined > 0 ? "baseline" : "current",
       baselineSetAt: baselined > 0 ? baselineSetAt : null,
     },
-    review: { scheduled, done, inProgress, notStarted, carryOver, ahead, progressed, knownStart },
-    goals: { all, carryOver: goalsCarry, planned, critical, mustDoHours, otherShift, movedOff, paused, stretch, gapHours, backOnTrackAt, lookAhead, pulled, pulledHeld },
+    review: { scheduled, done, inProgress, notStarted, carryOver, ahead, progressed, knownStart, ...(planCheck ? { plan: planCheck } : {}) },
+    goals: { all, carryOver: goalsCarry, planned, critical, mustDoHours, otherShift, movedOff, paused, stretch, gapHours, backOnTrackAt, lookAhead, pulled, pulledHeld, byPlan: !!planIds, offPlan },
     blocked,
   };
 }
@@ -1162,12 +1214,17 @@ export function filterShiftReport(report: ShiftReport, who: string | ((r: ShiftR
       scheduled: keep(review.scheduled), done: keep(review.done), inProgress: keep(review.inProgress),
       notStarted: keep(review.notStarted), carryOver: keep(review.carryOver),
       ahead: keep(review.ahead), progressed: keep(review.progressed), knownStart: review.knownStart,
+      ...(review.plan ? { plan: (() => {
+        const p = review.plan!;
+        const done = keep(p.done), moved = keep(p.moved), untouched = keep(p.untouched);
+        return { planned: done.length + moved.length + untouched.length, done, moved, untouched, extra: keep(p.extra) };
+      })() } : {}),
     },
     goals: {
       ...goals,
       all, carryOver: keep(goals.carryOver), planned: keep(goals.planned), critical: keep(goals.critical),
       mustDoHours: Math.round(all.reduce((a, r) => a + (r.hoursNext ?? 0), 0) * 10) / 10,
-      otherShift: keep(goals.otherShift), movedOff: keep(goals.movedOff), paused: keep(goals.paused), stretch: keep(goals.stretch),
+      otherShift: keep(goals.otherShift), movedOff: keep(goals.movedOff), paused: keep(goals.paused), stretch: keep(goals.stretch), offPlan: keep(goals.offPlan),
       // Pulled work belongs to the meeting's extra crew, not the step's owner:
       // the view decides what to show (ShiftReportView).
       lookAhead: goals.lookAhead, pulled: goals.pulled, pulledHeld: goals.pulledHeld,

@@ -441,7 +441,7 @@ export default function ProjectDetailPage() {
               <ClipboardList className="w-3.5 h-3.5" /> Plan
             </TabButton>
             <TabButton active={tab === "today"} onClick={() => setTab("today")} main>
-              <Sun className="w-3.5 h-3.5" /> Today
+              <Sun className="w-3.5 h-3.5" /> Shift
             </TabButton>
             <TabButton active={tab === "work"} onClick={() => setTab("work")} main>
               <Flag className="w-3.5 h-3.5" /> Work
@@ -471,7 +471,7 @@ export default function ProjectDetailPage() {
             <div className="ml-1 pb-2">
               <HelpTooltip>
                 <b>Plan</b> - the schedule as a list: import it (P6, MS Project), set it up, add to it.
-                <b className="block mt-1">Today</b> - the shift: meetings, hour by hour, overtime, the turnover, Lock report. Any date.
+                <b className="block mt-1">Shift</b> - the shift ending and the next one: meetings, hour by hour, overtime, the turnover, the night plan, Lock report. Any date.
                 <b className="block mt-1">Work</b> - the timeline, calendar and work orders.
                 <b className="block mt-1">Reports</b> - every report, and the field forms.
                 <b className="block mt-1">Documents</b> - every checkout attached to this project (active + released).

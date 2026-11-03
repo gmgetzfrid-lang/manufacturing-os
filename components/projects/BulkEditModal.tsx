@@ -2,7 +2,9 @@
 
 // BulkEditModal — change a name on every task at once, or set a value on
 // the tasks you selected. Shows exactly which tasks change (before → after)
-// before anything is written.
+// before anything is written. Leaving a name off is its own choice, asked
+// again before it's done: an empty "with" box never erases a name (it
+// once took the crew off 100 steps).
 
 import React, { useMemo, useState } from "react";
 import { Replace, Loader2, ArrowRight, Search } from "lucide-react";
@@ -10,6 +12,7 @@ import type { Milestone } from "@/types/schema";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { BULK_FIELDS, valuesIn, planReplace, planSet, valueLabel, type BulkField } from "@/lib/bulkEdit";
 import { applyBulkFieldChange } from "@/lib/milestones";
+import { appConfirm } from "@/components/providers/DialogProvider";
 
 export default function BulkEditModal({ milestones, selectedIds, startMode, orgId, projectId, userId, userEmail, onClose, onDone }: {
   milestones: Milestone[];
@@ -25,24 +28,37 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
   const [field, setField] = useState<BulkField>(BULK_FIELDS[0]);
   const [from, setFrom] = useState<string | null>(null);
   const [to, setTo] = useState("");
+  // Take the name off (no new one): ticked on purpose, never by leaving "with" empty.
+  const [clear, setClear] = useState(false);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const values = useMemo(() => valuesIn(milestones, field), [milestones, field]);
   const shownValues = values.filter((v) => !query || v.value.toLowerCase().includes(query.toLowerCase()));
-  const plan = useMemo(() => mode === "replace"
-    ? (from ? planReplace(milestones, field, from, to) : [])
-    : planSet(milestones, field, selectedIds, to),
-  [mode, from, to, milestones, field, selectedIds]);
+  // Nothing changes until there's a new value, or "take it off" is ticked.
+  // A fixed-choice field (crew, critical path) always has one picked.
+  const ready = !!field.options || clear || to.trim() !== "";
+  const plan = useMemo(() => !ready ? []
+    : mode === "replace"
+      ? (from ? planReplace(milestones, field, from, clear ? "" : to) : [])
+      : planSet(milestones, field, selectedIds, clear ? "" : to),
+  [ready, mode, from, to, clear, milestones, field, selectedIds]);
+  const clears = plan.filter((c) => !c.after).length;
 
   const apply = async () => {
     if (plan.length === 0) return;
+    // Taking a name off many tasks: said plainly, and asked once more.
+    if (clears > 0 && !field.options && !(await appConfirm({
+      title: `Leave ${clears} task${clears === 1 ? "" : "s"} with no ${field.label.split(" - ")[0].toLowerCase()} name?`,
+      message: mode === "replace" ? `“${from}” comes off ${clears === 1 ? "it" : "them"} and nothing goes in its place. To rename it instead, type the new name in "With".` : "The value is cleared on them. To set a value instead, type it in.",
+      tone: "danger", confirmLabel: "Yes, leave them blank",
+    }))) return;
     setBusy(true); setError(null);
     try {
       await applyBulkFieldChange({
         orgId, projectId, field: field.key, changes: plan.map((c) => ({ id: c.id, after: c.after })),
-        summary: mode === "replace" ? { mode, from: from ?? "", to: to.trim() || null } : { mode, to: to.trim() || null },
+        summary: mode === "replace" ? { mode, from: from ?? "", to: clear ? null : to.trim() || null } : { mode, to: clear ? null : to.trim() || null },
         actorUserId: userId, actorUserEmail: userEmail,
       });
       const key = field.key;
@@ -56,7 +72,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
 
   const pickField = (key: string) => {
     const f = BULK_FIELDS.find((x) => x.key === key) ?? BULK_FIELDS[0];
-    setField(f); setFrom(null); setTo(""); setQuery("");
+    setField(f); setFrom(null); setTo(""); setQuery(""); setClear(false);
     // A fixed-choice field (the crew) is set on the selection.
     if (f.options && selectedIds.size > 0) setMode("set");
   };
@@ -88,7 +104,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
         )}
         {mode === "replace" && !field.options && (
           <div>
-            <span className="block text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">Replace</span>
+            <span className="block text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">1. Pick the name to replace</span>
             {values.length === 0 ? (
               <p className="text-[12px] text-[var(--color-text-muted)]">No task has this field filled in.</p>
             ) : (
@@ -96,13 +112,13 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
                 {values.length > 8 && (
                   <div className="relative mb-1.5">
                     <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
-                    <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find a name…" className={`${inp} h-8 pl-8 text-xs`} />
+                    <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Narrow this list…" aria-label="Narrow the list of names" className={`${inp} h-8 pl-8 text-xs`} />
                   </div>
                 )}
                 <ul className="max-h-44 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
                   {shownValues.map((v) => (
                     <li key={v.value}>
-                      <button onClick={() => setFrom(v.value)}
+                      <button onClick={() => { setFrom(v.value); setClear(false); }}
                         className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-[13px] ${from === v.value ? "bg-[var(--color-accent-soft)] font-bold text-[var(--color-text)]" : "text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                         <span className="flex-1 truncate">{v.value}</span>
                         <span className="shrink-0 text-[11px] text-[var(--color-text-muted)]">{v.count} task{v.count === 1 ? "" : "s"}</span>
@@ -124,13 +140,21 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
           </label>
         )}
         {(mode === "set" || from) && !field.options && (
-          <label className="block">
-            <span className="block text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
-              {mode === "replace" ? <>With <span className="normal-case font-semibold">(leave blank to remove &ldquo;{from}&rdquo;)</span></> : "Set to (blank clears it)"}
-            </span>
-            <input value={to} onChange={(e) => setTo(e.target.value)} autoFocus list="bulk-values" placeholder={mode === "replace" ? "New name" : "Value"} className={inp} />
-            <datalist id="bulk-values">{values.map((v) => <option key={v.value} value={v.value} />)}</datalist>
-          </label>
+          <div className="space-y-1.5">
+            <label className="block">
+              <span className="block text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+                {mode === "replace" ? <>2. Replace &ldquo;<span className="normal-case">{from}</span>&rdquo; with</> : "Set to"}
+              </span>
+              <input value={to} onChange={(e) => { setTo(e.target.value); if (e.target.value.trim()) setClear(false); }} autoFocus list="bulk-values" disabled={clear}
+                placeholder={mode === "replace" ? "The new name (pick one or type it)" : "The value"} className={`${inp} disabled:opacity-50`} />
+              <datalist id="bulk-values">{values.filter((v) => v.value !== from).map((v) => <option key={v.value} value={v.value} />)}</datalist>
+            </label>
+            <label className="inline-flex items-center gap-2 text-[12px] text-[var(--color-text-muted)] cursor-pointer select-none">
+              <input type="checkbox" checked={clear} onChange={(e) => { setClear(e.target.checked); if (e.target.checked) setTo(""); }} className="w-4 h-4 accent-rose-600" />
+              {mode === "replace" ? <>Take &ldquo;{from}&rdquo; off and leave no name</> : "Clear it on the selected tasks"}
+            </label>
+            {!ready && <p className="text-[11.5px] text-[var(--color-text-muted)]">Nothing changes until you type the new name{mode === "replace" ? ", or tick the box to take it off" : ""}.</p>}
+          </div>
         )}
 
         {plan.length > 0 && (
@@ -156,7 +180,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
         <button onClick={() => void apply()} disabled={busy || plan.length === 0}
           className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Replace className="w-4 h-4" />}
-          {plan.length ? `Change ${plan.length} task${plan.length === 1 ? "" : "s"}` : "Change"}
+          {plan.length ? (clears === plan.length && !field.options ? `Take it off ${plan.length} task${plan.length === 1 ? "" : "s"}` : `Change ${plan.length} task${plan.length === 1 ? "" : "s"}`) : "Change"}
         </button>
       </ModalFooter>
     </Modal>

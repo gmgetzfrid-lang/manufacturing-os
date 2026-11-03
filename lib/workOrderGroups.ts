@@ -40,6 +40,8 @@ export interface WorkOrder {
   wo: string | null;
   /** The task (or single step) the WO is on. */
   owner: Milestone;
+  /** Other equipment on the same WO number. */
+  also?: Milestone[];
   steps: Milestone[];
   crews: string[];
   planStart: number; planFinish: number;
@@ -54,7 +56,7 @@ export interface WorkOrder {
 
 /** Each step's work order: its own, else the nearest group above with
  *  one; with none, the task it's under. Keyed `${wo}:${owner id}`. */
-export function workOrderGroupsOf(milestones: Milestone[], childrenByParent: Map<string, Milestone[]>): Map<string, { wo: string | null; owner: Milestone; steps: Milestone[] }> {
+export function workOrderGroupsOf(milestones: Milestone[], childrenByParent: Map<string, Milestone[]>): Map<string, { wo: string | null; owner: Milestone; steps: Milestone[]; also?: Milestone[] }> {
   const byId = new Map<string, Milestone>();
   for (const m of milestones) if (m.id) byId.set(m.id, m);
   const groups = new Map<string, { wo: string | null; owner: Milestone; steps: Milestone[] }>();
@@ -75,7 +77,40 @@ export function workOrderGroupsOf(milestones: Milestone[], childrenByParent: Map
     g.steps.push(m);
     groups.set(key, g);
   }
-  return groups;
+  return byNumber(groups, byId);
+}
+
+/** One work order per WO number. Steps with no WO under a task whose
+ *  sub-tasks all carry one WO number are that work order's (the Pulsation
+ *  Dampeners' welding steps belong with the re-installs on WO 304528); and
+ *  one WO number on two pieces of equipment is one work order, both named. */
+function byNumber(groups: Map<string, { wo: string | null; owner: Milestone; steps: Milestone[] }>, byId: Map<string, Milestone>): Map<string, { wo: string | null; owner: Milestone; steps: Milestone[]; also?: Milestone[] }> {
+  const above = (m: Milestone): Set<string> => {
+    const out = new Set<string>();
+    for (let p = m.parentId ? byId.get(m.parentId) : undefined, g = 0; p?.id && g < 60 && !out.has(p.id); p = p.parentId ? byId.get(p.parentId) : undefined, g++) out.add(p.id);
+    return out;
+  };
+  // Each no-WO task: the WO numbers found on the work orders under it.
+  const under = new Map<string, Set<string>>();
+  for (const g of groups.values()) {
+    if (!g.wo) continue;
+    for (const id of above(g.owner)) under.set(id, (under.get(id) ?? new Set()).add(g.wo));
+  }
+  const out = new Map<string, { wo: string | null; owner: Milestone; steps: Milestone[]; also?: Milestone[] }>();
+  for (const [key, g] of groups) {
+    let wo = g.wo;
+    if (!wo && g.owner.id) { const ws = under.get(g.owner.id); if (ws?.size === 1) wo = [...ws][0]; }
+    const k = wo ? `wo:${wo}` : key;
+    const cur = out.get(k);
+    if (!cur) { out.set(k, { wo, owner: g.owner, steps: [...g.steps] }); continue; }
+    cur.steps.push(...g.steps);
+    // The work order is named for its top task (the one others sit under).
+    const [top, other] = above(g.owner).has(cur.owner.id ?? "") ? [cur.owner, g.owner] : above(cur.owner).has(g.owner.id ?? "") ? [g.owner, cur.owner] : [cur.owner, g.owner];
+    cur.owner = top;
+    // Another piece of equipment on the same number: named as well.
+    if (!above(other).has(top.id ?? "") && other.id !== top.id) cur.also = [...(cur.also ?? []), other];
+  }
+  return out;
 }
 
 /** The work orders, earliest planned first. */
@@ -106,12 +141,12 @@ export function groupWorkOrders(milestones: Milestone[], childrenByParent: Map<s
       return { kind, n: xs.length, h: Math.round(xs.reduce((a, s) => a + (s.durationHours != null && s.durationHours > 0 ? s.durationHours : workHours(s, tz)), 0) * 10) / 10 };
     }).filter((x) => x.n > 0);
     out.push({
-      key, wo: g.wo, owner: g.owner, steps, crews,
+      key, wo: g.wo, owner: g.owner, ...(g.also?.length ? { also: g.also } : {}), steps, crews,
       planStart, planFinish, actStart, actFinish: all ? actFinish : NaN,
       pct: Math.round(pSum / wSum), plan: Math.round(planSum / wSum), hours: Math.round(hours * 10) / 10,
       standing: all ? "done" : held ? "held" : started ? "in_progress" : "not_started", done,
       added,
-      find: [g.wo, g.owner.name, ...crews, ...steps.flatMap((s) => [s.name, s.description, woOf(s), discoveryText(s)]), ...added.map((x) => ADDED[x.kind].lower)].filter(Boolean).join(" ").toLowerCase(),
+      find: [g.wo, g.owner.name, ...(g.also ?? []).map((x) => x.name), ...crews, ...steps.flatMap((s) => [s.name, s.description, woOf(s), discoveryText(s)]), ...added.map((x) => ADDED[x.kind].lower)].filter(Boolean).join(" ").toLowerCase(),
     });
   }
   return out.sort((a, b) => a.planStart - b.planStart || (a.wo ?? "~").localeCompare(b.wo ?? "~"));

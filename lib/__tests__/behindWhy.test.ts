@@ -1,7 +1,7 @@
 // Why the job is behind: each step's hours traced to what holds it up.
 
 import { describe, it, expect } from "vitest";
-import { behindWhy, behindWhyBlocks, chainText } from "@/lib/behindWhy";
+import { behindWhy, behindWhyBlocks, chainText, chainLabel, labelHours, whyTitle } from "@/lib/behindWhy";
 import type { GapDriver } from "@/lib/shiftReport";
 import type { Milestone } from "@/types/schema";
 
@@ -105,5 +105,41 @@ describe("why the job is behind", () => {
     const blocks = behindWhyBlocks(w, f);
     expect(blocks[0]).toEqual({ k: "label", text: "Why we're behind - 32 h of work behind plan" });
     expect(blocks[2].k).toBe("table");
+  });
+});
+
+describe("put off, not behind: how each chain reads", () => {
+  // Two steps not started, nothing in their way; one started and slow; one
+  // on the critical path; one held.
+  const ms = [
+    mk({ id: "a", plannedStartAt: h(0), plannedAt: h(10), durationHours: 10 }),
+    mk({ id: "b", plannedStartAt: h(0), plannedAt: h(10), durationHours: 10, status: "in_progress", percentComplete: 20, actualStartAt: h(1) }),
+    mk({ id: "c", plannedStartAt: h(0), plannedAt: h(10), durationHours: 10 }),
+    mk({ id: "d", plannedStartAt: h(0), plannedAt: h(10), durationHours: 10, status: "on_hold", statusReason: "no permit" }),
+  ];
+  const w = behindWhy({ behind: [drv("a", 10), drv("b", 6), drv("c", 4), drv("d", 3)], ahead: 30, milestones: ms, now: at(12), critical: new Set(["c"]) });
+  const lab = (id: string) => chainLabel(w.chains.find((ch) => ch.head.id === id)!);
+  it("not started: put off; started: slower than plan; neither flagged", () => {
+    expect(lab("a")).toEqual({ short: "put off", flag: false });
+    expect(lab("b")).toEqual({ short: "slower than plan", flag: false });
+  });
+  it("on the critical path, or held: flagged", () => {
+    expect(lab("c")).toEqual({ short: "late, critical path", flag: true });
+    expect(lab("d")).toEqual({ short: "on hold", flag: true });
+  });
+  it("hours by how they read, flagged first", () => {
+    expect(labelHours(w).map((x) => x.short)).toEqual(["late, critical path", "on hold", "put off", "slower than plan"]);
+  });
+  it("ahead overall: the line says worked out of order, net, and only the flagged ones are listed", () => {
+    expect(whyTitle(w, false, f.hrs)).toBe("Worked out of order - 30 h done ahead of plan, 23 h put off or slower. Net 7 h ahead.");
+    const blocks = behindWhyBlocks(w, f, 8, false);
+    const table = blocks.find((b) => b.k === "table") as { rows: unknown[][] } | undefined;
+    expect(table?.rows).toHaveLength(2);
+    expect(blocks.some((b) => b.k === "stats")).toBe(false);
+  });
+  it("behind overall: why we're behind, every chain", () => {
+    expect(whyTitle(w, true, f.hrs)).toBe("Why we're behind - 23 h of work behind plan, 30 h ahead elsewhere");
+    const table = behindWhyBlocks(w, f, 8, true).find((b) => b.k === "table") as { rows: unknown[][] };
+    expect(table.rows).toHaveLength(4);
   });
 });

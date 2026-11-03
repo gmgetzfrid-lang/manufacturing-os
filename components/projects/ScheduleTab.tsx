@@ -85,7 +85,7 @@ interface ScheduleTabProps {
   onProjectChanged?: () => void;
   /** Which tab is showing. */
   mode: ScheduleMode;
-  /** Go to another of the tabs (a report opened from Today, import from an empty board). */
+  /** Go to another of the tabs (a report opened from the Shift tab, import from an empty board). */
   onMode: (m: ScheduleMode) => void;
 }
 

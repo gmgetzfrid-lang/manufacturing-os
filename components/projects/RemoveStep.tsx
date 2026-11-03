@@ -1,7 +1,7 @@
 "use client";
 
 // Remove a step, from any view: the step card's Remove (calendar, the day's
-// side bar, Today's report, Work orders) asks the schedule (ExecutionView)
+// side bar, the Shift tab's report, Work orders) asks the schedule (ExecutionView)
 // through the "step:remove" event, which opens this. Two ways off:
 //   Delete  - put in by mistake: gone, with its comments; Undo right after
 //             brings it back.

@@ -4,9 +4,11 @@
 // Crews are set per step, and a schedule file often leaves one blank
 // (UIT-013's "Calibrate Equipment", under steps all done by Maintenance
 // (KE)). Reports and night staffing read the step's crew as: its own; else
-// the work order's (its parent's); else the one crew every other step of
-// that work order names. Two or more different crews there: still unknown —
-// never a guess.
+// the work order's (its parent's); else, when it's the one step of that work
+// order left blank, the one crew every other step names. Two or more
+// different crews there, or several steps blank: still unknown — never a
+// guess (crews taken off many steps at once must not all turn into the one
+// crew still named, as Schultz's steps once turned into Ancon).
 
 import type { Milestone } from "@/types/schema";
 
@@ -23,11 +25,13 @@ export function inheritedCrews(milestones: Milestone[]): Map<string, string> {
     const own = parent?.responsibleParty?.trim();
     if (own) { out.set(m.id, own); continue; }
     const crews = new Map<string, string>();
+    let blank = 0;
     for (const s of kids.get(m.parentId) ?? []) {
+      if (s.id && kids.has(s.id)) continue;
       const c = s.responsibleParty?.trim();
-      if (c) crews.set(c.toLowerCase(), c);
+      if (c) crews.set(c.toLowerCase(), c); else blank++;
     }
-    if (crews.size === 1) out.set(m.id, [...crews.values()][0]);
+    if (crews.size === 1 && blank === 1) out.set(m.id, [...crews.values()][0]);
   }
   return out;
 }

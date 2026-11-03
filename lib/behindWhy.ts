@@ -39,6 +39,8 @@ export interface BehindChain {
    *  finished, how long after the head's planned start — and, when that step
    *  was itself held up, what held it up. */
   pushed?: { by: string; byCause: BehindCause; ready: number; lateH: number; root?: { name: string; cause: BehindCause } };
+  /** A step in it is on the critical path: it moves the finish. */
+  critical?: boolean;
 }
 
 export interface BehindWhy {
@@ -60,6 +62,8 @@ export function behindWhy(input: {
   now: number;
   /** The % the report uses (its live progress), else the step's own. */
   pctOf?: (m: Milestone) => number;
+  /** Steps on the critical path: behind there moves the finish. */
+  critical?: Set<string>;
 }): BehindWhy {
   const { now } = input;
   const live = input.milestones.filter((m) => m.id && !m.cancelledAt);
@@ -182,13 +186,43 @@ export function behindWhy(input: {
     const cause = CAUSE_ORDER.reduce((a, k) => ((c.split[k] ?? 0) > (c.split[a] ?? 0) ? k : a), c.cause);
     // The head first, then the steps waiting on it, biggest first.
     const steps = [...c.steps].sort((a, b) => (a.id === c.head.id ? -1 : b.id === c.head.id ? 1 : b.hours - a.hours)).map((x) => ({ ...x, hours: r1(x.hours) }));
-    return { ...c, cause, hours: r1(c.hours), split, steps };
+    const critical = !!input.critical && (input.critical.has(c.head.id) || c.steps.some((x) => input.critical!.has(x.id)));
+    return { ...c, cause, hours: r1(c.hours), split, steps, ...(critical ? { critical } : {}) };
   }).sort((a, b) => b.hours - a.hours);
   return {
     total: r1(total), ahead: r1(input.ahead),
     byCause: { added: r1(byCause.added), discovery: r1(byCause.discovery), held: r1(byCause.held), own: r1(byCause.own) },
     chains: out,
   };
+}
+
+/** How a chain reads. Work off the critical path that isn't started was
+ *  put off (the field went another way: other work got done instead), or
+ *  is slower than plan once started — said plainly, not flagged. Late work
+ *  on the critical path (it moves the finish) and holds are flagged. */
+export function chainLabel(ch: BehindChain): { short: string; flag: boolean } {
+  if (ch.cause === "own") {
+    if (ch.critical) return { short: "late, critical path", flag: true };
+    return { short: ch.head.started != null || ch.head.percent > 0 ? "slower than plan" : "put off", flag: false };
+  }
+  if (ch.cause === "held") return { short: "on hold", flag: true };
+  return { short: CAUSE_WORD[ch.cause].short, flag: !!ch.critical };
+}
+
+/** The hours by how they read ("put off 20.1 h", "late, critical path 6 h"). */
+export function labelHours(why: BehindWhy): Array<{ short: string; hours: number; flag: boolean }> {
+  const m = new Map<string, { short: string; hours: number; flag: boolean }>();
+  for (const ch of why.chains) { const l = chainLabel(ch); const cur = m.get(l.short) ?? { ...l, hours: 0 }; cur.hours += ch.hours; m.set(l.short, cur); }
+  return [...m.values()].map((x) => ({ ...x, hours: r1(x.hours) })).sort((a, b) => Number(b.flag) - Number(a.flag) || b.hours - a.hours);
+}
+
+/** The section's title line: why we're behind, only when we are; else the
+ *  work done out of order, net. */
+export function whyTitle(why: BehindWhy, behind: boolean, hrs: (h: number) => string): string {
+  const h = (x: number) => hrs(r1(x));
+  if (behind) return `Why we're behind - ${h(why.total)} of work behind plan${why.ahead >= 0.5 ? `, ${h(why.ahead)} ahead elsewhere` : ""}`;
+  const net = why.ahead - why.total;
+  return `Worked out of order - ${h(why.ahead)} done ahead of plan, ${h(why.total)} put off or slower. Net ${net >= 0.5 ? `${h(net)} ahead` : net <= -0.5 ? `${h(-net)} behind` : "even"}.`;
 }
 
 /** A chain in words, for the screen and the email alike. */
@@ -224,13 +258,17 @@ export function chainText(ch: BehindChain, f: { DTs: (ms: number) => string; hrs
 const CAUSE_EXPORT_TONE: Record<BehindCause, Tone> = { discovery: "slate", added: "amber", held: "rose", own: "slate" };
 
 /** The same, as blocks for the emailed update: the causes, then a table of
- *  what holds each chain up (the eight biggest, and how much more). */
-export function behindWhyBlocks(why: BehindWhy, f: { DTs: (ms: number) => string; hrs: (h: number) => string }, max = 8): ExportBlock[] {
+ *  what holds each chain up (the eight biggest, and how much more). Not
+ *  behind overall: the line, and only what's worth a look (critical path,
+ *  holds). */
+export function behindWhyBlocks(why: BehindWhy, f: { DTs: (ms: number) => string; hrs: (h: number) => string }, max = 8, behind = true): ExportBlock[] {
   const h = (x: number) => f.hrs(r1(x));
-  const top = why.chains.slice(0, max), rest = why.chains.slice(max);
+  const list = behind ? why.chains : why.chains.filter((ch) => chainLabel(ch).flag);
+  const top = list.slice(0, max), rest = list.slice(max);
+  if (!behind && !list.length) return [{ k: "label", text: whyTitle(why, false, f.hrs) }];
   return [
-    { k: "label", text: `Why we're behind - ${h(why.total)} of work behind plan${why.ahead >= 0.5 ? `, ${h(why.ahead)} ahead elsewhere` : ""}` },
-    { k: "stats", items: CAUSE_ORDER.filter((k) => why.byCause[k] >= 0.05).map((k) => ({ label: CAUSE_WORD[k].word, value: h(why.byCause[k]), tone: CAUSE_EXPORT_TONE[k] })) },
+    { k: "label", text: whyTitle(why, behind, f.hrs) + (behind ? "" : " Worth a look:") },
+    ...(behind ? [{ k: "stats", items: labelHours(why).map((x) => ({ label: x.short[0].toUpperCase() + x.short.slice(1), value: h(x.hours), tone: (x.flag ? "rose" : "slate") as Tone })) } as ExportBlock] : []),
     {
       k: "table", head: ["Holding it up", "Cause", "Work behind"], align: ["left", "left", "right"], textLabels: ["", "", "behind"], nowrap: [2],
       rows: [
@@ -238,8 +276,8 @@ export function behindWhyBlocks(why: BehindWhy, f: { DTs: (ms: number) => string
           const t = chainText(ch, f);
           return [
             { t: `${t.title} - ${t.state}`, bold: true, sub: [t.facts, t.waiting, t.split].filter((x): x is string => !!x).map((x) => ({ t: x })) },
-            { t: CAUSE_WORD[ch.cause].short, tone: CAUSE_EXPORT_TONE[ch.cause] },
-            { t: h(ch.hours), bold: true, tone: "rose" as const },
+            { t: chainLabel(ch).short, tone: chainLabel(ch).flag ? "rose" as const : CAUSE_EXPORT_TONE[ch.cause] },
+            { t: h(ch.hours), bold: true, tone: chainLabel(ch).flag ? "rose" as const : "slate" as const },
           ];
         }),
         ...(rest.length ? [[{ t: `+ ${rest.length} more`, tone: "muted" as const }, "", h(rest.reduce((a, x) => a + x.hours, 0))]] : []),

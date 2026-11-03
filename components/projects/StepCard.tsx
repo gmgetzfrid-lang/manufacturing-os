@@ -18,6 +18,7 @@ import { discoveryOf, kindOf, ADDED, type AddedKind } from "@/lib/discovery";
 import { ADDED_TONE } from "@/components/projects/DiscoveryTag";
 import PctSlider from "@/components/projects/PctSlider";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
+import { ampmSlip } from "@/lib/ampm";
 import { askRemoveStep } from "@/components/projects/RemoveStep";
 import { newFinding } from "@/components/projects/Findings";
 import { updateMilestoneNote, setProgressTime, setNoteTime, updateDiscoveryRecord, deleteDiscovery, deleteMilestoneNote, undoLastProgress, resetStepProgress, setProgressPercent, removeProgressEntry, AHEAD_MAX_MS } from "@/lib/milestones";
@@ -376,7 +377,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   const [saved, setSaved] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const open = (a: Action) => {
-    setAction(a); setMsg(null); setSaved(null); setNote(""); setWhy(""); setShowWhy(false); setP(null); setAheadAsk(null); aheadOk.current = false;
+    setAction(a); setMsg(null); setSaved(null); setNote(""); setWhy(""); setShowWhy(false); setP(null); setAheadAsk(null); aheadOk.current = false; setAmpmAsk(null); ampmOk.current = false;
     setBy(doer); setByOther(false);
     // Opens on now (entering it as it happens); earlier is a tap away.
     setAtV(a === "edit" ? (Number.isFinite(af) ? toDateTimeInput(af, tz) : "") : toDateTimeInput(Date.now(), tz));
@@ -388,12 +389,23 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   const aheadOk = useRef(false);
   const [aheadAsk, setAheadAsk] = useState<string | null>(null);
   const span = (d: number) => { const m = Math.round(d / 60_000); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`; };
+  // A time on the other crew's shift: AM and PM mixed up? (12:00 AM for
+  // noon reads as midnight.) Asked once, with the other reading a tap away.
+  const ampmOk = useRef(false);
+  const [ampmAsk, setAmpmAsk] = useState<{ says: string; use: string; keep: string; fix: () => void } | null>(null);
+  const slipOf = (t: number, finish = false) => (ampmOk.current ? null : ampmSlip(t, m, tz, times, Date.now(), m.responsibleParty, finish ? finishMsOf(m) : startMsOf(m)));
   const need = (v: string, what: string): number | string => {
     const t = v.length >= 16 ? toMs(v) : NaN;
     if (!Number.isFinite(t)) return `Pick ${what}${v ? " - the time" : ""}.`;
     const ahead = t - Date.now();
     if (ahead > AHEAD_MAX_MS) return "That's more than 12 hours from now - check the day and AM or PM.";
     if (ahead > 60_000 && !aheadOk.current) { setAheadAsk(`That's ${span(ahead)} from now (${when(t)}). Save it anyway?`); return ""; }
+    const slip = slipOf(t, /finish/.test(what));
+    if (slip) {
+      const set = v === startV && v !== atV ? setStartV : setAtV;
+      setAmpmAsk({ says: slip.says, use: slip.otherLabel, keep: slip.asPut, fix: () => set(toDateTimeInput(slip.other, tz)) });
+      return "";
+    }
     return t;
   };
 
@@ -473,6 +485,12 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         if (blank) { setMsg(`Pick the day and the time for “${blank.e.text}”.`); return; }
         const ahead = vals.find((v) => v.t > Date.now() + 60_000);
         if (ahead) { setMsg(`“${ahead.e.text}” at ${when(ahead.t)} hasn't happened yet.`); return; }
+        // A time moved onto the other crew's shift: AM and PM mixed up?
+        for (const v of vals) {
+          if (v.e.unsure !== "unset" && Math.abs(v.t - v.e.at) < 60_000) continue;
+          const slip = slipOf(v.t, v.e.fix === "finish");
+          if (slip) { setAmpmAsk({ says: `“${v.e.text}”: ${slip.says}`, use: slip.otherLabel, keep: slip.asPut, fix: () => setFixAll((cur) => ({ ...cur, [v.e.key]: toDateTimeInput(slip.other, tz) })) }); return; }
+        }
         for (let k = 1; k < vals.length; k++) {
           if (vals[k].t < vals[k - 1].t) { setMsg(`“${vals[k].e.text}” at ${when(vals[k].t)} is before “${vals[k - 1].e.text}” at ${when(vals[k - 1].t)}, which happened first. Change both so they stay in order.`); return; }
         }
@@ -500,7 +518,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         setSaved(said); setAction(null);
       } else setMsg((x) => x ?? "Not saved.");
     } catch (e) { setMsg((e as Error).message || "Not saved."); }
-    finally { setBusy(false); aheadOk.current = false; }
+    finally { setBusy(false); aheadOk.current = false; ampmOk.current = false; }
   };
 
   // Taking back what was entered: the latest change (the step goes back to
@@ -743,6 +761,17 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
               : <button type="button" onClick={() => setShowWhy(true)} className="text-[11.5px] font-semibold text-[var(--color-accent)] hover:underline">+ Why it&apos;s behind</button>
           )}
           {msg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{msg}</div>}
+          {ampmAsk && (
+            <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40 px-2 py-1.5 space-y-1.5">
+              <div className="font-semibold text-amber-900 dark:text-amber-200">{ampmAsk.says} Did you mean {ampmAsk.use}?</div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" disabled={busy} onClick={() => { const a = ampmAsk; setAmpmAsk(null); a.fix(); }}
+                  className="h-8 px-3 rounded-lg bg-amber-600 text-white text-[12.5px] font-bold hover:bg-amber-700 disabled:opacity-60">Use {ampmAsk.use}</button>
+                <button type="button" disabled={busy} onClick={() => { ampmOk.current = true; setAmpmAsk(null); void save(); }}
+                  className="h-8 px-3 rounded-lg border border-amber-400 text-amber-900 dark:text-amber-200 text-[12.5px] font-bold hover:bg-amber-100 dark:hover:bg-amber-900/40 disabled:opacity-60">Keep {ampmAsk.keep}</button>
+              </div>
+            </div>
+          )}
           {aheadAsk && (
             <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40 px-2 py-1.5 space-y-1.5">
               <div className="font-semibold text-amber-900 dark:text-amber-200">{aheadAsk}</div>

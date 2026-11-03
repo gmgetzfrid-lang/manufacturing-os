@@ -1,5 +1,5 @@
 // reportLinks - the project's reports, one name each, and how a button
-// elsewhere (the hour-by-hour export and the shift sheet on Today, Print on
+// elsewhere (the hour-by-hour export and the shift sheet on the Shift tab, Print on
 // Work orders) opens one in Reports already set to its shift or work order.
 
 export type ReportId = "turnover" | "hourly" | "timelog" | "schedule" | "workorders" | "kickoff" | "closeout" | "sheet";
