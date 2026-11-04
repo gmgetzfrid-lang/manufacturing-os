@@ -9,15 +9,15 @@
 // stops the Save until it's answered or left out.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Mic, MicOff, NotebookPen, Loader2, X, Check, AlertTriangle, Search, Paperclip, FileText } from "lucide-react";
+import { Mic, MicOff, NotebookPen, Loader2, X, Check, AlertTriangle, Search, Paperclip, FileText, Undo2, Plus } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import DateTimePicker from "@/components/projects/DateTimePicker";
 import { supabase } from "@/lib/supabase";
 import {
-  stepCatalog, catalogText, parseReply, toLines, checkLine, saveEvents, defaultTimes, whenWords,
+  stepCatalog, catalogText, parseReply, toLines, checkLine, saveEvents, defaultTimes, whenWords, spokenToTags, applyWords, lineComment, sayLine,
   type CatalogStep, type QuickLine, type RawReply,
 } from "@/lib/quickUpdate";
-import { saveSheetLine } from "@/lib/shiftSheetSave";
+import { saveQuickStep, undoQuickStep, type SavedStep } from "@/lib/quickUpdateSave";
 import { readNoteFile } from "@/lib/noteFiles";
 import { notesFor } from "@/lib/milestones";
 import { searchFilter } from "@/lib/fuzzySearch";
@@ -26,6 +26,10 @@ import { fmtInTz, toDateTimeInput, fromDateTimeInput, dayKey } from "@/lib/sched
 import type { Milestone } from "@/types/schema";
 
 const HIDE_KEY = "quickUpdate:hidden";
+/** This person's words for tags ("mee too" = E-2), learned from what they
+ *  confirmed, per project on this device. */
+const wordsKey = (p: string) => `quickUpdate:words:${p}`;
+type Word = { said: string; as: string };
 const draftKey = (p: string) => `quickUpdate:draft:${p}`;
 const store = { get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k: string, v: string | null) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* private mode */ } } };
 
@@ -57,25 +61,49 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
     if (d) { setNote(d); setOpen(true); }
   }, [projectId]);
   const setDraft = (v: string) => { setNote(v); store.set(draftKey(projectId), v.trim() ? v : null); };
+  const [words, setWords] = useState<Word[]>([]);
+  useEffect(() => {
+    try { const w = JSON.parse(store.get(wordsKey(projectId)) ?? "[]"); if (Array.isArray(w)) setWords(w.filter((x) => x && typeof x.said === "string" && typeof x.as === "string")); } catch { /* none */ }
+  }, [projectId]);
+  const keepWords = (w: Word[]) => { setWords(w); store.set(wordsKey(projectId), w.length ? JSON.stringify(w) : null); };
+  const [showWords, setShowWords] = useState(false);
+  const wordsRef = useRef<Word[]>([]);
+  wordsRef.current = words;
+  const [teach, setTeach] = useState({ said: "", as: "" });
+  const addWord = () => {
+    const said = teach.said.trim().toLowerCase(), as = teach.as.trim();
+    if (!said || !as) return;
+    keepWords([{ said, as }, ...words.filter((w) => w.said.toLowerCase() !== said)].slice(0, 60));
+    setTeach({ said: "", as: "" });
+  };
 
   // ── Speaking ──
   const recRef = useRef<Rec | null>(null);
   const [listening, setListening] = useState(false);
+  // What it's hearing before the words are final: shown as you talk.
+  const [hearing, setHearing] = useState("");
   const canSpeak = typeof window !== "undefined" && !!speechCtor();
   const toggleMic = () => {
     if (listening) { recRef.current?.stop(); return; }
     const C = speechCtor();
     if (!C) return;
     const rec = new C();
-    rec.lang = "en-US"; rec.continuous = true; rec.interimResults = false;
+    rec.lang = "en-US"; rec.continuous = true; rec.interimResults = true;
     const base = note.trim();
     let said = "";
     rec.onresult = (e) => {
-      for (let i = e.resultIndex; i < e.results.length; i++) if (e.results[i].isFinal) said += `${said ? " " : ""}${e.results[i][0].transcript.trim()}`;
+      let live = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        // Tags said by letter ("echo two"), and the words it keeps hearing
+        // that you've taught it ("mee too" = E-2), written as tags.
+        const t = applyWords(spokenToTags(e.results[i][0].transcript.trim()), wordsRef.current);
+        if (e.results[i].isFinal) said += `${said ? " " : ""}${t}`; else live += `${live ? " " : ""}${t}`;
+      }
+      setHearing(live);
       setDraft([base, said].filter(Boolean).join(base && !/[.!?]$/.test(base) ? ". " : " "));
     };
-    rec.onend = () => { setListening(false); recRef.current = null; };
-    rec.onerror = () => { setListening(false); recRef.current = null; };
+    rec.onend = () => { setListening(false); setHearing(""); recRef.current = null; };
+    rec.onerror = () => { setListening(false); setHearing(""); recRef.current = null; };
     recRef.current = rec;
     setListening(true);
     rec.start();
@@ -155,6 +183,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
         body: JSON.stringify({
           orgId, projectId, note, catalog: catalogText(cat, tz), now, tz, shift: `This shift: ${shSpan(cur)}. Last shift: ${shSpan(prev)}.`,
           notesFrom: win ? `These notes are a log of the ${shSpan(win)}. A time written with no date is in that shift; on a night shift, times after midnight are the next morning.` : undefined,
+          words,
         }),
       });
       const body = (await res.json().catch(() => null)) as (RawReply & { error?: string }) | null;
@@ -162,7 +191,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
       const tctx = { now, tz, times, window: win };
       const first = defaultTimes(tctx)[0];
       // Cleaned again here: whatever comes back, nothing malformed reaches the lines.
-      const { lines, unplaced } = toLines(parseReply(body), cat, first.at, tctx, note);
+      const { lines, unplaced } = toLines(parseReply(body), cat, first.at, tctx, note, words);
       setDefaultPick({ id: first.id, at: first.at });
       setReview({ cat, lines, unplaced, at: now, window: win });
     } catch (e) {
@@ -178,10 +207,38 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
     setReview((r) => (r ? { ...r, lines: r.lines.map((l) => (l.timeFrom === "default" ? { ...l, at } : l)) } : r));
   };
   const edit = (id: string, patch: Partial<QuickLine>) => setReview((r) => (r ? { ...r, lines: r.lines.map((l) => (l.id === id ? { ...l, ...patch } : l)) } : r));
+  // A line by hand: one the AI missed, or words it couldn't place. You pick
+  // the step, what happened and when.
+  const addLine = (text: string, unplacedAt?: number) => setReview((r) => r ? {
+    ...r,
+    unplaced: unplacedAt == null ? r.unplaced : r.unplaced.filter((_, i) => i !== unplacedAt),
+    lines: [...r.lines, {
+      id: `add${Date.now()}`, stepId: null, options: [], action: text ? "comment" : "progress", percent: null, percentFrom: "said", suggest: null,
+      reason: null, comment: null, evidence: text, implied: false, at: defaultPick.at, timeFrom: "default", timeWords: null, expected: false, include: true, added: true,
+      ...(text ? { noteText: text } : {}),
+    }],
+  } : r);
 
   // ── Saving ──
   const [saving, setSaving] = useState(false);
-  const [done, setDone] = useState<{ saved: number; warn: string[]; failed: string[] } | null>(null);
+  const [done, setDone] = useState<{ saved: SavedStep[]; says: Record<string, string>; warn: string[]; failed: string[]; undone: Record<string, string>; note: string } | null>(null);
+  const [undoing, setUndoing] = useState(false);
+  const undo = async (list: SavedStep[]) => {
+    if (!done) return;
+    setUndoing(true);
+    const undone = { ...done.undone };
+    // Newest first, so a step saved twice comes back in order.
+    for (const s of [...list].reverse()) {
+      if (undone[s.id]) continue;
+      const r = await undoQuickStep(s).catch(() => "error" as const);
+      undone[s.id] = r === "ok" ? "Undone" : r === "changed" ? "Changed since - fix it in the step's history" : r === "missing" ? "Undo needs the database update 20261109_history_remove.sql" : "Not undone - fix it in the step's history";
+    }
+    setDone({ ...done, undone });
+    setUndoing(false);
+    // All of it taken back: the note goes back in the box, to fix and read again.
+    if (done.saved.every((s) => undone[s.id] === "Undone") && !note.trim()) setDraft(done.note);
+    onSaved();
+  };
   const byId = useMemo(() => new Map((review?.cat ?? []).map((c) => [c.id, c])), [review]);
   const checks = useMemo(() => {
     const now = Date.now();
@@ -194,20 +251,26 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
     if (!review || blocked.length) return;
     setSaving(true);
     const events = saveEvents(review.lines, review.cat, Date.now(), tz);
-    let saved = 0;
+    const saved: SavedStep[] = [];
+    const says: Record<string, string> = {};
     const warn: string[] = [], failed: string[] = [];
     for (const [id, ev] of events) {
-      const name = byId.get(id)?.name ?? "A step";
+      const st = byId.get(id);
+      const name = st?.name ?? "A step";
+      says[id] = review.lines.filter((l) => l.include && l.stepId === id).map((l) => { const no = checks.get(l.id)?.nothing; return no ? `Comment only (${no.replace(/\.$/, "").toLowerCase()})` : sayLine(l, st); }).join(", ");
       try {
-        const w = await saveSheetLine(id, ev, { orgId, userId, userName });
-        saved++;
-        if (w) warn.push(`${name}: ${w}`);
+        const r = await saveQuickStep(id, name, ev, { status: st?.status ?? "planned", pct: st?.pct ?? 0 }, { orgId, userId, userName });
+        saved.push(r);
+        if (r.warn) warn.push(`${name}: ${r.warn}`);
       } catch (e) { failed.push(`${name}: ${(e as Error).message}`); }
     }
+    // Words read as a tag and confirmed on its step: remembered for next time.
+    const learned = review.lines.filter((l) => l.include && l.heard && !l.heard.known && l.stepId === l.heard.stepId).map((l) => ({ said: l.heard!.said, as: l.heard!.as }));
+    if (learned.length) keepWords([...learned, ...words.filter((w) => !learned.some((x) => x.said.toLowerCase() === w.said.toLowerCase()))].slice(0, 60));
     setSaving(false);
     window.dispatchEvent(new Event("milestone-notes:changed"));
     onSaved();
-    setDone({ saved, warn, failed });
+    setDone({ saved, says, warn, failed, undone: {}, note });
     if (!failed.length) { setDraft(""); setReview(null); setFiles([]); setFrom({ id: "now" }); }
   };
 
@@ -263,7 +326,39 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
             {note && !busy && <button type="button" onClick={() => setDraft("")} className="text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Clear</button>}
             {!canSpeak && <span className="text-[11px] text-[var(--color-text-muted)]">To talk, use the mic on your keyboard.</span>}
           </div>
-          {listening && <div className="text-[12px] font-semibold text-rose-700 dark:text-rose-300">Listening… say what happened, then tap Stop.</div>}
+          {listening && (
+            <div className="text-[12px] text-rose-700 dark:text-rose-300">
+              <b>Listening…</b> say what happened, then tap Stop. Noisy? Say tags by letter: “Echo 2”, “Victor 1”, “Papa Sierra Victor 209”.
+              {hearing && <div className="mt-0.5 italic text-[var(--color-text-muted)]">Hearing: {hearing}</div>}
+            </div>
+          )}
+          <div className="text-[11.5px] text-[var(--color-text-muted)]">
+            <button type="button" onClick={() => setShowWords((v) => !v)} aria-expanded={showWords} className="font-semibold hover:text-[var(--color-text)]">Your words ({words.length})</button>
+            {showWords && (
+              <div className="mt-1 space-y-1.5">
+                <div>What talk-to-text keeps getting wrong, and what you meant. It&apos;s fixed as you talk, and the reader knows it.</div>
+                {words.length > 0 && (
+                  <ul className="flex flex-wrap gap-1.5">
+                    {words.map((w) => (
+                      <li key={w.said} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] px-2 py-0.5">
+                        “{w.said}” = {w.as}
+                        <button type="button" onClick={() => keepWords(words.filter((x) => x !== w))} aria-label={`Forget “${w.said}”`} className="p-0.5 hover:text-rose-700"><X className="w-3 h-3" /></button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <form onSubmit={(e) => { e.preventDefault(); addWord(); }} className="flex flex-wrap items-center gap-1.5">
+                  <span>It hears</span>
+                  <input value={teach.said} onChange={(e) => setTeach((t) => ({ ...t, said: e.target.value }))} placeholder="mee too" aria-label="It hears"
+                    className="h-8 w-28 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]" />
+                  <span>I mean</span>
+                  <input value={teach.as} onChange={(e) => setTeach((t) => ({ ...t, as: e.target.value }))} placeholder="E-2" aria-label="I mean"
+                    className="h-8 w-24 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]" />
+                  <button type="submit" disabled={!teach.said.trim() || !teach.as.trim()} className="h-8 rounded-md border border-[var(--color-border-strong)] px-2.5 font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Add word</button>
+                </form>
+              </div>
+            )}
+          </div>
           {fileBusy && <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {fileBusy}</div>}
           {files.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5 text-[11.5px] text-[var(--color-text-muted)]">
@@ -301,7 +396,25 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
           {err && <div role="alert" className="text-[12px] font-semibold text-rose-700 dark:text-rose-300">{err}</div>}
           {done && (
             <div role="status" className={`rounded-lg px-3 py-2 text-[12px] ${done.failed.length ? "bg-rose-50 dark:bg-rose-950/40 text-rose-900 dark:text-rose-100" : "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-100"}`}>
-              <b>{done.saved ? `Saved ${done.saved} step${done.saved === 1 ? "" : "s"}.` : "Nothing saved."}</b>
+              <div className="flex items-center gap-2">
+                <b className="flex-1">{done.saved.length && done.saved.every((s) => done.undone[s.id] === "Undone") ? "All taken back. Your note is in the box to fix and read again." : done.saved.length ? `Saved ${done.saved.length} step${done.saved.length === 1 ? "" : "s"}.` : "Nothing saved."}</b>
+                {done.saved.some((s) => !done.undone[s.id]) && (
+                  <button type="button" disabled={undoing} onClick={() => void undo(done.saved)} className="inline-flex items-center gap-1 rounded-md border border-current px-2 py-0.5 font-bold disabled:opacity-50">
+                    {undoing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Undo2 className="w-3.5 h-3.5" />} Undo all
+                  </button>
+                )}
+                <button type="button" onClick={() => setDone(null)} aria-label="Dismiss" className="p-0.5"><X className="w-3.5 h-3.5" /></button>
+              </div>
+              <ul className="mt-1 space-y-0.5">
+                {done.saved.map((s) => (
+                  <li key={s.id} className="flex flex-wrap items-baseline gap-x-2">
+                    <span className={done.undone[s.id] === "Undone" ? "line-through opacity-70" : ""}><b>{s.name}</b>: {done.says[s.id]}</span>
+                    {done.undone[s.id]
+                      ? <span className="font-semibold">{done.undone[s.id]}</span>
+                      : <button type="button" disabled={undoing} onClick={() => void undo([s])} className="font-bold underline disabled:opacity-50">Undo</button>}
+                  </li>
+                ))}
+              </ul>
               {done.failed.map((f) => <div key={f}>Not saved: {f}</div>)}
               {done.warn.map((w) => <div key={w}>{w}</div>)}
               {done.failed.length > 0 && <div>Your note is kept. Fix the step by hand, or read it again.</div>}
@@ -335,14 +448,22 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                   defaultLabel={choices.find((c) => c.id === defaultPick.id)?.label ?? "the time picked"} choices={choices} onEdit={(p) => edit(l.id, p)} />
               ))}
               {review.lines.length === 0 && <li className="px-4 py-6 text-center text-[13px] text-[var(--color-text-muted)]">Nothing in the note matched a step.</li>}
+              <li className="px-4 py-2.5">
+                <button type="button" onClick={() => addLine("")} className="inline-flex items-center gap-1.5 text-[12.5px] font-bold text-[var(--color-accent)] hover:underline"><Plus className="w-4 h-4" /> Add a line it missed</button>
+              </li>
             </ul>
             {review.unplaced.length > 0 && (
               <div className="px-4 py-3 border-t border-[var(--color-border)] bg-amber-50/60 dark:bg-amber-950/20">
                 <div className="text-[12px] font-black uppercase tracking-wider text-amber-900 dark:text-amber-200">Couldn&apos;t place ({review.unplaced.length})</div>
                 <ul className="mt-1 space-y-1 text-[12.5px] text-[var(--color-text)]">
-                  {review.unplaced.map((u, i) => <li key={i}>“{u.text}” <span className="text-[var(--color-text-muted)]">- {u.why}</span></li>)}
+                  {review.unplaced.map((u, i) => (
+                    <li key={i} className="flex flex-wrap items-baseline gap-x-2">
+                      <span>“{u.text}” <span className="text-[var(--color-text-muted)]">- {u.why}</span></span>
+                      <button type="button" onClick={() => addLine(u.text, i)} className="font-bold text-[var(--color-accent)] hover:underline">Put it on a step</button>
+                    </li>
+                  ))}
                 </ul>
-                <div className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">Not saved. Say it again naming the equipment or WO, or update the step by hand.</div>
+                <div className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">Not saved unless you put it on a step.</div>
               </div>
             )}
           </ModalBody>
@@ -400,7 +521,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
             </div>
           ) : (
             <div className="space-y-1">
-              <div className="text-[12.5px] font-bold text-rose-800 dark:text-rose-200">Which step is it?</div>
+              <div className="text-[12.5px] font-bold text-rose-800 dark:text-rose-200">{l.heard && !l.heard.known && options.length === 1 ? `Heard “${l.heard.said}” as ${l.heard.as}. Is this the step?` : "Which step is it?"}</div>
               <div className="flex flex-wrap gap-1.5">
                 {options.map((o) => (
                   <button key={o.id} type="button" onClick={() => onEdit({ stepId: o.id })} className="rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold text-left border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
@@ -421,8 +542,22 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
               )}
             </div>
           )}
-          {/* What changes */}
+          {/* What changes: read from the note, changeable. */}
           <div className="text-[13px] font-semibold text-[var(--color-text)]">{check.says}{l.percentFrom === "words" && l.percent != null ? <span className="font-normal text-[var(--color-text-muted)]"> (from your words)</span> : null}</div>
+          <div className="flex flex-wrap gap-1" role="group" aria-label="What happened">
+            {([["start", "Started"], ["progress", "%"], ["done", "Done"], ["hold", "On hold"], ["resume", "Back on"], ["comment", "Comment only"]] as const).map(([a, label]) => (
+              <button key={a} type="button" aria-pressed={l.action === a}
+                onClick={() => onEdit({ action: a, expected: false, ...(a === "progress" && l.action !== "progress" ? { percent: null, percentFrom: "said" } : {}) })}
+                className={`rounded-md border px-2 py-0.5 text-[11.5px] font-semibold ${l.action === a ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{label}</button>
+            ))}
+          </div>
+          {l.action === "progress" && step && l.percent != null && l.percentFrom !== "guess" && (
+            <label className="flex items-center gap-1.5 text-[12px] text-[var(--color-text-muted)]">
+              % now
+              <input inputMode="numeric" aria-label="Percent" value={String(l.percent)} className="h-8 w-16 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]"
+                onChange={(e) => { const n = Number(e.target.value.replace(/\D/g, "")); onEdit({ percent: e.target.value.trim() === "" ? null : Math.min(100, Number.isFinite(n) ? n : 0), percentFrom: "said" }); }} />
+            </label>
+          )}
           {l.action === "progress" && step && (l.percent == null || l.percentFrom === "guess") && (
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-[12px] text-[var(--color-text-muted)]">How far along?</span>
@@ -465,8 +600,15 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
               </div>
             )}
           </div>
-          {/* Your words */}
-          <div className="text-[12px] italic text-[var(--color-text-muted)] break-words">“{l.evidence}”{l.comment && !l.expected && l.comment !== l.evidence ? ` · ${l.comment}` : ""}</div>
+          {/* Your words, and the comment that goes on the step (editable). */}
+          {l.evidence && <div className="text-[12px] italic text-[var(--color-text-muted)] break-words">You said: “{l.evidence}”</div>}
+          {l.heard && (step || l.heard.known) && <div className={`text-[11.5px] ${l.heard.known ? "text-[var(--color-text-muted)]" : "font-semibold text-amber-800 dark:text-amber-300"}`}>Heard “{l.heard.said}” as {l.heard.as}{l.heard.known ? " (your word for it)" : l.stepId === l.heard.stepId ? ". Remembered for next time when you save." : "."}</div>}
+          <label className="block text-[11.5px] text-[var(--color-text-muted)]">
+            Comment on the step
+            <textarea rows={1} value={l.noteText !== undefined ? l.noteText ?? "" : lineComment(l)}
+              onChange={(e) => onEdit({ noteText: e.target.value })} placeholder="No comment"
+              className="mt-0.5 block w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-[12.5px] text-[var(--color-text)]" />
+          </label>
           {l.implied && <div className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">Probably done: your note doesn&apos;t say it. Tick to include.</div>}
           {l.expected && <div className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">Not entered as done: it hasn&apos;t happened yet. Kept as a comment.</div>}
           {check.nothing && <div className="text-[12px] text-[var(--color-text-muted)]">{check.nothing} Nothing changes; your words go on as a comment.</div>}

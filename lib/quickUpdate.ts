@@ -153,17 +153,19 @@ export const QUICK_SYSTEM = [
   "Work is done out of order. Never assume the schedule's order or dates say what was worked. Match by what the note says: equipment tags (V-01, V1 and V-1 are the same tag; E-2 is E-02), WO numbers, step words, crews.",
   "Use only step keys from the list (s1, s2...). Never invent a step. If you can't place a part, put it in unplaced.",
   "Notes are often short and vague (\"pulled the bundle\", \"blinds in\", \"head's off\", \"hydro passed\"). To find the step: (1) the equipment or WO named in that part; (2) if none, the equipment named earlier in the note (a log usually keeps talking about the last thing named until it names another) - then copy those earlier words into context; (3) the crew named; (4) steps marked LIVE (going now) and NEXT (next up on its work order) are the likely ones; (5) the \"said lately\" words show how the field describes each step.",
+  "Notes are often speech-to-text from a loud plant. Tags and numbers come out as words or sound-alikes: E-2 as \"e two\", \"echo two\", \"eat two\", \"me too\" or \"mee too\"; V-1 as \"v one\", \"victor one\", \"be one\"; PSV as \"p s v\"; numbers as words (\"two oh nine\" = 209). When you read words like that as a tag, put them in heard: {\"said\": the words as written, \"as\": the tag}. Words the person uses are listed under \"This person's words\" when known: they mean what they say there.",
   "basis: \"named\" (this part names the equipment, WO or a step only one piece of equipment has), \"context\" (named earlier in the note: put those exact words in context), \"only\" (the words fit one open step on the whole job), \"guess\" (more than one step fits). For guess, give no step: put every step that fits in candidates, likeliest first, up to 6. Never pick between two pieces of equipment that both have the step (Pull Bundle on E-02 and on E-22) unless the note says which.",
   "Actions: start, progress, done, hold (with its reason), resume (back on after a hold), comment.",
   "percent: only when the note gives an amount. percentFrom: \"said\" for a number (\"50\", \"50%\"), \"words\" for an amount in words (\"about half\" = 50, \"almost done\" = 90). A step described but with no amount (\"making progress\", \"staging\", \"working on it\") is progress with percent null, percentFrom \"guess\" and your best suggestion in suggest. Finished, complete, done, removed, pulled, washed (when the step is that action) = done.",
   "implied: true for a step the note doesn't name but must be finished for what it says to be true (washed the head means the head was removed). Only direct prerequisites, never more.",
   "when: copy the note's exact words about time into words (null if none). kind: \"none\" (no time words; \"already\" alone is none), \"clock\" (a time of day: 2pm, at 2, 0730, noon), \"day\" (a day with or without a time: yesterday at 3, Monday night, last night at 11), \"relative\" (2 hours ago, an hour ago), \"unclear\" (past with no time to place it: earlier, this morning, last night, yesterday, before lunch), \"future\" (not happened yet: will be done in a couple hours, should finish by 2, tonight they'll start). local: your reading as \"YYYY-MM-DD HH:MM\" in plant time, given now; null for none, unclear and future.",
   "evidence: the exact words from the note this update comes from. comment: anything else the note says about the step worth keeping (a reason, what they're waiting on), in the note's words.",
-  "Return STRICT JSON only: {\"updates\":[{\"step\":\"s12\",\"candidates\":[],\"basis\":\"named\",\"context\":null,\"action\":\"done\",\"percent\":null,\"percentFrom\":null,\"suggest\":null,\"reason\":null,\"comment\":null,\"implied\":false,\"evidence\":\"...\",\"when\":{\"words\":null,\"kind\":\"none\",\"local\":null}}],\"unplaced\":[{\"text\":\"...\",\"why\":\"...\"}]}",
+  "Return STRICT JSON only: {\"updates\":[{\"step\":\"s12\",\"candidates\":[],\"basis\":\"named\",\"context\":null,\"heard\":null,\"action\":\"done\",\"percent\":null,\"percentFrom\":null,\"suggest\":null,\"reason\":null,\"comment\":null,\"implied\":false,\"evidence\":\"...\",\"when\":{\"words\":null,\"kind\":\"none\",\"local\":null}}],\"unplaced\":[{\"text\":\"...\",\"why\":\"...\"}]}",
 ].join("\n");
 
-export function quickUserPrompt(o: { note: string; catalog: string; now: number; tz: string; shift: string; notesFrom?: string }): string {
+export function quickUserPrompt(o: { note: string; catalog: string; now: number; tz: string; shift: string; notesFrom?: string; words?: Array<{ said: string; as: string }> }): string {
   return [
+    ...(o.words?.length ? [`This person's words: ${o.words.slice(0, 40).map((w) => `"${w.said}" = ${w.as}`).join("; ")}.`] : []),
     `Now: ${clock(o.now, o.tz)} (plant time, ${o.tz}). ${o.shift}`,
     o.notesFrom ?? "The note is about now: a time without a date is the last time it came round (today, or last night).",
     "",
@@ -187,6 +189,8 @@ export interface RawUpdate {
   step: string | null; candidates: string[]; action: Action;
   /** How the AI found the step, and the earlier words it used. */
   basis: Basis | null; context: string | null;
+  /** Words read as a tag ("mee too" as E-2): speech-to-text in the noise. */
+  heard: { said: string; as: string } | null;
   percent: number | null; percentFrom: "said" | "words" | "guess" | null; suggest: number | null;
   reason: string | null; comment: string | null; implied: boolean; evidence: string;
   when: { words: string | null; kind: TimeKind; local: string | null };
@@ -212,6 +216,7 @@ export function parseReply(raw: unknown): RawReply {
     updates.push({
       step: str(x.step), candidates: Array.isArray(x.candidates) ? x.candidates.map(str).filter((c): c is string => !!c) : [],
       basis: x.basis === "named" || x.basis === "context" || x.basis === "only" || x.basis === "guess" ? x.basis : null, context: str(x.context),
+      heard: (() => { const h = (x.heard && typeof x.heard === "object" ? x.heard : null) as Record<string, unknown> | null; const said = str(h?.said), as = str(h?.as); return said && as ? { said, as } : null; })(),
       action, percent: num(x.percent), percentFrom: pf, suggest: num(x.suggest),
       reason: str(x.reason), comment: str(x.comment), implied: x.implied === true, evidence,
       when: { words: str(w.words), kind: KINDS.includes(w.kind as TimeKind) ? (w.kind as TimeKind) : "none", local: str(w.local) },
@@ -410,6 +415,81 @@ export interface QuickLine {
   unsure?: string;
   /** The words given aren't in the note: never saved as is. */
   notInNote?: boolean;
+  /** Words read as a tag ("mee too" as E-2), the step it pointed to, and
+   *  whether this person's words already say so (learned). */
+  heard?: { said: string; as: string; stepId: string; known: boolean };
+  /** The comment that goes on the step, as edited (null: none). Unset: the
+   *  note's own words. */
+  noteText?: string | null;
+  /** Put in by hand on the check screen. */
+  added?: boolean;
+}
+
+
+/** The person's own words put in as they talk: what speech-to-text keeps
+ *  hearing ("mee too") written as what they meant ("E-2"). Whole words only,
+ *  longest first, any case. */
+export function applyWords(text: string, words: Array<{ said: string; as: string }>): string {
+  let out = text;
+  for (const w of [...words].sort((a, b) => b.said.length - a.said.length)) {
+    const said = w.said.trim();
+    if (!said || !w.as.trim()) continue;
+    const re = new RegExp(`(^|[^a-z0-9])${said.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+")}(?=$|[^a-z0-9])`, "gi");
+    out = out.replace(re, (_m, pre: string) => `${pre}${w.as.trim()}`);
+  }
+  return out;
+}
+
+/** Tags said by letter and number, as speech-to-text writes them, made
+ *  tags: "echo two" and "e two" are E-2, "victor one" V-1, "papa sierra
+ *  victor two oh nine" PSV-209. Only a letter followed by a number, and not
+ *  "mike two hours". Words it isn't sure of are left as they are. */
+export function spokenToTags(text: string): string {
+  const NATO: Record<string, string> = { alpha: "A", alfa: "A", bravo: "B", charlie: "C", delta: "D", echo: "E", foxtrot: "F", golf: "G", hotel: "H", india: "I", juliet: "J", kilo: "K", lima: "L", mike: "M", november: "N", oscar: "O", papa: "P", quebec: "Q", romeo: "R", sierra: "S", tango: "T", uniform: "U", victor: "V", whiskey: "W", xray: "X", "x-ray": "X", yankee: "Y", zulu: "Z" };
+  const NUM: Record<string, string> = { zero: "0", oh: "0", o: "0", one: "1", won: "1", two: "2", to: "2", too: "2", three: "3", four: "4", for: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9", ten: "10", eleven: "11", twelve: "12", thirteen: "13", fourteen: "14", fifteen: "15", sixteen: "16", seventeen: "17", eighteen: "18", nineteen: "19", twenty: "20", thirty: "30", forty: "40", fifty: "50" };
+  const UNIT = /^(hours?|hrs?|minutes?|mins?|guys|men|people|percent|%|inch(es)?|in|feet|ft|days?|of|and)$/i;
+  const toks = text.split(/(\s+)/);
+  const out: string[] = [];
+  for (let i = 0; i < toks.length; i++) {
+    const raw = toks[i];
+    const w = raw.toLowerCase().replace(/[.,;:!?]+$/, "");
+    const letters: string[] = [];
+    let j = i;
+    // Letters: phonetic words, or single letters (not "a" or "i").
+    while (j < toks.length) {
+      const x = toks[j].toLowerCase().replace(/[.,;:!?]+$/, "");
+      if (!x.trim()) { j++; continue; }
+      if (NATO[x]) { letters.push(NATO[x]); j++; continue; }
+      if (/^[b-hj-z]$/.test(x)) { letters.push(x.toUpperCase()); j++; continue; }
+      break;
+    }
+    if (!letters.length || letters.length > 3) { out.push(raw); continue; }
+    // Then a number: digits, or number words ("two oh nine", "twenty two").
+    const digits: string[] = [];
+    let k = j, last = j;
+    while (k < toks.length) {
+      const x = toks[k].toLowerCase().replace(/[.,;:!?]+$/, "");
+      if (!x.trim()) { k++; continue; }
+      if (/^\d{1,4}[a-z]?$/.test(x)) { digits.push(x.toUpperCase()); last = k + 1; k++; continue; }
+      // "to" and "too" are how E-2 is often heard; "for" and "o" aren't read
+      // as the first digit ("v for", "e o").
+      if (NUM[x] != null && !(digits.length === 0 && (x === "for" || x === "o" || ((x === "to" || x === "too") && letters.length > 1)))) {
+        // "twenty two" is 22.
+        const prev = digits[digits.length - 1];
+        if (prev && /^[2-5]0$/.test(prev) && /^[1-9]$/.test(NUM[x])) digits[digits.length - 1] = String(Number(prev) + Number(NUM[x]));
+        else digits.push(NUM[x]);
+        last = k + 1; k++; continue;
+      }
+      break;
+    }
+    const next = toks.slice(last).find((t) => t.trim())?.toLowerCase().replace(/[.,;:!?]+$/, "") ?? "";
+    const spoken = letters.length > 1 || toks.slice(i, j).some((t) => NATO[t.toLowerCase().replace(/[.,;:!?]+$/, "")]) || /^[b-hj-z]$/.test(w);
+    if (!digits.length || !spoken || UNIT.test(next) || (letters.length === 1 && w === "mike" && /^(and|said|is|was|has)$/.test(next))) { out.push(raw); continue; }
+    const tail = toks[last - 1]?.match(/[.,;:!?]+$/)?.[0] ?? "";
+    out.push(`${letters.join("")}-${digits.join("")}${tail}`);
+    i = last - 1;
+  }
+  return out.join("");
 }
 
 // ── Which step: checked here, not taken on the AI's word ──
@@ -464,12 +544,26 @@ export function sameTask(a: CatalogStep, b: CatalogStep): boolean {
  *  - named here or earlier in the note: sure (by meaning, it's said);
  *  - not named, and the same task is open on other equipment: asked;
  *  - not named, the only step by that name: sure; no word in common: asked. */
-export function stepCheck(step: CatalogStep, u: Pick<RawUpdate, "evidence" | "context">, note: string, cat: CatalogStep[]):
-  { found: QuickLine["found"]; context: string | null; options?: string[]; unsure?: string } {
+export function stepCheck(step: CatalogStep, u: Pick<RawUpdate, "evidence" | "context"> & { heard?: RawUpdate["heard"] }, note: string, cat: CatalogStep[],
+  /** This person's words ("mee too" = E-2), confirmed before. */
+  words: Array<{ said: string; as: string }> = []):
+  { found: QuickLine["found"]; context: string | null; options?: string[]; unsure?: string; heard?: QuickLine["heard"] } {
   const ctx = u.context && inNote(u.context, note) ? u.context : null;
+  // Their own words for a tag read as the tag.
+  const own = (t: string) => words.reduce((acc, w) => (plainWords(acc).includes(plainWords(w.said)) ? `${acc} ${w.as}` : acc), t);
+  const ev = own(u.evidence), cx = ctx ? own(ctx) : null;
   const fits = fitsStep(`${u.evidence} ${ctx ?? ""}`, step);
-  if (namesStep(u.evidence, step)) return { found: fits ? "named" : "meaning", context: null };
-  if (ctx && namesStep(ctx, step)) return { found: fits ? "context" : "meaning", context: ctx };
+  if (namesStep(ev, step)) {
+    const learned = ev !== u.evidence && !namesStep(u.evidence, step) ? words.find((w) => plainWords(u.evidence).includes(plainWords(w.said))) : undefined;
+    return { found: fits ? "named" : "meaning", context: null, ...(learned ? { heard: { said: learned.said, as: learned.as, stepId: step.id, known: true } } : {}) };
+  }
+  if (cx && namesStep(cx, step)) return { found: fits ? "context" : "meaning", context: ctx };
+  // Words read as a tag in the noise: the first time, one tap to say yes.
+  const h = u.heard;
+  if (h && inNote(h.said, `${u.evidence} ${ctx ?? ""}`) && namesStep(h.as, step)) {
+    return { found: fits ? "named" : "meaning", context: null, options: [step.id], heard: { said: h.said, as: h.as, stepId: step.id, known: false },
+      unsure: `Heard “${h.said}” as ${h.as}. Is this the step?` };
+  }
   const open = (c: CatalogStep) => c.status !== "completed" && c.pct < 100;
   const twins = cat.filter((c) => c.id !== step.id && open(c) && sameTask(c, step));
   if (twins.length) {
@@ -482,7 +576,7 @@ export function stepCheck(step: CatalogStep, u: Pick<RawUpdate, "evidence" | "co
 }
 
 /** The AI's updates as lines: steps checked against the job, times read. */
-export function toLines(reply: RawReply, cat: CatalogStep[], defaultAt: number, ctx: TimeCtx, note = ""): { lines: QuickLine[]; unplaced: RawReply["unplaced"] } {
+export function toLines(reply: RawReply, cat: CatalogStep[], defaultAt: number, ctx: TimeCtx, note = "", words: Array<{ said: string; as: string }> = []): { lines: QuickLine[]; unplaced: RawReply["unplaced"] } {
   const byKey = new Map(cat.map((c) => [c.key, c]));
   const unplaced = [...reply.unplaced];
   const lines: QuickLine[] = [];
@@ -493,7 +587,7 @@ export function toLines(reply: RawReply, cat: CatalogStep[], defaultAt: number, 
     // Unsure between steps: the person picks, never the first one. Sure
     // only when the note itself says which (stepCheck).
     const picked = !(opts.length > 1) ? (step ?? opts[0]) : undefined;
-    const chk = picked && note ? stepCheck(picked, u, note, cat) : null;
+    const chk = picked && note ? stepCheck(picked, u, note, cat, words) : null;
     const unsure = opts.length > 1 || !!chk?.options;
     let action = u.action, percent = u.percent != null ? Math.round(u.percent) : null;
     if (action === "progress" && percent != null && percent >= 100) { action = "done"; percent = null; }
@@ -504,7 +598,7 @@ export function toLines(reply: RawReply, cat: CatalogStep[], defaultAt: number, 
       id: `q${i}`,
       stepId: unsure ? null : (step ?? opts[0]).id,
       options: chk?.options ?? (unsure ? opts.map((c) => c.id) : []),
-      ...(chk ? { found: chk.found, context: chk.context, ...(chk.unsure ? { unsure: chk.unsure } : {}) } : {}),
+      ...(chk ? { found: chk.found, context: chk.context, ...(chk.unsure ? { unsure: chk.unsure } : {}), ...(chk.heard ? { heard: chk.heard } : {}) } : {}),
       ...(note && !inNote(u.evidence, note) ? { notInNote: true } : {}),
       // Not happened yet: what was said is kept as a comment.
       action: expected ? "comment" : action,
@@ -573,6 +667,15 @@ export function whenWords(at: number, tz: string, times: ShiftTimes): string {
   return `${clock(at, tz)}, ${fmtInTz(s.start, tz, { weekday: "short" })} ${s.kind} shift`;
 }
 
+/** The comment a line puts on its step unless it's edited: the note's own
+ *  words (and anything else it said about the step), with a misheard tag
+ *  written as the tag it was taken for ("mee too" = E-2). */
+export function lineComment(l: QuickLine): string {
+  const parts = [l.comment, l.evidence].filter((x, i, a): x is string => !!x && a.indexOf(x) === i && !(i === 1 && !!a[0]?.includes(x)));
+  const text = parts.join(" · ");
+  return l.heard && (l.heard.known || l.heard.stepId === l.stepId) ? applyWords(text, [{ said: l.heard.said, as: l.heard.as }]) : text;
+}
+
 /** Each step's updates, to save in time order, with the person's words kept
  *  as a comment on it (once). Only included lines that are ready. */
 export function saveEvents(lines: QuickLine[], cat: CatalogStep[], now: number, tz: string): Map<string, SheetEvent[]> {
@@ -593,7 +696,8 @@ export function saveEvents(lines: QuickLine[], cat: CatalogStep[], now: number, 
       else if (l.action === "hold") ev.push({ kind: "hold", at, reason: (l.reason ?? l.comment ?? "").trim() });
       else if (l.action === "resume") ev.push({ kind: "pct", at, pct: step?.pct ?? 0 });
     }
-    const said = [l.comment, l.evidence].map((x) => x?.trim()).filter((x): x is string => !!x);
+    // The comment: as edited on the check screen, else the note's own words.
+    const said = [l.noteText !== undefined ? l.noteText : lineComment(l)].map((x) => x?.trim()).filter((x): x is string => !!x);
     if (said.length) {
       const w = words.get(l.stepId) ?? { at, text: [] };
       for (const s of said) if (!w.text.some((t) => t.includes(s) || s.includes(t))) w.text.push(s);

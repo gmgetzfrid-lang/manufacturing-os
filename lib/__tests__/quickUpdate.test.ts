@@ -7,6 +7,7 @@ import {
   type RawUpdate, type CatalogStep,
 } from "@/lib/quickUpdate";
 import type { ShiftTimes } from "@/lib/shiftReport";
+import type { QuickLine } from "@/lib/quickUpdate";
 import type { Milestone } from "@/types/schema";
 
 const tz = "America/Los_Angeles";
@@ -288,5 +289,71 @@ describe("found in the field: rounding and short words", () => {
     const qc = { key: "s1", id: "q", wo: "310352", place: "V-02 - De-Butanizer Receiver", name: "QC Complete", crew: "", status: "planned", pct: 0, planStart: 0, planFinish: 0, actStart: null, actFinish: null } as CatalogStep;
     expect(fitsStep("0545 QC done on V-2", qc)).toBe(true);
     expect(fitsStep("done on V-2", qc)).toBe(false);
+  });
+});
+
+import { spokenToTags, applyWords, lineComment } from "@/lib/quickUpdate";
+
+describe("talking in a loud plant", () => {
+  it("tags said by letter and number become tags", () => {
+    expect(spokenToTags("echo two bundle pulled")).toBe("E-2 bundle pulled");
+    expect(spokenToTags("the e two exchanger, head is off")).toBe("the E-2 exchanger, head is off");
+    expect(spokenToTags("victor one trays fifty")).toBe("V-1 trays fifty");
+    expect(spokenToTags("papa sierra victor two oh nine started")).toBe("PSV-209 started");
+    expect(spokenToTags("e twenty two blinds set.")).toBe("E-22 blinds set.");
+    expect(spokenToTags("e to channel head")).toBe("E-2 channel head");
+  });
+  it("leaves everything else alone", () => {
+    for (const t of ["mike two hours late", "Mike 2 guys on it", "a two inch line", "golf course", "V1 trays 50", "E-2 done", "v for vendetta", "waiting on the crane"]) expect(spokenToTags(t)).toBe(t);
+  });
+  const job: Milestone[] = [
+    mk({ id: "e02", name: "E-02 - De-Butanizer Condenser", workOrderRef: "310456" }),
+    mk({ id: "pb2", parentId: "e02", name: "Pull Bundle", plannedStartAt: iso("03", "06:00"), plannedAt: iso("03", "12:00") }),
+    mk({ id: "e22", name: "E-22 - Interstage Cooler", workOrderRef: "312478" }),
+    mk({ id: "pb22", parentId: "e22", name: "Pull Bundle", plannedStartAt: iso("05", "06:00"), plannedAt: iso("05", "12:00") }),
+  ];
+  const c = stepCatalog(job, undefined, { now });
+  const S = (id: string) => c.find((x) => x.id === id)!;
+  const note = "mee too bundle pulled";
+  it("“mee too” read as E-2: the first time, one tap to confirm", () => {
+    const r = stepCheck(S("pb2"), { evidence: "mee too bundle pulled", context: null, heard: { said: "mee too", as: "E-2" } }, note, c);
+    expect(r).toMatchObject({ options: ["pb2"], heard: { said: "mee too", as: "E-2", known: false } });
+    expect(r.unsure).toBe("Heard “mee too” as E-2. Is this the step?");
+  });
+  it("once it's this person's word for E-2: straight through, said so", () => {
+    const r = stepCheck(S("pb2"), { evidence: "mee too bundle pulled", context: null }, note, c, [{ said: "mee too", as: "E-2" }]);
+    expect(r).toMatchObject({ found: "named", heard: { said: "mee too", known: true } });
+    expect(r.options).toBeUndefined();
+  });
+  it("a sound-alike the AI read as a tag that isn't this step's: no", () => {
+    const r = stepCheck(S("pb22"), { evidence: "mee too bundle pulled", context: null, heard: { said: "mee too", as: "E-2" } }, note, c);
+    expect(r.options).toEqual(["pb22", "pb2"]);
+  });
+  it("an edited comment is what goes on the step; an emptied one, nothing", () => {
+    const base = { id: "x", stepId: "pb2", options: [], action: "comment" as const, percent: null, percentFrom: null, suggest: null, reason: null, comment: null, evidence: "mee too bundle pulled", implied: false, at: T("03", "09:00"), timeFrom: "said" as const, timeWords: null, expected: false, include: true };
+    expect(saveEvents([{ ...base, noteText: "E-2 bundle pulled, on the ground" }], c, now, tz).get("pb2")).toEqual([{ kind: "note", at: T("03", "09:00"), text: "E-2 bundle pulled, on the ground" }]);
+    expect(saveEvents([{ ...base, action: "done", noteText: "" }], c, now, tz).get("pb2")).toEqual([{ kind: "done", at: T("03", "09:00") }]);
+  });
+});
+
+describe("applyWords", () => {
+  const w = [{ said: "mee too", as: "E-2" }, { said: "be one", as: "V-1" }];
+  it("writes what it keeps hearing as the tag", () => {
+    expect(applyWords("mee too channel head is off", w)).toBe("E-2 channel head is off");
+    expect(applyWords("Pulled the bundle on Mee  Too.", w)).toBe("Pulled the bundle on E-2.");
+  });
+  it("whole words only", () => {
+    expect(applyWords("meet tool", w)).toBe("meet tool");
+    expect(applyWords("maybe one more", w)).toBe("maybe one more");
+  });
+});
+
+describe("lineComment", () => {
+  const base = { id: "a", stepId: "s1", options: [], action: "done", percent: null, percentFrom: null, suggest: null, reason: null, comment: null, evidence: "mee too channel head is off", implied: false, at: 0, timeFrom: "default", timeWords: null, expected: false, include: true } as unknown as QuickLine;
+  it("writes the tag once the step is confirmed", () => {
+    expect(lineComment({ ...base, heard: { said: "mee too", as: "E-2", stepId: "s1", known: false } })).toBe("E-2 channel head is off");
+  });
+  it("keeps the words while the step is still asked", () => {
+    expect(lineComment({ ...base, stepId: null, heard: { said: "mee too", as: "E-2", stepId: "s1", known: false } })).toBe("mee too channel head is off");
   });
 });

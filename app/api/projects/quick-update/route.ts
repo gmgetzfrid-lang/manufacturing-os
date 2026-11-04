@@ -28,9 +28,20 @@ const TRANSCRIBE_SYSTEM = [
 ].join("\n");
 const MAX_CATALOG = 160_000;
 
+/** The person's learned words ("mee too" = E-2), checked and kept short. */
+function wordsOf(v: unknown): Array<{ said: string; as: string }> {
+  if (!Array.isArray(v)) return [];
+  return v.flatMap((w) => {
+    const said = typeof w?.said === "string" ? w.said.replace(/["\n]/g, " ").trim().slice(0, 40) : "";
+    const as = typeof w?.as === "string" ? w.as.replace(/["\n]/g, " ").trim().slice(0, 40) : "";
+    return said && as ? [{ said, as }] : [];
+  }).slice(0, 40);
+}
+
 export async function POST(req: NextRequest) {
   let body: {
     orgId?: string; projectId?: string; action?: string; note?: string; catalog?: string; now?: number; tz?: string; shift?: string; notesFrom?: string;
+    words?: Array<{ said?: unknown; as?: unknown }>;
     images?: Array<{ base64?: string; mediaType?: string }>;
   };
   try { body = await req.json(); } catch { return bad("Bad JSON", 400); }
@@ -75,7 +86,7 @@ export async function POST(req: NextRequest) {
     const out = await governedAiCall({
       orgId, userId, op: "quickUpdate",
       system: QUICK_SYSTEM,
-      user: quickUserPrompt({ note, catalog, now, tz, shift: (body.shift ?? "").slice(0, 300), notesFrom: body.notesFrom ? body.notesFrom.slice(0, 400) : undefined }),
+      user: quickUserPrompt({ note, catalog, now, tz, shift: (body.shift ?? "").slice(0, 300), notesFrom: body.notesFrom ? body.notesFrom.slice(0, 400) : undefined, words: wordsOf(body.words) }),
       // A day's log can come back with dozens of updates.
       maxTokens: note.length > 6_000 ? 12_000 : 4_000,
       timeoutMs: 140_000,
