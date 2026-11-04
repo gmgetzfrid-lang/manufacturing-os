@@ -42,7 +42,7 @@ import { turnoverPlan, nextOf, standing, askedLine, doneOf, crewsOf, doneByTask,
 import {
   buildShiftReport, shiftWindow, shiftAt, nextShift, previousShift, defaultReviewShift, nextShiftWithWork, expectedByParent, paceOf, expectedFraction, workShiftOf, staffedDueMs, meetingLeadMin, type Pace, type WorkShift, type ShiftBreak,
   DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftRow, type ShiftWindow, type ShiftReport, type PullCrew,
-  crewsOnReport, filterShiftReport, whoOf, notesForShift, TURNOVER_GRACE_MS, type PathInfo, type ShiftPlan,
+  crewsOnReport, filterShiftReport, whoOf, notesForShift, TURNOVER_GRACE_MS, rowTask, type PathInfo, type ShiftPlan,
 } from "@/lib/shiftReport";
 import { buildKickoff, buildCloseout, defaultMeeting, type MeetingKind, type PlanRow } from "@/lib/meetingPlan";
 import { clockLabel, fmtInTz, tzAbbrev, toDateTimeInput } from "@/lib/scheduleTz";
@@ -1505,9 +1505,13 @@ const stepsBlock = (rows: TRow[], rightHead: string, whenHead = "When", flat?: b
 const shiftName = (w: ShiftWindow) => (w.kind === "day" ? "Day shift" : "Night shift");
 
 function rowFromShift(r: ShiftRow, c: Ctx, o: { when: string; n?: { num: number; tone: NumTone }; box?: boolean; right: string; done?: boolean; extraTags?: Array<TagT | null>; note?: string; why?: string }): TRow {
+  // Listed under its work order (ShiftRow.unit), never a folder of them; a
+  // work order of its own stands alone.
+  const t = rowTask(r);
+  const at = t ? r.path.lastIndexOf(t.name) : -1;
   return {
     id: r.leaf.id ?? r.leaf.name,
-    group: c.group(r.parentId, r.parentName, r.path.slice(0, -1), r.leaf.name),
+    group: c.group(t?.id ?? null, t?.name ?? null, at >= 0 ? r.path.slice(0, at) : r.path.slice(0, -1), r.leaf.name),
     n: o.n, box: o.box, when: o.when, name: r.leaf.name, done: o.done,
     tags: [r.critical ? { t: "critical", tone: "rose" } : null, ...(o.extraTags ?? [])],
     who: r.leaf.responsibleParty ?? undefined, wo: r.leaf.workOrderRef ?? undefined,
@@ -3104,7 +3108,7 @@ function DoneTasks({ rows, print, stamps = false, T, sort, onEdit }: { rows: Don
   const resultCls = (t: string) => (t === "amber" ? "text-amber-700 dark:text-amber-300" : "text-emerald-700 dark:text-emerald-400");
   const vsCls = (t?: string) => (t === "rose" ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400");
   const cell = print ? "px-1 py-[1px]" : "px-2 py-1.5";
-  const pctLine = (x: DoneTask) => [x.taskPct ? `${x.folder ? "" : "task "}${x.taskPct.pct}% done${x.taskPct.plan != null ? ` · plan ${x.taskPct.plan}%` : ""}` : null, x.count ?? null].filter(Boolean).join(" · ") || null;
+  const pctLine = (x: DoneTask) => [x.taskPct ? `${x.own ? "" : "task "}${x.taskPct.pct}% done${x.taskPct.plan != null ? ` · plan ${x.taskPct.plan}%` : ""}` : null, x.count ?? null].filter(Boolean).join(" · ") || null;
   const whyLine = (x: DoneTask) => x.why && <div className={`mt-0.5 italic font-medium text-amber-800 dark:text-amber-300 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>Why behind: {x.why}</div>;
   return (
     <div ref={sortBox} className="relative">
@@ -3114,7 +3118,7 @@ function DoneTasks({ rows, print, stamps = false, T, sort, onEdit }: { rows: Don
           {rows.map((x) => (
             <div key={x.ids.join(",")} data-sort-id={x.key} className={`group/sort px-3 py-2 text-[12.5px] space-y-0.5 ${moving(x.key) ? "opacity-40" : ""}`}>
               <div className="flex items-start justify-between gap-2">
-                <b className="text-[var(--color-text)] break-words"><Grip props={grip([x.key], x.task)} />{x.folder && <span className="block text-[10.5px] font-semibold text-[var(--color-text-muted)]">{x.folder}</span>}{x.task}{x.critical && <CriticalTag />}{x.woShown && <span className="ml-1.5 font-mono font-semibold text-[11px] text-[var(--color-text-muted)]">{/^\d+ WOs$/.test(x.woShown) ? x.woShown : `WO ${x.woShown}`}</span>}</b>
+                <b className="text-[var(--color-text)] break-words"><Grip props={grip([x.key], x.task)} />{x.task}{x.critical && <CriticalTag />}{x.woShown && <span className="ml-1.5 font-mono font-semibold text-[11px] text-[var(--color-text-muted)]">{/^\d+ WOs$/.test(x.woShown) ? x.woShown : `WO ${x.woShown}`}</span>}</b>
                 {x.vs.text && <b className={`shrink-0 font-mono text-[12px] ${vsCls(x.vs.tone)}`}>{x.vs.text}</b>}
               </div>
               {pctLine(x) && <div className="text-[11px] text-[var(--color-text-muted)]">{pctLine(x)}</div>}
@@ -3137,7 +3141,7 @@ function DoneTasks({ rows, print, stamps = false, T, sort, onEdit }: { rows: Don
           <tbody>
             {rows.map((x) => (
               <tr key={x.ids.join(",")} data-sort-id={x.key} className={`group/sort border-b border-slate-100 dark:border-slate-800 align-top ${moving(x.key) ? "opacity-40" : ""}`}>
-                <td className={`${cell} font-semibold break-words`}><Grip props={grip([x.key], x.task)} />{x.folder && <div className={`font-normal text-slate-500 dark:text-slate-400 ${print ? "text-[7pt]" : "text-[10.5px]"}`}>{x.folder}</div>}{x.task}{x.critical && <CriticalTag print={print} />}{pctLine(x) && <div className={`font-normal text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-[11px]"}`}>{pctLine(x)}</div>}</td>
+                <td className={`${cell} font-semibold break-words`}><Grip props={grip([x.key], x.task)} />{x.task}{x.critical && <CriticalTag print={print} />}{pctLine(x) && <div className={`font-normal text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-[11px]"}`}>{pctLine(x)}</div>}</td>
                 {hasWo && <td className={`${cell} font-mono text-[11px] break-words`}>{x.woShown.split(/,\s*/).map((w, i) => <span key={i} className="block">{w}</span>)}</td>}
                 <td className={`${cell} break-words`}><DoneLines x={x} stamps={stamps} T={T} print={print} onEdit={onEdit} /></td>
                 <td className={`${cell} text-[11.5px] text-[var(--color-text-muted)] break-words`}>{x.who}</td>

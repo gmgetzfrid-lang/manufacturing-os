@@ -31,7 +31,8 @@ import {
   buildShiftReport, previousShift, meetingLeadMin, timeInShift,
   type ShiftPlan, type ShiftReport, type ShiftRow, type ShiftTimes, type ShiftWindow,
 } from "@/lib/shiftReport";
-import { woOf } from "@/lib/workOrderCrew";
+import { workOrderOfStep } from "@/lib/workOrderCrew";
+export { workOrderOfStep } from "@/lib/workOrderCrew";
 import { startMsOf } from "@/lib/calendarPlacement";
 
 export type SheetKind = "late" | "going" | "due" | "pulled" | "try" | "early";
@@ -107,20 +108,6 @@ export function sheetLines(report: ShiftReport, tryIds?: Set<string>): SheetLine
 
 /** The lines by work order: WO number order (numbers as numbers), work with
  *  no WO last; in each, by plan, the ones that could start early last. */
-/** A step's work order: the WO number (its own, or the nearest above), and
- *  the highest task carrying that number (the equipment's), not the step a
- *  copied-down number sits on. No WO: its parent task. */
-export function workOrderOfStep(id: string, byId: Map<string, Milestone>): { key: string; wo: string | null; owner: Milestone } | null {
-  const m = byId.get(id);
-  if (!m) return null;
-  let wo = "", at: Milestone | undefined = m;
-  const seen = new Set<string>();
-  for (; at?.id && !seen.has(at.id); at = at.parentId ? byId.get(at.parentId) : undefined) { seen.add(at.id); wo = woOf(at); if (wo) break; }
-  let owner = wo && at ? at : (m.parentId ? byId.get(m.parentId) : undefined) ?? m;
-  if (wo) for (let up = owner.parentId ? byId.get(owner.parentId) : undefined; up?.id && !seen.has(up.id) && woOf(up) === wo; up = up.parentId ? byId.get(up.parentId) : undefined) { seen.add(up.id); owner = up; }
-  return { key: `${wo || "-"}:${owner.id}`, wo: wo || null, owner };
-}
-
 export function groupSheet(lines: SheetLine[], milestones: Milestone[]): SheetGroup[] {
   const byId = new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m]));
   const groupOf = (id: string) => workOrderOfStep(id, byId);

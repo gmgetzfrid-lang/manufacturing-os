@@ -90,3 +90,65 @@ export function withWorkOrderCrews(milestones: Milestone[]): Milestone[] {
     };
   });
 }
+
+/** A step's work order: the WO number (its own, or the nearest above), and
+ *  the highest task carrying that number (the equipment's), not the step a
+ *  copied-down number sits on. No WO: its parent task. */
+export function workOrderOfStep(id: string, byId: Map<string, Milestone>): { key: string; wo: string | null; owner: Milestone } | null {
+  const m = byId.get(id);
+  if (!m) return null;
+  let wo = "", at: Milestone | undefined = m;
+  const seen = new Set<string>();
+  for (; at?.id && !seen.has(at.id); at = at.parentId ? byId.get(at.parentId) : undefined) { seen.add(at.id); wo = woOf(at); if (wo) break; }
+  let owner = wo && at ? at : (m.parentId ? byId.get(m.parentId) : undefined) ?? m;
+  if (wo) for (let up = owner.parentId ? byId.get(owner.parentId) : undefined; up?.id && !seen.has(up.id) && woOf(up) === wo; up = up.parentId ? byId.get(up.parentId) : undefined) { seen.add(up.id); owner = up; }
+  return { key: `${wo || "-"}:${owner.id}`, wo: wo || null, owner };
+}
+
+/** Added work (discovery, added scope) stays with its equipment, even with
+ *  a WO # of its own. */
+const isAdded = (m: Milestone) => { const a = m.attributes as Record<string, unknown> | null | undefined; return !!a && a.discovery != null && a.discovery !== ""; };
+
+type KidsOf = (id: string) => Milestone[];
+
+/** A task's work order number: its own, or the one number typed on its
+ *  steps (E-12 with its WO on its steps, or on one of them) - the same rule
+ *  as the Work orders list. Sub-tasks with a number of their own are work
+ *  orders of their own, so a folder holding them ("Work Orders", "PSVs")
+ *  has none. `kidsOf`: each task's children. */
+export function taskWorkOrder(task: Milestone, kidsOf: KidsOf): string {
+  const own = woOf(task);
+  if (own || !task.id) return own;
+  const kids = kidsOf(task.id);
+  if (kids.some((k) => k.id && kidsOf(k.id).length > 0 && woOf(k))) return "";
+  const ws = kids.filter((k) => !isAdded(k)).map(woOf).filter(Boolean);
+  return ws.length >= 1 && ws.every((w) => w === ws[0]) ? ws[0] : "";
+}
+
+const taskWo = (a: Milestone, kidsOf?: KidsOf) => (kidsOf ? taskWorkOrder(a, kidsOf) : woOf(a));
+
+/** The WO number of a step that is a work order of its own: its number is
+ *  on it and not its task's (one PSV in a folder of PSVs, or a WO set under
+ *  another's equipment). "" when its work order is the task's. `chain`:
+ *  the tasks above it, nearest first; `kidsOf`: each task's steps. */
+export function ownWorkOrder(m: Milestone, chain: Milestone[], kidsOf?: KidsOf): string {
+  const w = woOf(m);
+  if (!w || isAdded(m)) return "";
+  const above = chain.map((a) => taskWo(a, kidsOf)).find(Boolean);
+  return above === w ? "" : w;
+}
+
+/** The task a step sits under on every report and card: its work order's
+ *  task (the highest one carrying its WO number, the equipment's), else
+ *  the task just above it when no WO is. Null: the step is a work order of
+ *  its own, or nothing is above it. Folders of work orders ("PSVs", "Work
+ *  Orders") are never a heading. */
+export function workOrderTask(m: Milestone, chain: Milestone[], kidsOf?: KidsOf): Milestone | null {
+  if (ownWorkOrder(m, chain, kidsOf)) return null;
+  const wos = chain.map((a) => taskWo(a, kidsOf));
+  const i = wos.findIndex(Boolean);
+  if (i < 0) return chain[0] ?? null;
+  let top = i;
+  while (top + 1 < chain.length && wos[top + 1] === wos[i]) top++;
+  return chain[top];
+}

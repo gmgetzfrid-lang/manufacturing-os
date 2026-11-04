@@ -19,6 +19,7 @@ import { saveSheetLine } from "@/lib/shiftSheetSave";
 import { useShiftRecords } from "@/lib/shiftRecord";
 import { woOf } from "@/lib/workOrderCrew";
 import { startMsOf } from "@/lib/calendarPlacement";
+import { searchMatcher, hasQuery } from "@/lib/fuzzySearch";
 
 const field = "h-9 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[13px] text-[var(--color-text)] disabled:opacity-50";
 const has = (e?: SheetEntry) => !!e && !!(e.start?.trim() || e.lunchPct?.trim() || e.endPct?.trim() || e.done?.trim() || e.hold || e.note?.trim());
@@ -92,18 +93,17 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
   const [q, setQ] = useState("");
   const kids = useMemo(() => { const s = new Set<string>(); for (const m of milestones) if (m.parentId) s.add(m.parentId); return s; }, [milestones]);
   const found = useMemo(() => {
-    const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    if (!words.length) return [];
+    if (!hasQuery(q)) return [];
+    const match = searchMatcher(q);
     const on = new Set(lineIds);
     return milestones
       .filter((m) => m.id && !kids.has(m.id) && !on.has(m.id) && m.status !== "completed")
       .map((m) => {
         const parent = m.parentId ? byId.get(m.parentId) : undefined;
-        const text = `${m.name} ${parent?.name ?? ""} ${woOf(m)} ${m.responsibleParty ?? ""}`.toLowerCase();
-        return { m, parent, text };
+        return { m, parent, s: match(`${m.name} ${parent?.name ?? ""} ${woOf(m)} ${m.responsibleParty ?? ""}`) };
       })
-      .filter((x) => words.every((w) => x.text.includes(w)))
-      .sort((a, b) => startMsOf(a.m) - startMsOf(b.m))
+      .filter((x) => x.s > 0)
+      .sort((a, b) => b.s - a.s || startMsOf(a.m) - startMsOf(b.m))
       .slice(0, 8);
   }, [q, milestones, kids, byId, lineIds]);
   const addLine = (m: Milestone) => {

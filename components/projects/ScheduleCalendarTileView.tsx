@@ -36,6 +36,7 @@ import AddWorkPicker from "@/components/projects/AddWorkPicker";
 import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
 import { OPEN_SETUP_EVENT } from "@/lib/scheduleSetup";
 import { carriedOpenWork } from "@/lib/openWork";
+import { woOf, taskWorkOrder } from "@/lib/workOrderCrew";
 
 // Use the shared palette so a group is the SAME hue here and on the
 // timeline. `.rail` is the solid accent (was `.bar` locally).
@@ -206,10 +207,26 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   // exactly once so a single sub-item can be dragged on its own day
   // while its siblings stay put. See lib/calendarPlacement.ts.
   const split = useMemo(
-    () => splitPlacements(milestones, childrenByParent, showSubtasks),
-    [milestones, childrenByParent, showSubtasks],
+    // One card per work order: a step that is a work order of its own (one
+    // PSV in the PSVs folder, a WO set under another's equipment) is its own
+    // card; added work stays on its equipment's (lib/workOrderCrew).
+    () => {
+      // The group's work order: its own number, or the nearest one above it.
+      const woUp = (g: Milestone) => {
+        const seen = new Set<string>();
+        for (let x: Milestone | undefined = g; x?.id && !seen.has(x.id); x = x.parentId ? byId.get(x.parentId) : undefined) { seen.add(x.id); const w = taskWorkOrder(x, (id) => childrenByParent.get(id) ?? []); if (w) return w; }
+        return "";
+      };
+      return splitPlacements(milestones, childrenByParent, showSubtasks, (step, group) => {
+        const w = woOf(step);
+        return !!w && !discoveryOf(step) && w !== woUp(group);
+      });
+    },
+    [milestones, childrenByParent, showSubtasks, byId],
   );
   const mains = split.chips;
+  // A card's steps: its own, not the ones that are work orders of their own.
+  const cardSteps = useCallback((m: Milestone) => leafDescendants(m).filter((l) => !(l.id && split.apart.has(l.id))), [leafDescendants, split]);
 
   // Distinct top-level groups that actually have rendered tasks beneath
   // them, in calendar order — used for the group color legend.
@@ -303,7 +320,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
     const m = new Map<string, { day: Placed[]; night: Placed[] }>();
     const slot = (k: string) => { let v = m.get(k); if (!v) { v = { day: [], night: [] }; m.set(k, v); } return v; };
     for (const ms of mains) {
-      const steps = ms.id ? leafDescendants(ms) : [];
+      const steps = ms.id ? cardSteps(ms) : [];
       const units = steps.length ? steps : [ms];
       const shown = built.row(ms);
       const s0 = startMs(shown), f0 = finishMs(shown);
@@ -332,7 +349,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
     }
     for (const v of m.values()) { v.day.sort(compareDayPlacements); v.night.sort(compareDayPlacements); }
     return m;
-  }, [mains, tz, leafDescendants, shiftTimes, crewFilter, bandsOf, built, pathMarks]);
+  }, [mains, tz, cardSteps, shiftTimes, crewFilter, bandsOf, built, pathMarks]);
   const isDonePl = (p: Placed) => (p.ms.id ? progress?.get(p.ms.id)?.percent : undefined) === 100 || p.ms.status === "completed";
   const doneLast = (arr: Placed[]) => [...arr.filter((p) => !isDonePl(p)), ...arr.filter(isDonePl)];
   // A day's cards once each (a work order worked day and night counts once).
@@ -922,7 +939,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         const dayKey = subPopover.dayKey;
         // By start, then the one that finishes first, then the file's order.
         // A card that is a single step is its own list.
-        const kids = leafDescendants(subPopover.ms);
+        const kids = cardSteps(subPopover.ms);
         const all = (kids.length ? kids : [subPopover.ms]).slice().sort((a, b) => startMs(a) - startMs(b) || finishMs(a) - finishMs(b) || wbsCompare(a.wbs, b.wbs));
         const band = subPopover.band;
         // Opened from a shift: that shift's steps; the rest behind a toggle.

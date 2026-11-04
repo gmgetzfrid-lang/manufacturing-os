@@ -19,6 +19,7 @@ import { dayKey, dayKeyToMs, wallClock, wallClockToMs, addDays, dayDiff, hasTime
 import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
 import { blocksStart, linkOf } from "@/lib/scheduleLinks";
 import type { NightJobs } from "@/lib/nightStaffing";
+import { ownWorkOrder, workOrderTask } from "@/lib/workOrderCrew";
 
 /** A crew kept for work pulled forward, and its size for one shift. */
 export interface PullCrew { crew: string | null; hands: number; hours: number }
@@ -501,6 +502,12 @@ export interface ShiftRow {
   /** Immediate parent (the equipment / step group), if any. */
   parentName: string | null;
   parentId: string | null;
+  /** The work order it's listed under on the report and in the email: the
+   *  task carrying its WO number (the equipment's), or its task when it has
+   *  no WO; null when the step is a work order of its own (each PSV) -
+   *  never a folder of work orders. Steps of their own on one WO number
+   *  share "wo:<number>". Unset: its parent (rowTask). */
+  unit?: { id: string; name: string } | null;
   start: number;
   finish: number;
   percent: number;
@@ -757,6 +764,11 @@ export type Readiness =
   | "waiting"        // waits on something not done and not finishing then
   | "held";          // blocked or on hold
 
+/** The work order a row is listed under (ShiftRow.unit), or its parent
+ *  for a row made without one. Null: a work order of its own. */
+export const rowTask = (r: ShiftRow): { id: string; name: string } | null =>
+  r.unit !== undefined ? r.unit : r.parentId ? { id: r.parentId, name: r.parentName ?? "" } : null;
+
 export interface LookAheadItem {
   row: ShiftRow;
   readiness: Readiness;
@@ -806,10 +818,30 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     const sibs = siblingsOf.get(m.parentId) ?? [];
     const i = sibs.findIndex((x) => x.id === m.id);
     const prev = i > 0 ? sibs[i - 1] : undefined;
+    // A folder of work orders isn't a sequence: one PSV doesn't wait on the
+    // PSV before it (lib/workOrderCrew).
+    const own = (x: Milestone) => !!ownWorkOrder(x, pathOf(x), (id) => kids.get(id) ?? []);
+    if (prev && (own(m) || own(prev))) return [];
     return prev && finishMsOf(prev) <= startMsOf(m) + 3_600_000 ? [prev] : [];
   };
   const doneM = (m: Milestone) => m.status === "completed" || pctOf(m) >= 100;
   const startedM = (m: Milestone) => doneM(m) || m.status === "in_progress" || pctOf(m) > 0;
+
+  // Each step's work order (lib/workOrderCrew): steps that are work orders
+  // of their own, by number - two or more on one number share a heading.
+  const kidsOfId = (id: string) => kids.get(id) ?? [];
+  const ownCount = new Map<string, number>();
+  for (const m of milestones) {
+    if (!isLeaf(m)) continue;
+    const w = ownWorkOrder(m, pathOf(m), kidsOfId);
+    if (w) ownCount.set(w, (ownCount.get(w) ?? 0) + 1);
+  }
+  const unitOf = (m: Milestone, chain: Milestone[]): ShiftRow["unit"] => {
+    const own = ownWorkOrder(m, chain, kidsOfId);
+    if (own) return (ownCount.get(own) ?? 0) > 1 ? { id: `wo:${own}`, name: `WO ${own}` } : null;
+    const t = workOrderTask(m, chain, kidsOfId);
+    return t?.id ? { id: t.id, name: t.name } : null;
+  };
 
   const rowFor = (m: Milestone, win: ShiftWindow): ShiftRow => {
     const chain = pathOf(m);
@@ -827,6 +859,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       path: chain.slice().reverse().map((a) => a.name),
       parentName: chain[0]?.name ?? null,
       parentId: chain[0]?.id ?? null,
+      unit: unitOf(m, chain),
       start: s, finish: f, percent,
       dueAt: crewDueMs(m, tz, times),
       status: m.status,

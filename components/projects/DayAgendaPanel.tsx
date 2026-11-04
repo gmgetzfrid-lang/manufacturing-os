@@ -42,6 +42,7 @@ import { discoveryText } from "@/lib/discovery";
 import StepCard from "@/components/projects/StepCard";
 import { loadProgressLog, type ProgressLogRow } from "@/lib/progressHistory";
 import { lastChanges, saidWithLatest } from "@/lib/stepComment";
+import { searchMatcher, hasQuery } from "@/lib/fuzzySearch";
 
 interface Props {
   day: string; // "YYYY-MM-DD" in the plant zone
@@ -199,12 +200,13 @@ export default function DayAgendaPanel({
   // Narrow to an equipment tag, WO number, step name or crew — the way a
   // contractor's report names the work.
   const shownGroups = useMemo(() => {
-    const q = query.trim().toLowerCase().replace(/[\s_-]+/g, "");
-    if (!q) return groups;
-    const hit = (t?: string | null) => !!t && t.toLowerCase().replace(/[\s_-]+/g, "").includes(q);
+    if (!hasQuery(query)) return groups;
+    // V-1 is V-01, a typo still finds it (lib/fuzzySearch): each step by
+    // its own words and its equipment's.
+    const match = searchMatcher(query);
     return groups.map((g) => {
-      const groupHit = hit(g.parent?.name) || g.crumbs.some((c) => hit(c.name));
-      return { ...g, rows: groupHit ? g.rows : g.rows.filter((r) => hit(r.leaf.name) || hit(woOf(r.leaf)) || hit(r.leaf.responsibleParty) || hit(r.leaf.location) || hit(discoveryText(r.leaf))) };
+      const above = [g.parent?.name, ...g.crumbs.map((c) => c.name)].filter(Boolean).join(" ");
+      return { ...g, rows: g.rows.filter((r) => match([above, r.leaf.name, woOf(r.leaf), r.leaf.responsibleParty, r.leaf.location, discoveryText(r.leaf)].filter(Boolean).join(" ")) > 0) };
     }).filter((g) => g.rows.length > 0);
   }, [groups, query, woOf]);
   // The day shift's work, then the night shift's: a step the night crew
@@ -327,15 +329,16 @@ export default function DayAgendaPanel({
     .filter((p): p is Milestone => !!p && p.status !== "completed" && (p.percentComplete ?? 0) < 100);
   // A search also finds steps on other days, to jump to them.
   const otherDays = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (q.length < 2) return [];
+    if (query.trim().length < 2 || !hasQuery(query)) return [];
+    const match = searchMatcher(query);
     const here = new Set(groups.flatMap((g) => g.rows.map((r) => r.leaf.id)));
     const kids = new Set(milestones.map((m) => m.parentId).filter(Boolean));
-    const hit = (s?: string | null) => !!s && s.toLowerCase().includes(q);
     return milestones
       .filter((m) => m.id && !kids.has(m.id) && !here.has(m.id) && m.plannedAt)
-      .filter((m) => hit(m.name) || hit(woOf(m)) || hit(m.responsibleParty) || hit(discoveryText(m)) || ancestorsOf(m).some((a) => hit(a.name)))
-      .sort((a, b) => startMsOf(a) - startMsOf(b))
+      .map((m) => ({ m, s: match([m.name, woOf(m), m.responsibleParty, discoveryText(m), ...ancestorsOf(m).map((a) => a.name)].filter(Boolean).join(" ")) }))
+      .filter((x) => x.s > 0)
+      .sort((a, b) => b.s - a.s || startMsOf(a.m) - startMsOf(b.m))
+      .map((x) => x.m)
       .slice(0, 12);
   }, [query, groups, milestones, ancestorsOf, woOf]);
   const pctOf = (m: Milestone) =>

@@ -12,7 +12,7 @@ import { capacityOf, askedResult } from "@/lib/shiftHandover";
 import { turnoverPlan, nextOf, askedLine, vsPlan, doneByTask, shareOf, pathNote, competition, type TableOrder } from "@/lib/turnoverPlan";
 import { behindWhyBlocks, type BehindWhy } from "@/lib/behindWhy";
 import { discoveryOf, discoverySummary, discoveryStepLine, impactLine, ADDED, kindOf as addedKind, addedTitle, type Discovery } from "@/lib/discovery";
-import { type PullCrew, type Pace, type ShiftPlan, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
+import { rowTask, type PullCrew, type Pace, type ShiftPlan, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
 import { planSetText, offPlanText, planCheckText } from "@/lib/nightPlan";
 import { rankHazards, type HazardJobInput, type HazardKind } from "@/lib/safetyMoment";
 import { safetyBrief, talkSources, projectFacts, RISKS_RANKED, type ProjectBase } from "@/lib/safetyTalk";
@@ -158,7 +158,8 @@ function byTask(rows: ShiftRow[], cells: (r: ShiftRow) => ExportCell[], taskSub?
   const order: string[] = [];
   const groups = new Map<string, ShiftRow[]>();
   for (const r of rows) {
-    let k = r.parentId ?? `solo:${r.leaf.id ?? r.leaf.name}`;
+    // Under its work order, never a folder of them (ShiftRow.unit).
+    let k = rowTask(r)?.id ?? `solo:${r.leaf.id ?? r.leaf.name}`;
     if (runs) {
       const last = order[order.length - 1];
       k = last && last.split("#")[0] === k ? last : `${k}#${order.length}`;
@@ -170,7 +171,7 @@ function byTask(rows: ShiftRow[], cells: (r: ShiftRow) => ExportCell[], taskSub?
   for (const k of order) {
     groups.get(k)!.forEach((r, i) => {
       const sub = i === 0 ? taskSub?.(r) : undefined;
-      out.push([i === 0 ? { t: r.parentName ?? r.leaf.name, bold: true, ...(sub ? { sub: [{ t: sub }] } : {}) } : "", ...cells(r)]);
+      out.push([i === 0 ? { t: rowTask(r)?.name ?? r.leaf.name, bold: true, ...(sub ? { sub: [{ t: sub }] } : {}) } : "", ...cells(r)]);
     });
   }
   return out;
@@ -231,7 +232,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   const doneRows = [...plan.done, ...plan.moved];
   const byTaskDone = doneByTask(report, plan, t, (id) => note(id), { timeOf: look.timeOf, taskPct: look.taskPct, whyOf: look.whyOf, taskSteps: (id) => { const s = look.stepsOf?.(id); return s ? { done: s.filter((x) => x.percent >= 100).length, total: s.length } : undefined; } });
   const pctText = (p?: { pct: number; plan?: number }) => (p ? `task ${p.pct}% done${p.plan != null ? ` · plan ${p.plan}%` : ""}` : undefined);
-  const taskSub = (r: ShiftRow) => (r.parentId ? pctText(look.taskPct?.(r.parentId)) : undefined);
+  const taskSub = (r: ShiftRow) => { const id = rowTask(r)?.id; return id && !id.startsWith("wo:") ? pctText(look.taskPct?.(id)) : undefined; };
   const checkText = planCheckText(report);
   if (doneRows.length || asked.length || checkText) {
     out.push({
@@ -242,7 +243,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
           k: "table", head: ["Task", "WO", "Last done · In progress", "Who", "What it means", "vs plan"], align: ["left", "left", "left", "left", "left", "right"],
           textLabels: ["", "WO", "", "by", "", "vs plan"], nowrap: [1, 5],
           rows: byTaskDone.map((x) => [
-            { t: x.folder ? `${x.folder}: ${x.task}` : x.task, bold: true, ...(x.taskPct || x.count || x.critical ? { sub: [...(x.critical ? [{ t: "Critical path", tone: "rose" as const }] : []), ...(x.taskPct || x.count ? [{ t: [x.taskPct ? pctText(x.taskPct)!.replace(/^task /, x.folder ? "" : "task ") : null, x.count ?? null].filter(Boolean).join(" · ") }] : [])] } : {}) }, x.woShown,
+            { t: x.task, bold: true, ...(x.taskPct || x.count || x.critical ? { sub: [...(x.critical ? [{ t: "Critical path", tone: "rose" as const }] : []), ...(x.taskPct || x.count ? [{ t: [x.taskPct ? pctText(x.taskPct)!.replace(/^task /, x.own ? "" : "task ") : null, x.count ?? null].filter(Boolean).join(" · ") }] : [])] } : {}) }, x.woShown,
             // The step done last and the one still going, labeled: its time when
             // times are on, its WO when the task has several, its own comment.
             (() => {

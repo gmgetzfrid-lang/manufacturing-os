@@ -11,6 +11,7 @@
 
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { discoveryText, discoveryOf, kindOf, type AddedKind } from "@/lib/discovery";
+import { searchMatcher, hasQuery } from "@/lib/fuzzySearch";
 
 export interface ScheduleFilter {
   /** Free text — matches name, WBS, work order, responsible, location,
@@ -106,7 +107,8 @@ export function filterMilestones(
     childrenByParent.set(pid, arr);
   }
 
-  const terms = f.query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  // V-1 is V-01; a typo still finds it (lib/fuzzySearch).
+  const match = hasQuery(f.query) ? searchMatcher(f.query) : null;
   const statusSet = new Set(f.statuses);
   const groupSet = new Set(f.groupIds);
 
@@ -121,10 +123,7 @@ export function filterMilestones(
   });
 
   const directMatch = (m: Milestone): boolean => {
-    if (terms.length > 0) {
-      const hay = haystack(m);
-      if (!terms.every((t) => hay.includes(t))) return false;
-    }
+    if (match && !match(haystack(m))) return false;
     if (statusSet.size > 0 && !statusSet.has(m.status)) return false;
     if (f.overdueOnly) {
       if (opts?.isOverdue) { if (!opts.isOverdue(m, now)) return false; }
@@ -182,7 +181,7 @@ export function filterMilestones(
   // the matching rows + their ancestors for context, but NOT every
   // child of a matching summary — otherwise filtering "overdue" would
   // drag in a whole phase because the summary row is itself past due.
-  const pullDescendants = terms.length > 0;
+  const pullDescendants = !!match;
   for (const m of milestones) {
     if (!m.id || !directMatch(m)) continue;
     show.add(m.id);

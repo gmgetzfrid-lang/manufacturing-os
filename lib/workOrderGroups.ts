@@ -9,7 +9,6 @@ import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { leafPercent } from "@/lib/scheduleProgress";
 import { expectedFraction, workHours, type ShiftTimes } from "@/lib/shiftReport";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
-import { woOf } from "@/lib/workOrderCrew";
 import { discoveryOf, discoveryText, kindOf, ADDED, type AddedKind } from "@/lib/discovery";
 import type { PathMarks } from "@/lib/criticalPath";
 import { notesFor } from "@/lib/milestones";
@@ -18,6 +17,8 @@ import { buildTimeLog, type TimeLogRow } from "@/lib/timeLog";
 import { letterheadDocument, type Letterhead } from "@/lib/letterhead";
 import { workOrdersHtml, PRINT_CSS, type PrintOrder, type PrintFormat } from "@/lib/workOrdersPrint";
 import { saidWithLatest } from "@/lib/stepComment";
+import { searchFilter } from "@/lib/fuzzySearch";
+import { woOf, taskWorkOrder } from "@/lib/workOrderCrew";
 
 export const STEP_STATUS: Record<MilestoneStatus, string> = { planned: "Not started", in_progress: "In progress", completed: "Done", on_hold: "On hold", blocked: "Blocked", missed: "Missed" };
 export const SHOW_WORD: Record<string, string> = { all: "All work orders", open: "Open work orders", critical: "Work orders on the critical path", behind: "Work orders behind plan", notStarted: "Work orders not started", held: "Held work orders", done: "Done work orders", added: "Work orders with discovery or added scope" };
@@ -71,6 +72,9 @@ export function workOrderGroupsOf(milestones: Milestone[], childrenByParent: Map
       if (wo) { owner = x; break; }
       x = x.parentId ? byId.get(x.parentId) : undefined;
     }
+    // The task above carrying the same number - its own, or typed on each of
+    // its steps (E-12) - is the work order, not the step.
+    for (let up = owner?.parentId ? byId.get(owner.parentId) : undefined; wo && up?.id && !seen.has(up.id) && taskWorkOrder(up, (id) => childrenByParent.get(id) ?? []) === wo; up = up.parentId ? byId.get(up.parentId) : undefined) { seen.add(up.id); owner = up; }
     if (!owner) owner = (m.parentId ? byId.get(m.parentId) : undefined) ?? m;
     const key = `${wo || "-"}:${owner.id}`;
     const g = groups.get(key) ?? { wo: wo || null, owner, steps: [] };
@@ -94,7 +98,7 @@ function byNumber(groups: Map<string, { wo: string | null; owner: Milestone; ste
   const under = new Map<string, Set<string>>();
   for (const g of groups.values()) {
     if (!g.wo) continue;
-    for (const id of above(g.owner)) under.set(id, (under.get(id) ?? new Set()).add(g.wo));
+    for (const id of [...(g.owner.id ? [g.owner.id] : []), ...above(g.owner)]) under.set(id, (under.get(id) ?? new Set()).add(g.wo));
   }
   const out = new Map<string, { wo: string | null; owner: Milestone; steps: Milestone[]; also?: Milestone[] }>();
   for (const [key, g] of groups) {
@@ -168,8 +172,8 @@ export function showsOrder(o: WorkOrder, show: Show, marks?: PathMarks): boolean
 
 /** The work orders a search finds (every word somewhere on the card). */
 export function findOrders(orders: WorkOrder[], query: string): WorkOrder[] {
-  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  return orders.filter((o) => words.every((w) => o.find.includes(w)));
+  // V-1 is V-01; a typo still finds it; the best matches first (lib/fuzzySearch).
+  return searchFilter(orders, query, (o) => o.find);
 }
 
 /** The work order report, ready to print: each work order opened up with

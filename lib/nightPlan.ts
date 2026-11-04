@@ -7,6 +7,7 @@
 // it: done, moved, not started, and what it did that wasn't on it.
 
 import type { ShiftPlan, ShiftReport, ShiftRow, LookAheadItem } from "@/lib/shiftReport";
+import { searchFilter, hasQuery } from "@/lib/fuzzySearch";
 
 export interface PlanChoiceGroup {
   id: "late" | "scheduled" | "other" | "early";
@@ -64,9 +65,9 @@ export function planSearchText(r: ShiftRow, wo?: string | null): string {
 
 /** Every word must match: "v-01 tower", "304528". */
 export function searchPlanPool<T extends { row: ShiftRow }>(pool: T[], query: string, woOf?: (id: string) => string | null | undefined): T[] {
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (!words.length) return [];
-  return pool.filter((x) => { const t = planSearchText(x.row, x.row.leaf.id ? woOf?.(x.row.leaf.id) : null); return words.every((w) => t.includes(w)); });
+  if (!hasQuery(query)) return [];
+  // V-1 is V-01, a typo still finds it; the best matches first (lib/fuzzySearch).
+  return searchFilter(pool, query, (x) => planSearchText(x.row, x.row.leaf.id ? woOf?.(x.row.leaf.id) : null));
 }
 
 /** A % typed for "by the end of the shift": a whole number 0 to 100, or

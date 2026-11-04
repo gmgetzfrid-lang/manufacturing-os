@@ -13,6 +13,7 @@ import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Moda
 import { filterLookAhead, scopeOf } from "@/lib/pullAhead";
 import { capacityOf } from "@/lib/shiftHandover";
 import type { LookAheadItem, PullCrew, ShiftRow, ShiftWindow } from "@/lib/shiftReport";
+import { searchMatcher, hasQuery } from "@/lib/fuzzySearch";
 
 const WINDOWS = [
   { id: "1", label: "Next day", days: 1 },
@@ -61,9 +62,9 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
     .sort((a, b) => a.row.crewStart - b.row.crewStart || a.row.leaf.name.localeCompare(b.row.leaf.name)), [items, query, readyOnly, criticalOnly, until]);
   // A search also says where it found steps that are already listed.
   const listedHits = useMemo(() => {
-    const k = query.toLowerCase().split(/\s+/).filter(Boolean);
-    if (!k.length) return [];
-    return onLists.filter((x) => { const t = [x.row.leaf.name, ...x.row.path, x.row.leaf.workOrderRef ?? "", x.row.leaf.responsibleParty ?? ""].join(" ").toLowerCase(); return k.every((w) => t.includes(w)); });
+    if (!hasQuery(query)) return [];
+    const match = searchMatcher(query);
+    return onLists.filter((x) => match([x.row.leaf.name, ...x.row.path, x.row.leaf.workOrderRef ?? "", x.row.leaf.responsibleParty ?? ""].join(" ")) > 0);
   }, [onLists, query]);
   const pickedIds = useMemo(() => new Set(picked.map((r) => r.leaf.id)), [picked]);
   const shown = more ? list : list.slice(0, SHOW);

@@ -153,7 +153,11 @@ export function splitPlacements<T extends PlaceableTask>(
   milestones: T[],
   childrenByParent: Map<string, T[]>,
   showSubtasks: boolean,
-): { chips: T[]; bands: T[] } {
+  /** A step that is a work order of its own, apart from the group it sits
+   *  in (one PSV in a folder of PSVs, a WO set under another's equipment):
+   *  its own card, not one of the group's. */
+  ownCard?: (step: T, group: T) => boolean,
+): { chips: T[]; bands: T[]; apart: Set<string> } {
   const byId = new Map<string, T>();
   for (const m of milestones) if (m.id) byId.set(m.id, m);
   const kidsOf = (m: T): T[] => (m.id ? childrenByParent.get(m.id) ?? [] : []);
@@ -164,6 +168,19 @@ export function splitPlacements<T extends PlaceableTask>(
   const chips: T[] = [];
   const bands: T[] = [];
   const seen = new Set<string>();
+  // A bottom group's steps that are work orders of their own: each its own
+  // card. A group left with none of its own (a folder of work orders) is
+  // no card at all.
+  const apart = new Set<string>();
+  const stays = new Map<string, number>();
+  if (ownCard && !showSubtasks) {
+    for (const g of milestones) {
+      if (!g.id || !isBottomGroup(g)) continue;
+      let n = 0;
+      for (const k of kidsOf(g)) { if (k.id && ownCard(k, g)) apart.add(k.id); else n++; }
+      stays.set(g.id, n);
+    }
+  }
   const push = (list: T[], m: T) => {
     if (!m.plannedAt) return;
     if (m.id) { if (seen.has(m.id)) return; seen.add(m.id); }
@@ -175,15 +192,17 @@ export function splitPlacements<T extends PlaceableTask>(
       const parent = m.parentId ? byId.get(m.parentId) : undefined;
       // In Tasks mode a leaf under a bottom group is represented by that
       // group's chip; everywhere else the leaf stands on its own.
-      if (!showSubtasks && parent && isBottomGroup(parent)) continue;
+      if (!showSubtasks && parent && isBottomGroup(parent) && !(m.id && apart.has(m.id))) continue;
       push(chips, m);
     } else if (isBottomGroup(m) && !showSubtasks) {
+      // A folder of work orders: a group above them, not a card.
+      if (m.id && stays.get(m.id) === 0) { push(bands, m); continue; }
       push(chips, m);
     } else {
       push(bands, m);
     }
   }
-  return { chips, bands };
+  return { chips, bands, apart };
 }
 
 /** The rows that get a chip on the grid (see splitPlacements). */

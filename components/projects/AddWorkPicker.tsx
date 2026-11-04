@@ -10,6 +10,7 @@ import { Plus, Search, X as XIcon } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { dayKeyToMs, fmtInTz, fromDateTimeInput } from "@/lib/scheduleTz";
 import { inheritedWorkOrders } from "@/lib/workOrderCrew";
+import { searchMatcher } from "@/lib/fuzzySearch";
 
 const ms = (v: unknown) => (v == null || v === "" ? NaN : Date.parse(String(v)));
 
@@ -46,7 +47,8 @@ export default function AddWorkPicker({ day: when, tz, milestones, onPick, onNew
   const wos = useMemo(() => inheritedWorkOrders(milestones), [milestones]);
   const parentName = useMemo(() => new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m.name])), [milestones]);
   const wo = (m: Milestone) => m.workOrderRef?.trim() || (m.id ? wos.get(m.id) : undefined) || "";
-  const hit = (m: Milestone) => !q.trim() || `${m.name} ${wo(m)} ${m.parentId ? parentName.get(m.parentId) ?? "" : ""}`.toLowerCase().includes(q.trim().toLowerCase());
+  const match = searchMatcher(q);
+  const hit = (m: Milestone) => match(`${m.name} ${wo(m)} ${m.parentId ? parentName.get(m.parentId) ?? "" : ""}`) > 0;
   const at = when.length >= 16 ? Date.parse(fromDateTimeInput(when, tz) ?? "") : NaN;
   const label = Number.isFinite(at)
     ? fmtInTz(at, tz, { weekday: "long", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })

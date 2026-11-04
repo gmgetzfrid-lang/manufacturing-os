@@ -13,6 +13,7 @@ import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Moda
 import { BULK_FIELDS, valuesIn, planReplace, planSet, valueLabel, type BulkField } from "@/lib/bulkEdit";
 import { applyBulkFieldChange } from "@/lib/milestones";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import { searchFilter } from "@/lib/fuzzySearch";
 
 export default function BulkEditModal({ milestones, selectedIds, startMode, orgId, projectId, userId, userEmail, onClose, onDone }: {
   milestones: Milestone[];
@@ -35,7 +36,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
   const [error, setError] = useState<string | null>(null);
 
   const values = useMemo(() => valuesIn(milestones, field), [milestones, field]);
-  const shownValues = values.filter((v) => !query || v.value.toLowerCase().includes(query.toLowerCase()));
+  const shownValues = searchFilter(values, query, (v) => v.value);
   // Nothing changes until there's a new value, or "take it off" is ticked.
   // A fixed-choice field (crew, critical path) always has one picked.
   const ready = !!field.options || clear || to.trim() !== "";

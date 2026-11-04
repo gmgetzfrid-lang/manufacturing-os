@@ -74,12 +74,13 @@ describe("Done: one row per work order", () => {
   const list = [psvs, psv("PSV-1", "310001"), psv("PSV-2", "310002"), psv("PSV-3", "310003"), e12, e12s("x"), e12s("y")];
   const r = buildShiftReport({ milestones: list, tz: LA, times, shift: day, now: day.end, startPct: new Map(list.map((m) => [m.id!, 0])) });
   const rows = doneByTask(r, turnoverPlan(r, () => false), f);
-  it("each PSV its own row, under the folder's name; E-12 one row", () => {
+  it("each PSV its own row, not under the folder; E-12 one row", () => {
     expect(rows).toHaveLength(4);
-    const psvRows = rows.filter((x) => x.folder === "PSVs");
+    const psvRows = rows.filter((x) => x.own);
     expect(psvRows.map((x) => x.task).sort()).toEqual(["Pull PSV-1", "Pull PSV-2", "Pull PSV-3"]);
     expect(psvRows.map((x) => x.wo).sort()).toEqual(["310001", "310002", "310003"]);
-    const e = rows.find((x) => !x.folder);
+    expect(rows.some((x) => x.task === "PSVs")).toBe(false);
+    const e = rows.find((x) => !x.own);
     expect(e?.task).toBe("E-12 Exchanger");
     expect(e?.head).toBe("2 done");
   });

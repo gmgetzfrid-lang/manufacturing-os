@@ -10,6 +10,7 @@ import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { leafPercent } from "@/lib/scheduleProgress";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { expectedFraction, type ShiftTimes } from "@/lib/shiftReport";
+import { searchMatcher, hasQuery } from "@/lib/fuzzySearch";
 
 export interface QuickLookStep {
   id: string;
@@ -143,15 +144,16 @@ export function quickLook(id: string, idx: QuickLookIndex, o: {
 /** Steps matching a search — by name, work order, equipment or crew —
  *  soonest first. "E-12" finds every step on E-12. */
 export function searchSteps(q: string, idx: QuickLookIndex, limit = 8): QuickLookStep[] {
-  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  if (!words.length) return [];
+  if (!hasQuery(q)) return [];
+  const match = searchMatcher(q);
   const hay = (m: Milestone) => {
     const chain: string[] = [];
     for (let p = m.parentId ? idx.byId.get(m.parentId) : undefined, n = 0; p && n < 8; p = p.parentId ? idx.byId.get(p.parentId) : undefined, n++) chain.push(p.name);
     return [m.name, m.workOrderRef ?? "", m.responsibleParty ?? "", ...chain].join(" ").toLowerCase();
   };
+  // Best match first (V-1 is V-01, a typo still finds it), then soonest.
   return idx.leaves
-    .filter((m) => { const h = hay(m); return words.every((w) => h.includes(w)); })
-    .sort(byStart).slice(0, limit)
+    .map((m) => ({ m, s: match(hay(m)) })).filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s || byStart(a.m, b.m)).map((x) => x.m).slice(0, limit)
     .map((m) => stepOf(m, idx));
 }

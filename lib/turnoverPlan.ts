@@ -12,7 +12,7 @@
 // Progress made this shift rides on the step's own row ("+25 this shift"),
 // never in a second list.
 
-import { whoOf, type ShiftReport, type ShiftRow } from "@/lib/shiftReport";
+import { whoOf, rowTask, type ShiftReport, type ShiftRow } from "@/lib/shiftReport";
 import { equipmentTag } from "@/lib/safetyMoment";
 import { discoveryOf, kindOf, ADDED } from "@/lib/discovery";
 
@@ -346,7 +346,9 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
   /** The task's steps: how many are done, of how many (not cancelled). */
   taskSteps?: (taskId: string) => { done: number; total: number } | undefined;
 } = {}): Array<{
-  task: string; folder?: string; wo: string;
+  task: string; wo: string;
+  /** A step that is a work order of its own (one PSV): its % is its own. */
+  own?: boolean;
   /** The WO cell as shown: the number (or two); a task over several work
    *  orders says how many ("11 WOs"), each step's line has its own. */
   woShown: string;
@@ -368,17 +370,13 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
   /** Some of its work this shift was on the critical path. */
   critical: boolean;
 }> {
-  // One row per work order. A task that is one work order (E-12: its WO
-  // on every step) keeps its row; a task that's a folder of work orders
-  // (PSVs: each PSV its own WO) gives each work order a row of its own.
-  const woOfRow = (r: ShiftRow) => r.leaf.workOrderRef?.trim() || "";
+  // One row per work order (ShiftRow.unit): E-12, its WO on the task, is
+  // one row; each PSV, its own WO, is a row of its own - never under the
+  // folder they sit in.
   const rowsIn = [...plan.done, ...plan.moved];
-  const wosUnder = new Map<string, Set<string>>();
-  for (const r of rowsIn) if (r.parentId) wosUnder.set(r.parentId, (wosUnder.get(r.parentId) ?? new Set()).add(woOfRow(r)));
-  const folder = (r: ShiftRow) => !!r.parentId && (wosUnder.get(r.parentId)?.size ?? 0) > 1;
   const groups = new Map<string, ShiftRow[]>();
   for (const r of rowsIn) {
-    const k = folder(r) && woOfRow(r) ? `wo:${woOfRow(r)}` : r.parentId ?? `solo:${r.leaf.id ?? r.leaf.name}`;
+    const k = rowTask(r)?.id ?? `solo:${r.leaf.id ?? r.leaf.name}`;
     groups.set(k, [...(groups.get(k) ?? []), r]);
   }
   // Critical work leads (it was on the path when the shift began); a
@@ -420,10 +418,11 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
     }, null);
     const lastDone = pick(done, 0)?.l, going = pick(moved, done.length)?.l;
     const last = (lastDone ?? going)!;
-    // A work order out of a folder (one PSV): named for its own step, and
-    // where it stands is its own, not the folder's.
-    const inFolder = key.startsWith("wo:");
-    const tally = !inFolder && rows[0].parentId ? o.taskSteps?.(rows[0].parentId) : undefined;
+    // A step that is a work order of its own (one PSV): named for itself,
+    // and where it stands is its own, not a folder's.
+    const unit = rowTask(rows[0]);
+    const real = unit && !unit.id.startsWith("wo:") ? unit.id : null;
+    const tally = real ? o.taskSteps?.(real) : undefined;
     const count = tally && tally.total > 0 ? `${tally.done} of ${tally.total} step${tally.total === 1 ? "" : "s"} done` : undefined;
     // What it means, said once: behind, late, early or on plan.
     const early = done.filter((r) => r.plannedLater);
@@ -440,16 +439,14 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
     const whys = rows.filter((r) => r.leaf.id && shareOf(report, r.leaf.id)?.side === "behind")
       .map((r) => ({ r, w: o.whyOf?.(r.leaf.id!)?.trim() })).filter((x) => x.w);
     const why = whys.length === 1 ? whys[0].w : whys.length ? whys.map((x) => `${x.r.leaf.name}: ${x.w}`).join("; ") : undefined;
-    const parentId = rows[0].parentId;
-    const one = inFolder && rows.length === 1 ? rows[0] : null;
+    const one = !unit && rows.length === 1 ? rows[0] : null;
     return {
       head, lines, last, count, why: why || undefined,
       lastDone, moreDone: Math.max(0, done.length - 1), going, moreGoing: Math.max(0, moved.length - 1),
       critical: onPath(rows),
-      taskPct: one ? { pct: one.percent, plan: one.expectedPct } : !inFolder && parentId ? o.taskPct?.(parentId) : undefined,
-      task: one ? one.leaf.name : rows[0].parentName ?? rows[0].leaf.name,
-      /** The folder a work order's row came out of ("PSVs"). */
-      folder: inFolder ? rows[0].parentName ?? undefined : undefined,
+      taskPct: one ? { pct: one.percent, plan: one.expectedPct } : real ? o.taskPct?.(real) : undefined,
+      task: unit?.name ?? rows[0].leaf.name,
+      own: !unit || undefined,
       // The work order number(s) — one for most work orders.
       wo: wos.join(", "),
       woShown: wos.length > 2 ? `${wos.length} WOs` : wos.join(", "),

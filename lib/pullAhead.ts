@@ -9,6 +9,7 @@
 
 import type { LookAheadItem } from "@/lib/shiftReport";
 import { discoveryText } from "@/lib/discovery";
+import { searchMatcher, hasQuery } from "@/lib/fuzzySearch";
 
 export interface LookAheadFilter {
   query: string;
@@ -27,10 +28,10 @@ export function searchText(x: LookAheadItem): string {
 }
 
 export function filterLookAhead(items: LookAheadItem[], f: LookAheadFilter): LookAheadItem[] {
-  const tokens = norm(f.query).split(/\s+/).filter(Boolean);
-  if (tokens.length) {
-    // Every word must match — "e-17 blinds", "4410023".
-    return items.filter((x) => { const t = searchText(x); return tokens.every((k) => t.includes(k)); })
+  if (hasQuery(f.query)) {
+    // Every word must match - "e-17 blinds", "4410023", "e17" (lib/fuzzySearch).
+    const match = searchMatcher(f.query);
+    return items.filter((x) => match(searchText(x)) > 0)
       .filter((x) => !f.criticalOnly || x.row.critical);
   }
   return items.filter((x) => x.row.crewStart < f.until
