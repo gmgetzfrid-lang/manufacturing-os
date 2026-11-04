@@ -51,6 +51,7 @@ import { FindingHost, FindingsReviewHost, PastJobsPanel } from "@/components/pro
 import { splitCancelled } from "@/lib/cancelledJobs";
 import { applyNightStaffing } from "@/lib/nightStaffing";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
+import QuickUpdate from "@/components/projects/QuickUpdate";
 
 // The project's four schedule tabs: Plan (build the schedule as a list,
 // import it, set it up), Today (the shift's screen), Work (the timeline,
@@ -467,6 +468,11 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       {/* Jobs taken off this schedule — still to be done elsewhere. */}
       {!loading && cancelled.length > 0 && (mode === "plan" || mode === "work") && (
         <CancelledJobsBar jobs={cancelled} canEdit={canEdit} userId={userId} userEmail={userEmail} onChanged={refresh} />
+      )}
+
+      {/* Update by note: type or say what happened; checked before it saves. Optional. */}
+      {!loading && milestones.length > 0 && canEdit && (mode === "today" || mode === "work") && (
+        <QuickUpdate milestones={milestones} tz={tz} times={shiftTimes} orgId={orgId} projectId={projectId} userId={userId} userName={userName} onSaved={() => void refresh()} />
       )}
 
       {/* Active view */}
