@@ -36,7 +36,7 @@ const DOT: Record<string, string> = { planned: "bg-slate-300", in_progress: "bg-
 const WORD: Record<string, string> = { planned: "Not started", in_progress: "In progress", on_hold: "On hold", blocked: "Blocked", missed: "Missed", completed: "Done" };
 const ms = (v: unknown) => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
 
-export default function CalendarQuickView({ task, onDay, others, dayKey, band, dayLabel, tz, times, progress, planNow, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery, whole }: {
+export default function CalendarQuickView({ task, onDay, others, dayKey, band, dayLabel, tz, times, progress, planNow, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery, whole, preloaded }: {
   task: Milestone;
   /** Steps on the shift (or day) tapped; the rest behind a toggle. */
   onDay: Milestone[]; others: Milestone[];
@@ -58,6 +58,10 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
   onDiscovery?: (task: Milestone) => void;
   /** All its steps, under a heading already shown (the work order list). */
   whole?: boolean;
+  /** The steps' comments and history, read already (Work orders reads them
+   *  for every work order up front): shown at once, so nothing moves after
+   *  it opens. Unset: read here. */
+  preloaded?: { notes: MilestoneNote[]; log: ProgressLogRow[] } | null;
 }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(t); }, []);
@@ -77,8 +81,15 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
   const ids = useMemo(() => all.map((m) => m.id).filter((x): x is string => !!x), [all]);
   const idsKey = ids.join(",");
   // Each step's comments, reasons and history.
-  const [notes, setNotes] = useState<MilestoneNote[]>([]);
-  const [log, setLog] = useState<ProgressLogRow[]>([]);
+  const [ownNotes, setNotes] = useState<MilestoneNote[]>([]);
+  const [ownLog, setLog] = useState<ProgressLogRow[]>([]);
+  const pre = preloaded !== undefined;
+  const notes = useMemo(() => (pre ? (preloaded?.notes ?? []).filter((n) => ids.includes(n.milestoneId)) : ownNotes),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- ids follow idsKey
+    [pre, preloaded, ownNotes, idsKey]);
+  const log = useMemo(() => (pre ? (preloaded?.log ?? []).filter((r) => ids.includes(r.milestone_id)) : ownLog),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- ids follow idsKey
+    [pre, preloaded, ownLog, idsKey]);
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const on = () => setTick((t) => t + 1);
@@ -89,11 +100,11 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
   const sig = all.map((m) => `${m.id}:${m.status}:${m.percentComplete ?? 0}`).join("|");
   useEffect(() => {
     let alive = true;
-    if (!idsKey) return;
+    if (!idsKey || pre) return;
     notesFor(idsKey.split(",")).then((n) => { if (alive) setNotes(n); }).catch(() => { /* comments are extra */ });
     if (task.projectId) loadProgressLog(task.projectId).then((l) => { if (alive) setLog((l ?? []).filter((r) => idsKey.includes(r.milestone_id))); }).catch(() => { /* history is extra */ });
     return () => { alive = false; };
-  }, [idsKey, task.projectId, tick, sig]);
+  }, [idsKey, task.projectId, tick, sig, pre]);
 
   const pctOf = (m: Milestone) => (m.id ? progress?.get(m.id)?.percent : undefined) ?? leafPercent(m);
   const planOf = (m: Milestone) => Math.round(expectedFraction(m, now, tz, times) * 100);
@@ -160,9 +171,9 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
     const isOpen = open === id;
     const s0 = startMsOf(m), f0 = finishMsOf(m);
     return (
-      <li key={id} className={`border-b border-[var(--color-border)] last:border-b-0 ${muted ? "opacity-70" : ""}`}>
-        <button type="button" onClick={() => setOpen(isOpen ? null : id)} aria-expanded={isOpen}
-          className={`w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] ${isOpen ? "bg-[var(--color-surface-2)]" : ""}`}>
+      <li key={id} className={`border-b border-[var(--color-border)] last:border-b-0 ${isOpen ? "border-l-4 border-l-sky-500" : ""} ${muted ? "opacity-70" : ""}`}>
+        <button type="button" onClick={() => setOpen(isOpen ? null : id)} aria-expanded={isOpen} aria-label={`${isOpen ? "Close" : "Open"} step: ${m.name}`}
+          className={`w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] ${isOpen ? "bg-sky-50 dark:bg-sky-950/30" : ""}`}>
           <span className={`mt-1 w-2.5 h-2.5 rounded-full shrink-0 ${DOT[m.status] ?? DOT.planned}`} aria-label={WORD[m.status]} />
           <span className="flex-1 min-w-0">
             <span className={`block text-[12.5px] font-semibold break-words ${m.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{m.name} <PathTag id={m.id} marks={marks} /> <DiscoveryTag m={m} tz={tz} /></span>
@@ -203,6 +214,8 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
             <span className={`rounded-md border px-1 text-[10px] font-bold tabular-nums ${pct >= 100 ? "text-emerald-700 bg-emerald-50 border-emerald-200" : pct > 0 ? "text-blue-700 bg-blue-50 border-blue-200" : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]"}`}>{pct}%</span>
             {Math.abs(h) >= 0.1 && m.status !== "completed" && <span className={`font-mono text-[10.5px] font-bold ${h < 0 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{h > 0 ? "+" : "−"}{Math.abs(h)} h</span>}
           </span>
+          {/* A step opens to its card: start, %, finish, history. */}
+          <ChevronRight className={`w-3.5 h-3.5 mt-1 shrink-0 text-[var(--color-text-faint)] transition-transform ${isOpen ? "rotate-90" : ""}`} aria-hidden />
         </button>
         {isOpen && (
           <StepCard key={id} m={m} wo={(m.workOrderRef?.trim() || woOf(task) || wos[0]) ?? undefined} pct={pct} hours={h} rows={info.rows} notes={info.mine}

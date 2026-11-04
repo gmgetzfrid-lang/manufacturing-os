@@ -10,10 +10,12 @@
 // — report, or report with history (lib/workOrdersPrint) — without
 // changing the view; the shift sheet for the field is in Reports.
 
-import React, { useMemo, useState } from "react";
-import { Search, ChevronRight, Printer, Ban, Plus, Lightbulb } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Search, ChevronDown, ChevronUp, Printer, Ban, Plus, Lightbulb } from "lucide-react";
+import { notesFor } from "@/lib/milestones";
+import { loadProgressLog, type ProgressLogRow } from "@/lib/progressHistory";
 import { newFinding } from "@/components/projects/Findings";
-import type { Milestone } from "@/types/schema";
+import type { Milestone, MilestoneNote } from "@/types/schema";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import type { ShiftTimes } from "@/lib/shiftReport";
 import { dayKey } from "@/lib/scheduleTz";
@@ -84,7 +86,56 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
   const today = dayKey(now, tz);
   // Always with its date — a multi-week job has more than one Monday.
   const fmt = (t: number) => whenDated(t, tz);
-  const toggle = (k: string) => setOpen((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+
+  // Every step's comments and history, read once for the whole list (and
+  // again after a change): a work order opens complete, nothing moves in
+  // after it's open.
+  const stepKey = useMemo(() => orders.flatMap((o) => o.steps.map((x) => x.id)).filter((x): x is string => !!x).sort().join(","), [orders]);
+  const sig = useMemo(() => milestones.map((m) => `${m.id}:${m.status}:${m.percentComplete ?? 0}`).join("|"), [milestones]);
+  const [pre, setPre] = useState<{ notes: MilestoneNote[]; log: ProgressLogRow[] } | null>(null);
+  const [preTick, setPreTick] = useState(0);
+  useEffect(() => {
+    const on = () => setPreTick((t) => t + 1);
+    window.addEventListener("milestone-notes:changed", on);
+    return () => window.removeEventListener("milestone-notes:changed", on);
+  }, []);
+  useEffect(() => {
+    if (!stepKey) return;
+    let alive = true;
+    const pid = projectId ?? milestones[0]?.projectId;
+    Promise.all([
+      notesFor(stepKey.split(",")).catch(() => [] as MilestoneNote[]),
+      pid ? loadProgressLog(pid).then((l) => l ?? []).catch(() => [] as ProgressLogRow[]) : Promise.resolve([] as ProgressLogRow[]),
+    ]).then(([notes, log]) => { if (alive) setPre({ notes, log }); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- read again when the steps, their status or the comments change
+  }, [stepKey, sig, preTick, projectId]);
+
+  // Opening or closing a work order keeps its header where it was under
+  // your finger; closed from below (the Close button, or its header held
+  // at the top while you scrolled its steps), it lands at the top.
+  const heads = useRef(new Map<string, HTMLElement>());
+  const scroller = (el: HTMLElement): { top: number; by: (dy: number) => void } => {
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      const oy = getComputedStyle(p).overflowY;
+      if ((oy === "auto" || oy === "scroll") && p.scrollHeight > p.clientHeight) return { top: p.getBoundingClientRect().top, by: (dy) => p.scrollBy(0, dy) };
+    }
+    return { top: 0, by: (dy) => window.scrollBy(0, dy) };
+  };
+  const toggle = (k: string) => {
+    const el = heads.current.get(k);
+    const sc = el ? scroller(el) : null;
+    const before = el ? el.getBoundingClientRect().top : null;
+    const closing = open.has(k);
+    setOpen((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+    if (!el || !sc || before == null) return;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const after = el.getBoundingClientRect().top;
+      // Where it should be: where it was, or the top when it was stuck there.
+      const want = closing && before <= sc.top + 2 ? sc.top + 8 : before;
+      if (Math.abs(after - want) > 1) sc.by(after - want);
+    }));
+  };
 
   // ── Print: the work orders shown, each opened up with all its steps.
   const { lh } = useLetterhead(projectId);
@@ -103,6 +154,38 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
       w.document.body.textContent = `Couldn't get the work orders ready: ${(e as Error).message}`;
     }
   };
+
+  // A work order's crews, dates and progress: in its header while closed;
+  // open, just under it, so the header held at the top stays short.
+  const detailsOf = (o: WorkOrder) => {
+    const single = o.steps.length === 1 && o.steps[0].id === o.owner.id;
+    return (
+      <>
+        {descOf(o.owner) && <div className="text-[12px] text-[var(--color-text)] line-clamp-2 break-words">{descOf(o.owner)}</div>}
+        <div className="text-[11.5px] text-[var(--color-text-muted)]">
+          {[o.crews.join(", ") || null, single ? null : `${o.done} of ${o.steps.length} steps done`].filter(Boolean).join(" · ")}
+          {o.added.map((x) => (
+            <span key={x.kind} className={`ml-1.5 font-semibold ${x.kind === "added" ? "text-teal-700 dark:text-teal-300" : "text-violet-700 dark:text-violet-300"}`} title={ADDED[x.kind].tip}>
+              + {x.n} {ADDED[x.kind].lower} step{x.n === 1 ? "" : "s"} ({x.h} h)
+            </span>
+          ))}
+        </div>
+        <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 text-[11.5px]">
+          <span className="text-[var(--color-text-muted)]">Plan</span>
+          <span className="text-[var(--color-text)]">{fmt(o.planStart)} → {fmt(o.planFinish)}</span>
+          <span className="text-[var(--color-text-muted)]">Actual</span>
+          <span className="font-semibold text-[var(--color-text)]">{Number.isFinite(o.actStart) ? `${fmt(o.actStart)} → ${Number.isFinite(o.actFinish) ? fmt(o.actFinish) : "…"}` : "not started"}</span>
+        </div>
+      </>
+    );
+  };
+  // Done against where the plan says it should be by now.
+  const barOf = (o: WorkOrder) => (
+    <span className="relative mt-1.5 ml-9 block h-1.5 rounded-full bg-slate-200 dark:bg-slate-700" aria-hidden>
+      <span className={`absolute inset-y-0 left-0 rounded-full ${o.standing === "done" ? "bg-emerald-500" : "bg-[var(--color-text)]"}`} style={{ width: `${Math.min(100, o.pct)}%` }} />
+      {o.standing !== "done" && <span className="absolute -top-[3px] w-0.5 h-3 bg-rose-700" style={{ left: `calc(${Math.min(100, o.plan)}% - 1px)` }} title={`Plan ${o.plan}% by now`} />}
+    </span>
+  );
 
   return (
     <div className="space-y-2">
@@ -181,37 +264,29 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
           {orders.length === 0 ? "No steps on the schedule yet." : "No work orders match."}
         </div>
       ) : (
-        <ul className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden divide-y divide-[var(--color-border)]">
+        <ul className="space-y-2">
           {shown.map((o) => {
             const isOpen = open.has(o.key);
             const st = STANDING[o.standing];
             const single = o.steps.length === 1 && o.steps[0].id === o.owner.id;
+            const name = `${o.wo ? `WO ${o.wo}` : "No WO"} ${o.owner.name}`;
             return (
-              <li key={o.key}>
-                <button type="button" onClick={() => toggle(o.key)} aria-expanded={isOpen}
-                  className={`w-full text-left px-3 py-2.5 hover:bg-[var(--color-surface-2)] ${isOpen ? "bg-[var(--color-surface-2)]" : ""}`}>
-                  <div className="flex items-start gap-2">
-                    <ChevronRight className={`w-4 h-4 mt-0.5 shrink-0 text-[var(--color-text-muted)] transition-transform ${isOpen ? "rotate-90" : ""}`} />
+              // Each work order its own card; open, it's framed in the accent
+              // colour and its steps sit inside it, indented on a grey panel.
+              <li key={o.key} className={`rounded-xl border bg-[var(--color-surface)] ${isOpen ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)] shadow-md" : "border-[var(--color-border)] shadow-sm"}`}>
+                <button type="button" onClick={() => toggle(o.key)} aria-expanded={isOpen} aria-label={`${isOpen ? "Close" : "Open"} ${name}`}
+                  ref={(el) => { if (el) heads.current.set(o.key, el); else heads.current.delete(o.key); }}
+                  className={`w-full text-left px-3 py-2.5 rounded-t-[10px] ${isOpen ? "sticky top-0 z-20 bg-[var(--color-accent-soft)] border-b border-[var(--color-accent)]/30" : "rounded-b-[10px] hover:bg-[var(--color-surface-2)]"}`}>
+                  <div className="flex items-start gap-2.5">
+                    <span className={`mt-0.5 shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-full border ${isOpen ? "bg-[var(--color-accent)] border-[var(--color-accent)] text-[var(--color-accent-fg)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`} aria-hidden>
+                      {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    </span>
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-baseline gap-x-2">
                         <span className={`font-mono text-[12.5px] font-bold ${o.wo ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{o.wo ? `WO ${o.wo}` : "No WO"}</span>
-                        <span className="text-[13px] font-semibold text-[var(--color-text)] break-words">{o.owner.name}{o.also?.map((x) => <span key={x.id} className="text-[var(--color-text-muted)]"> · {x.name}</span>)}</span>
+                        <span className="text-[14px] font-bold text-[var(--color-text)] break-words">{o.owner.name}{o.also?.map((x) => <span key={x.id} className="text-[var(--color-text-muted)]"> · {x.name}</span>)}</span>
                       </div>
-                      {descOf(o.owner) && <div className="text-[12px] text-[var(--color-text)] line-clamp-2 break-words">{descOf(o.owner)}</div>}
-                      <div className="text-[11.5px] text-[var(--color-text-muted)]">
-                        {[o.crews.join(", ") || null, single ? null : `${o.done} of ${o.steps.length} steps done`].filter(Boolean).join(" · ")}
-                        {o.added.map((x) => (
-                          <span key={x.kind} className={`ml-1.5 font-semibold ${x.kind === "added" ? "text-teal-700 dark:text-teal-300" : "text-violet-700 dark:text-violet-300"}`} title={ADDED[x.kind].tip}>
-                            + {x.n} {ADDED[x.kind].lower} step{x.n === 1 ? "" : "s"} ({x.h} h)
-                          </span>
-                        ))}
-                      </div>
-                      <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 text-[11.5px]">
-                        <span className="text-[var(--color-text-muted)]">Plan</span>
-                        <span className="text-[var(--color-text)]">{fmt(o.planStart)} → {fmt(o.planFinish)}</span>
-                        <span className="text-[var(--color-text-muted)]">Actual</span>
-                        <span className="font-semibold text-[var(--color-text)]">{Number.isFinite(o.actStart) ? `${fmt(o.actStart)} → ${Number.isFinite(o.actFinish) ? fmt(o.actFinish) : "…"}` : "not started"}</span>
-                      </div>
+                      {!isOpen && detailsOf(o)}
                     </div>
                     <div className="shrink-0 flex flex-col items-end gap-1">
                       <span className={`rounded-md border px-1.5 py-0.5 text-[11px] font-bold ${st.cls}`}>{st.word}</span>
@@ -221,16 +296,16 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
                       )}
                     </div>
                   </div>
-                  {/* Done against where the plan says it should be by now. */}
-                  <span className="relative mt-1.5 ml-6 block h-1.5 rounded-full bg-slate-200 dark:bg-slate-700" aria-hidden>
-                    <span className={`absolute inset-y-0 left-0 rounded-full ${o.standing === "done" ? "bg-emerald-500" : "bg-[var(--color-text)]"}`} style={{ width: `${Math.min(100, o.pct)}%` }} />
-                    {o.standing !== "done" && <span className="absolute -top-[3px] w-0.5 h-3 bg-rose-700" style={{ left: `calc(${Math.min(100, o.plan)}% - 1px)` }} title={`Plan ${o.plan}% by now`} />}
-                  </span>
+                  {!isOpen && barOf(o)}
                 </button>
                 {isOpen && (
-                  <div className="border-t border-[var(--color-border)]">
+                  <div className="rounded-b-[10px] bg-slate-100/80 dark:bg-slate-900/60">
+                    <div className="px-3 pt-2 pb-2.5 bg-[var(--color-surface)] border-b border-[var(--color-border)]">
+                      <div className="ml-9">{detailsOf(o)}</div>
+                      {barOf(o)}
+                    </div>
                     {(canEdit || onOpenReport) && (
-                      <div className="px-3 pt-2 flex flex-wrap gap-1.5">
+                      <div className="px-3 pt-2.5 flex flex-wrap gap-1.5">
                         {canEdit && onDiscovery && (
                           <button type="button" onClick={() => onDiscovery(o.owner)}
                             className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
@@ -251,12 +326,22 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
                         )}
                       </div>
                     )}
-                    <CalendarQuickView whole task={o.owner} onDay={o.steps} others={[]} dayKey={today} band={null} dayLabel="" marks={marks}
-                      tz={tz} times={times} progress={progress} canEdit={canEdit}
-                      onUpdate={onUpdate} onFixTimes={onFixTimes} onOpenDetail={onOpenDetail} onMoveDays={canEdit ? onMoveDays : undefined} onDiscovery={onDiscovery} />
+                    {/* Its steps: inside the work order, indented, each a row that opens to its card. */}
+                    <div className="px-2 sm:px-3 pt-2.5 pb-1">
+                      <div className="ml-2 sm:ml-5 pl-2 sm:pl-3 border-l-2 border-[var(--color-accent)]/40">
+                        <div className="mb-1 text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+                          {single ? "The step" : `Steps · ${o.done} of ${o.steps.length} done`}
+                        </div>
+                        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+                          <CalendarQuickView whole task={o.owner} onDay={o.steps} others={[]} dayKey={today} band={null} dayLabel="" marks={marks}
+                            tz={tz} times={times} progress={progress} canEdit={canEdit} preloaded={pre}
+                            onUpdate={onUpdate} onFixTimes={onFixTimes} onOpenDetail={onOpenDetail} onMoveDays={canEdit ? onMoveDays : undefined} onDiscovery={onDiscovery} />
+                        </div>
+                      </div>
+                    </div>
                     {/* Off this schedule — still done, somewhere else (Put back is above the schedule). */}
                     {canEdit && user && o.owner.id && (
-                      <div className="px-3 py-2 border-t border-[var(--color-border)] bg-[var(--color-surface-2)]/50">
+                      <div className="px-3 py-2">
                         {cancelling === o.key ? (
                           <CancelJobForm id={o.owner.id} name={`${o.wo ? `WO ${o.wo} · ` : ""}${o.owner.name}`} steps={o.steps.length}
                             userId={user.id} userName={user.name} userEmail={user.email}
@@ -270,6 +355,11 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
                         )}
                       </div>
                     )}
+                    {/* Close it from the bottom: no scrolling back up. */}
+                    <button type="button" onClick={() => toggle(o.key)} aria-label={`Close ${name}`}
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-b-[10px] border-t border-[var(--color-border)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
+                      <ChevronUp className="w-4 h-4" /> Close {o.wo ? `WO ${o.wo}` : o.owner.name}
+                    </button>
                   </div>
                 )}
               </li>
