@@ -9,7 +9,7 @@
 // stops the Save until it's answered or left out.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Mic, MicOff, NotebookPen, Loader2, X, Check, AlertTriangle, Search } from "lucide-react";
+import { Mic, MicOff, NotebookPen, Loader2, X, Check, AlertTriangle, Search, Paperclip, FileText } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import DateTimePicker from "@/components/projects/DateTimePicker";
 import { supabase } from "@/lib/supabase";
@@ -18,9 +18,11 @@ import {
   type CatalogStep, type QuickLine, type RawReply,
 } from "@/lib/quickUpdate";
 import { saveSheetLine } from "@/lib/shiftSheetSave";
+import { readNoteFile } from "@/lib/noteFiles";
+import { notesFor } from "@/lib/milestones";
 import { searchFilter } from "@/lib/fuzzySearch";
-import { shiftAt, previousShift, type ShiftTimes } from "@/lib/shiftReport";
-import { fmtInTz, toDateTimeInput, fromDateTimeInput } from "@/lib/scheduleTz";
+import { shiftAt, previousShift, shiftWindow, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
+import { fmtInTz, toDateTimeInput, fromDateTimeInput, dayKey } from "@/lib/scheduleTz";
 import type { Milestone } from "@/types/schema";
 
 const HIDE_KEY = "quickUpdate:hidden";
@@ -83,28 +85,86 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
   // ── Reading ──
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [review, setReview] = useState<{ cat: CatalogStep[]; lines: QuickLine[]; unplaced: RawReply["unplaced"]; at: number } | null>(null);
+  const [review, setReview] = useState<{ cat: CatalogStep[]; lines: QuickLine[]; unplaced: RawReply["unplaced"]; at: number; window?: ShiftWindow } | null>(null);
+  // ── Which shift the notes are about: now (typed or said as it happens),
+  // or a log of a shift (a file typed up all day). In a log, a time with no
+  // date is in that shift.
+  const [from, setFrom] = useState<{ id: "now" } | { id: "shift"; w: ShiftWindow; auto?: boolean }>({ id: "now" });
+  const [pickDay, setPickDay] = useState("");
+  const sh = (w: ShiftWindow) => `${fmtInTz(w.start, tz, { weekday: "short", month: "short", day: "numeric" })} ${w.kind} shift`;
+  const shSpan = (w: ShiftWindow) => `${sh(w)} (${fmtInTz(w.start, tz, { hour: "numeric", minute: "2-digit", hour12: true })} to ${fmtInTz(w.end, tz, { hour: "numeric", minute: "2-digit", hour12: true })})`;
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => { const t = setInterval(() => setNowTick(Date.now()), 60_000); return () => clearInterval(t); }, []);
+  const curShift = shiftAt(nowTick, tz, times), lastShift = previousShift(curShift, tz, times);
+  const fromWin = from.id === "shift" ? from.w : undefined;
+
+  // ── A file: its words go into the box first, to read and fix ──
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [fileBusy, setFileBusy] = useState<string | null>(null);
+  const [files, setFiles] = useState<Array<{ name: string; chars: number }>>([]);
+  const addFiles = async (list: FileList | null) => {
+    if (!list?.length) return;
+    setErr(null);
+    let text = note.trim();
+    let latest = 0;
+    for (const f of Array.from(list)) {
+      setFileBusy(`Reading ${f.name}…`);
+      try {
+        const r = await readNoteFile(f);
+        let words = r.text;
+        // Pictures (photos, scanned pages): copied out by the AI, 3 at a time.
+        for (let i = 0; i < r.images.length; i += 3) {
+          setFileBusy(`Copying out ${f.name}${r.images.length > 1 ? `, page ${i + 1} of ${r.images.length}` : ""}…`);
+          const res = await fetch("/api/projects/quick-update", {
+            method: "POST", headers: { "content-type": "application/json", ...(await authHeader()) },
+            body: JSON.stringify({ orgId, projectId, action: "transcribe", images: r.images.slice(i, i + 3) }),
+          });
+          const b = (await res.json().catch(() => null)) as { text?: string; error?: string } | null;
+          if (!res.ok || typeof b?.text !== "string") throw new Error(`${f.name}: ${b?.error ?? `couldn't copy out the page (HTTP ${res.status})`}`);
+          words = [words, b.text].filter(Boolean).join("\n\n");
+        }
+        if (!words.trim()) throw new Error(`${f.name}: no words found in it.`);
+        text = [text, words.trim()].filter(Boolean).join("\n\n");
+        setFiles((cur) => [...cur, { name: f.name, chars: words.length }]);
+        latest = Math.max(latest, f.lastModified || 0);
+      } catch (e) { setErr((e as Error).message); }
+    }
+    setFileBusy(null);
+    setDraft(text);
+    // A file typed up over a shift: which shift, from when it was last saved
+    // (said plainly, and changeable).
+    if (latest && from.id === "now") setFrom({ id: "shift", w: shiftAt(Math.min(latest, Date.now()), tz, times), auto: true });
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
   const read = async () => {
     if (!note.trim()) return;
     recRef.current?.stop();
     setBusy(true); setErr(null);
     const now = Date.now();
-    const cat = stepCatalog(milestones);
+    const win = fromWin && fromWin.start <= now ? fromWin : undefined;
+    // How the field has described each step lately helps match short notes.
+    const leafIds = milestones.filter((m) => m.id && !milestones.some((k) => k.parentId === m.id)).map((m) => m.id!);
+    const recent = await notesFor(leafIds).catch(() => []);
+    const cat = stepCatalog(milestones, undefined, { now, window: win, notes: recent });
     const cur = shiftAt(now, tz, times), prev = previousShift(cur, tz, times);
-    const sh = (w: typeof cur) => `${fmtInTz(w.start, tz, { weekday: "short", month: "short", day: "numeric" })} ${w.kind} shift (${fmtInTz(w.start, tz, { hour: "numeric", minute: "2-digit", hour12: true })} to ${fmtInTz(w.end, tz, { hour: "numeric", minute: "2-digit", hour12: true })})`;
     try {
       const res = await fetch("/api/projects/quick-update", {
         method: "POST",
         headers: { "content-type": "application/json", ...(await authHeader()) },
-        body: JSON.stringify({ orgId, projectId, note, catalog: catalogText(cat, tz), now, tz, shift: `This shift: ${sh(cur)}. Last shift: ${sh(prev)}.` }),
+        body: JSON.stringify({
+          orgId, projectId, note, catalog: catalogText(cat, tz), now, tz, shift: `This shift: ${shSpan(cur)}. Last shift: ${shSpan(prev)}.`,
+          notesFrom: win ? `These notes are a log of the ${shSpan(win)}. A time written with no date is in that shift; on a night shift, times after midnight are the next morning.` : undefined,
+        }),
       });
       const body = (await res.json().catch(() => null)) as (RawReply & { error?: string }) | null;
       if (!res.ok || !body?.updates) throw new Error(body?.error || `Couldn't read it (HTTP ${res.status}). Your note is kept - try again.`);
-      const d = defaultTimes({ now, tz, times })[0].at;
+      const tctx = { now, tz, times, window: win };
+      const first = defaultTimes(tctx)[0];
       // Cleaned again here: whatever comes back, nothing malformed reaches the lines.
-      const { lines, unplaced } = toLines(parseReply(body), cat, d, { now, tz, times });
-      setDefaultPick({ id: "now", at: d });
-      setReview({ cat, lines, unplaced, at: now });
+      const { lines, unplaced } = toLines(parseReply(body), cat, first.at, tctx, note);
+      setDefaultPick({ id: first.id, at: first.at });
+      setReview({ cat, lines, unplaced, at: now, window: win });
     } catch (e) {
       setErr((e as Error).message);
     } finally { setBusy(false); }
@@ -112,7 +172,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
 
   // ── The time for lines with no time said ──
   const [defaultPick, setDefaultPick] = useState<{ id: string; at: number }>({ id: "now", at: 0 });
-  const choices = useMemo(() => (review ? defaultTimes({ now: review.at, tz, times }) : []), [review, tz, times]);
+  const choices = useMemo(() => (review ? defaultTimes({ now: review.at, tz, times, window: review.window }) : []), [review, tz, times]);
   const setDefault = (id: string, at: number) => {
     setDefaultPick({ id, at });
     setReview((r) => (r ? { ...r, lines: r.lines.map((l) => (l.timeFrom === "default" ? { ...l, at } : l)) } : r));
@@ -148,7 +208,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
     window.dispatchEvent(new Event("milestone-notes:changed"));
     onSaved();
     setDone({ saved, warn, failed });
-    if (!failed.length) { setDraft(""); setReview(null); }
+    if (!failed.length) { setDraft(""); setReview(null); setFiles([]); setFrom({ id: "now" }); }
   };
 
   if (hidden) {
@@ -181,7 +241,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
             <span className="flex-1 text-[13px] font-bold text-[var(--color-text)]">Update by note</span>
             <button type="button" onClick={() => { recRef.current?.stop(); setOpen(false); }} aria-label="Close" className="p-1 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
           </div>
-          <textarea value={note} onChange={(e) => setDraft(e.target.value)} rows={4} aria-label="What happened"
+          <textarea value={note} onChange={(e) => setDraft(e.target.value)} rows={note.length > 400 ? 10 : 4} aria-label="What happened"
             placeholder={"What happened? Name the equipment or WO, like you'd tell your relief.\nE-02 channel head is on the ground, they pulled it and washed it, staging to put it back.\nV-1 trays 50%. V-3 on hold, scaffold not built."}
             className="w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-[14px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40" />
           <div className="flex flex-wrap items-center gap-2">
@@ -189,7 +249,14 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
               className={`inline-flex items-center gap-1.5 h-10 px-3 rounded-lg border text-[13px] font-bold disabled:opacity-50 ${listening ? "border-rose-500 bg-rose-600 text-white" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
               {listening ? <><MicOff className="w-4 h-4" /> Stop</> : <><Mic className="w-4 h-4" /> Speak</>}
             </button>
-            <button type="button" onClick={() => void read()} disabled={busy || !note.trim()}
+            <button type="button" onClick={() => fileRef.current?.click()} disabled={!!fileBusy || busy}
+              className="inline-flex items-center gap-1.5 h-10 px-3 rounded-lg border border-[var(--color-border-strong)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+              <Paperclip className="w-4 h-4" /> Add a file
+            </button>
+            <input ref={fileRef} type="file" multiple className="hidden" aria-label="Add a file of notes"
+              accept=".txt,.text,.md,.log,.csv,.tsv,.rtf,.docx,.xlsx,.xlsm,.xls,.pdf,image/*"
+              onChange={(e) => void addFiles(e.target.files)} />
+            <button type="button" onClick={() => void read()} disabled={busy || !!fileBusy || !note.trim()}
               className="inline-flex items-center gap-1.5 h-10 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
               {busy ? <><Loader2 className="w-4 h-4 animate-spin" /> Reading…</> : "Read it"}
             </button>
@@ -197,6 +264,40 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
             {!canSpeak && <span className="text-[11px] text-[var(--color-text-muted)]">To talk, use the mic on your keyboard.</span>}
           </div>
           {listening && <div className="text-[12px] font-semibold text-rose-700 dark:text-rose-300">Listening… say what happened, then tap Stop.</div>}
+          {fileBusy && <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {fileBusy}</div>}
+          {files.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 text-[11.5px] text-[var(--color-text-muted)]">
+              {files.map((f, i) => <span key={`${f.name}${i}`} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] px-2 py-0.5"><FileText className="w-3 h-3" /> {f.name} · {f.chars.toLocaleString()} characters</span>)}
+              <span>Its words are in the box above: read them over and fix anything before you tap Read it.</span>
+            </div>
+          )}
+          {/* Which shift the notes are about. */}
+          {note.trim() && (
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-2 text-[12px]">
+              <div className="font-bold text-[var(--color-text)]">These notes are about:</div>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                {([["now", "Now, as it happens", undefined], ["this", `This shift (${sh(curShift)})`, curShift], ["last", `Last shift (${sh(lastShift)})`, lastShift]] as const).map(([id, label, w]) => {
+                  const on = id === "now" ? from.id === "now" : from.id === "shift" && from.w.start === w!.start;
+                  return (
+                    <button key={id} type="button" aria-pressed={on} onClick={() => setFrom(w ? { id: "shift", w } : { id: "now" })}
+                      className={`rounded-full border px-2.5 py-1 font-semibold ${on ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface)]"}`}>{label}</button>
+                  );
+                })}
+                <span className="inline-flex items-center gap-1">
+                  <input type="date" value={pickDay} max={dayKey(nowTick, tz)} onChange={(e) => setPickDay(e.target.value)} aria-label="Another day"
+                    className="h-7 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12px]" />
+                  {(["day", "night"] as const).map((k) => (
+                    <button key={k} type="button" disabled={!pickDay} onClick={() => setFrom({ id: "shift", w: shiftWindow(pickDay, k, tz, times) })}
+                      className="rounded-full border border-[var(--color-border-strong)] px-2 py-0.5 font-semibold text-[var(--color-text)] disabled:opacity-40">{k === "day" ? "Day" : "Night"}</button>
+                  ))}
+                </span>
+              </div>
+              <div className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">
+                {from.id === "now" ? "A time with no date is the last time it came round: today, or last night."
+                  : <>A log of the <b className="text-[var(--color-text)]">{shSpan(from.w)}</b>{from.auto ? " (from when the file was last saved - change it if that's wrong)" : ""}. Times with no date are in that shift.</>}
+              </div>
+            </div>
+          )}
           {err && <div role="alert" className="text-[12px] font-semibold text-rose-700 dark:text-rose-300">{err}</div>}
           {done && (
             <div role="status" className={`rounded-lg px-3 py-2 text-[12px] ${done.failed.length ? "bg-rose-50 dark:bg-rose-950/40 text-rose-900 dark:text-rose-100" : "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-100"}`}>
@@ -211,7 +312,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
 
       {review && (
         <Modal onClose={() => !saving && setReview(null)} size="xl" dismissable={!saving}>
-          <ModalHeader icon={NotebookPen} title="Check before saving" subtitle="Each line is what your note says, matched to a step. Nothing saves until you tap Save." onClose={saving ? undefined : () => setReview(null)} />
+          <ModalHeader icon={NotebookPen} title="Check before saving" subtitle={`Each line is what your note says, matched to a step. Nothing saves until you tap Save.${review.window ? ` Notes from the ${sh(review.window)}.` : ""}`} onClose={saving ? undefined : () => setReview(null)} />
           <ModalBody className="p-0">
             <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-slate-50 dark:bg-[var(--color-surface-2)] text-[12px]">
               <div className="font-bold text-[var(--color-text)]">No time in your note? Those lines go in at:</div>
@@ -291,12 +392,22 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
             <div>
               <div className="text-[11px] font-semibold text-[var(--color-text-muted)] break-words">{[step.wo ? `WO ${step.wo}` : null, step.place].filter(Boolean).join(" · ")}</div>
               <div className="text-[14px] font-bold text-[var(--color-text)] break-words">{step.name}</div>
+              {/* How it was found, when the note didn't name it outright. */}
+              {l.found === "context" && l.context && <div className="text-[11.5px] text-[var(--color-text-muted)]">Equipment from earlier in your note: “{l.context}”</div>}
+              {l.found === "only" && <div className="text-[11.5px] text-[var(--color-text-muted)]">Your note doesn&apos;t name the equipment: this is the only open step by that name.</div>}
+              {l.found === "meaning" && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">Matched by meaning (no word in common with the step&apos;s name). Check it&apos;s the right step.</div>}
+              <button type="button" onClick={() => onEdit({ stepId: null, options: l.options.length ? l.options : [step.id] })} className="text-[11.5px] font-semibold text-[var(--color-accent)] hover:underline">Wrong step? Pick another</button>
             </div>
           ) : (
             <div className="space-y-1">
               <div className="text-[12.5px] font-bold text-rose-800 dark:text-rose-200">Which step is it?</div>
               <div className="flex flex-wrap gap-1.5">
-                {options.map((o) => <button key={o.id} type="button" onClick={() => onEdit({ stepId: o.id })} className={`${pill} border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]`}>{o.wo ? `WO ${o.wo} · ` : ""}{o.place ? `${o.place}: ` : ""}{o.name}</button>)}
+                {options.map((o) => (
+                  <button key={o.id} type="button" onClick={() => onEdit({ stepId: o.id })} className="rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold text-left border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                    {o.wo ? `WO ${o.wo} · ` : ""}{o.place ? `${o.place}: ` : ""}{o.name}
+                    <span className="font-normal text-[var(--color-text-muted)]"> · {o.status === "in_progress" ? `under way ${o.pct}%` : o.status === "completed" ? "done" : o.live ? "planned around now" : o.next ? "next up" : "not started"}</span>
+                  </button>
+                ))}
               </div>
               <label className="relative block max-w-md">
                 <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />

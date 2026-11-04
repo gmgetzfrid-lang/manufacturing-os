@@ -31,9 +31,11 @@ import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { leafPercent } from "@/lib/scheduleProgress";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { workOrderOfStep } from "@/lib/workOrderCrew";
-import { fmtInTz, wallClockToMs, dayKey, addDays } from "@/lib/scheduleTz";
+import { fmtInTz, wallClockToMs, wallClock, dayKey, addDays } from "@/lib/scheduleTz";
 import { shiftAt, previousShift, meetingLeadMin, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
 import type { SheetEvent } from "@/lib/shiftSheet";
+import type { MilestoneNote } from "@/types/schema";
+import { searchIndex } from "@/lib/fuzzySearch";
 
 // ── The steps the AI picks from ──
 
@@ -52,6 +54,13 @@ export interface CatalogStep {
   planFinish: number;
   actStart: number | null;
   actFinish: number | null;
+  /** Going around now: under way or held, planned around the notes' shift,
+   *  or started or finished in the last day and a half. */
+  live?: boolean;
+  /** The first step not done on its work order. */
+  next?: boolean;
+  /** How the field described it lately (its latest comments). */
+  said?: string[];
 }
 
 const ms = (v: unknown): number => (v == null || v === "" ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
@@ -59,7 +68,12 @@ const ms = (v: unknown): number => (v == null || v === "" ? NaN : v instanceof D
 /** Every step on the job (not cancelled), by work order in plan order, each
  *  with a short key. Done steps are listed too: a note can say something
  *  about one, and the AI must not mistake it for another. */
-export function stepCatalog(milestones: Milestone[], progress?: Map<string, ProgressInfo>): CatalogStep[] {
+export function stepCatalog(milestones: Milestone[], progress?: Map<string, ProgressInfo>, o: {
+  /** Now, the shift the notes are about, and the steps' comments - to say
+   *  which steps are going (live), which is next on each work order, and
+   *  how the field has been describing each one. */
+  now?: number; window?: { start: number; end: number }; notes?: MilestoneNote[];
+} = {}): CatalogStep[] {
   const live = milestones.filter((m) => !m.cancelledAt);
   const byId = new Map(live.filter((m) => m.id).map((m) => [m.id!, m]));
   const parents = new Set(live.map((m) => m.parentId).filter(Boolean));
@@ -80,6 +94,35 @@ export function stepCatalog(milestones: Milestone[], progress?: Map<string, Prog
   });
   rows.sort((a, b) => (a.wo || "~").localeCompare(b.wo || "~", "en", { numeric: true }) || a.place.localeCompare(b.place) || a.planStart - b.planStart || a.name.localeCompare(b.name));
   rows.forEach((r, i) => { r.key = `s${i + 1}`; });
+  if (o.now != null) {
+    const now = o.now, H = 3_600_000;
+    // The notes' shift, or the last 12 hours and the next 4.
+    const w = o.window ?? { start: now - 12 * H, end: now + 4 * H };
+    const near = (t: number | null) => t != null && t >= w.start - 6 * H && t <= Math.min(w.end, now) + H;
+    const seenWo = new Set<string>();
+    for (const r of rows) {
+      const open = r.status !== "completed" && r.pct < 100;
+      r.live = r.status === "in_progress" || r.status === "on_hold" || r.status === "blocked"
+        || (open && r.planStart < w.end && r.planFinish > w.start)
+        || near(r.actStart) || near(r.actFinish);
+      const g = r.wo || r.place;
+      if (open && !seenWo.has(g)) { r.next = true; seenWo.add(g); }
+    }
+  }
+  if (o.notes?.length) {
+    const recent = (o.now ?? Date.now()) - 5 * 86_400_000;
+    const by = new Map<string, MilestoneNote[]>();
+    for (const n of o.notes) {
+      if (n.kind !== "note" || !n.body?.trim()) continue;
+      const t = ms(n.happenedAt ?? n.createdAt);
+      if (!(t >= recent)) continue;
+      by.set(n.milestoneId, [...(by.get(n.milestoneId) ?? []), n]);
+    }
+    for (const r of rows) {
+      const ns = (by.get(r.id) ?? []).sort((a, b) => ms(b.happenedAt ?? b.createdAt) - ms(a.happenedAt ?? a.createdAt)).slice(0, 2);
+      if (ns.length) r.said = ns.map((n) => (n.body ?? "").trim().replace(/\s+/g, " ").slice(0, 90));
+    }
+  }
   return rows;
 }
 
@@ -97,6 +140,9 @@ export function catalogText(cat: CatalogStep[], tz: string): string {
     Number.isFinite(c.planStart) ? `plan ${clock(c.planStart, tz)} to ${clock(c.planFinish, tz)}` : "",
     c.actStart != null ? `started ${clock(c.actStart, tz)}` : "",
     c.actFinish != null ? `done ${clock(c.actFinish, tz)}` : "",
+    c.live ? "LIVE" : "",
+    c.next ? "NEXT" : "",
+    c.said?.length ? `said lately: ${c.said.map((x) => `"${x.replace(/"/g, "'")}"`).join("; ")}` : "",
   ].filter(Boolean).join(" | ")).join("\n");
 }
 
@@ -105,18 +151,21 @@ export function catalogText(cat: CatalogStep[], tz: string): string {
 export const QUICK_SYSTEM = [
   "You read a turnaround supervisor's field notes and say which steps on their schedule each part reports on, and what it reports. You only read: a person checks everything you return before anything is saved.",
   "Work is done out of order. Never assume the schedule's order or dates say what was worked. Match by what the note says: equipment tags (V-01, V1 and V-1 are the same tag; E-2 is E-02), WO numbers, step words, crews.",
-  "Use only step keys from the list (s1, s2...). Never invent a step. If a part could be more than one step, give the candidates and no step. If you can't place a part, put it in unplaced.",
+  "Use only step keys from the list (s1, s2...). Never invent a step. If you can't place a part, put it in unplaced.",
+  "Notes are often short and vague (\"pulled the bundle\", \"blinds in\", \"head's off\", \"hydro passed\"). To find the step: (1) the equipment or WO named in that part; (2) if none, the equipment named earlier in the note (a log usually keeps talking about the last thing named until it names another) - then copy those earlier words into context; (3) the crew named; (4) steps marked LIVE (going now) and NEXT (next up on its work order) are the likely ones; (5) the \"said lately\" words show how the field describes each step.",
+  "basis: \"named\" (this part names the equipment, WO or a step only one piece of equipment has), \"context\" (named earlier in the note: put those exact words in context), \"only\" (the words fit one open step on the whole job), \"guess\" (more than one step fits). For guess, give no step: put every step that fits in candidates, likeliest first, up to 6. Never pick between two pieces of equipment that both have the step (Pull Bundle on E-02 and on E-22) unless the note says which.",
   "Actions: start, progress, done, hold (with its reason), resume (back on after a hold), comment.",
   "percent: only when the note gives an amount. percentFrom: \"said\" for a number (\"50\", \"50%\"), \"words\" for an amount in words (\"about half\" = 50, \"almost done\" = 90). A step described but with no amount (\"making progress\", \"staging\", \"working on it\") is progress with percent null, percentFrom \"guess\" and your best suggestion in suggest. Finished, complete, done, removed, pulled, washed (when the step is that action) = done.",
   "implied: true for a step the note doesn't name but must be finished for what it says to be true (washed the head means the head was removed). Only direct prerequisites, never more.",
   "when: copy the note's exact words about time into words (null if none). kind: \"none\" (no time words; \"already\" alone is none), \"clock\" (a time of day: 2pm, at 2, 0730, noon), \"day\" (a day with or without a time: yesterday at 3, Monday night, last night at 11), \"relative\" (2 hours ago, an hour ago), \"unclear\" (past with no time to place it: earlier, this morning, last night, yesterday, before lunch), \"future\" (not happened yet: will be done in a couple hours, should finish by 2, tonight they'll start). local: your reading as \"YYYY-MM-DD HH:MM\" in plant time, given now; null for none, unclear and future.",
   "evidence: the exact words from the note this update comes from. comment: anything else the note says about the step worth keeping (a reason, what they're waiting on), in the note's words.",
-  "Return STRICT JSON only: {\"updates\":[{\"step\":\"s12\",\"candidates\":[],\"action\":\"done\",\"percent\":null,\"percentFrom\":null,\"suggest\":null,\"reason\":null,\"comment\":null,\"implied\":false,\"evidence\":\"...\",\"when\":{\"words\":null,\"kind\":\"none\",\"local\":null}}],\"unplaced\":[{\"text\":\"...\",\"why\":\"...\"}]}",
+  "Return STRICT JSON only: {\"updates\":[{\"step\":\"s12\",\"candidates\":[],\"basis\":\"named\",\"context\":null,\"action\":\"done\",\"percent\":null,\"percentFrom\":null,\"suggest\":null,\"reason\":null,\"comment\":null,\"implied\":false,\"evidence\":\"...\",\"when\":{\"words\":null,\"kind\":\"none\",\"local\":null}}],\"unplaced\":[{\"text\":\"...\",\"why\":\"...\"}]}",
 ].join("\n");
 
-export function quickUserPrompt(o: { note: string; catalog: string; now: number; tz: string; shift: string }): string {
+export function quickUserPrompt(o: { note: string; catalog: string; now: number; tz: string; shift: string; notesFrom?: string }): string {
   return [
     `Now: ${clock(o.now, o.tz)} (plant time, ${o.tz}). ${o.shift}`,
+    o.notesFrom ?? "The note is about now: a time without a date is the last time it came round (today, or last night).",
     "",
     "Steps on the job (key | WO | work order > step | crew | state | plan | actual):",
     o.catalog,
@@ -133,8 +182,11 @@ const ACTIONS: Action[] = ["start", "progress", "done", "hold", "resume", "comme
 type TimeKind = "none" | "clock" | "day" | "relative" | "unclear" | "future";
 const KINDS: TimeKind[] = ["none", "clock", "day", "relative", "unclear", "future"];
 
+export type Basis = "named" | "context" | "only" | "guess";
 export interface RawUpdate {
   step: string | null; candidates: string[]; action: Action;
+  /** How the AI found the step, and the earlier words it used. */
+  basis: Basis | null; context: string | null;
   percent: number | null; percentFrom: "said" | "words" | "guess" | null; suggest: number | null;
   reason: string | null; comment: string | null; implied: boolean; evidence: string;
   when: { words: string | null; kind: TimeKind; local: string | null };
@@ -159,6 +211,7 @@ export function parseReply(raw: unknown): RawReply {
     const pf = x.percentFrom === "said" || x.percentFrom === "words" || x.percentFrom === "guess" ? x.percentFrom : null;
     updates.push({
       step: str(x.step), candidates: Array.isArray(x.candidates) ? x.candidates.map(str).filter((c): c is string => !!c) : [],
+      basis: x.basis === "named" || x.basis === "context" || x.basis === "only" || x.basis === "guess" ? x.basis : null, context: str(x.context),
       action, percent: num(x.percent), percentFrom: pf, suggest: num(x.suggest),
       reason: str(x.reason), comment: str(x.comment), implied: x.implied === true, evidence,
       when: { words: str(w.words), kind: KINDS.includes(w.kind as TimeKind) ? (w.kind as TimeKind) : "none", local: str(w.local) },
@@ -175,10 +228,15 @@ export function parseReply(raw: unknown): RawReply {
 // ── Times ──
 
 const HALF = 30 * 60_000;
-/** To the nearest half hour, never later than now. */
-export function roundTime(t: number, now: number): number {
+/** To the nearest half hour, never later than now - and, given the shift
+ *  times, never into another shift (5:45 AM on a night log stays 5:30 AM,
+ *  not 6:00 AM on the day shift). */
+export function roundTime(t: number, now: number, keep?: { tz: string; times: ShiftTimes }): number {
   const r = Math.round(t / HALF) * HALF;
-  return r > now ? Math.floor(t / HALF) * HALF : r;
+  const down = Math.floor(t / HALF) * HALF;
+  if (r > now) return down;
+  if (keep && r !== down && shiftAt(r, keep.tz, keep.times).start !== shiftAt(t, keep.tz, keep.times).start) return down;
+  return r;
 }
 
 /** "2026-11-03 14:00" in plant time. */
@@ -210,7 +268,12 @@ export function saidClock(w: string): { h: number; m: number } | null {
   return null;
 }
 
-export interface TimeCtx { now: number; tz: string; times: ShiftTimes }
+export interface TimeCtx {
+  now: number; tz: string; times: ShiftTimes;
+  /** The shift the notes are a log of (picked, or from a file): times with
+   *  no date are in it. Unset: the notes are about now. */
+  window?: ShiftWindow;
+}
 
 export type TimeRead =
   | { at: number; from: "said" | "default" }
@@ -237,6 +300,26 @@ export function readTime(when: RawUpdate["when"], defaultAt: number, ctx: TimeCt
   }
   // A day with no time of day ("yesterday", "Monday"): asked.
   if (when.kind === "day" && !/\d|noon|midnight/.test(lw)) return { ask: "time", why: `You said “${words}” but not what time.` };
+  // A log of a shift: a clock time is in that shift ("0200" on a night log
+  // is 2 AM that night). Not in it, or in it twice (AM and PM): asked.
+  const win = ctx.window;
+  if (win && when.kind === "clock") {
+    const wc = wallClock(L, tz);
+    const hm = plain ?? { h: wc.hour, m: wc.minute };
+    const hours = plain || hasMeridiem(words) ? [hm.h] : [hm.h % 12, (hm.h % 12) + 12];
+    const inShift: number[] = [];
+    for (const day of [dayKey(win.start, tz), dayKey(win.end - 1, tz)]) {
+      const [y, mo, d] = day.split("-").map(Number);
+      for (const h of hours) {
+        const t = wallClockToMs({ year: y, month: mo, day: d, hour: h, minute: hm.m, second: 0 }, tz);
+        if (t >= win.start && t < win.end && !inShift.includes(t)) inShift.push(t);
+      }
+    }
+    if (inShift.length === 1) return inShift[0] > soon ? { future: true } : { at: roundTime(inShift[0], now, ctx), from: "said" };
+    if (inShift.length === 2) return { ask: "ampm", options: [roundTime(Math.min(...inShift), now, ctx), roundTime(Math.max(...inShift), now, ctx)] as [number, number], why: `“${words}”: AM or PM?` };
+    return { ask: "time", why: `“${words}” isn't in the shift these notes are from. Pick the time.` };
+  }
+  if (win && (L < win.start - 3_600_000 || L > win.end + 3_600_000)) return { ask: "time", why: `“${words}” (${clock(L, tz)}) is outside the shift these notes are from. Pick the time.` };
   // The day words must agree with the reading ("yesterday" is yesterday).
   const today = dayKey(now, tz), yest = dayKey(addDays(now, -1, tz), tz), d = dayKey(L, tz);
   const hour = Number(fmtInTz(L, tz, { hour: "numeric", hour12: false }).replace(/\D/g, "")) % 24;
@@ -255,22 +338,37 @@ export function readTime(when: RawUpdate["when"], defaultAt: number, ctx: TimeCt
   if (when.kind === "clock" && !hasMeridiem(words)) {
     const H = 3_600_000;
     const past = [L + 12 * H, L, L - 12 * H, L - 24 * H].filter((t) => t <= soon).sort((a, b) => b - a).slice(0, 2);
-    if (past.length === 2) return { ask: "ampm", options: [roundTime(past[1], now), roundTime(past[0], now)] as [number, number], why: `“${words}”: AM or PM?` };
+    if (past.length === 2) return { ask: "ampm", options: [roundTime(past[1], now, ctx), roundTime(past[0], now, ctx)] as [number, number], why: `“${words}”: AM or PM?` };
   }
   // Not come yet: what's expected, never entered as done.
   if (L > soon) return { future: true };
   if (L < now - 14 * 86_400_000) return { ask: "time", why: `“${words}” reads as more than two weeks ago. Pick the time.` };
-  return { at: roundTime(L, now), from: "said" };
+  return { at: roundTime(L, now, ctx), from: "said" };
 }
 
 /** The times offered for updates with no time said: now, the end of the
  *  last shift (when its turnover meeting started), and the start of this one. */
-export function defaultTimes(ctx: TimeCtx): Array<{ id: "now" | "last" | "start"; at: number; label: string }> {
+export function defaultTimes(ctx: TimeCtx): Array<{ id: "window" | "now" | "last" | "start"; at: number; label: string }> {
   const { now, tz, times } = ctx;
   const cur: ShiftWindow = shiftAt(now, tz, times);
   const prev = previousShift(cur, tz, times);
   const name = (w: ShiftWindow) => `${fmtInTz(w.start, tz, { weekday: "short" })} ${w.kind}`;
   const lastAt = roundTime(prev.end - meetingLeadMin(times) * 60_000, now);
+  const w = ctx.window;
+  // Notes from an earlier shift: its end (its turnover) comes first.
+  if (w && w.end <= now && w.start !== prev.start) {
+    const at = roundTime(w.end - meetingLeadMin(times) * 60_000, now);
+    return [
+      { id: "window", at, label: `End of that shift (${name(w)}), ${clock(at, tz)}` },
+      { id: "now", at: roundTime(now, now), label: `Now, ${clock(roundTime(now, now), tz)}` },
+    ];
+  }
+  if (w && w.start === prev.start) {
+    return [
+      { id: "last", at: lastAt, label: `End of last shift (${name(prev)}), ${clock(lastAt, tz)}` },
+      { id: "now", at: roundTime(now, now), label: `Now, ${clock(roundTime(now, now), tz)}` },
+    ];
+  }
   return [
     { id: "now", at: roundTime(now, now), label: `Now, ${clock(roundTime(now, now), tz)}` },
     { id: "last", at: lastAt, label: `Last shift (${name(prev)}), ${clock(lastAt, tz)}` },
@@ -303,10 +401,88 @@ export interface QuickLine {
   /** Not happened yet: kept as a comment, not entered as done. */
   expected: boolean;
   include: boolean;
+  /** How the step was found: named in these words, named earlier in the
+   *  note (`context`, its words), the only step by that name, or by meaning
+   *  (no word in common with the step's name: check it). */
+  found?: "named" | "context" | "only" | "meaning";
+  context?: string | null;
+  /** Why it's asked which step ("doesn't say which equipment"). */
+  unsure?: string;
+  /** The words given aren't in the note: never saved as is. */
+  notInNote?: boolean;
+}
+
+// ── Which step: checked here, not taken on the AI's word ──
+
+const plainWords = (s: string) => s.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+
+/** The words are in the note: spacing, case and punctuation aside, or all
+ *  but a word or two of them. */
+export function inNote(words: string | null | undefined, note: string): boolean {
+  const w = plainWords(words ?? ""), n = plainWords(note);
+  if (!w) return false;
+  if (n.includes(w)) return true;
+  const toks = w.split(" ").filter((x) => x.length >= 2);
+  if (!toks.length) return false;
+  const have = new Set(n.split(" "));
+  return toks.filter((x) => have.has(x)).length / toks.length >= 0.8;
+}
+
+/** The words name this step's equipment or work order: its tag any way it's
+ *  written (V-1 for V-01), or its WO number. */
+export function namesStep(words: string, c: CatalogStep): boolean {
+  const said = searchIndex(words);
+  const own = searchIndex(`${c.place} ${c.name}`);
+  for (const t of own.tags) if (said.tags.has(t)) return true;
+  return !!c.wo && said.nums.includes(c.wo.replace(/^0+(?=\d)/, ""));
+}
+
+const STOP = new Set(["the", "and", "for", "of", "to", "on", "in", "at", "by", "up", "or", "as", "is", "it", "be", "no", "with", "from", "a", "an", "all", "new", "set", "verify", "check",
+  // Words for how it stands, not what the task is.
+  "complete", "completed", "done", "finish", "finished", "start", "started"]);
+/** The step's own words, tags and numbers aside: what kind of task it is
+ *  (short ones too: QC, UT, VT). */
+const taskWords = (name: string) => plainWords(name).split(" ").filter((w) => w.length >= 2 && !/\d/.test(w) && !STOP.has(w));
+const near = (a: string, b: string) => a === b || (a.length >= 4 && b.length >= 4 && (a.startsWith(b.slice(0, 4)) && b.startsWith(a.slice(0, 4))));
+
+/** The note's words share a word with the step's name ("pulled" and Pull
+ *  Bundle, "trays" and Remove Trays). */
+export function fitsStep(words: string, c: CatalogStep): boolean {
+  const said = plainWords(words).split(" ");
+  return taskWords(c.name).some((t) => said.some((w) => near(w, t)));
+}
+
+/** The same task on other equipment: Pull Bundle on E-02 and on E-22. */
+export function sameTask(a: CatalogStep, b: CatalogStep): boolean {
+  const x = new Set(taskWords(a.name)), y = new Set(taskWords(b.name));
+  if (!x.size || !y.size) return false;
+  const both = [...x].filter((w) => y.has(w)).length;
+  return both / new Set([...x, ...y]).size >= 0.8;
+}
+
+/** How sure the step is, from the note itself:
+ *  - named here or earlier in the note: sure (by meaning, it's said);
+ *  - not named, and the same task is open on other equipment: asked;
+ *  - not named, the only step by that name: sure; no word in common: asked. */
+export function stepCheck(step: CatalogStep, u: Pick<RawUpdate, "evidence" | "context">, note: string, cat: CatalogStep[]):
+  { found: QuickLine["found"]; context: string | null; options?: string[]; unsure?: string } {
+  const ctx = u.context && inNote(u.context, note) ? u.context : null;
+  const fits = fitsStep(`${u.evidence} ${ctx ?? ""}`, step);
+  if (namesStep(u.evidence, step)) return { found: fits ? "named" : "meaning", context: null };
+  if (ctx && namesStep(ctx, step)) return { found: fits ? "context" : "meaning", context: ctx };
+  const open = (c: CatalogStep) => c.status !== "completed" && c.pct < 100;
+  const twins = cat.filter((c) => c.id !== step.id && open(c) && sameTask(c, step));
+  if (twins.length) {
+    const rank = (c: CatalogStep) => (c.id === step.id ? 0 : c.live ? 1 : c.next ? 2 : 3);
+    const options = [step, ...twins].sort((a, b) => rank(a) - rank(b)).slice(0, 8).map((c) => c.id);
+    return { found: undefined, context: null, options, unsure: `Your note doesn't say which equipment, and ${twins.length + 1} open steps are “${step.name}”.` };
+  }
+  if (!fits) return { found: undefined, context: null, options: [step.id], unsure: "Your note doesn't name the equipment or the step. Is this the one?" };
+  return { found: "only", context: null };
 }
 
 /** The AI's updates as lines: steps checked against the job, times read. */
-export function toLines(reply: RawReply, cat: CatalogStep[], defaultAt: number, ctx: TimeCtx): { lines: QuickLine[]; unplaced: RawReply["unplaced"] } {
+export function toLines(reply: RawReply, cat: CatalogStep[], defaultAt: number, ctx: TimeCtx, note = ""): { lines: QuickLine[]; unplaced: RawReply["unplaced"] } {
   const byKey = new Map(cat.map((c) => [c.key, c]));
   const unplaced = [...reply.unplaced];
   const lines: QuickLine[] = [];
@@ -314,8 +490,11 @@ export function toLines(reply: RawReply, cat: CatalogStep[], defaultAt: number, 
     const step = u.step ? byKey.get(u.step) : undefined;
     const opts = [...new Set([...(u.step ? [u.step] : []), ...u.candidates])].map((k) => byKey.get(k)).filter((c): c is CatalogStep => !!c);
     if (!step && opts.length === 0) { unplaced.push({ text: u.evidence || "(no words)", why: u.step ? "That step isn't on the schedule." : "Couldn't tell which step." }); return; }
-    // Unsure between steps: the person picks, never the first one.
-    const unsure = opts.length > 1;
+    // Unsure between steps: the person picks, never the first one. Sure
+    // only when the note itself says which (stepCheck).
+    const picked = !(opts.length > 1) ? (step ?? opts[0]) : undefined;
+    const chk = picked && note ? stepCheck(picked, u, note, cat) : null;
+    const unsure = opts.length > 1 || !!chk?.options;
     let action = u.action, percent = u.percent != null ? Math.round(u.percent) : null;
     if (action === "progress" && percent != null && percent >= 100) { action = "done"; percent = null; }
     if (percent != null) percent = Math.max(0, Math.min(100, percent));
@@ -324,7 +503,9 @@ export function toLines(reply: RawReply, cat: CatalogStep[], defaultAt: number, 
     lines.push({
       id: `q${i}`,
       stepId: unsure ? null : (step ?? opts[0]).id,
-      options: unsure ? opts.map((c) => c.id) : [],
+      options: chk?.options ?? (unsure ? opts.map((c) => c.id) : []),
+      ...(chk ? { found: chk.found, context: chk.context, ...(chk.unsure ? { unsure: chk.unsure } : {}) } : {}),
+      ...(note && !inNote(u.evidence, note) ? { notInNote: true } : {}),
       // Not happened yet: what was said is kept as a comment.
       action: expected ? "comment" : action,
       percent: expected ? null : percent,
@@ -348,8 +529,9 @@ export function toLines(reply: RawReply, cat: CatalogStep[], defaultAt: number, 
  *  will do. Empty `needs`: ready. `nothing`: it would change nothing. */
 export function checkLine(l: QuickLine, step: CatalogStep | undefined, now: number, tz: string): { needs: string[]; nothing?: string; says: string } {
   const needs: string[] = [];
+  if (l.notInNote) needs.push("These words aren't in your note. Untick it, or check the step by hand.");
   if (!step) {
-    needs.push(l.options.length ? "Which step is it?" : "Pick the step.");
+    needs.push(l.unsure ?? (l.options.length ? "Which step is it?" : "Pick the step."));
     return { needs, says: sayLine(l, undefined) };
   }
   if (l.at == null) needs.push(l.ampm ? "AM or PM?" : l.timeWhy ?? "When did it happen?");

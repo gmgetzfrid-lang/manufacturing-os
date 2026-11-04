@@ -178,3 +178,115 @@ describe("guards on a line", () => {
     expect(checkLine(l, step("tr"), now, tz).needs[0]).toMatch(/hasn't come yet/);
   });
 });
+
+import { inNote, namesStep, fitsStep, sameTask, stepCheck } from "@/lib/quickUpdate";
+
+describe("which step, when the note isn't descriptive", () => {
+  // Pull Bundle on two exchangers, Remove Trays on two towers, one Reinstall.
+  const job: Milestone[] = [
+    mk({ id: "e02", name: "E-02 - De-Butanizer Condenser", workOrderRef: "310456" }),
+    mk({ id: "pb2", parentId: "e02", name: "Pull Bundle", status: "in_progress", percentComplete: 10, actualStartAt: iso("03", "07:00"), plannedStartAt: iso("03", "06:00"), plannedAt: iso("03", "12:00") }),
+    mk({ id: "hb2", parentId: "e02", name: "Hydroblast Tubes", plannedStartAt: iso("03", "12:00"), plannedAt: iso("03", "16:00") }),
+    mk({ id: "e22", name: "E-22 - Interstage Cooler", workOrderRef: "312478" }),
+    mk({ id: "pb22", parentId: "e22", name: "Pull Bundle", plannedStartAt: iso("05", "06:00"), plannedAt: iso("05", "12:00") }),
+    mk({ id: "v01", name: "V-01 - De-Butanizer Column", workOrderRef: "310359" }),
+    mk({ id: "tr1", parentId: "v01", name: "Remove Trays", plannedStartAt: iso("03", "06:00"), plannedAt: iso("03", "18:00") }),
+    mk({ id: "v03", name: "V-03 - De-Ethanizer Column", workOrderRef: "310357" }),
+    mk({ id: "tr3", parentId: "v03", name: "Remove Trays", plannedStartAt: iso("04", "06:00"), plannedAt: iso("04", "18:00") }),
+    mk({ id: "cl3", parentId: "v03", name: "Clean Tower (Orbijet)", plannedStartAt: iso("04", "18:00"), plannedAt: iso("05", "06:00") }),
+  ];
+  const c = stepCatalog(job, undefined, { now, notes: [
+    { id: "n1", orgId: "o", milestoneId: "cl3", kind: "note", body: "Orbijet crew on site, rigging up", createdAt: iso("03", "08:00"), createdBy: "u" } as never,
+  ] });
+  const S = (id: string) => c.find((x) => x.id === id)!;
+  it("the catalog says what's going and what's next, and how the field described it", () => {
+    expect(S("pb2")).toMatchObject({ live: true, next: true });
+    expect(S("pb22").live).toBe(false);
+    expect(S("cl3").said).toEqual(["Orbijet crew on site, rigging up"]);
+    expect(catalogText(c, tz)).toContain('said lately: "Orbijet crew on site, rigging up"');
+  });
+  it("a tag any way it's written, or the WO number, names the equipment", () => {
+    expect(namesStep("e2 pulled bundle", S("pb2"))).toBe(true);
+    expect(namesStep("E-02 bundle", S("pb2"))).toBe(true);
+    expect(namesStep("310456 bundle out", S("pb2"))).toBe(true);
+    expect(namesStep("pulled the bundle", S("pb2"))).toBe(false);
+    expect(namesStep("e22 bundle", S("pb2"))).toBe(false);
+  });
+  it("the same task on other equipment is a twin; a different task isn't", () => {
+    expect(sameTask(S("pb2"), S("pb22"))).toBe(true);
+    expect(sameTask(S("tr1"), S("tr3"))).toBe(true);
+    expect(sameTask(S("pb2"), S("hb2"))).toBe(false);
+    expect(fitsStep("they pulled it", S("pb2"))).toBe(true);
+    expect(fitsStep("washed it", S("hb2"))).toBe(false);
+  });
+  const note = "Pulled the bundle. E-2 washed it. Trays out on V-3. The orbijet guys are rigging up";
+  it("'pulled the bundle', no equipment, two open Pull Bundles: asked, the live one first", () => {
+    const r = stepCheck(S("pb2"), { evidence: "Pulled the bundle", context: null }, note, c);
+    expect(r.options).toEqual(["pb2", "pb22"]);
+    expect(r.unsure).toMatch(/doesn't say which equipment/);
+  });
+  it("'E-2 washed it': named, but no word in common with Hydroblast Tubes: by meaning", () => {
+    expect(stepCheck(S("hb2"), { evidence: "E-2 washed it", context: null }, note, c)).toMatchObject({ found: "meaning" });
+  });
+  it("named earlier in the note: from context, only when those words are really in the note", () => {
+    expect(stepCheck(S("tr3"), { evidence: "Trays out", context: "on V-3" }, note, c)).toMatchObject({ found: "context" });
+    expect(stepCheck(S("tr3"), { evidence: "Trays out", context: "V-3 tower" }, note, c).options).toEqual(["tr3", "tr1"]);
+  });
+  it("not named, but only one step by that name: sure", () => {
+    expect(stepCheck(S("cl3"), { evidence: "The orbijet guys are rigging up", context: null }, note, c)).toMatchObject({ found: "only" });
+  });
+  it("words the AI says are in the note must be in it", () => {
+    expect(inNote("pulled the bundle", note)).toBe(true);
+    expect(inNote("E-2, washed it", note)).toBe(true);
+    expect(inNote("hydroblast complete on E-2", note)).toBe(false);
+  });
+  it("whole lines: an unsure step blocks Save until it's picked; made-up words block it", () => {
+    const reply = parseReply({ updates: [
+      { step: S("pb2").key, basis: "only", action: "done", evidence: "Pulled the bundle", when: { kind: "none" } },
+      { step: S("hb2").key, basis: "named", action: "done", evidence: "hydroblast complete on E-2", when: { kind: "none" } },
+    ] });
+    const { lines } = toLines(reply, c, T("03", "09:30"), ctx, note);
+    expect(lines[0]).toMatchObject({ stepId: null, options: ["pb2", "pb22"] });
+    expect(checkLine(lines[0], undefined, now, tz).needs[0]).toMatch(/which equipment/);
+    expect(checkLine({ ...lines[0], stepId: "pb2" }, S("pb2"), now, tz).needs).toEqual([]);
+    expect(checkLine(lines[1], S("hb2"), now, tz).needs[0]).toMatch(/aren't in your note/);
+  });
+});
+
+describe("a day's log from an earlier shift", () => {
+  const night = { kind: "night" as const, dayKey: "2026-11-02", start: T("02", "18:00"), end: T("03", "06:00") };
+  const lctx = { ...ctx, window: night };
+  const read = (words: string, kind: RawUpdate["when"]["kind"], local: string) => readTime({ words, kind, local }, 0, lctx);
+  it("a clock time is placed in that shift: 0200 is 2 AM that night, 1900 the evening before", () => {
+    expect(read("0200", "clock", "2026-11-03 02:00")).toEqual({ at: T("03", "02:00"), from: "said" });
+    expect(read("1900", "clock", "2026-11-03 19:00")).toEqual({ at: T("02", "19:00"), from: "said" });
+  });
+  it("no AM or PM: only one reading is in a 12-hour shift, so no question", () => {
+    expect(read("at 2", "clock", "2026-11-03 14:00")).toEqual({ at: T("03", "02:00"), from: "said" });
+  });
+  it("a time not in that shift is asked", () => {
+    expect(read("2pm", "clock", "2026-11-03 14:00")).toMatchObject({ ask: "time" });
+  });
+  it("lines with no time go in at the end of that shift first", () => {
+    const d = defaultTimes(lctx);
+    expect(d[0]).toMatchObject({ id: "last", at: T("03", "05:30") });
+  });
+  it("a log from two shifts back: that shift's end is offered first", () => {
+    const day = { kind: "day" as const, dayKey: "2026-11-02", start: T("02", "06:00"), end: T("02", "18:00") };
+    expect(defaultTimes({ ...ctx, window: day })[0]).toMatchObject({ id: "window", at: T("02", "17:30") });
+  });
+});
+
+describe("found in the field: rounding and short words", () => {
+  const night = { kind: "night" as const, dayKey: "2026-11-02", start: T("02", "18:00"), end: T("03", "06:00") };
+  it("5:45 AM on a night log stays on the night shift: 5:30 AM, not 6:00 AM", () => {
+    expect(readTime({ words: "0545", kind: "clock", local: "2026-11-03 05:45" }, 0, { ...ctx, window: night })).toEqual({ at: T("03", "05:30"), from: "said" });
+    expect(roundTime(T("02", "17:50"), now, { tz, times })).toBe(T("02", "17:30"));
+    expect(roundTime(T("02", "17:40"), now, { tz, times })).toBe(T("02", "17:30"));
+  });
+  it("QC done fits QC Complete: short words count, done and complete don't", () => {
+    const qc = { key: "s1", id: "q", wo: "310352", place: "V-02 - De-Butanizer Receiver", name: "QC Complete", crew: "", status: "planned", pct: 0, planStart: 0, planFinish: 0, actStart: null, actFinish: null } as CatalogStep;
+    expect(fitsStep("0545 QC done on V-2", qc)).toBe(true);
+    expect(fitsStep("done on V-2", qc)).toBe(false);
+  });
+});
