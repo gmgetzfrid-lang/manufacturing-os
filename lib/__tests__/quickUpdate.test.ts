@@ -7,6 +7,8 @@ import {
   type RawUpdate, type CatalogStep,
 } from "@/lib/quickUpdate";
 import type { ShiftTimes } from "@/lib/shiftReport";
+import { shiftWindow } from "@/lib/shiftReport";
+import { pctFromCounts, mergeLines, toAll, woNumbersIn, markAlready } from "@/lib/quickUpdate";
 import type { QuickLine } from "@/lib/quickUpdate";
 import type { Milestone } from "@/types/schema";
 
@@ -130,26 +132,29 @@ describe("the lines to check", () => {
     expect(line(0)).toMatchObject({ stepId: "rm", implied: true, include: false });
     expect(line(1)).toMatchObject({ stepId: "hb", include: true, at: def, timeFrom: "default" });
   });
-  it("a % guessed from words is asked, never saved", () => {
-    expect(checkLine(line(2), step("ri"), now, tz).needs).toEqual(["How far along? (not said)"]);
+  it("no % said: never held up, no % saved, the words go on", () => {
+    expect(checkLine(line(2), step("ri"), now, tz).needs).toEqual([]);
+    expect(checkLine(line(2), step("ri"), now, tz).says).toMatch(/no % said/);
   });
   it("two possible steps: the person picks", () => {
     expect(line(3)).toMatchObject({ stepId: null, options: ["mw", "op"] });
     expect(checkLine(line(3), undefined, now, tz).needs).toEqual(["Which step is it?"]);
   });
-  it("a % lower than the step already is: not saved here", () => {
-    expect(checkLine(line(4), step("tr"), now, tz).needs[0]).toMatch(/at 40% already/);
+  it("a % lower than the step already is: changes nothing, left out", () => {
+    expect(checkLine(line(4), step("tr"), now, tz).nothing).toMatch(/further along \(40%\)/);
+    expect(lines.find((x) => x.stepId === "tr" && x.percent === 30)).toMatchObject({ include: false, already: "Already further along (40%)." });
   });
   it("an expectation becomes a comment, not done", () => {
     const l = lines.find((x) => x.expected)!;
     expect(l).toMatchObject({ action: "comment", comment: "Expected: should be back on in a couple hours" });
   });
-  it("ready lines save in time order with the person's words on the step; blocked and unticked ones don't", () => {
+  it("ready lines save in time order with the person's words on the step; blocked, unticked and already-there ones don't", () => {
     const ev = saveEvents(lines, cat, now, tz);
     expect([...ev.keys()].sort()).toEqual(["hb", "ri"]);
     expect(ev.get("hb")).toEqual([{ kind: "done", at: def }, { kind: "note", at: def, text: "they washed it" }]);
-    // The guessed-% line is held back; the expectation still goes on as a comment.
-    expect(ev.get("ri")).toEqual([{ kind: "note", at: def, text: "Expected: should be back on in a couple hours · should be back on in a couple hours" .split(" · ")[0] }]);
+    // No % said: the words go on, the % stays; the expectation goes on as a comment too.
+    // Not started yet: it goes on as started.
+    expect(ev.get("ri")).toEqual([{ kind: "start", at: def }, { kind: "note", at: def, text: "must be staging to put it back · Expected: should be back on in a couple hours" }]);
   });
   it("once the person answers, the line is ready", () => {
     const fixed = { ...line(2), percent: 10 };
@@ -355,5 +360,78 @@ describe("lineComment", () => {
   });
   it("keeps the words while the step is still asked", () => {
     expect(lineComment({ ...base, stepId: null, heard: { said: "mee too", as: "E-2", stepId: "s1", known: false } })).toBe("mee too channel head is off");
+  });
+});
+
+
+describe("a pasted email: counts, shifts, groups, repeats", () => {
+  it("% from the note's own counts", () => {
+    expect(pctFromCounts("Continued tunneling V-1 (13 trays removed on shift, 37 total removed) ... 4:30 – 5 trays remaining on V-1")).toEqual({ pct: 88, words: "37 done, 5 left" });
+    expect(pctFromCounts("(3 trays removed on shift, 11 total removed) ... 11 trays remaining in V-3")?.pct).toBe(50);
+    expect(pctFromCounts("6 of 8 bundles out")?.pct).toBe(75);
+    expect(pctFromCounts("5 Trays out overall")).toBeNull();
+    expect(pctFromCounts("root pass on 3 of 4 compressor bottles")).toBeNull();
+  });
+  it("a count read as a % is not a %", () => {
+    const r = parseReply({ updates: [{ step: key("tr"), action: "progress", percent: 5, percentFrom: "said", evidence: "V-1 5 Trays out overall", when: { kind: "none" } }], unplaced: [] });
+    const l = toLines(r, cat, now, ctx).lines[0];
+    expect(l).toMatchObject({ percent: null });
+  });
+  const day = shiftWindow("2026-11-02", "day", tz, times);
+  const night = shiftWindow("2026-11-02", "night", tz, times);
+  const later = { now: T("03", "09:40"), tz, times };
+  it("inside a known shift: no AM or PM asked", () => {
+    expect(readTime({ words: "4:30", kind: "clock", local: "2026-11-02 04:30" }, 0, { ...later, window: day })).toMatchObject({ at: T("02", "16:30"), from: "said" });
+    expect(readTime({ words: "12:00", kind: "clock", local: "2026-11-02 12:00" }, 0, { ...later, window: night })).toMatchObject({ at: T("03", "00:00") });
+    expect(readTime({ words: "1:30", kind: "clock", local: "2026-11-02 01:30" }, 0, { ...later, window: day })).toMatchObject({ at: T("02", "13:30") });
+  });
+  it("the 5:30 meeting just before the shift: kept in it", () => {
+    expect(readTime({ words: "5:30 AM", kind: "clock", local: "2026-11-02 05:30" }, 0, { ...later, window: day })).toMatchObject({ at: T("02", "06:00") });
+  });
+  it("'earlier' in a known shift: that shift's time, not asked", () => {
+    const def = T("02", "17:30");
+    expect(readTime({ words: "earlier", kind: "unclear", local: null }, def, { ...later, window: day })).toEqual({ at: def, from: "default" });
+  });
+  it("one line for each step the same words cover", () => {
+    const r = parseReply({ updates: [{ step: null, candidates: [key("mw"), key("ri")], basis: "group", action: "progress", evidence: "root pass on both", when: { kind: "none" } }], unplaced: [] });
+    const ls = toLines(r, cat, now, ctx, "root pass on both").lines;
+    expect(ls.map((l) => [l.stepId, l.group])).toEqual([["mw", 2], ["ri", 2]]);
+    const pick = toLines(parseReply({ updates: [{ step: null, candidates: [key("mw"), key("ri")], action: "done", evidence: "x", when: { kind: "none" } }], unplaced: [] }), cat, now, ctx).lines[0];
+    expect(toAll(pick).map((l) => l.stepId)).toEqual(["mw", "ri"]);
+  });
+  it("already done or further along: left out", () => {
+    const r = parseReply({ updates: [{ step: key("op"), action: "done", evidence: "V-1 manways open", when: { kind: "none" } }], unplaced: [] });
+    expect(toLines(r, cat, now, ctx).lines[0]).toMatchObject({ include: false, already: "Already done." });
+  });
+  it("said twice (hour by hour and the summary): one line, the timed one", () => {
+    const base = { options: [] as string[], percent: null, percentFrom: null, suggest: null, reason: null, comment: null, implied: false, timeWords: null, expected: false, include: true };
+    const a: QuickLine = { ...base, id: "a", stepId: "hb", action: "done", evidence: "Hydroblasted E-02 bundle", at: T("02", "17:30"), timeFrom: "default" };
+    const b: QuickLine = { ...base, id: "b", stepId: "hb", action: "done", evidence: "3:30 – E-02 bundle ID and OD hydroblasted", at: T("02", "15:30"), timeFrom: "said" };
+    const m = mergeLines([a, b]);
+    expect(m).toHaveLength(1);
+    expect(m[0]).toMatchObject({ id: "b", at: T("02", "15:30"), comment: "Hydroblasted E-02 bundle" });
+  });
+  it("the note's WO isn't the step's: said", () => {
+    expect(woNumbersIn("WO# 310357 -V-4- Finished Blinding & open MW. AFE#25206")).toEqual(["310357", "25206"]);
+    const r = parseReply({ updates: [{ step: key("mw"), action: "done", evidence: "WO# 310456 -V-1- manways closed", when: { kind: "none" } }], unplaced: [] });
+    expect(toLines(r, cat, now, ctx).lines[0].woNote).toMatch(/WO 310456, which is E-02/);
+  });
+  it("one start per step, before anything else", () => {
+    const base = { options: [], percentFrom: null, suggest: null, reason: null, comment: null, implied: false, timeWords: null, expected: false, include: true, timeFrom: "said" as const, evidence: "" };
+    const ev = saveEvents([
+      { ...base, id: "1", stepId: "ri", action: "progress", percent: 40, at: T("03", "08:00") },
+      { ...base, id: "2", stepId: "ri", action: "progress", percent: null, at: T("03", "09:00") },
+    ], cat, now, tz).get("ri")!;
+    expect(ev.map((e) => e.kind)).toEqual(["pct"]);
+  });
+  it("on hold at 2:30 then back on at 3:30, in one paste: both count", () => {
+    const base = { options: [] as string[], percentFrom: null, suggest: null, reason: "vac truck plugging", comment: null, implied: false, timeWords: null, expected: false, include: true, timeFrom: "said" as const, evidence: "", percent: null };
+    const ls: QuickLine[] = [
+      { ...base, id: "h", stepId: "tr", action: "hold", at: T("03", "02:30") },
+      { ...base, id: "r", stepId: "tr", action: "resume", at: T("03", "03:30") },
+    ];
+    const m = markAlready(ls, cat, now, tz);
+    expect(m.map((l) => [l.id, l.include, l.already ?? null])).toEqual([["h", true, null], ["r", true, null]]);
+    expect(saveEvents(m, cat, now, tz).get("tr")!.filter((e) => e.kind !== "note").map((e) => e.kind)).toEqual(["hold", "pct"]);
   });
 });

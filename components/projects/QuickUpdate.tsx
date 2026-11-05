@@ -6,7 +6,9 @@
 // reads it into step updates (lib/quickUpdate). Nothing saves until every
 // line has been checked here: which step, what changes, when, the shift it
 // counts for, and your own words beside it. Anything it couldn't work out
-// stops the Save until it's answered or left out.
+// (which step) stops the Save until it's answered or left out. A pasted
+// email with its own shift headers is read shift by shift, its sections
+// picked (lib/emailShifts), into one check screen.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Mic, MicOff, NotebookPen, Loader2, X, Check, AlertTriangle, Search, Paperclip, FileText, Undo2, Plus } from "lucide-react";
@@ -14,9 +16,10 @@ import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Moda
 import DateTimePicker from "@/components/projects/DateTimePicker";
 import { supabase } from "@/lib/supabase";
 import {
-  stepCatalog, catalogText, parseReply, toLines, checkLine, saveEvents, defaultTimes, whenWords, spokenToTags, applyWords, lineComment, sayLine,
+  stepCatalog, catalogText, parseReply, toLines, checkLine, saveEvents, defaultTimes, whenWords, spokenToTags, applyWords, lineComment, sayLine, mergeLines, toAll, stepsBefore, markAlready,
   type CatalogStep, type QuickLine, type RawReply,
 } from "@/lib/quickUpdate";
+import { splitShifts, partText, sectionsFound, partLabel, DEFAULT_OMIT, SECTION_WORD, type SectionKind, type ShiftPart } from "@/lib/emailShifts";
 import { saveQuickStep, undoQuickStep, type SavedStep } from "@/lib/quickUpdateSave";
 import { readNoteFile } from "@/lib/noteFiles";
 import { notesFor } from "@/lib/milestones";
@@ -31,6 +34,8 @@ const HIDE_KEY = "quickUpdate:hidden";
 const wordsKey = (p: string) => `quickUpdate:words:${p}`;
 type Word = { said: string; as: string };
 const draftKey = (p: string) => `quickUpdate:draft:${p}`;
+/** The sections of a pasted email left out, remembered on this device. */
+const OMIT_KEY = "quickUpdate:omit";
 const store = { get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k: string, v: string | null) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* private mode */ } } };
 
 async function authHeader(): Promise<Record<string, string>> {
@@ -113,7 +118,18 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
   // ── Reading ──
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [review, setReview] = useState<{ cat: CatalogStep[]; lines: QuickLine[]; unplaced: RawReply["unplaced"]; at: number; window?: ShiftWindow } | null>(null);
+  const [review, setReview] = useState<{ cat: CatalogStep[]; lines: QuickLine[]; unplaced: RawReply["unplaced"]; at: number; window?: ShiftWindow;
+    /** A pasted email: the shifts read, in order, and any that couldn't be. */
+    parts?: Array<{ key: string; label: string }>; failed?: string[] } | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
+  // ── A pasted email with its own shift headers: each shift read on its
+  // own, its times in that shift; sections can be left out. ──
+  const [omit, setOmit] = useState<Set<SectionKind>>(() => new Set(DEFAULT_OMIT));
+  useEffect(() => {
+    try { const v = JSON.parse(store.get(OMIT_KEY) ?? "null"); if (Array.isArray(v)) setOmit(new Set(v as SectionKind[])); } catch { /* none */ }
+  }, []);
+  const flipOmit = (k: SectionKind) => setOmit((o) => { const n = new Set(o); if (n.has(k)) n.delete(k); else n.add(k); store.set(OMIT_KEY, JSON.stringify([...n])); return n; });
+  const [skip, setSkip] = useState<Set<string>>(new Set());
   // ── Which shift the notes are about: now (typed or said as it happens),
   // or a log of a shift (a file typed up all day). In a log, a time with no
   // date is in that shift.
@@ -125,6 +141,8 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
   useEffect(() => { const t = setInterval(() => setNowTick(Date.now()), 60_000); return () => clearInterval(t); }, []);
   const curShift = shiftAt(nowTick, tz, times), lastShift = previousShift(curShift, tz, times);
   const fromWin = from.id === "shift" ? from.w : undefined;
+  const parts = useMemo<ShiftPart[] | null>(() => (note.length > 40 ? splitShifts(note, tz, times, nowTick) : null), [note, tz, times, nowTick]);
+  const found = useMemo(() => (parts ? sectionsFound(parts) : []), [parts]);
 
   // ── A file: its words go into the box first, to read and fix ──
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -165,10 +183,73 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
     if (fileRef.current) fileRef.current.value = "";
   };
 
+  /** One read of the AI: the words, against the steps, for the shift given. */
+  const ask = async (text: string, cat: CatalogStep[], now: number, win: ShiftWindow | undefined) => {
+    const cur = shiftAt(now, tz, times), prev = previousShift(cur, tz, times);
+    const res = await fetch("/api/projects/quick-update", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(await authHeader()) },
+      body: JSON.stringify({
+        orgId, projectId, note: text, catalog: catalogText(cat, tz), now, tz, shift: `This shift: ${shSpan(cur)}. Last shift: ${shSpan(prev)}.`,
+        notesFrom: win ? `These notes are a log of the ${shSpan(win)}. A time written with no date is in that shift; on a night shift, times after midnight are the next morning.` : undefined,
+        words,
+      }),
+    });
+    const body = (await res.json().catch(() => null)) as (RawReply & { error?: string }) | null;
+    if (!res.ok || !body?.updates) throw new Error(body?.error || `Couldn't read it (HTTP ${res.status}).`);
+    return parseReply(body);
+  };
+
+  /** A pasted email: every shift in it read at once, each against its own
+   *  shift (its times, its live steps), then one check screen. */
+  const readParts = async (ps: ShiftPart[]) => {
+    const now = Date.now();
+    const leafIds = milestones.filter((m) => m.id && !milestones.some((k) => k.parentId === m.id)).map((m) => m.id!);
+    const recent = await notesFor(leafIds).catch(() => []);
+    const todo = ps.filter((p) => !skip.has(p.key)).map((p) => ({ p, text: partText(p, omit) })).filter((x) => x.text.trim());
+    if (!todo.length) throw new Error("Nothing left to read: every shift or section is left out.");
+    const results: Array<{ lines: QuickLine[]; unplaced: RawReply["unplaced"]; cat: CatalogStep[] } | null> = todo.map(() => null);
+    const failed: string[] = [];
+    let n = 0;
+    const run = async (i: number) => {
+      const { p, text } = todo[i];
+      const label = partLabel(p.window, tz);
+      const cat = stepCatalog(milestones, undefined, { now, window: p.window, notes: recent });
+      try {
+        const reply = await ask(text, cat, now, p.window);
+        const tctx = { now, tz, times, window: p.window };
+        const def = defaultTimes(tctx)[0];
+        const r = toLines(reply, cat, def.at, tctx, text, words);
+        results[i] = {
+          cat,
+          lines: r.lines.map((l) => ({ ...l, id: `${i}-${l.id}`, part: { key: p.key, label } })),
+          unplaced: r.unplaced.map((u) => ({ ...u, why: `${label}: ${u.why}` })),
+        };
+      } catch (e) { failed.push(`${label}: ${(e as Error).message}`); }
+      n++;
+      setProgress(`Read ${n} of ${todo.length} shifts…`);
+    };
+    setProgress(`Reading ${todo.length} shift${todo.length === 1 ? "" : "s"}…`);
+    // Two at a time: quick, and kind to the AI's limits.
+    for (let i = 0; i < todo.length; i += 2) await Promise.all([run(i), ...(i + 1 < todo.length ? [run(i + 1)] : [])]);
+    const ok = results.filter((r): r is NonNullable<typeof r> => !!r);
+    if (!ok.length) throw new Error(`Couldn't read it. ${failed.join(" ")} Your note is kept - try again.`);
+    // Newest shift first; the same thing said in two places, once.
+    const order = todo.map((t, i) => ({ i, start: t.p.window.start })).sort((a, b) => b.start - a.start);
+    const lines = markAlready(mergeLines(order.flatMap(({ i }) => results[i]?.lines ?? [])), ok[0].cat, now, tz);
+    const unplaced = order.flatMap(({ i }) => results[i]?.unplaced ?? []);
+    setDefaultPick({ id: "part", at: 0 });
+    setReview({ cat: ok[0].cat, lines, unplaced, at: now, parts: order.filter(({ i }) => results[i]).map(({ i }) => ({ key: todo[i].p.key, label: partLabel(todo[i].p.window, tz) })), failed });
+  };
+
   const read = async () => {
     if (!note.trim()) return;
     recRef.current?.stop();
     setBusy(true); setErr(null);
+    if (parts?.length) {
+      try { await readParts(parts); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); setProgress(null); }
+      return;
+    }
     const now = Date.now();
     const win = fromWin && fromWin.start <= now ? fromWin : undefined;
     // How the field has described each step lately helps match short notes.
@@ -240,9 +321,12 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
     onSaved();
   };
   const byId = useMemo(() => new Map((review?.cat ?? []).map((c) => [c.id, c])), [review]);
+  // Each line checked against its step as the lines before it leave it
+  // (a hold at 2:30 makes "back on" at 3:30 a change).
   const checks = useMemo(() => {
     const now = Date.now();
-    return new Map((review?.lines ?? []).map((l) => [l.id, checkLine(l, l.stepId ? byId.get(l.stepId) : undefined, now, tz)]));
+    const before = stepsBefore(review?.lines ?? [], review?.cat ?? [], now, tz);
+    return new Map((review?.lines ?? []).map((l) => [l.id, checkLine(l, l.stepId ? before.get(l.id) ?? byId.get(l.stepId) : undefined, now, tz)]));
   }, [review, byId, tz]);
   const included = (review?.lines ?? []).filter((l) => l.include);
   const blocked = included.filter((l) => (checks.get(l.id)?.needs.length ?? 0) > 0);
@@ -321,7 +405,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
               onChange={(e) => void addFiles(e.target.files)} />
             <button type="button" onClick={() => void read()} disabled={busy || !!fileBusy || !note.trim()}
               className="inline-flex items-center gap-1.5 h-10 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
-              {busy ? <><Loader2 className="w-4 h-4 animate-spin" /> Reading…</> : "Read it"}
+              {busy ? <><Loader2 className="w-4 h-4 animate-spin" /> {progress ?? "Reading…"}</> : parts?.length ? `Read all ${parts.filter((p) => !skip.has(p.key)).length} shift${parts.filter((p) => !skip.has(p.key)).length === 1 ? "" : "s"}` : "Read it"}
             </button>
             {note && !busy && <button type="button" onClick={() => setDraft("")} className="text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Clear</button>}
             {!canSpeak && <span className="text-[11px] text-[var(--color-text-muted)]">To talk, use the mic on your keyboard.</span>}
@@ -366,8 +450,42 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
               <span>Its words are in the box above: read them over and fix anything before you tap Read it.</span>
             </div>
           )}
+          {/* A pasted email: the shifts it names, and its sections to read or leave out. */}
+          {parts && parts.length > 0 && (
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-2 text-[12px] space-y-1.5">
+              <div className="font-bold text-[var(--color-text)]">Found {parts.length} shift{parts.length === 1 ? "" : "s"} in your note, by its own dates and times:</div>
+              <div className="flex flex-wrap gap-1.5">
+                {parts.map((p) => {
+                  const on = !skip.has(p.key);
+                  return (
+                    <label key={p.key} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-semibold cursor-pointer ${on ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] line-through"}`}>
+                      <input type="checkbox" checked={on} onChange={() => setSkip((s0) => { const n = new Set(s0); if (n.has(p.key)) n.delete(p.key); else n.add(p.key); return n; })} className="h-3.5 w-3.5 accent-[var(--color-accent)]" />
+                      {partLabel(p.window, tz)}
+                    </label>
+                  );
+                })}
+              </div>
+              {found.length > 0 && (
+                <>
+                  <div className="font-bold text-[var(--color-text)]">Read these parts:</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {found.map((f) => {
+                      const on = !omit.has(f.kind);
+                      return (
+                        <label key={f.kind} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 cursor-pointer ${on ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] font-semibold text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
+                          <input type="checkbox" checked={on} onChange={() => flipOmit(f.kind)} className="h-3.5 w-3.5 accent-[var(--color-accent)]" />
+                          {SECTION_WORD[f.kind]} <span className="opacity-70">· {f.lines}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <div className="text-[11.5px] text-[var(--color-text-muted)]">What you leave out stays out next time too. Anything already in the app comes in unticked.</div>
+                </>
+              )}
+            </div>
+          )}
           {/* Which shift the notes are about. */}
-          {note.trim() && (
+          {note.trim() && !parts?.length && (
             <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-2 text-[12px]">
               <div className="font-bold text-[var(--color-text)]">These notes are about:</div>
               <div className="mt-1 flex flex-wrap items-center gap-1.5">
@@ -427,6 +545,12 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
         <Modal onClose={() => !saving && setReview(null)} size="xl" dismissable={!saving}>
           <ModalHeader icon={NotebookPen} title="Check before saving" subtitle={`Each line is what your note says, matched to a step. Nothing saves until you tap Save.${review.window ? ` Notes from the ${sh(review.window)}.` : ""}`} onClose={saving ? undefined : () => setReview(null)} />
           <ModalBody className="p-0">
+            {review.parts ? (
+              <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-slate-50 dark:bg-[var(--color-surface-2)] text-[12px] text-[var(--color-text-muted)]">
+                <b className="text-[var(--color-text)]">{review.parts.length} shift{review.parts.length === 1 ? "" : "s"} read from your note</b>, newest first. Times are read in their own shift; a line with no time goes in at the end of its shift.
+                {(review.failed?.length ?? 0) > 0 && <div className="mt-1 font-semibold text-rose-700 dark:text-rose-300">Not read: {review.failed!.join(" · ")}. Go back and read it again for those.</div>}
+              </div>
+            ) : (
             <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-slate-50 dark:bg-[var(--color-surface-2)] text-[12px]">
               <div className="font-bold text-[var(--color-text)]">No time in your note? Those lines go in at:</div>
               <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -442,11 +566,25 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                   onChange={(v) => { const t = Date.parse(fromDateTimeInput(v, tz) ?? ""); if (Number.isFinite(t)) setDefault("pick", t); }} />
               </div>
             </div>
+            )}
             <ul className="divide-y divide-[var(--color-border)]">
-              {review.lines.map((l) => (
-                <LineRow key={l.id} l={l} cat={review.cat} step={l.stepId ? byId.get(l.stepId) : undefined} check={checks.get(l.id)!} tz={tz} times={times}
-                  defaultLabel={choices.find((c) => c.id === defaultPick.id)?.label ?? "the time picked"} choices={choices} onEdit={(p) => edit(l.id, p)} />
-              ))}
+              {review.lines.map((l, i) => {
+                const prev = review.lines[i - 1];
+                const head = review.parts && l.part && l.part.key !== prev?.part?.key;
+                const inPart = head ? review.lines.filter((x) => x.part?.key === l.part!.key) : [];
+                return (
+                  <React.Fragment key={l.id}>
+                    {head && (
+                      <li className="sticky top-0 z-[1] px-4 py-1.5 bg-[var(--color-surface-2)] text-[11.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+                        {l.part!.label} · {inPart.filter((x) => x.include).length} to save{inPart.some((x) => x.already) ? `, ${inPart.filter((x) => x.already).length} already in` : ""}
+                      </li>
+                    )}
+                    <LineRow l={l} cat={review.cat} step={l.stepId ? byId.get(l.stepId) : undefined} check={checks.get(l.id)!} tz={tz} times={times}
+                      defaultLabel={l.part ? `end of the ${l.part.label}` : choices.find((c) => c.id === defaultPick.id)?.label ?? "the time picked"} choices={choices}
+                      onEdit={(p) => edit(l.id, p)} onAll={() => setReview((r) => (r ? { ...r, lines: r.lines.flatMap((x) => (x.id === l.id ? toAll(x) : [x])) } : r))} />
+                  </React.Fragment>
+                );
+              })}
               {review.lines.length === 0 && <li className="px-4 py-6 text-center text-[13px] text-[var(--color-text-muted)]">Nothing in the note matched a step.</li>}
               <li className="px-4 py-2.5">
                 <button type="button" onClick={() => addLine("")} className="inline-flex items-center gap-1.5 text-[12.5px] font-bold text-[var(--color-accent)] hover:underline"><Plus className="w-4 h-4" /> Add a line it missed</button>
@@ -488,12 +626,14 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
 }
 
 /** One line: the step, the change, when, and your words; what it needs. */
-function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit }: {
+function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit, onAll }: {
   l: QuickLine; cat: CatalogStep[]; step: CatalogStep | undefined;
   check: { needs: string[]; nothing?: string; says: string };
   tz: string; times: ShiftTimes; defaultLabel: string;
   choices: Array<{ id: string; at: number; label: string }>;
   onEdit: (p: Partial<QuickLine>) => void;
+  /** The same words on every step it could be. */
+  onAll?: () => void;
 }) {
   const [find, setFind] = useState("");
   const [changing, setChanging] = useState(false);
@@ -517,6 +657,8 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
               {l.found === "context" && l.context && <div className="text-[11.5px] text-[var(--color-text-muted)]">Equipment from earlier in your note: “{l.context}”</div>}
               {l.found === "only" && <div className="text-[11.5px] text-[var(--color-text-muted)]">Your note doesn&apos;t name the equipment: this is the only open step by that name.</div>}
               {l.found === "meaning" && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">Matched by meaning (no word in common with the step&apos;s name). Check it&apos;s the right step.</div>}
+              {l.woNote && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{l.woNote}</div>}
+              {l.group && <div className="text-[11.5px] text-[var(--color-text-muted)]">Your note says this about {l.group} steps: it goes on each of them.</div>}
               <button type="button" onClick={() => onEdit({ stepId: null, options: l.options.length ? l.options : [step.id] })} className="text-[11.5px] font-semibold text-[var(--color-accent)] hover:underline">Wrong step? Pick another</button>
             </div>
           ) : (
@@ -529,6 +671,11 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
                     <span className="font-normal text-[var(--color-text-muted)]"> · {o.status === "in_progress" ? `under way ${o.pct}%` : o.status === "completed" ? "done" : o.live ? "planned around now" : o.next ? "next up" : "not started"}</span>
                   </button>
                 ))}
+                {onAll && options.length > 1 && (
+                  <button type="button" onClick={onAll} className="rounded-lg border border-dashed border-[var(--color-accent)] px-2.5 py-1.5 text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
+                    All {options.length} of these
+                  </button>
+                )}
               </div>
               <label className="relative block max-w-md">
                 <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
@@ -543,7 +690,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
             </div>
           )}
           {/* What changes: read from the note, changeable. */}
-          <div className="text-[13px] font-semibold text-[var(--color-text)]">{check.says}{l.percentFrom === "words" && l.percent != null ? <span className="font-normal text-[var(--color-text-muted)]"> (from your words)</span> : null}</div>
+          <div className="text-[13px] font-semibold text-[var(--color-text)]">{check.says}{l.percentFrom === "words" && l.percent != null ? <span className="font-normal text-[var(--color-text-muted)]"> (from your words)</span> : null}{l.counts && l.percent != null ? <span className="font-normal text-[var(--color-text-muted)]"> (from your counts: {l.counts})</span> : null}</div>
           <div className="flex flex-wrap gap-1" role="group" aria-label="What happened">
             {([["start", "Started"], ["progress", "%"], ["done", "Done"], ["hold", "On hold"], ["resume", "Back on"], ["comment", "Comment only"]] as const).map(([a, label]) => (
               <button key={a} type="button" aria-pressed={l.action === a}
@@ -560,7 +707,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
           )}
           {l.action === "progress" && step && (l.percent == null || l.percentFrom === "guess") && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[12px] text-[var(--color-text-muted)]">How far along?</span>
+              <span className="text-[12px] text-[var(--color-text-muted)]">Set a %? (not needed to save)</span>
               {[...new Set([25, 50, 75, ...(l.suggest != null && l.suggest > step.pct && l.suggest < 100 ? [l.suggest] : [])])].filter((p) => p > step.pct).sort((a, b) => a - b).map((p) => (
                 <button key={p} type="button" onClick={() => onEdit({ percent: p, percentFrom: "said" })} className={`${pill} ${l.percent === p ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{p}%</button>
               ))}
@@ -611,7 +758,9 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
           </label>
           {l.implied && <div className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">Probably done: your note doesn&apos;t say it. Tick to include.</div>}
           {l.expected && <div className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">Not entered as done: it hasn&apos;t happened yet. Kept as a comment.</div>}
-          {check.nothing && <div className="text-[12px] text-[var(--color-text-muted)]">{check.nothing} Nothing changes; your words go on as a comment.</div>}
+          {check.nothing && (l.already && !l.include
+            ? <div className="text-[12px] text-[var(--color-text-muted)]">{l.already} Already in the app: left out. Tick it to add your words as a comment.</div>
+            : <div className="text-[12px] text-[var(--color-text-muted)]">{check.nothing} Nothing changes; your words go on as a comment.</div>)}
           {needs.length > 0 && (
             <ul className="text-[12px] font-semibold text-rose-800 dark:text-rose-200 list-disc pl-4">
               {needs.map((n) => <li key={n}>{n}</li>)}

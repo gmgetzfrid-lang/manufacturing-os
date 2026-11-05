@@ -12,16 +12,22 @@
 //                  and the person picks. Anything else it couldn't place is
 //                  listed, never dropped.
 //   What changed - started, a %, done, on hold, back on, a comment. A % only
-//                  when it was said ("50", "about half"); a % guessed from
-//                  words ("making progress") is never saved, it's asked.
+//                  when it was said ("50", "about half") or the note's counts
+//                  give it (37 out, 5 left = 88%); with none ("making
+//                  progress") it goes on as under way with the words, the %
+//                  left as it is - never guessed, never holding up Save.
 //                  A step the note implies but doesn't name comes unticked.
-//                  A % below where the step already is isn't saved here.
+//                  What's already in (done, further along) comes unticked,
+//                  checked against the step as the earlier lines leave it.
 //   When         - the time said, read by this file again, not taken on the
 //                  AI's word: "2" with no AM or PM, two readings both in the
 //                  past, is asked; "yesterday" must be yesterday; a time not
 //                  come yet is an expectation (a comment), never done;
 //                  "earlier" or "last night" with no time is asked; before
-//                  the step started is asked. No time said: the time chosen
+//                  the step started is asked. A log of a known shift (a
+//                  pasted email, lib/emailShifts): its times are read in that
+//                  shift ("4:30" on a day shift is PM) and "earlier" goes in
+//                  at the end of it. No time said: the time chosen
 //                  for the batch (now, the last shift, or a time picked), shown
 //                  on every line. Times go to the nearest half hour, never
 //                  later than now.
@@ -154,10 +160,12 @@ export const QUICK_SYSTEM = [
   "Use only step keys from the list (s1, s2...). Never invent a step. If you can't place a part, put it in unplaced.",
   "Notes are often short and vague (\"pulled the bundle\", \"blinds in\", \"head's off\", \"hydro passed\"). To find the step: (1) the equipment or WO named in that part; (2) if none, the equipment named earlier in the note (a log usually keeps talking about the last thing named until it names another) - then copy those earlier words into context; (3) the crew named; (4) steps marked LIVE (going now) and NEXT (next up on its work order) are the likely ones; (5) the \"said lately\" words show how the field describes each step.",
   "Notes are often speech-to-text from a loud plant. Tags and numbers come out as words or sound-alikes: E-2 as \"e two\", \"echo two\", \"eat two\", \"me too\" or \"mee too\"; V-1 as \"v one\", \"victor one\", \"be one\"; PSV as \"p s v\"; numbers as words (\"two oh nine\" = 209). When you read words like that as a tag, put them in heard: {\"said\": the words as written, \"as\": the tag}. Words the person uses are listed under \"This person's words\" when known: they mean what they say there.",
-  "basis: \"named\" (this part names the equipment, WO or a step only one piece of equipment has), \"context\" (named earlier in the note: put those exact words in context), \"only\" (the words fit one open step on the whole job), \"guess\" (more than one step fits). For guess, give no step: put every step that fits in candidates, likeliest first, up to 6. Never pick between two pieces of equipment that both have the step (Pull Bundle on E-02 and on E-22) unless the note says which.",
+  "basis: \"named\" (this part names the equipment, WO or a step only one piece of equipment has), \"context\" (named earlier in the note: put those exact words in context), \"only\" (the words fit one open step on the whole job), \"group\" (it says the same thing about several steps: \"all four bottles\", \"3 of 4 compressor bottles\", \"both bundles\" - give no step and every step it covers in candidates), \"guess\" (more than one step fits). For guess, give no step: put every step that fits in candidates, likeliest first, up to 6. Never pick between two pieces of equipment that both have the step (Pull Bundle on E-02 and on E-22) unless the note says which.",
+  "When a WO number in the note and the equipment named disagree (WO# 310357 -V-4- when 310357 is V-03's), go by the equipment and say so in comment.",
   "Actions: start, progress, done, hold (with its reason), resume (back on after a hold), comment.",
-  "percent: only when the note gives an amount. percentFrom: \"said\" for a number (\"50\", \"50%\"), \"words\" for an amount in words (\"about half\" = 50, \"almost done\" = 90). A step described but with no amount (\"making progress\", \"staging\", \"working on it\") is progress with percent null, percentFrom \"guess\" and your best suggestion in suggest. Finished, complete, done, removed, pulled, washed (when the step is that action) = done.",
+  "percent: only when the note gives an amount. percentFrom: \"said\" for a percent (\"50\", \"50%\"), \"words\" for an amount in words (\"about half\" = 50, \"almost done\" = 90), \"counts\" for counts of the step's own things (\"37 total removed\" with \"5 remaining\" = 37 of 42 = 88; \"6 of 8 bundles\" = 75). A count alone is not a percent: \"5 trays out\" with no total is percent null. A step described but with no amount (\"making progress\", \"staging\", \"working on it\") is progress with percent null, percentFrom \"guess\" and your best suggestion in suggest. Finished, complete, done, removed, pulled, washed (when the step is that action) = done.",
   "implied: true for a step the note doesn't name but must be finished for what it says to be true (washed the head means the head was removed). Only direct prerequisites, never more.",
+  "A log with a shift named above it: every time written is in that shift (\"4:30\" on a 6 AM to 6 PM day shift is 4:30 PM). Lines under \"Work Completed\" with no time happened during that shift: kind none.",
   "when: copy the note's exact words about time into words (null if none). kind: \"none\" (no time words; \"already\" alone is none), \"clock\" (a time of day: 2pm, at 2, 0730, noon), \"day\" (a day with or without a time: yesterday at 3, Monday night, last night at 11), \"relative\" (2 hours ago, an hour ago), \"unclear\" (past with no time to place it: earlier, this morning, last night, yesterday, before lunch), \"future\" (not happened yet: will be done in a couple hours, should finish by 2, tonight they'll start). local: your reading as \"YYYY-MM-DD HH:MM\" in plant time, given now; null for none, unclear and future.",
   "evidence: the exact words from the note this update comes from. comment: anything else the note says about the step worth keeping (a reason, what they're waiting on), in the note's words.",
   "Return STRICT JSON only: {\"updates\":[{\"step\":\"s12\",\"candidates\":[],\"basis\":\"named\",\"context\":null,\"heard\":null,\"action\":\"done\",\"percent\":null,\"percentFrom\":null,\"suggest\":null,\"reason\":null,\"comment\":null,\"implied\":false,\"evidence\":\"...\",\"when\":{\"words\":null,\"kind\":\"none\",\"local\":null}}],\"unplaced\":[{\"text\":\"...\",\"why\":\"...\"}]}",
@@ -184,14 +192,14 @@ const ACTIONS: Action[] = ["start", "progress", "done", "hold", "resume", "comme
 type TimeKind = "none" | "clock" | "day" | "relative" | "unclear" | "future";
 const KINDS: TimeKind[] = ["none", "clock", "day", "relative", "unclear", "future"];
 
-export type Basis = "named" | "context" | "only" | "guess";
+export type Basis = "named" | "context" | "only" | "group" | "guess";
 export interface RawUpdate {
   step: string | null; candidates: string[]; action: Action;
   /** How the AI found the step, and the earlier words it used. */
   basis: Basis | null; context: string | null;
   /** Words read as a tag ("mee too" as E-2): speech-to-text in the noise. */
   heard: { said: string; as: string } | null;
-  percent: number | null; percentFrom: "said" | "words" | "guess" | null; suggest: number | null;
+  percent: number | null; percentFrom: "said" | "words" | "counts" | "guess" | null; suggest: number | null;
   reason: string | null; comment: string | null; implied: boolean; evidence: string;
   when: { words: string | null; kind: TimeKind; local: string | null };
 }
@@ -212,10 +220,10 @@ export function parseReply(raw: unknown): RawReply {
     const evidence = str(x.evidence) ?? "";
     if (!action) { if (evidence) unplaced.push({ text: evidence, why: "Not sure what it says happened." }); continue; }
     const w = (x.when && typeof x.when === "object" ? x.when : {}) as Record<string, unknown>;
-    const pf = x.percentFrom === "said" || x.percentFrom === "words" || x.percentFrom === "guess" ? x.percentFrom : null;
+    const pf = x.percentFrom === "said" || x.percentFrom === "words" || x.percentFrom === "counts" || x.percentFrom === "guess" ? x.percentFrom : null;
     updates.push({
       step: str(x.step), candidates: Array.isArray(x.candidates) ? x.candidates.map(str).filter((c): c is string => !!c) : [],
-      basis: x.basis === "named" || x.basis === "context" || x.basis === "only" || x.basis === "guess" ? x.basis : null, context: str(x.context),
+      basis: x.basis === "named" || x.basis === "context" || x.basis === "only" || x.basis === "group" || x.basis === "guess" ? x.basis : null, context: str(x.context),
       heard: (() => { const h = (x.heard && typeof x.heard === "object" ? x.heard : null) as Record<string, unknown> | null; const said = str(h?.said), as = str(h?.as); return said && as ? { said, as } : null; })(),
       action, percent: num(x.percent), percentFrom: pf, suggest: num(x.suggest),
       reason: str(x.reason), comment: str(x.comment), implied: x.implied === true, evidence,
@@ -292,6 +300,9 @@ export function readTime(when: RawUpdate["when"], defaultAt: number, ctx: TimeCt
   const words = when.words ?? "";
   if (when.kind === "future") return { future: true };
   if (when.kind === "none" && !words) return { at: defaultAt, from: "default" };
+  // A log of a known shift: "earlier", or a day with no time, happened in
+  // that shift - it goes in at that shift's time, not asked.
+  if (ctx.window && (when.kind === "unclear" || (when.kind === "none" && words) || (when.kind === "day" && !/\d|noon|midnight/.test(words.toLowerCase())))) return { at: defaultAt, from: "default" };
   if (when.kind === "unclear" || (when.kind === "none" && words)) return { ask: "time", why: `You said “${words || "earlier"}” but not when.` };
   const L = localToMs(when.local, tz);
   if (!Number.isFinite(L)) return { ask: "time", why: `Couldn't read a time from “${words}”.` };
@@ -321,6 +332,19 @@ export function readTime(when: RawUpdate["when"], defaultAt: number, ctx: TimeCt
       }
     }
     if (inShift.length === 1) return inShift[0] > soon ? { future: true } : { at: roundTime(inShift[0], now, ctx), from: "said" };
+    // Just outside it (the 5:30 meeting before a 6:00 start): the one reading
+    // within an hour and a half of the shift, kept inside it.
+    if (inShift.length === 0) {
+      const near: number[] = [];
+      for (const day of [dayKey(win.start, tz), dayKey(win.end - 1, tz)]) {
+        const [y, mo, d] = day.split("-").map(Number);
+        for (const h of hours) {
+          const t = wallClockToMs({ year: y, month: mo, day: d, hour: h, minute: hm.m, second: 0 }, tz);
+          if (t >= win.start - 90 * 60_000 && t < win.end + 90 * 60_000 && !near.includes(t)) near.push(t);
+        }
+      }
+      if (near.length === 1) { const t = Math.min(win.end - 60_000, Math.max(win.start, near[0])); return t > soon ? { future: true } : { at: roundTime(t, now, ctx), from: "said" }; }
+    }
     if (inShift.length === 2) return { ask: "ampm", options: [roundTime(Math.min(...inShift), now, ctx), roundTime(Math.max(...inShift), now, ctx)] as [number, number], why: `“${words}”: AM or PM?` };
     return { ask: "time", why: `“${words}” isn't in the shift these notes are from. Pick the time.` };
   }
@@ -423,7 +447,49 @@ export interface QuickLine {
   noteText?: string | null;
   /** Put in by hand on the check screen. */
   added?: boolean;
+  /** It changes nothing (the step is already there): left out, words kept
+   *  if ticked. The reason, said plainly. */
+  already?: string;
+  /** The note's WO number isn't this step's: what it was, said plainly. */
+  woNote?: string;
+  /** The shift of a pasted email it came from ("2026-11-04:day") and its name. */
+  part?: { key: string; label: string };
+  /** One of several steps the same words cover ("3 of 4 bottles"). */
+  group?: number;
+  /** The % worked out from the note's counts ("37 out, 5 left"). */
+  counts?: string;
 }
+
+/** A % from the note's counts of the step's own things: "37 total removed"
+ *  with "5 remaining" is 37 of 42; "6 of 8 bundles" is 6 of 8. A count with
+ *  no total ("5 trays out") gives none. */
+const COUNTABLE = "trays?|tubes?|plugs?|bolts?|studs?|blinds?|flanges?|nozzles?|spools?|welds?|joints?|manways?|bundles?|elements?|valves?|psvs?|sections?|panels?|bays?|cells?|beds?";
+export function pctFromCounts(text: string): { pct: number; words: string } | null {
+  const t = text.toLowerCase();
+  const last = (re: RegExp) => { let m: RegExpExecArray | null, out: RegExpExecArray | null = null; while ((m = re.exec(t))) out = m; return out; };
+  const done = last(new RegExp(`(\\d+)\\s*(?:total|overall|in total|so far)\\s*(?:(?:${COUNTABLE})\\s*)?(?:removed|pulled|out|done|installed|completed?|cleaned|replaced)`, "g"))
+    ?? last(new RegExp(`(\\d+)\\s*(?:(?:${COUNTABLE})\\s*)?(?:removed|pulled|out|done|installed|completed?|cleaned|replaced)\\s*(?:total|overall|in total|so far)`, "g"));
+  const left = last(new RegExp(`(\\d+)\\s*(?:(?:${COUNTABLE})\\s*)?(?:remaining|left|to go)`, "g"));
+  if (done && left) {
+    const d = Number(done[1]), r = Number(left[1]);
+    if (d + r > 0) return { pct: Math.round((d / (d + r)) * 100), words: `${d} done, ${r} left` };
+  }
+  const of = last(new RegExp(`(\\d+)\\s*(?:of|/)\\s*(\\d+)\\s*(?:${COUNTABLE})\\b`, "g"));
+  if (of) {
+    const x = Number(of[1]), y = Number(of[2]);
+    if (y > 0 && x <= y) return { pct: Math.round((x / y) * 100), words: `${x} of ${y}` };
+  }
+  return null;
+}
+
+/** A "%" the AI read that is really a count ("5 trays out" read as 5%). */
+function countNotPct(pct: number, text: string): boolean {
+  if (/%|percent|pct/i.test(text)) return false;
+  return new RegExp(`\\b${pct}\\s*(?:${COUNTABLE})\\b`, "i").test(text);
+}
+
+/** WO numbers written in some words ("WO# 310357", "WO#310457", "AFE#25206"). */
+export const woNumbersIn = (text: string) => [...text.matchAll(/\b(?:WO|AFE)\s*#?\s*(\d{4,7})\b/gi)].map((m) => m[1]);
 
 
 /** The person's own words put in as they talk: what speech-to-text keeps
@@ -584,26 +650,31 @@ export function toLines(reply: RawReply, cat: CatalogStep[], defaultAt: number, 
     const step = u.step ? byKey.get(u.step) : undefined;
     const opts = [...new Set([...(u.step ? [u.step] : []), ...u.candidates])].map((k) => byKey.get(k)).filter((c): c is CatalogStep => !!c);
     if (!step && opts.length === 0) { unplaced.push({ text: u.evidence || "(no words)", why: u.step ? "That step isn't on the schedule." : "Couldn't tell which step." }); return; }
-    // Unsure between steps: the person picks, never the first one. Sure
-    // only when the note itself says which (stepCheck).
-    const picked = !(opts.length > 1) ? (step ?? opts[0]) : undefined;
-    const chk = picked && note ? stepCheck(picked, u, note, cat, words) : null;
-    const unsure = opts.length > 1 || !!chk?.options;
+    // The same words about several steps ("3 of 4 bottles"): one line each,
+    // when every one of them is in the note's words.
+    const group = u.basis === "group" && opts.length > 1 && (!note || inNote(u.evidence, note)) ? opts : null;
     let action = u.action, percent = u.percent != null ? Math.round(u.percent) : null;
+    let percentFrom = u.percentFrom;
+    let counts: string | undefined;
+    if (percent != null && percentFrom !== "counts" && countNotPct(percent, u.evidence)) { percent = null; percentFrom = "guess"; }
+    // Counts in the note's words decide the % (worked out here, not taken on the AI's word).
+    if (action === "progress" && !group) {
+      const c = pctFromCounts(u.evidence);
+      if (c && (percent == null || percentFrom === "guess" || percentFrom === "counts")) { percent = c.pct; percentFrom = "counts"; counts = c.words; }
+      else if (percentFrom === "counts" && !c) { percent = null; percentFrom = "guess"; }
+    }
     if (action === "progress" && percent != null && percent >= 100) { action = "done"; percent = null; }
     if (percent != null) percent = Math.max(0, Math.min(100, percent));
     const t = readTime(u.when, defaultAt, ctx);
     const expected = "future" in t;
-    lines.push({
-      id: `q${i}`,
-      stepId: unsure ? null : (step ?? opts[0]).id,
-      options: chk?.options ?? (unsure ? opts.map((c) => c.id) : []),
-      ...(chk ? { found: chk.found, context: chk.context, ...(chk.unsure ? { unsure: chk.unsure } : {}), ...(chk.heard ? { heard: chk.heard } : {}) } : {}),
+    const base = (id: string): Omit<QuickLine, "stepId" | "options"> => ({
+      id,
       ...(note && !inNote(u.evidence, note) ? { notInNote: true } : {}),
       // Not happened yet: what was said is kept as a comment.
       action: expected ? "comment" : action,
       percent: expected ? null : percent,
-      percentFrom: u.percentFrom,
+      percentFrom,
+      ...(counts ? { counts } : {}),
       suggest: u.suggest != null ? Math.max(0, Math.min(100, Math.round(u.suggest))) : null,
       reason: u.reason, comment: expected ? `Expected: ${u.evidence}` : u.comment,
       evidence: u.evidence, implied: u.implied,
@@ -615,8 +686,109 @@ export function toLines(reply: RawReply, cat: CatalogStep[], defaultAt: number, 
       expected,
       include: !u.implied,
     });
+    if (group) {
+      group.forEach((g, j) => lines.push({ ...base(`q${i}g${j}`), stepId: g.id, options: [], found: "named", group: group.length, ...woNoteFor(u.evidence, g, cat) }));
+      return;
+    }
+    // Unsure between steps: the person picks, never the first one. Sure
+    // only when the note itself says which (stepCheck).
+    const picked = !(opts.length > 1) ? (step ?? opts[0]) : undefined;
+    const chk = picked && note ? stepCheck(picked, u, note, cat, words) : null;
+    const unsure = opts.length > 1 || !!chk?.options;
+    const sid = unsure ? null : (step ?? opts[0]).id;
+    lines.push({
+      ...base(`q${i}`),
+      stepId: sid,
+      options: chk?.options ?? (unsure ? opts.map((c) => c.id) : []),
+      ...(chk ? { found: chk.found, context: chk.context, ...(chk.unsure ? { unsure: chk.unsure } : {}), ...(chk.heard ? { heard: chk.heard } : {}) } : {}),
+      ...(picked && sid ? woNoteFor(u.evidence, picked, cat) : {}),
+    });
   });
-  return { lines, unplaced };
+  return { lines: markAlready(mergeLines(lines), cat, ctx.now, ctx.tz), unplaced };
+}
+
+/** Each line's step as it will stand just before that line saves: the
+ *  step now, then every earlier line on it in time order (on hold at 2:30
+ *  makes "back on" at 3:30 a change; started Monday makes done Tuesday one). */
+export function stepsBefore(lines: QuickLine[], cat: CatalogStep[], now: number, tz: string): Map<string, CatalogStep> {
+  const byId = new Map(cat.map((c) => [c.id, c]));
+  const state = new Map<string, CatalogStep>();
+  const out = new Map<string, CatalogStep>();
+  const rank = (a: QuickLine["action"]) => (a === "start" ? 0 : a === "progress" ? 1 : a === "hold" ? 2 : a === "resume" ? 3 : a === "done" ? 4 : 5);
+  const timed = lines.filter((l) => l.stepId && l.at != null).sort((a, b) => a.at! - b.at! || rank(a.action) - rank(b.action));
+  for (const l of timed) {
+    const cur = state.get(l.stepId!) ?? byId.get(l.stepId!);
+    if (!cur) continue;
+    out.set(l.id, cur);
+    if (!l.include || l.expected) continue;
+    const c = checkLine(l, cur, now, tz);
+    if (c.nothing || c.needs.length) continue;
+    const next = { ...cur };
+    if (l.action === "start") next.status = "in_progress";
+    else if (l.action === "progress") { next.status = "in_progress"; if (l.percent != null) next.pct = l.percent; }
+    else if (l.action === "done") { next.status = "completed"; next.pct = 100; }
+    else if (l.action === "hold") next.status = "on_hold";
+    else if (l.action === "resume") next.status = "in_progress";
+    if (next.actStart == null && l.action !== "comment" && l.action !== "hold") next.actStart = l.at!;
+    state.set(l.stepId!, next);
+  }
+  for (const l of lines) if (l.stepId && !out.has(l.id)) { const c = state.get(l.stepId) ?? byId.get(l.stepId); if (c) out.set(l.id, c); }
+  return out;
+}
+
+/** What would change nothing (already done, already further along) left
+ *  out, so a pasted thread with older updates in it doesn't repeat them;
+ *  one left out before that now would change something, put back. */
+export function markAlready(lines: QuickLine[], cat: CatalogStep[], now: number, tz: string): QuickLine[] {
+  // Undecided first: what was left out only for being "already" counts again.
+  let ls = lines.map((l) => (l.already ? { ...l, include: true, already: undefined } : l));
+  const before = stepsBefore(ls, cat, now, tz);
+  ls = ls.map((l) => {
+    const st = before.get(l.id);
+    if (!st || !l.include || l.expected) return l;
+    const c = checkLine(l, st, now, tz);
+    return c.nothing ? { ...l, include: false, already: c.nothing } : l;
+  });
+  return ls;
+}
+
+/** The note's WO number isn't the step's: said, never silently. */
+function woNoteFor(evidence: string, step: CatalogStep, cat: CatalogStep[]): { woNote?: string } {
+  const nums = woNumbersIn(evidence);
+  if (!nums.length || !step.wo || nums.includes(step.wo) || nums.some((n) => step.wo.includes(n))) return {};
+  const n = nums[0];
+  const other = cat.find((c) => c.wo === n);
+  return { woNote: other ? `Your note says WO ${n}, which is ${other.place || other.name}'s. Matched by the equipment named.` : `WO ${n} isn't on the schedule. Matched by the equipment named.` };
+}
+
+/** The same thing said twice (the hour by hour and the shift's summary):
+ *  one line, the one with a time said (the earliest), the other's words
+ *  added to its comment. Progress to the same %, and the same comment, too. */
+export function mergeLines(lines: QuickLine[]): QuickLine[] {
+  const keep: QuickLine[] = [];
+  const keyOf = (l: QuickLine) => (!l.stepId ? null
+    : l.action === "progress" ? `${l.stepId}|progress|${l.percent ?? "?"}`
+      : l.action === "comment" ? `${l.stepId}|comment|${plainWords(l.evidence)}`
+        : `${l.stepId}|${l.action}`);
+  const at = new Map<string, number>();
+  for (const l of lines) {
+    const k = keyOf(l);
+    if (!k || l.expected) { keep.push(l); continue; }
+    const i = at.get(k);
+    if (i == null) { at.set(k, keep.length); keep.push(l); continue; }
+    const a = keep[i];
+    const better = (l.timeFrom === "said" && a.timeFrom !== "said") || (l.timeFrom === "said" && a.timeFrom === "said" && l.at != null && a.at != null && l.at < a.at)
+      || (a.at == null && l.at != null);
+    const [win, lose] = better ? [l, a] : [a, l];
+    const extra = lose.evidence && !plainWords(`${win.evidence} ${win.comment ?? ""}`).includes(plainWords(lose.evidence)) ? lose.evidence : null;
+    keep[i] = { ...win, include: win.include || lose.include, comment: [win.comment, extra].filter(Boolean).join(" · ") || null };
+  }
+  return keep;
+}
+
+/** Several lines for one: the same words on each step it could be ("All of these"). */
+export function toAll(l: QuickLine): QuickLine[] {
+  return l.options.map((id, j) => ({ ...l, id: `${l.id}a${j}`, stepId: id, options: [], unsure: undefined, group: l.options.length, found: "named" as const }));
 }
 
 /** What still needs the person before a line can be saved, and what it
@@ -630,10 +802,8 @@ export function checkLine(l: QuickLine, step: CatalogStep | undefined, now: numb
   }
   if (l.at == null) needs.push(l.ampm ? "AM or PM?" : l.timeWhy ?? "When did it happen?");
   else if (l.at > now + 5 * 60_000) needs.push("That time hasn't come yet. Pick when it happened.");
-  if (l.action === "progress") {
-    if (l.percent == null) needs.push(l.percentFrom === "guess" ? "How far along? (not said)" : "What %?");
-    else if (l.percent < step.pct) needs.push(`It's at ${step.pct}% already. Leave it out, or fix it in the step's history.`);
-  }
+  // No % said: it goes on as under way with your words, the % left as it
+  // is (tap one to set it). Never held up for a number nobody said.
   if (l.action === "hold" && !(l.reason ?? l.comment)?.trim()) needs.push("Why is it on hold?");
   if (l.at != null && step.actStart != null && (l.action === "progress" || l.action === "done") && l.at < step.actStart - 60_000) {
     needs.push(`That's before it started (${clock(step.actStart, tz)}).`);
@@ -642,6 +812,8 @@ export function checkLine(l: QuickLine, step: CatalogStep | undefined, now: numb
   if (l.action === "done" && step.status === "completed") nothing = "Already done.";
   else if (l.action === "start" && (step.status !== "planned" || step.pct > 0)) nothing = "Already started.";
   else if (l.action === "progress" && l.percent != null && l.percent === step.pct) nothing = `Already at ${step.pct}%.`;
+  else if (l.action === "progress" && l.percent != null && l.percent < step.pct) nothing = `Already further along (${step.pct}%).`;
+  else if (l.action === "progress" && l.percent == null && (step.status === "completed")) nothing = "Already done.";
   else if (l.action === "resume" && step.status !== "on_hold" && step.status !== "blocked") nothing = "It isn't on hold.";
   else if (l.action === "hold" && (step.status === "on_hold" || step.status === "blocked")) nothing = "Already on hold.";
   // A no-change line still keeps what was said, as a comment.
@@ -653,7 +825,9 @@ export function checkLine(l: QuickLine, step: CatalogStep | undefined, now: numb
 export function sayLine(l: QuickLine, step: CatalogStep | undefined): string {
   switch (l.action) {
     case "start": return "Started";
-    case "progress": return l.percent == null ? "Moved forward, % not said" : `${step ? `${step.pct}% → ` : ""}${l.percent}%`;
+    case "progress": return l.percent == null
+      ? (step && step.status === "planned" && step.pct === 0 ? "Started (no % said)" : `Under way (no % said${step ? `, stays at ${step.pct}%` : ""})`)
+      : `${step ? `${step.pct}% → ` : ""}${l.percent}%`;
     case "done": return "Done";
     case "hold": return `On hold${(l.reason ?? l.comment) ? `: ${l.reason ?? l.comment}` : ""}`;
     case "resume": return "Back on (off hold)";
@@ -680,11 +854,12 @@ export function lineComment(l: QuickLine): string {
  *  as a comment on it (once). Only included lines that are ready. */
 export function saveEvents(lines: QuickLine[], cat: CatalogStep[], now: number, tz: string): Map<string, SheetEvent[]> {
   const byId = new Map(cat.map((c) => [c.id, c]));
+  const before = stepsBefore(lines, cat, now, tz);
   const out = new Map<string, SheetEvent[]>();
   const words = new Map<string, { at: number; text: string[] }>();
   for (const l of lines) {
     if (!l.include || !l.stepId || l.at == null) continue;
-    const step = byId.get(l.stepId);
+    const step = before.get(l.id) ?? byId.get(l.stepId);
     const c = checkLine(l, step, now, tz);
     if (c.needs.length) continue;
     const ev = out.get(l.stepId) ?? [];
@@ -692,6 +867,7 @@ export function saveEvents(lines: QuickLine[], cat: CatalogStep[], now: number, 
     if (!c.nothing) {
       if (l.action === "start") ev.push({ kind: "start", at });
       else if (l.action === "progress" && l.percent != null) ev.push({ kind: "pct", at, pct: l.percent });
+      else if (l.action === "progress" && step && step.status === "planned" && step.pct === 0) ev.push({ kind: "start", at });
       else if (l.action === "done") ev.push({ kind: "done", at });
       else if (l.action === "hold") ev.push({ kind: "hold", at, reason: (l.reason ?? l.comment ?? "").trim() });
       else if (l.action === "resume") ev.push({ kind: "pct", at, pct: step?.pct ?? 0 });
@@ -711,7 +887,13 @@ export function saveEvents(lines: QuickLine[], cat: CatalogStep[], now: number, 
     ev.push({ kind: "note", at: w.at, text: w.text.join(" · ") });
     out.set(id, ev);
   }
-  for (const [id, ev] of out) out.set(id, ev.sort((a, b) => a.at - b.at || order(a) - order(b)));
+  // One start per step, and only before anything else (a start after a %
+  // would set it back to 0).
+  for (const [id, ev] of out) {
+    const sorted = ev.sort((a, b) => a.at - b.at || order(a) - order(b));
+    const firstWork = sorted.findIndex((e) => e.kind !== "note");
+    out.set(id, sorted.filter((e, i) => e.kind !== "start" || i === firstWork));
+  }
   return out;
 }
 const order = (e: SheetEvent) => (e.kind === "start" ? 0 : e.kind === "pct" ? 1 : e.kind === "done" ? 2 : e.kind === "hold" ? 3 : 4);
