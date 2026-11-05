@@ -50,8 +50,8 @@ export function setupChecklist(s: {
   return [
     { id: "type", label: "Project type", required: false, extra: true, done: !!s.typeSet,
       why: "Turnaround, outage, capital project… the word the reports and safety topics say for this project." },
-    ...(s.equipmentSet !== undefined ? [{ id: "equipment" as const, label: "Unit & equipment", required: false, done: s.equipmentSet === true, checking: s.equipmentSet === null,
-      why: "The unit, and the equipment each work order is on - so the project shows on the Intelligence graph and what's learned on that equipment reaches the next job on it." }] : []),
+    ...(s.equipmentSet !== undefined ? [{ id: "equipment" as const, label: "Units & equipment", required: false, done: s.equipmentSet === true, checking: s.equipmentSet === null,
+      why: "The units the project is on, and each work order's equipment, unit and equipment type - read from your equipment numbers - so every view filters by unit and type, the project shows on the Intelligence graph, and what's learned on that equipment reaches the next job on it." }] : []),
     { id: "timezone", label: "Plant time zone", required: true, done: s.timezoneSet,
       why: "Without it the schedule runs on UTC - plan-by-now, behind / on plan and the current shift are hours off." },
     { id: "shifts", label: "Shift change times", required: true, done: s.shiftTimesSaved === true, checking: s.shiftTimesSaved == null,

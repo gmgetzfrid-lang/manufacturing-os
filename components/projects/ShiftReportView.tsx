@@ -58,6 +58,8 @@ import { buildLookBack, CAUSE_LABEL, type LookBack, type StepLook } from "@/lib/
 import { IncidentsLine, ShiftNotesBox, TimeLogButton } from "@/components/projects/ShiftRecordParts";
 import { useSortRows, Grip } from "@/components/projects/SortRows";
 import AddWorkPicker from "@/components/projects/AddWorkPicker";
+import { useWoClasses, passes, WoClassSelects } from "@/components/projects/WoClassFilter";
+import { typeLabel, unitLabel, NONE } from "@/lib/woClass";
 import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
 import { discoveries, discoveryOf, discoverySummary, discoveryStepLine, impactLine, ADDED, kindOf, addedTitle, type Discovery } from "@/lib/discovery";
 import { buildTimeLog, downloadTimeLog } from "@/lib/timeLog";
@@ -340,16 +342,21 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const [onlyPick, setOnlyPick] = useState<{ critical: boolean; added: boolean }>({ critical: false, added: false });
   const addedOnly = meeting === "turnover" && onlyPick.added;
   const criticalOnly = meeting === "turnover" && onlyPick.critical;
+  // One unit, one equipment type (Setup › Units & equipment).
+  const wc = useWoClasses(projectId, milestones);
+  const [classPick, setClassPick] = useState<{ units: string[]; types: string[] }>({ units: [], types: [] });
+  const classOn = meeting === "turnover" && (classPick.units.length > 0 || classPick.types.length > 0);
+  const classOnly = classOn && wc.book ? [...classPick.units.map((u) => (u === NONE ? "No unit" : unitLabel(u, wc.book!))), ...classPick.types.map((t) => (t === NONE ? "No type" : typeLabel(t, wc.book!)))].join(", ") : null;
   // Pulled work is the extra crew's, not the step owner's: in one crew's
   // view it shows when it's that crew's to do (or its own scope).
   const pulledCrewFallback = (hand.pullDraft ?? pullSet)?.crew ?? null;
   const view = useMemo(() => {
-    if (!crew && !addedOnly && !criticalOnly) return report;
-    const added = (r: ShiftRow) => (!addedOnly || !!discoveryOf(r.leaf)) && (!criticalOnly || r.critical);
+    if (!crew && !addedOnly && !criticalOnly && !classOn) return report;
+    const added = (r: ShiftRow) => (!addedOnly || !!discoveryOf(r.leaf)) && (!criticalOnly || r.critical) && (!classOn || passes(wc, r.leaf, classPick.units, classPick.types));
     const v = filterShiftReport(report, (r) => (!crew || whoOf(r) === crew) && added(r));
     const mine = (r: ShiftRow) => (!crew || (decisions[r.leaf.id ?? ""]?.crew ?? pulledCrewFallback) === crew || whoOf(r) === crew) && added(r);
     return { ...v, goals: { ...v.goals, pulled: report.goals.pulled.filter(mine), pulledHeld: report.goals.pulledHeld.filter(mine) } };
-  }, [report, crew, addedOnly, criticalOnly, decisions, pulledCrewFallback]);
+  }, [report, crew, addedOnly, criticalOnly, decisions, pulledCrewFallback, classOn, wc, classPick]);
   // Why it's behind: each step's hours of work traced to what holds it up
   // (lib/behindWhy) — the whole job's, like the standing.
   const why = useMemo(() => behindWhy({ behind: report.overall.drivers.behind, ahead: report.overall.drivers.aheadHours, milestones, now: report.now,
@@ -831,7 +838,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
 
   const head = (print: boolean) => (
     <Masthead meeting={meeting} report={report} kickoff={kickoff} closeout={closeout} ctx={ctx} asOf={asOf} now={now}
-      rehearsal={rehearsal} historyNote={historyNote} projectName={projectName} print={print} crew={crew} addedOnly={addedOnly} criticalOnly={criticalOnly} />
+      rehearsal={rehearsal} historyNote={historyNote} projectName={projectName} print={print} crew={crew} addedOnly={addedOnly} criticalOnly={criticalOnly} classOnly={classOnly} />
   );
 
   if (docOnly) return null;
@@ -1078,6 +1085,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
               Discovery &amp; added
             </button>
           </div>
+          <WoClassSelects c={wc} units={classPick.units} types={classPick.types} className="shrink-0"
+            onUnits={(v) => setClassPick((c) => ({ ...c, units: v }))} onTypes={(v) => setClassPick((c) => ({ ...c, types: v }))} />
           <TaskSearch idx={qlIndex} fmt={ctx} onPick={openLook} />
         </div>
       )}
@@ -2575,13 +2584,15 @@ function closeSection(title: string, signers: string[], sub = "Notes, actions an
 
 // ─── Masthead & footnote ─────────────────────────────────────────────
 
-function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehearsal, historyNote, projectName, print, crew, addedOnly, criticalOnly }: {
+function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehearsal, historyNote, projectName, print, crew, addedOnly, criticalOnly, classOnly }: {
   meeting: MeetingKind; report: ShiftReport; kickoff: ReturnType<typeof buildKickoff>; closeout: ReturnType<typeof buildCloseout>;
   ctx: Ctx; asOf: number; now: number; rehearsal: boolean; historyNote: string | null; projectName?: string; print: boolean;
   /** The crew the report is narrowed to. */
   crew?: string | null;
   addedOnly?: boolean;
   criticalOnly?: boolean;
+  /** Narrowed to a unit or equipment type: its name ("Exchangers"). */
+  classOnly?: string | null;
 }) {
   // No verdict badge here: Where we stand gives it (and the close-out's
   // tiles count what's open) - each number once.
@@ -2605,6 +2616,7 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
             {crew && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-slate-700 text-slate-900" : "bg-white text-slate-900"}`}>{crew} only</span>}
             {criticalOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-rose-700 text-rose-900" : "bg-rose-200 text-rose-950"}`}>Critical path only</span>}
             {addedOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-violet-700 text-violet-900" : "bg-violet-200 text-violet-950"}`}>Discovery &amp; added only</span>}
+            {classOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-slate-700 text-slate-900" : "bg-slate-200 text-slate-950"}`}>{classOnly} only</span>}
             {rehearsal && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-amber-700 text-amber-800" : "bg-amber-400 text-slate-900"}`}>Rehearsal - shift not started</span>}
             {historyNote && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold ${print ? "border border-slate-500 text-slate-700" : "bg-slate-700 text-slate-100"}`}>Earlier shift - {historyNote}</span>}
           </div>

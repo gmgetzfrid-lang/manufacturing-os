@@ -1,11 +1,13 @@
-// projectEquipment - Setup › Unit & equipment: the unit the project is on,
-// and the registry equipment each work order is on.
+// projectEquipment - Setup › Unit & equipment: the units the project is on,
+// and the registry equipment, unit and equipment type each work order is on.
 //
-// The unit is the project's scope link to a codebook unit (estate_edges
-// project_scope, proj → cbunit), the same link Documents › Scope draws and
-// the Intelligence graph reads. Each work order's equipment is kept on its
-// task (milestones.attributes, lib/findings EQUIP_ID / EQUIP_TAG) and linked
-// to the project for the graph (project_scope, proj → asset).
+// Each unit is a scope link from the project to a codebook unit
+// (estate_edges project_scope, proj → cbunit), the same link Documents ›
+// Scope draws and the Intelligence graph reads. Each work order's equipment,
+// unit and type are kept on its task (milestones.attributes: lib/findings
+// EQUIP_ID / EQUIP_TAG, lib/woClass EQUIP_UNIT / EQUIP_TYPE) and the
+// equipment is linked to the project for the graph (project_scope, proj →
+// asset). The unit and type are read from the site code first (lib/woClass).
 //
 // Matching respects units: a tag found under another unit is flagged, not
 // quietly taken as this unit's (V-7 on the Crude Unit may be another V-7).
@@ -16,13 +18,14 @@ import type { Milestone } from "@/types/schema";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { workOrderGroupsOf } from "@/lib/workOrderGroups";
 import { woOf } from "@/lib/workOrderCrew";
-import { loadCodebook } from "@/lib/codebook";
+import { loadCodebook, EMPTY_CODEBOOK, type Codebook } from "@/lib/codebook";
+import { classifyWorkOrder, EQUIP_UNIT, EQUIP_TYPE, type WoClass } from "@/lib/woClass";
 import { listEdgesFor, declareEdge, removeEdge } from "@/lib/estate/client";
 import { nid, type EstateEdge } from "@/lib/estate/ids";
 import { createAsset, updateAsset } from "@/lib/assets";
 import { EQUIP_ID, EQUIP_NONE, EQUIP_TAG, leadTag, tagsIn, tagKey, registryTagKey, type Equipment } from "@/lib/findings";
 
-export interface RegistryAsset { id: string; tag: string; unitCode: string | null }
+export interface RegistryAsset { id: string; tag: string; unitCode: string | null; code?: string | null }
 export interface UnitChoice { code: string; label: string }
 
 export type MatchState =
@@ -48,8 +51,10 @@ export interface WorkOrderMatch {
   tag: string | null;
   asset: RegistryAsset | null;
   state: MatchState;
-  /** Linked, or found, under another unit than the project's. */
+  /** Linked, or found, under another unit than the work order's. */
   otherUnit: boolean;
+  /** Its unit and equipment type, and where each came from. */
+  cls: WoClass;
 }
 
 /** What a task has saved: equipment, "none", or nothing yet. */
@@ -93,11 +98,15 @@ export function setupOrders(milestones: Milestone[]): Array<{ owner: Milestone; 
   return [...out.values()].sort((a, b) => a.owner.name.localeCompare(b.owner.name, undefined, { numeric: true }));
 }
 
-/** Each work order's equipment, as saved or as the names and the registry
- *  suggest. */
-export function matchWorkOrders(orders: Array<{ owner: Milestone; wo: string | null }>, all: Milestone[], registry: RegistryAsset[], unitCode: string | null): WorkOrderMatch[] {
+/** Each work order's equipment, unit and type, as saved or as the site
+ *  code, the names and the registry suggest. `units`: the project's units.
+ *  A work order whose site code puts it on a unit is matched to that unit's
+ *  equipment only: E-27 on the Crude Unit isn't the LRU's E-27. */
+export function matchWorkOrders(orders: Array<{ owner: Milestone; wo: string | null }>, all: Milestone[], registry: RegistryAsset[], units: string | string[] | null, book: Codebook = EMPTY_CODEBOOK): WorkOrderMatch[] {
+  const projectUnits = Array.isArray(units) ? units : units ? [units] : [];
   const byId = new Map<string, Milestone>();
-  for (const m of all) if (m.id) byId.set(m.id, m);
+  const kids = new Map<string, Milestone[]>();
+  for (const m of all) { if (m.id) byId.set(m.id, m); if (m.parentId) kids.set(m.parentId, [...(kids.get(m.parentId) ?? []), m]); }
   const byTag = new Map<string, RegistryAsset[]>();
   for (const a of registry) { const k = registryTagKey(a.tag); if (k) byTag.set(k, [...(byTag.get(k) ?? []), a]); }
   const out: WorkOrderMatch[] = [];
@@ -105,44 +114,75 @@ export function matchWorkOrders(orders: Array<{ owner: Milestone; wo: string | n
   for (const { owner, wo } of orders) {
     if (!owner.id || done.has(owner.id)) continue;
     done.add(owner.id);
+    const chain: Milestone[] = [];
+    const seen = new Set<string>();
+    for (let x: Milestone | undefined = owner; x?.id && !seen.has(x.id); x = x.parentId ? byId.get(x.parentId) : undefined) { seen.add(x.id); chain.push(x); }
     const saved = savedEquipment(owner);
     const base = { ownerId: owner.id, title: owner.name, wo };
-    if (saved === "none") { out.push({ ...base, tag: null, asset: null, state: "none", otherUnit: false }); continue; }
+    const classOf = (tag: string | null, asset: RegistryAsset | null) =>
+      classifyWorkOrder({ owner, chain, kids: kids.get(owner.id!) ?? [], book, projectUnits, tag, asset: asset ? { unitCode: asset.unitCode, code: asset.code ?? null } : null });
+    if (saved === "none") { out.push({ ...base, tag: null, asset: null, state: "none", otherUnit: false, cls: classOf(null, null) }); continue; }
     const tag = saved?.tag ?? proposeTag(owner, byId);
+    const first = classOf(tag, null);
+    // Sure of the unit (confirmed, or its site code): that unit's equipment only.
+    const sure = first.unitFrom === "saved" || first.unitFrom === "code";
+    const want = first.unit ?? projectUnits[0] ?? null;
     const hits = tag ? byTag.get(tagKey(tag)) ?? [] : [];
     const asset = (saved?.assetId ? registry.find((a) => a.id === saved.assetId) : undefined)
-      ?? hits.find((a) => !!unitCode && a.unitCode === unitCode) ?? hits[0] ?? null;
-    const otherUnit = !!asset && !!unitCode && asset.unitCode !== unitCode;
+      ?? hits.find((a) => !!want && a.unitCode === want) ?? (sure ? undefined : hits[0]) ?? null;
+    // Only equipment already linked speaks for the unit and type.
+    const cls = saved?.assetId && asset ? classOf(tag, asset) : first;
+    const unit = cls.unit ?? want;
+    const otherUnit = !!asset && !!unit && asset.unitCode !== unit;
     const state: MatchState = saved ? "linked" : !tag ? "no_tag" : !asset ? "not_in_registry" : otherUnit ? "other_unit" : "found";
-    out.push({ ...base, tag, asset, state, otherUnit });
+    out.push({ ...base, tag, asset, state, otherUnit, cls });
   }
   return out;
 }
 
 /** The schedule with equipment just saved here laid over it (the schedule
  *  on screen was read before the save). null: on no equipment. */
-export function withEquipment(milestones: Milestone[], saved: Map<string, Equipment | null> | undefined): Milestone[] {
+export function withEquipment(milestones: Milestone[], saved: Map<string, Equipment | null | SavedHere> | undefined): Milestone[] {
   if (!saved?.size) return milestones;
   return milestones.map((m) => {
     if (!m.id || !saved.has(m.id)) return m;
-    const e = saved.get(m.id);
+    const v = saved.get(m.id);
+    const s: SavedHere = v && typeof v === "object" && ("equipment" in v || "unit" in v || "type" in v) ? v as SavedHere : { equipment: v as Equipment | null };
     const a = { ...(m.attributes ?? {}) };
-    delete a[EQUIP_ID]; delete a[EQUIP_TAG]; delete a[EQUIP_NONE];
-    if (e) { a[EQUIP_TAG] = e.tag; if (e.assetId) a[EQUIP_ID] = e.assetId; } else a[EQUIP_NONE] = true;
+    if (s.equipment !== undefined) {
+      delete a[EQUIP_ID]; delete a[EQUIP_TAG]; delete a[EQUIP_NONE];
+      const e = s.equipment;
+      if (e) { a[EQUIP_TAG] = e.tag; if (e.assetId) a[EQUIP_ID] = e.assetId; } else a[EQUIP_NONE] = true;
+    }
+    if (s.unit !== undefined) { if (s.unit) a[EQUIP_UNIT] = s.unit; else delete a[EQUIP_UNIT]; }
+    if (s.type !== undefined) { if (s.type) a[EQUIP_TYPE] = s.type; else delete a[EQUIP_TYPE]; }
     return { ...m, attributes: a };
   });
 }
 
-/** Still to decide: a match not saved yet (no tag to go on doesn't count). */
-export const undecided = (ms: WorkOrderMatch[]) => ms.filter((m) => m.state === "found" || m.state === "other_unit" || m.state === "not_in_registry");
+/** What was just saved on a work order here: its equipment, unit, type
+ *  (undefined: left as it was). */
+export interface SavedHere { equipment?: Equipment | null; unit?: string | null; type?: string | null }
+
+/** A unit or type read from the site code, the registry or the tag, not
+ *  confirmed yet (the project's own unit needs no confirming). */
+export const classToConfirm = (c: WoClass) => (!!c.unit && c.unitFrom !== "saved" && c.unitFrom !== "project" && c.unitFrom !== "main") || (!!c.type && c.typeFrom !== "saved");
+
+/** Still to decide: a match not saved yet (no tag to go on doesn't count),
+ *  or a unit or type not confirmed. */
+export const undecided = (ms: WorkOrderMatch[]) => ms.filter((m) => m.state === "found" || m.state === "other_unit" || m.state === "not_in_registry" || classToConfirm(m.cls));
 
 // ─── Database ──────────────────────────────────────────────────────
 
 export interface ProjectEquipmentData {
   units: UnitChoice[];
   registry: RegistryAsset[];
-  /** The project's unit (its first scope link to a codebook unit). */
+  /** The project's first unit (kept for what reads one). */
   unit: UnitChoice | null;
+  /** Every unit the project is on, in the order linked. */
+  projectUnits: UnitChoice[];
+  /** The Site Codebook: unit and equipment type names, and the numbering. */
+  book: Codebook;
   /** Its scope links (to remove ones a change leaves behind). */
   edges: EstateEdge[];
 }
@@ -150,24 +190,42 @@ export interface ProjectEquipmentData {
 export async function loadProjectEquipment(orgId: string, projectId: string): Promise<ProjectEquipmentData> {
   const [book, assets, edges] = await Promise.all([
     loadCodebook(orgId),
-    fetchAllRows<{ id: string; tag: string; unit_code: string | null }>((from, to) => supabase.from("assets")
-      .select("id, tag, unit_code").eq("org_id", orgId).eq("archived", false).order("id").range(from, to) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>),
+    fetchAllRows<{ id: string; tag: string; unit_code: string | null; code: string | null }>((from, to) => supabase.from("assets")
+      .select("id, tag, unit_code, code").eq("org_id", orgId).eq("archived", false).order("id").range(from, to) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>),
     listEdgesFor(orgId, [nid.proj(projectId)]).catch(() => [] as EstateEdge[]),
   ]);
   const units = book.units.map((u) => ({ code: u.code, label: u.label }));
   const scope = edges.filter((e) => e.type === "project_scope" && e.status === "applied" && e.a === nid.proj(projectId));
-  const unitEdge = scope.find((e) => e.b.startsWith("cbunit:"));
-  const code = unitEdge ? unitEdge.b.slice("cbunit:".length) : null;
+  const codes = [...new Set(scope.filter((e) => e.b.startsWith("cbunit:")).sort((a, b) => String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? ""))).map((e) => e.b.slice("cbunit:".length)))];
+  const projectUnits = codes.map((code) => units.find((u) => u.code === code) ?? { code, label: `Unit ${code}` });
   return {
     units,
-    registry: assets.rows.map((a) => ({ id: a.id, tag: a.tag, unitCode: a.unit_code })),
-    unit: code ? units.find((u) => u.code === code) ?? { code, label: `Unit ${code}` } : null,
+    registry: assets.rows.map((a) => ({ id: a.id, tag: a.tag, unitCode: a.unit_code, code: a.code })),
+    unit: projectUnits[0] ?? null,
+    projectUnits,
+    book,
     edges: scope,
   };
 }
 
 export const unitName = (u: UnitChoice | null | undefined) => (u ? `${u.label} (${u.code})` : "");
 const actorOf = (a: { id: string | null; name: string | null }) => ({ userId: a.id, name: a.name });
+
+/** Put the project on a unit too (a scope link to it), or take it off one
+ *  (only a link set here; one drawn by hand in Documents › Scope stays). */
+export async function setProjectUnitOn(input: { orgId: string; projectId: string; projectName: string; unit: UnitChoice; on: boolean; before: EstateEdge[]; actor: { id: string | null; name: string | null } }): Promise<void> {
+  const node = nid.cbunit(input.unit.code);
+  if (input.on) {
+    if (input.before.some((e) => e.b === node && e.status === "applied")) return;
+    await declareEdge({
+      orgId: input.orgId, a: nid.proj(input.projectId), b: node, type: "project_scope",
+      summary: `Project "${input.projectName}" is on ${unitName(input.unit)} - set in Setup`,
+      evidence: { source: "setup" }, actor: actorOf(input.actor),
+    });
+    return;
+  }
+  for (const e of input.before) if (e.b === node && e.evidence?.source === "setup") await removeEdge(e.id);
+}
 
 /** Set the project's unit: one scope link to it (the one set here before
  *  is taken off). */
@@ -187,18 +245,27 @@ export async function setProjectUnit(input: { orgId: string; projectId: string; 
 
 /** Save a work order's equipment (null: on no equipment) and link the
  *  equipment to the project for the graph. */
-export async function setWorkOrderEquipment(input: { orgId: string; projectId: string; projectName: string; ownerId: string; title: string; equipment: Equipment | null; actor: { id: string | null; name: string | null };
+export async function setWorkOrderEquipment(input: { orgId: string; projectId: string; projectName: string; ownerId: string; title: string;
+  /** undefined: its equipment left as it is. */
+  equipment: Equipment | null | undefined;
+  /** Its unit and equipment type (undefined: left as they are; null: taken off). */
+  unit?: string | null; type?: string | null;
+  actor: { id: string | null; name: string | null };
   /** The project's scope links now: one to this equipment already (drawn by
    *  hand or here) is left as it is. */
   existing?: EstateEdge[] }): Promise<void> {
   const { data, error } = await supabase.from("milestones").select("attributes").eq("id", input.ownerId).maybeSingle();
   if (error) throw new Error(error.message);
   const attrs = { ...(((data as { attributes?: Record<string, unknown> | null } | null)?.attributes) ?? {}) };
-  delete attrs[EQUIP_ID]; delete attrs[EQUIP_TAG]; delete attrs[EQUIP_NONE];
-  if (input.equipment) {
-    attrs[EQUIP_TAG] = input.equipment.tag.trim();
-    if (input.equipment.assetId) attrs[EQUIP_ID] = input.equipment.assetId;
-  } else attrs[EQUIP_NONE] = true;
+  if (input.equipment !== undefined) {
+    delete attrs[EQUIP_ID]; delete attrs[EQUIP_TAG]; delete attrs[EQUIP_NONE];
+    if (input.equipment) {
+      attrs[EQUIP_TAG] = input.equipment.tag.trim();
+      if (input.equipment.assetId) attrs[EQUIP_ID] = input.equipment.assetId;
+    } else attrs[EQUIP_NONE] = true;
+  }
+  if (input.unit !== undefined) { if (input.unit) attrs[EQUIP_UNIT] = input.unit; else delete attrs[EQUIP_UNIT]; }
+  if (input.type !== undefined) { if (input.type) attrs[EQUIP_TYPE] = input.type; else delete attrs[EQUIP_TYPE]; }
   const { error: e2 } = await supabase.from("milestones").update({ attributes: attrs, updated_at: new Date().toISOString(), updated_by: input.actor.id }).eq("id", input.ownerId);
   if (e2) throw new Error(e2.message);
   const assetNode = input.equipment?.assetId ? nid.asset(input.equipment.assetId) : null;
@@ -220,15 +287,33 @@ export async function pruneEquipmentLinks(edges: EstateEdge[], inUse: Set<string
 }
 
 /** Put a tag in the registry under the project's unit. */
-export async function addToRegistry(input: { orgId: string; tag: string; unitCode: string; createdBy: string }): Promise<RegistryAsset> {
-  const a = await createAsset({ orgId: input.orgId, tag: input.tag.trim(), unitCode: input.unitCode, createdBy: input.createdBy });
-  return { id: a.id, tag: a.tag, unitCode: (a as { unit_code?: string | null }).unit_code ?? input.unitCode };
+export async function addToRegistry(input: { orgId: string; tag: string; unitCode: string; createdBy: string; code?: string | null }): Promise<RegistryAsset> {
+  const a = await createAsset({ orgId: input.orgId, tag: input.tag.trim(), unitCode: input.unitCode, createdBy: input.createdBy, ...(input.code ? { code: input.code } : {}) });
+  return { id: a.id, tag: a.tag, unitCode: (a as { unit_code?: string | null }).unit_code ?? input.unitCode, code: input.code ?? null };
 }
 
 /** Move registry equipment to the project's unit (the registry had it
  *  under another one). */
 export async function moveToUnit(assetId: string, unitCode: string, by: string): Promise<void> {
   await updateAsset(assetId, { unit_code: unitCode }, by);
+}
+
+/** Every project's units, for the projects list (its scope links to
+ *  codebook units), with the unit names. */
+export async function loadProjectUnits(orgId: string): Promise<{ byProject: Map<string, string[]>; units: UnitChoice[] }> {
+  const [book, edges] = await Promise.all([
+    loadCodebook(orgId),
+    fetchAllRows<{ a: string; b: string }>((from, to) => supabase.from("estate_edges").select("a, b").eq("org_id", orgId).eq("type", "project_scope").eq("status", "applied")
+      .like("a", "proj:%").like("b", "cbunit:%").order("id").range(from, to) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>),
+  ]);
+  const byProject = new Map<string, string[]>();
+  for (const e of edges.rows) {
+    const pid = e.a.slice("proj:".length), code = e.b.slice("cbunit:".length);
+    const list = byProject.get(pid) ?? [];
+    if (!list.includes(code)) list.push(code);
+    byProject.set(pid, list);
+  }
+  return { byProject, units: book.units.map((u) => ({ code: u.code, label: u.label })) };
 }
 
 /** Fired after a change, so every open view re-reads. */

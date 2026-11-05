@@ -19,6 +19,7 @@ import { getAssetByTag, listAssetPhotos, type Asset, type AssetPhoto } from "@/l
 import AliasPanel from "@/components/assets/AliasPanel";
 import MentionsPanel from "@/components/assets/MentionsPanel";
 import EstatePanel from "@/components/assets/EstatePanel";
+import WorkHistoryPanel from "@/components/assets/WorkHistoryPanel";
 import { stateStyle, documentState } from "@/lib/stateColors";
 
 interface HubDoc {
@@ -221,6 +222,11 @@ export default function AssetHubPage() {
             </ul>
           )}
         </div>
+
+        {/* Every job done on it, across projects, and what was learned. */}
+        {asset?.id && activeOrgId && (
+          <WorkHistoryPanel orgId={activeOrgId} assetId={asset.id} code={(asset as { code?: string | null }).code ?? null} />
+        )}
 
         {/* Everything the estate knows about it, through the one find service:
             drawn on, mentioned in, tagged, filed, and the work in flight. */}

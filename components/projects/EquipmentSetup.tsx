@@ -1,33 +1,40 @@
 "use client";
 
-// Setup › Unit & equipment: the unit the project is on, and the equipment
-// each work order is on, matched from the names against the equipment
-// registry. One tap confirms them all; any one can be changed. A tag the
-// registry files under another unit is flagged (V-7 on the Crude Unit may
-// not be this unit's V-7), with a way to move it; one not in the registry
-// is added to the project's unit. The project then shows on the
-// Intelligence graph with its unit and equipment, and what's learned on
+// Setup › Unit & equipment: the units the project is on, and for each work
+// order its equipment, unit and equipment type. The unit and type are read
+// from the site code in the schedule (5630.06: LRU, Exchangers) against the
+// Site Codebook, else the registry and the tag's letters; the equipment is
+// matched from the names against the registry. One tap confirms them all;
+// any one can be changed. A tag the registry files under another unit is
+// flagged (V-7 on the Crude Unit may not be this unit's V-7), with a way to
+// move it; one not in the registry is added under its work order's unit.
+// The project then shows on the Intelligence graph with its units and
+// equipment, every view filters by unit and type, and what's learned on
 // that equipment reaches the next job on it.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Check, Loader2, Pencil } from "lucide-react";
+import { AlertTriangle, Check, Loader2, Pencil, Plus, X } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import type { Milestone } from "@/types/schema";
-import { tagKey, registryTagKey, type Equipment } from "@/lib/findings";
+import { tagKey, registryTagKey } from "@/lib/findings";
 import {
-  loadProjectEquipment, matchWorkOrders, setupOrders, undecided, withEquipment, setProjectUnit, setWorkOrderEquipment, pruneEquipmentLinks,
-  addToRegistry, moveToUnit, unitName, EQUIPMENT_CHANGED, type ProjectEquipmentData, type RegistryAsset, type WorkOrderMatch,
+  loadProjectEquipment, matchWorkOrders, setupOrders, undecided, withEquipment, setProjectUnitOn, setWorkOrderEquipment, pruneEquipmentLinks,
+  addToRegistry, moveToUnit, unitName, EQUIPMENT_CHANGED, type ProjectEquipmentData, type RegistryAsset, type WorkOrderMatch, type SavedHere, type UnitChoice,
 } from "@/lib/projectEquipment";
+import { typeLabel, fromWords, type WoClass } from "@/lib/woClass";
 
 const cache = new Map<string, ProjectEquipmentData>();
-// Work orders' equipment saved here, by project: shown at once, before the
-// schedule on screen is read again.
-const savedHere = new Map<string, Map<string, Equipment | null>>();
-const noteSaved = (projectId: string, ownerId: string, e: Equipment | null) => {
-  const m = savedHere.get(projectId) ?? new Map<string, Equipment | null>();
-  m.set(ownerId, e);
+// Work orders' equipment, unit and type saved here, by project: shown at
+// once, before the schedule on screen is read again.
+const savedHere = new Map<string, Map<string, SavedHere>>();
+const noteSaved = (projectId: string, ownerId: string, patch: SavedHere) => {
+  const m = savedHere.get(projectId) ?? new Map<string, SavedHere>();
+  m.set(ownerId, { ...(m.get(ownerId) ?? {}), ...patch });
   savedHere.set(projectId, m);
 };
+/** The schedule with what was saved here laid over it (every view's unit
+ *  and type filters read it too). */
+export const withSavedHere = (projectId: string, milestones: Milestone[]) => withEquipment(milestones, savedHere.get(projectId));
 // One read shared by everything on the page that asks at once (the banner
 // and the Setup button); a change starts a fresh one.
 const inflight = new Map<string, Promise<ProjectEquipmentData>>();
@@ -63,9 +70,9 @@ export function useProjectEquipment(orgId: string | null | undefined, projectId:
   const matches = useMemo(() => {
     if (!data) return [];
     const ms = withEquipment(milestones, savedHere.get(projectId));
-    return matchWorkOrders(setupOrders(ms), ms, data.registry, data.unit?.code ?? null);
+    return matchWorkOrders(setupOrders(ms), ms, data.registry, data.projectUnits.map((u) => u.code), data.book);
   }, [data, milestones, projectId]);
-  const set = data ? !!data.unit && undecided(matches).length === 0 : null;
+  const set = data ? data.projectUnits.length > 0 && undecided(matches).length === 0 : null;
   return { data, matches, set, error, reload };
 }
 
@@ -83,35 +90,71 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
   const name = projectName ?? "this project";
-  const unit = data?.unit ?? null;
-  const unitLabel = unit ? unitName(unit) : "";
+  const pUnits = data?.projectUnits ?? [];
   const todo = undecided(matches);
+  const unitOf = (code: string | null | undefined): UnitChoice | undefined => (code ? data?.units.find((u) => u.code === code) ?? { code, label: `Unit ${code}` } : undefined);
+  const where = (a: RegistryAsset) => (a.unitCode ? unitName(unitOf(a.unitCode)) : "no unit");
+  // The unit a work order's new equipment goes under: its own, else the project's first.
+  const homeOf = (m: WorkOrderMatch) => m.cls.unit ?? pUnits[0]?.code ?? null;
   const flagged = matches.filter((m) => m.otherUnit && m.asset);
-  const flaggedAssets = [...new Map(flagged.map((m) => [m.asset!.id, m.asset!])).values()];
-  const unitOf = (code: string | null) => (code ? data?.units.find((u) => u.code === code) : undefined);
-  const where = (a: RegistryAsset) => (a.unitCode ? unitName(unitOf(a.unitCode) ?? { code: a.unitCode, label: `Unit ${a.unitCode}` }) : "no unit");
+  const flaggedAssets = [...new Map(flagged.map((m) => [m.asset!.id, { asset: m.asset!, to: homeOf(m) }])).values()].filter((x) => x.to);
+  // Units the work orders are on that the project isn't (yet).
+  const woUnits = useMemo(() => {
+    const n = new Map<string, number>();
+    for (const m of matches) if (m.cls.unit && m.cls.unitFrom !== "project" && m.cls.unitFrom !== "main") n.set(m.cls.unit, (n.get(m.cls.unit) ?? 0) + 1);
+    return [...n.entries()].sort((a, b) => b[1] - a[1]);
+  }, [matches]);
+  const missingUnits = woUnits.filter(([c]) => !pUnits.some((u) => u.code === c));
+  const unknownTypes = [...new Set(matches.map((m) => m.cls.type).filter((t): t is string => !!t && !data?.book.equipmentTypes.some((x) => x.code === t)))];
 
   const run = async (what: string, fn: () => Promise<void>) => {
     if (!orgId) return;
     setBusy(what); setErr(null);
     try { await fn(); }
-    catch (e) { setErr(/permission|policy|row-level/i.test((e as Error).message) ? `Linking the project to its unit and equipment needs the database update (20261115_project_findings.sql), or an org Admin, Manager, Supervisor or Document Control.` : (e as Error).message); }
+    catch (e) { setErr(/permission|policy|row-level/i.test((e as Error).message) ? `Linking the project to its units and equipment needs the database update (20261115_project_findings.sql), or an org Admin, Manager, Supervisor or Document Control.` : (e as Error).message); }
     finally { setBusy(null); inflight.delete(projectId); window.dispatchEvent(new CustomEvent(EQUIPMENT_CHANGED)); }
   };
+  const unitOn = (u: UnitChoice, on: boolean) => { if (orgId && data) void run(`unit:${u.code}`, () => setProjectUnitOn({ orgId, projectId, projectName: name, unit: u, on, before: data.edges, actor })); };
+  const addUnits = (codes: string[]) => { if (orgId && data) void run("units", async () => { for (const c of codes) await setProjectUnitOn({ orgId, projectId, projectName: name, unit: unitOf(c)!, on: true, before: data.edges, actor }); }); };
 
-  /** Save one work order: a tag (found in the registry, else added to the
-   *  unit) or on no equipment. `made` keeps a tag added once per run. */
-  const saveOne = async (m: WorkOrderMatch, tag: string | null, made = new Map<string, RegistryAsset>()) => {
-    if (!orgId) return;
-    if (!tag) { await setWorkOrderEquipment({ orgId, projectId, projectName: name, ownerId: m.ownerId, title: m.title, equipment: null, actor, existing: data?.edges }); noteSaved(projectId, m.ownerId, null); return; }
+  /** Save one work order: a tag (found in the registry, else added under its
+   *  unit) or on no equipment (null), or its equipment left as is
+   *  (undefined); and its unit and type. `made` keeps a tag added once. */
+  // A new registry entry gets its site code only when every work order on
+  // that tag (in that unit) has the same one: C-01's VFD (5679.03) and the
+  // compressor C-01 (5628.01) share a tag, not a number.
+  const codeFor = (home: string | null, k: string) => {
+    const cs = new Set(matches.filter((x) => x.tag && tagKey(x.tag) === k && (x.cls.unit ?? pUnits[0]?.code ?? null) === home).map((x) => x.cls.code));
+    const c = cs.size === 1 ? [...cs][0] : null;
+    return c && /^\d+\.\w+$/.test(c) ? c : null;
+  };
+  const saveOne = async (m: WorkOrderMatch, tag: string | null | undefined, cls: { unit: string | null; type: string | null }, made = new Map<string, RegistryAsset>()): Promise<string | null | undefined> => {
+    if (!orgId) return undefined;
+    const keep = { unit: cls.unit, type: cls.type };
+    if (tag === undefined) {
+      await setWorkOrderEquipment({ orgId, projectId, projectName: name, ownerId: m.ownerId, title: m.title, equipment: undefined, ...keep, actor, existing: data?.edges });
+      noteSaved(projectId, m.ownerId, keep);
+      return m.state === "linked" ? m.asset?.id ?? null : undefined;
+    }
+    if (!tag) {
+      await setWorkOrderEquipment({ orgId, projectId, projectName: name, ownerId: m.ownerId, title: m.title, equipment: null, ...keep, actor, existing: data?.edges });
+      noteSaved(projectId, m.ownerId, { equipment: null, ...keep });
+      return null;
+    }
+    const home = cls.unit ?? pUnits[0]?.code ?? null;
     const k = tagKey(tag);
     const hits = (data?.registry ?? []).filter((a) => registryTagKey(a.tag) === k);
-    let asset = (m.asset && registryTagKey(m.asset.tag) === k ? m.asset : null) ?? hits.find((a) => a.unitCode === unit?.code) ?? hits[0] ?? made.get(k) ?? null;
-    if (!asset && unit) { asset = await addToRegistry({ orgId, tag, unitCode: unit.code, createdBy: userId }); made.set(k, asset); }
+    // Sure of the unit: only that unit's equipment by this tag.
+    const sure = cls.unit != null;
+    let asset = (m.asset && registryTagKey(m.asset.tag) === k && (!sure || m.asset.unitCode === home) ? m.asset : null)
+      ?? hits.find((a) => a.unitCode === home) ?? (sure ? null : hits[0] ?? null) ?? made.get(`${home}:${k}`) ?? null;
+    if (!asset && home) { asset = await addToRegistry({ orgId, tag, unitCode: home, createdBy: userId, code: codeFor(home, k) }); made.set(`${home}:${k}`, asset); }
     const equipment = { assetId: asset?.id ?? null, tag: asset ? asset.tag.replace(/\s*\(.*$/, "") : tag.trim() };
-    await setWorkOrderEquipment({ orgId, projectId, projectName: name, ownerId: m.ownerId, title: m.title, equipment, actor, existing: data?.edges });
-    noteSaved(projectId, m.ownerId, equipment);
+    await setWorkOrderEquipment({ orgId, projectId, projectName: name, ownerId: m.ownerId, title: m.title, equipment, ...keep, actor, existing: data?.edges });
+    noteSaved(projectId, m.ownerId, { equipment, ...keep });
+    return asset?.id ?? null;
   };
 
   const inUseAfter = (changes: Map<string, string | null>) => {
@@ -127,8 +170,9 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
     const made = new Map<string, RegistryAsset>();
     const changes = new Map<string, string | null>();
     for (const m of todo) {
-      await saveOne(m, m.tag, made);
-      changes.set(m.ownerId, m.asset?.id ?? made.get(tagKey(m.tag))?.id ?? null);
+      const needsTag = m.state === "found" || m.state === "other_unit" || m.state === "not_in_registry";
+      const id = await saveOne(m, needsTag ? m.tag : undefined, { unit: m.cls.unit, type: m.cls.type }, made);
+      if (id !== undefined) changes.set(m.ownerId, id);
     }
     if (data) await pruneEquipmentLinks(data.edges, inUseAfter(changes));
   });
@@ -137,56 +181,86 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
   if (!orgId) return <div className="text-[12px] text-[var(--color-text-muted)]">Import the schedule first: the work orders come from it.</div>;
   if (!data) return <div className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">{error ? <span className="text-rose-700 dark:text-rose-300">{error}</span> : <><Loader2 className="w-4 h-4 animate-spin" /> Reading the registry…</>}</div>;
 
-  const notIn = todo.filter((m) => m.state === "not_in_registry");
+  // Tags to add: once per tag and unit (three C-01 work orders, one C-01).
+  const notIn = [...new Set(todo.filter((m) => m.state === "not_in_registry" && m.tag).map((m) => `${homeOf(m)}:${tagKey(m.tag!)}`))];
+  const others = data.units.filter((u) => !pUnits.some((p) => p.code === u.code));
   return (
     <div className="space-y-4">
-      {/* The unit */}
+      {/* The units */}
       <div className="space-y-1.5">
-        <label className="block text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]" htmlFor="eq-unit">Unit</label>
+        <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Units this project is on</div>
         {data.units.length === 0 ? (
           <div className="text-[12.5px] text-[var(--color-text-muted)]">No units in the Site Codebook yet. Add them under Admin › Codebook.</div>
         ) : (
-          <div className="flex flex-wrap items-center gap-2">
-            <select id="eq-unit" value={unit?.code ?? ""} disabled={!!busy}
-              onChange={(e) => { const u = data.units.find((x) => x.code === e.target.value); if (u) void run("unit", () => setProjectUnit({ orgId, projectId, projectName: name, unit: u, before: data.edges, actor })); }}
-              className={`${field} min-w-0 w-full sm:w-auto sm:min-w-[18rem]`}>
-              {!unit && <option value="">Pick the unit…</option>}
-              {data.units.map((u) => <option key={u.code} value={u.code}>{unitName(u)}</option>)}
-            </select>
-            {busy === "unit" && <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" />}
-            {unit && busy !== "unit" && <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-emerald-700 dark:text-emerald-400"><Check className="w-3.5 h-3.5" /> Saved</span>}
-          </div>
+          <>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {pUnits.map((u, i) => {
+                const n = woUnits.find(([c]) => c === u.code)?.[1] ?? 0;
+                const own = data.edges.some((e) => e.b === `cbunit:${u.code}` && e.evidence?.source === "setup");
+                return (
+                  <span key={u.code} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-accent)] bg-[var(--color-accent-soft)] pl-2.5 pr-1 py-1 text-[12.5px] font-semibold text-[var(--color-text)]">
+                    <span className="min-w-0">{unitName(u)}<span className="font-normal text-[var(--color-text-muted)]">{i === 0 && pUnits.length > 1 ? " · main" : ""}{n ? ` · ${n} WO${n === 1 ? "" : "s"}` : ""}</span></span>
+                    {busy === `unit:${u.code}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      : own ? <button type="button" disabled={!!busy} onClick={() => unitOn(u, false)} aria-label={`Take the project off ${u.label}`} className="p-0.5 rounded-full hover:bg-[var(--color-surface-2)]"><X className="w-3.5 h-3.5" /></button>
+                        : <span className="px-1 text-[10.5px] font-normal text-[var(--color-text-muted)]" title="Linked in Documents › Scope">Scope</span>}
+                  </span>
+                );
+              })}
+              {!adding ? (
+                <button type="button" disabled={!!busy} onClick={() => setAdding(true)} className={quiet}><Plus className="w-3.5 h-3.5" /> {pUnits.length ? "Add a unit" : "Pick a unit"}</button>
+              ) : (
+                <select autoFocus value="" aria-label="Add a unit" onBlur={() => setAdding(false)}
+                  onChange={(e) => { const u = unitOf(e.target.value); setAdding(false); if (u) unitOn(u, true); }}
+                  className={`${field} min-w-0 w-full sm:w-auto sm:min-w-[18rem]`}>
+                  <option value="">Pick the unit…</option>
+                  {others.map((u) => <option key={u.code} value={u.code}>{unitName(u)}</option>)}
+                </select>
+              )}
+              {busy === "units" && <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" />}
+            </div>
+            {missingUnits.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
+                <span>{pUnits.length ? "Work orders are also on" : "The work orders' equipment numbers put them on"} {missingUnits.map(([c, n]) => `${unitName(unitOf(c))} (${n})`).join(", ")}.</span>
+                <button type="button" disabled={!!busy} onClick={() => addUnits(missingUnits.map(([c]) => c))} className={quiet}><Plus className="w-3.5 h-3.5" /> Add {missingUnits.length === 1 ? "it" : `all ${missingUnits.length}`}</button>
+              </div>
+            )}
+          </>
         )}
       </div>
 
       {/* The work orders */}
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Work orders and their equipment · {matches.length}</div>
+          <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Work orders: equipment, unit and type · {matches.length}</div>
           {todo.length > 0 && (
-            <button type="button" onClick={confirmAll} disabled={!!busy || !unit} className={`${btn} ml-auto`} title={unit ? undefined : "Pick the unit first"}>
+            <button type="button" onClick={confirmAll} disabled={!!busy || !pUnits.length} className={`${btn} ml-auto`} title={pUnits.length ? undefined : "Pick the project's unit first"}>
               {busy === "all" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Confirm all {todo.length}
             </button>
           )}
         </div>
         {todo.length > 0 && (
           <p className="text-[12px] text-[var(--color-text-muted)]">
-            {!unit ? "Pick the unit first. " : ""}
-            Confirm all links each work order to the equipment shown{notIn.length && unit ? `, and adds ${notIn.length === 1 ? "the 1 tag" : `the ${notIn.length} tags`} not in the registry to ${unitLabel}` : ""}. Change any one first if it&apos;s wrong.
+            {!pUnits.length ? "Pick the project's unit first. " : ""}
+            Confirm all saves each work order&apos;s equipment, unit and type as shown{notIn.length && pUnits.length ? `, and adds ${notIn.length === 1 ? "the 1 tag" : `the ${notIn.length} tags`} not in the registry under their unit` : ""}. Change any one first if it&apos;s wrong.
           </p>
         )}
-        {unit && flaggedAssets.length > 0 && (
+        {unknownTypes.length > 0 && (
+          <div className="text-[12px] text-amber-800 dark:text-amber-300">
+            Equipment type {unknownTypes.map((t) => `${t}`).join(", ")} {unknownTypes.length === 1 ? "is" : "are"} in your equipment numbers but not in the Site Codebook. Add {unknownTypes.length === 1 ? "it" : "them"} under Admin › Codebook to name {unknownTypes.length === 1 ? "it" : "them"}.
+          </div>
+        )}
+        {flaggedAssets.length > 0 && (
           <div className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-[12.5px] text-amber-900 dark:text-amber-200 space-y-1.5">
             <div className="flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
               <span>
-                The registry has {flaggedAssets.length === 1 ? `${flaggedAssets[0].tag}` : `${flaggedAssets.length} of these`} under {[...new Set(flaggedAssets.map(where))].join(", ")}, not {unitLabel}.
+                The registry has {flaggedAssets.length === 1 ? `${flaggedAssets[0].asset.tag}` : `${flaggedAssets.length} of these`} under {[...new Set(flaggedAssets.map((x) => where(x.asset)))].join(", ")}, not the work order&apos;s unit.
                 {" "}If that&apos;s wrong, move {flaggedAssets.length === 1 ? "it" : "them"}. If that unit has its own, leave {flaggedAssets.length === 1 ? "it" : "them"} and change the work order.
               </span>
             </div>
             <button type="button" disabled={!!busy} className={quiet}
-              onClick={() => void run("move", async () => { for (const a of flaggedAssets) await moveToUnit(a.id, unit.code, userId); })}>
-              {busy === "move" && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Move {flaggedAssets.length === 1 ? flaggedAssets[0].tag : `all ${flaggedAssets.length}`} to {unit.label}
+              onClick={() => void run("move", async () => { for (const x of flaggedAssets) await moveToUnit(x.asset.id, x.to!, userId); })}>
+              {busy === "move" && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Move {flaggedAssets.length === 1 ? flaggedAssets[0].asset.tag : `all ${flaggedAssets.length}`} to {flaggedAssets.length === 1 ? unitOf(flaggedAssets[0].to)?.label : "their work order's unit"}
             </button>
           </div>
         )}
@@ -199,20 +273,19 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
                 <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
                   <div className="flex-1 min-w-[12rem]">
                     <div className="font-semibold text-[var(--color-text)] break-words">{m.title}{m.wo ? <span className="font-normal text-[var(--color-text-muted)]"> · WO {m.wo}</span> : null}</div>
-                    <MatchLine m={m} where={where} unitLabel={unitLabel} />
+                    <MatchLine m={m} where={where} />
+                    <ClassLine c={m.cls} unit={(c) => (c ? unitName(unitOf(c)) : "")} type={(t) => typeLabel(t, data.book)} known={(t) => data.book.equipmentTypes.some((x) => x.code === t)} />
                   </div>
                   {editing !== m.ownerId && (
                     <button type="button" disabled={!!busy} onClick={() => setEditing(m.ownerId)} className={quiet}><Pencil className="w-3.5 h-3.5" /> Change</button>
                   )}
                 </div>
                 {editing === m.ownerId && (
-                  <EditRow m={m} registry={data.registry} busy={busy === m.ownerId} unitLabel={unitLabel}
+                  <EditRow m={m} data={data} busy={busy === m.ownerId}
                     onCancel={() => setEditing(null)}
-                    onSave={(tag) => void run(m.ownerId, async () => {
-                      const made = new Map<string, RegistryAsset>();
-                      await saveOne(m, tag, made);
-                      const hit = tag ? (data.registry.find((a) => registryTagKey(a.tag) === tagKey(tag) && a.unitCode === unit?.code) ?? data.registry.find((a) => registryTagKey(a.tag) === tagKey(tag)) ?? made.get(tagKey(tag))) : undefined;
-                      await pruneEquipmentLinks(data.edges, inUseAfter(new Map([[m.ownerId, hit?.id ?? null]])));
+                    onSave={(tag, cls) => void run(m.ownerId, async () => {
+                      const id = await saveOne(m, tag, cls);
+                      if (id !== undefined) await pruneEquipmentLinks(data.edges, inUseAfter(new Map([[m.ownerId, id]])));
                       setEditing(null);
                     })} />
                 )}
@@ -226,39 +299,80 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
   );
 }
 
-function MatchLine({ m, where, unitLabel }: { m: WorkOrderMatch; where: (a: RegistryAsset) => string; unitLabel: string }) {
-  const chip = (t: string, tone: "emerald" | "amber" | "slate") => (
-    <span className={`inline-block rounded px-1.5 py-px text-[10.5px] font-black uppercase tracking-wider ${tone === "emerald" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300" : tone === "amber" ? "bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}>{t}</span>
-  );
+const chip = (t: string, tone: "emerald" | "amber" | "slate") => (
+  <span className={`inline-block rounded px-1.5 py-px text-[10.5px] font-black uppercase tracking-wider ${tone === "emerald" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300" : tone === "amber" ? "bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}>{t}</span>
+);
+
+function MatchLine({ m, where }: { m: WorkOrderMatch; where: (a: RegistryAsset) => string }) {
   const tag = m.tag ? <b className="text-[var(--color-text)]">{m.tag}</b> : null;
   return (
     <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[var(--color-text-muted)]">
       {m.state === "none" && <>{chip("No equipment", "slate")}</>}
-      {m.state === "no_tag" && <span>No tag in the name. Change it to pick the equipment.</span>}
+      {m.state === "no_tag" && <span>No tag in the name.</span>}
       {m.state === "linked" && <>{chip("Linked", "emerald")} {tag} {m.asset ? <span>· {where(m.asset)}</span> : <span>· not in the registry</span>}</>}
       {m.state === "found" && <>{tag} <span>· in the registry, {m.asset ? where(m.asset) : ""}</span></>}
       {m.state === "other_unit" && <>{tag} <span>· in the registry under {m.asset ? where(m.asset) : ""}</span></>}
-      {m.state === "not_in_registry" && <>{tag} <span>· not in the registry{unitLabel ? `, will be added to ${unitLabel}` : ""}</span></>}
+      {m.state === "not_in_registry" && <>{tag} <span>· not in the registry, will be added under its unit</span></>}
       {m.otherUnit && chip("Different unit", "amber")}
     </div>
   );
 }
 
-function EditRow({ m, registry, busy, unitLabel, onSave, onCancel }: { m: WorkOrderMatch; registry: RegistryAsset[]; busy: boolean; unitLabel: string; onSave: (tag: string | null) => void; onCancel: () => void }) {
-  const [tag, setTag] = useState(m.tag ?? "");
-  const id = `eq-tags-${m.ownerId}`;
-  const known = tag.trim() && registry.some((a) => registryTagKey(a.tag) === tagKey(tag));
+/** Its type and unit, and where each came from. */
+function ClassLine({ c, unit, type, known }: { c: WoClass; unit: (code: string | null) => string; type: (code: string) => string; known: (code: string) => boolean }) {
+  const saved = c.unitFrom === "saved" && (c.typeFrom === "saved" || !c.type);
   return (
-    <form className="mt-2 space-y-1.5" onSubmit={(e) => { e.preventDefault(); if (tag.trim()) onSave(tag.trim()); }}>
+    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[var(--color-text-muted)]">
+      {c.type ? <b className="text-[var(--color-text)]">{type(c.type)}</b> : <span>No type</span>}
+      {c.type && !known(c.type) && chip("Not in codebook", "amber")}
+      <span>·</span>
+      {c.unit ? <span className="text-[var(--color-text)]">{unit(c.unit)}</span> : <span>No unit</span>}
+      {saved ? chip("Confirmed", "emerald") : (c.typeFrom || c.unitFrom) && <span>· {fromWords(c.typeFrom ?? c.unitFrom, c)}</span>}
+    </div>
+  );
+}
+
+function EditRow({ m, data, busy, onSave, onCancel }: {
+  m: WorkOrderMatch; data: ProjectEquipmentData; busy: boolean;
+  /** tag: a tag, null (no equipment) or undefined (left as is). */
+  onSave: (tag: string | null | undefined, cls: { unit: string | null; type: string | null }) => void; onCancel: () => void;
+}) {
+  const [tag, setTag] = useState(m.state === "none" ? "" : m.tag ?? "");
+  const [unit, setUnit] = useState(m.cls.unit ?? data.projectUnits[0]?.code ?? "");
+  const [type, setType] = useState(m.cls.type ?? "");
+  const id = `eq-tags-${m.ownerId}`;
+  const known = tag.trim() && data.registry.some((a) => registryTagKey(a.tag) === tagKey(tag));
+  const units = [...data.projectUnits, ...data.units.filter((u) => !data.projectUnits.some((p) => p.code === u.code))];
+  const types = [...data.book.equipmentTypes].sort((a, b) => a.label.localeCompare(b.label));
+  const cls = { unit: unit || null, type: type || null };
+  const tagNow = tag.trim() ? tag.trim() : m.state === "none" ? null : undefined;
+  return (
+    <form className="mt-2 space-y-1.5" onSubmit={(e) => { e.preventDefault(); onSave(tagNow, cls); }}>
+      <div className="grid gap-2 sm:grid-cols-[10rem_minmax(0,1fr)_minmax(0,1fr)]">
+        <label className="text-[11px] font-semibold text-[var(--color-text-muted)]">Tag
+          <input value={tag} onChange={(e) => setTag(e.target.value)} list={id} placeholder="E-12" aria-label="Equipment tag" autoFocus className={`${field} mt-0.5 w-full`} />
+          <datalist id={id}>{data.registry.slice(0, 400).map((a) => <option key={a.id} value={a.tag.replace(/\s*\(.*$/, "")} />)}</datalist>
+        </label>
+        <label className="text-[11px] font-semibold text-[var(--color-text-muted)]">Unit
+          <select value={unit} onChange={(e) => setUnit(e.target.value)} aria-label="Unit" className={`${field} mt-0.5 w-full`}>
+            <option value="">No unit</option>
+            {units.map((u) => <option key={u.code} value={u.code}>{unitName(u)}</option>)}
+          </select>
+        </label>
+        <label className="text-[11px] font-semibold text-[var(--color-text-muted)]">Equipment type
+          <select value={type} onChange={(e) => setType(e.target.value)} aria-label="Equipment type" className={`${field} mt-0.5 w-full`}>
+            <option value="">No type</option>
+            {type && !types.some((t) => t.code === type) && <option value={type}>Type {type} (not in the codebook)</option>}
+            {types.map((t) => <option key={t.code} value={t.code}>{t.label} ({t.code})</option>)}
+          </select>
+        </label>
+      </div>
       <div className="flex flex-wrap items-center gap-2">
-        <input value={tag} onChange={(e) => setTag(e.target.value)} list={id} placeholder="Tag, e.g. E-12" aria-label="Equipment tag" autoFocus
-          className={`${field} w-40`} />
-        <datalist id={id}>{registry.slice(0, 400).map((a) => <option key={a.id} value={a.tag.replace(/\s*\(.*$/, "")} />)}</datalist>
-        <button type="submit" disabled={busy || !tag.trim()} className={btn}>{busy && <Loader2 className="w-4 h-4 animate-spin" />} Save</button>
-        <button type="button" disabled={busy} onClick={() => onSave(null)} className={quiet}>No equipment</button>
+        <button type="submit" disabled={busy} className={btn}>{busy && <Loader2 className="w-4 h-4 animate-spin" />} Save</button>
+        <button type="button" disabled={busy} onClick={() => onSave(null, cls)} className={quiet}>No equipment</button>
         <button type="button" disabled={busy} onClick={onCancel} className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-1">Cancel</button>
       </div>
-      {tag.trim() && !known && <div className="text-[11.5px] text-[var(--color-text-muted)]">Not in the registry{unitLabel ? `: it will be added to ${unitLabel}` : " (pick the unit to add it there)"}.</div>}
+      {tag.trim() && !known && <div className="text-[11.5px] text-[var(--color-text-muted)]">Not in the registry: it will be added under {unit ? unitName(units.find((u) => u.code === unit)) : "the project's unit"}.</div>}
     </form>
   );
 }

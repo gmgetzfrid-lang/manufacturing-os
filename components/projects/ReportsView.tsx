@@ -38,6 +38,8 @@ import ShiftReportView from "@/components/projects/ShiftReportView";
 import ExecutionReportView from "@/components/projects/ExecutionReportView";
 import { defaultMeeting, type MeetingKind } from "@/lib/meetingPlan";
 import { useProjectWord } from "@/components/projects/ProjectTypeContext";
+import { useWoClasses, passes, WoClassSelects } from "@/components/projects/WoClassFilter";
+import { typeLabel, unitLabel, NONE } from "@/lib/woClass";
 
 interface Props {
   milestones: Milestone[];
@@ -105,6 +107,9 @@ export default function ReportsView(p: Props) {
   const [woHistory, setWoHistory] = useState(false);
   // Work orders left open on Work orders, printed with the ones the filter finds.
   const [woAlso, setWoAlso] = useState<string[]>([]);
+  // Only these units and equipment types.
+  const [woUnits, setWoUnits] = useState<string[]>([]);
+  const [woTypes, setWoTypes] = useState<string[]>([]);
   // The shift sheet: the shift it's for (null: the coming one), and its
   // entry screen open.
   const [sheetPick, setSheetPick] = useState<ShiftPick | null>(null);
@@ -124,7 +129,7 @@ export default function ReportsView(p: Props) {
       setWoHistory(!!l.history);
     }
     if (l.id === "sheet") { setSheetPick(l.shift ?? null); setSheetEntry(!!l.enter); }
-    if (l.id === "workorders") setWoAlso(l.also ?? []);
+    if (l.id === "workorders") { setWoAlso(l.also ?? []); setWoUnits(l.units ?? []); setWoTypes(l.types ?? []); }
     p.onLinkUsed?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per link
   }, [linkN]);
@@ -210,10 +215,15 @@ export default function ReportsView(p: Props) {
 
   // ── Work orders ──
   const orders = useMemo(() => groupWorkOrders(p.milestones, p.childrenByParent, p.progress, tz, times, now), [p.milestones, p.childrenByParent, p.progress, tz, times, now]);
+  const wc = useWoClasses(projectId, p.milestones);
   const woShown = useMemo(() => (woShow === "one" ? orders.filter((o) => o.key === woKey)
-    : orders.filter((o) => woAlso.includes(o.key) || (findOrders([o], woQuery).length > 0 && showsOrder(o, woShow, p.marks)))), [orders, woShow, woKey, woQuery, woAlso, p.marks]);
+    : orders.filter((o) => woAlso.includes(o.key) || (findOrders([o], woQuery).length > 0 && showsOrder(o, woShow, p.marks) && passes(wc, o.owner, woUnits, woTypes)))), [orders, woShow, woKey, woQuery, woAlso, p.marks, wc, woUnits, woTypes]);
+  const classScope = [
+    ...woUnits.map((u) => (u === NONE ? "no unit" : wc.book ? unitLabel(u, wc.book) : `Unit ${u}`)),
+    ...woTypes.map((t) => (t === NONE ? "no type set" : wc.book ? typeLabel(t, wc.book) : `Type ${t}`)),
+  ].join(" · ");
   const woScope = woShow === "one" ? (woShown[0] ? `${woShown[0].wo ? `WO ${woShown[0].wo}` : "No WO"} · ${woShown[0].owner.name}` : "One work order")
-    : `${SHOW_WORD[woShow]}${woQuery.trim() ? ` · search “${woQuery.trim()}”` : ""}`;
+    : `${SHOW_WORD[woShow]}${classScope ? ` · ${classScope}` : ""}${woQuery.trim() ? ` · search “${woQuery.trim()}”` : ""}`;
 
   // ── The shift sheet (lib/shiftSheet) ──
   // The coming shift: from its start meeting on, the next one.
@@ -252,7 +262,7 @@ export default function ReportsView(p: Props) {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
   const lhOn = useLh && !!lh ? lh : null;
-  const previewSig = JSON.stringify([sel, shift.dayKey, shift.kind, cover, days.from, days.to, format, !!lhOn, woShow, woKey, woQuery, woAlso, woHistory, sel === "sheet" ? sheetDoc : null, tick, live.length, meeting ? doc : null]);
+  const previewSig = JSON.stringify([sel, shift.dayKey, shift.kind, cover, days.from, days.to, format, !!lhOn, woShow, woKey, woQuery, woAlso, woHistory, woUnits, woTypes, wc.ready, sel === "sheet" ? sheetDoc : null, tick, live.length, meeting ? doc : null]);
   useEffect(() => {
     let alive = true;
     const t = setTimeout(async () => {
@@ -431,7 +441,7 @@ export default function ReportsView(p: Props) {
           {row("Which", <>
             <select value={woShow} onChange={(e) => { const v = e.target.value as Show | "one"; setWoShow(v); setWoAlso([]); if (v === "one" && !woKey) setWoKey(orders[0]?.key ?? ""); }} aria-label="Which work orders"
               className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)]">
-              {SHOWS.map(([k, l]) => <option key={k} value={k}>{l} ({findOrders(orders, woQuery).filter((o) => showsOrder(o, k, p.marks)).length})</option>)}
+              {SHOWS.map(([k, l]) => <option key={k} value={k}>{l} ({findOrders(orders, woQuery).filter((o) => showsOrder(o, k, p.marks) && passes(wc, o.owner, woUnits, woTypes)).length})</option>)}
               <option value="one">One work order</option>
             </select>
             {woShow !== "one" && woQuery.trim() && (
@@ -439,6 +449,9 @@ export default function ReportsView(p: Props) {
                 <button type="button" onClick={() => { setWoQuery(""); setWoAlso([]); }} aria-label="Clear the search" className="text-[var(--color-text-muted)]"><X className="w-3.5 h-3.5" /></button>
               </span>
             )}
+          </>)}
+          {woShow !== "one" && (wc.choices.units.length > 1 || wc.choices.types.some((t) => t.code !== NONE) || woUnits.length > 0 || woTypes.length > 0) && row("Unit, type", <>
+            <WoClassSelects c={wc} units={woUnits} types={woTypes} onUnits={(v) => { setWoUnits(v); setWoAlso([]); }} onTypes={(v) => { setWoTypes(v); setWoAlso([]); }} />
           </>)}
           {woShow === "one" && (
             row("Work order", <>

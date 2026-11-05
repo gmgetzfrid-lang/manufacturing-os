@@ -31,6 +31,8 @@ import type { ReportLink } from "@/lib/reportLinks";
 import { useProjectWord } from "@/components/projects/ProjectTypeContext";
 import { CancelJobForm } from "@/components/projects/CancelledJobs";
 import AddWorkPicker from "@/components/projects/AddWorkPicker";
+import { useWoClasses, passes, WoClassSelects } from "@/components/projects/WoClassFilter";
+import { typeLabel, unitLabel } from "@/lib/woClass";
 
 export default function WorkOrdersView({ milestones, childrenByParent, tz, times, progress, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery, onNewWorkOrder, projectId, projectName, user, onCancelled, onOpenReport }: {
   milestones: Milestone[];
@@ -61,6 +63,9 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
   const [show, setShow] = useState<Show>("all");
   // Who: the crew named on the steps ("" = steps with no crew named).
   const [who, setWho] = useState<string | null>(null);
+  // Unit and equipment type (Setup › Units & equipment).
+  const [units, setUnits] = useState<string[]>([]);
+  const [types, setTypes] = useState<string[]>([]);
   const [open, setOpen] = useState<Set<string>>(new Set());
   // The work order being taken off the schedule (its key).
   const [cancelling, setCancelling] = useState<string | null>(null);
@@ -80,7 +85,8 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
     return [...n.entries()].sort((a, b) => Number(a[0] === "") - Number(b[0] === "") || a[1].name.localeCompare(b[1].name, undefined, { numeric: true }));
   }, [orders]);
   const byWho = (o: WorkOrder) => who == null || o.steps.some((st) => crewKey(crewOf(st)) === who);
-  const found = findOrders(orders, query).filter(byWho);
+  const wc = useWoClasses(projectId, milestones);
+  const found = findOrders(orders, query).filter(byWho).filter((o) => passes(wc, o.owner, units, types));
   // One you have open stays while you work in it, whatever the filter.
   const shown = found.filter((o) => showsOrder(o, show, marks) || open.has(o.key));
   const today = dayKey(now, tz);
@@ -157,13 +163,20 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
 
   // A work order's crews, dates and progress: in its header while closed;
   // open, just under it, so the header held at the top stays short.
+  // Its equipment type and unit, when known: "Exchangers, LRU".
+  const classWords = (m: Milestone) => {
+    const c = wc.classOf(m);
+    if (!c || !wc.book) return null;
+    const unitShort = (code: string) => { const l = unitLabel(code, wc.book!); return l.match(/\(([^)]+)\)\s*$/)?.[1] ?? l; };
+    return [c.type ? typeLabel(c.type, wc.book) : null, c.unit && wc.choices.units.length > 1 ? unitShort(c.unit) : null].filter(Boolean).join(", ") || null;
+  };
   const detailsOf = (o: WorkOrder) => {
     const single = o.steps.length === 1 && o.steps[0].id === o.owner.id;
     return (
       <>
         {descOf(o.owner) && <div className="text-[12px] text-[var(--color-text)] line-clamp-2 break-words">{descOf(o.owner)}</div>}
         <div className="text-[11.5px] text-[var(--color-text-muted)]">
-          {[o.crews.join(", ") || null, single ? null : `${o.done} of ${o.steps.length} steps done`].filter(Boolean).join(" · ")}
+          {[classWords(o.owner), o.crews.join(", ") || null, single ? null : `${o.done} of ${o.steps.length} steps done`].filter(Boolean).join(" · ")}
           {o.added.map((x) => (
             <span key={x.kind} className={`ml-1.5 font-semibold ${x.kind === "added" ? "text-teal-700 dark:text-teal-300" : "text-violet-700 dark:text-violet-300"}`} title={ADDED[x.kind].tip}>
               + {x.n} {ADDED[x.kind].lower} step{x.n === 1 ? "" : "s"} ({x.h} h)
@@ -205,6 +218,7 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
           <option value="__all">Everyone</option>
           {whoList.map(([k, x]) => <option key={k || "__none"} value={k}>{k ? x.name : "No crew named"} ({x.steps} step{x.steps === 1 ? "" : "s"})</option>)}
         </select>
+        <WoClassSelects c={wc} units={units} types={types} onUnits={setUnits} onTypes={setTypes} />
         <div className="inline-flex flex-wrap gap-1" role="group" aria-label="Show">
           {([["all", "All"], ["open", "Open"], ["critical", "Critical path"], ["behind", "Behind"], ["notStarted", "Not started"], ["held", "Held"], ["done", "Done"], ["added", "Discovery & added"]] as const).map(([k, l]) => {
             const n = found.filter(is(k)).length;
@@ -238,11 +252,11 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
               <span className="fixed inset-0 z-[40]" onClick={() => setPrintMenu(false)} aria-hidden />
               <span className="absolute right-0 top-full mt-1 z-[41] w-72 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-1.5 flex flex-col text-[12px]">
                 <span className="px-2 pt-1 pb-1.5 text-[11px] text-[var(--color-text-muted)]">The {shown.length} work order{shown.length === 1 ? "" : "s"} shown, each opened up with all its steps. Your view here stays as it is.</span>
-                <button type="button" onClick={() => { if (onOpenReport) { setPrintMenu(false); onOpenReport({ id: "workorders", show, query, also: [...open] }); } else void printIt("report"); }} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)]">
+                <button type="button" onClick={() => { if (onOpenReport) { setPrintMenu(false); onOpenReport({ id: "workorders", show, query, also: [...open], units, types }); } else void printIt("report"); }} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)]">
                   <span className="font-semibold">Report</span>
                   <span className="block text-[11px] text-[var(--color-text-muted)]">Plan, actual, status, % and the latest comment</span>
                 </button>
-                <button type="button" onClick={() => { if (onOpenReport) { setPrintMenu(false); onOpenReport({ id: "workorders", show, query, also: [...open], history: true }); } else void printIt("history"); }} disabled={!projectId} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                <button type="button" onClick={() => { if (onOpenReport) { setPrintMenu(false); onOpenReport({ id: "workorders", show, query, also: [...open], history: true, units, types }); } else void printIt("history"); }} disabled={!projectId} className="text-left px-2 py-1.5 rounded hover:bg-[var(--color-surface-2)] disabled:opacity-50">
                   <span className="font-semibold">Report with history</span>
                   <span className="block text-[11px] text-[var(--color-text-muted)]">Every start, % update, hold and comment, with its time</span>
                 </button>

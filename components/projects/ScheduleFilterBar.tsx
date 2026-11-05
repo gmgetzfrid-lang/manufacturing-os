@@ -29,9 +29,11 @@ interface Props {
   /** How many leaf tasks match right now (for the count badge). */
   matchCount: number;
   totalCount: number;
+  /** The unit and equipment type pickers (components/projects/WoClassFilter). */
+  classSelects?: React.ReactNode;
 }
 
-export default function ScheduleFilterBar({ filter, onChange, groups, matchCount, totalCount }: Props) {
+export default function ScheduleFilterBar({ filter, onChange, groups, matchCount, totalCount, classSelects }: Props) {
   const active = isFilterActive(filter);
   const [showMore, setShowMore] = React.useState(false);
 
@@ -79,6 +81,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
         {/* Quick filters: each narrows what's shown, together they narrow
             each other (critical and behind = critical steps behind). */}
         <div role="group" aria-label="Quick filters" className="flex items-center gap-1.5 sm:flex-wrap max-sm:w-full max-sm:overflow-x-auto max-sm:pb-0.5 scroll-quiet">
+          {classSelects}
           {quick("Critical path", <Flame className="w-3.5 h-3.5" />, !!filter.criticalOnly, "rose", () => onChange({ ...filter, criticalOnly: !filter.criticalOnly }))}
           {quick("Behind", <TrendingDown className="w-3.5 h-3.5" />, !!filter.behindOnly, "amber", () => onChange({ ...filter, behindOnly: !filter.behindOnly }))}
           {quick("Overdue", <AlertTriangle className="w-3.5 h-3.5" />, filter.overdueOnly, "rose", () => onChange({ ...filter, overdueOnly: !filter.overdueOnly }))}

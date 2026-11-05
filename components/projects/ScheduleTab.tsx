@@ -38,6 +38,7 @@ import ScheduleProgress from "@/components/projects/ScheduleProgress";
 import ScheduleImportModal from "@/components/projects/ScheduleImportModal";
 import ScheduleEmptyState from "@/components/projects/ScheduleEmptyState";
 import ScheduleFilterBar from "@/components/projects/ScheduleFilterBar";
+import { useWoClasses, WoClassSelects } from "@/components/projects/WoClassFilter";
 import { filterMilestones, isFilterActive, EMPTY_FILTER, type ScheduleFilter } from "@/lib/scheduleFilter";
 import { buildProgressIndex, type ProgressInfo } from "@/lib/scheduleProgress";
 import RebaseScheduleModal from "@/components/projects/RebaseScheduleModal";
@@ -160,11 +161,13 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   // Search / filter for the Planning list (reuses the Execution engine).
   const [planFilter, setPlanFilter] = useState<ScheduleFilter>(EMPTY_FILTER);
   const planFilterOn = isFilterActive(planFilter);
+  // Each work order's unit and equipment type (Setup › Units & equipment).
+  const woClasses = useWoClasses(projectId, milestones);
   const visible = useMemo(() => {
     if (!planFilterOn) return ghostFiltered;
-    const keep = filterMilestones(ghostFiltered, planFilter);
+    const keep = filterMilestones(ghostFiltered, planFilter, { classOf: woClasses.classOf });
     return ghostFiltered.filter((m) => m.id && keep.has(m.id));
-  }, [ghostFiltered, planFilter, planFilterOn]);
+  }, [ghostFiltered, planFilter, planFilterOn, woClasses]);
   const planGroups = useMemo(() => {
     const byId = new Set(ghostFiltered.map((m) => m.id));
     return ghostFiltered.filter((m) => !m.parentId || !byId.has(m.parentId));
@@ -565,6 +568,8 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           groups={planGroups}
           matchCount={planLeafStats.shown}
           totalCount={planLeafStats.total}
+          classSelects={<WoClassSelects c={woClasses} units={planFilter.units ?? []} types={planFilter.types ?? []}
+            onUnits={(v) => setPlanFilter((f) => ({ ...f, units: v }))} onTypes={(v) => setPlanFilter((f) => ({ ...f, types: v }))} />}
         />
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
           <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center justify-between gap-3 bg-slate-50/60 dark:bg-[var(--color-surface-2)]">

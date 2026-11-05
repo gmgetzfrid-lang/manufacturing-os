@@ -40,6 +40,9 @@ export interface ReportLink {
   query?: string;
   /** Work order report: work orders left open there, printed as well. */
   also?: string[];
+  /** Work order report: only these units and equipment types (lib/woClass). */
+  units?: string[];
+  types?: string[];
   /** Each opening applies afresh, even of the same report. */
   n?: number;
 }

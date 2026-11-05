@@ -16,6 +16,7 @@ import {
   Calendar, User as UserIcon, Layers, ChevronRight, ChevronDown, Download,
 } from "lucide-react";
 import { listedTypeOf, typePlural, typeOrder } from "@/lib/projectType";
+import { loadProjectUnits, type UnitChoice } from "@/lib/projectEquipment";
 import { useRole } from "@/components/providers/RoleContext";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
@@ -96,9 +97,27 @@ export default function ProjectsPage() {
 
   // The kinds of project on screen, each with its projects (most recent
   // activity first, as listed). A kind picked narrows the list to it.
+  // The units each project is on (Setup › Units & equipment): one picked
+  // narrows the list to the projects on it.
+  const [units, setUnits] = useState<{ byProject: Map<string, string[]>; units: UnitChoice[] } | null>(null);
+  useEffect(() => {
+    if (!activeOrgId) return;
+    let alive = true;
+    loadProjectUnits(activeOrgId).then((u) => { if (alive) setUnits(u); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [activeOrgId]);
+  const [unitPick, setUnitPick] = useState<string>("");
+  const unitChoices = useMemo(() => {
+    if (!units) return [];
+    const n = new Map<string, number>();
+    for (const p of projects) for (const c of units.byProject.get(p.id ?? "") ?? ["-"]) n.set(c, (n.get(c) ?? 0) + 1);
+    return [...n.entries()].map(([code, k]) => ({ code, n: k, label: code === "-" ? "No unit set" : `${units.units.find((u) => u.code === code)?.label ?? `Unit ${code}`} (${code})` }))
+      .sort((a, b) => (a.code === "-" ? 1 : b.code === "-" ? -1 : a.label.localeCompare(b.label)));
+  }, [units, projects]);
+  const onUnit = (p: Project) => !unitPick || (units?.byProject.get(p.id ?? "") ?? ["-"]).includes(unitPick);
   const groups = useMemo(() => {
     const m = new Map<string, { key: string; label: string; order: number; items: Project[] }>();
-    for (const p of projects) {
+    for (const p of projects.filter(onUnit)) {
       const t = listedTypeOf(p);
       const key = typePlural(t).toLowerCase();
       const g = m.get(key) ?? { key, label: typePlural(t), order: typeOrder(t), items: [] };
@@ -106,7 +125,8 @@ export default function ProjectsPage() {
       m.set(key, g);
     }
     return [...m.values()].sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
-  }, [projects]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onUnit reads unitPick and units
+  }, [projects, unitPick, units]);
   const [typePick, setTypeFilter] = useState<string | null>(null);
   // A kind with nothing left on screen (another status, a search) lets go.
   const typeFilter = typePick && groups.some((g) => g.key === typePick) ? typePick : null;
@@ -174,6 +194,17 @@ export default function ProjectsPage() {
             </button>
           ))}
         </div>
+
+        {/* UNIT */}
+        {unitChoices.some((u) => u.code !== "-") && (
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <select value={unitPick} onChange={(e) => setUnitPick(e.target.value)} aria-label="Unit"
+              className={`h-8 rounded-lg border px-2 text-xs font-bold bg-[var(--color-surface)] text-[var(--color-text)] ${unitPick ? "border-[var(--color-accent)]" : "border-[var(--color-border)]"}`}>
+              <option value="">All units</option>
+              {unitChoices.map((u) => <option key={u.code} value={u.code}>{u.label} · {u.n}</option>)}
+            </select>
+          </div>
+        )}
 
         {/* KINDS OF PROJECT */}
         {groups.length > 1 && (

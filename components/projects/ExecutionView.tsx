@@ -40,6 +40,7 @@ import DiscoveryForm from "@/components/projects/DiscoveryForm";
 import MarkSheet from "@/components/projects/MarkSheet";
 import PlanNextShift from "@/components/projects/PlanNextShift";
 import WorkOrdersView from "@/components/projects/WorkOrdersView";
+import { useWoClasses, WoClassSelects } from "@/components/projects/WoClassFilter";
 import { timesAfterStatus, timesAfterProgress, type ActualTimes } from "@/lib/optimisticTimes";
 import DiscoveryTag from "@/components/projects/DiscoveryTag";
 import { planNote, type ShiftPlanChange } from "@/lib/shiftPlan";
@@ -389,6 +390,8 @@ export default function ExecutionView({
 
   // ── Search / filter ──────────────────────────────────────────
   const [filter, setFilter] = useState<ScheduleFilter>(EMPTY_FILTER);
+  // Each work order's unit and equipment type (Setup › Units & equipment).
+  const woClasses = useWoClasses(projectId, items);
   // Typing stays instant on a 600-task board: the rows follow a moment later.
   const appliedFilter = useDeferredValue(filter);
   const filterOn = isFilterActive(appliedFilter);
@@ -406,8 +409,9 @@ export default function ExecutionView({
         const w = Math.max(0.1, m.durationHours != null && m.durationHours > 0 ? m.durationHours : workHours(m, tz));
         return ((expectedFraction(m, cpClock, tz, shiftTimes) * 100 - pct) / 100) * w >= 0.5;
       },
+      classOf: woClasses.classOf,
     }),
-    [items, appliedFilter, tz, shiftTimes, critical, progressIndex, cpClock],
+    [items, appliedFilter, tz, shiftTimes, critical, progressIndex, cpClock, woClasses],
   );
   // The milestones each sub-view should render (full list when the
   // filter is off, so nothing changes for the common case).
@@ -1353,6 +1357,8 @@ export default function ExecutionView({
           groups={topGroups}
           matchCount={matchStats.shown}
           totalCount={matchStats.total}
+          classSelects={<WoClassSelects c={woClasses} units={filter.units ?? []} types={filter.types ?? []}
+            onUnits={(v) => setFilter((f) => ({ ...f, units: v }))} onTypes={(v) => setFilter((f) => ({ ...f, types: v }))} />}
         />
       )}
 

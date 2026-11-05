@@ -12,6 +12,7 @@
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { discoveryText, discoveryOf, kindOf, type AddedKind } from "@/lib/discovery";
 import { searchMatcher, hasQuery } from "@/lib/fuzzySearch";
+import { classPasses, type WoClass } from "@/lib/woClass";
 
 export interface ScheduleFilter {
   /** Free text — matches name, WBS, work order, responsible, location,
@@ -35,11 +36,15 @@ export interface ScheduleFilter {
   behindOnly?: boolean;
   /** Only steps nobody has started. */
   notStartedOnly?: boolean;
+  /** Only work orders on these units / of these equipment types
+   *  (lib/woClass; "-" is none set). */
+  units?: string[];
+  types?: string[];
 }
 
 export const EMPTY_FILTER: ScheduleFilter = {
   query: "", statuses: [], groupIds: [], overdueOnly: false, blockedOnly: false, shifts: [], added: [],
-  criticalOnly: false, behindOnly: false, notStartedOnly: false,
+  criticalOnly: false, behindOnly: false, notStartedOnly: false, units: [], types: [],
 };
 
 /** Not started: planned (or missed), no start recorded, nothing done. */
@@ -48,7 +53,7 @@ export const notStarted = (m: Milestone): boolean =>
 
 export function isFilterActive(f: ScheduleFilter): boolean {
   return f.query.trim().length > 0 || f.statuses.length > 0 || f.groupIds.length > 0 || f.overdueOnly || f.blockedOnly || f.shifts.length > 0 || (f.added?.length ?? 0) > 0
-    || !!f.criticalOnly || !!f.behindOnly || !!f.notStartedOnly;
+    || !!f.criticalOnly || !!f.behindOnly || !!f.notStartedOnly || (f.units?.length ?? 0) > 0 || (f.types?.length ?? 0) > 0;
 }
 
 /** Haystack for free-text search over one milestone. */
@@ -89,6 +94,8 @@ export function filterMilestones(
     isCritical?: (m: Milestone) => boolean;
     /** Behind plan by now - the same rule as the work orders' Behind. */
     isBehind?: (m: Milestone, now: number) => boolean;
+    /** A step's work order unit and equipment type (lib/woClass). */
+    classOf?: (m: Milestone) => WoClass | null;
   },
 ): Set<string> {
   const all = new Set<string>();
@@ -133,6 +140,12 @@ export function filterMilestones(
       }
     }
     if (f.blockedOnly && m.status !== "blocked" && m.status !== "on_hold") return false;
+    // Unit and equipment type: said of steps (their work order's); a task
+    // shows for its steps.
+    if (f.units?.length || f.types?.length) {
+      if (m.id && childrenByParent.has(m.id)) return false;
+      if (!classPasses(opts?.classOf?.(m) ?? null, f.units ?? [], f.types ?? [])) return false;
+    }
     // Critical, behind, not started: said of steps; a task shows for its steps.
     if (f.criticalOnly || f.behindOnly || f.notStartedOnly) {
       if (m.id && childrenByParent.has(m.id)) return false;
