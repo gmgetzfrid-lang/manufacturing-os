@@ -642,11 +642,38 @@ export function stepCheck(step: CatalogStep, u: Pick<RawUpdate, "evidence" | "co
 }
 
 /** The AI's updates as lines: steps checked against the job, times read. */
+/** Where some words are in the note, any case, any spacing. */
+function locate(note: string, words: string | null | undefined): [number, number] | null {
+  const parts = (words ?? "").trim().split(/\s+/).filter(Boolean).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (!parts.length) return null;
+  const m = new RegExp(parts.join("\\s+"), "i").exec(note);
+  return m ? [m.index, m.index + m[0].length] : null;
+}
+
+/** The note's own words for a line, as written. The AI sometimes cuts one
+ *  sentence in two (\"11/5 at 2am the channel cover was bolted up\" and
+ *  \"bolted up ready to start hydro\"): two pieces that overlap or sit side
+ *  by side in the note are joined back into the sentence typed. */
+export function saidAsWritten(evidence: string, comment: string | null, note: string): { evidence: string; comment: string | null } {
+  if (!note || !comment) return { evidence, comment };
+  const e = locate(note, evidence), c = locate(note, comment);
+  if (!e || !c) return { evidence, comment };
+  // The comment is inside the words already: once is enough.
+  if (c[0] >= e[0] && c[1] <= e[1]) return { evidence, comment: null };
+  if (e[0] >= c[0] && e[1] <= c[1]) return { evidence: note.slice(c[0], c[1]).trim(), comment: null };
+  const [a, b] = e[0] <= c[0] ? [e, c] : [c, e];
+  const gap = note.slice(a[1], b[0]);
+  if (b[0] <= a[1] || /^[\s,;:.\-–]{0,3}$/.test(gap)) return { evidence: note.slice(a[0], Math.max(a[1], b[1])).trim(), comment: null };
+  return { evidence, comment };
+}
+
 export function toLines(reply: RawReply, cat: CatalogStep[], defaultAt: number, ctx: TimeCtx, note = "", words: Array<{ said: string; as: string }> = []): { lines: QuickLine[]; unplaced: RawReply["unplaced"] } {
   const byKey = new Map(cat.map((c) => [c.key, c]));
   const unplaced = [...reply.unplaced];
   const lines: QuickLine[] = [];
-  reply.updates.forEach((u, i) => {
+  reply.updates.forEach((u0, i) => {
+    // The person's sentence as typed, not cut up and put back out of order.
+    const u = { ...u0, ...saidAsWritten(u0.evidence, u0.comment, note) };
     const step = u.step ? byKey.get(u.step) : undefined;
     const opts = [...new Set([...(u.step ? [u.step] : []), ...u.candidates])].map((k) => byKey.get(k)).filter((c): c is CatalogStep => !!c);
     if (!step && opts.length === 0) { unplaced.push({ text: u.evidence || "(no words)", why: u.step ? "That step isn't on the schedule." : "Couldn't tell which step." }); return; }
@@ -845,8 +872,12 @@ export function whenWords(at: number, tz: string, times: ShiftTimes): string {
  *  words (and anything else it said about the step), with a misheard tag
  *  written as the tag it was taken for ("mee too" = E-2). */
 export function lineComment(l: QuickLine): string {
-  const parts = [l.comment, l.evidence].filter((x, i, a): x is string => !!x && a.indexOf(x) === i && !(i === 1 && !!a[0]?.includes(x)));
-  const text = parts.join(" · ");
+  // Their words first, then anything else said about it; one inside the
+  // other ("Expected: …" around the words), the longer one only.
+  const e = l.evidence?.trim() ?? "", c = l.comment?.trim() ?? "";
+  const pe = plainWords(e), pc = plainWords(c);
+  const parts = !c ? [e] : !e ? [c] : pc.includes(pe) ? [c] : pe.includes(pc) ? [e] : [e, c];
+  const text = parts.filter(Boolean).join(" · ");
   return l.heard && (l.heard.known || l.heard.stepId === l.stepId) ? applyWords(text, [{ said: l.heard.said, as: l.heard.as }]) : text;
 }
 

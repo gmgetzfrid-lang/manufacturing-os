@@ -8,7 +8,7 @@ import {
 } from "@/lib/quickUpdate";
 import type { ShiftTimes } from "@/lib/shiftReport";
 import { shiftWindow } from "@/lib/shiftReport";
-import { pctFromCounts, mergeLines, toAll, woNumbersIn, markAlready } from "@/lib/quickUpdate";
+import { pctFromCounts, mergeLines, toAll, woNumbersIn, markAlready, saidAsWritten } from "@/lib/quickUpdate";
 import type { QuickLine } from "@/lib/quickUpdate";
 import type { Milestone } from "@/types/schema";
 
@@ -433,5 +433,15 @@ describe("a pasted email: counts, shifts, groups, repeats", () => {
     const m = markAlready(ls, cat, now, tz);
     expect(m.map((l) => [l.id, l.include, l.already ?? null])).toEqual([["h", true, null], ["r", true, null]]);
     expect(saveEvents(m, cat, now, tz).get("tr")!.filter((e) => e.kind !== "note").map((e) => e.kind)).toEqual(["hold", "pct"]);
+  });
+  it("one sentence cut in two by the AI is saved as typed, once", () => {
+    const note = "11/5/26 at 2:00am the channel cover of e-24 was bolted up ready to start hydro testing for tube side";
+    expect(saidAsWritten("11/5/26 at 2:00am the channel cover of e-24 was bolted up", "bolted up ready to start hydro testing for tube side", note))
+      .toEqual({ evidence: note, comment: null });
+    // Far apart in the note: both kept, the words first.
+    const far = "E-24 channel cover bolted up. Crane showed up late. Waiting on QC.";
+    expect(saidAsWritten("E-24 channel cover bolted up.", "Waiting on QC.", far)).toEqual({ evidence: "E-24 channel cover bolted up.", comment: "Waiting on QC." });
+    const r = parseReply({ updates: [{ step: key("ri"), action: "done", evidence: "11/5/26 at 2:00am the channel cover of e-24 was bolted up", comment: "bolted up ready to start hydro testing for tube side", when: { kind: "none" } }], unplaced: [] });
+    expect(lineComment(toLines(r, cat, now, ctx, note).lines[0])).toBe(note);
   });
 });
