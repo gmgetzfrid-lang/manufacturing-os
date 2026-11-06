@@ -11,7 +11,7 @@ import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Play, Check, Trash2 } from "lucide-react";
 import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import { shiftAt, workHours, type ShiftTimes } from "@/lib/shiftReport";
-import { fmtInTz, toDateTimeInput, fromDateTimeInput } from "@/lib/scheduleTz";
+import { fmtInTz, toDateTimeInput, fromDateTimeInput, dayKey } from "@/lib/scheduleTz";
 import { whenDated } from "@/lib/timeWords";
 import DateTimePicker from "@/components/projects/DateTimePicker";
 import { discoveryOf, kindOf, ADDED, type AddedKind } from "@/lib/discovery";
@@ -617,11 +617,19 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   const hidden = allHistory ? 0 : Math.max(0, history.length - LATEST);
   const shown = history.slice(hidden);
   const toSet = history.filter((x) => x.unsure === "unset").length;
+  // A night shift runs over midnight: it's named by both days ("Wed, Nov 4
+  // into Thu, Nov 5"), and a time after midnight says its day ("Thu 2:00
+  // AM"), so 2 AM Thursday never reads as done on Wednesday.
   const shiftOf = (t: number) => {
     const w = shiftAt(t, tz, times);
-    return { key: `${w.dayKey}:${w.kind}`, night: w.kind === "night", label: `${fmtInTz(w.start, tz, { weekday: "short", month: "short", day: "numeric" })} · ${w.kind} shift` };
+    const d = (x: number) => fmtInTz(x, tz, { weekday: "short", month: "short", day: "numeric" });
+    return { key: `${w.dayKey}:${w.kind}`, night: w.kind === "night", label: w.kind === "night" ? `${d(w.start)} into ${d(w.end - 1)} · night shift` : `${d(w.start)} · day shift` };
   };
-  const clock = (t: number) => fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true });
+  const clock = (t: number) => {
+    const w = shiftAt(t, tz, times);
+    const c = fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true });
+    return w.kind === "night" && dayKey(t, tz) !== w.dayKey ? `${fmtInTz(t, tz, { weekday: "short" })} ${c}` : c;
+  };
   const pickLabel = action === "start" || action === "resume" ? "Started" : action === "finish" ? "Finished" : action === "hold" ? "Stopped" : action === "edit" ? "Finished" : "When";
   return (
     <div ref={rootRef} className="px-3 pb-3 pl-7 space-y-2 bg-[var(--color-surface)] text-[12.5px]">
