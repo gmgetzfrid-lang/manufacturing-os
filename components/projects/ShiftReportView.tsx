@@ -47,7 +47,7 @@ import {
 import { buildKickoff, buildCloseout, defaultMeeting, type MeetingKind, type PlanRow } from "@/lib/meetingPlan";
 import { clockLabel, fmtInTz, tzAbbrev, toDateTimeInput } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
-import { toPlainText, toEmailHtml, type ExportBlock, type ExportCell, type ExportDoc, type ExportStepRow } from "@/lib/reportExport";
+import { type ExportBlock, type ExportCell, type ExportDoc, type ExportStepRow } from "@/lib/reportExport";
 import { turnoverUpdate, withoutEmpty, noteLine, hazardJobsOf, forecastText, discoverySub, discoveryBlock } from "@/lib/managementUpdate";
 import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
 import { isDefaultType, typeWord } from "@/lib/projectType";
@@ -71,7 +71,8 @@ import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Moda
 import { SafetyMomentBox } from "@/components/projects/SafetyMomentBox";
 import { useLetterhead } from "@/lib/letterheadStore";
 import { letterheadLayersHtml, letterheadPrintCss, type Letterhead } from "@/lib/letterhead";
-import { copyRich, printHtml, sectionsOff, updatePrintDocument, updateSubject } from "@/lib/updatePrint";
+import { copyRich, printHtml, sectionsOff, updatePrintDocument, updateSubject, sendParts, sendPrintDocument, updateDocx, updateFileName, saveFile, saveList, readFormat, readHeaderOff, readFormOff, FORMAT_KEY, HEADER_OFF_KEY, FORM_OFF_KEY, type SendFormat } from "@/lib/updatePrint";
+import { HEADER_PARTS, type HeaderPart } from "@/lib/reportExport";
 import type { ReportLink, ShiftPick } from "@/lib/reportLinks";
 import { riskHistory, safetyBrief, projectFacts, RISKS_RANKED, type ProjectBase } from "@/lib/safetyTalk";
 import { rankHazards, type HazardJobInput, type HazardKind } from "@/lib/safetyMoment";
@@ -90,7 +91,8 @@ import { meetingLines, meetingParts, meetingRows, meetingTitle, meetingRecord, m
 import { overtimeOf, overtimeEnd, overtimeLine, sentHomeLine, shiftEntries, type HoldOver, type OvertimeWindow } from "@/lib/holdOver";
 import { HourlyLogExport } from "@/components/projects/HourlyLogExport";
 import { FindingsReview, PastJobsPanel, KindChip, useProjectFindings, usePastJobs, pastJobLines, type PastJob } from "@/components/projects/Findings";
-import { APPLIES_WORD, KIND_WORD, type Finding } from "@/lib/findings";
+import { APPLIES_WORD, KIND_WORD, leadTag, type Finding } from "@/lib/findings";
+import { shiftForm, FORM_ROWS, type FormRowId } from "@/lib/shiftForm";
 import { exportedLabel, logSteps, shiftLog } from "@/lib/hourlyLog";
 import { pngInBrowser, saveHourlyLog, type LogFormat } from "@/lib/hourlyLogFiles";
 import { slotClocks, hourlyRows, hourSlots, breaksOn, breakLabel, plainLine, workOrderClosers } from "@/lib/shiftHourly";
@@ -760,6 +762,18 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   // The report as data — for Copy (text / email).
   const exportDoc = (): ExportDoc => {
     const { overall, shift: sh, next } = report;
+    const hourlyList = sheet.hourly ? (() => {
+            const h = sheet.hourly;
+            const hr = hourlyRows(h.notes, h.slots, h.upTo, h.entries, tz, { ...h.meet, closes: h.closes });
+            const cl = slotClocks(hr.map((r) => r.slot), tz);
+            return hr.map((r, i) => {
+              const m = r.slot.kind === "meeting" ? h.meet?.start : r.slot.kind === "handover" ? h.meet?.end : undefined;
+              // A meeting in the hours: on site and the safety topic (its table is its own section).
+              const brief = (p: MeetingParts) => [...(p.rows.some((x) => !x.plant && x.onSite != null) ? [`On the job: ${p.rows.reduce((a, x) => a + (x.plant ? 0 : x.onSite ?? 0), 0)}`] : []), ...(p.safety ? [`Safety topic: ${p.safety}`] : [])];
+              if (r.slot.kind === "overtime") return { clock: cl[i], kind: r.slot.kind, title: r.slot.label ?? "Overtime", text: "" };
+              return { clock: cl[i], kind: r.slot.kind, ...(m ? { title: m.title } : {}), text: m ? (m.parts ? brief(m.parts) : m.lines).join("\n") : r.slot.kind === "break" ? breakLabel(r.slot) : plainLine(r.text), progress: r.progress.map(plainLine), closed: r.closed.map(plainLine) };
+            });
+          })() : [];
     const kind = meeting === "kickoff" ? "Kick-off meeting" : meeting === "closeout" ? "Close-out meeting" : `Shift turnover${crew ? ` - ${crew}` : ""}`;
     const when = meeting === "turnover"
       ? `${shiftName(sh)} ${ctx.D(sh.start)} ${ctx.win(sh)} → ${shiftName(next)} ${ctx.D(next.start)} ${ctx.win(next)}`
@@ -772,7 +786,51 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         : { label: overall.standing === "ahead" ? "AHEAD" : overall.standing === "behind" ? "BEHIND" : "ON TRACK",
           tone: overall.standing === "ahead" ? "emerald" : overall.standing === "behind" ? "rose" : "slate",
           detail: `${overall.actualPct}% vs ${overall.plannedPct}% plan` };
+    // The plant's required format (lib/shiftForm): the shift's own record
+    // and what the report has planned and done, by crew.
+    const formOf = (): ExportDoc["form"] => {
+      const w = view.shift;
+      const parts = meetingParts(sheet.recThis, w.start);
+      const tagOf = (r: ShiftRow) => { const t = rowTask(r); const name = (t?.name ?? r.parentName ?? "").trim(); return leadTag(name) ?? name; };
+      const item = (r: ShiftRow, extra?: string) => {
+        const nm = r.leaf.name.trim();
+        // A step that names its own equipment (PSV-209 - …) needs no prefix.
+        const tag = leadTag(nm) ? "" : tagOf(r);
+        const plain = (x: string) => x.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const text = tag && !plain(nm).includes(plain(tag)) ? `${tag} – ${nm}` : nm;
+        return extra ? `${text} ${extra}` : text;
+      };
+      const crewOf = (r: ShiftRow) => r.leaf.actualParty?.trim() || r.leaf.responsibleParty?.trim() || "Other";
+      const doneIds = new Set(view.review.done.map((r) => r.leaf.id));
+      return shiftForm({
+        project: projectName ?? "Schedule",
+        date: fmtInTz(w.start, tz, { month: "long", day: "numeric", year: "numeric" }), start: ctx.T(w.start), end: ctx.T(w.end),
+        meeting: ctx.T(w.start - meetingLeadMin(times) * 60_000),
+        attendees: parts.rows.map((x) => ({ crew: x.crew, names: x.attendees })),
+        incidents: sheet.incidents && (sheet.incidents.none || sheet.incidents.items?.length)
+          ? { none: !!sheet.incidents.none, items: (sheet.incidents.items ?? []).map((x) => ({ kind: x.kind, text: x.text, time: ctx.T(x.at) })) } : undefined,
+        safetyTopic: parts.safety,
+        planned: view.review.scheduled.map((r) => ({ crew: r.leaf.responsibleParty?.trim() || "Other", text: item(r) })),
+        completed: [
+          ...view.review.done.map((r) => ({ crew: crewOf(r), text: item(r) })),
+          ...view.review.progressed.filter((r) => !doneIds.has(r.leaf.id)).map((r) => ({ crew: crewOf(r), text: item(r, r.pctStart != null ? `(${r.pctStart}% to ${r.percent}%)` : `(${r.percent}%)`) })),
+        ],
+        followUps: sheet.notes.filter((n) => n.followUp && !n.cleared).map((n) => n.text),
+        notes: hourlyList.flatMap((x) => {
+          const text = x.kind === "meeting" || x.kind === "handover" ? "Shift change meeting."
+            : x.kind === "overtime" ? x.title ?? "Overtime"
+              : x.text || (x.progress?.length ? x.progress.join(", ") : "");
+          return text ? [{ clock: x.clock, text }] : [];
+        }),
+        headcount: parts.rows.filter((x) => !x.plant && x.onSite != null).map((x) => ({ crew: x.crew, n: x.onSite! })),
+      });
+    };
+    const formCheck = meeting === "turnover" ? [
+      ...(sheet.carriedThis ? [`Attendees and head count are carried from the ${sheet.carriedThis.label}: update them on the Meeting before you send.`] : []),
+      ...(!sheet.incidents || !(sheet.incidents.none || sheet.incidents.items?.length) ? ["Incidents aren't entered for this shift: mark none, or add them, in Safety."] : []),
+    ] : [];
     return {
+      ...(meeting === "turnover" ? { form: formOf(), formCheck } : {}),
       kind, project: projectName ?? "Schedule", when,
       asOf: `${ctx.DT(meeting === "turnover" ? asOf : now)} ${tzAbbrev(ctx.tz, now)}${meeting === "turnover" && rehearsal ? " · rehearsal - shift not started" : meeting === "turnover" && historyNote ? ` · ${historyNote}` : ""}`,
       status,
@@ -797,18 +855,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           crewsThis: sheet.crewsThis, crewsNext: sheet.crewsNext,
           incidents: sheet.incidents && (sheet.incidents.none || sheet.incidents.items?.length) ? { none: !!sheet.incidents.none, items: sheet.incidents.items ?? [] } : undefined,
           shiftNotes: sheet.notes.map((n) => ({ at: n.at, text: n.text, followUp: n.followUp, from: n.from })),
-          hourly: sheet.hourly ? (() => {
-            const h = sheet.hourly;
-            const hr = hourlyRows(h.notes, h.slots, h.upTo, h.entries, tz, { ...h.meet, closes: h.closes });
-            const cl = slotClocks(hr.map((r) => r.slot), tz);
-            return hr.map((r, i) => {
-              const m = r.slot.kind === "meeting" ? h.meet?.start : r.slot.kind === "handover" ? h.meet?.end : undefined;
-              // A meeting in the hours: on site and the safety topic (its table is its own section).
-              const brief = (p: MeetingParts) => [...(p.rows.some((x) => !x.plant && x.onSite != null) ? [`On the job: ${p.rows.reduce((a, x) => a + (x.plant ? 0 : x.onSite ?? 0), 0)}`] : []), ...(p.safety ? [`Safety topic: ${p.safety}`] : [])];
-              if (r.slot.kind === "overtime") return { clock: cl[i], kind: r.slot.kind, title: r.slot.label ?? "Overtime", text: "" };
-              return { clock: cl[i], kind: r.slot.kind, ...(m ? { title: m.title } : {}), text: m ? (m.parts ? brief(m.parts) : m.lines).join("\n") : r.slot.kind === "break" ? breakLabel(r.slot) : plainLine(r.text), progress: r.progress.map(plainLine), closed: r.closed.map(plainLine) };
-            });
-          })() : [],
+          hourly: hourlyList,
           meetings: sheet.hourly ? (() => {
             const h = sheet.hourly;
             const hr = hourlyRows(h.notes, h.slots, h.upTo, h.entries, tz, { ...h.meet, closes: h.closes });
@@ -1284,7 +1331,7 @@ function CopyUpdate({ doc, meeting, lh, stamps }: { doc: () => ExportDoc; meetin
   const [isOpen, setIsOpen] = useState(false);
   const d = useMemo(() => (isOpen ? doc() : null), [isOpen, doc]);
   const [off, setOff] = useState<Set<string>>(new Set());
-  const [done, setDone] = useState<{ what: "email" | "text"; ok: boolean } | null>(null);
+  const [done, setDone] = useState<{ what: "email" | "text" | "word"; ok: boolean } | null>(null);
   const open = () => {
     // A section that's flagged today (blocked work, things behind) is always
     // ticked when the box opens: unticking it once must not hide tomorrow's
@@ -1305,20 +1352,40 @@ function CopyUpdate({ doc, meeting, lh, stamps }: { doc: () => ExportDoc; meetin
   });
   const idOf = (s: ExportDoc["sections"][number]) => s.id ?? s.title;
   const picked = d ? { ...d, sections: d.sections.filter((s) => !off.has(idOf(s))) } : null;
-  const html = picked ? toEmailHtml(picked) : "";
+  // The plant's required table (with the header pieces picked), or the
+  // detailed update: remembered on this device, and Print, Copy and the
+  // Word file all follow it.
+  const [format, setFormatState] = useState<SendFormat>(() => (typeof window === "undefined" ? "form" : readFormat()));
+  const [headerOff, setHeaderOff] = useState<Set<HeaderPart>>(() => (typeof window === "undefined" ? new Set() : readHeaderOff()));
+  const [formOff, setFormOff] = useState<Set<FormRowId>>(() => (typeof window === "undefined" ? new Set() : readFormOff()));
+  const setFormat = (f: SendFormat) => { setFormatState(f); try { localStorage.setItem(FORMAT_KEY, f); } catch { /* private mode */ } };
+  const flip = <T extends string>(set: (fn: (s: Set<T>) => Set<T>) => void, key: string, id: T) => set((cur) => { const n = new Set(cur); if (n.has(id)) n.delete(id); else n.add(id); saveList(key, n); return n; });
+  const useForm = !!d?.form && format === "form";
+  const out = picked ? sendParts(picked, { format, headerOff, formOff }) : null;
+  const html = out?.html ?? "";
   const subject = d ? updateSubject(d) : "";
+  // The header pieces this update has.
+  const hasStand = !!d?.sections.some((s) => s.id === "stand");
+  const parts = HEADER_PARTS.filter((p) => (p.id === "status" ? !!d?.status : ["standLine", "complete", "plan", "gap", "steps", "bars"].includes(p.id) ? hasStand : true));
 
   // Print what goes in the email — the safety topics on a page of their
   // own at the end, on the company letterhead when there is one.
   const printIt = () => {
-    if (!picked || !printHtml(updatePrintDocument(picked, lh ?? null))) setDone({ what: "text", ok: false });
+    if (!picked || !printHtml(useForm ? sendPrintDocument(picked, lh ?? null, { format, headerOff, formOff }) : updatePrintDocument(picked, lh ?? null))) setDone({ what: "text", ok: false });
   };
 
   const run = async (what: "email" | "text") => {
-    if (!picked) return;
-    const text = toPlainText(picked);
-    const ok = what === "email" ? await copyRich(html, text) : await copyText(text);
+    if (!picked || !out) return;
+    const ok = what === "email" ? await copyRich(out.html, out.text) : await copyText(out.text);
     setDone({ what, ok });
+  };
+  const [wordBusy, setWordBusy] = useState(false);
+  const word = async () => {
+    if (!picked) return;
+    setWordBusy(true);
+    try { saveFile(await updateDocx(picked, { headerOff, formOff }), updateFileName(picked)); setDone({ what: "word", ok: true }); }
+    catch { setDone({ what: "word", ok: false }); }
+    finally { setWordBusy(false); }
   };
 
   return (
@@ -1332,7 +1399,45 @@ function CopyUpdate({ doc, meeting, lh, stamps }: { doc: () => ExportDoc; meetin
         <Modal onClose={() => setIsOpen(false)} size="xl">
           <ModalHeader icon={Mail} title="Email or print the update" subtitle="What you'll send or print - leave out any section for today." onClose={() => setIsOpen(false)} />
           <ModalBody className="space-y-3">
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px]">
+            {d.form && (
+              <div className="flex flex-wrap items-center gap-2 text-[12px]">
+                <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Format</span>
+                <span className="inline-flex rounded-lg border border-[var(--color-border-strong)] overflow-hidden" role="group" aria-label="Format">
+                  {([["form", "Required (shift table)"], ["detail", "Detailed"]] as const).map(([k, l]) => (
+                    <button key={k} type="button" aria-pressed={format === k} onClick={() => setFormat(k)}
+                      className={`h-8 px-3 text-[12px] font-bold ${format === k ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>{l}</button>
+                  ))}
+                </span>
+              </div>
+            )}
+            {useForm && (
+              <>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px]">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Header</span>
+                  {parts.map((p) => (
+                    <label key={p.id} className="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                      <input type="checkbox" className="accent-[var(--color-accent)]" checked={!headerOff.has(p.id)} onChange={() => flip(setHeaderOff, HEADER_OFF_KEY, p.id)} />
+                      <span className="font-semibold text-[var(--color-text)]">{p.word}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px]">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Table</span>
+                  {FORM_ROWS.map((r) => (
+                    <label key={r.id} className="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                      <input type="checkbox" className="accent-[var(--color-accent)]" checked={!formOff.has(r.id)} onChange={() => flip(setFormOff, FORM_OFF_KEY, r.id)} />
+                      <span className="font-semibold text-[var(--color-text)]">{r.word}</span>
+                    </label>
+                  ))}
+                </div>
+                {(d.formCheck?.length ?? 0) > 0 && (
+                  <ul className="rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-1.5 text-[12px] font-semibold text-amber-900 dark:text-amber-200 list-disc pl-6">
+                    {d.formCheck!.map((c) => <li key={c}>{c}</li>)}
+                  </ul>
+                )}
+              </>
+            )}
+            {!useForm && <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px]">
               <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Include</span>
               {d.sections.map((s) => (
                 <label key={idOf(s)} className="inline-flex items-center gap-1.5 cursor-pointer select-none">
@@ -1346,27 +1451,32 @@ function CopyUpdate({ doc, meeting, lh, stamps }: { doc: () => ExportDoc; meetin
                   <span className="font-semibold text-[var(--color-text)]">Times in Done</span>
                 </label>
               )}
-            </div>
+            </div>}
             <div className="rounded-lg border border-[var(--color-border)] bg-white p-4 max-h-[58vh] overflow-y-auto">
               {/* The email body itself — escaped text in inline-styled tables. */}
               <div dangerouslySetInnerHTML={{ __html: html }} />
             </div>
           </ModalBody>
-          <ModalFooter>
+          <ModalFooter className="flex-wrap">
             {done && (
-              <span role="status" className={`mr-auto text-[12px] font-bold ${done.ok ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700"}`}>
-                {!done.ok ? "Your browser blocked the copy - try again." : done.what === "email"
+              <span role="status" className={`w-full sm:w-auto mr-auto text-[12px] font-bold ${done.ok ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700"}`}>
+                {!done.ok ? (done.what === "word" ? "Couldn't make the Word file - try again." : "Your browser blocked the copy - try again.") : done.what === "word" ? "Word file saved." : done.what === "email"
                   ? <>Copied - paste into your email (Ctrl+V). <a className="underline" href={`mailto:?subject=${encodeURIComponent(subject)}`}>New email with subject</a></>
                   : "Copied as text - paste anywhere (Ctrl+V)."}
               </span>
             )}
-            <button onClick={printIt} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+            <button onClick={printIt} className="inline-flex items-center justify-center whitespace-nowrap flex-1 sm:flex-none min-w-[calc(50%-0.25rem)] sm:min-w-0 gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <Printer className="w-4 h-4" /> Print
             </button>
-            <button onClick={() => void run("text")} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+            <button onClick={() => void run("text")} className="inline-flex items-center justify-center whitespace-nowrap flex-1 sm:flex-none min-w-[calc(50%-0.25rem)] sm:min-w-0 gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <FileText className="w-4 h-4" /> Copy as text
             </button>
-            <button onClick={() => void run("email")} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)]">
+            {useForm && (
+              <button onClick={() => void word()} disabled={wordBusy} className="inline-flex items-center justify-center whitespace-nowrap flex-1 sm:flex-none min-w-[calc(50%-0.25rem)] sm:min-w-0 gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                <FileText className="w-4 h-4" /> Export Word
+              </button>
+            )}
+            <button onClick={() => void run("email")} className="inline-flex items-center justify-center whitespace-nowrap flex-1 sm:flex-none min-w-[calc(50%-0.25rem)] sm:min-w-0 gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)]">
               <Mail className="w-4 h-4" /> Copy for email
             </button>
           </ModalFooter>

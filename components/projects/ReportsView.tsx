@@ -11,7 +11,7 @@
 
 import { openFindingsReview } from "@/components/projects/Findings";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ClipboardPen, Download, Loader2, Mail, Maximize2, Presentation, Printer, X, Lightbulb } from "lucide-react";
+import { ChevronLeft, ClipboardPen, Download, FileText, Loader2, Mail, Maximize2, Presentation, Printer, X, Lightbulb } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import type { CancelledJob } from "@/lib/cancelledJobs";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
@@ -22,7 +22,7 @@ import { dayKey, fmtInTz } from "@/lib/scheduleTz";
 import { useLetterhead } from "@/lib/letterheadStore";
 import { REPORTS, type ReportId, type ReportLink, type ShiftPick } from "@/lib/reportLinks";
 import type { ExportDoc } from "@/lib/reportExport";
-import { copyUpdateForEmail, printHtml, updatePrintDocument, updateToSend } from "@/lib/updatePrint";
+import { copyUpdateForEmail, printHtml, sendPrintDocument, updateToSend, updateDocx, updateFileName, saveFile } from "@/lib/updatePrint";
 import { withWorkOrderCrews } from "@/lib/workOrderCrew";
 import { loadProgressLog } from "@/lib/progressHistory";
 import { loadShiftRecords, saveShiftRecord, useShiftRecords, type ShiftRecord } from "@/lib/shiftRecord";
@@ -269,7 +269,7 @@ export default function ReportsView(p: Props) {
       setPreviewErr(null);
       try {
         if (meeting) {
-          setPreview(doc ? { kind: "html", html: updatePrintDocument(updateToSend(doc, meeting), lhOn) } : null);
+          setPreview(doc ? { kind: "html", html: sendPrintDocument(updateToSend(doc, meeting), lhOn) } : null);
           setPreviewBusy(!doc);
           return;
         }
@@ -311,7 +311,7 @@ export default function ReportsView(p: Props) {
   const [msg, setMsg] = useState<string | null>(null);
   useEffect(() => { setMsg(null); }, [sel]);
   const blocked = "Your browser blocked the print window - allow pop-ups for this site and try again.";
-  const run = async (what: "download" | "print" | "email") => {
+  const run = async (what: "download" | "print" | "email" | "word") => {
     setMsg(null);
     // A print window is opened at the tap, so the browser doesn't take it for a pop-up.
     const w = what === "print" && sel !== "hourly" ? window.open("", "_blank") : null;
@@ -322,7 +322,8 @@ export default function ReportsView(p: Props) {
         if (!doc) throw new Error("Still getting the report ready.");
         const picked = updateToSend(doc, meeting);
         if (what === "email") { setMsg((await copyUpdateForEmail(picked)) ? "Copied - paste into your email." : "Your browser blocked the copy - try again."); return; }
-        printHtml(updatePrintDocument(picked, lhOn), w);
+        if (what === "word") { saveFile(await updateDocx(picked), updateFileName(picked)); setMsg("Word file saved."); return; }
+        printHtml(sendPrintDocument(picked, lhOn), w);
         remember({ report: sel, label: `${meeting === "turnover" ? shiftLabel : "Printed"}`, shift: shiftPick });
       } else if (sel === "hourly") {
         const logs = await hourlyLogs();
@@ -502,6 +503,7 @@ export default function ReportsView(p: Props) {
       )}
       {sel === "sheet" && <button type="button" onClick={() => setSheetEntry(true)} className={secondary}><ClipboardPen className="w-4 h-4" /> Enter what&apos;s written</button>}
       {meeting && <button type="button" disabled={busy || !doc} onClick={() => void run("email")} className={secondary}><Mail className="w-4 h-4" /> Copy for email</button>}
+      {meeting === "turnover" && doc?.form && <button type="button" disabled={busy} onClick={() => void run("word")} className={secondary}><FileText className="w-4 h-4" /> Export Word</button>}
       {(meeting === "kickoff" || meeting === "closeout") && (
         <>
           <button type="button" onClick={() => setOnScreen("open")} className={secondary} title="The whole meeting on screen: hide sections, lessons, copy as text"><Maximize2 className="w-4 h-4" /> Open</button>

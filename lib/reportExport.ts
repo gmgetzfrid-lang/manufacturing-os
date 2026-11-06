@@ -102,6 +102,10 @@ export interface ExportSection {
 }
 
 export interface ExportDoc {
+  /** The shift update in the plant's required format (lib/shiftForm),
+   *  with what to check before it goes ("names carried from …"). */
+  form?: import("@/lib/shiftForm").ShiftForm;
+  formCheck?: string[];
   kind: string;          // "Shift turnover"
   project: string;
   when: string;          // "Day shift Wed Oct 22 5:30–17:30 → Night shift …"
@@ -396,23 +400,85 @@ export function toEmailHtml(d: ExportDoc): string {
   return noEmDash(emailHtml(d));
 }
 
-function emailHtml(d: ExportDoc): string {
+/** The pieces of the update's header, each one on or off for the email and
+ *  the export: the masthead's lines, its verdict, and Where we stand's
+ *  line, numbers and bars. */
+export type HeaderPart = "kind" | "project" | "when" | "asof" | "status" | "standLine" | "complete" | "plan" | "gap" | "steps" | "bars";
+export const HEADER_PARTS: Array<{ id: HeaderPart; word: string }> = [
+  { id: "kind", word: "Shift turnover" }, { id: "project", word: "Project name" }, { id: "when", word: "Shifts" }, { id: "asof", word: "As of" },
+  { id: "status", word: "Ahead / behind" }, { id: "standLine", word: "Day, finish dates" }, { id: "complete", word: "Complete" },
+  { id: "plan", word: "Plan by now" }, { id: "gap", word: "Work ahead / behind" }, { id: "steps", word: "Steps done" }, { id: "bars", word: "Done / plan bars" },
+];
+/** Which piece a Where we stand number is. */
+export function tilePart(label: string): HeaderPart | null {
+  if (/^complete/i.test(label)) return "complete";
+  if (/^plan by now/i.test(label)) return "plan";
+  if (/^(work ahead|work behind|gap)/i.test(label)) return "gap";
+  if (/^steps done/i.test(label)) return "steps";
+  return null;
+}
+
+/** The masthead with the pieces left on: what it is, the project, the
+ *  shifts and time, and the verdict box. Empty when every piece is off. */
+function mastheadHtml(d: ExportDoc, off: ReadonlySet<HeaderPart> = new Set()): string {
   // No dark blocks with light text anywhere: phone mail apps switching
   // light / dark mode recolor text and backgrounds separately, and white
   // text on a kept-dark background comes out black on navy. Light panels
   // with dark text (every color set on the element itself) flip cleanly.
-  const status = d.status
+  const status = d.status && !off.has("status")
     ? td(`padding:6px 10px;background-color:${TONE[d.status.tone].bg};border:1px solid ${TONE[d.status.tone].bd};border-left:4px solid ${SOLID[d.status.tone]};text-align:right;white-space:nowrap;vertical-align:middle;`,
       `<div style="${FONT}font-size:14px;font-weight:bold;color:${TONE[d.status.tone].fg};">${esc(d.status.label)}</div>` +
       (d.status.detail ? `<div style="${FONT}font-size:10px;color:${TONE[d.status.tone].fg};">${esc(d.status.detail)}</div>` : ""), `bgcolor="${TONE[d.status.tone].bg}" `)
     : "";
-  let html = `<div style="${FONT}color:${INK};">`;
-  html += `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;"><tr>` +
-    td(`padding:8px 12px;background-color:#f8fafc;border-top:4px solid ${INK};border-bottom:1px solid ${LINE};border-left:1px solid ${LINE};`,
-      `<div style="${FONT}font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:1.5px;color:${MUTED};">${esc(d.kind)}</div>` +
-      `<div style="${FONT}font-size:18px;font-weight:bold;color:${INK};">${esc(d.project)}</div>` +
-      `<div style="${FONT}font-size:11px;color:#334155;">${esc(d.when)} · as of ${esc(d.asOf)}</div>`, `bgcolor="#f8fafc" `) +
+  const whenLine = [off.has("when") ? "" : d.when, off.has("asof") ? "" : `as of ${d.asOf}`].filter(Boolean).join(" · ");
+  const left = (off.has("kind") ? "" : `<div style="${FONT}font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:1.5px;color:${MUTED};">${esc(d.kind)}</div>`) +
+    (off.has("project") ? "" : `<div style="${FONT}font-size:18px;font-weight:bold;color:${INK};">${esc(d.project)}</div>`) +
+    (whenLine ? `<div style="${FONT}font-size:11px;color:#334155;">${esc(whenLine)}</div>` : "");
+  if (!left && !status) return "";
+  return `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;"><tr>` +
+    (left ? td(`padding:8px 12px;background-color:#f8fafc;border-top:4px solid ${INK};border-bottom:1px solid ${LINE};border-left:1px solid ${LINE};`, left, `bgcolor="#f8fafc" `) : "") +
     status + `</tr></table>`;
+}
+
+/** The header as picked: the masthead, then Where we stand's line,
+ *  numbers and bars (only the pieces left on), for the required format. */
+export function headerHtml(d: ExportDoc, off: ReadonlySet<HeaderPart>): string {
+  let html = mastheadHtml(d, off);
+  const stand = d.sections.find((s) => s.id === "stand");
+  const ov = stand?.blocks.find((b): b is Extract<ExportBlock, { k: "overview" }> => b.k === "overview");
+  const stats = (ov?.stats ?? []).filter((x) => { const p = tilePart(x.label); return !p || !off.has(p); });
+  const bars = ov?.bars && !off.has("bars") ? ov.bars : undefined;
+  const line = stand && !off.has("standLine");
+  if (line || stats.length || bars) {
+    html += `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;margin-top:${html ? 14 : 0}px;">` +
+      (line ? `<tr>${td(`border-bottom:2px solid ${stand!.flag === "rose" ? SOLID.rose : INK};padding:0 0 3px;`,
+        `<span style="${FONT}font-size:15px;font-weight:bold;color:${INK};">${esc(stand!.title)}</span>` + (stand!.sub ? `<span style="${FONT}font-size:12px;color:${MUTED};">&nbsp;&nbsp;${esc(stand!.sub)}</span>` : ""))}</tr>` : "") +
+      (stats.length || bars ? `<tr>${td("padding:6px 0 0;", blockHtml({ k: "overview", stats, bars, title: "", lines: [] }))}</tr>` : "") +
+      `</table>`;
+  }
+  return html ? `<div style="${FONT}color:${INK};max-width:820px;margin-bottom:14px;">${html}</div>` : "";
+}
+
+/** The header as text, the same pieces. */
+export function headerText(d: ExportDoc, off: ReadonlySet<HeaderPart>): string {
+  const out: string[] = [];
+  if (!off.has("kind")) out.push(d.kind.toUpperCase());
+  if (!off.has("project")) out.push(d.project);
+  const whenLine = [off.has("when") ? "" : d.when, off.has("asof") ? "" : `as of ${d.asOf}`].filter(Boolean).join(" · ");
+  if (whenLine) out.push(whenLine);
+  if (d.status && !off.has("status")) out.push(`${d.status.label}${d.status.detail ? ` - ${d.status.detail}` : ""}`);
+  const stand = d.sections.find((s) => s.id === "stand");
+  const ov = stand?.blocks.find((b): b is Extract<ExportBlock, { k: "overview" }> => b.k === "overview");
+  if (stand && !off.has("standLine")) out.push(`Where we stand${stand.sub ? ` - ${stand.sub}` : ""}`);
+  const stats = (ov?.stats ?? []).filter((x) => { const p = tilePart(x.label); return !p || !off.has(p); });
+  if (stats.length) out.push(stats.map((x) => `${x.label}: ${x.value}`).join(" · "));
+  if (ov?.bars && !off.has("bars")) out.push(`Done ${ov.bars.done}% · Plan ${ov.bars.plan}% (${ov.bars.from} to ${ov.bars.to})`);
+  return noEmDash(out.join("\n"));
+}
+
+function emailHtml(d: ExportDoc): string {
+  let html = `<div style="${FONT}color:${INK};">`;
+  html += mastheadHtml(d);
   for (const s of d.sections) {
     // A section that needs attention gets a colored rule, not a number.
     const rule = s.flag === "rose" ? SOLID.rose : s.flag === "amber" ? SOLID.amber : INK;
