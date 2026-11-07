@@ -4,6 +4,7 @@ import React, { createContext, useCallback, useContext, useEffect, useLayoutEffe
 import { supabase } from "@/lib/supabase";
 import type { Role } from "@/types/schema";
 import { normalizeRoles, primaryRole } from "@/lib/roleCapabilities";
+import { readMember, writeMember, storedUid, memberToOpen, type CachedMember } from "@/lib/memberCache";
 
 type OrgMember = {
   orgId: string;
@@ -56,16 +57,37 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   // the org is back for the first visible frame (no flash, no hang on a
   // transient-null loading state) and both hydration renders start null.
   const [activeOrgId, _setActiveOrgId] = useState<string | null>(null);
-  useLayoutEffect(() => {
-    try {
-      const v = window.localStorage.getItem(LS_ORG_KEY);
-      if (v) _setActiveOrgId((cur) => cur ?? v);
-    } catch { /* private mode — boot resolves the org from the profile */ }
-  }, []);
   const [activeRole, setActiveRole] = useState<Role>("Viewer");
   const [roles, setRoles] = useState<Role[]>([]);
   const [member, setMember] = useState<OrgMember | null>(null);
   const [membershipState, setMembershipState] = useState<MembershipState>("resolving");
+  // The account's role as last seen on this device, opened with at once on
+  // a refresh (lib/memberCache) and checked again in the background: no
+  // spinner, and never a "Viewer" app while the role is looked up.
+  const openedRef = useRef<CachedMember | null>(null);
+  useLayoutEffect(() => {
+    let lastOrg: string | null = null;
+    try {
+      lastOrg = window.localStorage.getItem(LS_ORG_KEY);
+      if (lastOrg) _setActiveOrgId((cur) => cur ?? lastOrg);
+    } catch { /* private mode — boot resolves the org from the profile */ }
+    try {
+      const m = memberToOpen(readMember(window.localStorage), storedUid(window.localStorage, window.sessionStorage), lastOrg);
+      if (!m) return;
+      openedRef.current = m;
+      setUid(m.uid);
+      setUserEmail(m.email ?? null);
+      _setActiveOrgId(m.orgId);
+      setMember({ orgId: m.orgId, uid: m.uid, role: m.role, roles: m.roles, status: "active", email: m.email });
+      setRoles(m.roles);
+      setActiveRole(m.role);
+      setMembershipState("member");
+      setLoading(false);
+    } catch { /* storage unreadable: boot looks it up */ }
+  }, []);
+  // Mirrors for the watchdogs below (they close over the first render).
+  const stateRef = useRef<MembershipState>("resolving");
+  useEffect(() => { stateRef.current = membershipState; }, [membershipState]);
   const bootedRef = useRef(false);
   // Track the *current* uid in a ref so the auth-state callback (which
   // captures the initial closure) can detect "this SIGNED_IN is just a
@@ -83,6 +105,10 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!loading) return;
     const t = window.setTimeout(() => {
+      // Still looking up a signed-in account's role: keep the loading screen
+      // (it offers Start over) rather than open the app as a Viewer. Each
+      // lookup has its own time limit, so this ends.
+      if (uidRef.current && stateRef.current === "resolving") return;
       console.warn("[RoleContext] loading watchdog tripped - force-clearing spinner");
       setLoading(false);
     }, 6000);
@@ -119,8 +145,10 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
     if (uid) await persistOrgId(orgId, uid);
   }, [uid, persistOrgId]);
 
-  const resolveOrgAndRole = async (userId: string, email: string | null) => {
-    setMembershipState("resolving");
+  /** `quiet`: a background check of the role the app opened with — a
+   *  failed lookup keeps it (no error screen); a changed role replaces it. */
+  const resolveOrgAndRole = async (userId: string, email: string | null, quiet = false) => {
+    if (!quiet) setMembershipState("resolving");
 
     // Every query THROWS on error so the retry loop below can tell "the
     // lookup failed" apart from "this account truly has no membership". The
@@ -170,13 +198,19 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
     let lastErr: unknown = null;
     for (let i = 0; i < 3 && !resolved; i++) {
       try {
-        resolved = await attempt();
+        // A lookup that hangs counts as failed, so the boot always ends.
+        resolved = await Promise.race([
+          attempt(),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("membership lookup timed out")), 10000)),
+        ]);
       } catch (e) {
         lastErr = e;
         await new Promise((r) => setTimeout(r, 600 * (i + 1)));
       }
     }
     if (!resolved) {
+      // A background check that couldn't reach the server: keep the role.
+      if (quiet) { console.warn("[RoleContext] background role check failed - keeping the remembered role", lastErr); return; }
       // Real lookup failure — say so and let the shell offer a retry.
       console.warn("[RoleContext] membership resolution failed after retries", lastErr);
       setMember(null);
@@ -208,12 +242,14 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         email: (mem.email as string | undefined) ?? email ?? undefined,
       };
       const active = nextMember.status === "active";
+      try { writeMember(window.localStorage, active ? nextMember : null); } catch { /* private mode */ }
       setMember(nextMember);
       setRoles(active ? collection : []);
       setActiveRole(active ? headline : "Viewer");
       setMembershipState(active ? "member" : "none");
       if (active) void persistOrgId(orgId, userId);
     } else {
+      try { writeMember(window.localStorage, null); } catch { /* private mode */ }
       setMember(null);
       setRoles([]);
       setActiveRole("Viewer");
@@ -236,17 +272,37 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
     // the rest of the app render — auth-gated queries will either work or
     // redirect on their own.
     const bootTimeout = window.setTimeout(() => {
-      setLoading(false);
       bootedRef.current = true;
+      if (uidRef.current && stateRef.current === "resolving") return;
+      setLoading(false);
     }, 8000);
 
     // Get initial session
     supabase.auth.getSession().then(async ({ data: { session } }) => {
+      const opened = openedRef.current;
       if (session?.user) {
         const u = session.user;
         setUid(u.id);
         setUserEmail(u.email ?? null);
+        if (opened && opened.uid === u.id) {
+          // Already open with the remembered role: check it in the background.
+          setLoading(false);
+          bootedRef.current = true;
+          window.clearTimeout(bootTimeout);
+          void resolveOrgAndRole(u.id, u.email ?? null, true);
+          return;
+        }
         await resolveOrgAndRole(u.id, u.email ?? null);
+      } else if (opened) {
+        // Opened with a remembered role, but the session is gone: signed out.
+        openedRef.current = null;
+        try { writeMember(window.localStorage, null); } catch { /* private mode */ }
+        setUid(null);
+        setUserEmail(null);
+        setMember(null);
+        setRoles([]);
+        setActiveRole("Viewer");
+        setMembershipState("resolving");
       }
       setLoading(false);
       bootedRef.current = true;
@@ -266,6 +322,8 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         setMember(null);
         setMembershipState("resolving");
         setLoading(false);
+        openedRef.current = null;
+        try { writeMember(window.localStorage, null); } catch { /* private mode */ }
         // Status snapshots persist in localStorage for instant paints —
         // they must not outlive the account that fetched them.
         try {
