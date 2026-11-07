@@ -107,12 +107,19 @@ export function sendParts(d: ExportDoc, o: { format?: SendFormat; headerOff?: Re
   const format = o.format ?? readFormat();
   if (!d.form || format === "detail") return { html: toEmailHtml(d), text: toPlainText(d), form: false };
   const hOff = o.headerOff ?? readHeaderOff(), fOff = o.formOff ?? readFormOff();
-  const head = headerHtml(d, hOff), headT = headerText(d, hOff);
-  return { html: head + formHtml(d.form, fOff), text: [headT, formText(d.form, fOff)].filter(Boolean).join("\n\n"), form: true };
+  const h = formHead(d), shown = { project: !hOff.has("project"), when: !hOff.has("when") };
+  const head = headerHtml(h, hOff), headT = headerText(h, hOff);
+  return { html: head + formHtml(d.form, fOff, shown), text: [headT, formText(d.form, fOff, shown)].filter(Boolean).join("\n\n"), form: true };
 }
 
+/** The header over the shift table says the shift's date once ("Thursday,
+ *  November 5, 2026 · Day shift 6:00 AM – 6:00 PM", as of the time), not
+ *  the turnover's "Day shift … → Night shift …". */
+const formHead = (d: ExportDoc): ExportDoc => (d.form ? { ...d, when: d.form.dateLine, asOf: d.form.asOf ?? d.asOf } : d);
+
 /** The header pieces for the Word file. */
-export function docxHeader(d: ExportDoc, off: ReadonlySet<HeaderPart>): FormDocxHeader {
+export function docxHeader(full: ExportDoc, off: ReadonlySet<HeaderPart>): FormDocxHeader {
+  const d = formHead(full);
   const stand = d.sections.find((s) => s.id === "stand");
   const ov = stand?.blocks.find((b): b is Extract<ExportBlock, { k: "overview" }> => b.k === "overview");
   return {

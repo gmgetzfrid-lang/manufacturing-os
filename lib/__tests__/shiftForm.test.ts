@@ -36,6 +36,19 @@ describe("the shift table in the plant's format", () => {
       { k: "item", text: "E-32 – Set Blinds; Verify LOTO, Remove Channel Head, Pull Bundle (0% to 50%)" }, { k: "item", text: "PSV-209 - E-27 Propane Condenser" }]);
     expect(g.rows.find((r) => r.id === "notes")!.lines.map((l) => ("lead" in l ? `${l.lead}${l.text}` : l.text))).toEqual(["9:00 – Schultz: E-02 done, Break, 15 min.", "9:30 – Ancon: V-1 started. Schultz: E-23 done"]);
   });
+  it("the date said once: the header's line, no title row repeating it", () => {
+    const g = shiftForm({ ...input, weekday: "Thursday", shift: "Day shift", asOf: "6:00 PM" });
+    expect(g.dateLine).toBe("Thursday, November 5, 2026 · Day shift 6:00 AM – 6:00 PM");
+    expect(g.asOf).toBe("6:00 PM");
+    const both = formHtml(g, [], { project: true, when: true });
+    expect(both).not.toContain("November 5, 2026");
+    expect(both).not.toContain("LRU Turnaround November 2026");
+    // The header without the date: the title row says only the date.
+    const dateOnly = formHtml(g, [], { project: true });
+    expect(dateOnly).toContain("November 5, 2026 6:00 AM – 6:00 PM");
+    expect(dateOnly).not.toContain("LRU Turnaround November 2026");
+    expect(formText(g, [], { project: true, when: true })).not.toContain("November 5, 2026");
+  });
   it("incidents not entered are said, never shown as none", () => {
     const g = shiftForm({ ...input, incidents: undefined });
     expect(g.rows.find((r) => r.id === "safety")!.lines[0]).toMatchObject({ text: "Incidents not entered" });
@@ -43,7 +56,7 @@ describe("the shift table in the plant's format", () => {
   it("rows left out stay out of the email and the text", () => {
     const html = formHtml(f, ["attend", "headcount"]);
     expect(html).not.toContain("Meeting Attendees");
-    expect(html).toContain("<b><u>No Safety Incidents</u></b>");
+    expect(html).toMatch(/<b[^>]*><u>No Safety Incidents<\/u><\/b>/);
     expect(html).toMatch(/<ol[^>]*><li[^>]*>V-03 – Remove Trays/);
     const t = formText(f, ["notes"]);
     expect(t).toContain("  1. V-03 – Remove Trays");
@@ -56,6 +69,10 @@ describe("the shift table in the plant's format", () => {
     expect(doc).toContain('<w:gridCol w:w="1971"/><w:gridCol w:w="8649"/>');
     expect(doc).toContain("AHEAD");
     expect(doc).toContain("No Safety Incidents");
+    // The header says the project: the title row says only the date.
+    expect(doc).toContain("November 5, 2026 6:00 AM");
+    expect(doc).not.toContain("LRU Turnaround November 2026");
+    expect(doc).toContain('<w:top w:val="single" w:sz="18" w:space="0" w:color="000A72"/>');
     const nums = await zip.file("word/numbering.xml")!.async("string");
     expect((nums.match(/<w:num w:numId=/g) ?? []).length).toBe(4);
     expect(nums).toContain("<w:startOverride w:val=\"1\"/>");

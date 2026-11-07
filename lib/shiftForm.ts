@@ -38,8 +38,17 @@ export interface ShiftForm {
   title: string;
   /** "November 5, 2026 6:00 AM – 6:00 PM" */
   when: string;
+  /** The header's date line, the date said once: "Thursday, November 5,
+   *  2026 · Day shift 6:00 AM – 6:00 PM". */
+  dateLine: string;
+  /** "6:00 PM" (the date too when it's another day). */
+  asOf?: string;
   rows: FormRow[];
 }
+
+/** What the header above the table already says: the table's title row
+ *  leaves it out (and is left out when it says both). */
+export interface FormShown { project?: boolean; when?: boolean }
 
 export const FORM_ROWS: Array<{ id: FormRowId; word: string }> = [
   { id: "attend", word: "Meeting attendees" },
@@ -57,6 +66,8 @@ export interface FormInput {
   project: string;
   /** "November 5, 2026", "6:00 AM", "6:00 PM", the meeting's "5:30 AM". */
   date: string; start: string; end: string; meeting: string;
+  /** "Thursday", "Day shift", and when the update is as of ("6:00 PM"). */
+  weekday?: string; shift?: string; asOf?: string;
   attendees: Array<{ crew: string; names: string }>;
   incidents?: { none: boolean; items: Array<{ kind: string; text: string; time?: string }> };
   safetyTopic?: string;
@@ -128,7 +139,9 @@ export function shiftForm(i: FormInput): ShiftForm {
       : none("No notes entered") },
     { id: "headcount", label: "Personnel Headcount", lines: i.headcount.length ? i.headcount.map((h) => ({ k: "text" as const, text: `${clean(h.crew)} – ${h.n}`, bold: true })) : none("No head count entered") },
   ];
-  return { title: clean(i.project), when: `${i.date} ${i.start} – ${i.end}`, rows };
+  return { title: clean(i.project), when: `${i.date} ${i.start} – ${i.end}`,
+    dateLine: `${i.weekday ? `${i.weekday}, ` : ""}${i.date} · ${i.shift ? `${i.shift} ` : ""}${i.start} – ${i.end}`,
+    ...(i.asOf ? { asOf: i.asOf } : {}), rows };
 }
 
 /** The rows that go out. */
@@ -138,37 +151,52 @@ export const formRows = (f: ShiftForm, off: Iterable<FormRowId>) => { const o = 
 
 const esc = (s: string) => noEmDash(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const FONT = "font-family:Lato,Calibri,Arial,sans-serif;";
-const CELL = `${FONT}font-size:11pt;color:#000000;border:1px solid #ABABAB;vertical-align:top;`;
+// A little style, the same in the email, print and Word: Kern navy for the
+// row names, crews and times, a navy rule on top, a light tint behind the
+// row names and thin light lines between the rows. No dark bands with
+// light text: phone mail apps in dark mode recolor text and backgrounds
+// separately (lib/reportExport).
+const NAVY = "#000A72", TINT = "#EEF1F8", RULE = "#D5DAE6", OK_GREEN = "#166534";
 
 function linesHtml(lines: FormLine[]): string {
-  let out = "", list: string[] = [];
-  const flush = () => { if (list.length) { out += `<ol style="${FONT}margin:0 0 6px 0;padding-left:28px;">${list.map((t) => `<li style="margin:0;">${esc(t)}</li>`).join("")}</ol>`; list = []; } };
+  let out = "", list: string[] = [], first = true;
+  const flush = () => { if (list.length) { out += `<ol style="${FONT}font-size:11pt;color:#111827;margin:2px 0 6px 0;padding-left:26px;">${list.map((t) => `<li style="margin:0 0 3px 0;">${esc(t)}</li>`).join("")}</ol>`; list = []; } };
   for (const l of lines) {
     if (l.k === "item") { list.push(l.text); continue; }
     flush();
-    if (l.k === "group") out += `<div style="${FONT}font-size:11pt;font-weight:bold;margin:0;">${esc(l.text)}</div>`;
-    else out += `<div style="${FONT}font-size:11pt;margin:0 0 2px 0;">${l.lead ? `<b>${esc(l.lead)}</b>` : ""}${l.strong ? `<b><u>${esc(l.text)}</u></b>` : l.bold ? `<b>${esc(l.text)}</b>` : esc(l.text)}</div>`;
+    if (l.k === "group") out += `<div style="${FONT}font-size:11pt;font-weight:bold;color:${NAVY};margin:${first ? 0 : 8}px 0 0 0;">${esc(l.text)}</div>`;
+    else out += `<div style="${FONT}font-size:11pt;color:#111827;margin:0 0 5px 0;">${l.lead ? `<b style="color:${NAVY};">${esc(l.lead)}</b>` : ""}${l.strong ? `<b style="color:${OK_GREEN};"><u>${esc(l.text)}</u></b>` : l.bold ? `<b>${esc(l.text)}</b>` : esc(l.text)}</div>`;
+    first = false;
   }
   flush();
   return out;
 }
 
+/** The title row: what the header above doesn't already say. */
+function titleOf(f: ShiftForm, shown: FormShown): { left: string; right: string } | null {
+  const left = shown.project ? "" : f.title, right = shown.when ? "" : f.when;
+  return left || right ? { left, right } : null;
+}
+
 /** The table as an email body: inline styles only, so Outlook and Gmail
  *  keep it as it is. */
-export function formHtml(f: ShiftForm, off: Iterable<FormRowId> = []): string {
+export function formHtml(f: ShiftForm, off: Iterable<FormRowId> = [], shown: FormShown = {}): string {
   const rows = formRows(f, off);
-  const title = `<td style="${CELL}padding:4px 6px;" width="19%"></td>` +
-    `<td style="${CELL}padding:4px 6px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;"><tr>` +
-    `<td style="${FONT}font-size:11pt;">${esc(f.title)}</td><td style="${FONT}font-size:11pt;text-align:right;white-space:nowrap;">${esc(f.when)}</td></tr></table></td>`;
-  return `<table data-form="shift" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;border:1px solid #ABABAB;background-color:#FFFFFF;" bgcolor="#FFFFFF">` +
-    `<tr>${title}</tr>` +
-    rows.map((r) => `<tr><td style="${CELL}padding:4px 6px;" width="19%">${esc(r.label)}</td><td style="${CELL}padding:4px 6px;">${linesHtml(r.lines)}</td></tr>`).join("") +
+  const t = titleOf(f, shown);
+  const line = (i: number) => (i ? `border-top:1px solid ${RULE};` : "");
+  const title = t ? `<tr><td colspan="2" bgcolor="#F7F8FB" style="${FONT}background-color:#F7F8FB;padding:8px 12px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;"><tr>` +
+    `<td style="${FONT}font-size:12pt;font-weight:bold;color:${NAVY};">${esc(t.left)}</td><td style="${FONT}font-size:11pt;color:#334155;text-align:right;white-space:nowrap;">${esc(t.right)}</td></tr></table></td></tr>` : "";
+  return `<table data-form="shift" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;border:1px solid ${RULE};border-top:3px solid ${NAVY};background-color:#FFFFFF;" bgcolor="#FFFFFF">` +
+    title +
+    rows.map((r, i) => `<tr><td width="19%" bgcolor="${TINT}" style="${FONT}font-size:10.5pt;font-weight:bold;color:${NAVY};background-color:${TINT};vertical-align:top;padding:9px 10px;${line(i || (t ? 1 : 0))}">${esc(r.label)}</td>` +
+      `<td style="${FONT}font-size:11pt;color:#111827;vertical-align:top;padding:9px 12px;${line(i || (t ? 1 : 0))}">${linesHtml(r.lines)}</td></tr>`).join("") +
     `</table>`;
 }
 
 /** The table as plain text (a mail app that won't take formatting). */
-export function formText(f: ShiftForm, off: Iterable<FormRowId> = []): string {
-  const out: string[] = [`${f.title}    ${f.when}`, ""];
+export function formText(f: ShiftForm, off: Iterable<FormRowId> = [], shown: FormShown = {}): string {
+  const t = titleOf(f, shown);
+  const out: string[] = t ? [[t.left, t.right].filter(Boolean).join("    "), ""] : [];
   for (const r of formRows(f, off)) {
     out.push(r.label.toUpperCase());
     let n = 0;
@@ -198,19 +226,24 @@ const W_NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/m
 const xe = (s: string) => noEmDash(s).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const run = (t: string, o: { b?: boolean; u?: boolean; sz?: number; color?: string } = {}) =>
   `<w:r>${o.b || o.u || o.sz || o.color ? `<w:rPr>${o.b ? "<w:b/>" : ""}${o.color ? `<w:color w:val="${o.color}"/>` : ""}${o.sz ? `<w:sz w:val="${o.sz}"/><w:szCs w:val="${o.sz}"/>` : ""}${o.u ? '<w:u w:val="single"/>' : ""}</w:rPr>` : ""}<w:t xml:space="preserve">${xe(t)}</w:t></w:r>`;
-const BORDER = (c = "ABABAB") => `<w:tcBorders><w:top w:val="single" w:sz="6" w:space="0" w:color="${c}"/><w:left w:val="single" w:sz="6" w:space="0" w:color="${c}"/><w:bottom w:val="single" w:sz="6" w:space="0" w:color="${c}"/><w:right w:val="single" w:sz="6" w:space="0" w:color="${c}"/></w:tcBorders>`;
+const BORDER = (c = "D5DAE6") => `<w:tcBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="${c}"/><w:left w:val="single" w:sz="4" w:space="0" w:color="${c}"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="${c}"/><w:right w:val="single" w:sz="4" w:space="0" w:color="${c}"/></w:tcBorders>`;
 const TONE_FILL: Record<string, { fill: string; color: string }> = {
   rose: { fill: "FFF1F2", color: "9F1239" }, amber: { fill: "FFFBEB", color: "92400E" }, emerald: { fill: "ECFDF5", color: "065F46" },
   slate: { fill: "F1F5F9", color: "0F172A" }, muted: { fill: "F1F5F9", color: "475569" },
 };
-const cell = (w: number, inner: string, o: { fill?: string; border?: boolean } = {}) =>
-  `<w:tc><w:tcPr><w:tcW w:w="${w}" w:type="dxa"/>${o.border === false ? "" : BORDER()}${o.fill ? `<w:shd w:val="clear" w:color="auto" w:fill="${o.fill}"/>` : ""}<w:tcMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tcMar></w:tcPr>${inner || "<w:p/>"}</w:tc>`;
+const cell = (w: number, inner: string, o: { fill?: string; border?: boolean; pad?: [number, number]; span?: number } = {}) =>
+  `<w:tc><w:tcPr><w:tcW w:w="${w}" w:type="dxa"/>${o.span ? `<w:gridSpan w:val="${o.span}"/>` : ""}${o.border === false ? "" : BORDER()}${o.fill ? `<w:shd w:val="clear" w:color="auto" w:fill="${o.fill}"/>` : ""}<w:tcMar><w:top w:w="${o.pad?.[0] ?? 0}" w:type="dxa"/><w:left w:w="${o.pad?.[1] ?? 108}" w:type="dxa"/><w:bottom w:w="${o.pad?.[0] ?? 0}" w:type="dxa"/><w:right w:w="${o.pad?.[1] ?? 108}" w:type="dxa"/></w:tcMar></w:tcPr>${inner || "<w:p/>"}</w:tc>`;
 const para = (runs: string, pPr = "") => `<w:p>${pPr ? `<w:pPr>${pPr}</w:pPr>` : ""}${runs}</w:p>`;
 const table = (widths: number[], rows: string[], borders = true) =>
   `<w:tbl><w:tblPr><w:tblW w:w="${widths.reduce((a, b) => a + b, 0)}" w:type="dxa"/>${borders ? '<w:tblBorders><w:top w:val="outset" w:sz="6" w:space="0" w:color="auto"/><w:left w:val="outset" w:sz="6" w:space="0" w:color="auto"/><w:bottom w:val="outset" w:sz="6" w:space="0" w:color="auto"/><w:right w:val="outset" w:sz="6" w:space="0" w:color="auto"/></w:tblBorders>' : ""}<w:tblLayout w:type="fixed"/><w:tblCellMar><w:left w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar><w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="1" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/></w:tblPr><w:tblGrid>${widths.map((w) => `<w:gridCol w:w="${w}"/>`).join("")}</w:tblGrid>${rows.join("")}</w:tbl>`;
 
 // The plant's own: columns 1971 and 8649 twips, Lato 11.
 const COL_L = 1971, COL_R = 8649, FULL = COL_L + COL_R;
+const NAVY_W = "000A72";
+/** The shift table: a navy rule on top, thin light lines around and
+ *  between the rows, none down the middle. */
+const formTable = (rows: string[]) =>
+  `<w:tbl><w:tblPr><w:tblW w:w="${FULL}" w:type="dxa"/><w:tblBorders><w:top w:val="single" w:sz="18" w:space="0" w:color="${NAVY_W}"/><w:left w:val="single" w:sz="4" w:space="0" w:color="D5DAE6"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="D5DAE6"/><w:right w:val="single" w:sz="4" w:space="0" w:color="D5DAE6"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="D5DAE6"/><w:insideV w:val="nil"/></w:tblBorders><w:tblLayout w:type="fixed"/><w:tblCellMar><w:left w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar><w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="1" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/></w:tblPr><w:tblGrid><w:gridCol w:w="${COL_L}"/><w:gridCol w:w="${COL_R}"/></w:tblGrid>${rows.join("")}</w:tbl>`;
 
 function headerXml(h: FormDocxHeader): string {
   let x = "";
@@ -255,23 +288,28 @@ export async function formDocx(f: ShiftForm, off: Iterable<FormRowId> = [], head
   const rows = formRows(f, off);
   const nums: number[] = [];
   const cellLines = (lines: FormLine[]) => {
-    let out = "", num = 0;
+    let out = "", num = 0, first = true;
     for (const l of lines) {
-      if (l.k === "group") { num = 0; out += para(run(l.text, { b: true })); continue; }
+      if (l.k === "group") { num = 0; out += para(run(l.text, { b: true, color: NAVY_W }), `<w:keepNext/><w:spacing w:before="${first ? 0 : 140}" w:after="40"/>`); first = false; continue; }
       if (l.k === "item") {
         if (!num) { num = nums.length + 1; nums.push(num); }
-        out += para(run(l.text), `<w:numPr><w:ilvl w:val="0"/><w:numId w:val="${num}"/></w:numPr>`);
+        out += para(run(l.text), `<w:numPr><w:ilvl w:val="0"/><w:numId w:val="${num}"/></w:numPr><w:spacing w:after="40"/>`);
+        first = false;
         continue;
       }
       num = 0;
-      out += para((l.lead ? run(l.lead, { b: true }) : "") + run(l.text, { b: l.strong || l.bold, u: l.strong }));
+      out += para((l.lead ? run(l.lead, { b: true, color: NAVY_W }) : "") + run(l.text, { b: l.strong || l.bold, u: l.strong, color: l.strong ? "166534" : undefined }), '<w:spacing w:after="80"/>');
+      first = false;
     }
     return out || "<w:p/>";
   };
-  const titleRow = `<w:tr><w:trPr><w:trHeight w:val="330"/></w:trPr>${cell(COL_L, "<w:p/>")}${cell(COL_R, para(run(f.title) + "<w:r><w:tab/></w:r>" + run(f.when), `<w:tabs><w:tab w:val="right" w:pos="${COL_R - 250}"/></w:tabs>`))}</w:tr>`;
-  const body = (header ? headerXml(header) : "") + table([COL_L, COL_R], [
+  // What the header above already says isn't said again.
+  const t = titleOf(f, { project: !!header?.project, when: !!header?.when });
+  const PAD: [number, number] = [110, 140];
+  const titleRow = t ? `<w:tr>${cell(FULL, para(run(t.left, { b: true, sz: 24, color: NAVY_W }) + "<w:r><w:tab/></w:r>" + run(t.right, { color: "334155" }), `<w:tabs><w:tab w:val="right" w:pos="${FULL - 300}"/></w:tabs><w:spacing w:after="0"/>`), { fill: "F7F8FB", border: false, pad: PAD, span: 2 })}</w:tr>` : "";
+  const body = (header ? headerXml(header) : "") + formTable([
     titleRow,
-    ...rows.map((r) => `<w:tr><w:trPr><w:trHeight w:val="330"/></w:trPr>${cell(COL_L, para(run(r.label)))}${cell(COL_R, cellLines(r.lines))}</w:tr>`),
+    ...rows.map((r) => `<w:tr>${cell(COL_L, para(run(r.label, { b: true, sz: 21, color: NAVY_W }), '<w:spacing w:after="0"/>'), { fill: "EEF1F8", border: false, pad: PAD })}${cell(COL_R, cellLines(r.lines), { border: false, pad: PAD })}</w:tr>`),
   ]) + "<w:p/>";
   const sect = '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/><w:cols w:space="720"/></w:sectPr>';
   const numbering = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering ${W_NS}><w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="hybridMultilevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum>${nums.map((n) => `<w:num w:numId="${n}"><w:abstractNumId w:val="0"/><w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride></w:num>`).join("")}</w:numbering>`;

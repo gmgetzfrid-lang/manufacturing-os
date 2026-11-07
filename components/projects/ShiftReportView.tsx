@@ -806,6 +806,9 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       return shiftForm({
         project: projectName ?? "Schedule",
         date: fmtInTz(w.start, tz, { month: "long", day: "numeric", year: "numeric" }), start: ctx.T(w.start), end: ctx.T(w.end),
+        weekday: fmtInTz(w.start, tz, { weekday: "long" }), shift: w.kind === "night" ? "Night shift" : "Day shift",
+        // As of: the time, and the date only when it's another day.
+        asOf: `${fmtInTz(asOf, tz, { year: "numeric", month: "numeric", day: "numeric" }) === fmtInTz(w.start, tz, { year: "numeric", month: "numeric", day: "numeric" }) ? ctx.T(asOf) : ctx.DT(asOf)}${rehearsal ? " · rehearsal - shift not started" : historyNote ? ` · ${historyNote}` : ""}`,
         meeting: ctx.T(w.start - meetingLeadMin(times) * 60_000),
         attendees: parts.rows.map((x) => ({ crew: x.crew, names: x.attendees })),
         incidents: sheet.incidents && (sheet.incidents.none || sheet.incidents.items?.length)
