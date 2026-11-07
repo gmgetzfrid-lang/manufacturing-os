@@ -11,7 +11,7 @@
 
 import { openFindingsReview } from "@/components/projects/Findings";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ClipboardPen, Download, FileText, Loader2, Mail, Maximize2, Presentation, Printer, X, Lightbulb } from "lucide-react";
+import { ChevronLeft, ClipboardPen, Download, FileText, Loader2, Mail, Maximize2, Minimize2, Minus, Plus, Presentation, Printer, SlidersHorizontal, X, Lightbulb } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import type { CancelledJob } from "@/lib/cancelledJobs";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
@@ -257,8 +257,11 @@ export default function ReportsView(p: Props) {
   // The meeting on screen, full size: to work in it, or to present it.
   const [onScreen, setOnScreen] = useState<null | "open" | "present">(null);
 
-  // ── Page 1, as it will come out ──
-  const [preview, setPreview] = useState<{ kind: "html"; html: string; landscape?: boolean; pages?: number } | { kind: "img"; src: string; pages: number } | { kind: "rows"; head: string[]; rows: string[][]; total: number } | null>(null);
+  // ── The report, whole, as it will come out ──
+  const [preview, setPreview] = useState<Preview>(null);
+  // The report full screen, its options beside it (a print setup screen).
+  const [full, setFull] = useState(false);
+  useEffect(() => { setFull(false); }, [sel]);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
   const lhOn = useLh && !!lh ? lh : null;
@@ -279,17 +282,17 @@ export default function ReportsView(p: Props) {
           const logs = await hourlyLogs();
           if (format === "xlsx") {
             const rows = hourlyLogTable(logs);
-            if (alive) setPreview({ kind: "rows", head: ["Date", "Shift", "Time", "Type", "What happened"], rows: rows.slice(0, 40), total: rows.length });
+            if (alive) setPreview({ kind: "rows", head: ["Date", "Shift", "Time", "Type", "What happened"], rows: rows.slice(0, ROWS_SHOWN), total: rows.length });
           } else {
             const bytes = await hourlyLogPdf(logs, { project: name, lh: lhOn, toPng: pngInBrowser });
-            const pg = await pdfPage1(bytes);
-            if (alive) setPreview({ kind: "img", src: pg.src, pages: pg.pages });
+            // Every page, shown as each is drawn.
+            await pdfPages(bytes, (pages, total) => { if (alive) setPreview({ kind: "pdf", pages, total }); }, () => alive);
           }
         } else if (sel === "timelog") {
           const rows = await timeRows();
           const d = (at: number) => fmtInTz(at, tz, { month: "numeric", day: "numeric", year: "numeric" });
           const tm = (at: number) => fmtInTz(at, tz, { hour: "numeric", minute: "2-digit", hour12: true });
-          if (alive) setPreview({ kind: "rows", head: ["Date", "Time", "Shift", "Task / equipment", "WO", "Step", "Crew", "What happened", "%", "Comment"], rows: rows.slice(0, 40).map((r) => [d(r.at), tm(r.at), r.shift, r.task, r.wo, r.step, r.crew, r.what, r.pct, r.comment]), total: rows.length });
+          if (alive) setPreview({ kind: "rows", head: ["Date", "Time", "Shift", "Task / equipment", "WO", "Step", "Crew", "What happened", "%", "Comment"], rows: rows.slice(0, ROWS_SHOWN).map((r) => [d(r.at), tm(r.at), r.shift, r.task, r.wo, r.step, r.crew, r.what, r.pct, r.comment]), total: rows.length });
         } else if (sel === "workorders") {
           const html = await workOrdersPrintDocument({ shown: woShown, milestones: p.milestones, projectId, projectName: p.projectName, tz, times, progress: p.progress, format: woHistory ? "history" : "report", word, scope: `${woScope}${woHistory ? " · with each step's history" : ""}`, lh: lhOn });
           if (alive) setPreview({ kind: "html", html, landscape: true });
@@ -529,7 +532,7 @@ export default function ReportsView(p: Props) {
       {sel === "schedule" ? (
         <ExecutionReportView milestones={p.milestones} shiftTimes={times} critical={p.critical} criticalSource={p.criticalSource} projectId={projectId} projectName={p.projectName} />
       ) : (
-        <div className="grid gap-5 grid-cols-[minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_minmax(300px,420px)] items-start">
+        <div className="grid gap-5 grid-cols-[minmax(0,1fr)] lg:grid-cols-[minmax(280px,360px)_minmax(0,1fr)] items-start">
           <div className="space-y-4 min-w-0">
             {(!meeting || meeting === "turnover" || lhRow) && options}
             {actions}
@@ -548,7 +551,7 @@ export default function ReportsView(p: Props) {
               </div>
             )}
           </div>
-          <PreviewPane preview={preview} busy={previewBusy} err={previewErr} />
+          <DocView preview={preview} busy={previewBusy} err={previewErr} onFull={() => setFull(true)} />
         </div>
       )}
     </div>
@@ -585,6 +588,12 @@ export default function ReportsView(p: Props) {
           userId={p.userId} userName={p.userName} canEdit={p.canEdit} onClose={() => setSheetEntry(false)}
           onSaved={() => window.dispatchEvent(new CustomEvent("schedule:changed"))} />
       )}
+      {full && sel !== "schedule" && (
+        <FullView name={meta.name} onClose={() => setFull(false)} actions={actions}
+          options={(!meeting || meeting === "turnover" || lhRow) ? options : null}>
+          <DocView preview={preview} busy={previewBusy} err={previewErr} fill />
+        </FullView>
+      )}
       {onScreen && meeting && (
         <div className="fixed inset-0 z-[300] bg-[var(--color-bg,#f8fafc)] overflow-y-auto">
           <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2">
@@ -611,77 +620,156 @@ const DESCRIBE: Record<ReportId, string> = {
   sheet: "One page for the field, for one shift: only that shift's work, by equipment. Write start, % at lunch, % at the end of the shift and done by pen, then enter it here line for line.",
 };
 
-/** Page 1 of a PDF as a picture (pdf.js), and how many pages it has. */
-async function pdfPage1(bytes: Uint8Array): Promise<{ src: string; pages: number }> {
+/** Rows shown of a spreadsheet report (the file has them all). */
+const ROWS_SHOWN = 2000;
+/** Pages drawn of a PDF report (the file has them all). */
+const PAGES_SHOWN = 80;
+
+/** Every page of a PDF as a picture (pdf.js), each passed on as it's drawn. */
+async function pdfPages(bytes: Uint8Array, onPages: (pages: string[], total: number) => void, alive: () => boolean): Promise<void> {
   const { pdfjs } = await import("react-pdf");
   pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
   const { PDFJS_VERBOSITY } = await import("@/lib/pdfjsConfig");
   const doc = await pdfjs.getDocument({ data: bytes.slice(), verbosity: PDFJS_VERBOSITY }).promise;
   try {
-    const page = await doc.getPage(1);
-    const vp = page.getViewport({ scale: 1.5 });
-    const c = document.createElement("canvas");
-    c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
-    const ctx = c.getContext("2d");
-    if (!ctx) throw new Error("This browser can't draw the page.");
-    ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, c.width, c.height);
-    await page.render({ canvasContext: ctx, viewport: vp, canvas: c }).promise;
-    return { src: c.toDataURL("image/png"), pages: doc.numPages };
+    const out: string[] = [];
+    for (let i = 1; i <= Math.min(doc.numPages, PAGES_SHOWN) && alive(); i++) {
+      const page = await doc.getPage(i);
+      const vp = page.getViewport({ scale: 1.6 });
+      const c = document.createElement("canvas");
+      c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+      const ctx = c.getContext("2d");
+      if (!ctx) throw new Error("This browser can't draw the page.");
+      ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvasContext: ctx, viewport: vp, canvas: c }).promise;
+      out.push(c.toDataURL("image/png"));
+      onPages([...out], doc.numPages);
+    }
   } finally { void doc.destroy(); }
 }
 
-type Preview = { kind: "html"; html: string; landscape?: boolean; pages?: number } | { kind: "img"; src: string; pages: number } | { kind: "rows"; head: string[]; rows: string[][]; total: number } | null;
+type Preview = { kind: "html"; html: string; landscape?: boolean; pages?: number } | { kind: "pdf"; pages: string[]; total: number } | { kind: "rows"; head: string[]; rows: string[][]; total: number } | null;
 
-/** Page 1 as it will come out, scaled to the pane. */
-function PreviewPane({ preview, busy, err }: { preview: Preview; busy: boolean; err: string | null }) {
-  const ref = useRef<HTMLDivElement | null>(null);
+const ZOOMS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+
+/** The report, whole: every page as it will come out, to read through
+ *  like a print preview. Fit to the width, or zoomed in and out; full
+ *  screen from here. `fill`: it fills its box (full screen). */
+function DocView({ preview, busy, err, onFull, fill }: { preview: Preview; busy: boolean; err: string | null; onFull?: () => void; fill?: boolean }) {
+  const box = useRef<HTMLDivElement | null>(null);
+  const frame = useRef<HTMLIFrameElement | null>(null);
   const [w, setW] = useState(0);
+  const [z, setZ] = useState(1);
+  const [h, setH] = useState(1056);
   useEffect(() => {
-    const el = ref.current;
+    const el = box.current;
     if (!el) return;
     const ro = new ResizeObserver(() => setW(el.clientWidth));
     ro.observe(el); setW(el.clientWidth);
     return () => ro.disconnect();
   }, []);
   const landscape = preview?.kind === "html" && preview.landscape;
-  const W = landscape ? 1056 : 816, H = landscape ? 816 : 1056;
-  const k = w > 0 ? w / W : 0.4;
-  // Off paper the page has no margins: the preview gives it the printed ones.
+  const W = landscape ? 1056 : 816;
+  // Fit: the page as wide as the box, never past its printed size; the
+  // zoom from there (wider than the box: it scrolls sideways).
+  const fit = w > 0 ? Math.min((w - 2) / W, 1) : 0.5;
+  const k = fit * z;
+  // Off paper the page has no margins: on screen it gets the printed ones.
   const html = preview?.kind === "html" ? (preview.html.includes("lh-frame") ? preview.html : preview.html.replace("</head>", "<style>@media screen{body{padding:12mm}}</style></head>")) : "";
+  // The document's own height, so every page shows (read once it has
+  // drawn, pictures and all).
+  const measure = useCallback(() => {
+    const d = frame.current?.contentDocument;
+    if (!d?.documentElement) return;
+    setH(Math.max(400, d.documentElement.scrollHeight, d.body?.scrollHeight ?? 0));
+  }, []);
+  useEffect(() => { const t = setTimeout(measure, 400); return () => clearTimeout(t); }, [html, measure]);
+  const step = (dir: 1 | -1) => setZ((v) => { const i = ZOOMS.indexOf(v); return ZOOMS[Math.max(0, Math.min(ZOOMS.length - 1, (i < 0 ? 2 : i) + dir))]; });
+  const what = !preview ? "" : preview.kind === "pdf" ? `${preview.total} page${preview.total === 1 ? "" : "s"}${preview.total > preview.pages.length ? ` · ${busy ? "drawing" : "showing"} ${preview.pages.length}` : ""}`
+    : preview.kind === "rows" ? `${preview.total} row${preview.total === 1 ? "" : "s"}${preview.total > preview.rows.length ? ` · first ${preview.rows.length} shown` : ""}`
+      : preview.pages ? `${preview.pages} page${preview.pages === 1 ? "" : "s"}` : "Whole report";
+  const btn = "inline-flex items-center justify-center whitespace-nowrap shrink-0 h-8 min-w-8 px-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40";
   return (
-    <div className="min-w-0 rounded-xl bg-slate-200/70 dark:bg-slate-800/60 p-3 sm:p-4 lg:sticky lg:top-4">
-      <div ref={ref} className="w-full">
-        {err ? (
-          <div className="rounded-lg bg-[var(--color-surface)] p-6 text-[12.5px] text-rose-700 dark:text-rose-400">Couldn&apos;t show it: {err}</div>
-        ) : !preview ? (
-          <div className="rounded-lg bg-white shadow flex items-center justify-center text-[12px] text-slate-500" style={{ height: H * k }}>
-            {busy ? <span className="inline-flex items-center gap-1.5"><Loader2 className="w-4 h-4 animate-spin" /> Getting page 1 ready…</span> : "Pick what to put on it."}
-          </div>
-        ) : preview.kind === "img" ? (
-          // eslint-disable-next-line @next/next/no-img-element -- a page drawn in the browser
-          <img src={preview.src} alt="Page 1" className={`w-full rounded-sm bg-white shadow ${busy ? "opacity-60" : ""}`} />
-        ) : preview.kind === "rows" ? (
-          <div className={`rounded-sm bg-white shadow overflow-auto ${busy ? "opacity-60" : ""}`} style={{ maxHeight: 640 }}>
-            <table className="w-full border-collapse text-[10.5px] text-slate-900">
-              <thead><tr>{preview.head.map((h) => <th key={h} className="sticky top-0 bg-slate-100 border border-slate-300 px-1.5 py-1 text-left font-bold whitespace-nowrap">{h}</th>)}</tr></thead>
-              <tbody>
-                {preview.rows.length === 0 ? <tr><td colSpan={preview.head.length} className="px-2 py-4 text-center text-slate-500">Nothing in it yet.</td></tr>
-                  : preview.rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j} className={`border border-slate-200 px-1.5 py-0.5 align-top ${c.length <= 24 ? "whitespace-nowrap" : "min-w-[220px]"}`}>{c}</td>)}</tr>)}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className={`relative overflow-hidden rounded-sm bg-white shadow ${busy ? "opacity-60" : ""}`} style={{ height: H * k }}>
-            <iframe title="Page 1" srcDoc={html} sandbox="" tabIndex={-1} aria-hidden
-              style={{ width: W, height: H, border: 0, transform: `scale(${k})`, transformOrigin: "0 0", pointerEvents: "none" }} />
-          </div>
+    <div className={`min-w-0 rounded-xl bg-slate-200/70 dark:bg-slate-800/60 flex flex-col ${fill ? "h-full" : "lg:sticky lg:top-4 lg:h-[calc(100vh-140px)] lg:min-h-[560px]"}`}>
+      <div className="flex items-center gap-1.5 px-3 py-2 border-b border-slate-300/70 dark:border-slate-700">
+        <span className="min-w-0 text-[12px] font-semibold text-slate-700 dark:text-slate-200 mr-auto truncate">{busy && !preview ? "Getting it ready…" : what}{busy && preview ? " · updating" : ""}</span>
+        {preview?.kind !== "rows" && (
+          <>
+            <button type="button" onClick={() => step(-1)} disabled={z === ZOOMS[0]} aria-label="Zoom out" className={btn}><Minus className="w-3.5 h-3.5" /></button>
+            <button type="button" onClick={() => setZ(1)} aria-label="Fit to width" className={`${btn} w-14`}>{z === 1 ? "Fit" : `${Math.round(z * 100)}%`}</button>
+            <button type="button" onClick={() => step(1)} disabled={z === ZOOMS[ZOOMS.length - 1]} aria-label="Zoom in" className={btn}><Plus className="w-3.5 h-3.5" /></button>
+          </>
         )}
+        {onFull && <button type="button" onClick={onFull} aria-label="Full screen" className={`${btn} gap-1`}><Maximize2 className="w-3.5 h-3.5" /> <span className="hidden min-[400px]:inline sm:inline">Full screen</span><span className="min-[400px]:hidden">Full</span></button>}
       </div>
-      <div className="mt-2 text-center text-[11.5px] text-slate-600 dark:text-slate-300">
-        {preview?.kind === "img" || (preview?.kind === "html" && preview.pages) ? `Page 1 of ${preview.pages} · what you'll get`
-          : preview?.kind === "rows" ? `${preview.total > preview.rows.length ? `First ${preview.rows.length} of ${preview.total} rows` : `${preview.total} row${preview.total === 1 ? "" : "s"}`} · what you'll get`
-            : "Page 1 · what you'll get"}
+      <div className={`min-h-0 p-3 sm:p-4 ${fill ? "flex-1 overflow-auto" : "lg:flex-1 lg:overflow-auto"}`}>
+        <div ref={box} className="w-full">
+          {err ? (
+            <div className="rounded-lg bg-[var(--color-surface)] p-6 text-[12.5px] text-rose-700 dark:text-rose-400">Couldn&apos;t show it: {err}</div>
+          ) : !preview ? (
+            <div className="mx-auto rounded-sm bg-white shadow flex items-center justify-center text-[12px] text-slate-500" style={{ width: W * fit, height: 1056 * fit }}>
+              {busy ? <span className="inline-flex items-center gap-1.5"><Loader2 className="w-4 h-4 animate-spin" /> Getting it ready…</span> : "Pick what to put on it."}
+            </div>
+          ) : preview.kind === "pdf" ? (
+            <div className="space-y-4">
+              {preview.pages.map((src, i) => (
+                // eslint-disable-next-line @next/next/no-img-element -- a page drawn in the browser
+                <img key={i} src={src} alt={`Page ${i + 1}`} className={`block mx-auto max-w-none rounded-sm bg-white shadow ${busy ? "opacity-80" : ""}`} style={{ width: Math.max(120, Math.min(w - 2, 980) * z) }} />
+              ))}
+            </div>
+          ) : preview.kind === "rows" ? (
+            <div className={`rounded-sm bg-white shadow overflow-auto ${busy ? "opacity-60" : ""}`} style={fill ? undefined : { maxHeight: "calc(100vh - 220px)" }}>
+              <table className="w-full border-collapse text-[11px] text-slate-900">
+                <thead><tr>{preview.head.map((x) => <th key={x} className="sticky top-0 bg-slate-100 border border-slate-300 px-1.5 py-1 text-left font-bold whitespace-nowrap">{x}</th>)}</tr></thead>
+                <tbody>
+                  {preview.rows.length === 0 ? <tr><td colSpan={preview.head.length} className="px-2 py-4 text-center text-slate-500">Nothing in it yet.</td></tr>
+                    : preview.rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j} className={`border border-slate-200 px-1.5 py-0.5 align-top ${c.length <= 24 ? "whitespace-nowrap" : "min-w-[220px]"}`}>{c}</td>)}</tr>)}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className={`mx-auto overflow-hidden rounded-sm bg-white shadow ${busy ? "opacity-60" : ""}`} style={{ width: W * k, height: h * k }}>
+              {/* No scripts run in it; same origin only so its height can be read. */}
+              <iframe ref={frame} title="The report" srcDoc={html} sandbox="allow-same-origin" tabIndex={-1} onLoad={measure}
+                style={{ width: W, height: h, border: 0, transform: `scale(${k})`, transformOrigin: "0 0" }} />
+            </div>
+          )}
+        </div>
       </div>
+    </div>
+  );
+}
+
+/** The report full screen: its options beside it, as a print setup
+ *  screen (above it on a phone, folded away), and what to do with it. */
+function FullView({ name, onClose, actions, options, children }: { name: string; onClose: () => void; actions: React.ReactNode; options: React.ReactNode; children: React.ReactNode }) {
+  const [opts, setOpts] = useState(false);
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", k);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { window.removeEventListener("keydown", k); document.body.style.overflow = prev; };
+  }, [onClose]);
+  return (
+    <div role="dialog" aria-modal="true" aria-label={name} className="fixed inset-0 z-[300] flex flex-col bg-[var(--color-bg,#f8fafc)]">
+      <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 sm:px-4 py-2">
+        <b className="text-[14px] text-[var(--color-text)] mr-auto truncate">{name}</b>
+        {options && (
+          <button type="button" onClick={() => setOpts((v) => !v)} aria-pressed={opts} className="lg:hidden inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12.5px] font-bold text-[var(--color-text)]">
+            <SlidersHorizontal className="w-4 h-4" /> Options
+          </button>
+        )}
+        <button type="button" onClick={onClose} className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12.5px] font-bold text-[var(--color-text)]"><Minimize2 className="w-4 h-4" /> Close</button>
+      </div>
+      <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
+        <aside className={`${opts ? "block" : "hidden"} lg:block lg:w-[360px] shrink-0 max-h-[50vh] lg:max-h-none overflow-y-auto border-b lg:border-b-0 lg:border-r border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-4`}>
+          {options}
+          <div className="hidden lg:block">{actions}</div>
+        </aside>
+        <div className="flex-1 min-h-0 min-w-0 p-2 sm:p-3">{children}</div>
+      </div>
+      <div className="lg:hidden border-t border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">{actions}</div>
     </div>
   );
 }
