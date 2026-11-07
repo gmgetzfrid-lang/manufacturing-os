@@ -51,6 +51,8 @@ export const FORM_ROWS: Array<{ id: FormRowId; word: string }> = [
   { id: "headcount", word: "Headcount" },
 ];
 
+export interface FormWork { crew: string; group?: string; text: string }
+
 export interface FormInput {
   project: string;
   /** "November 5, 2026", "6:00 AM", "6:00 PM", the meeting's "5:30 AM". */
@@ -58,9 +60,11 @@ export interface FormInput {
   attendees: Array<{ crew: string; names: string }>;
   incidents?: { none: boolean; items: Array<{ kind: string; text: string; time?: string }> };
   safetyTopic?: string;
-  /** Work for the shift and work done, each with its crew. */
-  planned: Array<{ crew: string; text: string }>;
-  completed: Array<{ crew: string; text: string }>;
+  /** Work for the shift and work done, each with its crew. `group`: the
+   *  equipment or job a step is under ("E-32"): its steps go on one line,
+   *  "E-32 – Set Blinds, Remove Channel Head, Pull Bundle". */
+  planned: FormWork[];
+  completed: FormWork[];
   followUps: string[];
   /** The hours: "7:00" and what happened. */
   notes: Array<{ clock: string; text: string }>;
@@ -69,18 +73,36 @@ export interface FormInput {
 
 const clean = (s: string) => noEmDash(s).replace(/\s+/g, " ").trim();
 
-/** Items by crew, crews in the order they first come. */
-function byCrew(list: Array<{ crew: string; text: string }>): FormLine[] {
-  const groups = new Map<string, string[]>();
+/** Items by crew, crews in the order they first come; a crew's steps on
+ *  the same equipment on one line, where the first of them comes. */
+function byCrew(list: FormWork[]): FormLine[] {
+  const crews = new Map<string, Array<{ group: string; texts: string[] }>>();
   for (const x of list) {
     const crew = clean(x.crew) || "Other";
     const t = clean(x.text);
     if (!t) continue;
-    const g = groups.get(crew) ?? [];
-    if (!g.includes(t)) g.push(t);
-    groups.set(crew, g);
+    const g = clean(x.group ?? "");
+    const items = crews.get(crew) ?? [];
+    const at = g ? items.find((i) => i.group === g) : items.find((i) => !i.group && i.texts[0] === t);
+    if (at) { if (!at.texts.includes(t)) at.texts.push(t); }
+    else items.push({ group: g, texts: [t] });
+    crews.set(crew, items);
   }
-  return [...groups.entries()].flatMap(([crew, items]) => [{ k: "group" as const, text: crew }, ...items.map((t) => ({ k: "item" as const, text: t }))]);
+  return [...crews.entries()].flatMap(([crew, items]) => [{ k: "group" as const, text: crew },
+    ...items.map((i) => ({ k: "item" as const, text: i.group ? `${i.group} – ${i.texts.join(", ")}` : i.texts[0] }))]);
+}
+
+/** The hours, one paragraph a time: the same time twice is one. */
+function oneATime(notes: Array<{ clock: string; text: string }>): Array<{ clock: string; text: string }> {
+  const out: Array<{ clock: string; text: string }> = [];
+  for (const n of notes) {
+    const t = clean(n.text);
+    if (!t) continue;
+    const last = out[out.length - 1];
+    if (last && last.clock === n.clock) last.text = `${last.text}${/[.!?]$/.test(last.text) ? " " : ", "}${t}`;
+    else out.push({ clock: n.clock, text: t });
+  }
+  return out;
 }
 
 /** The table, from the shift's data. Rows with nothing in them still show,
@@ -101,8 +123,8 @@ export function shiftForm(i: FormInput): ShiftForm {
     { id: "plan", label: `Work to be Completed After ${i.meeting} Meeting`, lines: i.planned.length ? byCrew(i.planned) : none("No work planned for the shift") },
     { id: "done", label: `Work Completed Between ${i.meeting} and ${i.end}`, lines: i.completed.length ? byCrew(i.completed) : none("Nothing entered as done") },
     { id: "followup", label: "Follow-Up Items", lines: i.followUps.map(clean).filter(Boolean).length ? i.followUps.map(clean).filter(Boolean).map((t) => ({ k: "item" as const, text: t })) : none("None") },
-    { id: "notes", label: "Shift Notes", lines: i.notes.filter((n) => clean(n.text)).length
-      ? i.notes.filter((n) => clean(n.text)).map((n) => ({ k: "text" as const, lead: `${n.clock} –`, text: ` ${clean(n.text)}` }))
+    { id: "notes", label: "Shift Notes", lines: oneATime(i.notes).length
+      ? oneATime(i.notes).map((n) => ({ k: "text" as const, lead: `${n.clock} –`, text: ` ${n.text}` }))
       : none("No notes entered") },
     { id: "headcount", label: "Personnel Headcount", lines: i.headcount.length ? i.headcount.map((h) => ({ k: "text" as const, text: `${clean(h.crew)} – ${h.n}`, bold: true })) : none("No head count entered") },
   ];
@@ -115,7 +137,7 @@ export const formRows = (f: ShiftForm, off: Iterable<FormRowId>) => { const o = 
 // ─── Email (and print) ───────────────────────────────────────────────
 
 const esc = (s: string) => noEmDash(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-const FONT = "font-family:Calibri,Carlito,Arial,sans-serif;";
+const FONT = "font-family:Lato,Calibri,Arial,sans-serif;";
 const CELL = `${FONT}font-size:11pt;color:#000000;border:1px solid #ABABAB;vertical-align:top;`;
 
 function linesHtml(lines: FormLine[]): string {
@@ -187,7 +209,7 @@ const para = (runs: string, pPr = "") => `<w:p>${pPr ? `<w:pPr>${pPr}</w:pPr>` :
 const table = (widths: number[], rows: string[], borders = true) =>
   `<w:tbl><w:tblPr><w:tblW w:w="${widths.reduce((a, b) => a + b, 0)}" w:type="dxa"/>${borders ? '<w:tblBorders><w:top w:val="outset" w:sz="6" w:space="0" w:color="auto"/><w:left w:val="outset" w:sz="6" w:space="0" w:color="auto"/><w:bottom w:val="outset" w:sz="6" w:space="0" w:color="auto"/><w:right w:val="outset" w:sz="6" w:space="0" w:color="auto"/></w:tblBorders>' : ""}<w:tblLayout w:type="fixed"/><w:tblCellMar><w:left w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tblCellMar><w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="1" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/></w:tblPr><w:tblGrid>${widths.map((w) => `<w:gridCol w:w="${w}"/>`).join("")}</w:tblGrid>${rows.join("")}</w:tbl>`;
 
-// The plant's own: columns 1971 and 8649 twips, Calibri 11.
+// The plant's own: columns 1971 and 8649 twips, Lato 11.
 const COL_L = 1971, COL_R = 8649, FULL = COL_L + COL_R;
 
 function headerXml(h: FormDocxHeader): string {
@@ -226,7 +248,7 @@ function headerXml(h: FormDocxHeader): string {
 }
 
 /** The table (and the header picked) as a Word file, laid out like the
- *  plant's: Calibri 11, the same columns and borders, crews bold with
+ *  plant's: Lato 11, the same columns and borders, crews bold with
  *  their items numbered under them, the times in Shift Notes bold. */
 export async function formDocx(f: ShiftForm, off: Iterable<FormRowId> = [], header?: FormDocxHeader): Promise<Uint8Array> {
   const JSZip = (await import("jszip")).default;
@@ -259,7 +281,7 @@ export async function formDocx(f: ShiftForm, off: Iterable<FormRowId> = [], head
   zip.file("docProps/core.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${xe(`${f.title} - ${f.when}`)}</dc:title></cp:coreProperties>`);
   zip.file("word/_rels/document.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>`);
   zip.file("word/document.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${W_NS}><w:body>${body}${sect}</w:body></w:document>`);
-  zip.file("word/styles.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${W_NS}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="en-US"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>`);
+  zip.file("word/styles.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${W_NS}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Lato" w:hAnsi="Lato" w:eastAsia="Lato" w:cs="Lato"/><w:sz w:val="22"/><w:szCs w:val="22"/><w:lang w:val="en-US"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>`);
   zip.file("word/numbering.xml", numbering);
   return zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
 }

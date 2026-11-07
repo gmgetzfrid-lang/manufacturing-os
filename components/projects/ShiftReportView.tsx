@@ -95,7 +95,7 @@ import { APPLIES_WORD, KIND_WORD, leadTag, type Finding } from "@/lib/findings";
 import { shiftForm, FORM_ROWS, type FormRowId } from "@/lib/shiftForm";
 import { exportedLabel, logSteps, shiftLog } from "@/lib/hourlyLog";
 import { pngInBrowser, saveHourlyLog, type LogFormat } from "@/lib/hourlyLogFiles";
-import { slotClocks, hourlyRows, hourSlots, breaksOn, breakLabel, plainLine, workOrderClosers } from "@/lib/shiftHourly";
+import { slotClocks, hourlyRows, hourSlots, breaksOn, breakLabel, plainLine, workOrderClosers, briefNotes, selfNamed } from "@/lib/shiftHourly";
 import { saidWithLatest } from "@/lib/stepComment";
 
 /** The crew the report is narrowed to (tables then drop their Who column). */
@@ -792,13 +792,14 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       const w = view.shift;
       const parts = meetingParts(sheet.recThis, w.start);
       const tagOf = (r: ShiftRow) => { const t = rowTask(r); const name = (t?.name ?? r.parentName ?? "").trim(); return leadTag(name) ?? name; };
+      // A step goes on its equipment's line ("E-32 – Set Blinds, Pull
+      // Bundle"); one that names its own (PSV-209 - …) is its own line.
       const item = (r: ShiftRow, extra?: string) => {
         const nm = r.leaf.name.trim();
-        // A step that names its own equipment (PSV-209 - …) needs no prefix.
-        const tag = leadTag(nm) ? "" : tagOf(r);
+        const tag = leadTag(nm) || selfNamed(nm) ? "" : tagOf(r);
         const plain = (x: string) => x.toLowerCase().replace(/[^a-z0-9]/g, "");
-        const text = tag && !plain(nm).includes(plain(tag)) ? `${tag} – ${nm}` : nm;
-        return extra ? `${text} ${extra}` : text;
+        const text = extra ? `${nm} ${extra}` : nm;
+        return tag && !plain(nm).includes(plain(tag)) ? { group: tag, text } : { text };
       };
       const crewOf = (r: ShiftRow) => r.leaf.actualParty?.trim() || r.leaf.responsibleParty?.trim() || "Other";
       const doneIds = new Set(view.review.done.map((r) => r.leaf.id));
@@ -810,18 +811,16 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         incidents: sheet.incidents && (sheet.incidents.none || sheet.incidents.items?.length)
           ? { none: !!sheet.incidents.none, items: (sheet.incidents.items ?? []).map((x) => ({ kind: x.kind, text: x.text, time: ctx.T(x.at) })) } : undefined,
         safetyTopic: parts.safety,
-        planned: view.review.scheduled.map((r) => ({ crew: r.leaf.responsibleParty?.trim() || "Other", text: item(r) })),
+        planned: view.review.scheduled.map((r) => ({ crew: r.leaf.responsibleParty?.trim() || "Other", ...item(r) })),
         completed: [
-          ...view.review.done.map((r) => ({ crew: crewOf(r), text: item(r) })),
-          ...view.review.progressed.filter((r) => !doneIds.has(r.leaf.id)).map((r) => ({ crew: crewOf(r), text: item(r, r.pctStart != null ? `(${r.pctStart}% to ${r.percent}%)` : `(${r.percent}%)`) })),
+          ...view.review.done.map((r) => ({ crew: crewOf(r), ...item(r) })),
+          ...view.review.progressed.filter((r) => !doneIds.has(r.leaf.id)).map((r) => ({ crew: crewOf(r), ...item(r, r.pctStart != null ? `(${r.pctStart}% to ${r.percent}%)` : `(${r.percent}%)`) })),
         ],
         followUps: sheet.notes.filter((n) => n.followUp && !n.cleared).map((n) => n.text),
-        notes: hourlyList.flatMap((x) => {
-          const text = x.kind === "meeting" || x.kind === "handover" ? "Shift change meeting."
-            : x.kind === "overtime" ? x.title ?? "Overtime"
-              : x.text || (x.progress?.length ? x.progress.join(", ") : "");
-          return text ? [{ clock: x.clock, text }] : [];
-        }),
+        // The hours, short, the way a shift writes them (lib/shiftHourly briefNotes).
+        notes: sheet.hourly
+          ? briefNotes(hourlyRows(sheet.hourly.notes, sheet.hourly.slots, sheet.hourly.upTo, sheet.hourly.entries, tz, { ...sheet.hourly.meet, closes: sheet.hourly.closes }), sheet.hourly.entries, sheet.hourly.slots, tz)
+          : [],
         headcount: parts.rows.filter((x) => !x.plant && x.onSite != null).map((x) => ({ crew: x.crew, n: x.onSite! })),
       });
     };

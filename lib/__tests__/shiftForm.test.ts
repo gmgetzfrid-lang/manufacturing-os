@@ -25,6 +25,17 @@ describe("the shift table in the plant's format", () => {
     expect(f.rows.find((r) => r.id === "notes")!.lines).toHaveLength(2);
     expect(f.rows.find((r) => r.id === "safety")!.lines[0]).toMatchObject({ text: "No Safety Incidents", strong: true });
   });
+  it("a crew's steps on the same equipment on one line; the same time once", () => {
+    const g = shiftForm({ ...input,
+      completed: [
+        { crew: "Schultz", group: "E-32", text: "Set Blinds; Verify LOTO" }, { crew: "Schultz", text: "PSV-209 - E-27 Propane Condenser" },
+        { crew: "Schultz", group: "E-32", text: "Remove Channel Head" }, { crew: "Schultz", group: "E-32", text: "Pull Bundle (0% to 50%)" },
+      ],
+      notes: [{ clock: "9:00", text: "Schultz: E-02 done" }, { clock: "9:00", text: "Break, 15 min." }, { clock: "9:30", text: "Ancon: V-1 started." }, { clock: "9:30", text: "Schultz: E-23 done" }] });
+    expect(g.rows.find((r) => r.id === "done")!.lines).toEqual([{ k: "group", text: "Schultz" },
+      { k: "item", text: "E-32 – Set Blinds; Verify LOTO, Remove Channel Head, Pull Bundle (0% to 50%)" }, { k: "item", text: "PSV-209 - E-27 Propane Condenser" }]);
+    expect(g.rows.find((r) => r.id === "notes")!.lines.map((l) => ("lead" in l ? `${l.lead}${l.text}` : l.text))).toEqual(["9:00 – Schultz: E-02 done, Break, 15 min.", "9:30 – Ancon: V-1 started. Schultz: E-23 done"]);
+  });
   it("incidents not entered are said, never shown as none", () => {
     const g = shiftForm({ ...input, incidents: undefined });
     expect(g.rows.find((r) => r.id === "safety")!.lines[0]).toMatchObject({ text: "Incidents not entered" });

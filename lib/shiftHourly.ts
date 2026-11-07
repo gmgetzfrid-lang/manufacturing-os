@@ -440,3 +440,78 @@ export function breaksOn(shift: ShiftWindow, breaks: ShiftBreak[] | undefined, t
   return (breaks ?? []).filter((b) => b.shift === shift.kind).map((b) => ({ at: timeInShift(shift, b.start, tz), minutes: b.minutes, label: b.label }))
     .filter((b): b is HourBreak => b.at != null).sort((a, b) => a.at - b.at);
 }
+
+/** A step that says its own equipment or title: "PSV-210 - V-12B …",
+ *  "Pull V-12A - 2nd Stage Suction Bottle", "UIT-012 Set Blinds". */
+export const selfNamed = (step: string) => /\s[-–—]\s/.test(step) || /^[A-Z]{1,6}[- ]?\d+[A-Z]?\b/.test(step.trim());
+
+/** The equipment and step in a few words, the way a shift writes it:
+ *  "PSV-210", "E-02 Set Blinds; Verify LOTO", "Pull V-12A". */
+export function briefWhat(task: string, step: string): string {
+  const s = noEmDash(step).replace(/\s+/g, " ").trim();
+  if (!s) return shortTask(noEmDash(task));
+  if (selfNamed(s)) return shortTask(s);
+  const t = shortTask(noEmDash(task)).replace(/\s*\([^)]*\)\s*$/, "").trim();
+  const k = (x: string) => x.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return t && !k(s).includes(k(t)) ? `${t} ${s}` : s;
+}
+
+/** The hours for the plant's shift update (lib/shiftForm), short, the way
+ *  a shift writes them: "8:30 – Maintenance (KE): PSV-210 started". One
+ *  paragraph a time; each entry at its own half hour, crew first, then the
+ *  equipment and step and what happened, the comment as typed; no work
+ *  order numbers. An hour typed over is said as typed. */
+export function briefNotes(rows: HourlyRow[], entries: TimeLogRow[] | null | undefined, slots: HourSlot[], tz: string): Array<{ clock: string; text: string }> {
+  const HALF = 30 * 60_000;
+  const bySlot = rowsBySlot(entries ?? [], slots);
+  const items: Array<{ at: number; text: string }> = [];
+  const said = (l: string) => noEmDash(plainLine(l)).replace(/\s+/g, " ").trim();
+  for (const r of rows) {
+    const s = r.slot;
+    if (s.kind === "meeting" || s.kind === "handover") { items.push({ at: s.start, text: "Shift change meeting." }); continue; }
+    if (s.kind === "break") { items.push({ at: s.start, text: `${breakLabel(s)}.` }); continue; }
+    if (s.kind === "overtime") { items.push({ at: s.start, text: s.label ?? "Overtime" }); continue; }
+    // An hour typed over: what was typed, as typed. Its entries are said
+    // short, unless the person took one out or reworded it: then the hour
+    // is said as it stands.
+    const kept = [...r.lines, ...r.progress];
+    const typed = r.typed ? r.lines.filter((l) => !r.auto.some((a) => sameLine(a, l))) : [];
+    if (r.typed && r.auto.some((a) => !kept.some((l) => sameLine(a, l)))) {
+      for (const l of kept) { const t = said(l); if (t) items.push({ at: s.start, text: t }); }
+      continue;
+    }
+    // Each step's entries at the same half hour, said once.
+    const groups = new Map<string, { at: number; rows: TimeLogRow[] }>();
+    (bySlot.get(s.key) ?? []).filter((e) => !autoNote(e)).forEach((e, i) => {
+      const at = Math.max(s.start, Math.floor(e.at / HALF) * HALF);
+      const k = `${at}|${e.id && e.step && !isFound(e) ? e.id : `x${i}`}`;
+      const g = groups.get(k);
+      if (g) g.rows.push(e); else groups.set(k, { at, rows: [e] });
+    });
+    for (const { at, rows: g } of groups.values()) {
+      const [e] = g;
+      let text: string;
+      if (!e.step && !e.id && !isFound(e)) text = `${e.what}: ${sentence(e.comment) || "-"}`;
+      else if (isFound(e)) text = noEmDash(plainLine(entryLine(e))).replace(/^WO \d+\s*/, "");
+      else {
+        const evs = [...new Set(g.map(eventOf).filter(Boolean))];
+        const said = [...new Set(g.map((x) => sentence(x.comment)).filter(Boolean))];
+        text = `${e.crew ? `${e.crew}: ` : ""}${briefWhat(e.task, e.step)}${evs.length ? ` ${evs.join(", ")}` : ""}${said.length ? `. ${said.join(" ")}` : ""}`;
+      }
+      text = noEmDash(text).replace(/\s+/g, " ").trim();
+      if (text) items.push({ at, text });
+    }
+    for (const l of typed) { const t = said(l); if (t) items.push({ at: s.start, text: t }); }
+  }
+  // In time order (the order found, within a time), one paragraph a time.
+  const sorted = items.map((x, i) => ({ ...x, i })).sort((a, b) => a.at - b.at || a.i - b.i);
+  const paras: Array<{ at: number; parts: string[] }> = [];
+  for (const x of sorted) {
+    const last = paras[paras.length - 1];
+    if (last && last.at === x.at) { if (!last.parts.includes(x.text)) last.parts.push(x.text); }
+    else paras.push({ at: x.at, parts: [x.text] });
+  }
+  // AM or PM on the first and where it changes ("5:30 AM", "7:00", "12:00 PM").
+  const clocks = hourlyClocks(paras.map((p) => p.at), tz);
+  return paras.map((p, i) => ({ clock: clocks[i], text: p.parts.reduce((a, t) => (a ? `${a}${/[.!?]$/.test(a) ? " " : ", "}${t}` : t), "") }));
+}
