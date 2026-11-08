@@ -260,3 +260,7 @@ export function phaseReportText(input: { project: string; picked: PhaseStats | n
   out.push("PHASES", ...input.each.map(line), line(input.all));
   return noEmDash(out.join("\n"));
 }
+
+/** The close-out's "How the job did": the same numbers, progress and money. */
+export const howItDidHtml = (s: PhaseStats, tz: string, now: number) =>
+  `<div style="${FONT}color:${INK};max-width:820px;margin:18px auto 0;">${h2(s.phase ? `How ${s.phase.name} did` : "How the job did")}${phaseSectionHtml(s, tz, now)}</div>`;

@@ -22,11 +22,12 @@ import { dayKey, fmtInTz } from "@/lib/scheduleTz";
 import { useLetterhead } from "@/lib/letterheadStore";
 import { REPORTS, type ReportId, type ReportLink, type ShiftPick } from "@/lib/reportLinks";
 import type { ExportDoc } from "@/lib/reportExport";
-import { copyUpdateForEmail, copyRich, printHtml, sendPrintDocument, updateToSend, updateDocx, updateFileName, saveFile } from "@/lib/updatePrint";
+import { copyUpdateForEmail, copyRich, sendParts, printHtml, sendPrintDocument, updateToSend, updateDocx, updateFileName, saveFile } from "@/lib/updatePrint";
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { usePhases } from "@/components/projects/PhaseContext";
-import { phaseStats, phaseReportHtml, phaseReportDocument, phaseReportText, type CostLine, type CostEntry } from "@/lib/phaseReport";
+import CloseoutSteps from "@/components/projects/CloseoutSteps";
+import { phaseStats, phaseReportHtml, phaseReportDocument, phaseReportText, howItDidHtml, type CostLine, type CostEntry } from "@/lib/phaseReport";
 import { withWorkOrderCrews } from "@/lib/workOrderCrew";
 import { loadProgressLog } from "@/lib/progressHistory";
 import { loadShiftRecords, saveShiftRecord, useShiftRecords, type ShiftRecord } from "@/lib/shiftRecord";
@@ -271,7 +272,9 @@ export default function ReportsView(p: Props) {
   const lhOn = useLh && !!lh ? lh : null;
   // ── Phase report: the phase picked (or every phase and the project) ──
   const ph = usePhases();
-  const phaseBody = async (): Promise<{ html: string; text: string; title: string }> => {
+  // The numbers for a phase (null: the whole project): progress from the
+  // log, money from the budget lines and what's booked on them.
+  const statsMaker = async () => {
     const rows = <T,>(table: string) => fetchAllRows<T>((from, to) => supabase.from(table).select("*").eq("project_id", projectId).order("id").range(from, to) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>);
     const [log, lines, entries, proj] = await Promise.all([
       loadProgressLog(projectId), rows<CostLine>("cost_accounts"), rows<CostEntry>("cost_entries"),
@@ -279,7 +282,16 @@ export default function ReportsView(p: Props) {
     ]);
     const total = (proj.data as { authorized_amount?: number | null } | null)?.authorized_amount;
     const at = Date.now();
-    const stats = (phase: (typeof ph.phases)[number] | null) => phaseStats({ milestones: ph.all, phases: ph.phases, phase, log, tz, times, now: at, total: total == null ? null : Number(total), lines: lines.rows, entries: entries.rows });
+    return { at, stats: (phase: (typeof ph.phases)[number] | null) => phaseStats({ milestones: ph.all, phases: ph.phases, phase, log, tz, times, now: at, total: total == null ? null : Number(total), lines: lines.rows, entries: entries.rows }) };
+  };
+  // The close-out's "How the job did" (the phase picked, else the project).
+  const howItDid = async () => {
+    const { at, stats } = await statsMaker();
+    const phase = ph.phase ? ph.phases.find((x) => x.id === ph.phase) ?? null : null;
+    return howItDidHtml(stats(phase), tz, at);
+  };
+  const phaseBody = async (): Promise<{ html: string; text: string; title: string }> => {
+    const { at, stats } = await statsMaker();
     const each = ph.phases.map(stats);
     const all = stats(null);
     const picked = ph.phase ? each.find((x) => x.phase?.id === ph.phase) ?? null : null;
@@ -293,8 +305,14 @@ export default function ReportsView(p: Props) {
       setPreviewErr(null);
       try {
         if (meeting) {
-          setPreview(doc ? { kind: "html", html: sendPrintDocument(updateToSend(doc, meeting), lhOn) } : null);
+          const page = doc ? sendPrintDocument(updateToSend(doc, meeting), lhOn) : null;
+          setPreview(page ? { kind: "html", html: page } : null);
           setPreviewBusy(!doc);
+          // The close-out: how the job did, under it.
+          if (page && meeting === "closeout") {
+            const extra = await howItDid().catch(() => "");
+            if (alive && extra) setPreview({ kind: "html", html: page.replace(/<\/body>/i, `${extra}</body>`) });
+          }
           return;
         }
         if (sel === "schedule") { setPreview(null); return; }
@@ -348,9 +366,20 @@ export default function ReportsView(p: Props) {
       if (meeting) {
         if (!doc) throw new Error("Still getting the report ready.");
         const picked = updateToSend(doc, meeting);
-        if (what === "email") { setMsg((await copyUpdateForEmail(picked)) ? "Copied - paste into your email." : "Your browser blocked the copy - try again."); return; }
+        if (what === "email") {
+          let ok: boolean;
+          if (meeting === "closeout") {
+            const parts = sendParts(picked);
+            const extra = await howItDid().catch(() => "");
+            ok = await copyRich(parts.html + extra, parts.text);
+          } else ok = await copyUpdateForEmail(picked);
+          setMsg(ok ? "Copied - paste into your email." : "Your browser blocked the copy - try again.");
+          return;
+        }
         if (what === "word") { saveFile(await updateDocx(picked), updateFileName(picked)); setMsg("Word file saved."); return; }
-        printHtml(sendPrintDocument(picked, lhOn), w);
+        const page = sendPrintDocument(picked, lhOn);
+        const extra = meeting === "closeout" ? await howItDid().catch(() => "") : "";
+        printHtml(extra ? page.replace(/<\/body>/i, `${extra}</body>`) : page, w);
         remember({ report: sel, label: `${meeting === "turnover" ? shiftLabel : "Printed"}`, shift: shiftPick });
       } else if (sel === "hourly") {
         const logs = await hourlyLogs();
@@ -564,6 +593,10 @@ export default function ReportsView(p: Props) {
       ) : (
         <div className="grid gap-5 grid-cols-[minmax(0,1fr)] lg:grid-cols-[minmax(280px,360px)_minmax(0,1fr)] items-start">
           <div className="space-y-4 min-w-0">
+            {sel === "closeout" && live[0]?.orgId && (
+              <CloseoutSteps orgId={live[0].orgId} projectId={projectId} projectName={p.projectName} milestones={live} tz={tz}
+                userId={p.userId} canEdit={p.canEdit} phaseName={ph.phase ? ph.phases.find((x) => x.id === ph.phase)?.name ?? null : null} />
+            )}
             {(!meeting || meeting === "turnover" || lhRow) && options}
             {actions}
             {madeHere.length > 0 && (

@@ -13,7 +13,7 @@ import React, { useMemo } from "react";
 import { LineChart as LineChartIcon, Users } from "lucide-react";
 import { SCurveChart, ExampleFrame, BarList } from "@/components/ui/ChartKit";
 import { MiniBars } from "@/components/dashboard/viz";
-import { buildCostSeries, computeForecast, plannedManpowerSeries, type DatedAmount } from "@/lib/costSeries";
+import { buildCostSeries, plannedManpowerSeries, type DatedAmount } from "@/lib/costSeries";
 import { buildExampleCostData } from "@/lib/exampleProject";
 import { computeBidEconomics } from "@/lib/bidTab";
 import { fmtMoney, type CostEntry, type ProjectCostRollup } from "@/lib/costs";
@@ -44,21 +44,17 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
 
   const hasRealData = rollup.budget > 0 || entries.some((e) => e.status !== "void");
 
-  const { series, forecast, manpower } = useMemo(() => {
-    if (!hasRealData) return { series: [], forecast: null, manpower: [] };
+  const { series, manpower } = useMemo(() => {
+    if (!hasRealData) return { series: [], manpower: [] };
     const { commitments, actuals } = entriesToDated(entries);
     const series = buildCostSeries({
       budget: rollup.budget, scheduleStart, scheduleEnd, commitments, actuals,
     });
-    const forecast = computeForecast({
-      budget: rollup.budget, spent: rollup.spent, cpi: rollup.cpi,
-      scheduleStart, scheduleEnd, today: todayIso, fmt,
-    });
     const manpower = awardedLaborHours && scheduleStart && scheduleEnd
       ? plannedManpowerSeries({ laborHours: awardedLaborHours, scheduleStart, scheduleEnd })
       : [];
-    return { series, forecast, manpower };
-  }, [hasRealData, entries, rollup.budget, rollup.spent, rollup.cpi, scheduleStart, scheduleEnd, awardedLaborHours, todayIso, fmt]);
+    return { series, manpower };
+  }, [hasRealData, entries, rollup.budget, scheduleStart, scheduleEnd, awardedLaborHours]);
 
   // ── Example preview: the same components, stand-in data, watermarked ──
   if (!hasRealData) {
@@ -66,10 +62,6 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
     const exSeries = buildCostSeries({
       budget: ex.budget, scheduleStart: ex.scheduleStart, scheduleEnd: ex.scheduleEnd,
       commitments: ex.commitments, actuals: ex.actuals,
-    });
-    const exForecast = computeForecast({
-      budget: ex.budget, spent: ex.actuals.reduce((s, a) => s + a.amount, 0), cpi: ex.cpi,
-      today: ex.today, fmt: (n) => fmtMoney(n, "USD"),
     });
     const exEcon = computeBidEconomics(ex.quotes);
     const exAward = exEcon.find((e) => e.vendorName === "Gulf Mechanical");
@@ -83,7 +75,7 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
             <SectionLabel icon={<LineChartIcon className="w-3.5 h-3.5" />} text="Spend curve - planned pace vs promised vs spent" />
             <SCurveChart points={exSeries} fmt={(n) => fmtMoney(n, "USD")} todayIso={ex.today} />
           </div>
-          {exForecast?.sentence && <ForecastSentence sentence={exForecast.sentence} basis={exForecast.basis} />}
+
           <div className="grid md:grid-cols-2 gap-4">
             <div>
               <SectionLabel icon={<Users className="w-3.5 h-3.5" />} text="Planned crew size by week (from the awarded bid's hours)" />
@@ -104,7 +96,7 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
     );
   }
 
-  if (series.length < 2 && !forecast?.sentence) return null;
+  if (series.length < 2) return null;
 
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-sm space-y-3">
@@ -119,7 +111,7 @@ export default function CostCharts({ rollup, entries, scheduleStart, scheduleEnd
           )}
         </div>
       )}
-      {forecast?.sentence && <ForecastSentence sentence={forecast.sentence} basis={forecast.basis} />}
+      {/* One forecast on Costs: Forecast at finish (the Overview's card). */}
       {manpower.length > 0 && (
         <div>
           <SectionLabel icon={<Users className="w-3.5 h-3.5" />} text="Planned crew size by week (from the awarded bid's hours)" />
@@ -135,20 +127,6 @@ function SectionLabel({ icon, text }: { icon?: React.ReactNode; text: string }) 
   return (
     <div className="flex items-center gap-1.5 mb-1.5 text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">
       {icon}{text}
-    </div>
-  );
-}
-
-function ForecastSentence({ sentence, basis }: { sentence: string; basis: "cpi" | "run_rate" | "none" }) {
-  const over = /over budget/.test(sentence);
-  return (
-    <div className={`rounded-xl border px-3 py-2.5 text-sm font-bold ${
-      over ? "border-rose-500/40 bg-rose-500/[0.06] text-rose-800 dark:text-rose-300"
-        : "border-emerald-500/40 bg-emerald-500/[0.06] text-emerald-800 dark:text-emerald-300"}`}>
-      {sentence}
-      <span className="ml-2 text-[10px] font-bold text-[var(--color-text-muted)]">
-        {basis === "cpi" ? "Based on cost performance so far (CPI)." : "Based on the spending pace against the schedule."}
-      </span>
     </div>
   );
 }

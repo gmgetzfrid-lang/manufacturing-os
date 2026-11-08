@@ -28,7 +28,7 @@ import Link from "next/link";
 import {
   ClipboardCheck, FileText, Loader2, Sparkles, Search, X, Plus, Check,
   ChevronDown, ChevronRight, AlertTriangle, ShieldCheck, PackageCheck,
-  ListChecks, Ban, Wand2, Pencil, RotateCcw, Paperclip, Trash2,
+  ListChecks, Ban, Wand2, Pencil, RotateCcw, Paperclip, Trash2, UploadCloud,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { listParties, type Actor, type CostParty } from "@/lib/costs";
@@ -45,6 +45,7 @@ import {
 } from "@/lib/turnover";
 import type { SegmentedItem } from "@/lib/checklistEngine";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
+import { projectFileHome, uploadProjectFile, type ProjectFileHome } from "@/lib/projectUpload";
 import UndoToastHost from "@/components/projects/UndoToastHost";
 import { useUndoableActions } from "@/components/projects/useUndoableActions";
 
@@ -141,7 +142,7 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onC
         {canManage && (
           <button onClick={() => setShowNew((v) => !v)}
             className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] transition-colors">
-            <Plus className="w-3 h-3" /> New from document
+            <Plus className="w-3 h-3" /> New checklist
           </button>
         )}
       </div>
@@ -156,7 +157,7 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onC
           <ClipboardCheck className="w-7 h-7 mx-auto text-[var(--color-text-faint)] mb-2" />
           <div className="text-sm font-bold text-[var(--color-text)]">No checklists yet</div>
           <div className="text-xs text-[var(--color-text-muted)] mt-1 max-w-lg mx-auto">
-            Upload your PSSR or QA/QC checklist to document control, then point at it here - the AI
+            Click New checklist and upload your PSSR or QA/QC checklist (PDF) right there - the AI
             splits it into items, judges what applies to this job, and finds the evidence you already have.
           </div>
         </div>
@@ -172,14 +173,37 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onC
   );
 }
 
-function NewChecklistFlow({ orgId, projectId, actor, onDone, onCancel, setErr }: {
-  orgId: string; projectId: string; actor: Actor;
+/** A new checklist: upload the file right here (it goes into the project's
+ *  documents) or find one already in document control; the AI reads it
+ *  into items; you check them and save. */
+export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone, onCancel, setErr, kindDefault = "pssr" }: {
+  orgId: string; projectId: string; projectName?: string; actor: Actor;
   onDone: () => void; onCancel: () => void; setErr: (m: string | null) => void;
+  kindDefault?: ChecklistKind;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Array<{ id: string; label: string }>>([]);
   const [doc, setDoc] = useState<{ id: string; label: string } | null>(null);
-  const [kind, setKind] = useState<ChecklistKind>("pssr");
+  const [kind, setKind] = useState<ChecklistKind>(kindDefault);
+  // Upload: where the project's files go (picked once when it has no home yet).
+  const [home, setHome] = useState<ProjectFileHome | null>(null);
+  const [lib, setLib] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const fileRef = React.useRef<HTMLInputElement | null>(null);
+  useEffect(() => { let live = true; void projectFileHome(orgId, projectId).then((h) => { if (live) { setHome(h); setLib(h.libraryId ?? h.libraries[0]?.id ?? ""); } }); return () => { live = false; }; }, [orgId, projectId]);
+  const upload = async (file: File | null | undefined) => {
+    if (!file) return;
+    if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") { setErr("Upload the checklist as a PDF (in Word or Excel: File › Save As › PDF)."); return; }
+    setUploading(true); setErr(null);
+    try {
+      const d = await uploadProjectFile({ orgId, projectId, projectName: projectName ?? home?.name ?? "Project", file, prefix: kind === "pssr" ? "PSSR" : kind === "mi" ? "MI" : kind === "qaqc" ? "QAQC" : "CHECKLIST",
+        title: file.name.replace(/\.pdf$/i, ""), libraryId: lib || null, actorUserId: actor.uid, actorEmail: actor.email });
+      const picked = { id: d.documentId, label: d.label };
+      setDoc(picked);
+      await read(picked);
+    } catch (e) { setErr((e as Error).message); }
+    finally { setUploading(false); if (fileRef.current) fileRef.current.value = ""; }
+  };
   const [reading, setReading] = useState(false);
   const [proposed, setProposed] = useState<SegmentedItem[] | null>(null);
   const [title, setTitle] = useState("");
@@ -188,11 +212,14 @@ function NewChecklistFlow({ orgId, projectId, actor, onDone, onCancel, setErr }:
   useEffect(() => {
     const q = query.trim();
     if (q.length < 2 || doc) { setResults([]); return; }
+    // Commas and brackets would break the search filter.
+    const safe = q.replace(/[,()%*\\]/g, " ").trim();
+    if (safe.length < 2) { setResults([]); return; }
     const t = setTimeout(async () => {
       const { data } = await supabase
         .from("documents").select("id, document_number, title, name")
         .eq("org_id", orgId)
-        .or(`document_number.ilike.%${q}%,title.ilike.%${q}%,name.ilike.%${q}%`)
+        .or(`document_number.ilike.%${safe}%,title.ilike.%${safe}%,name.ilike.%${safe}%`)
         .limit(8);
       setResults((((data ?? []) as Array<Record<string, unknown>>)).map((d) => ({
         id: String(d.id), label: String(d.document_number || d.title || d.name || "Document"),
@@ -201,19 +228,19 @@ function NewChecklistFlow({ orgId, projectId, actor, onDone, onCancel, setErr }:
     return () => clearTimeout(t);
   }, [query, orgId, doc]);
 
-  const read = async () => {
-    if (!doc) return;
+  const read = async (which: { id: string; label: string } | null = doc) => {
+    if (!which) return;
     setReading(true); setErr(null);
     try {
       const res = await fetch("/api/projects/checklist", {
         method: "POST",
         headers: { "content-type": "application/json", ...(await authHeader()) },
-        body: JSON.stringify({ orgId, projectId, action: "segment", documentId: doc.id }),
+        body: JSON.stringify({ orgId, projectId, action: "segment", documentId: which.id }),
       });
       const body = (await res.json().catch(() => null)) as { items?: SegmentedItem[]; sourceLabel?: string; error?: string } | null;
       if (!res.ok || !body?.items) throw new Error(body?.error || `HTTP ${res.status}`);
       setProposed(body.items);
-      setTitle(body.sourceLabel ?? doc.label);
+      setTitle(body.sourceLabel ?? which.label);
     } catch (e) {
       setErr((e as Error).message);
     } finally { setReading(false); }
@@ -234,9 +261,28 @@ function NewChecklistFlow({ orgId, projectId, actor, onDone, onCancel, setErr }:
   };
 
   return (
-    <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)]/30 space-y-2">
+    <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)]/30 space-y-2"
+      onDragOver={(e) => { if (!proposed && !doc) e.preventDefault(); }}
+      onDrop={(e) => { if (proposed || doc) return; e.preventDefault(); void upload(e.dataTransfer.files?.[0]); }}>
       {!proposed ? (
         <>
+          {!doc && (
+            <div className="rounded-xl border-2 border-dashed border-[var(--color-accent)]/50 bg-[var(--color-surface)] p-3 flex items-center gap-3 flex-wrap">
+              <input ref={fileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={(e) => void upload(e.target.files?.[0])} />
+              <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading || reading || (!!home && !home.libraryId && !lib)}
+                className="h-9 inline-flex items-center gap-1.5 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-black disabled:opacity-50">
+                {uploading || reading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />} {uploading ? "Uploading…" : reading ? "Reading it…" : `Upload the ${kind === "pssr" ? "PSSR" : "checklist"} (PDF)`}
+              </button>
+              <span className="text-[12px] text-[var(--color-text-muted)] flex-1 min-w-48">Or drop it here. It&apos;s saved to this project&apos;s documents, then read into items for you to check.</span>
+              {home && !home.libraryId && (
+                <label className="flex items-center gap-1.5 text-[12px] font-bold text-[var(--color-text)]">Save in
+                  <select value={lib} onChange={(e) => setLib(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+                    {home.libraries.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                  </select>
+                </label>
+              )}
+            </div>
+          )}
           <div className="flex items-center gap-2 flex-wrap">
             {doc ? (
               <span className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-xs font-bold text-[var(--color-text)]">
@@ -247,7 +293,7 @@ function NewChecklistFlow({ orgId, projectId, actor, onDone, onCancel, setErr }:
               <span className="relative flex-1 min-w-64">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
                 <input value={query} onChange={(e) => setQuery(e.target.value)} autoFocus
-                  placeholder="Find the checklist document (by number or title)…"
+                  placeholder="Or find one already in document control (number or title)…"
                   className="w-full h-8 pl-8 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs" />
               </span>
             )}
@@ -257,7 +303,7 @@ function NewChecklistFlow({ orgId, projectId, actor, onDone, onCancel, setErr }:
                 <option key={k} value={k}>{CHECKLIST_KIND_LABEL[k]}</option>
               ))}
             </select>
-            <button onClick={() => void read()} disabled={!doc || reading}
+            <button onClick={() => void read()} disabled={!doc || reading || uploading}
               className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
               title="AI reads the printed pages and splits them into checkable items - you review before anything saves.">
               {reading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Read it

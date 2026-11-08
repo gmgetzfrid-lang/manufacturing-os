@@ -40,6 +40,8 @@ export interface CostAccount {
   partyId: string | null;
   wbsMilestoneId: string | null;
   status: "active" | "closed";
+  /** Kept for one phase (lib/projectPhases); null: split by the phases' shares. */
+  phaseId?: string | null;
 }
 
 export interface CostEntry {
@@ -58,6 +60,8 @@ export interface CostEntry {
   /** The quote or invoice this entry was posted from (cost_documents), so
    *  an award or a posting can be taken back exactly. */
   sourceDocumentId?: string | null;
+  /** The phase it's booked to (null: by its line, else by its date). */
+  phaseId?: string | null;
 }
 
 export interface Actor { uid: string; email: string | null; role?: string | null }
@@ -91,6 +95,7 @@ function mapAccount(r: Record<string, unknown>): CostAccount {
     partyId: (r.party_id as string | null) ?? null,
     wbsMilestoneId: (r.wbs_milestone_id as string | null) ?? null,
     status: (r.status as CostAccount["status"]) ?? "active",
+    phaseId: (r.phase_id as string | null | undefined) ?? null,
   };
 }
 
@@ -109,6 +114,7 @@ function mapEntry(r: Record<string, unknown>): CostEntry {
     createdByName: (r.created_by_name as string | null) ?? null,
     createdAt: (r.created_at as string | null) ?? null,
     sourceDocumentId: (r.source_document_id as string | null) ?? null,
+    phaseId: (r.phase_id as string | null | undefined) ?? null,
   };
 }
 

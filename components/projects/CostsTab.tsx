@@ -16,7 +16,7 @@
 import { activeOnly } from "@/lib/activeMilestones";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  CircleDollarSign, Plus, X, Loader2, Check, ChevronDown, ChevronRight,
+  Plus, X, Loader2, Check, ChevronDown, ChevronRight,
   Landmark, HardHat, Scale, TrendingUp, TrendingDown, AlertTriangle, Ban,
   LayoutDashboard, ScanSearch, Receipt, GitPullRequestArrow, FileCheck2, FileUp, Gauge, Hourglass,
   Pencil, RotateCcw,
@@ -40,8 +40,10 @@ import { appConfirm } from "@/components/providers/DialogProvider";
 import { AfeCard, LineEditor, BudgetHistory, EntryRevise } from "@/components/projects/cost/CostEdits";
 import { FilePreviewModal, fileOfDoc, type PreviewFile } from "@/components/projects/cost/FilePreview";
 import { loadBudgetHistory, parseMoney, type BudgetChange } from "@/lib/costRevisions";
+import BudgetTable, { LinesChart } from "@/components/projects/cost/BudgetTable";
+import { phaseStats } from "@/lib/phaseReport";
+import type { ProjectPhase } from "@/lib/projectPhases";
 
-const COST_TYPES = ["labor", "material", "equipment", "subcontract", "other"] as const;
 type CostView = "overview" | "budget" | "quotes" | "invoices" | "changes";
 
 interface BudgetBasis { afeNumber: string | null; chargeAccount: string | null; authorized: number | null; docId: string | null }
@@ -52,10 +54,14 @@ const ENTRY_TYPES: Array<{ v: CostEntryType; label: string; hint: string }> = [
   { v: "adjustment", label: "Adjustment", hint: "Signed correction (can be negative to credit back)" },
 ];
 
-export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, onDataChanged }: {
+export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, onDataChanged, phases = [], phase = null }: {
   orgId: string; projectId: string; canManage: boolean; uid: string; userEmail?: string | null;
   /** Fires after each data reload so the page's coach/health re-gathers. */
   onDataChanged?: () => void;
+  /** The project's phases and the one picked: each line's phase, and the
+   *  phase's share of the money (lib/phaseReport). */
+  phases?: ProjectPhase[];
+  phase?: string | null;
 }) {
   const [accounts, setAccounts] = useState<CostAccount[]>([]);
   const [entries, setEntries] = useState<CostEntry[]>([]);
@@ -67,9 +73,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   const [schedSpan, setSchedSpan] = useState<{ start: string | null; end: string | null }>({ start: null, end: null });
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [openAccount, setOpenAccount] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [showNewAccount, setShowNewAccount] = useState(false);
   const [showParties, setShowParties] = useState(false);
   const [view, setView] = useState<CostView | null>(null);
   const [basis, setBasis] = useState<BudgetBasis | null>(null);
@@ -146,16 +150,28 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   }, [docs]);
 
   const pctIndex = useMemo(() => new Map(milestones.map((m) => [m.id, m.pct])), [milestones]);
-  const rollup = useMemo(() => computeCostRollup(accounts, entries, pctIndex), [accounts, entries, pctIndex]);
+  // Closed lines are kept for the record, out of every total.
+  const openAccounts = useMemo(() => accounts.filter((a) => a.status !== "closed"), [accounts]);
+  const rollup = useMemo(() => computeCostRollup(openAccounts, entries, pctIndex), [openAccounts, entries, pctIndex]);
+  // Each line's numbers, closed ones too (the budget table shows them).
+  const allRollup = useMemo(() => computeCostRollup(accounts, entries, pctIndex), [accounts, entries, pctIndex]);
+  const lineNumbers = useMemo(() => new Map(allRollup.accounts.map((r) => [r.account.id, { committed: r.committed, spent: r.spent }])), [allRollup]);
+  // The phase picked: its share of the money, line by line.
+  const phaseMoney = useMemo(() => {
+    const p = phase ? phases.find((x) => x.id === phase) ?? null : null;
+    if (!p) return null;
+    const s = phaseStats({ milestones: [], phases, phase: p, log: null, tz: "UTC", now: Date.now(), total: basis?.authorized ?? null,
+      lines: openAccounts.map((a) => ({ id: a.id, name: a.name, cost_type: a.costType, budget: a.budget, phase_id: a.phaseId ?? null, status: a.status })),
+      entries: entries.map((e) => ({ cost_account_id: e.costAccountId ?? "", entry_type: e.entryType, amount: e.amount, entry_date: e.entryDate, status: e.status, phase_id: e.phaseId ?? null })) });
+    return { phase: p, s };
+  }, [phase, phases, openAccounts, entries, basis]);
   const cur = rollup.currencies[0] ?? "USD";
   const mixedCurrency = rollup.currencies.length > 1;
   const outlook = useMemo(() => computeCostOutlook(rollup, pctIndex, projectPct), [rollup, pctIndex, projectPct]);
-  const outlookById = useMemo(() => new Map(outlook.accounts.map((a) => [a.accountId, a])), [outlook]);
   // The bar shows ESTIMATED cost to date (quotes × progress) — invoices lag
   // the work by weeks, so "spent" alone would read near-zero all job.
   const burnPct = rollup.budget > 0 ? Math.min(100, (outlook.estimatedToDate / rollup.budget) * 100) : 0;
   const commitPct = rollup.budget > 0 ? Math.min(100, (rollup.committed / rollup.budget) * 100) : 0;
-  const partyName = useMemo(() => new Map(parties.map((p) => [p.id, p.name])), [parties]);
   const entriesByAccount = useMemo(() => {
     const m = new Map<string, CostEntry[]>();
     for (const e of entries) {
@@ -201,6 +217,18 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       </div>
 
       {view === "overview" && (<>
+      {phaseMoney && (
+        <div className="rounded-2xl border-2 border-[var(--color-accent)]/40 bg-[var(--color-surface)] px-4 py-3">
+          <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{phaseMoney.phase.name} · {phaseMoney.phase.share}% of the {basis?.authorized != null ? "AFE" : "budget"}</div>
+          <div className="mt-1 grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[["Phase budget", phaseMoney.s.budget], ["Committed", phaseMoney.s.committed], ["Spent", phaseMoney.s.spent], [phaseMoney.s.budget - phaseMoney.s.spent >= 0 ? "Left" : "Over", Math.abs(phaseMoney.s.budget - phaseMoney.s.spent)]].map(([k, v]) => (
+              <div key={String(k)}><div className="text-[11px] text-[var(--color-text-muted)]">{k}</div><div className={`text-lg font-black tabular-nums ${k === "Over" ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text)]"}`}>{fmtMoney(Number(v), cur)}</div></div>
+            ))}
+          </div>
+          <div className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">Lines kept for {phaseMoney.phase.name} count whole; every other line counts its {phaseMoney.phase.share}% share. Spending counts where it was booked, else by its date. The totals below are the whole project.</div>
+        </div>
+      )}
+      {phaseMoney && phaseMoney.s.lines.length > 0 && <LinesChart rows={phaseMoney.s.lines} cur={cur} />}
       {/* ── Stat strip ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard icon={<Landmark className="w-4 h-4" />} label="Budget" value={fmtMoney(rollup.budget, cur)} tone="accent" />
@@ -240,6 +268,10 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       {rollup.budget > 0 && (
         <OutlookCard outlook={outlook} rollup={rollup} cur={cur} authorized={basis?.authorized ?? null}
           onQuotes={() => setView("quotes")} />
+      )}
+
+      {rollup.budget > 0 && !phaseMoney && (
+        <LinesChart rows={rollup.accounts.map((r) => ({ name: r.account.name, budget: r.account.budget, committed: r.committed, spent: r.spent }))} cur={cur} />
       )}
 
       {mixedCurrency && (
@@ -305,117 +337,36 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         ) : null}
       </div>
 
-      {/* ── Accounts ── */}
-      <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
-        <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
-          <CircleDollarSign className="w-4 h-4 text-[var(--color-accent)]" />
-          <span className="text-sm font-bold text-[var(--color-text)]">Cost accounts</span>
-          <span className="text-[10px] font-mono text-[var(--color-text-muted)]">{accounts.length}</span>
-          {canManage && (
-            <button onClick={() => setShowNewAccount((v) => !v)} className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] transition-colors">
-              <Plus className="w-3 h-3" /> New account
-            </button>
-          )}
-        </div>
-
-        {showNewAccount && canManage && (
-          <AccountForm
-            orgId={orgId} projectId={projectId} actor={actor}
-            parties={parties} milestones={milestones}
-            onDone={() => { setShowNewAccount(false); void refresh(); }}
-            onCancel={() => setShowNewAccount(false)}
-          />
-        )}
-
-        {rollup.accounts.length === 0 ? (
-          <div className="px-4 py-10 text-center">
-            <CircleDollarSign className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
-            <div className="text-sm font-bold text-[var(--color-text)]">No cost accounts yet</div>
-            <div className="text-xs text-[var(--color-text-muted)] mt-1 max-w-md mx-auto">
-              An account is a budget line - &ldquo;Piping subcontract&rdquo;, &ldquo;Scaffolding&rdquo;, &ldquo;Engineering hours&rdquo;. Post commitments and actuals against it and the burn tracks itself.
-              {canManage ? " Create the first one above." : " Document Control sets these up."}
-            </div>
-          </div>
-        ) : (
-          <div className="divide-y divide-[var(--color-border)]">
-            {rollup.accounts.map((r) => {
-              const isOpen = openAccount === r.account.id;
-              const ol = outlookById.get(r.account.id);
-              const est = ol?.estimatedToDate ?? r.spent;
-              const rowPct = r.account.budget > 0 ? Math.min(100, (est / r.account.budget) * 100) : 0;
-              const lineOver = !!ol && r.account.budget > 0 && ol.forecast > r.account.budget + 0.5;
-              const accEntries = entriesByAccount.get(r.account.id) ?? [];
-              return (
-                <div key={r.account.id} className={r.overBudget ? "bg-rose-500/[0.04]" : undefined}>
-                  <div className="flex items-stretch">
-                  <button onClick={() => setOpenAccount(isOpen ? null : r.account.id)} className="flex-1 min-w-0 px-4 py-3 flex items-center gap-3 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
-                    {isOpen ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {r.account.code && <span className="font-mono text-[10px] text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{r.account.code}</span>}
-                        <span className="text-sm font-bold text-[var(--color-text)] truncate">{r.account.name}</span>
-                        {r.account.costType && <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{r.account.costType}</span>}
-                        {r.account.partyId && partyName.get(r.account.partyId) && (
-                          <span className="text-[10px] text-[var(--color-text-muted)]">· {partyName.get(r.account.partyId)}</span>
-                        )}
-                        {(r.overBudget || lineOver) && (
-                          <span className="inline-flex items-center gap-0.5 text-[9px] font-black uppercase tracking-wider text-rose-700 dark:text-rose-300 bg-rose-500/10 border border-rose-500/40 px-1.5 py-0.5 rounded"
-                            title={r.overBudget ? "Invoiced more than the budget" : "The awarded quote is more than the budget"}>
-                            <AlertTriangle className="w-2.5 h-2.5" /> {r.overBudget ? "over budget" : `quoted ${fmtMoney(ol!.forecast - r.account.budget, r.account.currency ?? cur)} over`}
-                          </span>
-                        )}
-                        {r.earnedValue !== null && (
-                          <span className="text-[9px] font-bold text-[var(--color-text-muted)]" title="Earned value from the pinned schedule task">EV {fmtMoney(r.earnedValue, r.account.currency ?? cur)}</span>
-                        )}
-                      </div>
-                      <div className="mt-1.5 relative h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden max-w-md">
-                        <div className={`absolute inset-y-0 left-0 rounded-full transition-all duration-500 ${r.overBudget ? "bg-rose-500" : "bg-[var(--color-accent)]"}`} style={{ width: `${rowPct}%` }} />
-                      </div>
-                    </div>
-                    <div className="shrink-0 text-right">
-                      <div className="text-sm font-black tabular-nums text-[var(--color-text)]"
-                        title={ol?.pct != null ? `Estimated: ${ol.basis === "quote" ? "awarded quote" : "budget"} × ${ol.pct}% complete (${ol.pctSource === "task" ? "pinned schedule task" : "whole schedule"}). Invoiced: ${fmtMoney(r.spent, r.account.currency ?? cur)}.` : "Invoiced to date"}>
-                        {fmtMoney(est, r.account.currency ?? cur)}
-                      </div>
-                      <div className="text-[10px] tabular-nums text-[var(--color-text-muted)]">
-                        {ol?.pct != null ? `est. at ${ol.pct}% · ` : ""}of {fmtMoney(r.account.budget, r.account.currency ?? cur)}
-                      </div>
-                      {r.committed > 0 && (
-                        <div className="text-[10px] tabular-nums text-[var(--color-text-faint)]">quoted {fmtMoney(r.committed, r.account.currency ?? cur)}</div>
-                      )}
-                    </div>
-                  </button>
-                  {canManage && (
-                    <button onClick={() => setEditingLine(editingLine === r.account.id ? null : r.account.id)} aria-label={`Edit ${r.account.name}`}
-                      title="Change the budget, contractor, name or type"
-                      className="shrink-0 self-center mr-3 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[11.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-                      Edit
-                    </button>
-                  )}
-                  </div>
-                  {editingLine === r.account.id && (
-                    <div className="px-4 pb-3">
-                      <LineEditor orgId={orgId} projectId={projectId} account={r.account} parties={parties} actor={actor}
-                        onCancel={() => setEditingLine(null)}
-                        onSaved={(msg) => { setEditingLine(null); setNotice(msg); void refresh(); }} />
-                    </div>
-                  )}
-
-                  {isOpen && (
-                    <AccountDetail
-                      orgId={orgId} projectId={projectId} actor={actor}
-                      rollup={r} entries={accEntries} parties={parties} milestones={milestones}
-                      history={budgetHistory.get(r.account.id) ?? []} onNotice={setNotice}
-                      canManage={canManage} busy={busy} setBusy={setBusy}
-                      onChanged={() => void refresh()} setErr={setErr}
-                    />
+      {/* ── Budget lines: the table, each line opening to its entries ── */}
+      <BudgetTable orgId={orgId} projectId={projectId} accounts={accounts} numbers={lineNumbers} entries={entries} parties={parties}
+        phases={phases} phase={phase} canManage={canManage} actor={actor} cur={cur}
+        onChanged={() => void refresh()} setErr={setErr} setNotice={setNotice}
+        renderDetail={(account) => {
+          const r = allRollup.accounts.find((x) => x.account.id === account.id);
+          if (!r) return null;
+          return (
+            <div className="bg-[var(--color-surface-2)]/30">
+              {canManage && account.status !== "closed" && (
+                <div className="px-4 pt-3">
+                  {editingLine === account.id ? (
+                    <LineEditor orgId={orgId} projectId={projectId} account={account} parties={parties} actor={actor}
+                      onCancel={() => setEditingLine(null)}
+                      onSaved={(msg) => { setEditingLine(null); setNotice(msg); void refresh(); }} />
+                  ) : (
+                    <button onClick={() => setEditingLine(account.id)} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[11.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Change the budget with a reason</button>
                   )}
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+              )}
+              <AccountDetail
+                orgId={orgId} projectId={projectId} actor={actor}
+                rollup={r} entries={entriesByAccount.get(account.id) ?? []} parties={parties} milestones={milestones}
+                history={budgetHistory.get(account.id) ?? []} onNotice={setNotice}
+                canManage={canManage} busy={busy} setBusy={setBusy}
+                onChanged={() => void refresh()} setErr={setErr}
+              />
+            </div>
+          );
+        }} />
 
       {/* ── Parties ── */}
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
@@ -713,66 +664,6 @@ function EntryForm({ orgId, projectId, accountId, parties, actor, onDone, setErr
         className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
         {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Post
       </button>
-    </div>
-  );
-}
-
-function AccountForm({ orgId, projectId, actor, parties, milestones, onDone, onCancel }: {
-  orgId: string; projectId: string; actor: { uid: string; email: string | null };
-  parties: CostParty[]; milestones: Array<{ id: string; name: string; pct: number }>;
-  onDone: () => void; onCancel: () => void;
-}) {
-  const [code, setCode] = useState("");
-  const [name, setName] = useState("");
-  const [type, setType] = useState<string>("subcontract");
-  const [budget, setBudget] = useState("");
-  const [party, setParty] = useState("");
-  const [pin, setPin] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async () => {
-    if (!name.trim()) { setError("Account name is required."); return; }
-    const b = budget ? Number(budget) : 0;
-    if (!Number.isFinite(b) || b < 0) { setError("Budget must be a non-negative number."); return; }
-    setSaving(true); setError(null);
-    const res = await saveAccount({
-      orgId, projectId,
-      patch: { code: code || null, name, costType: type, budget: b, partyId: party || null, wbsMilestoneId: pin || null, currency: "USD" },
-      actor,
-    });
-    setSaving(false);
-    if (!res.ok) { setError(res.error ?? "Couldn't create the account."); return; }
-    onDone();
-  };
-
-  return (
-    <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)]/40 space-y-2">
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
-        <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code (e.g. 01-200)" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono" />
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Account name (required)" autoFocus className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs md:col-span-2" />
-        <select value={type} onChange={(e) => setType(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
-          {COST_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-        </select>
-        <input value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="Budget (USD)" inputMode="decimal" className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-mono tabular-nums" />
-        <select value={party} onChange={(e) => setParty(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
-          <option value="">Party…</option>
-          {parties.filter((p) => p.status !== "inactive").map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
-      </div>
-      <div className="flex items-center gap-2 flex-wrap">
-        <select value={pin} onChange={(e) => setPin(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" title="Earned value = budget × the pinned task's % complete">
-          <option value="">Pin to schedule task (optional, enables EV/CPI)…</option>
-          {milestones.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.pct}%)</option>)}
-        </select>
-        {error && <span className="text-[11px] font-bold text-rose-700">{error}</span>}
-        <span className="ml-auto flex items-center gap-2">
-          <button onClick={onCancel} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1">Cancel</button>
-          <button onClick={() => void submit()} disabled={saving} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
-            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Create
-          </button>
-        </span>
-      </div>
     </div>
   );
 }

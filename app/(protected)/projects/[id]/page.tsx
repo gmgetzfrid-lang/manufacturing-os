@@ -254,6 +254,16 @@ export default function ProjectDetailPage() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
+  // The close-out's steps ask to go to a tab (punch list, turnover) or to
+  // open Complete (components/projects/CloseoutSteps).
+  useEffect(() => {
+    const toTab = (e: Event) => { const t = tabOf(String((e as CustomEvent).detail ?? "")); if (t) { setTab(t); window.scrollTo({ top: 0, behavior: "smooth" }); } };
+    const complete = () => setPendingStatus("completed");
+    window.addEventListener("project:tab", toTab);
+    window.addEventListener("project:complete", complete);
+    return () => { window.removeEventListener("project:tab", toTab); window.removeEventListener("project:complete", complete); };
+  }, [setTab]);
+
   const handlePostComment = async () => {
     if (!commentDraft.trim() || !uid || !project) return;
     setPosting(true);
@@ -570,6 +580,8 @@ export default function ProjectDetailPage() {
             uid={uid}
             userEmail={userEmail}
             onDataChanged={() => setCoachKey((k) => k + 1)}
+            phases={phases}
+            phase={phase}
           />
         )}
         {tab === "quality" && project.id && project.orgId && uid && (
