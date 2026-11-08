@@ -54,6 +54,7 @@ import { getProjectTimeline, type TimelineEvent } from "@/lib/timeline";
 import { openProjectEvidencePack } from "@/lib/evidencePack";
 import TimelineFeed from "@/components/documents/TimelineFeed";
 import ScheduleTab from "@/components/projects/ScheduleTab";
+import { PhasesSetup, PhaseBar, usePhasePick } from "@/components/projects/PhasesSetup";
 import { MEMBER_ROLES, projectAccess, roleLabel, needsCoOwnerSql } from "@/lib/projectAccess";
 
 const COOWNER_SQL_NOTE = "Co-owner needs a database change first: run supabase/migrations/20261113_project_co_owners.sql in the Supabase SQL editor. Editor and Viewer work now.";
@@ -136,6 +137,7 @@ export default function ProjectDetailPage() {
   const [posting, setPosting] = useState(false);
 
   const [showEdit, setShowEdit] = useState(false);
+  const [showPhases, setShowPhases] = useState(false);
 
   // Status-transition state
   const [pendingStatus, setPendingStatus] = useState<ProjectStatus | null>(null);
@@ -163,6 +165,10 @@ export default function ProjectDetailPage() {
   const canManage = access.canManage;
   // Deleting the project and handing over ownership: the owner (or an admin), not a co-owner.
   const isOwnerOrAdmin = !!isOwner || isAdmin;
+  // The project's phases (Transmix 1 and 2), and the one picked: the
+  // schedule, reports and costs follow it; null is the whole project.
+  const phases = React.useMemo(() => project?.phases ?? [], [project?.phases]);
+  const [phase, setPhase] = usePhasePick(project?.id, phases);
 
   // ?edit=1 (the coach's "write the purpose", "attach a Summary of Work")
   // opens Edit project, then drops out of the URL.
@@ -384,6 +390,13 @@ export default function ProjectDetailPage() {
                 onClick={() => setShowEdit(true)}
               />
             )}
+            {canManage && (
+              <ActionButton
+                icon={<Layers className="w-3.5 h-3.5" />}
+                label={phases.length ? "Phases" : "Split into phases"}
+                onClick={() => setShowPhases(true)}
+              />
+            )}
             <ActionButton
               icon={<ShieldCheck className="w-3.5 h-3.5" />}
               label="Evidence pack"
@@ -515,6 +528,9 @@ export default function ProjectDetailPage() {
         {project.id && project.orgId && tab && (!isScheduleTab(tab) || tab === "plan") && (
           <ProjectCoach orgId={project.orgId} projectId={project.id} refreshKey={coachKey} />
         )}
+        {(isScheduleTab(tab) || tab === "costs") && (
+          <PhaseBar phases={phases} pick={phase} onPick={setPhase} onEdit={canManage ? () => setShowPhases(true) : undefined} />
+        )}
         {tab === "documents" && (
           <div className="space-y-4">
             {project.id && project.orgId && (
@@ -614,6 +630,8 @@ export default function ProjectDetailPage() {
               onProjectChanged={() => void refresh()}
               mode={tab}
               onMode={setTab}
+              phases={phases}
+              phase={phase}
             />
           </ScheduleTzProvider>
         )}
@@ -633,6 +651,11 @@ export default function ProjectDetailPage() {
       {/* Lessons & findings: the close-out review, from the header or the Complete step. */}
       {reviewOpen && project.id && project.orgId && (
         <FindingsReviewModal orgId={project.orgId} projectId={project.id} projectName={project.name} canEdit={!!canManage || !!access.canEdit} timeZone={project.timezone} onClose={() => setReviewOpen(false)} />
+      )}
+
+      {showPhases && uid && project.id && project.orgId && (
+        <PhasesSetup orgId={project.orgId} projectId={project.id} projectName={project.name} phases={phases} phasesColumn={project.phasesColumn !== false}
+          uid={uid} userEmail={userEmail} onClose={() => setShowPhases(false)} onSaved={() => void refresh()} />
       )}
 
       {showEdit && uid && (

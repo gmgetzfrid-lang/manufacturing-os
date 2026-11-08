@@ -2,7 +2,7 @@
 // elsewhere (the hour-by-hour export and the shift sheet on the Shift tab, Print on
 // Work orders) opens one in Reports already set to its shift or work order.
 
-export type ReportId = "turnover" | "hourly" | "timelog" | "schedule" | "workorders" | "kickoff" | "closeout" | "sheet";
+export type ReportId = "turnover" | "hourly" | "timelog" | "schedule" | "workorders" | "kickoff" | "closeout" | "phase" | "sheet";
 
 export interface ReportMeta { id: ReportId; name: string; sub: string; form?: boolean }
 
@@ -15,6 +15,7 @@ export const REPORTS: ReportMeta[] = [
   { id: "workorders", name: "Work order report", sub: "Plan against actual, each work order · print" },
   { id: "kickoff", name: "Kick-off", sub: "Start of the project · present, print, email" },
   { id: "closeout", name: "Close-out", sub: "End of the project · present, print, email" },
+  { id: "phase", name: "Phase report", sub: "How a phase did, and the project phase by phase · print, email" },
   { id: "sheet", name: "Shift sheet", sub: "One page a shift, by pen · print, enter", form: true },
 ];
 

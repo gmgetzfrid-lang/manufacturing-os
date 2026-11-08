@@ -16,6 +16,7 @@
 // milestones complete deliberately. Future automation can wire in
 // as a separate enhancement.
 
+import { newWorkPhaseOf, PHASE_ATTR } from "@/lib/projectPhases";
 import { noEmDash } from "@/lib/noEmDash";
 import { supabase } from "@/lib/supabase";
 import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
@@ -204,6 +205,9 @@ export async function createMilestone(input: CreateMilestoneInput): Promise<Mile
   if (input.plannedStartAt) rich.planned_start_at = input.plannedStartAt;
   if (input.durationHours != null && Number.isFinite(input.durationHours) && input.durationHours > 0) rich.duration_hours = input.durationHours;
   if (input.parentId) rich.parent_id = input.parentId;
+  // A task with nothing above it lands in the phase picked (lib/projectPhases).
+  const ph = !input.parentId ? newWorkPhaseOf(input.projectId) : null;
+  if (ph) rich.attributes = { [PHASE_ATTR]: ph };
   let ins = await supabase.from("milestones").insert({ ...core, ...rich }).select("*").single();
   if (ins.error && Object.keys(rich).length > 0 && looksLikeUnknownColumn(ins.error.message)) {
     // Pre-hierarchy database: land the step, drop the fields it can't hold.
@@ -1763,6 +1767,9 @@ export interface ImportParsedInput {
    *  every row from it afterwards. Otherwise only rows that are new to the
    *  project get a baseline, and only when the project already has one. */
   baselineAll?: boolean;
+  /** Don't match old line-numbered rows by name (a phase's import: those
+   *  rows belong to the phase there before it, lib/projectPhases). */
+  noLegacyMatch?: boolean;
 }
 
 /** Bare "2026-08-15" / naive "2026-08-15 08:00" → plant time; anything
@@ -1831,7 +1838,7 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
   // file order — so two "Pull bundle" steps under different exchangers
   // each find their own row.
   const legacyByKey = new Map<string, string[]>();
-  if (input.projectId && input.rows.some((r) => /-key:/.test(r.externalRef ?? ""))) {
+  if (input.projectId && !input.noLegacyMatch && input.rows.some((r) => /-key:/.test(r.externalRef ?? ""))) {
     const { rows: all } = await fetchAllRows<{ id: string; name: string; parent_id: string | null; external_ref: string | null; wbs: string | null }>((from, to) => supabase
       .from("milestones").select("id, name, parent_id, external_ref, wbs").eq("org_id", input.orgId).eq("project_id", input.projectId!)
       .order("id").range(from, to));

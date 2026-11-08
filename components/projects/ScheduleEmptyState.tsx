@@ -13,18 +13,22 @@ interface Props {
   canEdit: boolean;
   onImport: () => void;
   onAdd: () => void;
+  /** A phase of the project with no schedule yet ("Transmix-2"). */
+  phaseName?: string | null;
 }
 
-export default function ScheduleEmptyState({ canEdit, onImport, onAdd }: Props) {
+export default function ScheduleEmptyState({ canEdit, onImport, onAdd, phaseName }: Props) {
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden">
       <div className="px-6 py-8 text-center bg-gradient-to-b from-[var(--color-accent-soft)]/60 to-white border-b border-[var(--color-border)]">
         <div className="w-14 h-14 mx-auto rounded-2xl bg-[image:var(--brand-gradient)] flex items-center justify-center shadow-lg mb-3">
           <CalendarRange className="w-7 h-7 text-white" />
         </div>
-        <h2 className="text-lg font-black text-[var(--color-text)]">Let&apos;s build your schedule</h2>
+        <h2 className="text-lg font-black text-[var(--color-text)]">{phaseName ? `No schedule in ${phaseName} yet` : "Let's build your schedule"}</h2>
         <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-md mx-auto">
-          Pick how you want to start. You can mix and match later - everything lands in the same plan and runs in the Execution board.
+          {phaseName
+            ? `Import ${phaseName}'s schedule file: it goes into ${phaseName} only and is tracked on its own. The other phases aren't touched, and All phases shows the whole project.`
+            : "Pick how you want to start. You can mix and match later - everything lands in the same plan and runs in the Execution board."}
         </p>
       </div>
 
@@ -34,7 +38,7 @@ export default function ScheduleEmptyState({ canEdit, onImport, onAdd }: Props) 
             tone="indigo"
             icon={<Upload className="w-5 h-5" />}
             badge="Easiest"
-            title="Import a schedule"
+            title={phaseName ? `Import ${phaseName}'s schedule` : "Import a schedule"}
             body="Already have one? Drop a Microsoft Project XML or Primavera (.xer/.xml) file and we'll parse it - hierarchy and all. (In MS Project: File → Save As → XML.)"
             cta="Upload a file"
             onClick={onImport}

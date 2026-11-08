@@ -22,7 +22,11 @@ import { dayKey, fmtInTz } from "@/lib/scheduleTz";
 import { useLetterhead } from "@/lib/letterheadStore";
 import { REPORTS, type ReportId, type ReportLink, type ShiftPick } from "@/lib/reportLinks";
 import type { ExportDoc } from "@/lib/reportExport";
-import { copyUpdateForEmail, printHtml, sendPrintDocument, updateToSend, updateDocx, updateFileName, saveFile } from "@/lib/updatePrint";
+import { copyUpdateForEmail, copyRich, printHtml, sendPrintDocument, updateToSend, updateDocx, updateFileName, saveFile } from "@/lib/updatePrint";
+import { supabase } from "@/lib/supabase";
+import { fetchAllRows } from "@/lib/fetchAllRows";
+import { usePhases } from "@/components/projects/PhaseContext";
+import { phaseStats, phaseReportHtml, phaseReportDocument, phaseReportText, type CostLine, type CostEntry } from "@/lib/phaseReport";
 import { withWorkOrderCrews } from "@/lib/workOrderCrew";
 import { loadProgressLog } from "@/lib/progressHistory";
 import { loadShiftRecords, saveShiftRecord, useShiftRecords, type ShiftRecord } from "@/lib/shiftRecord";
@@ -265,7 +269,24 @@ export default function ReportsView(p: Props) {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
   const lhOn = useLh && !!lh ? lh : null;
-  const previewSig = JSON.stringify([sel, shift.dayKey, shift.kind, cover, days.from, days.to, format, !!lhOn, woShow, woKey, woQuery, woAlso, woHistory, woUnits, woTypes, wc.ready, sel === "sheet" ? sheetDoc : null, tick, live.length, meeting ? doc : null]);
+  // ── Phase report: the phase picked (or every phase and the project) ──
+  const ph = usePhases();
+  const phaseBody = async (): Promise<{ html: string; text: string; title: string }> => {
+    const rows = <T,>(table: string) => fetchAllRows<T>((from, to) => supabase.from(table).select("*").eq("project_id", projectId).order("id").range(from, to) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>);
+    const [log, lines, entries, proj] = await Promise.all([
+      loadProgressLog(projectId), rows<CostLine>("cost_accounts"), rows<CostEntry>("cost_entries"),
+      supabase.from("projects").select("authorized_amount").eq("id", projectId).maybeSingle(),
+    ]);
+    const total = (proj.data as { authorized_amount?: number | null } | null)?.authorized_amount;
+    const at = Date.now();
+    const stats = (phase: (typeof ph.phases)[number] | null) => phaseStats({ milestones: ph.all, phases: ph.phases, phase, log, tz, times, now: at, total: total == null ? null : Number(total), lines: lines.rows, entries: entries.rows });
+    const each = ph.phases.map(stats);
+    const all = stats(null);
+    const picked = ph.phase ? each.find((x) => x.phase?.id === ph.phase) ?? null : null;
+    const title = picked?.phase ? `${picked.phase.name} phase report` : `${p.projectName ?? "Project"} phase report`;
+    return { html: phaseReportHtml({ project: p.projectName ?? "Project", tz, now: at, picked, all, each }), text: phaseReportText({ project: p.projectName ?? "Project", picked, all, each }), title };
+  };
+  const previewSig = JSON.stringify([ph.phase, ph.phases, sel === "phase" ? ph.all.length : 0, sel, shift.dayKey, shift.kind, cover, days.from, days.to, format, !!lhOn, woShow, woKey, woQuery, woAlso, woHistory, woUnits, woTypes, wc.ready, sel === "sheet" ? sheetDoc : null, tick, live.length, meeting ? doc : null]);
   useEffect(() => {
     let alive = true;
     const t = setTimeout(async () => {
@@ -298,6 +319,9 @@ export default function ReportsView(p: Props) {
           if (alive) setPreview({ kind: "html", html, landscape: true });
         } else if (sel === "sheet") {
           if (alive) setPreview(sheetDoc ? { kind: "html", html: sheetDoc, pages: sheetPages(sheetDoc) } : null);
+        } else if (sel === "phase") {
+          const b = await phaseBody();
+          if (alive) setPreview({ kind: "html", html: phaseReportDocument(b.title, b.html) });
         }
       } catch (e) {
         if (alive) { setPreview(null); setPreviewErr((e as Error).message); }
@@ -350,6 +374,11 @@ export default function ReportsView(p: Props) {
         const html = await workOrdersPrintDocument({ shown: woShown, milestones: p.milestones, projectId, projectName: p.projectName, tz, times, progress: p.progress, format: woHistory ? "history" : "report", word, scope: `${woScope}${woHistory ? " · with each step's history" : ""}`, lh: lhOn });
         printHtml(html, w);
         remember({ report: "workorders", label: woScope });
+      } else if (sel === "phase") {
+        const b = await phaseBody();
+        if (what === "email") { setMsg((await copyRich(b.html, b.text)) ? "Copied - paste into your email." : "Your browser blocked the copy - try again."); return; }
+        printHtml(phaseReportDocument(b.title, b.html), w);
+        remember({ report: "phase", label: ph.phase ? ph.phases.find((x) => x.id === ph.phase)?.name ?? "Phase" : "All phases" });
       } else if (sel === "sheet" && sheet && sheetDoc) {
         printHtml(sheetDoc, w);
         // Kept with the shift: entering it shows these lines, in this order.
@@ -499,13 +528,14 @@ export default function ReportsView(p: Props) {
       {sel === "hourly" && <button type="button" disabled={busy} onClick={() => void run("download")} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download</button>}
       {sel === "hourly" && format !== "xlsx" && <button type="button" disabled={busy} onClick={() => void run("print")} className={secondary}><Printer className="w-4 h-4" /> Print</button>}
       {sel === "timelog" && <button type="button" disabled={busy} onClick={() => void run("download")} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download</button>}
-      {(meeting || sel === "workorders" || sel === "sheet") && (
+      {(meeting || sel === "workorders" || sel === "sheet" || sel === "phase") && (
         <button type="button" disabled={busy || (!!meeting && !doc) || (sel === "sheet" && !sheetDoc) || (sel === "workorders" && woShown.length === 0)} onClick={() => void run("print")} className={primary}>
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />} Print
         </button>
       )}
       {sel === "sheet" && <button type="button" onClick={() => setSheetEntry(true)} className={secondary}><ClipboardPen className="w-4 h-4" /> Enter what&apos;s written</button>}
       {meeting && <button type="button" disabled={busy || !doc} onClick={() => void run("email")} className={secondary}><Mail className="w-4 h-4" /> Copy for email</button>}
+      {sel === "phase" && <button type="button" disabled={busy} onClick={() => void run("email")} className={secondary}><Mail className="w-4 h-4" /> Copy for email</button>}
       {meeting === "turnover" && doc?.form && <button type="button" disabled={busy} onClick={() => void run("word")} className={secondary}><FileText className="w-4 h-4" /> Export Word</button>}
       {(meeting === "kickoff" || meeting === "closeout") && (
         <>
@@ -563,7 +593,7 @@ export default function ReportsView(p: Props) {
       {/* The update a meeting sends, made off screen for the preview. */}
       {meeting && <ShiftReportView key={sel} {...base} docOnly meetingFixed={meeting} shiftPick={meeting === "turnover" ? shiftPick : undefined} onDoc={setDoc} />}
       <nav aria-label="Reports" className={`${phoneOpen ? "hidden sm:block" : ""} sm:w-[280px] shrink-0 sm:border-r border-[var(--color-border)] py-3`}>
-        {[{ head: "Reports", sub: "filled in from the project", items: REPORTS.filter((r) => !r.form) }, { head: "Forms", sub: "blank, filled in by hand", items: REPORTS.filter((r) => r.form) }].map((g) => (
+        {[{ head: "Reports", sub: "filled in from the project", items: REPORTS.filter((r) => !r.form && (r.id !== "phase" || ph.phases.length > 0)) }, { head: "Forms", sub: "blank, filled in by hand", items: REPORTS.filter((r) => r.form) }].map((g) => (
           <div key={g.head} className="mb-2">
             <div className="px-4 pt-1 pb-1">
               <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{g.head}</div>
@@ -617,6 +647,7 @@ const DESCRIBE: Record<ReportId, string> = {
   workorders: "Each work order opened up with all its steps: plan against actual, status, % and the latest comment.",
   kickoff: "The start of the project: the job, the first shifts, readiness and safety.",
   closeout: "The end of the project: how it went, what was added, what's open, and the Lessons & findings review for next time.",
+  phase: "How the phase picked at the top did: progress against plan day by day, the finish, the work added and its share of the budget, beside the other phases and the whole project. With All phases picked: every phase and the project.",
   sheet: "One page for the field, for one shift: only that shift's work, by equipment. Write start, % at lunch, % at the end of the shift and done by pen, then enter it here line for line.",
 };
 

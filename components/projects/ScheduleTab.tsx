@@ -43,7 +43,9 @@ import { filterMilestones, isFilterActive, EMPTY_FILTER, type ScheduleFilter } f
 import { buildProgressIndex, type ProgressInfo } from "@/lib/scheduleProgress";
 import RebaseScheduleModal from "@/components/projects/RebaseScheduleModal";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
-import { DEFAULT_SCHEDULE_TZ, fmtInTz, fromDateTimeInput, tzLabel } from "@/lib/scheduleTz";
+import { DEFAULT_SCHEDULE_TZ, fmtInTz, fromDateTimeInput, tzLabel, dayKey } from "@/lib/scheduleTz";
+import { inPhase, phaseOnDay, setNewWorkPhase, type ProjectPhase } from "@/lib/projectPhases";
+import { PhaseProvider } from "@/components/projects/PhaseContext";
 import { ProjectTypeProvider } from "@/components/projects/ProjectTypeContext";
 import ExecutionView from "@/components/projects/ExecutionView";
 import { CancelledJobsBar } from "@/components/projects/CancelledJobs";
@@ -58,6 +60,7 @@ import QuickUpdate from "@/components/projects/QuickUpdate";
 // import it, set it up), Today (the shift's screen), Work (the timeline,
 // calendar and work orders) and Reports (every report).
 export type ScheduleMode = "plan" | "today" | "work" | "reports";
+const NO_PHASES: ProjectPhase[] = [];
 
 const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);
 const STATUS_OPTIONS: MilestoneStatus[] = ["planned", "in_progress", "completed", "on_hold", "blocked", "missed"];
@@ -90,9 +93,13 @@ interface ScheduleTabProps {
   mode: ScheduleMode;
   /** Go to another of the tabs (a report opened from the Shift tab, import from an empty board). */
   onMode: (m: ScheduleMode) => void;
+  /** The project's phases (lib/projectPhases), and the one picked: every
+   *  view shows that phase's schedule; null is the whole project. */
+  phases?: ProjectPhase[];
+  phase?: string | null;
 }
 
-export default function ScheduleTab({ orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole, isProjectOwner, canEditSchedule, timezone, canManage, onProjectChanged, mode, onMode }: ScheduleTabProps) {
+export default function ScheduleTab({ orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole, isProjectOwner, canEditSchedule, timezone, canManage, onProjectChanged, mode, onMode, phases = NO_PHASES, phase = null }: ScheduleTabProps) {
   const view = mode === "plan" ? "planning" : "execution";
   const tz = useScheduleTz();
   // The owner, a co-owner or editor on the project, or an org role that works
@@ -100,13 +107,25 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const canEdit = canEditSchedule ?? (!!isProjectOwner || (!!userRole && ADMIN_ROLES.has(userRole)));
 
   const [allMilestones, setMilestones] = useState<Milestone[]>([]);
+  // The phase picked: its schedule only (every view, report and count);
+  // all phases is the whole project.
+  const phaseMilestones = useMemo(() => inPhase(allMilestones, phases, phase), [allMilestones, phases, phase]);
+  // New work lands in the phase picked, else the one running today.
+  useEffect(() => {
+    setNewWorkPhase(projectId, phases.length ? (phase ?? phaseOnDay(dayKey(Date.now(), tz), phases)?.id ?? null) : null);
+  }, [projectId, phases, phase, tz]);
   // Jobs taken off this schedule leave every view (their steps with them);
   // the close-out report and the Cancelled list keep them in sight.
-  const { active, cancelled } = useMemo(() => splitCancelled(allMilestones), [allMilestones]);
+  const { active, cancelled } = useMemo(() => splitCancelled(phaseMilestones), [phaseMilestones]);
+
   // Jobs with no night crew are day work, whatever hours the file gave
   // them (Schedule setup → Night shifts). A view-only mark, never saved.
   const shiftTimes = useShiftTimes(projectId);
   const milestones = useMemo(() => applyNightStaffing(active, shiftTimes.nightJobs), [active, shiftTimes.nightJobs]);
+  // Every phase, for the phase report (the same work the views see: not
+  // cancelled, nights as staffed).
+  const phaseCtx = useMemo(() => ({ phases, phase, all: phases.length ? applyNightStaffing(splitCancelled(allMilestones).active, shiftTimes.nightJobs) : milestones }),
+    [phases, phase, allMilestones, shiftTimes.nightJobs, milestones]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showGhost, setShowGhost] = useState(true);
@@ -247,7 +266,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const onClearSchedule = async () => {
     const n = allMilestones.length;
     const ok = await appConfirm({
-      message: `Delete all ${n} task${n === 1 ? "" : "s"} on this project's schedule? Notes on them go too. Undo is offered right after; once you leave the page, import the schedule file again to rebuild it. This action is audited.`,
+      message: `Delete all ${n} task${n === 1 ? "" : "s"} on this project's schedule${phases.length ? `, every phase (${phases.map((p) => p.name).join(" and ")})` : ""}? Notes on them go too. Undo is offered right after; once you leave the page, import the schedule file again to rebuild it. This action is audited.`,
       tone: "danger",
     });
     if (!ok) return;
@@ -267,7 +286,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const onResetProgress = async () => {
     const n = allMilestones.length;
     const ok = await appConfirm({
-      message: `Reset progress on all ${n} task${n === 1 ? "" : "s"}? Every task goes back to 0% and "planned", and its actual start / completion stamps are cleared, so the real outage starts clean after testing. Planned dates, the baseline, dependencies and notes stay (status-change notes from the rehearsal are removed). Undo is offered right after. This action is audited.`,
+      message: `Reset progress on all ${n} task${n === 1 ? "" : "s"}${phases.length ? `, every phase (${phases.map((p) => p.name).join(" and ")})` : ""}? Every task goes back to 0% and "planned", and its actual start / completion stamps are cleared, so the real outage starts clean after testing. Planned dates, the baseline, dependencies and notes stay (status-change notes from the rehearsal are removed). Undo is offered right after. This action is audited.`,
       tone: "danger",
     });
     if (!ok) return;
@@ -334,6 +353,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
 
   return (
     <ProjectTypeProvider projectId={projectId} projectName={projectName} groups={groupNames}>
+    <PhaseProvider value={phaseCtx}>
     <div className="space-y-4">
       <ScheduleSetup {...setupProps} />
       {/* + Finding (a step, a work order, an hour) and the close-out review, on every tab. */}
@@ -465,6 +485,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           canEdit={canEdit}
           onImport={() => { onMode("plan"); setImportOpen(true); }}
           onAdd={() => { onMode("plan"); setAdding(true); }}
+          phaseName={phase ? phases.find((x) => x.id === phase)?.name ?? null : null}
         />
       )}
 
@@ -658,6 +679,9 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           userRole={userRole}
           existingCount={allMilestones.length}
           existing={allMilestones}
+          phases={phases}
+          phase={phase}
+          phaseMilestones={phases.length ? (pid: string) => inPhase(allMilestones, phases, pid) : undefined}
           onClose={() => setImportOpen(false)}
           onDone={() => { setImportOpen(false); void refresh(); }}
         />
@@ -693,6 +717,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
         );
       })()}
     </div>
+    </PhaseProvider>
     </ProjectTypeProvider>
   );
 }

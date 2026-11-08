@@ -986,6 +986,14 @@ export interface Project {
   projectTypeSaved?: unknown;
   /** The wizard's job size: small | standard | capital. */
   jobKind?: string | null;
+  /** The project split into phases (lib/projectPhases; projects.phases).
+   *  Empty: one phase, the whole project. */
+  phases?: import("@/lib/projectPhases").ProjectPhase[];
+  /** False when the database has no phases column yet (PHASES_SQL). */
+  phasesColumn?: boolean;
+  /** The AFE's authorized amount (projects.authorized_amount). */
+  authorizedAmount?: number | null;
+  afeNumber?: string | null;
   completedAt?: Timestamp;
   cancelledAt?: Timestamp;
   cancelledReason?: string;

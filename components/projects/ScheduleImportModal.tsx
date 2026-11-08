@@ -28,6 +28,7 @@ import {
   Columns3, ArrowRight, Link2,
 } from "lucide-react";
 import { parseScheduleFileFromBytes, type ParseResult, type ScheduleFormat } from "@/lib/scheduleParsers";
+import { rowsForPhase, phaseRef, type ProjectPhase } from "@/lib/projectPhases";
 import { importMilestonesFromParsed, clearProjectSchedule, snapshotSchedule, undoImport, reapplyCancellations, type ScheduleSnapshot, type ImportResult } from "@/lib/milestones";
 import type { MilestoneSource } from "@/types/schema";
 import { Select } from "@/components/ui/Field";
@@ -51,6 +52,13 @@ interface Props {
   existingCount?: number;
   /** The tasks already on the project, to show what a re-import will do. */
   existing?: Array<{ name: string; externalRef?: string | null }>;
+  /** The project's phases (lib/projectPhases): the file goes into one of
+   *  them, matched only against that phase's tasks, and every row tagged. */
+  phases?: ProjectPhase[];
+  /** The phase picked on the project (null: all phases). */
+  phase?: string | null;
+  /** A phase's tasks. */
+  phaseMilestones?: (phaseId: string) => Array<{ name: string; externalRef?: string | null }>;
   onClose: () => void;
   onDone: () => void;
 }
@@ -79,9 +87,19 @@ const FORMAT_TO_SOURCE: Record<ScheduleFormat, ImportSource> = {
 };
 
 export default function ScheduleImportModal({
-  orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole, existingCount, existing, onClose, onDone,
+  orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole, existingCount: projectCount, existing: projectExisting, phases = [], phase = null, phaseMilestones, onClose, onDone,
 }: Props) {
   const tz = useScheduleTz();
+  // A project in phases: which phase the file goes into (the one picked;
+  // with all phases showing, the first with no schedule yet). Only that
+  // phase's tasks are matched, updated or counted; the others are never
+  // touched. The phase there first keeps its rows' own keys.
+  const [target, setTarget] = useState<string | null>(() => !phases.length ? null
+    : phase ?? phases.find((p) => (phaseMilestones?.(p.id).length ?? 0) === 0)?.id ?? phases[0].id);
+  const phased = phases.length > 0 && !!target;
+  const ownKeys = phased && target !== phases[0].id;
+  const existing = useMemo(() => (phased && phaseMilestones ? phaseMilestones(target!) : projectExisting), [phased, phaseMilestones, target, projectExisting]);
+  const existingCount = phased ? existing?.length ?? 0 : projectCount;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [filename, setFilename] = useState<string | null>(null);
@@ -112,7 +130,8 @@ export default function ScheduleImportModal({
     for (const m of existing) if (/-row:/.test(m.externalRef ?? "")) legacy.set(norm(m.name), (legacy.get(norm(m.name)) ?? 0) + 1);
     let updated = 0;
     const used = new Set<string>();
-    for (const r of parseResult.rows) {
+    for (const row of parseResult.rows) {
+      const r = ownKeys ? { ...row, externalRef: phaseRef(target!, row.externalRef) ?? null } : row;
       if (r.externalRef && refs.has(r.externalRef)) { updated++; used.add(r.externalRef); continue; }
       const left = legacy.get(norm(r.name)) ?? 0;
       if (left > 0 && /-key:/.test(r.externalRef ?? "")) { legacy.set(norm(r.name), left - 1); updated++; }
@@ -120,7 +139,7 @@ export default function ScheduleImportModal({
     const legacyUsed = existing.filter((m) => /-row:/.test(m.externalRef ?? "")).length - [...legacy.values()].reduce((a, b) => a + b, 0);
     const kept = existing.length - used.size - legacyUsed;
     return { updated, added: parseResult.rows.length - updated, kept: Math.max(0, kept) };
-  }, [parseResult, existing]);
+  }, [parseResult, existing, ownKeys, target]);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   // Per-column review config: include/exclude, rename, or map to a first-class
   // field. Lets the user shape ANY ingested column before the final import.
@@ -196,17 +215,21 @@ export default function ScheduleImportModal({
       // A copy of the schedule as it is, so the import can be undone.
       const before = (existingCount ?? 0) > 0 ? await snapshotSchedule(orgId, projectId) : { rows: [], notes: [] };
       setSnapshot(before);
-      setReplaced(replaceExisting && (existingCount ?? 0) > 0);
-      if (replaceExisting && (existingCount ?? 0) > 0) {
+      // A project in phases is only ever merged into: replacing would wipe every phase.
+      const replace = replaceExisting && !phased;
+      setReplaced(replace && (existingCount ?? 0) > 0);
+      if (replace && (existingCount ?? 0) > 0) {
         await clearProjectSchedule({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
       }
-      const shaped = parseResult.rows.map(applyColConfig);
+      const shaped0 = parseResult.rows.map(applyColConfig);
+      const shaped = phased ? rowsForPhase(shaped0 as unknown as Array<typeof shaped0[number] & { attributes?: Record<string, unknown> | null }>, target!, ownKeys) as unknown as typeof shaped0 : shaped0;
       const res = await importMilestonesFromParsed({
         orgId, projectId,
         timeZone: tz,
         // A fresh or replace import IS the plan of record → baseline it.
         // A merge keeps the existing baseline and only baselines new rows.
-        baselineAll: replaceExisting || (existingCount ?? 0) === 0,
+        baselineAll: (replaceExisting && !phased) || (existingCount ?? 0) === 0,
+        noLegacyMatch: ownKeys,
         source: FORMAT_TO_SOURCE[parseResult.format],
         // CRITICAL: pass through every hierarchy + duration field
         // the parser captured. Previous code dropped these on the
@@ -243,7 +266,7 @@ export default function ScheduleImportModal({
         createdByName: userName,
       });
       // A replace re-creates every row: cancelled jobs stay cancelled.
-      if (replaceExisting && before.rows.length) await reapplyCancellations(orgId, projectId, before.rows as unknown as Array<Record<string, unknown>>);
+      if (replaceExisting && !phased && before.rows.length) await reapplyCancellations(orgId, projectId, before.rows as unknown as Array<Record<string, unknown>>);
       setImportResult(res);
       // Only auto-close when at least one row was actually INSERTED
       // into this project. Pure-update results (which happen when
@@ -254,7 +277,7 @@ export default function ScheduleImportModal({
       // every row was an update to a different project's rows.
       // Stays open on the result, with Undo, until the person closes it.
     } finally { setImporting(false); }
-  }, [parseResult, orgId, projectId, userId, userName, userEmail, userRole, applyColConfig, tz, replaceExisting, existingCount]);
+  }, [parseResult, orgId, projectId, userId, userName, userEmail, userRole, applyColConfig, tz, replaceExisting, existingCount, phased, target, ownKeys]);
 
   const canSubmit = !!parseResult && parseResult.rows.length > 0 && !importing;
   const previewRows = parseResult?.rows.slice(0, 8) ?? [];
@@ -279,6 +302,16 @@ export default function ScheduleImportModal({
                   </span>
                 )}
               </div>
+              {phases.length > 0 && (
+                <label className="mt-1 flex items-center gap-1.5 text-[12px] text-[var(--color-text)]">
+                  <span className="font-bold">Phase</span>
+                  <select value={target ?? ""} onChange={(e) => setTarget(e.target.value)} disabled={importing || !!importResult} aria-label="Phase to import into"
+                    className="h-7 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[12px] font-bold">
+                    {phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                  <span className="text-[11px] text-[var(--color-text-muted)]">{existingCount ? `${existingCount} task${existingCount === 1 ? "" : "s"} there now: the file is merged into them` : "no schedule yet"}; other phases aren&apos;t touched.</span>
+                </label>
+              )}
             </div>
           </div>
           <button onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)] transition-colors">
@@ -525,7 +558,7 @@ export default function ScheduleImportModal({
               <span className="text-[var(--color-text-muted)]"> Updated tasks take the file&apos;s names, dates, hours and outline. Progress, comments, hold reasons and the crew setting stay as recorded here; contractor, location and work order are filled from the file only where they&apos;re blank.</span>
             </div>
           )}
-          {(existingCount ?? 0) > 0 && parseResult && parseResult.rows.length > 0 && !importResult && (
+          {!phased && (existingCount ?? 0) > 0 && parseResult && parseResult.rows.length > 0 && !importResult && (
             <label className="flex items-start gap-2 rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-[11px] text-rose-900 dark:text-rose-200">
               <input type="checkbox" checked={replaceExisting} onChange={(e) => setReplaceExisting(e.target.checked)} className="mt-0.5" />
               <span>
