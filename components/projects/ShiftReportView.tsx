@@ -54,7 +54,7 @@ import { isDefaultType, typeWord } from "@/lib/projectType";
 import { useProjectTypeCtx } from "@/components/projects/ProjectTypeContext";
 import { notesFor } from "@/lib/milestones";
 import { useShiftRecords, saveShiftRecord, openFollowUps, newId, CLOSEOUT_KEY, editIncident, editNote, unclearNote, restoreIncident, restoreNote, type CrewCount, type Incident, type IncidentKind, type ShiftNote, type ShiftRecord } from "@/lib/shiftRecord";
-import { buildLookBack, CAUSE_LABEL, type LookBack, type StepLook } from "@/lib/lookBack";
+import { lostWords, buildLookBack, CAUSE_LABEL, type LookBack, type StepLook } from "@/lib/lookBack";
 import { IncidentsLine, ShiftNotesBox, TimeLogButton } from "@/components/projects/ShiftRecordParts";
 import { useSortRows, Grip } from "@/components/projects/SortRows";
 import AddWorkPicker from "@/components/projects/AddWorkPicker";
@@ -2478,20 +2478,8 @@ function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftRep
 }
 
 
-/** What a step lost, and why — in words. */
-function whyLost(s: StepLook, c: Ctx): string[] {
-  const out: string[] = [];
-  if (s.lost.hold) {
-    const said = s.holds.filter((h) => h.reason);
-    out.push(said.length ? said.map((h) => `On hold${h.hours > 0 ? ` ${c.hrs(h.hours)}` : " now"} - “${h.reason}”`).join("; ") : `On hold / blocked ${c.hrs(s.lost.hold)}`);
-  }
-  if (s.lost.longer) out.push(`Ran ${c.hrs(s.lost.longer)} longer than planned`);
-  if (s.lost["late-start"]) out.push(`Started ${c.hrs(s.lost["late-start"])} late - no hold or earlier work recorded`);
-  if (s.lost.replanned) out.push(`Re-planned (${c.hrs(s.lost.replanned)})${s.replans[0] ? ` - “${s.replans[0]}”` : ""}`);
-  if (s.discovery) out.push(`${ADDED[s.addedKind ?? "discovery"].word} - “${s.discovery}”`);
-  for (const w of s.why.slice(-2)) out.push(`Said: “${w}”`);
-  return out;
-}
+/** What a step lost, and why, in words (lib/lookBack lostWords). */
+const whyLost = (s: StepLook, c: Ctx): string[] => lostWords(s, c.hrs);
 
 function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
   const signed = (h: number) => `${h > 0 ? "+" : h < 0 ? "−" : ""}${c.hrs(Math.abs(h))}`;

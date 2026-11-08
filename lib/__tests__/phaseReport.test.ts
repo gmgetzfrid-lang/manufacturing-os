@@ -78,6 +78,18 @@ describe("phaseStats", () => {
     expect(r.plannedFinish).toBe(Date.parse(at("2026-11-01", "16:00")));
     expect(r.shifts.map((x) => [x.plan, x.done, x.addedKnown, x.addedDone])).toEqual([[100, 0, 0, 0], [null, 0, 4, 0], [null, 100, 4, 4]]);
     expect(r.startGuessed).toBe(0);
+    // Behind from the plan's finish until the work was done; what was behind, and what ran past it.
+    expect(r.shifts.map((x) => x.finishes)).toEqual([false, false, true]);
+    expect(r.slip.first?.dayKey).toBe("2026-11-01");
+    expect(r.slip.forGood).toBe(r.slip.first);
+    expect(r.slip.widest).toMatchObject({ points: 100, hours: 10 });
+    expect(r.slip.behind.map((x) => [x.id, x.hoursBehind])).toEqual([["b1", 10]]);
+    expect(r.slip.pastPlan.map((x) => [x.id, x.inPlan, x.hoursBehind])).toEqual([["a1", false, 4], ["b1", true, 10]]);
+    const html = phaseReportHtml({ project: "T", tz, now: Date.parse(at("2026-11-05")), picked: null, all: r, each: [] });
+    expect(html).toContain("Why it finished late");
+    expect(html).toContain("Fell behind the plan for good Sun, Nov 1 · Day: 0% done against 100% planned");
+    expect(html).toContain("Still going when the plan said done");
+    expect(html).toContain("late</b>");
   });
   it("a phase with no schedule: not 0 of 0, and the whole project isn't done", () => {
     const only1 = ms.filter((x) => !["t2", "s3"].includes(x.id!)).map((x) => (x.id === "s2" ? { ...x, status: "completed", percentComplete: 100, actualAt: at("2026-11-02", "15:00") } as Milestone : x));

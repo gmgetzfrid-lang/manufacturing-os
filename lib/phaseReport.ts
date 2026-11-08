@@ -17,7 +17,8 @@ import type { ProgressLogRow } from "@/lib/progressHistory";
 import { phaseIndex, phaseOnDay, phaseAmount, phaseDates, type ProjectPhase } from "@/lib/projectPhases";
 import { dayKey, fmtInTz } from "@/lib/scheduleTz";
 import { workHours, expectedFraction, shiftWindowsBetween, DEFAULT_SHIFT_TIMES, type ShiftTimes } from "@/lib/shiftReport";
-import { builtCurves, pctAt } from "@/lib/asBuiltProgress";
+import { builtCurves, pctAt, type BuiltCurve } from "@/lib/asBuiltProgress";
+import { woOf } from "@/lib/workOrderCrew";
 import { originalPlan } from "@/lib/closeoutStatus";
 import { noEmDash } from "@/lib/noEmDash";
 import { discoveryOf } from "@/lib/discovery";
@@ -47,6 +48,40 @@ export interface ShiftRow {
   addedDone: number | null;
   /** Under way now. */
   current: boolean;
+  /** The shift the last step was done in. */
+  finishes: boolean;
+}
+
+/** A step in the slip story: which, and where it stood. */
+export interface SlipStep {
+  id: string;
+  name: string;
+  /** The task (equipment) it's under, and its work order. */
+  task: string;
+  wo: string;
+  crew: string;
+  /** In the original plan (else added after). */
+  inPlan: boolean;
+  /** Hours of its planned work it was behind at the time. */
+  hoursBehind: number;
+  /** When it was done (null: not yet). */
+  finish: number | null;
+}
+
+/** When the work fell behind the original plan, and what was behind:
+ *  from the times recorded, no schedule links needed. */
+export interface Slip {
+  /** The first shift it was behind. */
+  first: ShiftRow | null;
+  /** The shift it fell behind for good: behind from then until the plan's
+   *  work was all done. */
+  forGood: ShiftRow | null;
+  /** The widest gap: points, and hours of the plan's work. */
+  widest: { row: ShiftRow; points: number; hours: number } | null;
+  /** When it fell behind for good (else first): the steps furthest behind. */
+  behind: SlipStep[];
+  /** Still going when the plan said all done (finished after it, or not yet). */
+  pastPlan: SlipStep[];
 }
 
 export interface PhaseStats {
@@ -69,6 +104,8 @@ export interface PhaseStats {
   added: { count: number; steps: number; hours: number };
   /** Shift by shift: the original plan against the work done, as built. */
   shifts: ShiftRow[];
+  /** When it fell behind and what was behind (see Slip). */
+  slip: Slip;
   /** The plan the chart is measured against: the original plan as saved
    *  (the baseline), else, with none saved, the schedule as it is. */
   planBasis: { kind: "baseline" | "schedule"; savedAt: number | null; hours: number; steps: number; start: number | null; finish: number | null };
@@ -103,6 +140,75 @@ function leaves(ms0: Milestone[]): Milestone[] {
 }
 
 const doneOf = (m: Milestone) => m.status === "completed" || Number(m.percentComplete ?? 0) >= 100;
+
+/** Behind the original plan at a shift's end (after the plan was done, its
+ *  work counts as planned 100%). */
+export const behindAt = (r: ShiftRow) => r.done != null && r.done + 0.05 < (r.plan ?? 100);
+
+function slipOf(x: {
+  shifts: ShiftRow[]; work: Milestone[]; plan: Milestone[]; planHours: number; planFinish: number | null;
+  curves: Map<string, BuiltCurve>; weight: (m: Milestone) => number; now: number; tz: string; times: ShiftTimes;
+  inPlan: Set<string>; milestones: Milestone[];
+}): Slip {
+  const rows = x.shifts.filter((r) => r.done != null);
+  const first = rows.find(behindAt) ?? null;
+  // Behind from here to the end (or until the plan's work reached 100%).
+  let forGood: ShiftRow | null = null;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (!behindAt(rows[i])) break;
+    forGood = rows[i];
+  }
+  if (forGood && rows[rows.length - 1] && !behindAt(rows[rows.length - 1])) forGood = null;
+  // Caught up in the end (the plan's work all done): the streak before that.
+  if (!forGood) {
+    let end = rows.length - 1;
+    while (end >= 0 && !behindAt(rows[end])) end--;
+    if (end >= 0 && rows.slice(end + 1).every((r) => (r.done ?? 0) >= 100)) {
+      let i = end;
+      while (i > 0 && behindAt(rows[i - 1])) i--;
+      forGood = rows[i];
+    }
+  }
+  let widest: Slip["widest"] = null;
+  for (const r of rows) {
+    if (!behindAt(r)) continue;
+    const points = Math.round(((r.plan ?? 100) - (r.done ?? 0)) * 10) / 10;
+    if (!widest || points > widest.points) widest = { row: r, points, hours: Math.round((points / 100) * x.planHours * 10) / 10 };
+  }
+  const byId = new Map(x.milestones.filter((m) => m.id).map((m) => [m.id!, m]));
+  const about = (m: Milestone) => {
+    const parent = m.parentId ? byId.get(m.parentId) : undefined;
+    let wo = woOf(m);
+    for (let p = parent; !wo && p; p = p.parentId ? byId.get(p.parentId) : undefined) wo = woOf(p);
+    return { id: m.id!, name: m.name, task: parent?.name ?? "", wo, crew: m.responsibleParty?.trim() ?? "", inPlan: x.inPlan.has(m.id!) };
+  };
+  const at = forGood ?? first;
+  const behind: SlipStep[] = [];
+  if (at) {
+    const t = at.current ? x.now : at.end;
+    for (const m of x.plan) {
+      const c = x.curves.get(m.id!);
+      const planned = expectedFraction(m, t, x.tz, x.times);
+      const done = c && c.points.length ? pctAt(c, t) / 100 : 0;
+      const hb = x.weight(m) * (planned - done);
+      if (hb >= 0.5) behind.push({ ...about(m), hoursBehind: Math.round(hb * 10) / 10, finish: doneOf(m) ? ms(m.actualAt) : null });
+    }
+    behind.sort((a, b) => b.hoursBehind - a.hoursBehind);
+  }
+  const pastPlan: SlipStep[] = [];
+  if (x.planFinish != null) {
+    for (const m of x.work) {
+      const f = doneOf(m) ? ms(m.actualAt) : null;
+      if (f != null ? f > x.planFinish : x.now > x.planFinish) {
+        const c = x.curves.get(m.id!);
+        const left = c && c.points.length ? 1 - pctAt(c, x.planFinish) / 100 : 1;
+        pastPlan.push({ ...about(m), hoursBehind: Math.round(x.weight(m) * left * 10) / 10, finish: f });
+      }
+    }
+    pastPlan.sort((a, b) => (a.finish ?? Infinity) - (b.finish ?? Infinity));
+  }
+  return { first, forGood, widest, behind, pastPlan };
+}
 
 /** One phase's numbers (phase null: the whole project). */
 export function phaseStats(input: {
@@ -178,10 +284,14 @@ export function phaseStats(input: {
           addedKnown: Math.round(outside.filter((m) => knownAt(m) <= w.end).reduce((a, m) => a + weight(m), 0) * 10) / 10,
           addedDone: future ? null : Math.round(doneHours(outside, t, withUntimed) * 10) / 10,
           current,
+          finishes: allDone && lastDone != null && lastDone > w.start && lastDone <= w.end,
         });
       }
     }
   }
+
+  // The slip story: when it fell behind, and what was behind.
+  const slip = slipOf({ shifts, work, plan: plan.steps, planHours, planFinish: plan.finish, curves, weight, now, tz, times, inPlan, milestones: input.milestones });
 
   // Added after the plan: discovery and added scope.
   const addedSteps = work.filter((m) => !!discoveryOf(m));
@@ -210,7 +320,7 @@ export function phaseStats(input: {
     actualPct: pct(earned, hours), plannedPct: pct(plannedAt(now), hours),
     plannedStart: plan.start, plannedFinish: plan.finish, finishedAt,
     added: { count: finds.size, steps: addedSteps.length, hours: Math.round(addedSteps.reduce((a, m) => a + weight(m), 0)) },
-    shifts,
+    shifts, slip,
     planBasis: { kind: plan.kind, savedAt: plan.savedAt, hours: Math.round(planHours), steps: plan.steps.length, start: plan.start, finish: plan.finish },
     outside: { steps: outside.length, hours: Math.round(outside.reduce((a, m) => a + weight(m), 0)) },
     startGuessed, untimed,
@@ -252,8 +362,6 @@ const hrs = (h: number) => `${Math.round(h * 10) / 10} h`;
 /** "Sat, Oct 24 · Night" */
 export const shiftLabel = (r: ShiftRow) => `${dayWords(r.dayKey)} · ${r.kind === "day" ? "Day" : "Night"}`;
 
-/** Behind the plan at that shift's end. */
-export const behindAt = (r: ShiftRow) => r.plan != null && r.done != null && r.done + 0.05 < r.plan;
 
 /** What the chart shows, in words: what the gray is measured from, how the
  *  green was worked out, and anything it couldn't place. Said every time. */
@@ -311,12 +419,44 @@ export function phaseSectionHtml(s: PhaseStats, tz: string, now: number): string
         const planCell = r.plan != null ? bar(r.plan, "#94a3b8") : `<div style="font-size:10px;color:${MUTED};">plan done</div>`;
         const doneCell = r.done != null ? bar(r.done, doneColor) : `<div style="font-size:10px;color:${MUTED};">to come</div>`;
         const added = r.addedKnown > 0 ? `<div style="font-size:10px;color:${AMBER};">added ${hrs(r.addedDone ?? 0)} of ${hrs(r.addedKnown)}</div>` : "";
-        return `<tr${r.kind === "night" ? ` style="background:#f8fafc;"` : ""}><td style="padding:2px 6px 2px 0;white-space:nowrap;color:${INK};">${esc(shiftLabel(r))}${r.planEnds && s.plannedFinish != null ? `<div style="font-size:10px;color:${MUTED};">plan done ${esc(fmtInTz(s.plannedFinish, tz, { hour: "numeric", minute: "2-digit", hour12: true }))}</div>` : ""}${r.current ? `<div style="font-size:10px;color:${MUTED};">now</div>` : ""}</td>` +
+        return `<tr${r.kind === "night" ? ` style="background:#f8fafc;"` : ""}><td style="padding:2px 6px 2px 0;white-space:nowrap;color:${INK};">${esc(shiftLabel(r))}${r.planEnds && s.plannedFinish != null ? `<div style="font-size:10px;font-weight:bold;color:${NAVY};">plan finish ${esc(fmtInTz(s.plannedFinish, tz, { hour: "numeric", minute: "2-digit", hour12: true }))}</div>` : ""}${r.finishes && s.finishedAt != null ? `<div style="font-size:10px;font-weight:bold;color:${GREEN};">all done ${esc(fmtInTz(s.finishedAt, tz, { hour: "numeric", minute: "2-digit", hour12: true }))}</div>` : ""}${r.current ? `<div style="font-size:10px;color:${MUTED};">now</div>` : ""}</td>` +
           `<td style="padding:2px 0;">${planCell}<div style="height:2px;font-size:0;line-height:0;">&nbsp;</div>${doneCell}</td>` +
-          `<td style="padding:2px 0 2px 8px;white-space:nowrap;text-align:right;color:${MUTED};" width="22%">${r.plan != null ? `${r.plan}%` : "plan done"}${r.done != null ? ` / <b style="color:${doneColor};">${r.done}%</b>` : ""}${added}</td></tr>`;
+          `<td style="padding:2px 0 2px 8px;white-space:nowrap;text-align:right;color:${MUTED};" width="22%">${r.plan != null ? `${r.plan}%` : "past plan"}${r.done != null ? ` / <b style="color:${doneColor};">${r.done}%</b>${r.plan == null && red ? ` <b style="color:${RED};">late</b>` : ""}` : ""}${added}</td></tr>`;
       }).join("") + `</table>`;
   }
-  return html + moneyHtml(s);
+  return html + slipHtml(s, tz) + moneyHtml(s);
+}
+
+
+/** When it fell behind, by how much, and what was behind (in words). */
+export function slipWords(s: PhaseStats, tz: string): string[] {
+  const sl = s.slip, out: string[] = [];
+  const at = (r: ShiftRow) => `${shiftLabel(r)}: ${r.done}% done against ${r.plan ?? 100}% planned`;
+  if (sl.forGood) out.push(`Fell behind the plan for good ${at(sl.forGood)}, and ${s.finishedAt != null ? "didn't catch up before the finish" : "hasn't caught up"}.`);
+  if (sl.first && sl.first !== sl.forGood) out.push(`${sl.forGood ? "Behind once before" : "Behind"} ${at(sl.first)}${sl.forGood ? ", then caught up" : ""}.`);
+  if (sl.widest) out.push(`Widest gap ${shiftLabel(sl.widest.row)}: ${sl.widest.points} points, ${hrs(sl.widest.hours)} of the plan's work.`);
+  if (!sl.first) out.push("Never behind the original plan at a shift's end.");
+  if (s.finishedAt != null && s.plannedFinish != null && s.finishedAt > s.plannedFinish + 1_800_000) out.push(`Planned to be done ${dateTime(s.plannedFinish, tz)}; the last step was done ${dateTime(s.finishedAt, tz)}.`);
+  return out;
+}
+
+const stepLine = (x: SlipStep) => `${x.task ? `${x.task} \u203a ` : ""}${x.name}${x.wo ? ` (WO ${x.wo})` : ""}${x.crew ? `, ${x.crew}` : ""}${x.inPlan ? "" : " - added after the plan"}`;
+export { stepLine as slipStepLine };
+
+function slipHtml(s: PhaseStats, tz: string): string {
+  const sl = s.slip;
+  if (!s.shifts.length) return "";
+  const words = slipWords(s, tz);
+  const list = (title: string, xs: SlipStep[], right: (x: SlipStep) => string, more: number) =>
+    `<div style="${FONT}font-size:11.5px;font-weight:bold;color:${INK};margin:8px 0 2px;">${esc(title)}</div>` +
+    `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;${FONT}font-size:11px;">${xs.map((x) => `<tr><td style="padding:2px 6px 2px 0;border-bottom:1px solid ${RULE};">${esc(stepLine(x))}</td><td style="padding:2px 0 2px 6px;border-bottom:1px solid ${RULE};text-align:right;white-space:nowrap;color:${MUTED};">${esc(right(x))}</td></tr>`).join("")}</table>` +
+    (more > 0 ? `<div style="${FONT}font-size:10.5px;color:${MUTED};">and ${more} more</div>` : "");
+  let html = h2(s.finishedAt != null && s.plannedFinish != null && s.finishedAt > s.plannedFinish + 1_800_000 ? "Why it finished late" : "Where it slipped") +
+    `<div style="${FONT}font-size:12px;color:${INK};line-height:1.5;">${words.map(esc).join("<br>")}</div>`;
+  const at = sl.forGood ?? sl.first;
+  if (at && sl.behind.length) html += list(`Furthest behind at the end of ${shiftLabel(at)}`, sl.behind.slice(0, 6), (x) => `${hrs(x.hoursBehind)} behind`, sl.behind.length - 6);
+  if (sl.pastPlan.length && s.plannedFinish != null) html += list(`Still going when the plan said done (${dateTime(s.plannedFinish, tz)})`, sl.pastPlan.slice(0, 10), (x) => (x.finish != null ? `done ${dateTime(x.finish, tz)}` : "not done"), sl.pastPlan.length - 10);
+  return html;
 }
 
 function moneyHtml(s: PhaseStats): string {

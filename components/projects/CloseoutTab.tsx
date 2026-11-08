@@ -26,7 +26,11 @@ import { listTurnoverItems, seedTurnoverItems, addTurnoverItem, updateTurnoverIt
 import { uploadProjectFile, projectFileHome, type ProjectFileHome } from "@/lib/projectUpload";
 import { loadCloseoutSettings, saveCloseoutSettings, type CloseoutSettings } from "@/lib/closeoutSettings";
 import { workSummary, vsPlanWords } from "@/lib/closeoutStatus";
-import { phaseStats, chartKey, shiftLabel, behindAt, noScheduleWords, type CostLine, type CostEntry } from "@/lib/phaseReport";
+import { phaseStats, chartKey, shiftLabel, behindAt, noScheduleWords, slipWords, slipStepLine, type CostLine, type CostEntry, type SlipStep } from "@/lib/phaseReport";
+import { buildLookBack, lostWords, CAUSE_LABEL, type Cause, type StepLook } from "@/lib/lookBack";
+import { discoveries } from "@/lib/discovery";
+import { notesFor } from "@/lib/milestones";
+import type { MilestoneNote } from "@/types/schema";
 import { phaseDates, inPhase, type ProjectPhase } from "@/lib/projectPhases";
 import { fmtInTz } from "@/lib/scheduleTz";
 import { NewChecklistFlow } from "@/components/projects/QualityTab";
@@ -51,6 +55,9 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   const times = useShiftTimes(projectId);
   const [ms, setMs] = useState<Milestone[] | null>(null);
   const [log, setLog] = useState<ProgressLogRow[] | null>(null);
+  // What was recorded on each step (holds and their reasons, what people
+  // said): the look back's reasons for the slip.
+  const [notes, setNotes] = useState<MilestoneNote[] | null>(null);
   const [money0, setMoney0] = useState<{ lines: CostLine[]; entries: CostEntry[]; afe: number | null } | null>(null);
   const [snap, setSnap] = useState<ProjectStateSnapshot | null>(null);
   // Every PSSR on the project (a project in phases has one a phase).
@@ -84,10 +91,11 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
         loadCloseoutSettings(projectId).catch(() => ({} as CloseoutSettings)),
         projectFileHome(orgId, projectId).catch(() => null),
       ]);
+      const stepNotes = await notesFor(m.map((x) => x.id!).filter(Boolean)).catch(() => [] as MilestoneNote[]);
       const mine = lists.filter((c) => c.kind === "pssr" && c.status !== "void");
       const withProg = await Promise.all(mine.map(async (c) => { const pr = computeChecklistProgress(await listChecklistItems(c.id)); return { list: c, satisfied: pr.satisfied, applicable: pr.applicable }; }));
       if (!live) return;
-      setMs(m); setLog(l);
+      setMs(m); setLog(l); setNotes(stepNotes);
       const a = (proj.data as { authorized_amount?: number | null } | null)?.authorized_amount;
       setMoney0({ lines: lines.rows, entries: entries.rows, afe: a == null ? null : Number(a) });
       setSnap(s); setItems(t); setSettings(cs); setHome(h);
@@ -105,6 +113,14 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   const pickedPhase = phasePick ? phases.find((p) => p.id === phasePick) ?? null : null;
   const stats = useMemo(() => (ms && money0 ? phaseStats({ milestones: ms, phases, phase: pickedPhase, log, tz, times, now: Date.now(), total: money0.afe, lines: money0.lines, entries: money0.entries }) : null),
     [ms, money0, phases, pickedPhase, log, tz, times]);
+  // The look back (lib/lookBack): each step's lost time and why, as recorded.
+  const look = useMemo(() => {
+    if (!ms || !notes) return null;
+    const active = ms.filter((m) => !(m as { cancelledAt?: unknown }).cancelledAt);
+    return buildLookBack({ milestones: active, notes, discoveries: discoveries(active), now: Date.now(), tz });
+  }, [ms, notes, tz]);
+  const lookById = useMemo(() => new Map((look?.steps ?? []).map((x) => [x.id, x])), [look]);
+  const phaseIds = useMemo(() => (ms && pickedPhase ? new Set(inPhase(ms, phases, pickedPhase.id).map((m) => m.id!)) : null), [ms, phases, pickedPhase]);
   const short = (t: number) => `${fmtInTz(t, tz, { month: "short", day: "numeric" })}, ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`;
   const when = (t: number) => `${fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric" })}, ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`;
 
@@ -356,13 +372,17 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                       <div className="text-[12.5px] font-bold text-[var(--color-text)]">Against the original plan, shift by shift</div>
                       <ul className="mt-1 mb-2 space-y-0.5 text-[11.5px] leading-snug text-[var(--color-text-muted)]">
                         {chartKey(stats, tz).map((k) => <li key={k}>{k}</li>)}
+                        <li>Past the plan&rsquo;s finish, anything short of 100% is late, in red.</li>
                       </ul>
                       <div className="divide-y divide-[var(--color-border)]/60">
                         {stats.shifts.map((r) => {
                           const red = behindAt(r);
                           return (
                             <div key={r.start} className={`grid grid-cols-[116px_minmax(0,1fr)_auto] gap-2 items-center py-1 text-[12px] ${r.kind === "night" ? "bg-[var(--color-surface-2)]/50" : ""}`}>
-                              <span className="text-[var(--color-text)] leading-tight pl-1">{shiftLabel(r)}{r.planEnds && stats.plannedFinish != null && <span className="block text-[10.5px] text-[var(--color-text-muted)]">plan done {fmtInTz(stats.plannedFinish, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}{r.current && <span className="block text-[10.5px] text-[var(--color-text-muted)]">now</span>}</span>
+                              <span className="text-[var(--color-text)] leading-tight pl-1">{shiftLabel(r)}
+                                {r.planEnds && stats.plannedFinish != null && <span className="block text-[10.5px] font-bold text-[#000A72] dark:text-indigo-300">plan finish {fmtInTz(stats.plannedFinish, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}
+                                {r.finishes && stats.finishedAt != null && <span className="block text-[10.5px] font-bold text-emerald-700 dark:text-emerald-400">all done {fmtInTz(stats.finishedAt, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}
+                                {r.current && <span className="block text-[10.5px] text-[var(--color-text-muted)]">now</span>}</span>
                               <div className="space-y-0.5">
                                 {r.plan != null
                                   ? <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><div className="h-full rounded-full bg-slate-400" style={{ width: `${Math.min(100, r.plan)}%` }} /></div>
@@ -370,7 +390,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                                 <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">{r.done != null && <div className={`h-full rounded-full ${red ? "bg-rose-500" : "bg-emerald-600"}`} style={{ width: `${Math.min(100, r.done)}%` }} />}</div>
                               </div>
                               <span className="text-right tabular-nums text-[var(--color-text-muted)] leading-tight pr-1">
-                                {r.plan != null ? `${r.plan}%` : "plan done"}{r.done != null ? <> / <b className={red ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}>{r.done}%</b></> : " / to come"}
+                                {r.plan != null ? `${r.plan}%` : "past plan"}{r.done != null ? <> / <b className={red ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}>{r.done}%</b>{r.plan == null && red && <b className="text-rose-700 dark:text-rose-400"> late</b>}</> : " / to come"}
                                 {r.addedKnown > 0 && <span className="block text-[10.5px] text-amber-700 dark:text-amber-400">added {Math.round((r.addedDone ?? 0) * 10) / 10} of {r.addedKnown} h</span>}
                               </span>
                             </div>
@@ -379,6 +399,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                       </div>
                     </div>
                   )}
+                  {stats.shifts.length > 0 && <SlipStory stats={stats} tz={tz} lookById={lookById} setbacks={(look?.setbacks ?? []).filter((x) => !phaseIds || phaseIds.has(x.id))} steps={(look?.steps ?? []).filter((x) => !phaseIds || phaseIds.has(x.id))} loading={!look} />}
                 </>
               )}
               {stats.lines.length > 0 && <LinesChart rows={stats.lines} cur="USD" />}
@@ -397,6 +418,85 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
           </ModalBody>
         </Modal>
       )}
+    </div>
+  );
+}
+
+/** Why it finished late (or where it slipped): when it fell behind, what
+ *  was behind then, what was still going when the plan said done, the
+ *  biggest setbacks and where the time went, each with what was recorded. */
+function SlipStory({ stats, tz, lookById, setbacks, steps, loading }: {
+  stats: ReturnType<typeof phaseStats>; tz: string; lookById: Map<string, StepLook>; setbacks: StepLook[]; steps: StepLook[]; loading: boolean;
+}) {
+  const sl = stats.slip;
+  const late = stats.finishedAt != null && stats.plannedFinish != null && stats.finishedAt > stats.plannedFinish + 1_800_000;
+  const when = (t: number) => `${fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric" })}, ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`;
+  const reasons = (id: string) => { const x = lookById.get(id); return x ? lostWords(x).slice(0, 3) : []; };
+  const Row = ({ x, right }: { x: SlipStep; right: string }) => {
+    const why = reasons(x.id);
+    return (
+      <li className="py-1.5">
+        <div className="flex items-start gap-2">
+          <span className="min-w-0 flex-1 text-[12px] text-[var(--color-text)] leading-snug">{slipStepLine(x)}</span>
+          <span className="shrink-0 text-[11.5px] tabular-nums text-[var(--color-text-muted)]">{right}</span>
+        </div>
+        {why.length > 0 ? why.map((w) => <div key={w} className="text-[11.5px] text-amber-800 dark:text-amber-300 leading-snug">{w}</div>)
+          : !loading && <div className="text-[11.5px] text-[var(--color-text-muted)] leading-snug">Nothing recorded on why</div>}
+      </li>
+    );
+  };
+  const at = sl.forGood ?? sl.first;
+  const byCause = (["hold", "longer", "late-start", "replanned", "discovery"] as Cause[]).map((c) => ({ c, h: Math.round(steps.reduce((a, x) => a + (x.lost[c] ?? 0), 0) * 10) / 10, n: steps.filter((x) => (x.lost[c] ?? 0) > 0).length })).filter((x) => x.h > 0);
+  const maxH = Math.max(1, ...byCause.map((x) => x.h));
+  const head = "text-[12.5px] font-bold text-[var(--color-text)] mt-3";
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] px-3 py-2.5">
+      <div className="text-[13px] font-black text-[var(--color-text)]">{late ? "Why it finished late" : "Where it slipped"}</div>
+      <ul className="mt-1 space-y-0.5 text-[12px] text-[var(--color-text)] leading-snug">
+        {slipWords(stats, tz).map((w) => <li key={w}>{w}</li>)}
+      </ul>
+      {at && sl.behind.length > 0 && (
+        <>
+          <div className={head}>Furthest behind at the end of {shiftLabel(at)}</div>
+          <ul className="divide-y divide-[var(--color-border)]/60">{sl.behind.slice(0, 5).map((x) => <Row key={x.id} x={x} right={`${x.hoursBehind} h behind`} />)}</ul>
+          {sl.behind.length > 5 && <div className="text-[11px] text-[var(--color-text-muted)]">and {sl.behind.length - 5} more</div>}
+        </>
+      )}
+      {sl.pastPlan.length > 0 && stats.plannedFinish != null && (
+        <>
+          <div className={head}>Still going when the plan said done ({when(stats.plannedFinish)})</div>
+          <ul className="divide-y divide-[var(--color-border)]/60">{sl.pastPlan.slice(0, 8).map((x) => <Row key={x.id} x={x} right={x.finish != null ? `done ${when(x.finish)}` : "not done"} />)}</ul>
+          {sl.pastPlan.length > 8 && <div className="text-[11px] text-[var(--color-text-muted)]">and {sl.pastPlan.length - 8} more</div>}
+        </>
+      )}
+      {setbacks.length > 0 && (
+        <>
+          <div className={head}>Biggest setbacks over the job</div>
+          <ul className="divide-y divide-[var(--color-border)]/60">{setbacks.slice(0, 5).map((x) => (
+            <li key={x.id} className="py-1.5">
+              <div className="flex items-start gap-2">
+                <span className="min-w-0 flex-1 text-[12px] text-[var(--color-text)] leading-snug">{x.task ? `${x.task} \u203a ` : ""}{x.name}{x.wo ? ` (WO ${x.wo})` : ""}{x.crew ? `, ${x.crew}` : ""}</span>
+                <span className="shrink-0 text-[11.5px] tabular-nums text-rose-700 dark:text-rose-400">lost {x.lostH} h</span>
+              </div>
+              {lostWords(x).slice(0, 3).map((w) => <div key={w} className="text-[11.5px] text-amber-800 dark:text-amber-300 leading-snug">{w}</div>)}
+            </li>
+          ))}</ul>
+        </>
+      )}
+      {byCause.length > 0 && (
+        <>
+          <div className={head}>Where the time went</div>
+          <div className="text-[11px] text-[var(--color-text-muted)] mb-1">Hours each step lost on its own, by cause. Steps run side by side, so these add up to more than the finish&rsquo;s slip.</div>
+          <div className="space-y-1">{byCause.map((x) => (
+            <div key={x.c} className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto] gap-2 items-center text-[11.5px]">
+              <span className="text-[var(--color-text)] leading-tight">{CAUSE_LABEL[x.c]}</span>
+              <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><div className="h-full rounded-full bg-amber-500" style={{ width: `${(x.h / maxH) * 100}%` }} /></div>
+              <span className="tabular-nums text-[var(--color-text-muted)]">{x.h} h · {x.n} step{x.n === 1 ? "" : "s"}</span>
+            </div>
+          ))}</div>
+        </>
+      )}
+      {loading && <div className="mt-2 text-[11.5px] text-[var(--color-text-muted)]">Reading what was recorded on each step…</div>}
     </div>
   );
 }

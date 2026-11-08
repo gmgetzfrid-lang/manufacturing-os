@@ -19,7 +19,7 @@ import type { Milestone, MilestoneNote } from "@/types/schema";
 import { computeCpm, linkGraph } from "@/lib/cpm";
 import { earliestStart } from "@/lib/scheduleLinks";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
-import { discoveryOf, kindOf, type Discovery, type AddedKind } from "@/lib/discovery";
+import { discoveryOf, kindOf, ADDED, type Discovery, type AddedKind } from "@/lib/discovery";
 import { woOf } from "@/lib/workOrderCrew";
 
 const H = 3_600_000;
@@ -293,4 +293,21 @@ export function buildLookBack(input: {
   if (finish.done && finish.slipH <= ON_PLAN_H) keep.push(`The ${word} finished ${finish.slipH < -ON_PLAN_H ? `${-finish.slipH} h ahead of` : "on"} plan.`);
 
   return { finish, steps, setbacks, byCause, chain, ahead, quicker, absorbed, crews, improve, keep };
+}
+
+/** Why a step lost time, in words, from what was recorded on it: its holds
+ *  and the reason given, running long, a late start nothing recorded
+ *  explains, a re-plan, what was found, what people said. The close-out
+ *  report and the Close-out tab say it the same way. */
+export function lostWords(s: StepLook, hrs: (h: number) => string = (h) => `${r1(h)} h`): string[] {
+  const out: string[] = [];
+  const said = s.holds.filter((h) => h.reason);
+  if (s.lost.hold) out.push(said.length ? said.map((h) => `On hold${h.hours > 0 ? ` ${hrs(h.hours)}` : " now"} - \u201c${h.reason}\u201d`).join("; ") : `On hold / blocked ${hrs(s.lost.hold)}`);
+  else if (said.length) out.push(`Put on hold - \u201c${said[said.length - 1].reason}\u201d`);
+  if (s.lost.longer) out.push(`Ran ${hrs(s.lost.longer)} longer than planned`);
+  if (s.lost["late-start"]) out.push(`Started ${hrs(s.lost["late-start"])} late - no hold or earlier work recorded`);
+  if (s.lost.replanned) out.push(`Re-planned (${hrs(s.lost.replanned)})${s.replans[0] ? ` - \u201c${s.replans[0]}\u201d` : ""}`);
+  if (s.discovery) out.push(`${ADDED[s.addedKind ?? "discovery"].word} - \u201c${s.discovery}\u201d`);
+  for (const w of s.why.slice(-2)) out.push(`Said: \u201c${w}\u201d`);
+  return out;
 }
