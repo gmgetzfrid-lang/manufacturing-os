@@ -28,15 +28,16 @@ export const ON_PLAN_H = 1;
 const r1 = (h: number) => Math.round(h * 10) / 10;
 const ms = (v: unknown): number => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
 
-export type Cause = "hold" | "replanned" | "late-start" | "longer" | "discovery";
+export type Cause = "hold" | "replanned" | "crew" | "late-start" | "longer" | "discovery";
 export const CAUSE_LABEL: Record<Cause, string> = {
   hold: "On hold / blocked",
   replanned: "Re-planned",
+  crew: "Waiting for the crew - on other work",
   "late-start": "Started late - no hold or earlier work recorded",
   longer: "Took longer than planned",
   discovery: "Discovery & added scope",
 };
-const CAUSES: Cause[] = ["hold", "longer", "late-start", "replanned", "discovery"];
+const CAUSES: Cause[] = ["hold", "longer", "crew", "late-start", "replanned", "discovery"];
 
 export interface StepLook {
   id: string;
@@ -50,6 +51,12 @@ export interface StepLook {
   /** Actual start / finish — or the forecast, not done yet. */
   as: number; af: number;
   done: boolean;
+  /** Started (a start recorded, or under way, held, done). Not started: its
+   *  start is a forecast. */
+  started: boolean;
+  /** Its crew's other work while it waited (when that's why): each as
+   *  "E-17 › Hydroblast (ran 15.5 h long)". */
+  crewOn: string[];
   /** Hours late (+) or early (−): finish and start against the plan; how
    *  much longer (+) or shorter it ran. */
   finishH: number; startH: number; overrunH: number;
@@ -195,6 +202,44 @@ export function buildLookBack(input: {
     return best;
   };
 
+  // Each crew's work, as it really went: a wait its links and its equipment
+  // don't explain, with its crew on other work all through it, was waiting
+  // for the crew.
+  // Holds on each step, from its notes.
+  const holdsById = new Map<string, ReturnType<typeof holdsOf>>();
+  for (const m of leaves) {
+    const q = at.get(m.id!);
+    if (q) holdsById.set(m.id!, holdsOf(notesBy.get(m.id!) ?? [], q.done ? q.af : now, { status: m.status, reason: m.statusReason }));
+  }
+  // The time each step was really being worked: its run less its holds (a
+  // crew stood down on a hold isn't busy on that job).
+  const worked = (id: string, as: number, af: number): Array<[number, number]> => {
+    let out: Array<[number, number]> = [[as, af]];
+    for (const h of holdsById.get(id) ?? []) {
+      out = out.flatMap(([a, b]): Array<[number, number]> => (h.to <= a || h.from >= b ? [[a, b]] : [...(h.from > a ? [[a, h.from] as [number, number]] : []), ...(h.to < b ? [[h.to, b] as [number, number]] : [])]));
+    }
+    return out;
+  };
+  const byCrew = new Map<string, Array<{ id: string; a: number; b: number }>>();
+  for (const m of leaves) {
+    const c = m.responsibleParty?.trim(), q = at.get(m.id!);
+    if (c && q) byCrew.set(c, [...(byCrew.get(c) ?? []), ...worked(m.id!, q.as, q.af).map(([a, b]) => ({ id: m.id!, a, b }))]);
+  }
+  const crewBusy = (m: Milestone, from: number, to: number): { hours: number; on: string[] } => {
+    const c = m.responsibleParty?.trim();
+    if (!c || to - from < ON_PLAN_H * H) return { hours: 0, on: [] };
+    const spans = (byCrew.get(c) ?? []).filter((x) => x.id !== m.id && x.b > from && x.a < to).map((x) => ({ id: x.id, a: Math.max(x.a, from), b: Math.min(x.b, to) }));
+    // The time covered (overlapping jobs counted once).
+    let covered = 0, end = -Infinity;
+    for (const x of [...spans].sort((p, q) => p.a - q.a)) { if (x.b > end) { covered += x.b - Math.max(x.a, end); end = x.b; } }
+    // The jobs it was on the longest through the wait.
+    const per = new Map<string, number>();
+    for (const x of spans) per.set(x.id, (per.get(x.id) ?? 0) + (x.b - x.a));
+    const on = [...per].sort((p, q) => q[1] - p[1]).slice(0, 2).map(([id]) => id);
+    return covered >= 0.75 * (to - from) ? { hours: covered / H, on } : { hours: 0, on: [] };
+  };
+  const crewOnIds = new Map<string, string[]>();
+
   const steps: StepLook[] = [];
   for (const m of leaves) {
     const t = at.get(m.id!);
@@ -212,7 +257,7 @@ export function buildLookBack(input: {
       inheritedH = Math.min(Math.max(0, startH), inheritedH + same.covered / H);
       if (!allowedBy || same.covered / H >= inheritedH / 2) allowedBy = same.id;
     }
-    const holds = holdsOf(mine, t.done ? t.af : now, { status: m.status, reason: m.statusReason });
+    const holds = holdsById.get(m.id!) ?? [];
     // Held before it started counts against its start; while under way,
     // against its run.
     let holdStart = 0, holdRun = 0;
@@ -233,12 +278,14 @@ export function buildLookBack(input: {
       const take = (c: Cause, h: number) => { const x = Math.min(left, Math.max(0, h)); add(c, x); left -= x; };
       const ownStart = Math.max(0, startH - inheritedH);
       const run = Math.max(0, overrunH);
+      const busy = ownStart >= ON_PLAN_H ? crewBusy(m, waitStart, t.as) : { hours: 0, on: [] };
       // Still on hold with no history of it: its slip is the hold's.
       const heldNow = HOLD.has(m.status) && holds.length === 0;
       const hs = heldNow ? ownStart : Math.min(ownStart, holdStart), hr = heldNow ? run : Math.min(run, holdRun);
       take("hold", hs + hr);
       take("longer", run - hr);
-      take(replans.length ? "replanned" : "late-start", ownStart - hs);
+      if (busy.hours > 0 && !replans.length) { take("crew", Math.min(ownStart - hs, busy.hours)); crewOnIds.set(m.id!, busy.on); }
+      take(replans.length ? "replanned" : "late-start", ownStart - hs - (lost.crew ?? 0));
     }
     // Under an hour isn't counted — times are as entered.
     for (const c of CAUSES) if ((lost[c] ?? 0) < ON_PLAN_H && c !== "discovery") delete lost[c];
@@ -251,6 +298,8 @@ export function buildLookBack(input: {
     steps.push({
       id: m.id!, name: m.name, task: parent?.name ?? "", wo: woOf(m) || parentWo(m), crew: m.responsibleParty?.trim() ?? "",
       bs: t.bs, bf: t.bf, as: t.as, af: t.af, done: t.done,
+      started: t.done || Number.isFinite(ms(m.actualStartAt)) || m.status === "in_progress" || HOLD.has(m.status) || Number(m.percentComplete ?? 0) > 0,
+      crewOn: [],
       finishH: r1(finishH), startH: r1(startH), overrunH: r1(overrunH), inheritedH: r1(inheritedH),
       ...(allowedBy && inheritedH >= ON_PLAN_H ? { waitedOn: allowedBy } : {}),
       holdH: r1([...holdTotal.values()].reduce((a, h) => a + h, 0)), holds: [...holdTotal].map(([reason, h]) => ({ reason, hours: r1(h) })),
@@ -260,6 +309,14 @@ export function buildLookBack(input: {
     });
   }
   const look = new Map(steps.map((s) => [s.id, s]));
+  // What the crew was on, in words (the other jobs' own record).
+  for (const s of steps) {
+    s.crewOn = (crewOnIds.get(s.id) ?? []).map((id) => look.get(id)).filter((o): o is StepLook => !!o).map((o) => {
+      // Only the time it was worked counts, so no hold is said here.
+      const tag = o.discovery ? ` (${ADDED[o.addedKind ?? "discovery"].lower})` : o.overrunH >= ON_PLAN_H ? ` (${o.done ? "ran" : "forecast"} ${r1(o.overrunH)} h long)` : "";
+      return `${o.task ? `${o.task} \u203a ` : ""}${o.name}${tag}`;
+    });
+  }
 
   // The finish: the plan's last finish, and where the work landed it.
   const finishB = Math.max(...steps.map((s) => s.bf)), finishA = Math.max(...steps.map((s) => s.af));
@@ -346,8 +403,10 @@ export function lostWords(s: StepLook, hrs: (h: number) => string = (h) => `${r1
   const said = s.holds.filter((h) => h.reason);
   if (s.lost.hold) out.push(said.length ? said.map((h) => `On hold${h.hours > 0 ? ` ${hrs(h.hours)}` : " now"} - \u201c${h.reason}\u201d`).join("; ") : `On hold / blocked ${hrs(s.lost.hold)}`);
   else if (said.length) out.push(`Put on hold - \u201c${said[said.length - 1].reason}\u201d`);
-  if (s.lost.longer) out.push(`Ran ${hrs(s.lost.longer)} longer than planned`);
-  if (s.lost["late-start"]) out.push(`Started ${hrs(s.lost["late-start"])} late - no hold or earlier work recorded`);
+  // Still going: its run so far against its plan, forecast to its finish.
+  if (s.lost.longer) out.push(s.done ? `Ran ${hrs(s.lost.longer)} longer than planned` : `Forecast to run ${hrs(s.lost.longer)} longer than planned (still going)`);
+  if (s.lost.crew) out.push(`Waited ${hrs(s.lost.crew)} for ${s.crew || "its crew"}, on other work${s.crewOn.length ? `: ${s.crewOn.join("; ")}` : ""}`);
+  if (s.lost["late-start"]) out.push(s.started ? `Started ${hrs(s.lost["late-start"])} late - no hold or earlier work recorded` : `Not started, ${hrs(s.lost["late-start"])} past its planned start - nothing recorded on why`);
   if (s.lost.replanned) out.push(`Re-planned (${hrs(s.lost.replanned)})${s.replans[0] ? ` - \u201c${s.replans[0]}\u201d` : ""}`);
   if (s.discovery) out.push(`${ADDED[s.addedKind ?? "discovery"].word} - \u201c${s.discovery}\u201d`);
   for (const w of s.why.slice(-2)) out.push(`Said: \u201c${w}\u201d`);
@@ -403,9 +462,10 @@ export function whileWaiting(look: Map<string, StepLook>, s: StepLook, max = 3):
     const w = overlap(o.as, o.af);
     if (w < 0.5 * H) continue;
     const held = o.holdSpans.find((h) => h.reason && overlap(h.from, h.to) > 0);
-    const tag = held ? ` (on hold - \u201c${held.reason}\u201d)` : o.discovery ? ` (${ADDED[o.addedKind ?? "discovery"].lower})` : o.overrunH >= ON_PLAN_H ? ` (ran ${r1(o.overrunH)} h long)` : o.holds.some((h) => h.reason && h.hours >= ON_PLAN_H) ? ` (on hold ${r1(o.holdH)} h - \u201c${o.holds.find((h) => h.reason)!.reason}\u201d)` : "";
+    const tag = held ? ` (on hold - \u201c${held.reason}\u201d)` : o.discovery ? ` (${ADDED[o.addedKind ?? "discovery"].lower})` : o.overrunH >= ON_PLAN_H ? ` (${o.done ? "ran" : "forecast"} ${r1(o.overrunH)} h long)` : o.holds.some((h) => h.reason && h.hours >= ON_PLAN_H) ? ` (on hold ${r1(o.holdH)} h - \u201c${o.holds.find((h) => h.reason)!.reason}\u201d)` : "";
     if (sameTask) out.push({ w: w * 2, key: `t${o.id}`, text: `On ${o.task}, ${o.name} was under way${tag}` });
-    else if (s.crew && o.crew === s.crew) out.push({ w, key: `c${o.id}`, text: `${s.crew} was on ${o.task ? `${o.task} \u203a ` : ""}${o.name}${tag}` });
+    // Its crew's other work is already said when it waited for the crew.
+    else if (s.crew && o.crew === s.crew && !s.lost.crew) out.push({ w, key: `c${o.id}`, text: `${s.crew} was on ${o.task ? `${o.task} \u203a ` : ""}${o.name}${tag}` });
   }
   const seen = new Set<string>();
   return out.sort((a, b) => b.w - a.w).filter((x) => (seen.has(x.key) ? false : (seen.add(x.key), true))).slice(0, max).map((x) => x.text);

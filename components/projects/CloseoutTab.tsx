@@ -121,6 +121,11 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   }, [ms, notes, tz]);
   const lookById = useMemo(() => new Map((look?.steps ?? []).map((x) => [x.id, x])), [look]);
   const phaseIds = useMemo(() => (ms && pickedPhase ? new Set(inPhase(ms, phases, pickedPhase.id).map((m) => m.id!)) : null), [ms, phases, pickedPhase]);
+  // All phases: each phase's own numbers, against its own plan.
+  const perPhase = useMemo(() => (ms && money0 && !pickedPhase ? phases.map((p) => ({
+    p, ids: new Set(inPhase(ms, phases, p.id).map((m) => m.id!)),
+    ps: phaseStats({ milestones: ms, phases, phase: p, log, tz, times, now: Date.now(), total: money0.afe, lines: money0.lines, entries: money0.entries }),
+  })) : []), [ms, money0, pickedPhase, phases, log, tz, times]);
   const short = (t: number) => `${fmtInTz(t, tz, { month: "short", day: "numeric" })}, ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`;
   const when = (t: number) => `${fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric" })}, ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`;
 
@@ -360,46 +365,33 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                     {stats.missing.length > 0
                       ? <Tile k="Finish" v="Not finished" s={`${stats.missing.map((p) => p.name).join(", ")} not scheduled`} tone="warn" />
                       : <Tile k={stats.finishedAt != null ? "Finished" : "Planned finish"} v={stats.finishedAt != null ? short(stats.finishedAt) : stats.plannedFinish != null ? short(stats.plannedFinish) : "-"}
-                        s={stats.finishedAt != null && stats.plannedFinish != null ? `${vsPlanWords(Math.round(((stats.finishedAt - stats.plannedFinish) / 3_600_000) * 10) / 10)} (${short(stats.plannedFinish)})` : `${stats.actualPct}% done, plan ${stats.plannedPct}%`} />}
+                        s={stats.finishedAt != null && stats.plannedFinish != null ? `${vsPlanWords(Math.round(((stats.finishedAt - stats.plannedFinish) / 3_600_000) * 10) / 10)} (${short(stats.plannedFinish)})` : !pickedPhase && phases.length > 0 ? `${stats.phasesDone} of ${phases.length} phases done` : `${stats.actualPct}% done, plan ${stats.plannedPct}%`} />}
                     <Tile k="Steps" v={`${stats.done} / ${stats.steps}`} s={`${Math.round(stats.hours).toLocaleString("en-US")} h of work`} />
                     <Tile k="Added work" v={`${stats.added.count} added`} s={stats.added.count ? `${stats.added.steps} step${stats.added.steps === 1 ? "" : "s"} · +${stats.added.hours} h of work` : "nothing added to the plan"} />
                     <Tile k={pickedPhase ? "Phase budget" : money0?.afe != null ? "AFE" : "Budget"} v={money(stats.budget)} s={`budget lines ${money(stats.lines.reduce((a, l) => a + l.budget, 0))}`} />
                     <Tile k="Spent" v={money(stats.spent)} s={stats.budget ? `${Math.round((stats.spent / stats.budget) * 100)}% of the ${pickedPhase ? "phase budget" : money0?.afe != null ? "AFE" : "budget"}` : "no budget"} />
                     <Tile k={stats.budget - stats.spent >= 0 ? "Left" : "Over"} v={money(Math.abs(stats.budget - stats.spent))} tone={stats.budget - stats.spent >= 0 ? "good" : "bad"} s={stats.budget - stats.spent >= 0 ? "invoices still to come?" : "over the budget"} />
                   </div>
-                  {stats.shifts.length > 0 && (
-                    <div>
-                      <div className="text-[12.5px] font-bold text-[var(--color-text)]">Against the original plan, shift by shift</div>
-                      <ul className="mt-1 mb-2 space-y-0.5 text-[11.5px] leading-snug text-[var(--color-text-muted)]">
-                        {chartKey(stats, tz).map((k) => <li key={k}>{k}</li>)}
-                        <li>Past the plan&rsquo;s finish, anything short of 100% is late, in red.</li>
-                      </ul>
-                      <div className="divide-y divide-[var(--color-border)]/60">
-                        {stats.shifts.map((r) => {
-                          const red = behindAt(r);
-                          return (
-                            <div key={r.start} className={`grid grid-cols-[116px_minmax(0,1fr)_auto] gap-2 items-center py-1 text-[12px] ${r.kind === "night" ? "bg-[var(--color-surface-2)]/50" : ""}`}>
-                              <span className="text-[var(--color-text)] leading-tight pl-1">{shiftLabel(r)}
-                                {r.planEnds && stats.plannedFinish != null && <span className="block text-[10.5px] font-bold text-[#000A72] dark:text-indigo-300">plan finish {fmtInTz(stats.plannedFinish, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}
-                                {r.finishes && stats.finishedAt != null && <span className="block text-[10.5px] font-bold text-emerald-700 dark:text-emerald-400">all done {fmtInTz(stats.finishedAt, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}
-                                {r.current && <span className="block text-[10.5px] text-[var(--color-text-muted)]">now</span>}</span>
-                              <div className="space-y-0.5">
-                                {r.plan != null
-                                  ? <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><div className="h-full rounded-full bg-slate-400" style={{ width: `${Math.min(100, r.plan)}%` }} /></div>
-                                  : <div className="h-1.5" />}
-                                <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">{r.done != null && <div className={`h-full rounded-full ${red ? "bg-rose-500" : "bg-emerald-600"}`} style={{ width: `${Math.min(100, r.done)}%` }} />}</div>
-                              </div>
-                              <span className="text-right tabular-nums text-[var(--color-text-muted)] leading-tight pr-1">
-                                {r.plan != null ? `${r.plan}%` : "past plan"}{r.done != null ? <> / <b className={red ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}>{r.done}%</b>{r.plan == null && red && <b className="text-rose-700 dark:text-rose-400"> late</b>}</> : " / to come"}
-                                {r.addedKnown > 0 && <span className="block text-[10.5px] text-amber-700 dark:text-amber-400">added {Math.round((r.addedDone ?? 0) * 10) / 10} of {r.addedKnown} h</span>}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
+                  {!pickedPhase && phases.length > 0 ? (
+                    // All phases: each phase against its own plan, never merged into one line.
+                    <div className="space-y-4">
+                      {perPhase.map(({ p, ps, ids }) => (
+                        <div key={p.id} className="rounded-xl border border-[var(--color-border)] p-3 space-y-2">
+                          <div className="flex items-baseline gap-2 flex-wrap">
+                            <b className="text-[13.5px] text-[var(--color-text)]">{p.name}</b>
+                            <span className="text-[12px] text-[var(--color-text-muted)]">{phaseDates(p)}</span>
+                          </div>
+                          <div className={`text-[12.5px] ${ps.noSchedule ? "text-amber-800 dark:text-amber-300" : "text-[var(--color-text)]"}`}>
+                            {ps.noSchedule ? `${noScheduleWords(p, now, tz)}.`
+                              : ps.finishedAt != null ? `Done ${when(ps.finishedAt)}${ps.plannedFinish != null ? `, ${vsPlanWords(Math.round(((ps.finishedAt - ps.plannedFinish) / 3_600_000) * 10) / 10)} (plan ${when(ps.plannedFinish)})` : ""}.`
+                                : `${ps.actualPct}% done, plan by now ${ps.plannedPct}% · ${ps.done} of ${ps.steps} steps.`}
+                          </div>
+                          {ps.noSchedule && canManage && <button type="button" onClick={() => importFor(p)} className={pri}><UploadCloud className="w-4 h-4" /> Import {p.name}&rsquo;s schedule</button>}
+                          {ps.shifts.length > 0 && <Progress stats={ps} tz={tz} look={look} lookById={lookById} ids={ids} loading={!look} />}
+                        </div>
+                      ))}
                     </div>
-                  )}
-                  {stats.shifts.length > 0 && <SlipStory stats={stats} tz={tz} look={look} lookById={lookById} setbacks={(look?.setbacks ?? []).filter((x) => !phaseIds || phaseIds.has(x.id))} steps={(look?.steps ?? []).filter((x) => !phaseIds || phaseIds.has(x.id))} loading={!look} />}
+                  ) : stats.shifts.length > 0 && <Progress stats={stats} tz={tz} look={look} lookById={lookById} ids={phaseIds} loading={!look} />}
                 </>
               )}
               {stats.lines.length > 0 && <LinesChart rows={stats.lines} cur="USD" />}
@@ -419,6 +411,48 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
         </Modal>
       )}
     </div>
+  );
+}
+
+/** One plan's progress, shift by shift, and why it slipped (the steps in
+ *  `ids`, else all). */
+function Progress({ stats, tz, look, lookById, ids, loading }: {
+  stats: ReturnType<typeof phaseStats>; tz: string; look: LookBack | null; lookById: Map<string, StepLook>; ids: Set<string> | null; loading: boolean;
+}) {
+  return (
+    <>
+      <div>
+        <div className="text-[12.5px] font-bold text-[var(--color-text)]">Against the original plan, shift by shift</div>
+        <ul className="mt-1 mb-2 space-y-0.5 text-[11.5px] leading-snug text-[var(--color-text-muted)]">
+          {chartKey(stats, tz).map((k) => <li key={k}>{k}</li>)}
+          <li>Past the plan&rsquo;s finish, anything short of 100% is late, in red.</li>
+        </ul>
+        <div className="divide-y divide-[var(--color-border)]/60">
+          {stats.shifts.map((r) => {
+            const red = behindAt(r);
+            return (
+              <div key={r.start} className={`grid grid-cols-[116px_minmax(0,1fr)_auto] gap-2 items-center py-1 text-[12px] ${r.kind === "night" ? "bg-[var(--color-surface-2)]/50" : ""}`}>
+                <span className="text-[var(--color-text)] leading-tight pl-1">{shiftLabel(r)}
+                  {r.planEnds && stats.plannedFinish != null && <span className="block text-[10.5px] font-bold text-[#000A72] dark:text-indigo-300">plan finish {fmtInTz(stats.plannedFinish, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}
+                  {r.finishes && stats.finishedAt != null && <span className="block text-[10.5px] font-bold text-emerald-700 dark:text-emerald-400">all done {fmtInTz(stats.finishedAt, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}
+                  {r.current && <span className="block text-[10.5px] text-[var(--color-text-muted)]">now</span>}</span>
+                <div className="space-y-0.5">
+                  {r.plan != null
+                    ? <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><div className="h-full rounded-full bg-slate-400" style={{ width: `${Math.min(100, r.plan)}%` }} /></div>
+                    : <div className="h-1.5" />}
+                  <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">{r.done != null && <div className={`h-full rounded-full ${red ? "bg-rose-500" : "bg-emerald-600"}`} style={{ width: `${Math.min(100, r.done)}%` }} />}</div>
+                </div>
+                <span className="text-right tabular-nums text-[var(--color-text-muted)] leading-tight pr-1">
+                  {r.plan != null ? `${r.plan}%` : "past plan"}{r.done != null ? <> / <b className={red ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}>{r.done}%</b>{r.plan == null && red && <b className="text-rose-700 dark:text-rose-400"> late</b>}</> : " / to come"}
+                  {r.addedKnown > 0 && <span className="block text-[10.5px] text-amber-700 dark:text-amber-400">added {Math.round((r.addedDone ?? 0) * 10) / 10} of {r.addedKnown} h</span>}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <SlipStory stats={stats} tz={tz} look={look} lookById={lookById} setbacks={(look?.setbacks ?? []).filter((x) => !ids || ids.has(x.id))} steps={(look?.steps ?? []).filter((x) => !ids || ids.has(x.id))} loading={loading} />
+    </>
   );
 }
 
@@ -465,7 +499,7 @@ function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading }: {
     groups.set(c.id, g);
   }
   const behindCauses = [...groups.values()].sort((a, b) => b.hours - a.hours).slice(0, 5);
-  const byCause = (["hold", "longer", "late-start", "replanned", "discovery"] as CauseKind[]).map((c) => ({ c, h: Math.round(steps.reduce((a, x) => a + (x.lost[c] ?? 0), 0) * 10) / 10, n: steps.filter((x) => (x.lost[c] ?? 0) > 0).length })).filter((x) => x.h > 0);
+  const byCause = (["hold", "longer", "crew", "late-start", "replanned", "discovery"] as CauseKind[]).map((c) => ({ c, h: Math.round(steps.reduce((a, x) => a + (x.lost[c] ?? 0), 0) * 10) / 10, n: steps.filter((x) => (x.lost[c] ?? 0) > 0).length })).filter((x) => x.h > 0);
   const maxH = Math.max(1, ...byCause.map((x) => x.h));
   const head = "text-[12.5px] font-black text-[var(--color-text)] mt-3";
   return (
@@ -485,7 +519,7 @@ function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading }: {
       )}
       {at && behindCauses.length > 0 && (
         <>
-          <div className={head}>What put it behind at the end of {shiftLabel(at)}</div>
+          <div className={head}>What put it behind {at.current ? "so far this shift" : "at the end of"} {at.current ? `(${shiftLabel(at)})` : shiftLabel(at)}</div>
           <div className="text-[11.5px] text-[var(--color-text-muted)]">The steps furthest behind then, under where their delay came from:</div>
           <ul className="divide-y divide-[var(--color-border)]/60">{behindCauses.map((g) => <Cause key={g.cause.id} x={g.cause} held={g.held} self={g.self} />)}</ul>
         </>

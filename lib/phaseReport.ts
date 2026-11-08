@@ -34,8 +34,9 @@ export interface ShiftRow {
   dayKey: string;
   start: number;
   end: number;
-  /** % of the original plan's work planned done by the shift's end. Null
-   *  once the plan has finished (the shift after the one it finishes in). */
+  /** % of the original plan's work planned done by the shift's end (by
+   *  now for the shift under way). Null once the plan has finished (the
+   *  shift after the one it finishes in). */
   plan: number | null;
   /** The shift the original plan finishes in. */
   planEnds: boolean;
@@ -118,9 +119,14 @@ export interface PhaseStats {
   untimed: number;
   /** This phase has no schedule yet. */
   noSchedule: boolean;
+  /** Its schedule was put in after its planned start, with nothing done
+   *  before then recorded: when it was put in. */
+  loadedLate: number | null;
   /** The whole project: the phases with no schedule yet, and how many are done. */
   missing: ProjectPhase[];
   phasesDone: number;
+  /** The whole project: how many phases it has (0 when it has none, or for a phase). */
+  phaseCount: number;
   budget: number;
   committed: number;
   spent: number;
@@ -140,6 +146,17 @@ function leaves(ms0: Milestone[]): Milestone[] {
 }
 
 const doneOf = (m: Milestone) => m.status === "completed" || Number(m.percentComplete ?? 0) >= 100;
+
+/** When the schedule was put in, if that was after its planned start and
+ *  no work before then has been recorded (else null). */
+function loadedLateOf(work: Milestone[], planStart: number | null): number | null {
+  const made = work.map((m) => ms(m.createdAt)).filter((x): x is number => x != null);
+  if (!made.length || planStart == null) return null;
+  const at = Math.min(...made);
+  if (at <= planStart + 3_600_000) return null;
+  const before = work.some((m) => { const a = ms(m.actualStartAt) ?? ms(m.actualAt); return a != null && a < at; });
+  return before ? null : at;
+}
 
 /** Behind the original plan at a shift's end (after the plan was done, its
  *  work counts as planned 100%). */
@@ -274,7 +291,8 @@ export function phaseStats(input: {
         const future = w.start >= now;
         const t = current ? now : w.end;
         const planEnds = plan.finish != null && plan.finish > w.start && plan.finish <= w.end;
-        const planVal = plan.finish != null && w.start >= plan.finish ? null : pct(planAt(w.end), planHours);
+        // The shift under way: measured against the plan by now, not by its end (it isn't over).
+        const planVal = plan.finish != null && w.start >= plan.finish ? null : pct(planAt(t), planHours);
         // Steps with no time to place them count from now: in the shift under way, or the last one shown.
         const withUntimed = current || (w === lastWin && now >= w.end);
         shifts.push({
@@ -324,7 +342,8 @@ export function phaseStats(input: {
     planBasis: { kind: plan.kind, savedAt: plan.savedAt, hours: Math.round(planHours), steps: plan.steps.length, start: plan.start, finish: plan.finish },
     outside: { steps: outside.length, hours: Math.round(outside.reduce((a, m) => a + weight(m), 0)) },
     startGuessed, untimed,
-    noSchedule: work.length === 0, missing, phasesDone,
+    noSchedule: work.length === 0, missing, phasesDone, phaseCount: phase ? 0 : phases.length,
+    loadedLate: loadedLateOf(work, plan.start),
     budget,
     committed: lineRows.reduce((a, r) => a + r.committed, 0), spent: lineRows.reduce((a, r) => a + r.spent, 0),
     lines: lineRows,
@@ -386,7 +405,10 @@ export function noScheduleWords(p: ProjectPhase, now: number, tz: string): strin
 }
 
 /** One phase's section: numbers, progress shift by shift, money by line. */
-export function phaseSectionHtml(s: PhaseStats, tz: string, now: number): string {
+export function phaseSectionHtml(s: PhaseStats, tz: string, now: number,
+  /** chart: false - the whole project in phases: each phase's chart and story follow, each against its own plan. */
+  opts: { chart?: boolean } = {}): string {
+  const chart = opts.chart !== false;
   const when = (t: number | null) => (t == null ? "-" : dateTime(t, tz));
   if (s.noSchedule && s.phase) {
     return `<div style="${FONT}font-size:13px;color:${AMBER};margin-top:8px;padding:8px 10px;border:1px solid #fcd34d;background:#fffbeb;"><b>${esc(noScheduleWords(s.phase, now, tz))}.</b> Nothing to measure until its schedule is imported.</div>` + moneyHtml(s);
@@ -399,7 +421,10 @@ export function phaseSectionHtml(s: PhaseStats, tz: string, now: number): string
   let html = "";
   if (notAll) html += `<div style="${FONT}font-size:12.5px;color:${AMBER};margin-top:8px;padding:8px 10px;border:1px solid #fcd34d;background:#fffbeb;"><b>${esc(s.missing.map((p) => noScheduleWords(p, now, tz)).join("; "))}.</b> The project isn't done, and the figures below cover only the phases with a schedule.</div>`;
   html += `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-top:6px;"><tr>` +
-    tile(notAll ? "Complete (scheduled)" : "Complete", `${s.actualPct}%`, `plan by now ${s.plannedPct}%`, gap >= 0 ? GREEN : RED) +
+    // The whole project in phases: how many phases are done, never one % across them.
+    (!chart && s.phaseCount
+      ? tile("Phases done", `${s.phasesDone} of ${s.phaseCount}`, "each against its own plan below", s.phasesDone === s.phaseCount ? GREEN : INK)
+      : tile(notAll ? "Complete (scheduled)" : "Complete", `${s.actualPct}%`, `plan by now ${s.plannedPct}%`, gap >= 0 ? GREEN : RED)) +
     tile("Steps done", `${s.done} / ${s.steps}`, `${s.hours.toLocaleString("en-US")} h of work`) +
     (notAll
       ? tile("Finish", "Not finished", `${s.missing.map((p) => p.name).join(", ")} not scheduled`, AMBER)
@@ -409,6 +434,7 @@ export function phaseSectionHtml(s: PhaseStats, tz: string, now: number): string
     `</tr></table>`;
   if (s.added.count) html += `<div style="${FONT}font-size:12px;color:${AMBER};margin-top:6px;"><b>Added after the plan:</b> ${s.added.count} (${s.added.steps} step${s.added.steps === 1 ? "" : "s"}), ${s.added.hours} h of work (discovery and added scope).</div>`;
 
+  if (!chart) return html + `<div style="${FONT}font-size:11.5px;color:${MUTED};margin-top:6px;">Each phase is measured against its own plan below: the phases aren't one job, so their progress isn't drawn as one.</div>` + moneyHtml(s);
   if (s.shifts.length) {
     html += h2("Progress against the original plan, shift by shift");
     html += `<div style="${FONT}font-size:11px;color:${MUTED};margin:0 0 6px;line-height:1.45;">${chartKey(s, tz).map(esc).join("<br>")}</div>`;
@@ -432,7 +458,8 @@ export function phaseSectionHtml(s: PhaseStats, tz: string, now: number): string
 export function slipWords(s: PhaseStats, tz: string): string[] {
   const sl = s.slip, out: string[] = [];
   const at = (r: ShiftRow) => `${shiftLabel(r)}: ${r.done}% done against ${r.plan ?? 100}% planned`;
-  if (sl.forGood) out.push(`Fell behind the plan for good ${at(sl.forGood)}, and ${s.finishedAt != null ? "didn't catch up before the finish" : "hasn't caught up"}.`);
+  if (s.loadedLate != null && s.plannedStart != null) out.push(`The schedule was put in ${dateTime(s.loadedLate, tz)}, after its planned start (${dateTime(s.plannedStart, tz)}), and nothing done before then is recorded: enter what's been done, with its times, and this will catch up.`);
+  if (sl.forGood) out.push(s.finishedAt != null ? `Fell behind the plan for good ${at(sl.forGood)}, and didn't catch up before the finish.` : `Behind the plan since ${at(sl.forGood)}${sl.forGood.current ? " so far" : ""}, and hasn't caught up yet.`);
   if (sl.first && sl.first !== sl.forGood) out.push(`${sl.forGood ? "Behind once before" : "Behind"} ${at(sl.first)}${sl.forGood ? ", then caught up" : ""}.`);
   if (sl.widest) out.push(`Widest gap ${shiftLabel(sl.widest.row)}: ${sl.widest.points} points, ${hrs(sl.widest.hours)} of the plan's work.`);
   if (!sl.first) out.push("Never behind the original plan at a shift's end.");
@@ -454,7 +481,7 @@ function slipHtml(s: PhaseStats, tz: string): string {
   let html = h2(s.finishedAt != null && s.plannedFinish != null && s.finishedAt > s.plannedFinish + 1_800_000 ? "Why it finished late" : "Where it slipped") +
     `<div style="${FONT}font-size:12px;color:${INK};line-height:1.5;">${words.map(esc).join("<br>")}</div>`;
   const at = sl.forGood ?? sl.first;
-  if (at && sl.behind.length) html += list(`Furthest behind at the end of ${shiftLabel(at)}`, sl.behind.slice(0, 6), (x) => `${hrs(x.hoursBehind)} behind`, sl.behind.length - 6);
+  if (at && sl.behind.length) html += list(`Furthest behind ${at.current ? "now, in" : "at the end of"} ${shiftLabel(at)}`, sl.behind.slice(0, 6), (x) => `${hrs(x.hoursBehind)} behind`, sl.behind.length - 6);
   if (sl.pastPlan.length && s.plannedFinish != null) html += list(`Still going when the plan said done (${dateTime(s.plannedFinish, tz)})`, sl.pastPlan.slice(0, 10), (x) => (x.finish != null ? `done ${dateTime(x.finish, tz)}` : "not done"), sl.pastPlan.length - 10);
   return html;
 }
@@ -508,7 +535,7 @@ export function phaseReportHtml(input: { project: string; tz: string; now: numbe
     html += rollupHtml(all, each, tz, now);
   } else {
     html += rollupHtml(all, each, tz, now);
-    html += h2("Whole project") + phaseSectionHtml(all, tz, now);
+    html += h2("Whole project") + phaseSectionHtml(all, tz, now, { chart: each.length === 0 });
     for (const s of each) html += `<div style="page-break-before:always;"></div>` + h2(s.phase!.name) + phaseSectionHtml(s, tz, now);
   }
   return html + `</div>`;
@@ -534,5 +561,5 @@ export function phaseReportText(input: { project: string; picked: PhaseStats | n
 }
 
 /** The close-out's "How the job did": the same numbers, progress and money. */
-export const howItDidHtml = (s: PhaseStats, tz: string, now: number) =>
-  `<div style="${FONT}color:${INK};max-width:820px;margin:18px auto 0;">${h2(s.phase ? `How ${s.phase.name} did` : "How the job did")}${phaseSectionHtml(s, tz, now)}</div>`;
+export const howItDidHtml = (s: PhaseStats, tz: string, now: number, opts: { chart?: boolean } = {}) =>
+  `<div style="${FONT}color:${INK};max-width:820px;margin:18px auto 0;">${h2(s.phase ? `How ${s.phase.name} did` : "How the job did")}${phaseSectionHtml(s, tz, now, opts)}</div>`;

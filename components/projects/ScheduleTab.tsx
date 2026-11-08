@@ -327,14 +327,19 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
 
   const hasBaseline = useMemo(() => milestones.some((m) => m.baselineFinishAt), [milestones]);
   const [baselineBusy, setBaselineBusy] = useState(false);
+  // A phase picked: its own plan only, never the other phases' saved plans.
+  const pickedPhase = phase ? phases.find((p) => p.id === phase) ?? null : null;
+  const baselineIds = pickedPhase ? phaseMilestones.map((m) => m.id).filter((x): x is string => !!x) : undefined;
   const onSetBaseline = async () => {
-    const msg = hasBaseline
-      ? "Re-capture the current plan as the new baseline? Drift will be measured from now on against this snapshot."
-      : "Snapshot the current plan as the baseline? Every view will then show how far the schedule drifts from it.";
+    const whose = pickedPhase ? `${pickedPhase.name}'s` : "the current";
+    const msg = (hasBaseline
+      ? `Re-capture ${whose} plan as the new baseline? Drift will be measured from now on against this snapshot.${pickedPhase ? " Other phases keep theirs." : ""}`
+      : `Snapshot ${whose} plan as the baseline? Every view will then show how far the schedule drifts from it.`)
+      + (!pickedPhase && phases.length > 1 && hasBaseline ? " This replaces every phase's saved plan; pick a phase first to re-capture only its own." : "");
     if (!(await appConfirm(msg))) return;
     setBaselineBusy(true);
     try {
-      const res = await setBaseline({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
+      const res = await setBaseline({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole, ids: baselineIds });
       if (!res.ok) setError(res.error ?? "Couldn't set baseline.");
       await refresh();
     } catch (e) { setError((e as Error).message); }
@@ -346,7 +351,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
     projectId, projectName, timezone, milestones, hasBaseline, canManage: !!canManage, canEdit, userId,
     onProjectChanged: () => onProjectChanged?.(),
     onSetBaseline: async () => {
-      const res = await setBaseline({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
+      const res = await setBaseline({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole, ids: baselineIds });
       if (!res.ok) throw new Error(res.error ?? "Couldn't set the baseline.");
       await refresh();
     },

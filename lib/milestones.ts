@@ -1767,6 +1767,10 @@ export interface ImportParsedInput {
    *  every row from it afterwards. Otherwise only rows that are new to the
    *  project get a baseline, and only when the project already has one. */
   baselineAll?: boolean;
+  /** A phase's first schedule: the rows this import adds are that phase's
+   *  plan of record, so they're baselined (only they: the other phases'
+   *  plans stay as saved). */
+  baselineInserted?: boolean;
   /** Don't match old line-numbered rows by name (a phase's import: those
    *  rows belong to the phase there before it, lib/projectPhases). */
   noLegacyMatch?: boolean;
@@ -2110,7 +2114,7 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
       if (input.baselineAll) {
         await setBaseline({ orgId: input.orgId, projectId: input.projectId, actorUserId: input.createdBy });
       } else if (insertedIds.length > 0) {
-        const { data: anyBase } = await supabase
+        const { data: anyBase } = input.baselineInserted ? { data: [1] } : await supabase
           .from("milestones").select("id")
           .eq("org_id", input.orgId).eq("project_id", input.projectId)
           .not("baseline_set_at", "is", null).limit(1);
@@ -2550,12 +2554,27 @@ export async function setBaseline(input: {
   actorUserId: string;
   actorUserEmail?: string;
   actorUserRole?: string;
+  /** Only these steps (a phase's): the other phases' plans are left as
+   *  they were saved. Omitted: the whole project. */
+  ids?: string[];
 }): Promise<{ ok: boolean; count: number; error?: string }> {
-  const { rows, error } = await fetchAllRows<{ id: string; planned_at: string; planned_start_at: string | null }>((from, to) => supabase
-    .from("milestones")
-    .select("id, planned_at, planned_start_at")
-    .eq("org_id", input.orgId)
-    .eq("project_id", input.projectId).order("id").range(from, to));
+  type Row = { id: string; planned_at: string; planned_start_at: string | null };
+  let rows: Row[] | null = null, error: string | null | undefined;
+  if (input.ids) {
+    rows = [];
+    for (let i = 0; i < input.ids.length; i += 200) {
+      const { data, error: e } = await supabase.from("milestones").select("id, planned_at, planned_start_at")
+        .eq("org_id", input.orgId).eq("project_id", input.projectId).in("id", input.ids.slice(i, i + 200));
+      if (e) { error = e.message; break; }
+      rows.push(...((data ?? []) as Row[]));
+    }
+  } else {
+    ({ rows, error } = await fetchAllRows<Row>((from, to) => supabase
+      .from("milestones")
+      .select("id, planned_at, planned_start_at")
+      .eq("org_id", input.orgId)
+      .eq("project_id", input.projectId).order("id").range(from, to)));
+  }
   if (error) return { ok: false, count: 0, error };
   if (!rows || rows.length === 0) return { ok: false, count: 0, error: "No tasks to baseline." };
 

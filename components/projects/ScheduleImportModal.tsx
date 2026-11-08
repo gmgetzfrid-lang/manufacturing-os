@@ -233,7 +233,9 @@ export default function ScheduleImportModal({
         timeZone: tz,
         // A fresh or replace import IS the plan of record → baseline it.
         // A merge keeps the existing baseline and only baselines new rows.
-        baselineAll: (replaceExisting && !phased) || (existingCount ?? 0) === 0,
+        // A phase's first schedule baselines its own rows, never the other phases'.
+        baselineAll: !phased && (replaceExisting || (existingCount ?? 0) === 0),
+        baselineInserted: phased && (existingCount ?? 0) === 0,
         noLegacyMatch: ownKeys,
         source: FORMAT_TO_SOURCE[parseResult.format],
         // CRITICAL: pass through every hierarchy + duration field

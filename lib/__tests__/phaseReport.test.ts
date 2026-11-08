@@ -3,7 +3,7 @@
 
 import { describe, it, expect } from "vitest";
 import type { Milestone } from "@/types/schema";
-import { phaseStats, phaseReportHtml, type CostLine, type CostEntry } from "@/lib/phaseReport";
+import { phaseStats, phaseReportHtml, slipWords, type CostLine, type CostEntry } from "@/lib/phaseReport";
 import { PHASE_ATTR, type ProjectPhase } from "@/lib/projectPhases";
 
 const tz = "America/Los_Angeles";
@@ -50,6 +50,20 @@ describe("phaseStats", () => {
     expect(s.startGuessed).toBe(1);
     expect(s.planBasis).toMatchObject({ kind: "schedule", hours: 20, steps: 2 });
   });
+  it("the shift under way is measured against the plan by now, not by its end", () => {
+    const mid = Date.parse(at("2026-11-02", "11:00"));
+    const r = phaseStats({ milestones: ms, phases: P, phase: P[0], log, tz, now: mid, total: 2000, lines, entries });
+    const cur = r.shifts.find((x) => x.current)!;
+    // s2 planned 6 AM to 4 PM: half way by 11 AM. Plan by now 75%, not the 100% due at 6 PM; done 75%.
+    expect([cur.plan, cur.done]).toEqual([75, 75]);
+    expect(r.plannedPct).toBe(75);
+    expect(r.slip.forGood).toBeNull();
+    // Behind now, with the phase still going: said as so far, not "for good".
+    const idle = ms.map((x) => (x.id === "s2" ? ({ ...x, status: "planned", percentComplete: 0 } as Milestone) : x));
+    const r2 = phaseStats({ milestones: idle, phases: P, phase: P[0], log: [], tz, now: mid, total: 2000, lines, entries });
+    expect(slipWords(r2, tz).join(" ")).toMatch(/Behind the plan since Mon, Nov 2 · Day: [\d.]+% done against 75% planned so far, and hasn't caught up yet\./);
+    expect(slipWords(r2, tz).join(" ")).not.toMatch(/for good/);
+  });
   it("a step reset in the log and then finished counts as built: its % entered, then spread to its finish", () => {
     const ms2 = [
       m("r1", { plannedStartAt: at("2026-11-01", "06:00"), plannedAt: at("2026-11-01", "16:00"), durationHours: 10, status: "completed", percentComplete: 100, actualAt: at("2026-11-01", "15:00") }),
@@ -90,6 +104,23 @@ describe("phaseStats", () => {
     expect(html).toContain("Fell behind the plan for good Sun, Nov 1 · Day: 0% done against 100% planned");
     expect(html).toContain("Still going when the plan said done");
     expect(html).toContain("late</b>");
+  });
+  it("a schedule put in after its planned start, with nothing recorded before then, says so", () => {
+    const late = ms.map((x) => ({ ...x, createdAt: at("2026-11-02", "13:00"), ...(x.id === "s1" ? { status: "planned", percentComplete: 0, actualAt: null } : {}) } as Milestone));
+    const a = phaseStats({ milestones: late, phases: P, phase: P[0], log: [], tz, now, total: 2000, lines, entries });
+    expect(a.loadedLate).toBe(Date.parse(at("2026-11-02", "13:00")));
+    expect(slipWords(a, tz)[0]).toMatch(/^The schedule was put in Mon, Nov 2, 1:00 PM, after its planned start \(Sun, Nov 1, 6:00 AM\)/);
+    // Recorded work before it was put in (entered after): no such note.
+    expect(s.loadedLate).toBeNull();
+  });
+  it("the whole project in phases: no merged progress line; each phase against its own plan", () => {
+    const b = phaseStats({ milestones: ms, phases: P, phase: P[1], log, tz, now, total: 2000, lines, entries });
+    const all = phaseStats({ milestones: ms, phases: P, phase: null, log, tz, now, total: 2000, lines, entries });
+    const html = phaseReportHtml({ project: "T", tz, now, picked: null, all, each: [s, b] });
+    const whole = html.slice(html.indexOf("Whole project</div>"), html.indexOf("Transmix-1</div>"));
+    expect(whole).toContain("Each phase is measured against its own plan below");
+    expect(whole).not.toContain("shift by shift");
+    expect(html.slice(html.indexOf("Transmix-1</div>"))).toContain("shift by shift");
   });
   it("a phase with no schedule: not 0 of 0, and the whole project isn't done", () => {
     const only1 = ms.filter((x) => !["t2", "s3"].includes(x.id!)).map((x) => (x.id === "s2" ? { ...x, status: "completed", percentComplete: 100, actualAt: at("2026-11-02", "15:00") } as Milestone : x));

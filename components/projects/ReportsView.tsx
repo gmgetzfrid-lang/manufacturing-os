@@ -293,6 +293,8 @@ export default function ReportsView(p: Props) {
   const howItDid = async () => {
     const { at, stats } = await statsMaker();
     const phase = ph.phase ? ph.phases.find((x) => x.id === ph.phase) ?? null : null;
+    // All phases: the project's totals, then each phase against its own plan.
+    if (!phase && ph.phases.length) return howItDidHtml(stats(null), tz, at, { chart: false }) + ph.phases.map((p) => howItDidHtml(stats(p), tz, at)).join("");
     return howItDidHtml(stats(phase), tz, at);
   };
   // The as-built schedule: the phase picked (else the whole job), as built.
