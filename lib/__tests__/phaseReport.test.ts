@@ -46,6 +46,19 @@ describe("phaseStats", () => {
       { day: "2026-11-03", planned: 100, actual: null },
     ]);
   });
+  it("a step reset in the log and then finished (back-dated) counts done by its finish, as the shift report reads it", () => {
+    const ms2 = [
+      m("r1", { plannedStartAt: at("2026-11-01", "06:00"), plannedAt: at("2026-11-01", "16:00"), durationHours: 10, status: "completed", percentComplete: 100, actualAt: at("2026-11-01", "15:00") }),
+      m("r2", { plannedStartAt: at("2026-11-01", "06:00"), plannedAt: at("2026-11-01", "16:00"), durationHours: 10, status: "completed", percentComplete: 100, actualAt: at("2026-11-02", "09:00") }),
+    ];
+    const log2 = [
+      { milestone_id: "r1", at: at("2026-10-31", "10:00"), old_status: "planned", old_percent: 0, new_status: "completed", new_percent: 100 },
+      { milestone_id: "r1", at: at("2026-11-01", "08:00"), old_status: "completed", old_percent: 100, new_status: "planned", new_percent: 0 },
+      { milestone_id: "r2", at: at("2026-11-01", "12:00"), old_status: "planned", old_percent: 0, new_status: "in_progress", new_percent: 40 },
+    ] as never;
+    const r = phaseStats({ milestones: ms2, phases: [], phase: null, log: log2, tz, now: Date.parse(at("2026-11-05")), total: null, lines: [], entries: [] });
+    expect(r.days.map((d) => d.actual)).toEqual([70, 100]);
+  });
   it("money: the phase's share of the AFE, its own lines whole, spend by date", () => {
     expect(s.budget).toBe(1000);
     expect(s.lines).toEqual([{ name: "Mechanical", budget: 500, committed: 0, spent: 300 }, { name: "Cleaning", budget: 400, committed: 200, spent: 0 }]);

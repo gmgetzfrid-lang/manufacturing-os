@@ -13,7 +13,7 @@
 // Pure, but for the HTML's look. Everything said comes from the data.
 
 import type { Milestone } from "@/types/schema";
-import type { ProgressLogRow } from "@/lib/progressHistory";
+import { scheduleAt, type ProgressLogRow } from "@/lib/progressHistory";
 import { phaseIndex, phaseOnDay, phaseAmount, phaseDates, type ProjectPhase } from "@/lib/projectPhases";
 import { dayKey, wallClockToMs, fmtInTz } from "@/lib/scheduleTz";
 import { workHours, expectedFraction, DEFAULT_SHIFT_TIMES, type ShiftTimes } from "@/lib/shiftReport";
@@ -90,8 +90,7 @@ export function phaseStats(input: {
   const last = [phase?.end, lastPlan, finishedAt != null ? dayKey(finishedAt, tz) : null].filter((x): x is string => !!x).sort().pop() ?? null;
   if (first && last && work.length) {
     const ids = new Set(work.map((m) => m.id!));
-    const hist = (input.log ?? []).filter((r) => ids.has(r.milestone_id)).map((r) => ({ id: r.milestone_id, at: ms(r.at) ?? 0, p: r.new_status === "completed" ? 100 : Number(r.new_percent ?? 0) }))
-      .sort((a, b) => a.at - b.at);
+    const hist = (input.log ?? []).filter((r) => ids.has(r.milestone_id)).sort((a, b) => (ms(a.at) ?? 0) - (ms(b.at) ?? 0));
     const today = dayKey(now, tz);
     const w = new Map(work.map((m) => [m.id!, weight(m)]));
     let d = first;
@@ -102,11 +101,10 @@ export function phaseStats(input: {
       // Today: where it stands now (the log is behind what's on the steps).
       if (d === today) actual = pct(earned, hours);
       else if (d < today) {
-        const at = new Map<string, number>();
-        for (const h of hist) { if (h.at < end) at.set(h.id, h.p); else break; }
-        // Steps finished with no log line (imported done): by their finish.
-        for (const m of done) if (!at.has(m.id!) && (ms(m.actualAt) ?? Infinity) < end) at.set(m.id!, 100);
-        actual = pct([...at].reduce((a, [id, p]) => a + (w.get(id) ?? 0) * Math.min(100, p) / 100, 0), hours);
+        // The job as it stood at the day's end, read the way the shift
+        // report reads it (a finish back-dated before then counts as done).
+        const then = scheduleAt(work, hist, end - 1).milestones;
+        actual = pct(then.reduce((a, m) => a + (w.get(m.id!) ?? 0) * (m.status === "completed" ? 100 : Math.max(0, Math.min(100, Number(m.percentComplete ?? 0)))) / 100, 0), hours);
       }
       days.push({ day: d, planned: pct(plannedAt(end), hours), actual });
       const next = new Date(Date.UTC(y, mo - 1, dd + 1));

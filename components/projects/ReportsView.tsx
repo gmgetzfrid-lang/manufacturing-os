@@ -26,7 +26,6 @@ import { copyUpdateForEmail, copyRich, sendParts, printHtml, sendPrintDocument, 
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { usePhases } from "@/components/projects/PhaseContext";
-import CloseoutSteps from "@/components/projects/CloseoutSteps";
 import { phaseStats, phaseReportHtml, phaseReportDocument, phaseReportText, howItDidHtml, type CostLine, type CostEntry } from "@/lib/phaseReport";
 import { withWorkOrderCrews } from "@/lib/workOrderCrew";
 import { loadProgressLog } from "@/lib/progressHistory";
@@ -70,6 +69,10 @@ interface Props {
 // The report last open on each project (this visit): back on Reports, it's
 // still there.
 const lastOpen = new Map<string, ReportId>();
+// A report asked for from another tab (Close-out's "Close-out report"):
+// opened straight, on a phone too.
+const askedOpen = new Set<string>();
+export function openReportNext(projectId: string, id: ReportId): void { lastOpen.set(projectId, id); askedOpen.add(projectId); }
 
 const SHOWS: Array<[Show, string]> = [["all", "All"], ["open", "Open"], ["behind", "Behind"], ["critical", "Critical path"], ["notStarted", "Not started"], ["held", "Held"], ["done", "Done"], ["added", "Discovery & added"]];
 const MEETING_OF: Partial<Record<ReportId, MeetingKind>> = { turnover: "turnover", kickoff: "kickoff", closeout: "closeout" };
@@ -97,7 +100,8 @@ export default function ReportsView(p: Props) {
   const [sel, setSelState] = useState<ReportId>(() => lastOpen.get(projectId) ?? defaultMeeting(live, Date.now(), p.progress, tz));
   const setSel = useCallback((id: ReportId) => { lastOpen.set(projectId, id); setSelState(id); }, [projectId]);
   // Phone: the report open full screen (the list behind it).
-  const [phoneOpen, setPhoneOpen] = useState(false);
+  const [phoneOpen, setPhoneOpen] = useState(() => askedOpen.has(projectId));
+  useEffect(() => { askedOpen.delete(projectId); }, [projectId]);
   // The shift (turnover, hourly log, time log); null: the current one.
   const [shiftPick, setShiftPick] = useState<ShiftPick | null>(null);
   // Opened from the list: the whole project; from the Shift tab, that shift.
@@ -593,9 +597,13 @@ export default function ReportsView(p: Props) {
       ) : (
         <div className="grid gap-5 grid-cols-[minmax(0,1fr)] lg:grid-cols-[minmax(280px,360px)_minmax(0,1fr)] items-start">
           <div className="space-y-4 min-w-0">
-            {sel === "closeout" && live[0]?.orgId && (
-              <CloseoutSteps orgId={live[0].orgId} projectId={projectId} projectName={p.projectName} milestones={live} tz={tz}
-                userId={p.userId} canEdit={p.canEdit} phaseName={ph.phase ? ph.phases.find((x) => x.id === ph.phase)?.name ?? null : null} />
+            {/* Closing the job (PSSR, turnover, punch, complete) is on its own tab. */}
+            {sel === "closeout" && (
+              <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("project:tab", { detail: "closeout" }))}
+                className="w-full flex items-center gap-2 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-3 py-2.5 text-left text-[13px] font-bold text-emerald-900 dark:text-emerald-200 hover:bg-emerald-100 dark:hover:bg-emerald-950/50">
+                <span className="flex-1">PSSR, turnover documents, punch list and Mark complete are on the Close-out tab.</span>
+                <span className="shrink-0 underline">Open Close-out</span>
+              </button>
             )}
             {(!meeting || meeting === "turnover" || lhRow) && options}
             {actions}

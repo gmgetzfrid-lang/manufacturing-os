@@ -5,8 +5,10 @@
 //   Today    — the shift's screen: meetings, hour by hour, turnover, Lock report
 //   Work     — the timeline, calendar and work orders
 //   Reports  — every report, one name each, and the field forms
+//   Close-out — what's left to close the job, and how it did
 // then Documents, Costs, Quality, Intake, Activity and Members.
-// A project opens on Plan until work starts, then on Today.
+// A project opens on Plan until work starts, then on Shift, and on
+// Close-out once every step is done.
 //
 // Project owner gets a settings strip up top with status-transition buttons:
 // Pause / Resume / Complete / Cancel / Archive, and Reopen on a completed,
@@ -21,7 +23,7 @@ import {
   CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Calendar, Send,
   User as UserIcon, MessageSquare, Users, FileText, Activity as ActivityIcon,
   ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck, Pencil, CircleDollarSign,
-  UploadCloud, ClipboardList, Sun, FileBarChart, RotateCcw,
+  UploadCloud, ClipboardList, Sun, FileBarChart, RotateCcw, ListChecks,
 } from "lucide-react";
 import { canReopen } from "@/lib/projectStatus";
 import IntakePanel from "@/components/projects/IntakePanel";
@@ -54,6 +56,12 @@ import { getProjectTimeline, type TimelineEvent } from "@/lib/timeline";
 import { openProjectEvidencePack } from "@/lib/evidencePack";
 import TimelineFeed from "@/components/documents/TimelineFeed";
 import ScheduleTab from "@/components/projects/ScheduleTab";
+import MoreMenu from "@/components/ui/MoreMenu";
+import CloseoutTab from "@/components/projects/CloseoutTab";
+import { openReportNext } from "@/components/projects/ReportsView";
+import type { ReportId } from "@/lib/reportLinks";
+import { opensOnCloseout } from "@/lib/closeoutStatus";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { PhasesSetup, PhaseBar, usePhasePick } from "@/components/projects/PhasesSetup";
 import { MEMBER_ROLES, projectAccess, roleLabel, needsCoOwnerSql } from "@/lib/projectAccess";
 
@@ -64,11 +72,11 @@ import type {
   Project, ProjectMember, ProjectMemberRole, ProjectActivity, CheckoutSession, ProjectStatus, Timestamp,
 } from "@/types/schema";
 
-type Tab = "plan" | "today" | "work" | "reports" | "documents" | "intake" | "costs" | "quality" | "activity" | "members";
+type Tab = "plan" | "today" | "work" | "reports" | "closeout" | "documents" | "intake" | "costs" | "quality" | "activity" | "members";
 const SCHEDULE_TABS = ["plan", "today", "work", "reports"] as const;
 type ScheduleTabId = (typeof SCHEDULE_TABS)[number];
 const isScheduleTab = (t: Tab | null): t is ScheduleTabId => !!t && (SCHEDULE_TABS as readonly string[]).includes(t);
-const TABS: readonly Tab[] = ["plan", "today", "work", "reports", "documents", "intake", "costs", "quality", "activity", "members"];
+const TABS: readonly Tab[] = ["plan", "today", "work", "reports", "closeout", "documents", "intake", "costs", "quality", "activity", "members"];
 /** The tab a link asks for (older links' "schedule" opened the board: Work).
  *  None: decided by the project. */
 const tabOf = (t: string | null | undefined): Tab | null => (t === "schedule" ? "work" : t && (TABS as readonly string[]).includes(t) ? t as Tab : null);
@@ -108,7 +116,7 @@ export default function ProjectDetailPage() {
   // keeps your place.
   const search = useSearchParams();
   // null until the project says where to open: Plan until work starts, then Today.
-  const [tab, setTabState] = useState<Tab | null>(() => tabOf(search?.get("tab")));
+  const [asked, setTabState] = useState<Tab | null>(() => tabOf(search?.get("tab")));
   const setTab = useCallback((t: Tab) => {
     setTabState(t);
     try {
@@ -123,16 +131,24 @@ export default function ProjectDetailPage() {
     const t = tabOf(search?.get("tab"));
     if (t) setTabState(t);
   }, [search]);
-  // No tab asked for: Plan until work starts (a step started or any progress), then Today.
-  const decided = tab != null;
+  // Where the work stands (the Close-out tab's dot), and, no tab asked
+  // for, where to open: Plan until work starts (a step started or any
+  // progress), then Shift, then Close-out once every step is done (or the
+  // project is complete).
+  type StepRow = { id: string; parent_id: string | null; status: string; percent_complete: number | null; is_summary: boolean | null; cancelled_at: string | null; actual_start_at: string | null };
+  const [stepRows, setStepRows] = useState<StepRow[] | null>(null);
   useEffect(() => {
-    if (decided || !projectId) return;
+    if (!projectId) return;
     let live = true;
-    void supabase.from("milestones").select("id").eq("project_id", projectId)
-      .or("actual_start_at.not.is.null,percent_complete.gt.0,status.in.(in_progress,completed)").limit(1)
-      .then(({ data, error }) => { if (live) setTabState((cur) => cur ?? (!error && data && data.length > 0 ? "today" : "plan")); });
+    void fetchAllRows<StepRow>((from, to) => supabase.from("milestones")
+      .select("id, parent_id, status, percent_complete, is_summary, cancelled_at, actual_start_at")
+      .eq("project_id", projectId).order("id").range(from, to))
+      .then(({ rows, error }) => { if (live) setStepRows(error ? [] : rows); });
     return () => { live = false; };
-  }, [decided, projectId]);
+  }, [projectId]);
+  const workDone = !!project && !!stepRows && opensOnCloseout(project.status, stepRows);
+  const started = !!stepRows && stepRows.some((r) => r.actual_start_at || Number(r.percent_complete ?? 0) > 0 || r.status === "in_progress" || r.status === "completed");
+  const tab: Tab | null = asked ?? (project && stepRows ? (workDone ? "closeout" : started ? "today" : "plan") : null);
   const [commentDraft, setCommentDraft] = useState("");
   const [posting, setPosting] = useState(false);
 
@@ -254,15 +270,22 @@ export default function ProjectDetailPage() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  // The close-out's steps ask to go to a tab (punch list, turnover) or to
-  // open Complete (components/projects/CloseoutSteps).
+  // Go to a tab by name; "reports:<report>" opens that report.
+  const goTab = useCallback((name: string) => {
+    if (name.startsWith("reports:") && projectId) { openReportNext(projectId, name.slice(8) as ReportId); setTab("reports"); }
+    else { const t = tabOf(name); if (!t) return; setTab(t); }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [projectId, setTab]);
+
+  // Other screens ask to go to a tab ("project:tab", e.g. Reports' "Open
+  // Close-out") or to open Complete ("project:complete").
   useEffect(() => {
-    const toTab = (e: Event) => { const t = tabOf(String((e as CustomEvent).detail ?? "")); if (t) { setTab(t); window.scrollTo({ top: 0, behavior: "smooth" }); } };
+    const toTab = (e: Event) => goTab(String((e as CustomEvent).detail ?? ""));
     const complete = () => setPendingStatus("completed");
     window.addEventListener("project:tab", toTab);
     window.addEventListener("project:complete", complete);
     return () => { window.removeEventListener("project:tab", toTab); window.removeEventListener("project:complete", complete); };
-  }, [setTab]);
+  }, [goTab]);
 
   const handlePostComment = async () => {
     if (!commentDraft.trim() || !uid || !project) return;
@@ -377,108 +400,63 @@ export default function ProjectDetailPage() {
               </div>
             </div>
 
-            {canManage && project.status === "active" && (
-              <div className="flex items-center gap-1">
-                <ActionButton icon={<Pause className="w-3.5 h-3.5" />} label="Pause" onClick={() => setPendingStatus("paused")} />
-                <ActionButton icon={<CheckCircle2 className="w-3.5 h-3.5" />} label="Complete" onClick={() => setPendingStatus("completed")} color="emerald" />
-                <ActionButton icon={<XCircle className="w-3.5 h-3.5" />} label="Cancel" onClick={() => setPendingStatus("cancelled")} color="red" />
-              </div>
-            )}
-            <ActionButton
-              icon={<Download className="w-3.5 h-3.5" />}
-              label="Export CSV"
-              onClick={async () => {
-                if (!project.id || !project.orgId) return;
-                try { await exportProjectToCsv(project.id, project.orgId); }
-                catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
-              }}
-            />
-            {canManage && (
-              <ActionButton
-                icon={<Pencil className="w-3.5 h-3.5" />}
-                label="Edit"
-                onClick={() => setShowEdit(true)}
-              />
-            )}
-            {canManage && (
-              <ActionButton
-                icon={<Layers className="w-3.5 h-3.5" />}
-                label={phases.length ? "Phases" : "Split into phases"}
-                onClick={() => setShowPhases(true)}
-              />
-            )}
-            <ActionButton
-              icon={<ShieldCheck className="w-3.5 h-3.5" />}
-              label="Evidence pack"
-              onClick={async () => {
-                if (!project.id) return;
-                try { await openProjectEvidencePack(project.id); }
-                catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
-              }}
-            />
-            <ActionButton
-              icon={<FileText className="w-3.5 h-3.5" />}
-              label="Report"
-              onClick={async () => {
-                if (!project.id || !project.orgId) return;
-                try { await openProjectReport(project.orgId, project.id); }
-                catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
-              }}
-            />
-            {/* What the job taught: the close-out's one review (the old
-                Lessons learned box folds into it). */}
-            {canManage && (project.status === "completed" || project.status === "active" || project.status === "paused") && (
-              <ActionButton
-                icon={<Target className="w-3.5 h-3.5" />}
-                label="Lessons & findings"
-                onClick={() => setReviewOpen(true)}
-              />
-            )}
-            {project.id && project.orgId && uid && (
-              <>
-                <WatchButton
-                  orgId={project.orgId}
-                  userId={uid}
-                  resourceType="project"
-                  resourceId={project.id}
-                />
-                <PresenceIndicator
-                  resourceType="project"
-                  resourceId={project.id}
-                  userId={uid}
-                  userName={userEmail?.split("@")[0]}
-                  role={activeRole || undefined}
-                />
-              </>
-            )}
-            {canManage && project.status === "paused" && (
-              <div className="flex items-center gap-1">
-                <ActionButton icon={<Play className="w-3.5 h-3.5" />} label="Resume" onClick={() => setPendingStatus("active")} color="emerald" />
-                <ActionButton icon={<XCircle className="w-3.5 h-3.5" />} label="Cancel" onClick={() => setPendingStatus("cancelled")} color="red" />
-              </div>
-            )}
-            {canManage && (project.status === "completed" || project.status === "cancelled") && (
-              <ActionButton icon={<ArchiveIcon className="w-3.5 h-3.5" />} label="Archive" onClick={() => setPendingStatus("archived")} />
-            )}
-            {/* Closed by mistake, or the work came back: active again. */}
-            {canManage && canReopen(project.status) && (
-              <ActionButton icon={<RotateCcw className="w-3.5 h-3.5" />} label="Reopen" onClick={() => setPendingStatus("active")} color="emerald" />
-            )}
-            {isOwnerOrAdmin && (
-              <ActionButton
-                icon={<Trash2 className="w-3.5 h-3.5" />}
-                label="Delete"
-                color="red"
-                onClick={async () => {
+            {/* Edit and Phases in sight; the rest in one More menu. */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {canManage && (
+                <ActionButton icon={<Pencil className="w-3.5 h-3.5" />} label="Edit" onClick={() => setShowEdit(true)} />
+              )}
+              {canManage && (
+                <ActionButton icon={<Layers className="w-3.5 h-3.5" />} label={phases.length ? "Phases" : "Split into phases"} onClick={() => setShowPhases(true)} />
+              )}
+              {project.id && project.orgId && uid && (
+                <>
+                  <WatchButton orgId={project.orgId} userId={uid} resourceType="project" resourceId={project.id} />
+                  <PresenceIndicator resourceType="project" resourceId={project.id} userId={uid} userName={userEmail?.split("@")[0]} role={activeRole || undefined} />
+                </>
+              )}
+              <MoreMenu items={[
+                { icon: <FileText className="w-4 h-4" />, label: "Report", onClick: async () => {
+                  if (!project.id || !project.orgId) return;
+                  try { await openProjectReport(project.orgId, project.id); }
+                  catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                } },
+                { icon: <Download className="w-4 h-4" />, label: "Export CSV", onClick: async () => {
+                  if (!project.id || !project.orgId) return;
+                  try { await exportProjectToCsv(project.id, project.orgId); }
+                  catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                } },
+                { icon: <ShieldCheck className="w-4 h-4" />, label: "Evidence pack", onClick: async () => {
+                  if (!project.id) return;
+                  try { await openProjectEvidencePack(project.id); }
+                  catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
+                } },
+                // What the job taught: the close-out's one review.
+                ...(canManage && (project.status === "completed" || project.status === "active" || project.status === "paused")
+                  ? [{ icon: <Target className="w-4 h-4" />, label: "Lessons & findings", onClick: () => setReviewOpen(true) }] : []),
+                ...(canManage && project.status === "active" ? [
+                  { icon: <Pause className="w-4 h-4" />, label: "Pause project", onClick: () => setPendingStatus("paused"), line: true },
+                  { icon: <CheckCircle2 className="w-4 h-4" />, label: "Mark complete", onClick: () => setPendingStatus("completed"), tone: "good" as const },
+                  { icon: <XCircle className="w-4 h-4" />, label: "Cancel project", onClick: () => setPendingStatus("cancelled"), tone: "bad" as const },
+                ] : []),
+                ...(canManage && project.status === "paused" ? [
+                  { icon: <Play className="w-4 h-4" />, label: "Resume", onClick: () => setPendingStatus("active"), tone: "good" as const, line: true },
+                  { icon: <XCircle className="w-4 h-4" />, label: "Cancel project", onClick: () => setPendingStatus("cancelled"), tone: "bad" as const },
+                ] : []),
+                ...(canManage && (project.status === "completed" || project.status === "cancelled")
+                  ? [{ icon: <ArchiveIcon className="w-4 h-4" />, label: "Archive", onClick: () => setPendingStatus("archived"), line: true }] : []),
+                // Closed by mistake, or the work came back: active again.
+                ...(canManage && canReopen(project.status)
+                  ? [{ icon: <RotateCcw className="w-4 h-4" />, label: "Reopen", onClick: () => setPendingStatus("active"), tone: "good" as const }] : []),
+                ...(isOwnerOrAdmin ? [{ icon: <Trash2 className="w-4 h-4" />, label: "Delete project", tone: "bad" as const, line: true, onClick: async () => {
                   if (!project.id) return;
                   if (!(await appConfirm({ message: `Delete "${project.name}"? This permanently removes the project and its schedule. Document checkouts are kept (just unlinked). This cannot be undone.`, tone: "danger", confirmLabel: "Delete" }))) return;
                   try {
                     await deleteProject({ projectId: project.id, actorUserId: uid!, actorEmail: userEmail ?? undefined, actorRole: activeRole ?? undefined });
                     router.push("/projects");
                   } catch (e) { await appAlert({ message: (e as Error).message, tone: "danger" }); }
-                }}
-              />
-            )}
+                } }] : []),
+              ]} />
+            </div>
           </div>
 
           {/* TABS */}
@@ -494,6 +472,10 @@ export default function ProjectDetailPage() {
             </TabButton>
             <TabButton active={tab === "reports"} onClick={() => setTab("reports")} main>
               <FileBarChart className="w-3.5 h-3.5" /> Reports
+            </TabButton>
+            <TabButton active={tab === "closeout"} onClick={() => setTab("closeout")} main>
+              <ListChecks className="w-3.5 h-3.5" /> Close-out
+              {workDone && <span className="w-2 h-2 rounded-full bg-emerald-500" aria-label="work done" />}
             </TabButton>
             <span className="shrink-0 self-center w-px h-5 mx-1 bg-[var(--color-border)]" aria-hidden />
             <TabButton active={tab === "documents"} onClick={() => setTab("documents")}>
@@ -520,6 +502,7 @@ export default function ProjectDetailPage() {
                 <b className="block mt-1">Shift</b> - the shift ending and the next one: meetings, hour by hour, overtime, the turnover, the night plan, Lock report. Any date.
                 <b className="block mt-1">Work</b> - the timeline, calendar and work orders.
                 <b className="block mt-1">Reports</b> - every report, and the field forms.
+                <b className="block mt-1">Close-out</b> - what&rsquo;s left to close the job, and how it did. A finished job opens here.
                 <b className="block mt-1">Documents</b> - every checkout attached to this project (active + released).
                 <b className="block mt-1">Activity</b> - the project&rsquo;s full timeline: comments, doc events, holds, milestone hits.
                 <b className="block mt-1">Members</b> - who&rsquo;s on this project. Owner can add/remove.
@@ -535,7 +518,7 @@ export default function ProjectDetailPage() {
       <div className={`${isScheduleTab(tab) || !tab ? "max-w-[1800px] mx-auto px-3 sm:px-4" : "max-w-6xl mx-auto px-6"} py-6`}>
         {/* Health + "what do I feed you" — the wizard for the rest of the
             project's life, visible from every tab. */}
-        {project.id && project.orgId && tab && (!isScheduleTab(tab) || tab === "plan") && (
+        {project.id && project.orgId && tab && tab !== "closeout" && (!isScheduleTab(tab) || tab === "plan") && (
           <ProjectCoach orgId={project.orgId} projectId={project.id} refreshKey={coachKey} />
         )}
         {(isScheduleTab(tab) || tab === "costs") && (
@@ -584,6 +567,24 @@ export default function ProjectDetailPage() {
             phase={phase}
           />
         )}
+        {tab === "closeout" && project.id && project.orgId && uid && (
+          <CloseoutTab
+            orgId={project.orgId}
+            projectId={project.id}
+            projectName={project.name}
+            projectStatus={project.status}
+            jobKind={jobKind}
+            tz={project.timezone || "America/Los_Angeles"}
+            phases={phases}
+            uid={uid}
+            userEmail={userEmail}
+            canManage={!!canManage}
+            onTab={goTab}
+            onLessons={() => setReviewOpen(true)}
+            onComplete={() => setPendingStatus("completed")}
+          />
+        )}
+        {tab === "closeout" && !uid && <div className="py-10 flex justify-center"><Spinner /></div>}
         {tab === "quality" && project.id && project.orgId && uid && (
           <QualityTab
             orgId={project.orgId}
@@ -805,11 +806,20 @@ function ActionButton({ icon, label, onClick, color }: { icon: React.ReactNode; 
 function TabButton({ active, onClick, children, main }: { active: boolean; onClick: () => void; children: React.ReactNode;
   /** One of the four work tabs (Plan, Today, Work, Reports): darker when not picked. */
   main?: boolean }) {
+  // The picked tab in sight: the bar scrolls sideways on a phone.
+  const ref = React.useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    const el = ref.current, bar = el?.parentElement;
+    if (!active || !el || !bar) return;
+    const r = el.getBoundingClientRect(), b = bar.getBoundingClientRect();
+    if (r.left < b.left || r.right > b.right) bar.scrollLeft += r.left - b.left - 16;
+  }, [active]);
   return (
     <button
+      ref={ref}
       onClick={onClick}
       aria-current={active ? "page" : undefined}
-      className={`shrink-0 px-3.5 sm:px-4 py-2.5 text-xs font-bold inline-flex items-center gap-1.5 border-b-2 whitespace-nowrap transition-colors ${
+      className={`shrink-0 px-3 xl:px-3.5 py-2.5 text-xs font-bold inline-flex items-center gap-1.5 border-b-2 whitespace-nowrap transition-colors ${
         active ? "border-[var(--color-accent)] text-[var(--color-accent)]" : main ? "border-transparent text-[var(--color-text)] hover:text-[var(--color-accent)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
       }`}
     >
