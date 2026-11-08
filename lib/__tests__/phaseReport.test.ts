@@ -18,7 +18,7 @@ const ms: Milestone[] = [
   m("s1", { parentId: "t1", plannedStartAt: at("2026-11-01", "06:00"), plannedAt: at("2026-11-01", "16:00"), durationHours: 10, status: "completed", percentComplete: 100, actualAt: at("2026-11-01", "15:00") }),
   m("s2", { parentId: "t1", plannedStartAt: at("2026-11-02", "06:00"), plannedAt: at("2026-11-02", "16:00"), durationHours: 10, status: "in_progress", percentComplete: 50 }),
   m("t2", { attributes: { [PHASE_ATTR]: "b" } }),
-  m("s3", { parentId: "t2", plannedStartAt: at("2026-11-08", "06:00"), plannedAt: at("2026-11-08", "16:00"), durationHours: 20, attributes: { discovery: { what: "x" } } }),
+  m("s3", { parentId: "t2", plannedStartAt: at("2026-11-08", "06:00"), plannedAt: at("2026-11-08", "16:00"), durationHours: 20, attributes: { discovery: { id: "d1", seq: 1, what: "x", impact: { hours: 20 } } } }),
 ];
 const log = [{ milestone_id: "s2", at: at("2026-11-02", "10:00"), old_status: "planned", old_percent: 0, new_status: "in_progress", new_percent: 50 }] as never;
 const lines: CostLine[] = [
@@ -66,7 +66,7 @@ describe("phaseStats", () => {
   });
   it("phase 2 and the whole project", () => {
     const b = phaseStats({ milestones: ms, phases: P, phase: P[1], log, tz, now, total: 2000, lines, entries });
-    expect(b).toMatchObject({ steps: 1, done: 0, added: { count: 1, hours: 20 }, budget: 1000, spent: 100 });
+    expect(b).toMatchObject({ steps: 1, done: 0, added: { count: 1, steps: 1, hours: 20 }, budget: 1000, spent: 100 });
     expect(b.lines.map((l) => l.name)).toEqual(["Mechanical"]);
     const all = phaseStats({ milestones: ms, phases: P, phase: null, log, tz, now, total: 2000, lines, entries });
     expect(all).toMatchObject({ steps: 3, budget: 2000, spent: 400, committed: 200 });

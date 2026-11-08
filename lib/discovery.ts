@@ -17,6 +17,7 @@ import type { Milestone } from "@/types/schema";
 import { cascadeDependents, type DateChange, type ReflowNode } from "@/lib/scheduleReflow";
 import { computeCpm } from "@/lib/cpm";
 import { resolveCriticalPath, type CriticalMode } from "@/lib/criticalPath";
+import { effectiveWeight } from "@/lib/scheduleProgress";
 
 export interface DiscoveryStepInput { name: string; crew?: string; hours: number }
 
@@ -265,6 +266,23 @@ export function discoveries(milestones: Milestone[]): Discovery[] {
   }
   for (const g of groups.values()) g.steps.sort((a, b) => (discoveryOf(a)?.seq ?? 0) - (discoveryOf(b)?.seq ?? 0));
   return [...groups.values()].sort((a, b) => a.record.foundAt - b.record.foundAt);
+}
+
+/** The work a find added as the schedule has it now: its steps' hours
+ *  (cancelled ones and a work order over its own steps left out). The
+ *  record's impact.hours is the estimate when it was found. */
+export function hoursNow(d: Discovery, tz?: string): number {
+  const over = new Set(d.steps.map((m) => m.parentId).filter(Boolean) as string[]);
+  const work = d.steps.filter((m) => !(m.id && over.has(m.id)) && !(m as { cancelledAt?: unknown }).cancelledAt);
+  return Math.round(work.reduce((a, m) => a + effectiveWeight(m, tz), 0) * 10) / 10;
+}
+
+/** The impact line with the work as the schedule has it now, and the
+ *  first estimate when it has changed since (the close-out). */
+export function impactNowLine(d: Discovery, hrs: (h: number) => string, word = "turnaround", tz?: string): string {
+  const now = hoursNow(d, tz), was = d.record.impact.hours;
+  const line = impactLine({ ...d.record.impact, hours: now }, hrs, word);
+  return Math.abs(now - was) >= 0.5 ? `${line} · first estimated ${hrs(was)}` : line;
 }
 
 /** "+14 h to V-7 · finish +8 h · critical" — the impact in a line. */

@@ -18,6 +18,7 @@ import { phaseIndex, phaseOnDay, phaseAmount, phaseDates, type ProjectPhase } fr
 import { dayKey, wallClockToMs, fmtInTz } from "@/lib/scheduleTz";
 import { workHours, expectedFraction, DEFAULT_SHIFT_TIMES, type ShiftTimes } from "@/lib/shiftReport";
 import { noEmDash } from "@/lib/noEmDash";
+import { discoveryOf } from "@/lib/discovery";
 
 export interface CostLine { id: string; name: string; cost_type?: string | null; budget: number | null; phase_id?: string | null; status?: string | null }
 export interface CostEntry { cost_account_id: string; entry_type: string; amount: number | null; entry_date: string | null; status?: string | null; phase_id?: string | null }
@@ -35,7 +36,9 @@ export interface PhaseStats {
   plannedFinish: number | null;
   /** Every step done: when the last one finished. */
   finishedAt: number | null;
-  added: { count: number; hours: number };
+  /** Added after the plan (discovery and added scope): how many finds, their
+   *  steps, and the hours of work as the schedule has it now. */
+  added: { count: number; steps: number; hours: number };
   /** Day by day: % planned and % done by the end of each day (done: up to today). */
   days: Array<{ day: string; planned: number; actual: number | null }>;
   budget: number;
@@ -113,7 +116,8 @@ export function phaseStats(input: {
   }
 
   // Added after the plan: discovery and added scope.
-  const addedSteps = work.filter((m) => !!(m.attributes as Record<string, unknown> | undefined)?.discovery);
+  const addedSteps = work.filter((m) => !!discoveryOf(m));
+  const finds = new Set(addedSteps.map((m) => discoveryOf(m)!.id));
 
   // Money.
   const shareOf = (p: ProjectPhase | null) => (p ? p.share : 100);
@@ -137,7 +141,7 @@ export function phaseStats(input: {
     phase, steps: work.length, done: done.length, hours: Math.round(hours),
     actualPct: pct(earned, hours), plannedPct: pct(plannedAt(now), hours),
     plannedStart: starts.length ? Math.min(...starts) : null, plannedFinish: ends.length ? Math.max(...ends) : null, finishedAt,
-    added: { count: addedSteps.length, hours: Math.round(addedSteps.reduce((a, m) => a + weight(m), 0)) },
+    added: { count: finds.size, steps: addedSteps.length, hours: Math.round(addedSteps.reduce((a, m) => a + weight(m), 0)) },
     days, budget,
     committed: lineRows.reduce((a, r) => a + r.committed, 0), spent: lineRows.reduce((a, r) => a + r.spent, 0),
     lines: lineRows,
@@ -182,7 +186,7 @@ export function phaseSectionHtml(s: PhaseStats, tz: string, now: number): string
     tile("Budget", money(s.budget), `${money(s.spent)} spent · ${money(s.committed)} committed`) +
     tile(left >= 0 ? "Left" : "Over budget", money(Math.abs(left)), s.budget ? `${Math.round((s.spent / s.budget) * 100)}% of budget spent` : "no budget", left >= 0 ? GREEN : RED) +
     `</tr></table>`;
-  if (s.added.count) html += `<div style="${FONT}font-size:12px;color:${AMBER};margin-top:6px;"><b>Added after the plan:</b> ${s.added.count} step${s.added.count === 1 ? "" : "s"}, ${s.added.hours} h (discovery and added scope).</div>`;
+  if (s.added.count) html += `<div style="${FONT}font-size:12px;color:${AMBER};margin-top:6px;"><b>Added after the plan:</b> ${s.added.count} (${s.added.steps} step${s.added.steps === 1 ? "" : "s"}), ${s.added.hours} h of work (discovery and added scope).</div>`;
 
   if (s.days.length) {
     html += h2("Progress, planned and done, day by day");

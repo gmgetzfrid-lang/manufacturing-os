@@ -61,9 +61,10 @@ import AddWorkPicker from "@/components/projects/AddWorkPicker";
 import { useWoClasses, passes, WoClassSelects } from "@/components/projects/WoClassFilter";
 import { typeLabel, unitLabel, NONE } from "@/lib/woClass";
 import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
-import { discoveries, discoveryOf, discoverySummary, discoveryStepLine, impactLine, ADDED, kindOf, addedTitle, type Discovery } from "@/lib/discovery";
+import { discoveries, discoveryOf, discoverySummary, discoveryStepLine, impactLine, impactNowLine, hoursNow, ADDED, kindOf, addedTitle, type Discovery } from "@/lib/discovery";
 import { buildTimeLog, downloadTimeLog } from "@/lib/timeLog";
 import { loadProgressLog, scheduleAt, type ProgressLogRow } from "@/lib/progressHistory";
+import { workSummary, vsPlanWords, type WorkSummary } from "@/lib/closeoutStatus";
 import { resolveCriticalPath, floatsOf, pathMarks, CRITICAL_MODES, type PathMarks } from "@/lib/criticalPath";
 import { useCriticalMode, saveCriticalMode } from "@/lib/criticalModeStore";
 import { effectiveSpans } from "@/lib/scheduleTime";
@@ -256,7 +257,10 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   );
   // Only a record that reaches back to the shift replaces today's
   // progress; otherwise it's today's, and the label says so.
-  const asThen = history?.complete ? history : null;
+  // The close-out is the end of the job: always as it stands now, never
+  // replayed to the last shift it was planned to run.
+  const closing = meeting === "closeout";
+  const asThen = !closing && history?.complete ? history : null;
   const milestones = asThen ? asThen.milestones : live;
   const progress = useMemo(() => (asThen ? buildProgressIndex(asThen.milestones, tz) : liveProgress), [asThen, liveProgress, tz]);
   // The schedule as it stood when the shift began — only when the record
@@ -304,7 +308,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       msg: pathMsg,
     };
   }, [crit, milestones, pathAt, tz, canEdit, projectId, pathMsg]);
-  const historyNote = !pastShift ? null
+  const historyNote = !pastShift || closing ? null
     : history?.complete ? `progress as recorded by ${clockLabel(recordedBy, tz)} ${fmtInTz(recordedBy, tz, { month: "short", day: "numeric" })}`
       : `progress as entered by now - the record doesn't reach back to this shift`;
 
@@ -365,6 +369,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     pctOf: (m) => (m.id ? progress?.get(m.id)?.percent : undefined) ?? leafPercent(m), critical: criticalIds }), [report, milestones, progress, criticalIds]);
   const kickoff = useMemo(() => buildKickoff({ milestones, progress, criticalIds, tz, times }), [milestones, progress, criticalIds, tz, times]);
   const closeout = useMemo(() => buildCloseout({ milestones, progress, criticalIds, tz }), [milestones, progress, criticalIds, tz]);
+  // When the last step really finished, against the plan (the close-out's standing).
+  const workDone = useMemo(() => (meeting === "closeout" ? workSummary(milestones) : undefined), [meeting, milestones]);
   const rehearsal = now < shift.start;
   const jumpTarget = useMemo(() => (report.review.scheduled.length === 0 ? nextShiftWithWork(milestones, shift, tz, times) : null), [report.review.scheduled.length, milestones, shift, tz, times]);
   const byId = useMemo(() => { const m = new Map<string, Milestone>(); for (const x of milestones) if (x.id) m.set(x.id, x); return m; }, [milestones]);
@@ -668,13 +674,13 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const allSections = useMemo(() => meeting === "kickoff"
     ? kickoffSections(kickoff, ctx, findingsCtx)
     : meeting === "closeout"
-      ? closeoutSections(closeout, report, ctx, cancelled, discoveryList, lookBack, findingsCtx)
+      ? closeoutSections(closeout, report, ctx, cancelled, discoveryList, lookBack, findingsCtx, workDone)
       : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet, hourlyExport, onEdit: canEdit && onUpdateStep && !locked ? setEditing : undefined, forecast, pathSource, discovery: discoveryList, why, taskSteps: (id) => stepTally.get(id),
         onDiscovery: onDiscovery && !locked ? () => { const first = view.goals.all[0]?.parentId ?? view.review.done[0]?.parentId; const t = (first ? live.find((m) => m.id === first) : undefined) ?? live.find((m) => live.some((k) => k.parentId === m.id)); if (t) onDiscovery(t); } : undefined,
         // Only while the next shift is still ahead (or on).
         onPlanNext: onPlanNext && report.next.end > now && !locked ? () => onPlanNext(report.next) : undefined,
         nightPlan: { plan: nextPlan, open: report.next.end > now && (canShip || nextPlan) ? () => setPlanOpen(true) : undefined } }),
-  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, hourlyExport, locked, findingsCtx, nextPlan, canShip]);
+  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, hourlyExport, locked, findingsCtx, nextPlan, canShip, workDone]);
   // Sections left off the report, on screen and in print — the viewer's own
   // choice for each meeting, remembered like the email's. Each comes back
   // with a tap (listed at the bottom); the email keeps its own choice.
@@ -2158,7 +2164,10 @@ function discoverySection(shift: ShiftWindow, c: Ctx, list: Discovery[], onAdd?:
 /** Each find: when, where, what, the work it added (and where that stands),
  *  and what it did to the schedule. A table where there's room; on a phone,
  *  a card each. */
-function DiscoveryList({ list, c, print }: { list: Discovery[]; c: Ctx; print: boolean }) {
+function DiscoveryList({ list, c, print, now = false }: { list: Discovery[]; c: Ctx; print: boolean;
+  /** The close-out: the work as the schedule has it now (and the first estimate when it changed). */
+  now?: boolean }) {
+  const impactOf = (d: Discovery) => (now ? impactNowLine(d, c.hrs, c.word, c.tz) : impactLine(d.record.impact, c.hrs, c.word));
   const cell = print ? "px-1 py-[1px]" : "px-2 py-1.5";
   const impactCls = (d: Discovery) => (d.record.impact.critical ? "text-rose-700 dark:text-rose-400 font-bold" : "text-[var(--color-text)]");
   return (
@@ -2173,7 +2182,7 @@ function DiscoveryList({ list, c, print }: { list: Discovery[]; c: Ctx; print: b
               </div>
               <div className="break-words"><b className="text-[11px] uppercase tracking-wide text-[var(--color-text-muted)] mr-1">{ADDED[kindOf(d.record)].word}</b>{d.record.what}</div>
               {d.steps.map((m) => <div key={m.id} className="text-[11.5px] text-[var(--color-text-muted)] break-words">{discoveryStepLine(m, c.hrs)}</div>)}
-              <div className={`text-[11.5px] ${impactCls(d)}`}>{impactLine(d.record.impact, c.hrs, c.word)}</div>
+              <div className={`text-[11.5px] ${impactCls(d)}`}>{impactOf(d)}</div>
             </div>
           ))}
         </div>
@@ -2192,7 +2201,7 @@ function DiscoveryList({ list, c, print }: { list: Discovery[]; c: Ctx; print: b
                 <td className={`${cell} font-semibold break-words`}>{d.task?.name}{d.task?.workOrderRef && <div className="font-mono font-normal text-[11px] text-[var(--color-text-muted)]">WO {d.task.workOrderRef}</div>}</td>
                 <td className={`${cell} break-words`}><div className="text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">{ADDED[kindOf(d.record)].word}</div>{d.record.what}{d.record.approvedBy && <div className="text-[11px] text-[var(--color-text-muted)]">Approved by {d.record.approvedBy}</div>}</td>
                 <td className={`${cell} break-words`}>{d.steps.map((m) => <div key={m.id}>{discoveryStepLine(m, c.hrs)}</div>)}</td>
-                <td className={`${cell} break-words ${impactCls(d)}`}>{impactLine(d.record.impact, c.hrs, c.word)}</td>
+                <td className={`${cell} break-words ${impactCls(d)}`}>{impactOf(d)}</td>
               </tr>
             ))}
           </tbody>
@@ -2382,7 +2391,7 @@ function findingsSection(f: FindingsCtx, c: Ctx): Sec {
   };
 }
 
-function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftReport, c: Ctx, cancelled: CancelledJob[], found: Discovery[] = [], lookBack: LookBack | null = null, findings?: FindingsCtx): Sec[] {
+function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftReport, c: Ctx, cancelled: CancelledJob[], found: Discovery[] = [], lookBack: LookBack | null = null, findings?: FindingsCtx, work?: WorkSummary): Sec[] {
   const finalStats = [
     { label: "Complete", value: `${co.actualPct}%`, tone: (co.actualPct >= 100 ? "emerald" : "amber") as "emerald" | "amber" },
     { label: "Steps done", value: `${co.done}/${co.steps}`, tone: "slate" as const },
@@ -2399,7 +2408,8 @@ function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftRep
   return [
     {
       id: "final", title: "Final standing", short: "Standing",
-      sub: co.finish != null ? `Planned finish ${c.DT(co.finish)}` : undefined,
+      sub: [co.finish != null ? `Planned finish ${c.DT(co.finish)}` : null,
+        work?.finishedAt != null ? `finished ${c.DT(work.finishedAt)}${work.hoursAfterPlan != null ? ` (${vsPlanWords(work.hoursAfterPlan)})` : ""}` : null].filter(Boolean).join(" · ") || undefined,
       flag: co.done < co.steps ? "amber" : null,
       body: () => (
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 keep">
@@ -2438,11 +2448,12 @@ function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftRep
     // what it did to the finish.
     ...(found.length ? [{
       id: "discovery", title: addedTitle(found.map((d) => kindOf(d.record))), short: "Added work",
-      sub: `${found.length} added · ${c.hrs(Math.round(found.reduce((a, d) => a + d.record.impact.hours, 0) * 10) / 10)} of work added · ${found.filter((d) => d.record.impact.critical).length} on the critical path`,
+      // The work as the schedule has it now (estimates revised since count as revised).
+      sub: `${found.length} added (${found.reduce((a, d) => a + d.steps.length, 0)} steps) · ${c.hrs(Math.round(found.reduce((a, d) => a + hoursNow(d, c.tz), 0) * 10) / 10)} of work added · ${found.filter((d) => d.record.impact.critical).length} on the critical path`,
       count: found.length,
       flag: null,
-      body: (print: boolean) => <DiscoveryList list={found} c={c} print={print} />,
-      data: () => [discoveryBlock(found, c)],
+      body: (print: boolean) => <DiscoveryList list={found} c={c} print={print} now />,
+      data: () => [discoveryBlock(found, c, true)],
     } as Sec] : []),
     // The look back: where the time went, what set the finish, what went
     // well, where to do better.
