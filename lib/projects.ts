@@ -5,7 +5,7 @@
 // public projects; private projects are visible only to their members (admins
 // always see everything for audit purposes).
 
-import { normalizePhases } from "@/lib/projectPhases";
+import { phasesOfRow } from "@/lib/projectPhases";
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
 import { DEFAULT_SCHEDULE_TZ, isValidTimeZone, normalizeTimeZone } from "@/lib/scheduleTz";
@@ -49,7 +49,7 @@ export function rowToProject(r: Record<string, unknown>): Project {
     timezone: (r.timezone as string | null | undefined) ?? null,
     projectTypeSaved: (r.shift_times as { projectType?: unknown } | null | undefined)?.projectType ?? null,
     jobKind: (r.job_kind as string | null | undefined) ?? null,
-    phases: normalizePhases(r.phases),
+    phases: phasesOfRow(r),
     authorizedAmount: r.authorized_amount == null ? null : Number(r.authorized_amount),
     afeNumber: (r.afe_number as string | null | undefined) ?? null,
     completedAt: r.completed_at as Timestamp,

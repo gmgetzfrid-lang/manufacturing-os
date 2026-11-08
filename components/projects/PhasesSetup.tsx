@@ -12,12 +12,12 @@
 //   the device for the project.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Layers, Plus, Trash2, Copy, Check, Loader2, AlertTriangle } from "lucide-react";
+import { Layers, Plus, Trash2, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui/Modal";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import {
-  type ProjectPhase, PHASES_SQL, evenShares, fitShares, moveDivider, setShare, phaseAmount, shareOfAmount,
+  type ProjectPhase, evenShares, fitShares, moveDivider, setShare, phaseAmount, shareOfAmount,
   startPhases, newPhaseId, phaseDates, phaseProblems,
 } from "@/lib/projectPhases";
 import { saveAfe } from "@/lib/costRevisions";
@@ -141,24 +141,18 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, uid,
   const [afeDraft, setAfeDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  // Asked of the database each time this opens (never from when the page
-  // loaded: the SQL may have been run since).
-  const [needSql, setNeedSql] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   // The AFE, the budget lines' total, and the schedule's dates (phase 1's).
   useEffect(() => {
     let live = true;
     void (async () => {
-      const [p, lines, first, last, col] = await Promise.all([
+      const [p, lines, first, last] = await Promise.all([
         supabase.from("projects").select("afe_number, charge_account, authorized_amount, budget_doc_id").eq("id", projectId).maybeSingle(),
         supabase.from("cost_accounts").select("budget").eq("project_id", projectId),
         supabase.from("milestones").select("planned_start_at, planned_at").eq("project_id", projectId).not("planned_start_at", "is", null).order("planned_start_at", { ascending: true }).limit(1),
         supabase.from("milestones").select("planned_at").eq("project_id", projectId).not("planned_at", "is", null).order("planned_at", { ascending: false }).limit(1),
-        supabase.from("projects").select("phases").eq("id", projectId).maybeSingle(),
       ]);
       if (!live) return;
-      setNeedSql(!!col.error && /phases/i.test(col.error.message));
       const row = (p.data ?? null) as { afe_number?: string | null; charge_account?: string | null; authorized_amount?: number | null; budget_doc_id?: string | null } | null;
       const a = { number: row?.afe_number ?? null, account: row?.charge_account ?? null, authorized: row?.authorized_amount == null ? null : Number(row.authorized_amount), docId: row?.budget_doc_id ?? null };
       setAfe(a);
@@ -205,20 +199,18 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, uid,
       }
       // One phase left is no phases: the whole project, one schedule.
       const keep = phases.length > 1 ? phases.map((p) => ({ ...p, name: noEmDash(p.name.trim()) })) : [];
-      const patch: Record<string, unknown> = { phases: keep };
+      // Saved with the project's settings (projects.shift_times), where the
+      // shift times, letterhead and project type save: no new column needed.
+      const { data: cur, error: readErr } = await supabase.from("projects").select("shift_times").eq("id", projectId).maybeSingle();
+      if (readErr) { setErr(`Not saved. The database said: ${readErr.message}`); return; }
+      const settings = { ...(((cur as { shift_times?: Record<string, unknown> | null } | null)?.shift_times) ?? {}), phases: keep };
+      const patch: Record<string, unknown> = { shift_times: settings };
       if (name.trim() && name.trim() !== projectName) patch.name = noEmDash(name.trim());
       const { data, error } = await supabase.from("projects").update(patch).eq("id", projectId).select("id");
-      if (error) {
-        if (/phases/i.test(error.message) && /column|schema/i.test(error.message)) {
-          setNeedSql(true);
-          setErr(/schema cache/i.test(error.message)
-            ? "The database has the change but hasn't picked it up yet. Run the SQL below again (its last line tells it to), wait a few seconds, then Save."
-            : "Phases need the database update below run first.");
-          return;
-        }
-        setErr(error.message); return;
-      }
+      if (error) { setErr(`Not saved. The database said: ${error.message}`); return; }
       if (!data?.length) { setErr("Not saved - only the project's owner, a co-owner or an admin can change the phases."); return; }
+      // A copy in the phases column, when the database has it.
+      void supabase.from("projects").update({ phases: keep }).eq("id", projectId).then(() => undefined, () => undefined);
       onSaved();
       onClose();
     } finally { setBusy(false); }
@@ -229,14 +221,6 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, uid,
     <Modal onClose={onClose} size="xl" dismissable={!busy}>
       <ModalHeader icon={Layers} title="Phases" subtitle="One project, one AFE, split into phases: each with its own dates, schedule, reports and share of the budget." onClose={onClose} />
       <ModalBody className="space-y-5">
-        {needSql && (
-          <div className="rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-3 text-[12.5px] text-amber-900 dark:text-amber-200">
-            <div className="font-bold flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" /> Run this once in Supabase (SQL editor), then save:</div>
-            <pre className="mt-2 whitespace-pre-wrap text-[11.5px] bg-white/70 dark:bg-black/30 rounded-lg p-2 font-mono">{PHASES_SQL}</pre>
-            <button type="button" onClick={() => { void navigator.clipboard?.writeText(PHASES_SQL).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }); }}
-              className="mt-2 inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-amber-400 font-bold">{copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />} {copied ? "Copied" : "Copy SQL"}</button>
-          </div>
-        )}
 
         <label className="block">
           <span className="block text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1">Project name</span>

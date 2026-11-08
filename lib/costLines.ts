@@ -54,7 +54,7 @@ export async function setLinesClosed(input: { orgId: string; ids: string[]; clos
 export async function setLinesPhase(input: { orgId: string; ids: string[]; phaseId: string | null; actor: Actor }): Promise<{ ok: boolean; error?: string }> {
   if (!input.ids.length) return { ok: true };
   const { data, error } = await supabase.from("cost_accounts").update({ phase_id: input.phaseId }).in("id", input.ids).select("id");
-  if (error) return { ok: false, error: /phase_id/.test(error.message) ? `Phases need the database update run first:\n${PHASES_SQL}` : error.message };
+  if (error) return { ok: false, error: /phase_id/.test(error.message) ? `Not saved. Run this in Supabase (SQL editor), wait a few seconds, then try again:\n${PHASES_SQL}\nThe database said: ${error.message}` : error.message };
   if (!data?.length) return { ok: false, error: "Not changed - only the project's owner, a co-owner or an admin can change the budget." };
   for (const id of input.ids) await audit("COST_ACCOUNT_PHASE", input.orgId, id, input.actor, { phaseId: input.phaseId });
   return { ok: true };

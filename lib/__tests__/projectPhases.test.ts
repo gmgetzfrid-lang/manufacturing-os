@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import type { Milestone } from "@/types/schema";
 import {
-  rowsForPhase, normalizePhases, fitShares, evenShares, moveDivider, setShare, phaseAmount, shareOfAmount, startPhases,
+  phasesOfRow, rowsForPhase, normalizePhases, fitShares, evenShares, moveDivider, setShare, phaseAmount, shareOfAmount, startPhases,
   phaseIndex, inPhase, phaseOnDay, phaseRef, phaseDates, phaseProblems, PHASE_ATTR, type ProjectPhase,
 } from "@/lib/projectPhases";
 
@@ -107,5 +107,17 @@ describe("a schedule imported into a phase", () => {
   it("the phase there first keeps the keys its rows were imported with", () => {
     const r = rowsForPhase(rows, "a", false);
     expect(r[1]).toMatchObject({ externalRef: "msp-uid:2", parentExternalRef: "msp-uid:1", attributes: { [PHASE_ATTR]: "a" } });
+  });
+});
+
+describe("where the phases are saved", () => {
+  const ph = [{ id: "a", name: "T-1", share: 50 }, { id: "b", name: "T-2", share: 50 }];
+  it("the project's settings first, even emptied there", () => {
+    expect(phasesOfRow({ shift_times: { dayStart: "05:30", phases: ph }, phases: [] }).map((p) => p.name)).toEqual(["T-1", "T-2"]);
+    expect(phasesOfRow({ shift_times: { phases: [] }, phases: ph })).toEqual([]);
+  });
+  it("else the phases column", () => {
+    expect(phasesOfRow({ shift_times: { dayStart: "05:30" }, phases: ph })).toHaveLength(2);
+    expect(phasesOfRow({})).toEqual([]);
   });
 });

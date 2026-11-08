@@ -37,6 +37,14 @@ notify pgrst, 'reload schema';`;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
+/** A project's phases as saved: in its settings (projects.shift_times,
+ *  where every project setting saves for whoever can change the project),
+ *  else the phases column. Saved in settings, even empty, settings win. */
+export function phasesOfRow(r: { phases?: unknown; shift_times?: unknown }): ProjectPhase[] {
+  const st = r.shift_times && typeof r.shift_times === "object" ? (r.shift_times as Record<string, unknown>) : null;
+  return normalizePhases(st && "phases" in st ? st.phases : r.phases);
+}
+
 /** The phases as saved, cleaned: named, dated, shares adding to 100. */
 export function normalizePhases(raw: unknown): ProjectPhase[] {
   if (!Array.isArray(raw)) return [];

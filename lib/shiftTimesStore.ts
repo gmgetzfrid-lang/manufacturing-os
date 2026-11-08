@@ -74,11 +74,13 @@ export async function saveProjectShiftTimes(projectId: string, t: ShiftTimes): P
   };
   // Keep the letterhead and the project type saved beside the times
   // (lib/letterheadStore, saveProjectType).
-  const { data: kept } = await supabase.from("projects").select("lh:shift_times->letterhead, pt:shift_times->projectType").eq("id", projectId).maybeSingle();
+  const { data: kept } = await supabase.from("projects").select("lh:shift_times->letterhead, pt:shift_times->projectType, ph:shift_times->phases").eq("id", projectId).maybeSingle();
   const lh = (kept as { lh?: unknown } | null)?.lh;
+  // The project's phases are kept here too (lib/projectPhases).
+  const ph = (kept as { ph?: unknown } | null)?.ph;
   const pt = cleanProjectType((kept as { pt?: unknown } | null)?.pt) ?? cleanProjectType(t.projectType);
   if (pt) clean.projectType = pt;
-  const { data, error } = await supabase.from("projects").update({ shift_times: lh ? { ...clean, letterhead: lh } : clean }).eq("id", projectId).select("id");
+  const { data, error } = await supabase.from("projects").update({ shift_times: { ...clean, ...(lh ? { letterhead: lh } : {}), ...(Array.isArray(ph) ? { phases: ph } : {}) } }).eq("id", projectId).select("id");
   if (error) {
     // The column isn't there yet: keep them on this device meanwhile.
     if (/shift_times/.test(error.message)) {
