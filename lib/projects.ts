@@ -50,7 +50,6 @@ export function rowToProject(r: Record<string, unknown>): Project {
     projectTypeSaved: (r.shift_times as { projectType?: unknown } | null | undefined)?.projectType ?? null,
     jobKind: (r.job_kind as string | null | undefined) ?? null,
     phases: normalizePhases(r.phases),
-    phasesColumn: "phases" in r,
     authorizedAmount: r.authorized_amount == null ? null : Number(r.authorized_amount),
     afeNumber: (r.afe_number as string | null | undefined) ?? null,
     completedAt: r.completed_at as Timestamp,

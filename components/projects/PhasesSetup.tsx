@@ -128,12 +128,12 @@ function SplitBar({ phases, total, onShares }: { phases: ProjectPhase[]; total: 
 
 interface SetupProps {
   orgId: string; projectId: string; projectName: string;
-  phases: ProjectPhase[]; phasesColumn: boolean;
+  phases: ProjectPhase[];
   uid: string; userEmail: string | null;
   onClose: () => void; onSaved: () => void;
 }
 
-export function PhasesSetup({ orgId, projectId, projectName, phases: saved, phasesColumn, uid, userEmail, onClose, onSaved }: SetupProps) {
+export function PhasesSetup({ orgId, projectId, projectName, phases: saved, uid, userEmail, onClose, onSaved }: SetupProps) {
   const [name, setName] = useState(projectName);
   const [phases, setPhases] = useState<ProjectPhase[]>(saved);
   const [afe, setAfe] = useState<{ number: string | null; account: string | null; authorized: number | null; docId: string | null } | null>(null);
@@ -141,20 +141,24 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, phas
   const [afeDraft, setAfeDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [needSql, setNeedSql] = useState(!phasesColumn);
+  // Asked of the database each time this opens (never from when the page
+  // loaded: the SQL may have been run since).
+  const [needSql, setNeedSql] = useState(false);
   const [copied, setCopied] = useState(false);
 
   // The AFE, the budget lines' total, and the schedule's dates (phase 1's).
   useEffect(() => {
     let live = true;
     void (async () => {
-      const [p, lines, first, last] = await Promise.all([
+      const [p, lines, first, last, col] = await Promise.all([
         supabase.from("projects").select("afe_number, charge_account, authorized_amount, budget_doc_id").eq("id", projectId).maybeSingle(),
         supabase.from("cost_accounts").select("budget").eq("project_id", projectId),
         supabase.from("milestones").select("planned_start_at, planned_at").eq("project_id", projectId).not("planned_start_at", "is", null).order("planned_start_at", { ascending: true }).limit(1),
         supabase.from("milestones").select("planned_at").eq("project_id", projectId).not("planned_at", "is", null).order("planned_at", { ascending: false }).limit(1),
+        supabase.from("projects").select("phases").eq("id", projectId).maybeSingle(),
       ]);
       if (!live) return;
+      setNeedSql(!!col.error && /phases/i.test(col.error.message));
       const row = (p.data ?? null) as { afe_number?: string | null; charge_account?: string | null; authorized_amount?: number | null; budget_doc_id?: string | null } | null;
       const a = { number: row?.afe_number ?? null, account: row?.charge_account ?? null, authorized: row?.authorized_amount == null ? null : Number(row.authorized_amount), docId: row?.budget_doc_id ?? null };
       setAfe(a);
@@ -165,7 +169,7 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, phas
         const day = (iso?: string | null) => (iso ? new Date(iso).toLocaleDateString("en-CA") : null);
         const f = (first.data?.[0] ?? null) as { planned_start_at?: string | null } | null;
         const l = (last.data?.[0] ?? null) as { planned_at?: string | null } | null;
-        setPhases(startPhases(projectName.replace(/\s*\b(turnaround|ta)\b.*$/i, "").trim() || projectName, { start: day(f?.planned_start_at), end: day(l?.planned_at) }));
+        setPhases(startPhases("Phase", { start: day(f?.planned_start_at), end: day(l?.planned_at) }));
       }
     })();
     return () => { live = false; };
@@ -176,7 +180,7 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, phas
   const edit = (i: number, patch: Partial<ProjectPhase>) => setPhases((ps) => ps.map((p, j) => (j === i ? { ...p, ...patch } : p)));
   const shares = (s: number[]) => setPhases((ps) => ps.map((p, j) => ({ ...p, share: s[j] })));
   const add = () => setPhases((ps) => {
-    if (!ps.length) return startPhases(projectName, { start: null, end: null });
+    if (!ps.length) return startPhases("Phase", { start: null, end: null });
     const last = ps[ps.length - 1];
     const half = Math.round((last.share / 2) * 10) / 10;
     return [...ps.slice(0, -1), { ...last, share: Math.round((last.share - half) * 10) / 10 }, { id: newPhaseId(), name: `Phase ${ps.length + 1}`, start: null, end: null, share: half }];
@@ -205,7 +209,13 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, phas
       if (name.trim() && name.trim() !== projectName) patch.name = noEmDash(name.trim());
       const { data, error } = await supabase.from("projects").update(patch).eq("id", projectId).select("id");
       if (error) {
-        if (/phases/i.test(error.message) && /column|schema/i.test(error.message)) { setNeedSql(true); setErr("Phases need the database update below run first."); return; }
+        if (/phases/i.test(error.message) && /column|schema/i.test(error.message)) {
+          setNeedSql(true);
+          setErr(/schema cache/i.test(error.message)
+            ? "The database has the change but hasn't picked it up yet. Run the SQL below again (its last line tells it to), wait a few seconds, then Save."
+            : "Phases need the database update below run first.");
+          return;
+        }
         setErr(error.message); return;
       }
       if (!data?.length) { setErr("Not saved - only the project's owner, a co-owner or an admin can change the phases."); return; }

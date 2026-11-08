@@ -666,7 +666,7 @@ export default function ProjectDetailPage() {
       )}
 
       {showPhases && uid && project.id && project.orgId && (
-        <PhasesSetup orgId={project.orgId} projectId={project.id} projectName={project.name} phases={phases} phasesColumn={project.phasesColumn !== false}
+        <PhasesSetup orgId={project.orgId} projectId={project.id} projectName={project.name} phases={phases}
           uid={uid} userEmail={userEmail} onClose={() => setShowPhases(false)} onSaved={() => void refresh()} />
       )}
 

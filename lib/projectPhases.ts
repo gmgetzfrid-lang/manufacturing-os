@@ -31,7 +31,8 @@ export const PHASE_ATTR = "project_phase";
 /** The database change phases need (run once in Supabase). */
 export const PHASES_SQL = `alter table public.projects add column if not exists phases jsonb not null default '[]'::jsonb;
 alter table public.cost_accounts add column if not exists phase_id text;
-alter table public.cost_entries add column if not exists phase_id text;`;
+alter table public.cost_entries add column if not exists phase_id text;
+notify pgrst, 'reload schema';`;
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const round1 = (n: number) => Math.round(n * 10) / 10;
