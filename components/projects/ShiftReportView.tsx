@@ -64,7 +64,10 @@ import CalendarQuickView, { type StepUpdate } from "@/components/projects/Calend
 import { discoveries, discoveryOf, discoverySummary, discoveryStepLine, impactLine, impactNowLine, hoursNow, ADDED, kindOf, addedTitle, type Discovery } from "@/lib/discovery";
 import { buildTimeLog, downloadTimeLog } from "@/lib/timeLog";
 import { loadProgressLog, scheduleAt, type ProgressLogRow } from "@/lib/progressHistory";
-import { workSummary, vsPlanWords, type WorkSummary } from "@/lib/closeoutStatus";
+import { workSummary, workSteps, vsPlanWords, type WorkSummary } from "@/lib/closeoutStatus";
+import { usePhases } from "@/components/projects/PhaseContext";
+import { inPhase } from "@/lib/projectPhases";
+import { noScheduleWords } from "@/lib/phaseReport";
 import { resolveCriticalPath, floatsOf, pathMarks, CRITICAL_MODES, type PathMarks } from "@/lib/criticalPath";
 import { useCriticalMode, saveCriticalMode } from "@/lib/criticalModeStore";
 import { effectiveSpans } from "@/lib/scheduleTime";
@@ -371,6 +374,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const closeout = useMemo(() => buildCloseout({ milestones, progress, criticalIds, tz }), [milestones, progress, criticalIds, tz]);
   // When the last step really finished, against the plan (the close-out's standing).
   const workDone = useMemo(() => (meeting === "closeout" ? workSummary(milestones) : undefined), [meeting, milestones]);
+  // The whole project in phases: a phase with no schedule yet means it isn't done.
+  const phx = usePhases();
+  const unscheduled = useMemo(() => (meeting === "closeout" && !phx.phase && phx.phases.length
+    ? phx.phases.filter((p) => workSteps(inPhase(phx.all, phx.phases, p.id)).length === 0) : []), [meeting, phx]);
+  const unscheduledWords = useMemo(() => unscheduled.map((p) => noScheduleWords(p, now, tz)), [unscheduled, now, tz]);
   const rehearsal = now < shift.start;
   const jumpTarget = useMemo(() => (report.review.scheduled.length === 0 ? nextShiftWithWork(milestones, shift, tz, times) : null), [report.review.scheduled.length, milestones, shift, tz, times]);
   const byId = useMemo(() => { const m = new Map<string, Milestone>(); for (const x of milestones) if (x.id) m.set(x.id, x); return m; }, [milestones]);
@@ -674,13 +682,13 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const allSections = useMemo(() => meeting === "kickoff"
     ? kickoffSections(kickoff, ctx, findingsCtx)
     : meeting === "closeout"
-      ? closeoutSections(closeout, report, ctx, cancelled, discoveryList, lookBack, findingsCtx, workDone)
+      ? closeoutSections(closeout, report, ctx, cancelled, discoveryList, lookBack, findingsCtx, workDone, unscheduledWords)
       : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet, hourlyExport, onEdit: canEdit && onUpdateStep && !locked ? setEditing : undefined, forecast, pathSource, discovery: discoveryList, why, taskSteps: (id) => stepTally.get(id),
         onDiscovery: onDiscovery && !locked ? () => { const first = view.goals.all[0]?.parentId ?? view.review.done[0]?.parentId; const t = (first ? live.find((m) => m.id === first) : undefined) ?? live.find((m) => live.some((k) => k.parentId === m.id)); if (t) onDiscovery(t); } : undefined,
         // Only while the next shift is still ahead (or on).
         onPlanNext: onPlanNext && report.next.end > now && !locked ? () => onPlanNext(report.next) : undefined,
         nightPlan: { plan: nextPlan, open: report.next.end > now && (canShip || nextPlan) ? () => setPlanOpen(true) : undefined } }),
-  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, hourlyExport, locked, findingsCtx, nextPlan, canShip, workDone]);
+  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, hourlyExport, locked, findingsCtx, nextPlan, canShip, workDone, unscheduledWords]);
   // Sections left off the report, on screen and in print — the viewer's own
   // choice for each meeting, remembered like the email's. Each comes back
   // with a tap (listed at the bottom); the email keeps its own choice.
@@ -788,7 +796,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         : (closeout.finish != null ? `Planned finish ${ctx.DT(closeout.finish)}` : "");
     const status: ExportDoc["status"] = meeting === "kickoff" ? undefined
       : meeting === "closeout"
-        ? (closeout.done >= closeout.steps ? { label: "COMPLETE", tone: "emerald" } : { label: `${closeout.steps - closeout.done} OPEN`, tone: "amber" })
+        ? (unscheduled.length ? { label: `${unscheduled.map((p) => p.name).join(", ").toUpperCase()} NOT SCHEDULED`, tone: "amber" }
+          : closeout.done >= closeout.steps ? { label: "COMPLETE", tone: "emerald" } : { label: `${closeout.steps - closeout.done} OPEN`, tone: "amber" })
         : { label: overall.standing === "ahead" ? "AHEAD" : overall.standing === "behind" ? "BEHIND" : "ON TRACK",
           tone: overall.standing === "ahead" ? "emerald" : overall.standing === "behind" ? "rose" : "slate",
           detail: `${overall.actualPct}% vs ${overall.plannedPct}% plan` };
@@ -2391,9 +2400,11 @@ function findingsSection(f: FindingsCtx, c: Ctx): Sec {
   };
 }
 
-function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftReport, c: Ctx, cancelled: CancelledJob[], found: Discovery[] = [], lookBack: LookBack | null = null, findings?: FindingsCtx, work?: WorkSummary): Sec[] {
+function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftReport, c: Ctx, cancelled: CancelledJob[], found: Discovery[] = [], lookBack: LookBack | null = null, findings?: FindingsCtx, work?: WorkSummary,
+  /** Phases with no schedule yet ("Phase 2: no schedule yet, ..."): the job isn't done. */
+  unscheduled: string[] = []): Sec[] {
   const finalStats = [
-    { label: "Complete", value: `${co.actualPct}%`, tone: (co.actualPct >= 100 ? "emerald" : "amber") as "emerald" | "amber" },
+    { label: unscheduled.length ? "Complete (scheduled)" : "Complete", value: `${co.actualPct}%`, tone: (co.actualPct >= 100 && !unscheduled.length ? "emerald" : "amber") as "emerald" | "amber" },
     { label: "Steps done", value: `${co.done}/${co.steps}`, tone: "slate" as const },
     // No "on time / late": when a step is marked done isn't when it finished.
     { label: "Still open", value: `${co.open.length}`, tone: (co.open.length ? "amber" : "emerald") as "amber" | "emerald" },
@@ -2409,8 +2420,9 @@ function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftRep
     {
       id: "final", title: "Final standing", short: "Standing",
       sub: [co.finish != null ? `Planned finish ${c.DT(co.finish)}` : null,
-        work?.finishedAt != null ? `finished ${c.DT(work.finishedAt)}${work.hoursAfterPlan != null ? ` (${vsPlanWords(work.hoursAfterPlan)})` : ""}` : null].filter(Boolean).join(" · ") || undefined,
-      flag: co.done < co.steps ? "amber" : null,
+        work?.finishedAt != null ? `${unscheduled.length ? "scheduled work " : ""}finished ${c.DT(work.finishedAt)}${work.hoursAfterPlan != null ? ` (${vsPlanWords(work.hoursAfterPlan)})` : ""}` : null,
+        ...unscheduled].filter(Boolean).join(" · ") || undefined,
+      flag: co.done < co.steps || unscheduled.length ? "amber" : null,
       body: () => (
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 keep">
           {finalStats.map((x) => <Stat key={x.label} label={x.label} value={x.value} tone={x.tone} />)}

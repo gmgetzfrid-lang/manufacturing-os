@@ -95,7 +95,7 @@ describe("the word replaces \"turnaround\"", () => {
 
 describe("one name per report", () => {
   it("the reports, then the forms", () => {
-    expect(REPORTS.filter((r) => !r.form).map((r) => r.name)).toEqual(["Shift turnover", "Hourly log", "Time log", "Schedule report", "Work order report", "Kick-off", "Close-out", "Phase report"]);
+    expect(REPORTS.filter((r) => !r.form).map((r) => r.name)).toEqual(["Shift turnover", "Hourly log", "Time log", "Schedule report", "Work order report", "As-built schedule", "Kick-off", "Close-out", "Phase report"]);
     expect(REPORTS.filter((r) => r.form).map((r) => r.name)).toEqual(["Shift sheet"]);
     expect(new Set(REPORTS.map((r) => r.name)).size).toBe(REPORTS.length);
     expect(reportName("hourly")).toBe("Hourly log");

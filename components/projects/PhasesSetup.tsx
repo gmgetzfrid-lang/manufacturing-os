@@ -34,19 +34,23 @@ const parseMoney = (s: string) => { const n = Number(s.replace(/[$,\s]/g, "")); 
 const pickKey = (projectId: string) => `project.phase:${projectId}`;
 
 /** The phase picked on this device for the project (null: all phases). */
-export function usePhasePick(projectId: string | null | undefined, phases: ProjectPhase[]): [string | null, (id: string | null) => void] {
+/** The phase picked on the project: the one asked for in the link, else the
+ *  one picked last on this device ("all" when All phases was), else
+ *  `fallback` (the phase running today), else all. */
+export function usePhasePick(projectId: string | null | undefined, phases: ProjectPhase[], fallback: string | null = null): [string | null, (id: string | null) => void] {
   // Read on the first render in the browser (the bar shows only once the
   // project has loaded, so the server never draws it).
   const [raw, setRaw] = useState<string | null>(() => {
     if (typeof window === "undefined" || !projectId) return null;
     try { return new URL(window.location.href).searchParams.get("phase") ?? localStorage.getItem(pickKey(projectId)); } catch { return null; }
   });
-  const pick = raw && phases.some((p) => p.id === raw) ? raw : null;
+  const known = (id: string | null) => !!id && phases.some((p) => p.id === id);
+  const pick = known(raw) ? raw : raw === "all" ? null : known(fallback) ? fallback : null;
   const set = useCallback((id: string | null) => {
-    setRaw(id);
+    setRaw(id ?? "all");
     if (!projectId) return;
     try {
-      if (id) localStorage.setItem(pickKey(projectId), id); else localStorage.removeItem(pickKey(projectId));
+      localStorage.setItem(pickKey(projectId), id ?? "all");
       const u = new URL(window.location.href);
       if (id) u.searchParams.set("phase", id); else u.searchParams.delete("phase");
       window.history.replaceState(null, "", u.toString());

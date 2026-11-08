@@ -50,6 +50,9 @@ interface Props {
   /** Tasks already on the project — offers "replace the current
    *  schedule" so a re-import starts from a clean slate. */
   existingCount?: number;
+  /** Progress already recorded on the schedule (lib/closeoutStatus
+   *  progressWarning): said beside Replace, which would cut it off. */
+  progressNote?: string;
   /** The tasks already on the project, to show what a re-import will do. */
   existing?: Array<{ name: string; externalRef?: string | null }>;
   /** The project's phases (lib/projectPhases): the file goes into one of
@@ -87,7 +90,7 @@ const FORMAT_TO_SOURCE: Record<ScheduleFormat, ImportSource> = {
 };
 
 export default function ScheduleImportModal({
-  orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole, existingCount: projectCount, existing: projectExisting, phases = [], phase = null, phaseMilestones, onClose, onDone,
+  orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole, existingCount: projectCount, progressNote, existing: projectExisting, phases = [], phase = null, phaseMilestones, onClose, onDone,
 }: Props) {
   const tz = useScheduleTz();
   // A project in phases: which phase the file goes into (the one picked;
@@ -100,6 +103,8 @@ export default function ScheduleImportModal({
   const ownKeys = phased && target !== phases[0].id;
   const existing = useMemo(() => (phased && phaseMilestones ? phaseMilestones(target!) : projectExisting), [phased, phaseMilestones, target, projectExisting]);
   const existingCount = phased ? existing?.length ?? 0 : projectCount;
+  // Progress already recorded, that a replace would cut off.
+  const replaceWarning = progressNote ?? "";
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [filename, setFilename] = useState<string | null>(null);
@@ -563,6 +568,7 @@ export default function ScheduleImportModal({
               <input type="checkbox" checked={replaceExisting} onChange={(e) => setReplaceExisting(e.target.checked)} className="mt-0.5" />
               <span>
                 <b>Replace the current schedule</b> - delete the {existingCount} task{existingCount === 1 ? "" : "s"} already on this project first, then import the file from scratch. Cancelled jobs stay cancelled, with their notes.
+                {replaceWarning && <b className="block my-1">{replaceWarning}</b>}
                 The file becomes the plan of record (baseline). Untick to merge instead (see above): the baseline stays and nothing recorded here is lost.
                 Deleting is audited and can&apos;t be undone.
               </span>

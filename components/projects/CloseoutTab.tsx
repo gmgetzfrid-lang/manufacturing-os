@@ -6,6 +6,10 @@
 // change orders, the final cost, lessons & findings) each finished right
 // here, then Mark the project complete; beside it, how the job did. A
 // finished job opens on this tab.
+//
+// In phases (Transmix-1 and -2), each phase says where it stands: done,
+// under way, or no schedule yet. The project isn't done until every phase
+// is; each phase has its own PSSR.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Check, UploadCloud, ArrowRight, Loader2, Plus, FileText } from "lucide-react";
@@ -22,8 +26,8 @@ import { listTurnoverItems, seedTurnoverItems, addTurnoverItem, updateTurnoverIt
 import { uploadProjectFile, projectFileHome, type ProjectFileHome } from "@/lib/projectUpload";
 import { loadCloseoutSettings, saveCloseoutSettings, type CloseoutSettings } from "@/lib/closeoutSettings";
 import { workSummary, vsPlanWords } from "@/lib/closeoutStatus";
-import { phaseStats, type CostLine, type CostEntry } from "@/lib/phaseReport";
-import { phaseDates, type ProjectPhase } from "@/lib/projectPhases";
+import { phaseStats, chartKey, shiftLabel, behindAt, noScheduleWords, type CostLine, type CostEntry } from "@/lib/phaseReport";
+import { phaseDates, inPhase, type ProjectPhase } from "@/lib/projectPhases";
 import { fmtInTz } from "@/lib/scheduleTz";
 import { NewChecklistFlow } from "@/components/projects/QualityTab";
 import { LinesChart } from "@/components/projects/cost/BudgetTable";
@@ -31,11 +35,15 @@ import { Modal, ModalBody, ModalHeader } from "@/components/ui/Modal";
 
 const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 
-export default function CloseoutTab({ orgId, projectId, projectName, projectStatus, jobKind, tz, phases, uid, userEmail, canManage, onTab, onLessons, onComplete }: {
+type PssrList = { list: Checklist; satisfied: number; applicable: number };
+
+export default function CloseoutTab({ orgId, projectId, projectName, projectStatus, jobKind, tz, phases, uid, userEmail, canManage, onTab, onPickPhase, onLessons, onComplete }: {
   orgId: string; projectId: string; projectName: string; projectStatus: string; jobKind: string | null; tz: string;
   phases: ProjectPhase[]; uid: string; userEmail: string | null; canManage: boolean;
   /** Go to another tab (Quality's punch list, Costs, Reports). */
   onTab: (tab: string) => void;
+  /** Pick a phase on the project (to import its schedule on Plan). */
+  onPickPhase?: (phaseId: string) => void;
   onLessons: () => void;
   onComplete: () => void;
 }) {
@@ -45,14 +53,16 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   const [log, setLog] = useState<ProgressLogRow[] | null>(null);
   const [money0, setMoney0] = useState<{ lines: CostLine[]; entries: CostEntry[]; afe: number | null } | null>(null);
   const [snap, setSnap] = useState<ProjectStateSnapshot | null>(null);
-  const [pssr, setPssr] = useState<{ list: Checklist; satisfied: number; applicable: number } | null | undefined>(undefined);
+  // Every PSSR on the project (a project in phases has one a phase).
+  const [pssrs, setPssrs] = useState<PssrList[] | undefined>(undefined);
   const [items, setItems] = useState<TurnoverItem[] | null>(null);
   const [settings, setSettings] = useState<CloseoutSettings>({});
   const [tick, setTick] = useState(0);
   const reload = () => setTick((t) => t + 1);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
+  // Uploading a PSSR: for the whole job ("all") or a phase.
+  const [uploading, setUploading] = useState<string | null>(null);
   const [newDoc, setNewDoc] = useState("");
   const [phasePick, setPhasePick] = useState<string | null>(null);
   // Where attached files are saved: the project's library, else one picked here.
@@ -74,19 +84,24 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
         loadCloseoutSettings(projectId).catch(() => ({} as CloseoutSettings)),
         projectFileHome(orgId, projectId).catch(() => null),
       ]);
-      const p = lists.find((c) => c.kind === "pssr" && c.status !== "void") ?? null;
-      const prog = p ? computeChecklistProgress(await listChecklistItems(p.id)) : null;
+      const mine = lists.filter((c) => c.kind === "pssr" && c.status !== "void");
+      const withProg = await Promise.all(mine.map(async (c) => { const pr = computeChecklistProgress(await listChecklistItems(c.id)); return { list: c, satisfied: pr.satisfied, applicable: pr.applicable }; }));
       if (!live) return;
       setMs(m); setLog(l);
       const a = (proj.data as { authorized_amount?: number | null } | null)?.authorized_amount;
       setMoney0({ lines: lines.rows, entries: entries.rows, afe: a == null ? null : Number(a) });
       setSnap(s); setItems(t); setSettings(cs); setHome(h);
-      setPssr(p && prog ? { list: p, satisfied: prog.satisfied, applicable: prog.applicable } : null);
+      setPssrs(withProg);
     })();
     return () => { live = false; };
   }, [orgId, projectId, tick]);
 
   const work = useMemo(() => (ms ? workSummary(ms) : null), [ms]);
+  // Each phase: where its work stands (no steps: no schedule yet).
+  const phaseWork = useMemo(() => (ms ? phases.map((p) => ({ p, w: workSummary(inPhase(ms, phases, p.id)) })) : []), [ms, phases]);
+  const unscheduled = phaseWork.filter((x) => x.w.total === 0).map((x) => x.p);
+  const allWorkDone = phases.length ? phaseWork.length > 0 && phaseWork.every((x) => x.w.total > 0 && x.w.allDone) : !!work?.allDone;
+  const now = Date.now();
   const pickedPhase = phasePick ? phases.find((p) => p.id === phasePick) ?? null : null;
   const stats = useMemo(() => (ms && money0 ? phaseStats({ milestones: ms, phases, phase: pickedPhase, log, tz, times, now: Date.now(), total: money0.afe, lines: money0.lines, entries: money0.entries }) : null),
     [ms, money0, phases, pickedPhase, log, tz, times]);
@@ -103,11 +118,30 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   // ── The steps ──
   const required = (items ?? []).filter((i) => i.required);
   const inCount = required.filter((i) => i.status === "accepted" || i.status === "waived").length;
+  const listOk = (x: PssrList | undefined) => !!x && (x.list.status === "complete" || (x.applicable > 0 && x.satisfied === x.applicable));
+  const byPhase = settings.pssrByPhase ?? {};
+  const tiedIds = new Set(Object.values(byPhase).map((v) => v.checklistId).filter(Boolean) as string[]);
+  // A PSSR uploaded before phases were set up, not tied to one yet.
+  const untied = phases.length ? (pssrs ?? []).filter((x) => !tiedIds.has(x.list.id)) : [];
+  const phasePssr = (id: string) => { const v = byPhase[id]; return { notNeeded: !!v?.notNeeded, list: v?.checklistId ? (pssrs ?? []).find((x) => x.list.id === v.checklistId) : undefined }; };
   const pssrNotNeeded = settings.pssr === "not_needed";
-  const pssrOk = pssrNotNeeded || (!!pssr && (pssr.list.status === "complete" || (pssr.applicable > 0 && pssr.satisfied === pssr.applicable)));
+  const pssr = pssrs === undefined ? undefined : pssrs[0] ?? null;
+  const pssrOk = phases.length
+    ? phases.every((p) => { const x = phasePssr(p.id); return x.notNeeded || listOk(x.list); })
+    : pssrNotNeeded || listOk(pssr ?? undefined);
+  const importFor = (p: ProjectPhase) => { onPickPhase?.(p.id); onTab("plan"); };
+  // A PSSR just uploaded for a phase: the newest one not tied to a phase is it.
+  const tieNewPssr = async (forPhase: string | null) => {
+    if (forPhase && forPhase !== "all") {
+      const lists = await listChecklists(orgId, projectId).catch(() => [] as Checklist[]);
+      const fresh = lists.filter((c) => c.kind === "pssr" && c.status !== "void" && !tiedIds.has(c.id)).sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")))[0];
+      if (fresh) { const r = await saveCloseoutSettings(projectId, { pssrByPhase: { [forPhase]: { checklistId: fresh.id, notNeeded: false } } }); if (!r.ok) setErr(r.error ?? "Not saved."); }
+    }
+    reload();
+  };
   const invoiced = money0 ? money0.entries.filter((e) => e.status !== "void" && (e.entry_type === "actual" || e.entry_type === "adjustment")).reduce((s, e) => s + Number(e.amount ?? 0), 0) : 0;
   const left = [
-    work && !work.allDone, !pssrOk, items && required.length > inCount, snap && snap.punchOpen > 0, snap && snap.openChangeOrders > 0,
+    !allWorkDone, !pssrOk, items && required.length > inCount, snap && snap.punchOpen > 0, snap && snap.openChangeOrders > 0,
   ].filter(Boolean).length;
 
   const btn = "inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
@@ -117,21 +151,45 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
 
   return (
     <div className="space-y-4">
-      {/* Where the work stands */}
-      <div className={`rounded-2xl border px-4 py-3 flex items-start gap-3 flex-wrap ${work.allDone ? "border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-800" : "border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800"}`}>
-        <span className={`mt-0.5 w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${work.allDone ? "bg-emerald-600 text-white" : "bg-amber-500 text-white"}`}>{work.allDone ? <Check className="w-5 h-5" /> : <span className="text-[12px] font-black">{work.total ? Math.round((work.done / work.total) * 100) : 0}%</span>}</span>
+      {/* Where the work stands: the whole job, or each phase. */}
+      <div className={`rounded-2xl border px-4 py-3 flex items-start gap-3 flex-wrap ${allWorkDone ? "border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-800" : "border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800"}`}>
+        <span className={`mt-0.5 w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${allWorkDone ? "bg-emerald-600 text-white" : "bg-amber-500 text-white"}`}>{allWorkDone ? <Check className="w-5 h-5" /> : <span className="text-[15px] font-black">!</span>}</span>
         <div className="min-w-0 flex-1 basis-60">
-          <div className={`text-[15px] font-black ${work.allDone ? "text-emerald-900 dark:text-emerald-200" : "text-amber-900 dark:text-amber-200"}`}>
-            {work.allDone ? `The work is done: ${work.done} of ${work.total} steps` : `${work.done} of ${work.total} steps done`}
+          <div className={`text-[15px] font-black ${allWorkDone ? "text-emerald-900 dark:text-emerald-200" : "text-amber-900 dark:text-amber-200"}`}>
+            {phases.length
+              ? allWorkDone ? `The work is done: every phase (${work.done} of ${work.total} steps)`
+                : unscheduled.length ? `Not done: ${unscheduled.map((p) => p.name).join(", ")} ${unscheduled.length === 1 ? "has" : "have"} no schedule yet`
+                  : `Not done: ${phaseWork.filter((x) => !x.w.allDone).map((x) => x.p.name).join(", ")} still going`
+              : work.allDone ? `The work is done: ${work.done} of ${work.total} steps` : `${work.done} of ${work.total} steps done`}
           </div>
-          <div className={`text-[12.5px] ${work.allDone ? "text-emerald-800 dark:text-emerald-300" : "text-amber-800 dark:text-amber-300"}`}>
-            {work.finishedAt != null
-              ? `Last step finished ${when(work.finishedAt)}${work.plannedFinish != null ? ` · planned ${when(work.plannedFinish)} (${vsPlanWords(work.hoursAfterPlan)})` : ""}. `
-              : work.total ? `${work.total - work.done} step${work.total - work.done === 1 ? "" : "s"} not marked done yet. ` : "No schedule yet. "}
-            {projectStatus === "completed" ? "The project is complete." : left === 0 ? "Every close-out step is clear." : work.allDone ? `Now close it out: ${left} thing${left === 1 ? "" : "s"} left.` : ""}
-          </div>
+          {phases.length ? (
+            <ul className={`mt-1 space-y-1 text-[12.5px] ${allWorkDone ? "text-emerald-800 dark:text-emerald-300" : "text-amber-900 dark:text-amber-200"}`}>
+              {phaseWork.map(({ p, w }) => (
+                <li key={p.id} className="flex items-start gap-2 flex-wrap">
+                  <span className="min-w-0 flex-1 basis-56">
+                    {w.total === 0 ? <><b>{noScheduleWords(p, now, tz)}</b>.</>
+                      : w.allDone ? <><b>{p.name}: done</b>, {w.done} of {w.total} steps{w.finishedAt != null ? ` · last finished ${when(w.finishedAt)}` : ""}{w.finishedAt != null && w.plannedFinish != null ? ` · planned ${when(w.plannedFinish)} (${vsPlanWords(w.hoursAfterPlan)})` : ""}</>
+                        : <><b>{p.name}</b>: {w.done} of {w.total} steps done</>}
+                  </span>
+                  {w.total === 0 && canManage && <button type="button" onClick={() => importFor(p)} className={pri}><UploadCloud className="w-4 h-4" /> Import {p.name}&rsquo;s schedule</button>}
+                </li>
+              ))}
+              {projectStatus !== "completed" && <li>{allWorkDone ? (left === 0 ? "Every close-out step is clear." : `Now close it out: ${left} thing${left === 1 ? "" : "s"} left.`) : "You can close out the finished phases now (their PSSR, turnover documents)."}</li>}
+              {projectStatus === "completed" && <li>The project is marked complete.</li>}
+            </ul>
+          ) : (
+            <div className={`text-[12.5px] ${work.allDone ? "text-emerald-800 dark:text-emerald-300" : "text-amber-800 dark:text-amber-300"}`}>
+              {work.finishedAt != null
+                ? `Last step finished ${when(work.finishedAt)}${work.plannedFinish != null ? ` · planned ${when(work.plannedFinish)} (${vsPlanWords(work.hoursAfterPlan)})` : ""}. `
+                : work.total ? `${work.total - work.done} step${work.total - work.done === 1 ? "" : "s"} not marked done yet. ` : "No schedule yet. "}
+              {projectStatus === "completed" ? "The project is marked complete." : left === 0 ? "Every close-out step is clear." : work.allDone ? `Now close it out: ${left} thing${left === 1 ? "" : "s"} left.` : ""}
+            </div>
+          )}
         </div>
-        <button type="button" onClick={() => onTab("reports:closeout")} className={btn}><FileText className="w-4 h-4" /> Close-out report</button>
+        <div className="flex gap-1.5 flex-wrap">
+          <button type="button" onClick={() => onTab("reports:asbuilt")} className={btn}><FileText className="w-4 h-4" /> As-built schedule</button>
+          <button type="button" onClick={() => onTab("reports:closeout")} className={btn}><FileText className="w-4 h-4" /> Close-out report</button>
+        </div>
       </div>
 
       {err && <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300 whitespace-pre-line">{err}</div>}
@@ -144,19 +202,59 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
             <span className="text-[12px] text-[var(--color-text-muted)]">{left === 0 ? "all clear" : `${left} left`} · tap any to finish it here</span>
           </div>
           <ol className="divide-y divide-[var(--color-border)]">
-            <Step n={1} ok={work.allDone} title="Work done"
-              detail={work.allDone ? `${work.done} of ${work.total} steps${work.finishedAt != null ? ` · finished ${when(work.finishedAt)}` : ""}` : `${work.total - work.done} of ${work.total} steps not marked done`}
-              action={!work.allDone ? <button type="button" onClick={() => onTab("work")} className={btn}>Open the work <ArrowRight className="w-3.5 h-3.5" /></button> : null} />
+            <Step n={1} ok={allWorkDone} title="Work done"
+              detail={phases.length
+                ? phaseWork.map(({ p, w }) => (w.total === 0 ? `${p.name}: no schedule yet` : w.allDone ? `${p.name}: done${w.finishedAt != null ? ` ${short(w.finishedAt)}` : ""}` : `${p.name}: ${w.done} of ${w.total} steps`)).join(" · ")
+                : work.allDone ? `${work.done} of ${work.total} steps${work.finishedAt != null ? ` · finished ${when(work.finishedAt)}` : ""}` : `${work.total - work.done} of ${work.total} steps not marked done`}
+              action={unscheduled.length && canManage ? <button type="button" onClick={() => importFor(unscheduled[0])} className={btn}>Import {unscheduled[0].name}&rsquo;s schedule</button>
+                : !allWorkDone ? <button type="button" onClick={() => onTab("work")} className={btn}>Open the work <ArrowRight className="w-3.5 h-3.5" /></button> : null} />
 
-            <Step n={2} ok={pssrOk} title="PSSR (pre-startup safety review)"
-              detail={pssrNotNeeded ? "Not needed for this job." : pssr === undefined ? "Checking…" : pssr ? `${pssr.list.title}: ${pssr.satisfied} of ${pssr.applicable} items done${pssr.list.status === "complete" ? " · complete" : ""}`
-                : "Upload the PSSR (PDF): saved to the project's documents and read into items you check off. Or mark it not needed for this job."}
-              action={pssrNotNeeded ? (canManage ? <button type="button" disabled={!!busy} onClick={() => void run("pssr", () => saveCloseoutSettings(projectId, { pssr: null }))} className={btn}>Needed after all</button> : null)
-                : pssr ? <button type="button" onClick={() => onTab("quality")} className={btn}>Open <ArrowRight className="w-3.5 h-3.5" /></button>
-                  : canManage ? <span className="flex gap-1.5 flex-wrap justify-end">
-                    <button type="button" onClick={() => { setErr(null); setUploading(true); }} className={pri}><UploadCloud className="w-4 h-4" /> Upload PSSR</button>
-                    <button type="button" disabled={!!busy} onClick={() => void run("pssr", () => saveCloseoutSettings(projectId, { pssr: "not_needed" }))} className={btn}>Not needed</button>
-                  </span> : null} />
+            {phases.length ? (
+              <Step n={2} ok={pssrs === undefined ? null : pssrOk} title="PSSR (pre-startup safety review), each phase"
+                detail={pssrs === undefined ? "Checking…" : "Each phase starts up on its own: upload its PSSR (PDF), read into items you check off, or mark it not needed."}>
+                <div className="mt-2 rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
+                  {phases.map((p) => {
+                    const x = phasePssr(p.id);
+                    const ok = x.notNeeded || listOk(x.list);
+                    return (
+                      <div key={p.id} className="px-3 py-2 flex items-center gap-2 flex-wrap text-[12.5px]">
+                        <span className={`w-5 h-5 shrink-0 rounded-full flex items-center justify-center ${ok ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300" : "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300"}`}>{ok ? <Check className="w-3 h-3" /> : <span className="text-[10px] font-black">!</span>}</span>
+                        <span className="min-w-0 flex-1 basis-40"><b className="text-[var(--color-text)]">{p.name}</b> <span className="text-[var(--color-text-muted)]">{x.notNeeded ? "· not needed" : x.list ? `· ${x.list.list.title}: ${x.list.satisfied} of ${x.list.applicable} items done${x.list.list.status === "complete" ? ", complete" : ""}` : "· not uploaded"}</span></span>
+                        {x.list && <button type="button" onClick={() => onTab("quality")} className={btn}>Open</button>}
+                        {!x.list && !x.notNeeded && canManage && <>
+                          <button type="button" onClick={() => { setErr(null); setUploading(p.id); }} className={pri}><UploadCloud className="w-4 h-4" /> Upload</button>
+                          <button type="button" disabled={!!busy} onClick={() => void run("pssr", () => saveCloseoutSettings(projectId, { pssrByPhase: { [p.id]: { notNeeded: true, checklistId: null } } }))} className={btn}>Not needed</button>
+                        </>}
+                        {x.notNeeded && canManage && <button type="button" disabled={!!busy} onClick={() => void run("pssr", () => saveCloseoutSettings(projectId, { pssrByPhase: { [p.id]: { notNeeded: false, checklistId: null } } }))} className={btn}>Needed after all</button>}
+                      </div>
+                    );
+                  })}
+                  {untied.map((x) => (
+                    <label key={x.list.id} className="px-3 py-2 flex items-center gap-2 flex-wrap text-[12.5px] bg-[var(--color-surface-2)]/40">
+                      <span className="min-w-0 flex-1 basis-40 text-[var(--color-text)]"><b>{x.list.title}</b> <span className="text-[var(--color-text-muted)]">· uploaded before the phases: which phase is it?</span></span>
+                      {canManage && (
+                        <select value="" aria-label={`Phase for ${x.list.title}`} disabled={!!busy}
+                          onChange={(e) => { const id = e.target.value; if (id) void run("pssr", () => saveCloseoutSettings(projectId, { pssrByPhase: { [id]: { checklistId: x.list.id, notNeeded: false } } })); }}
+                          className="h-8 rounded-lg border border-orange-400 bg-[var(--color-surface)] px-2 text-[12.5px]">
+                          <option value="">Pick the phase</option>
+                          {phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                      )}
+                    </label>
+                  ))}
+                </div>
+              </Step>
+            ) : (
+              <Step n={2} ok={pssrOk} title="PSSR (pre-startup safety review)"
+                detail={pssrNotNeeded ? "Not needed for this job." : pssr === undefined ? "Checking…" : pssr ? `${pssr.list.title}: ${pssr.satisfied} of ${pssr.applicable} items done${pssr.list.status === "complete" ? " · complete" : ""}`
+                  : "Upload the PSSR (PDF): saved to the project's documents and read into items you check off. Or mark it not needed for this job."}
+                action={pssrNotNeeded ? (canManage ? <button type="button" disabled={!!busy} onClick={() => void run("pssr", () => saveCloseoutSettings(projectId, { pssr: null }))} className={btn}>Needed after all</button> : null)
+                  : pssr ? <button type="button" onClick={() => onTab("quality")} className={btn}>Open <ArrowRight className="w-3.5 h-3.5" /></button>
+                    : canManage ? <span className="flex gap-1.5 flex-wrap">
+                      <button type="button" onClick={() => { setErr(null); setUploading("all"); }} className={pri}><UploadCloud className="w-4 h-4" /> Upload PSSR</button>
+                      <button type="button" disabled={!!busy} onClick={() => void run("pssr", () => saveCloseoutSettings(projectId, { pssr: "not_needed" }))} className={btn}>Not needed</button>
+                    </span> : null} />
+            )}
 
             <Step n={3} ok={items ? required.length === inCount : null} title="Turnover documents"
               detail={!items ? "Checking…" : items.length === 0 ? "No documents set for this job yet." : `${inCount} of ${required.length} required in · you pick what this job needs`}>
@@ -206,8 +304,10 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
           </ol>
           {canManage && projectStatus !== "completed" && (
             <div className="px-4 py-3 border-t border-[var(--color-border)] flex items-center justify-end gap-3 flex-wrap">
-              {left > 0 && <span className="text-[12px] text-[var(--color-text-muted)]">{left} step{left === 1 ? "" : "s"} still open: you can complete anyway.</span>}
-              <button type="button" onClick={onComplete} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-emerald-600 text-white text-[13px] font-black hover:bg-emerald-700"><Check className="w-4 h-4" /> Mark project complete</button>
+              {unscheduled.length > 0
+                ? <span className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">{unscheduled.map((p) => p.name).join(", ")} {unscheduled.length === 1 ? "has" : "have"} no schedule yet: complete the project only if {unscheduled.length === 1 ? "it isn't" : "they aren't"} going ahead.</span>
+                : left > 0 && <span className="text-[12px] text-[var(--color-text-muted)]">{left} step{left === 1 ? "" : "s"} still open: you can complete anyway.</span>}
+              <button type="button" onClick={onComplete} className={allWorkDone ? "inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-emerald-600 text-white text-[13px] font-black hover:bg-emerald-700" : "inline-flex items-center gap-1.5 h-9 px-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[13px] font-bold hover:bg-[var(--color-surface-2)]"}><Check className="w-4 h-4" /> Mark project complete</button>
             </div>
           )}
         </div>
@@ -228,36 +328,58 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
           {stats ? (
             <div className="p-4 space-y-4">
               {pickedPhase && <div className="text-[12px] text-[var(--color-text-muted)]">{pickedPhase.name} · {phaseDates(pickedPhase)} · {pickedPhase.share}% of the {money0?.afe != null ? "AFE" : "budget"}</div>}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                <Tile k={stats.finishedAt != null ? "Finished" : "Planned finish"} v={stats.finishedAt != null ? short(stats.finishedAt) : stats.plannedFinish != null ? short(stats.plannedFinish) : "-"}
-                  s={stats.finishedAt != null && stats.plannedFinish != null ? vsPlanWords(Math.round(((stats.finishedAt - stats.plannedFinish) / 3_600_000) * 10) / 10) : `${stats.actualPct}% done, plan ${stats.plannedPct}%`} />
-                <Tile k="Steps" v={`${stats.done} / ${stats.steps}`} s={`${Math.round(stats.hours).toLocaleString("en-US")} h of work`} />
-                <Tile k="Added work" v={`${stats.added.count} added`} s={stats.added.count ? `${stats.added.steps} step${stats.added.steps === 1 ? "" : "s"} · +${stats.added.hours} h of work` : "nothing added to the plan"} />
-                <Tile k={pickedPhase ? "Phase budget" : money0?.afe != null ? "AFE" : "Budget"} v={money(stats.budget)} s={`budget lines ${money(stats.lines.reduce((a, l) => a + l.budget, 0))}`} />
-                <Tile k="Spent" v={money(stats.spent)} s={stats.budget ? `${Math.round((stats.spent / stats.budget) * 100)}% of the ${pickedPhase ? "phase budget" : money0?.afe != null ? "AFE" : "budget"}` : "no budget"} />
-                <Tile k={stats.budget - stats.spent >= 0 ? "Left" : "Over"} v={money(Math.abs(stats.budget - stats.spent))} tone={stats.budget - stats.spent >= 0 ? "good" : "bad"} s={stats.budget - stats.spent >= 0 ? "invoices still to come?" : "over the budget"} />
-              </div>
-              {stats.days.length > 0 && (
-                <div>
-                  <div className="text-[12.5px] font-bold text-[var(--color-text)] mb-1.5">Progress, planned and done, by day <span className="font-semibold text-[var(--color-text-muted)]">· gray plan; done green, red when behind</span></div>
-                  <div className="space-y-1.5">
-                    {stats.days.map((d) => {
-                      const [y, mo, dd] = d.day.split("-").map(Number);
-                      const label = new Date(Date.UTC(y, mo - 1, dd)).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
-                      const behind = d.actual != null && d.actual + 0.05 < d.planned;
-                      return (
-                        <div key={d.day} className="grid grid-cols-[86px_minmax(0,1fr)_92px] gap-2 items-center text-[12px]">
-                          <span className="text-[var(--color-text)]">{label}</span>
-                          <div className="space-y-0.5">
-                            <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><div className="h-full rounded-full bg-slate-400" style={{ width: `${Math.min(100, d.planned)}%` }} /></div>
-                            <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">{d.actual != null && <div className={`h-full rounded-full ${behind ? "bg-rose-500" : "bg-emerald-600"}`} style={{ width: `${Math.min(100, d.actual)}%` }} />}</div>
-                          </div>
-                          <span className="text-right tabular-nums text-[var(--color-text-muted)]">{d.planned}%{d.actual != null ? ` / ${d.actual}%` : ""}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
+              {stats.noSchedule && pickedPhase ? (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-3 py-2.5 text-[12.5px] text-amber-900 dark:text-amber-200 flex items-center gap-2 flex-wrap">
+                  <span className="min-w-0 flex-1 basis-48"><b>{noScheduleWords(pickedPhase, now, tz)}.</b> Nothing to measure until its schedule is imported.</span>
+                  {canManage && <button type="button" onClick={() => importFor(pickedPhase)} className={pri}><UploadCloud className="w-4 h-4" /> Import {pickedPhase.name}&rsquo;s schedule</button>}
                 </div>
+              ) : (
+                <>
+                  {stats.missing.length > 0 && (
+                    <div className="rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-3 py-2 text-[12.5px] text-amber-900 dark:text-amber-200">
+                      <b>{stats.missing.map((p) => noScheduleWords(p, now, tz)).join("; ")}.</b> The figures below cover only {phases.filter((p) => !stats.missing.some((x) => x.id === p.id)).map((p) => p.name).join(", ")}.
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {stats.missing.length > 0
+                      ? <Tile k="Finish" v="Not finished" s={`${stats.missing.map((p) => p.name).join(", ")} not scheduled`} tone="warn" />
+                      : <Tile k={stats.finishedAt != null ? "Finished" : "Planned finish"} v={stats.finishedAt != null ? short(stats.finishedAt) : stats.plannedFinish != null ? short(stats.plannedFinish) : "-"}
+                        s={stats.finishedAt != null && stats.plannedFinish != null ? `${vsPlanWords(Math.round(((stats.finishedAt - stats.plannedFinish) / 3_600_000) * 10) / 10)} (${short(stats.plannedFinish)})` : `${stats.actualPct}% done, plan ${stats.plannedPct}%`} />}
+                    <Tile k="Steps" v={`${stats.done} / ${stats.steps}`} s={`${Math.round(stats.hours).toLocaleString("en-US")} h of work`} />
+                    <Tile k="Added work" v={`${stats.added.count} added`} s={stats.added.count ? `${stats.added.steps} step${stats.added.steps === 1 ? "" : "s"} · +${stats.added.hours} h of work` : "nothing added to the plan"} />
+                    <Tile k={pickedPhase ? "Phase budget" : money0?.afe != null ? "AFE" : "Budget"} v={money(stats.budget)} s={`budget lines ${money(stats.lines.reduce((a, l) => a + l.budget, 0))}`} />
+                    <Tile k="Spent" v={money(stats.spent)} s={stats.budget ? `${Math.round((stats.spent / stats.budget) * 100)}% of the ${pickedPhase ? "phase budget" : money0?.afe != null ? "AFE" : "budget"}` : "no budget"} />
+                    <Tile k={stats.budget - stats.spent >= 0 ? "Left" : "Over"} v={money(Math.abs(stats.budget - stats.spent))} tone={stats.budget - stats.spent >= 0 ? "good" : "bad"} s={stats.budget - stats.spent >= 0 ? "invoices still to come?" : "over the budget"} />
+                  </div>
+                  {stats.shifts.length > 0 && (
+                    <div>
+                      <div className="text-[12.5px] font-bold text-[var(--color-text)]">Against the original plan, shift by shift</div>
+                      <ul className="mt-1 mb-2 space-y-0.5 text-[11.5px] leading-snug text-[var(--color-text-muted)]">
+                        {chartKey(stats, tz).map((k) => <li key={k}>{k}</li>)}
+                      </ul>
+                      <div className="divide-y divide-[var(--color-border)]/60">
+                        {stats.shifts.map((r) => {
+                          const red = behindAt(r);
+                          return (
+                            <div key={r.start} className={`grid grid-cols-[116px_minmax(0,1fr)_auto] gap-2 items-center py-1 text-[12px] ${r.kind === "night" ? "bg-[var(--color-surface-2)]/50" : ""}`}>
+                              <span className="text-[var(--color-text)] leading-tight pl-1">{shiftLabel(r)}{r.planEnds && stats.plannedFinish != null && <span className="block text-[10.5px] text-[var(--color-text-muted)]">plan done {fmtInTz(stats.plannedFinish, tz, { hour: "numeric", minute: "2-digit", hour12: true })}</span>}{r.current && <span className="block text-[10.5px] text-[var(--color-text-muted)]">now</span>}</span>
+                              <div className="space-y-0.5">
+                                {r.plan != null
+                                  ? <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><div className="h-full rounded-full bg-slate-400" style={{ width: `${Math.min(100, r.plan)}%` }} /></div>
+                                  : <div className="h-1.5" />}
+                                <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">{r.done != null && <div className={`h-full rounded-full ${red ? "bg-rose-500" : "bg-emerald-600"}`} style={{ width: `${Math.min(100, r.done)}%` }} />}</div>
+                              </div>
+                              <span className="text-right tabular-nums text-[var(--color-text-muted)] leading-tight pr-1">
+                                {r.plan != null ? `${r.plan}%` : "plan done"}{r.done != null ? <> / <b className={red ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}>{r.done}%</b></> : " / to come"}
+                                {r.addedKnown > 0 && <span className="block text-[10.5px] text-amber-700 dark:text-amber-400">added {Math.round((r.addedDone ?? 0) * 10) / 10} of {r.addedKnown} h</span>}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
               {stats.lines.length > 0 && <LinesChart rows={stats.lines} cur="USD" />}
             </div>
@@ -266,12 +388,12 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
       </div>
 
       {uploading && (
-        <Modal onClose={() => setUploading(false)} size="lg">
-          <ModalHeader icon={UploadCloud} title="Upload the PSSR" subtitle="Saved to this project's documents, then read into checklist items. You check them before anything is kept." onClose={() => setUploading(false)} />
+        <Modal onClose={() => setUploading(null)} size="lg">
+          <ModalHeader icon={UploadCloud} title={uploading === "all" ? "Upload the PSSR" : `Upload ${phases.find((p) => p.id === uploading)?.name ?? "the phase"}'s PSSR`} subtitle="Saved to this project's documents, then read into checklist items. You check them before anything is kept." onClose={() => setUploading(null)} />
           <ModalBody className="!p-0">
             {err && <div role="alert" className="px-4 pt-3 text-[12.5px] font-semibold text-rose-700 dark:text-rose-400">{err}</div>}
             <NewChecklistFlow orgId={orgId} projectId={projectId} projectName={projectName} actor={actor}
-              onDone={() => { setUploading(false); reload(); }} onCancel={() => setUploading(false)} setErr={setErr} kindDefault="pssr" />
+              onDone={() => { const forPhase = uploading; setUploading(null); void tieNewPssr(forPhase); }} onCancel={() => setUploading(null)} setErr={setErr} kindDefault="pssr" />
           </ModalBody>
         </Modal>
       )}
@@ -299,11 +421,11 @@ function Step({ n, ok, title, detail, action, children }: { n: number; ok: boole
   );
 }
 
-function Tile({ k, v, s, tone }: { k: string; v: string; s: string; tone?: "good" | "bad" }) {
+function Tile({ k, v, s, tone }: { k: string; v: string; s: string; tone?: "good" | "bad" | "warn" }) {
   return (
     <div className="rounded-xl border border-[var(--color-border)] px-3 py-2 min-w-0">
       <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{k}</div>
-      <div className={`text-[16px] font-black truncate ${tone === "good" ? "text-emerald-700 dark:text-emerald-400" : tone === "bad" ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text)]"}`}>{v}</div>
+      <div className={`text-[16px] font-black truncate ${tone === "good" ? "text-emerald-700 dark:text-emerald-400" : tone === "bad" ? "text-rose-700 dark:text-rose-400" : tone === "warn" ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text)]"}`}>{v}</div>
       <div className="text-[11px] text-[var(--color-text-muted)] truncate">{s}</div>
     </div>
   );

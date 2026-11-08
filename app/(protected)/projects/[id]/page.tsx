@@ -60,7 +60,9 @@ import MoreMenu from "@/components/ui/MoreMenu";
 import CloseoutTab from "@/components/projects/CloseoutTab";
 import { openReportNext } from "@/components/projects/ReportsView";
 import type { ReportId } from "@/lib/reportLinks";
-import { opensOnCloseout } from "@/lib/closeoutStatus";
+import { workState } from "@/lib/closeoutStatus";
+import { phaseOnDay } from "@/lib/projectPhases";
+import { dayKey } from "@/lib/scheduleTz";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { PhasesSetup, PhaseBar, usePhasePick } from "@/components/projects/PhasesSetup";
 import { MEMBER_ROLES, projectAccess, roleLabel, needsCoOwnerSql } from "@/lib/projectAccess";
@@ -135,20 +137,25 @@ export default function ProjectDetailPage() {
   // for, where to open: Plan until work starts (a step started or any
   // progress), then Shift, then Close-out once every step is done (or the
   // project is complete).
-  type StepRow = { id: string; parent_id: string | null; status: string; percent_complete: number | null; is_summary: boolean | null; cancelled_at: string | null; actual_start_at: string | null };
+  type StepRow = { id: string; parent_id: string | null; status: string; percent_complete: number | null; is_summary: boolean | null; cancelled_at: string | null; actual_start_at: string | null; attributes: unknown };
   const [stepRows, setStepRows] = useState<StepRow[] | null>(null);
   useEffect(() => {
     if (!projectId) return;
     let live = true;
     void fetchAllRows<StepRow>((from, to) => supabase.from("milestones")
-      .select("id, parent_id, status, percent_complete, is_summary, cancelled_at, actual_start_at")
+      .select("id, parent_id, status, percent_complete, is_summary, cancelled_at, actual_start_at, attributes")
       .eq("project_id", projectId).order("id").range(from, to))
       .then(({ rows, error }) => { if (live) setStepRows(error ? [] : rows); });
     return () => { live = false; };
   }, [projectId]);
-  const workDone = !!project && !!stepRows && opensOnCloseout(project.status, stepRows);
+  // Where the work stands, phase by phase: done means every phase has a
+  // schedule and all of it is done.
+  const state = React.useMemo(() => (stepRows ? workState(stepRows, project?.phases ?? []) : null), [stepRows, project?.phases]);
+  const workDone = !!project && !!state && (project.status === "completed" || state.allDone);
   const started = !!stepRows && stepRows.some((r) => r.actual_start_at || Number(r.percent_complete ?? 0) > 0 || r.status === "in_progress" || r.status === "completed");
-  const tab: Tab | null = asked ?? (project && stepRows ? (workDone ? "closeout" : started ? "today" : "plan") : null);
+  // Done with what's scheduled, a phase still to schedule: Plan, to import it.
+  const nextToSchedule = !!state && state.scheduledDone && state.unscheduled.length > 0;
+  const tab: Tab | null = asked ?? (project && stepRows ? (workDone ? "closeout" : nextToSchedule ? "plan" : started ? "today" : "plan") : null);
   const [commentDraft, setCommentDraft] = useState("");
   const [posting, setPosting] = useState(false);
 
@@ -184,7 +191,13 @@ export default function ProjectDetailPage() {
   // The project's phases (Transmix 1 and 2), and the one picked: the
   // schedule, reports and costs follow it; null is the whole project.
   const phases = React.useMemo(() => project?.phases ?? [], [project?.phases]);
-  const [phase, setPhase] = usePhasePick(project?.id, phases);
+  // Unless one was picked: the phase running today (else the next to schedule).
+  const todays = React.useMemo(() => {
+    if (!phases.length || !project) return null;
+    const running = phaseOnDay(dayKey(Date.now(), project.timezone || "America/Los_Angeles"), phases);
+    return running?.id ?? null;
+  }, [phases, project]);
+  const [phase, setPhase] = usePhasePick(project?.id, phases, todays);
 
   // ?edit=1 (the coach's "write the purpose", "attach a Summary of Work")
   // opens Edit project, then drops out of the URL.
@@ -272,10 +285,14 @@ export default function ProjectDetailPage() {
 
   // Go to a tab by name; "reports:<report>" opens that report.
   const goTab = useCallback((name: string) => {
-    if (name.startsWith("reports:") && projectId) { openReportNext(projectId, name.slice(8) as ReportId); setTab("reports"); }
+    if (name.startsWith("reports:") && projectId) {
+      // A phase picked with no schedule has no reports: show all phases.
+      if (phase && state?.unscheduled.some((p) => p.id === phase)) setPhase(null);
+      openReportNext(projectId, name.slice(8) as ReportId); setTab("reports");
+    }
     else { const t = tabOf(name); if (!t) return; setTab(t); }
     window.scrollTo({ top: 0, behavior: "smooth" });
-  }, [projectId, setTab]);
+  }, [projectId, setTab, phase, state, setPhase]);
 
   // Other screens ask to go to a tab ("project:tab", e.g. Reports' "Open
   // Close-out") or to open Complete ("project:complete").
@@ -580,6 +597,7 @@ export default function ProjectDetailPage() {
             userEmail={userEmail}
             canManage={!!canManage}
             onTab={goTab}
+            onPickPhase={setPhase}
             onLessons={() => setReviewOpen(true)}
             onComplete={() => setPendingStatus("completed")}
           />

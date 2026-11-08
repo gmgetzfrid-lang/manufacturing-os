@@ -32,6 +32,7 @@ import type { ShiftCredit } from "@/lib/shiftReport";
 import { supabase } from "@/lib/supabase";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import { progressWarning } from "@/lib/closeoutStatus";
 import Spinner from "@/components/ui/Spinner";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import ScheduleProgress from "@/components/projects/ScheduleProgress";
@@ -266,7 +267,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const onClearSchedule = async () => {
     const n = allMilestones.length;
     const ok = await appConfirm({
-      message: `Delete all ${n} task${n === 1 ? "" : "s"} on this project's schedule${phases.length ? `, every phase (${phases.map((p) => p.name).join(" and ")})` : ""}? Notes on them go too. Undo is offered right after; once you leave the page, import the schedule file again to rebuild it. This action is audited.`,
+      message: `Delete all ${n} task${n === 1 ? "" : "s"} on this project's schedule${phases.length ? `, every phase (${phases.map((p) => p.name).join(" and ")})` : ""}? Notes on them go too.${progressWarning(allMilestones) ? ` ${progressWarning(allMilestones)} To bring in a revised schedule and keep it, use Import and leave Replace unticked: it merges.` : ""} Undo is offered right after; once you leave the page, it can't be undone. This action is audited.`,
       tone: "danger",
     });
     if (!ok) return;
@@ -678,6 +679,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           userEmail={userEmail}
           userRole={userRole}
           existingCount={allMilestones.length}
+          progressNote={progressWarning(allMilestones)}
           existing={allMilestones}
           phases={phases}
           phase={phase}

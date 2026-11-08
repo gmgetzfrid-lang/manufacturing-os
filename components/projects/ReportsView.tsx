@@ -27,6 +27,7 @@ import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { usePhases } from "@/components/projects/PhaseContext";
 import { phaseStats, phaseReportHtml, phaseReportDocument, phaseReportText, howItDidHtml, type CostLine, type CostEntry } from "@/lib/phaseReport";
+import { buildAsBuilt, asBuiltDocument, downloadAsBuilt } from "@/lib/asBuiltSchedule";
 import { withWorkOrderCrews } from "@/lib/workOrderCrew";
 import { loadProgressLog } from "@/lib/progressHistory";
 import { loadShiftRecords, saveShiftRecord, useShiftRecords, type ShiftRecord } from "@/lib/shiftRecord";
@@ -294,6 +295,10 @@ export default function ReportsView(p: Props) {
     const phase = ph.phase ? ph.phases.find((x) => x.id === ph.phase) ?? null : null;
     return howItDidHtml(stats(phase), tz, at);
   };
+  // The as-built schedule: the phase picked (else the whole job), as built.
+  const asBuiltScope = ph.phase ? ph.phases.find((x) => x.id === ph.phase)?.name ?? "Phase" : ph.phases.length ? "All phases" : "Whole project";
+  const asBuilt = () => buildAsBuilt({ milestones: p.milestones, childrenByParent: p.childrenByParent, cancelled: p.cancelled, phases: ph.phases, tz });
+  const asBuiltDoc = () => asBuiltDocument(asBuilt(), { project: name, scope: asBuiltScope, tz, now: Date.now() });
   const phaseBody = async (): Promise<{ html: string; text: string; title: string }> => {
     const { at, stats } = await statsMaker();
     const each = ph.phases.map(stats);
@@ -344,6 +349,8 @@ export default function ReportsView(p: Props) {
         } else if (sel === "phase") {
           const b = await phaseBody();
           if (alive) setPreview({ kind: "html", html: phaseReportDocument(b.title, b.html) });
+        } else if (sel === "asbuilt") {
+          if (alive) setPreview({ kind: "html", html: asBuiltDoc(), landscape: true });
         }
       } catch (e) {
         if (alive) { setPreview(null); setPreviewErr((e as Error).message); }
@@ -407,6 +414,12 @@ export default function ReportsView(p: Props) {
         const html = await workOrdersPrintDocument({ shown: woShown, milestones: p.milestones, projectId, projectName: p.projectName, tz, times, progress: p.progress, format: woHistory ? "history" : "report", word, scope: `${woScope}${woHistory ? " · with each step's history" : ""}`, lh: lhOn });
         printHtml(html, w);
         remember({ report: "workorders", label: woScope });
+      } else if (sel === "asbuilt") {
+        if (what === "download") {
+          await downloadAsBuilt(asBuilt(), { project: name, scope: asBuiltScope, tz, fileName: `${fileBase} - as-built schedule${ph.phase ? ` ${ph.phases.find((x) => x.id === ph.phase)?.name ?? ""}` : ""}.xlsx` });
+          setMsg("Excel file saved.");
+        } else printHtml(asBuiltDoc(), w);
+        remember({ report: "asbuilt", label: `${asBuiltScope} · ${what === "download" ? "Excel" : "printed"}` });
       } else if (sel === "phase") {
         const b = await phaseBody();
         if (what === "email") { setMsg((await copyRich(b.html, b.text)) ? "Copied - paste into your email." : "Your browser blocked the copy - try again."); return; }
@@ -561,7 +574,8 @@ export default function ReportsView(p: Props) {
       {sel === "hourly" && <button type="button" disabled={busy} onClick={() => void run("download")} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download</button>}
       {sel === "hourly" && format !== "xlsx" && <button type="button" disabled={busy} onClick={() => void run("print")} className={secondary}><Printer className="w-4 h-4" /> Print</button>}
       {sel === "timelog" && <button type="button" disabled={busy} onClick={() => void run("download")} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download</button>}
-      {(meeting || sel === "workorders" || sel === "sheet" || sel === "phase") && (
+      {sel === "asbuilt" && <button type="button" disabled={busy} onClick={() => void run("download")} className={secondary}><Download className="w-4 h-4" /> Excel</button>}
+      {(meeting || sel === "workorders" || sel === "sheet" || sel === "phase" || sel === "asbuilt") && (
         <button type="button" disabled={busy || (!!meeting && !doc) || (sel === "sheet" && !sheetDoc) || (sel === "workorders" && woShown.length === 0)} onClick={() => void run("print")} className={primary}>
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />} Print
         </button>
@@ -686,6 +700,7 @@ const DESCRIBE: Record<ReportId, string> = {
   timelog: "Every step and the time each thing was done, for the project file.",
   schedule: "Complete, pace and the forecast finish, with what's blocked and overdue.",
   workorders: "Each work order opened up with all its steps: plan against actual, status, % and the latest comment.",
+  asbuilt: "The job as it was really done: every work order and step, when it was planned (the original plan as saved) and when it really started and finished, how far off the plan, what was added and what was taken off. A timeline and the full table; Excel for the project file.",
   kickoff: "The start of the project: the job, the first shifts, readiness and safety.",
   closeout: "The end of the project: how it went, what was added, what's open, and the Lessons & findings review for next time.",
   phase: "How the phase picked at the top did: progress against plan day by day, the finish, the work added and its share of the budget, beside the other phases and the whole project. With All phases picked: every phase and the project.",

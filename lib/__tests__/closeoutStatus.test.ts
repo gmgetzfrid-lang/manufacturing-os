@@ -3,7 +3,7 @@
 
 import { describe, it, expect } from "vitest";
 import type { Milestone } from "@/types/schema";
-import { workSummary, vsPlanWords, opensOnCloseout } from "@/lib/closeoutStatus";
+import { workSummary, vsPlanWords, opensOnCloseout, workState, progressWarning } from "@/lib/closeoutStatus";
 
 const m = (id: string, x: Record<string, unknown> = {}) => ({ id, name: id, parentId: null, status: "planned", percentComplete: 0, ...x } as unknown as Milestone);
 
@@ -33,5 +33,37 @@ describe("closeoutStatus", () => {
     expect(opensOnCloseout("active", [...r, { id: "b", parent_id: "t", status: "planned", percent_complete: 0 }])).toBe(false);
     expect(opensOnCloseout("completed", [])).toBe(true);
     expect(opensOnCloseout("active", [])).toBe(false);
+  });
+});
+
+describe("workState with phases", () => {
+  const phases = [
+    { id: "p1", name: "Phase 1", start: "2026-10-24", end: "2026-10-31", share: 50 },
+    { id: "p2", name: "Phase 2", start: "2026-11-07", end: "2026-11-15", share: 50 },
+  ];
+  const row = (id: string, parent: string | null, status: string, attributes: unknown = null) => ({ id, parent_id: parent, status, percent_complete: status === "completed" ? 100 : 0, is_summary: false, cancelled_at: null, attributes });
+  it("Phase 1 done, Phase 2 with no schedule: not done, Phase 2 to schedule", () => {
+    const rows = [row("t", null, "planned"), row("a", "t", "completed"), row("b", "t", "completed")];
+    const s = workState(rows, phases);
+    expect(s.unscheduled.map((p) => p.id)).toEqual(["p2"]);
+    expect(s).toMatchObject({ scheduledDone: true, allDone: false });
+    expect(opensOnCloseout("active", rows, phases)).toBe(false);
+  });
+  it("both phases scheduled and done: done", () => {
+    const rows = [row("t", null, "planned"), row("a", "t", "completed"), row("t2", null, "planned", { project_phase: "p2" }), row("c", "t2", "completed")];
+    expect(workState(rows, phases)).toMatchObject({ unscheduled: [], allDone: true });
+    expect(opensOnCloseout("active", rows, phases)).toBe(true);
+  });
+  it("no phases: every step done is done; marked complete always opens on close-out", () => {
+    expect(opensOnCloseout("active", [row("a", null, "completed")])).toBe(true);
+    expect(opensOnCloseout("completed", [row("a", null, "planned")])).toBe(true);
+  });
+});
+
+describe("progressWarning", () => {
+  it("says what a clear or replace would cut off", () => {
+    const rows = [m("t", {}), m("a", { parentId: "t", status: "completed", percentComplete: 100 }), m("b", { parentId: "t", status: "in_progress", percentComplete: 40 }), m("c", { parentId: "t" })];
+    expect(progressWarning(rows)).toBe("2 steps already have progress recorded (1 done, 1 started). This cuts that record off: the reports, the as-built schedule and each shift's history will no longer show it.");
+    expect(progressWarning([m("t", {}), m("c", { parentId: "t" })])).toBe("");
   });
 });

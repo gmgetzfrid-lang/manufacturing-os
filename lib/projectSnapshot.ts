@@ -30,7 +30,7 @@ export async function gatherProjectSnapshot(orgId: string, projectId: string): P
       safe(supabase.from("change_orders").select("status, amount").eq("project_id", projectId).limit(500)
         .then((r) => (r.error ? [] : ((r.data ?? []) as Array<{ status: string; amount: number }>))), []),
       safe(activeOnly((a) => {
-        const q = supabase.from("milestones").select("id, status, planned_at, percent_complete, baseline_finish_at, source").eq("project_id", projectId);
+        const q = supabase.from("milestones").select("id, parent_id, is_summary, status, planned_at, percent_complete, baseline_finish_at, source").eq("project_id", projectId);
         return (a ? q.is("cancelled_at", null) : q).limit(1000);
       })
         .then((r) => (r.error ? [] : ((r.data ?? []) as Array<Record<string, unknown>>))), []),
@@ -53,6 +53,7 @@ export async function gatherProjectSnapshot(orgId: string, projectId: string): P
   // the schedule as one typed in. Counting only typed ones told a project
   // with an imported schedule to "add a schedule" and "set a baseline".
   const live = msRows;
+  const parentIds = new Set(live.map((m) => m.parent_id).filter(Boolean).map(String));
   const pctIdx = milestonePctIndex(live.map((m) => ({
     id: String(m.id),
     percentComplete: (m.percent_complete as number | null) ?? null,
@@ -118,10 +119,13 @@ export async function gatherProjectSnapshot(orgId: string, projectId: string): P
     approvedCoAmount: coRows.filter((c) => c.status === "approved").reduce((s, c) => s + Number(c.amount ?? 0), 0),
 
     milestoneCount: live.length,
+    // Steps of work only: a heading over other tasks is never marked done
+    // itself (its steps are), so counting it called a finished job late.
     overdueMilestones: live.filter((m) => {
+      if (parentIds.has(String(m.id)) || m.is_summary === true) return false;
       const planned = m.planned_at ? Date.parse(String(m.planned_at)) : NaN;
       const status = String(m.status ?? "planned");
-      return Number.isFinite(planned) && planned < now && status !== "completed";
+      return Number.isFinite(planned) && planned < now && status !== "completed" && Number(m.percent_complete ?? 0) < 100;
     }).length,
     spi: null, // needs the schedule tab's EV math + history; null stays honest
     hasBaseline: live.some((m) => !!m.baseline_finish_at),
