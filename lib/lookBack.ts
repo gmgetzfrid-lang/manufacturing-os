@@ -55,9 +55,17 @@ export interface StepLook {
   finishH: number; startH: number; overrunH: number;
   /** Of its late start, the hours the work before it finished late. */
   inheritedH: number;
+  /** The work before it (its link) whose finish let it start, when that
+   *  held it up an hour or more. */
+  waitedOn?: string;
   /** On hold / blocked: hours, and why. */
   holdH: number;
   holds: Array<{ reason: string; hours: number }>;
+  /** Each hold, when: from going on hold to coming off it. */
+  holdSpans: Array<{ reason: string; from: number; to: number }>;
+  /** Its own late start, the window it waited in: from when it could have
+   *  started (its plan, or the work before it) to when it did. */
+  waitFrom: number;
   /** "Why it's behind", as people said it. */
   why: string[];
   /** Re-planned — the reason given. */
@@ -159,9 +167,32 @@ export function buildLookBack(input: {
       const q = at.get(p.id);
       if (!q) continue;
       const t = earliestStart(p.link, { start: q.as, end: q.af }, me.af - me.as);
+      // It started before this let it (the work went in another order, as
+      // when a find changes the sequence): this didn't hold it up.
+      if (t > me.as + 30 * 60_000) continue;
       if (t > best) { best = t; by = p.id; }
     }
     return { at: best, by };
+  };
+
+  // Other work on the same equipment (the same task above it), for a wait
+  // its links don't explain: work under way on it the whole time held it up.
+  const siblings = new Map<string, Milestone[]>();
+  for (const m of leaves) if (m.parentId) siblings.set(m.parentId, [...(siblings.get(m.parentId) ?? []), m]);
+  const sameWork = (m: Milestone, from: number, to: number): { id: string; covered: number } | null => {
+    if (to - from < ON_PLAN_H * H || !m.parentId) return null;
+    let best: { id: string; covered: number } | null = null;
+    const myWo = woOf(m) || parentWo(m);
+    for (const o of siblings.get(m.parentId) ?? []) {
+      if (o.id === m.id) continue;
+      // A folder of separate jobs isn't one piece of equipment: the same work order only.
+      if ((woOf(o) || parentWo(o)) !== myWo) continue;
+      const q = at.get(o.id!);
+      if (!q) continue;
+      const covered = Math.max(0, Math.min(q.af, to) - Math.max(q.as, from));
+      if (covered >= 0.75 * (to - from) && (!best || covered > best.covered)) best = { id: o.id!, covered };
+    }
+    return best;
   };
 
   const steps: StepLook[] = [];
@@ -171,8 +202,16 @@ export function buildLookBack(input: {
     const mine = notesBy.get(m.id!) ?? [];
     const startH = (t.as - t.bs) / H, finishH = (t.af - t.bf) / H;
     const overrunH = ((t.af - t.as) - (t.bf - t.bs)) / H;
-    const allowed = allowedAt(m.id!).at;
-    const inheritedH = Math.max(0, Math.min(Math.max(0, startH), (allowed - t.bs) / H));
+    const { at: allowed, by: linkedBy } = allowedAt(m.id!);
+    let inheritedH = Math.max(0, Math.min(Math.max(0, startH), (allowed - t.bs) / H));
+    let allowedBy = linkedBy;
+    // The rest of its wait, if work on the same equipment was under way all through it.
+    const waitStart = Math.max(t.bs, Number.isFinite(allowed) ? allowed : t.bs);
+    const same = startH > 0 ? sameWork(m, waitStart, t.as) : null;
+    if (same) {
+      inheritedH = Math.min(Math.max(0, startH), inheritedH + same.covered / H);
+      if (!allowedBy || same.covered / H >= inheritedH / 2) allowedBy = same.id;
+    }
     const holds = holdsOf(mine, t.done ? t.af : now, { status: m.status, reason: m.statusReason });
     // Held before it started counts against its start; while under way,
     // against its run.
@@ -213,7 +252,10 @@ export function buildLookBack(input: {
       id: m.id!, name: m.name, task: parent?.name ?? "", wo: woOf(m) || parentWo(m), crew: m.responsibleParty?.trim() ?? "",
       bs: t.bs, bf: t.bf, as: t.as, af: t.af, done: t.done,
       finishH: r1(finishH), startH: r1(startH), overrunH: r1(overrunH), inheritedH: r1(inheritedH),
+      ...(allowedBy && inheritedH >= ON_PLAN_H ? { waitedOn: allowedBy } : {}),
       holdH: r1([...holdTotal.values()].reduce((a, h) => a + h, 0)), holds: [...holdTotal].map(([reason, h]) => ({ reason, hours: r1(h) })),
+      holdSpans: holds.map((h) => ({ reason: h.reason, from: h.from, to: h.to })),
+      waitFrom: waitStart,
       why, replans, ...(disc ? { discovery: disc.what, addedKind: kindOf(disc) } : {}), lost, lostH,
     });
   }
@@ -310,4 +352,82 @@ export function lostWords(s: StepLook, hrs: (h: number) => string = (h) => `${r1
   if (s.discovery) out.push(`${ADDED[s.addedKind ?? "discovery"].word} - \u201c${s.discovery}\u201d`);
   for (const w of s.why.slice(-2)) out.push(`Said: \u201c${w}\u201d`);
   return out;
+}
+
+/** What a step was waiting on, back to where the delay started: the work
+ *  before it (by its links) that held it up, then what held that up, and
+ *  so on, nearest first. Empty: nothing before it held it up. */
+export function waitChain(look: Map<string, StepLook>, id: string, max = 8): StepLook[] {
+  const out: StepLook[] = [];
+  const seen = new Set<string>([id]);
+  for (let cur = look.get(id)?.waitedOn; cur && out.length < max && !seen.has(cur); ) {
+    const p = look.get(cur);
+    if (!p) break;
+    out.push(p);
+    seen.add(cur);
+    cur = p.waitedOn;
+  }
+  return out;
+}
+
+/** Where a step's delay started: the last link of its wait chain, else itself. */
+export const rootOf = (look: Map<string, StepLook>, id: string): StepLook | undefined => {
+  const c = waitChain(look, id);
+  return c.length ? c[c.length - 1] : look.get(id);
+};
+
+/** The root's own reasons, in words: what was found, holds, running long,
+ *  a late start nothing explains. Said plainly when nothing was recorded. */
+export function rootWords(s: StepLook, hrs: (h: number) => string = (h) => `${r1(h)} h`): string[] {
+  const w = lostWords(s, hrs);
+  if (w.length) return w;
+  return s.finishH >= ON_PLAN_H ? [`Finished ${hrs(s.finishH)} late; nothing recorded on why`] : [];
+}
+
+/** What was going on while a step waited to start, when nothing it's
+ *  linked to explains the wait: holds on the same equipment (with the
+ *  reason given), other work on it, and what its crew was on instead.
+ *  Context from the record, not a claimed cause; most overlap first. */
+export function whileWaiting(look: Map<string, StepLook>, s: StepLook, max = 3): string[] {
+  const from = s.waitFrom, to = s.as;
+  if (to - from < ON_PLAN_H * H) return [];
+  const overlap = (a: number, b: number) => Math.max(0, Math.min(b, to) - Math.max(a, from));
+  const out: Array<{ w: number; text: string; key: string }> = [];
+  for (const o of look.values()) {
+    if (o.id === s.id) continue;
+    const sameTask = !!s.task && o.task === s.task && o.wo === s.wo;
+    for (const h of o.holdSpans) {
+      const w = overlap(h.from, h.to);
+      if (sameTask && w > 0 && h.reason) out.push({ w: w * 3, key: `h${o.id}`, text: `On ${o.task}, ${o.name} was on hold - \u201c${h.reason}\u201d` });
+    }
+    const w = overlap(o.as, o.af);
+    if (w < 0.5 * H) continue;
+    const held = o.holdSpans.find((h) => h.reason && overlap(h.from, h.to) > 0);
+    const tag = held ? ` (on hold - \u201c${held.reason}\u201d)` : o.discovery ? ` (${ADDED[o.addedKind ?? "discovery"].lower})` : o.overrunH >= ON_PLAN_H ? ` (ran ${r1(o.overrunH)} h long)` : o.holds.some((h) => h.reason && h.hours >= ON_PLAN_H) ? ` (on hold ${r1(o.holdH)} h - \u201c${o.holds.find((h) => h.reason)!.reason}\u201d)` : "";
+    if (sameTask) out.push({ w: w * 2, key: `t${o.id}`, text: `On ${o.task}, ${o.name} was under way${tag}` });
+    else if (s.crew && o.crew === s.crew) out.push({ w, key: `c${o.id}`, text: `${s.crew} was on ${o.task ? `${o.task} \u203a ` : ""}${o.name}${tag}` });
+  }
+  const seen = new Set<string>();
+  return out.sort((a, b) => b.w - a.w).filter((x) => (seen.has(x.key) ? false : (seen.add(x.key), true))).slice(0, max).map((x) => x.text);
+}
+
+/** Has time of its own lost (held, ran long, started late with nothing
+ *  before it to blame, re-planned) or is added work. */
+export const ownCause = (s: StepLook) => !!s.discovery || s.lostH >= ON_PLAN_H;
+
+/** What set the finish: the last step done, back through what each waited
+ *  on; earliest first. */
+export function finishChain(lb: LookBack): StepLook[] {
+  const look = new Map(lb.steps.map((s) => [s.id, s]));
+  const last = lb.steps.reduce<StepLook | null>((a, s) => (!a || s.af > a.af ? s : a), null);
+  return last ? [last, ...waitChain(look, last.id)].reverse() : [];
+}
+
+/** Where a late step's delay came from: along what it waited on, the
+ *  furthest step with time of its own lost; itself when nothing before it
+ *  held it up. */
+export function causeOf(look: Map<string, StepLook>, id: string): StepLook | undefined {
+  const chain = [look.get(id), ...waitChain(look, id)].filter((x): x is StepLook => !!x);
+  for (let i = chain.length - 1; i >= 0; i--) if (ownCause(chain[i])) return chain[i];
+  return chain[chain.length - 1];
 }

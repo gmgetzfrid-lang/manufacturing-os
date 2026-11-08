@@ -27,7 +27,7 @@ import { uploadProjectFile, projectFileHome, type ProjectFileHome } from "@/lib/
 import { loadCloseoutSettings, saveCloseoutSettings, type CloseoutSettings } from "@/lib/closeoutSettings";
 import { workSummary, vsPlanWords } from "@/lib/closeoutStatus";
 import { phaseStats, chartKey, shiftLabel, behindAt, noScheduleWords, slipWords, slipStepLine, type CostLine, type CostEntry, type SlipStep } from "@/lib/phaseReport";
-import { buildLookBack, lostWords, CAUSE_LABEL, type Cause, type StepLook } from "@/lib/lookBack";
+import { buildLookBack, lostWords, rootWords, whileWaiting, finishChain, causeOf, ownCause, CAUSE_LABEL, type Cause as CauseKind, type StepLook, type LookBack } from "@/lib/lookBack";
 import { discoveries } from "@/lib/discovery";
 import { notesFor } from "@/lib/milestones";
 import type { MilestoneNote } from "@/types/schema";
@@ -399,7 +399,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                       </div>
                     </div>
                   )}
-                  {stats.shifts.length > 0 && <SlipStory stats={stats} tz={tz} lookById={lookById} setbacks={(look?.setbacks ?? []).filter((x) => !phaseIds || phaseIds.has(x.id))} steps={(look?.steps ?? []).filter((x) => !phaseIds || phaseIds.has(x.id))} loading={!look} />}
+                  {stats.shifts.length > 0 && <SlipStory stats={stats} tz={tz} look={look} lookById={lookById} setbacks={(look?.setbacks ?? []).filter((x) => !phaseIds || phaseIds.has(x.id))} steps={(look?.steps ?? []).filter((x) => !phaseIds || phaseIds.has(x.id))} loading={!look} />}
                 </>
               )}
               {stats.lines.length > 0 && <LinesChart rows={stats.lines} cur="USD" />}
@@ -422,63 +422,91 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   );
 }
 
-/** Why it finished late (or where it slipped): when it fell behind, what
- *  was behind then, what was still going when the plan said done, the
- *  biggest setbacks and where the time went, each with what was recorded. */
-function SlipStory({ stats, tz, lookById, setbacks, steps, loading }: {
-  stats: ReturnType<typeof phaseStats>; tz: string; lookById: Map<string, StepLook>; setbacks: StepLook[]; steps: StepLook[]; loading: boolean;
+/** Why it finished late (or where it slipped), from the record: when it
+ *  fell behind; what set the finish, back through what each step waited
+ *  on to the steps that lost time of their own; what put it behind, the
+ *  late steps grouped under where their delay came from; then the biggest
+ *  setbacks and where the time went. Where nothing recorded explains a
+ *  late start, what was going on at the time is shown as context. */
+function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading }: {
+  stats: ReturnType<typeof phaseStats>; tz: string; look: LookBack | null; lookById: Map<string, StepLook>; setbacks: StepLook[]; steps: StepLook[]; loading: boolean;
 }) {
   const sl = stats.slip;
   const late = stats.finishedAt != null && stats.plannedFinish != null && stats.finishedAt > stats.plannedFinish + 1_800_000;
   const when = (t: number) => `${fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric" })}, ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`;
-  const reasons = (id: string) => { const x = lookById.get(id); return x ? lostWords(x).slice(0, 3) : []; };
-  const Row = ({ x, right }: { x: SlipStep; right: string }) => {
-    const why = reasons(x.id);
-    return (
-      <li className="py-1.5">
-        <div className="flex items-start gap-2">
-          <span className="min-w-0 flex-1 text-[12px] text-[var(--color-text)] leading-snug">{slipStepLine(x)}</span>
-          <span className="shrink-0 text-[11.5px] tabular-nums text-[var(--color-text-muted)]">{right}</span>
-        </div>
-        {why.length > 0 ? why.map((w) => <div key={w} className="text-[11.5px] text-amber-800 dark:text-amber-300 leading-snug">{w}</div>)
-          : !loading && <div className="text-[11.5px] text-[var(--color-text-muted)] leading-snug">Nothing recorded on why</div>}
-      </li>
-    );
-  };
+  const label = (x: { task: string; name: string; wo?: string; crew?: string }) => `${x.task ? `${x.task} \u203a ` : ""}${x.name}${x.wo ? ` (WO ${x.wo})` : ""}${x.crew ? `, ${x.crew}` : ""}`;
+  const unexplained = (x: StepLook) => (x.lost["late-start"] ?? 0) >= 1;
+  const Cause = ({ x, held, self }: { x: StepLook; held?: Array<{ s: SlipStep; right: string }>; self?: number }) => (
+    <li className="py-2">
+      <div className="text-[12.5px] font-bold text-[var(--color-text)] leading-snug">{label(x)}</div>
+      {rootWords(x).slice(0, 3).map((w) => <div key={w} className="text-[12px] text-amber-800 dark:text-amber-300 leading-snug">{w}</div>)}
+      {unexplained(x) && whileWaiting(lookById, x, 2).map((w) => <div key={w} className="text-[11.5px] text-[var(--color-text-muted)] leading-snug">While it waited: {w}</div>)}
+      {self != null && self > 0 && <div className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)] leading-snug">{Math.round(self * 10) / 10} h of its own planned work behind then</div>}
+      {held && held.length > 0 && (
+        <div className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)] leading-snug">Held up: {held.map((h) => `${h.s.task ? `${h.s.task} \u203a ` : ""}${h.s.name} (${h.right})`).join("; ")}</div>
+      )}
+    </li>
+  );
+  // What set the finish: the chain from the last step done, the steps on
+  // it with time of their own lost; the rest waited.
+  const chain = look && late ? finishChain(look) : [];
+  const drivers = chain.filter(ownCause);
+  const waited = chain.filter((x) => !ownCause(x));
+  // What put it behind: the steps furthest behind then, under their cause.
   const at = sl.forGood ?? sl.first;
-  const byCause = (["hold", "longer", "late-start", "replanned", "discovery"] as Cause[]).map((c) => ({ c, h: Math.round(steps.reduce((a, x) => a + (x.lost[c] ?? 0), 0) * 10) / 10, n: steps.filter((x) => (x.lost[c] ?? 0) > 0).length })).filter((x) => x.h > 0);
+  const groups = new Map<string, { cause: StepLook; held: Array<{ s: SlipStep; right: string }>; self: number; hours: number }>();
+  for (const x of sl.behind.slice(0, 12)) {
+    const c = causeOf(lookById, x.id);
+    if (!c) continue;
+    const g = groups.get(c.id) ?? { cause: c, held: [], self: 0, hours: 0 };
+    if (c.id !== x.id) g.held.push({ s: x, right: `${x.hoursBehind} h behind` });
+    else g.self += x.hoursBehind;
+    g.hours += x.hoursBehind;
+    groups.set(c.id, g);
+  }
+  const behindCauses = [...groups.values()].sort((a, b) => b.hours - a.hours).slice(0, 5);
+  const byCause = (["hold", "longer", "late-start", "replanned", "discovery"] as CauseKind[]).map((c) => ({ c, h: Math.round(steps.reduce((a, x) => a + (x.lost[c] ?? 0), 0) * 10) / 10, n: steps.filter((x) => (x.lost[c] ?? 0) > 0).length })).filter((x) => x.h > 0);
   const maxH = Math.max(1, ...byCause.map((x) => x.h));
-  const head = "text-[12.5px] font-bold text-[var(--color-text)] mt-3";
+  const head = "text-[12.5px] font-black text-[var(--color-text)] mt-3";
   return (
     <div className="rounded-xl border border-[var(--color-border)] px-3 py-2.5">
       <div className="text-[13px] font-black text-[var(--color-text)]">{late ? "Why it finished late" : "Where it slipped"}</div>
       <ul className="mt-1 space-y-0.5 text-[12px] text-[var(--color-text)] leading-snug">
         {slipWords(stats, tz).map((w) => <li key={w}>{w}</li>)}
       </ul>
-      {at && sl.behind.length > 0 && (
+      {loading && <div className="mt-2 text-[11.5px] text-[var(--color-text-muted)]">Reading what was recorded on each step…</div>}
+      {drivers.length > 0 && (
         <>
-          <div className={head}>Furthest behind at the end of {shiftLabel(at)}</div>
-          <ul className="divide-y divide-[var(--color-border)]/60">{sl.behind.slice(0, 5).map((x) => <Row key={x.id} x={x} right={`${x.hoursBehind} h behind`} />)}</ul>
-          {sl.behind.length > 5 && <div className="text-[11px] text-[var(--color-text-muted)]">and {sl.behind.length - 5} more</div>}
+          <div className={head}>What set the finish</div>
+          <div className="text-[11.5px] text-[var(--color-text-muted)]">The last step done, back through what each waited on (its links). These lost time of their own:</div>
+          <ol className="divide-y divide-[var(--color-border)]/60">{drivers.map((x) => <Cause key={x.id} x={x} />)}</ol>
+          {waited.length > 0 && <div className="text-[11.5px] text-[var(--color-text-muted)] leading-snug">Waited on them: {waited.map((x) => x.name).join(", ")}.</div>}
+        </>
+      )}
+      {at && behindCauses.length > 0 && (
+        <>
+          <div className={head}>What put it behind at the end of {shiftLabel(at)}</div>
+          <div className="text-[11.5px] text-[var(--color-text-muted)]">The steps furthest behind then, under where their delay came from:</div>
+          <ul className="divide-y divide-[var(--color-border)]/60">{behindCauses.map((g) => <Cause key={g.cause.id} x={g.cause} held={g.held} self={g.self} />)}</ul>
         </>
       )}
       {sl.pastPlan.length > 0 && stats.plannedFinish != null && (
         <>
           <div className={head}>Still going when the plan said done ({when(stats.plannedFinish)})</div>
-          <ul className="divide-y divide-[var(--color-border)]/60">{sl.pastPlan.slice(0, 8).map((x) => <Row key={x.id} x={x} right={x.finish != null ? `done ${when(x.finish)}` : "not done"} />)}</ul>
-          {sl.pastPlan.length > 8 && <div className="text-[11px] text-[var(--color-text-muted)]">and {sl.pastPlan.length - 8} more</div>}
+          <div className="text-[11.5px] text-[var(--color-text)] leading-snug">{sl.pastPlan.slice(0, 10).map((x) => `${slipStepLine(x)}: ${x.finish != null ? `done ${when(x.finish)}` : "not done"}`).join(" · ")}{sl.pastPlan.length > 10 ? ` · and ${sl.pastPlan.length - 10} more` : ""}</div>
         </>
       )}
       {setbacks.length > 0 && (
         <>
-          <div className={head}>Biggest setbacks over the job</div>
+          <div className={head}>Steps that lost the most time of their own</div>
           <ul className="divide-y divide-[var(--color-border)]/60">{setbacks.slice(0, 5).map((x) => (
             <li key={x.id} className="py-1.5">
               <div className="flex items-start gap-2">
-                <span className="min-w-0 flex-1 text-[12px] text-[var(--color-text)] leading-snug">{x.task ? `${x.task} \u203a ` : ""}{x.name}{x.wo ? ` (WO ${x.wo})` : ""}{x.crew ? `, ${x.crew}` : ""}</span>
+                <span className="min-w-0 flex-1 text-[12px] text-[var(--color-text)] leading-snug">{label(x)}</span>
                 <span className="shrink-0 text-[11.5px] tabular-nums text-rose-700 dark:text-rose-400">lost {x.lostH} h</span>
               </div>
               {lostWords(x).slice(0, 3).map((w) => <div key={w} className="text-[11.5px] text-amber-800 dark:text-amber-300 leading-snug">{w}</div>)}
+              {unexplained(x) && whileWaiting(lookById, x, 1).map((w) => <div key={w} className="text-[11.5px] text-[var(--color-text-muted)] leading-snug">While it waited: {w}</div>)}
             </li>
           ))}</ul>
         </>
@@ -486,7 +514,7 @@ function SlipStory({ stats, tz, lookById, setbacks, steps, loading }: {
       {byCause.length > 0 && (
         <>
           <div className={head}>Where the time went</div>
-          <div className="text-[11px] text-[var(--color-text-muted)] mb-1">Hours each step lost on its own, by cause. Steps run side by side, so these add up to more than the finish&rsquo;s slip.</div>
+          <div className="text-[11px] text-[var(--color-text-muted)] mb-1">Hours each step lost of its own, by cause (waiting on the work before it isn&rsquo;t counted again). Steps run side by side, so these add up to more than the finish&rsquo;s slip.</div>
           <div className="space-y-1">{byCause.map((x) => (
             <div key={x.c} className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto] gap-2 items-center text-[11.5px]">
               <span className="text-[var(--color-text)] leading-tight">{CAUSE_LABEL[x.c]}</span>
@@ -496,7 +524,6 @@ function SlipStory({ stats, tz, lookById, setbacks, steps, loading }: {
           ))}</div>
         </>
       )}
-      {loading && <div className="mt-2 text-[11.5px] text-[var(--color-text-muted)]">Reading what was recorded on each step…</div>}
     </div>
   );
 }
