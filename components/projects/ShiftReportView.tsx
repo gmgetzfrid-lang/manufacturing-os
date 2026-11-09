@@ -1145,7 +1145,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
               Discovery &amp; added
             </button>
           </div>
-          <WoClassSelects c={wc} units={classPick.units} types={classPick.types} className="shrink-0"
+          <WoClassSelects c={wc} units={classPick.units} types={classPick.types} className="max-sm:w-full"
             onUnits={(v) => setClassPick((c) => ({ ...c, units: v }))} onTypes={(v) => setClassPick((c) => ({ ...c, types: v }))} />
           <TaskSearch idx={qlIndex} fmt={ctx} onPick={openLook} />
         </div>

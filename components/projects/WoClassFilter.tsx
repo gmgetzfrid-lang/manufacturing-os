@@ -59,9 +59,10 @@ export function WoClassSelects({ c, units, types, onUnits, onTypes, className = 
   const showUnit = c.choices.units.length > 1 || units.length > 0;
   const showType = c.choices.types.some((t) => t.code !== "-") || types.length > 0;
   if (!c.ready || (!showUnit && !showType)) return null;
-  const sel = (on: boolean) => `h-8 max-w-[14rem] rounded-lg border px-2 text-[12px] font-semibold bg-[var(--color-surface)] text-[var(--color-text)] ${on ? "border-[var(--color-accent)]" : "border-[var(--color-border-strong)]"}`;
+  // On a phone the two share the row, each shrinking to fit (never wider than the screen).
+  const sel = (on: boolean) => `h-8 min-w-0 flex-1 basis-[8rem] sm:flex-none sm:basis-auto max-w-[14rem] truncate rounded-lg border px-2 text-[12px] font-semibold bg-[var(--color-surface)] text-[var(--color-text)] ${on ? "border-[var(--color-accent)]" : "border-[var(--color-border-strong)]"}`;
   return (
-    <span className={`inline-flex flex-wrap items-center gap-1.5 ${className}`}>
+    <span className={`inline-flex flex-wrap items-center gap-1.5 min-w-0 max-w-full ${className}`}>
       {showUnit && (
         <select value={units[0] ?? ""} onChange={(e) => onUnits(e.target.value ? [e.target.value] : [])} aria-label="Unit" className={sel(units.length > 0)}>
           <option value="">All units</option>

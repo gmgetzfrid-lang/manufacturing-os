@@ -69,7 +69,12 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
             <BackupIndicator />
             <KnowledgeIndexIndicator />
             <GlobalCommandPalette />
-            <SubscriptionGate>{children}</SubscriptionGate>
+            {/* Clipped sideways: nothing wider than the screen can widen the
+                page, so even focusing a field can't shift it sideways (the
+                main's own overflow only stops a drag). */}
+            <div className="h-full [overflow-x:clip]">
+              <SubscriptionGate>{children}</SubscriptionGate>
+            </div>
             <BackToGraphChip />
             <RelationshipGraphHost />
             <SignatureCaptureHost />
