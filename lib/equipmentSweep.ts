@@ -78,6 +78,15 @@ export function letterFits(tag: string, typeLabel: string | null): boolean {
 
 export interface RegistryAsset { id: string; tag: string; code: string | null; unitCode: string | null; description?: string | null }
 
+/** An ID an old import saved inside the name ("X-31 (2030.31)"). */
+export const idInTag = (tag: string): string | null => {
+  const m = String(tag).match(/\(\s*([^)]+?)\s*\)/);
+  return m && looksLikeId(m[1]) ? m[1].toUpperCase() : null;
+};
+
+/** The registry as the ID sees it: an ID kept only in the name counts. */
+export const withIds = (registry: RegistryAsset[]): RegistryAsset[] => registry.map((a) => (a.code ? a : { ...a, code: idInTag(a.tag) }));
+
 export interface SweepRow {
   tag: string;
   pages: number[];
@@ -98,11 +107,32 @@ export interface SweepRow {
   listedAs: string | null;
   /** The same name on other units: different equipment, said so. */
   otherUnits: Array<{ unitCode: string | null; code: string | null }>;
-  /** Something a person should look at before it's added. */
+  /** Something a person should look at before it's added (never a name
+   *  that repeats: only the ID decides). */
   problem: string | null;
-  /** The registry has this name in the unit with another ID (often one
-   *  guessed from the tag before): the equipment the sheet's ID can replace. */
+  /** The registry has this name in the unit with another ID: a different
+   *  piece of equipment (the ID governs), so this one is added beside it.
+   *  "Overwrite with what the sheets say" puts the sheet's ID on it instead. */
   clash?: { assetId: string; code: string } | null;
+  /** The registry's ID for it was guessed from the tag (V-7 in unit 20 as
+   *  2010.7, before IDs came off the drawings): the sheet's printed one
+   *  replaces it on its own. The old guess, for saying so. */
+  fixCode?: string | null;
+}
+
+/** The ID the old import worked out from a tag (unit, type, tag number):
+ *  a registry ID equal to it was a guess, not the plant's. */
+export function guessedCode(tag: string, unitCode: string | null | undefined, book: Codebook): string | null {
+  const p = splitTag(tag);
+  const t = typeFromLetter(tag, book);
+  if (!p || !t || !unitCode) return null;
+  return `${unitCode}${t.code}.${parseInt(p.number, 10)}${p.suffix}`;
+}
+
+/** Tags read out of a drawing's own number ("2002-D 2001" gives D-2001):
+ *  the title block, not equipment. */
+export function drawingNumberTags(drawingNumber: string | null | undefined): Set<string> {
+  return new Set([...String(drawingNumber ?? "").toUpperCase().matchAll(/([A-Z]{1,4})[\s-]?(\d{1,6})/g)].map((m) => nameKey(`${m[1]}-${m[2]}`)));
 }
 
 /** Each tag on a drawing, lined up with the registry. `drawingUnit` is the
@@ -117,8 +147,9 @@ export function sweepRows(input: {
    *  is the title block, not equipment. */
   drawingNumber?: string | null;
 }): SweepRow[] {
-  const { book, registry } = input;
-  const own = new Set([...String(input.drawingNumber ?? "").toUpperCase().matchAll(/([A-Z]{1,4})[\s-]?(\d{1,6})/g)].map((m) => nameKey(`${m[1]}-${m[2]}`)));
+  const { book } = input;
+  const registry = withIds(input.registry);
+  const own = drawingNumberTags(input.drawingNumber);
   const byTag = new Map<string, { pages: Set<number>; code: string | null; name: string | null }>();
   for (const r of input.readings) {
     const tag = normalizeTag(r.tag);
@@ -149,6 +180,7 @@ export function sweepRows(input: {
     let problem: string | null = null;
     let listedAs: string | null = null;
     let clash: SweepRow["clash"] = null;
+    let fixCode: string | null = null;
     if (v.code) {
       asset = byId.get(idKey(v.code)) ?? null;
       if (asset) {
@@ -156,17 +188,20 @@ export function sweepRows(input: {
         if (nameKey(plain(asset.tag)) !== nameKey(tag)) listedAs = plain(asset.tag);
       } else {
         // Not in the registry by ID. The same name in the unit with no ID
-        // yet is this equipment (its ID gets filled in); with another ID,
-        // it's a clash for a person.
-        const named = inUnit[0];
-        if (named && !named.code) { asset = named; match = "name"; }
-        else if (named?.code) {
-          problem = `The ${unitWord(named.unitCode, book)} list has ${tag} as ${named.code}; the sheet says ${v.code}.`;
-          clash = { assetId: named.id, code: named.code };
-        }
+        // yet, or with one only guessed from the tag, is this equipment (the
+        // printed ID goes on it). With a real ID of its own it's another
+        // piece of equipment: the ID governs, so this one is added beside it.
+        const blank = inUnit.find((a) => !a.code);
+        const guessed = inUnit.find((a) => a.code && idKey(a.code) === idKey(guessedCode(tag, a.unitCode, book)));
+        if (blank) { asset = blank; match = "name"; }
+        else if (guessed) { asset = guessed; match = "name"; fixCode = guessed.code; }
+        else if (inUnit[0]?.code) clash = { assetId: inUnit[0].id, code: inUnit[0].code };
       }
     } else if (inUnit.length === 1) {
       asset = inUnit[0]; match = "name";
+    } else if (inUnit.length > 1) {
+      // The name alone can't say which: the ID does.
+      problem = `The ${unitWord(unitCode, book)} list has ${inUnit.length} called ${tag} (${inUnit.map((a) => a.code ?? "no ID").join(", ")}). Enter this one's ID.`;
     }
     const t = dec?.typeCode ? { code: dec.typeCode, label: dec.typeLabel ?? dec.typeCode, from: "id" as const } : typeFromLetter(tag, book);
     if (dec?.typeLabel && !letterFits(tag, dec.typeLabel)) problem = problem ?? `The ID says ${dec.typeLabel.toLowerCase()}, but the tag letter doesn't fit.`;
@@ -182,6 +217,7 @@ export function sweepRows(input: {
       otherUnits: sameName.filter((a) => a.id !== asset?.id && a.unitCode !== unitCode).map((a) => ({ unitCode: a.unitCode, code: a.code })),
       problem,
       clash,
+      fixCode,
     };
   }).sort((a, b) => a.tag.localeCompare(b.tag, undefined, { numeric: true }));
 }

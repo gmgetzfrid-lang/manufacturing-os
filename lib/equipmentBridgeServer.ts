@@ -24,7 +24,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadCodebookAdmin } from "@/lib/codebookServer";
 import { parseDrawingNumber } from "@/lib/codebook";
-import { sweepRows, autoReady, decodeId, looksLikeId, type SweepRow, type RegistryAsset, type RowChoice } from "@/lib/equipmentSweep";
+import { sweepRows, autoReady, decodeId, looksLikeId, drawingNumberTags, withIds, type SweepRow, type RegistryAsset, type RowChoice } from "@/lib/equipmentSweep";
 import { idKey, nameKey } from "@/lib/equipmentPick";
 
 /** One tag on a drawing, lined up with the registry by its ID
@@ -67,10 +67,28 @@ export async function computeForKnowledgeDoc(admin: SupabaseClient, knowledgeDoc
     .eq("document_id", kdoc.id)
     .eq("kind", "equipment")
     .limit(4000);
-  const readings = ((ents ?? []) as Array<{ tag: string; page: number; raw: string | null }>).map((e) => ({ tag: String(e.tag), page: Number(e.page), raw: e.raw ?? null }));
+  const fresh = ((ents ?? []) as Array<{ tag: string; page: number; raw: string | null }>).map((e) => ({ tag: String(e.tag), page: Number(e.page), raw: e.raw ?? null }));
+  // A re-read never forgets what an earlier read found: a tag this read
+  // missed (a poor text layer) is kept, with the ID only if the sheet
+  // printed it (never one an old rule worked out from the tag).
+  const { data: prevRow } = await admin.from("document_equipment_suggestions").select("suggested, applied")
+    .eq("org_id", orgId).eq("document_id", documentId).maybeSingle();
+  const seen = new Set(fresh.map((r) => nameKey(r.tag)));
+  const prevRows = (Array.isArray(prevRow?.suggested) ? prevRow!.suggested : []) as Array<Partial<SweepRow>>;
+  // Tags accepted from an earlier read too (kept on the drawing).
+  for (const t of (Array.isArray(prevRow?.applied) ? prevRow!.applied : []) as string[]) {
+    if (!prevRows.some((r) => r.tag && nameKey(r.tag) === nameKey(t))) prevRows.push({ tag: t, pages: [] });
+  }
+  const carried = prevRows
+    .filter((r) => r.tag && !seen.has(nameKey(r.tag)))
+    .flatMap((r) => (r.pages?.length ? r.pages : [NaN]).map((page) => ({
+      tag: String(r.tag), page,
+      raw: r.codeFrom === "sheet" && r.code ? `${r.tag} (${r.code})${r.name ? ` ${r.name}` : ""}` : null,
+    })));
+  const readings = [...fresh, ...carried];
   if (readings.length === 0) {
     // Still record an empty computation so the sweep shows "checked, nothing".
-    await upsertSuggestions(admin, orgId, documentId, []);
+    await upsertSuggestions(admin, orgId, documentId, [], { settle: false });
     return { documentId, suggestions: [], autoApplied: false };
   }
 
@@ -94,12 +112,18 @@ export async function computeForKnowledgeDoc(admin: SupabaseClient, knowledgeDoc
   }
   void bridge;
 
-  const registry = await loadRegistry(admin, orgId);
+  const registry = withIds(await loadRegistry(admin, orgId));
   const suggestions = sweepRows({ readings, registry, book, drawingUnit, drawingNumber: srcDoc.document_number ?? null });
-  await upsertSuggestions(admin, orgId, documentId, suggestions);
-  // A link a machine drew from this drawing to equipment the sheet's own ID
-  // says it isn't (the Crude Unit's V-7 for a Transmix V-7) comes off.
+  // A re-read sets right what an earlier one got wrong, on its own:
+  //  - a link a machine drew to equipment the sheet's ID says it isn't (the
+  //    Crude Unit's V-7 for the Transmix V-7) comes off;
+  //  - a title-block number taken for equipment (D-2001) comes off, while a
+  //    tag this read missed is kept (not read is not wrong);
+  //  - a tag already accepted links to the equipment its ID names now.
   await pruneWrongLinks(admin, orgId, documentId, suggestions, registry).catch(() => undefined);
+  const settled = await upsertSuggestions(admin, orgId, documentId, suggestions, { titleBlock: drawingNumberTags(srcDoc.document_number ?? null) });
+  if (settled.gone.length) await unlinkForDocument(admin, { orgId, documentId, tags: settled.gone, userId: null, keepStatus: true }).catch(() => undefined);
+  await linkRows(admin, orgId, documentId, suggestions.filter((r) => r.assetId && settled.applied.includes(r.tag)), null).catch(() => undefined);
 
   // Auto-apply when the library opted in AND a target column is mapped.
   let autoApplied = false;
@@ -120,12 +144,22 @@ export async function computeForKnowledgeDoc(admin: SupabaseClient, knowledgeDoc
 async function upsertSuggestions(
   admin: SupabaseClient, orgId: string, documentId: string,
   suggestions: BridgeSuggestion[],
-): Promise<void> {
-  // Preserve the applied history (the idempotence base) across recomputes.
+  opts: { settle?: boolean; titleBlock?: Set<string> } = {},
+): Promise<{ applied: string[]; gone: string[] }> {
+  // Keep what was accepted before (the idempotence base). One whose ID now
+  // names no listed equipment (it was linked to another unit's) waits to be
+  // added again.
   const { data: existing } = await admin
     .from("document_equipment_suggestions").select("applied, status")
     .eq("org_id", orgId).eq("document_id", documentId).maybeSingle();
-  const applied: string[] = Array.isArray(existing?.applied) ? (existing?.applied as string[]) : [];
+  const before: string[] = Array.isArray(existing?.applied) ? (existing?.applied as string[]) : [];
+  const now = new Map(suggestions.map((s) => [nameKey(s.tag), s]));
+  // Only a title-block number taken for equipment (D-2001 on 2002-D 2001)
+  // comes off. A tag this read didn't see stays: not read is not wrong.
+  // Nothing read (a drawing between reads) settles nothing.
+  const settle = opts.settle !== false;
+  const gone = settle ? before.filter((t) => opts.titleBlock?.has(nameKey(t))) : [];
+  const applied = settle ? before.filter((t) => !gone.includes(t) && (!now.has(nameKey(t)) || !!now.get(nameKey(t))?.assetId)) : before;
   const newTags = suggestions.map((s) => s.tag).filter((t) => !applied.includes(t));
   await admin.from("document_equipment_suggestions").upsert({
     org_id: orgId,
@@ -135,6 +169,7 @@ async function upsertSuggestions(
     status: newTags.length === 0 && applied.length > 0 ? "applied" : "pending",
     computed_at: new Date().toISOString(),
   }, { onConflict: "org_id,document_id" });
+  return { applied, gone };
 }
 
 async function loadBridgeConfig(admin: SupabaseClient, libraryId: string): Promise<BridgeConfig | null> {
@@ -168,12 +203,12 @@ export async function folderUnitOf(admin: SupabaseClient, orgId: string, folderI
 /** Take tags off a drawing: out of its applied list and its column, and
  *  the links drawn for them. For a wrong link (a title-block number read as
  *  equipment, another unit's equipment). */
-export async function unlinkForDocument(admin: SupabaseClient, input: { orgId: string; documentId: string; tags: string[]; userId: string }): Promise<{ removed: number }> {
+export async function unlinkForDocument(admin: SupabaseClient, input: { orgId: string; documentId: string; tags: string[]; userId: string | null; keepStatus?: boolean }): Promise<{ removed: number }> {
   const { orgId, documentId } = input;
   const keys = new Set(input.tags.map((t) => nameKey(t)));
   const { data: row } = await admin.from("document_equipment_suggestions").select("applied").eq("org_id", orgId).eq("document_id", documentId).maybeSingle();
   const applied = (Array.isArray(row?.applied) ? row!.applied as string[] : []).filter((t) => !keys.has(nameKey(t)));
-  await admin.from("document_equipment_suggestions").update({ applied, status: "pending" }).eq("org_id", orgId).eq("document_id", documentId);
+  if (!input.keepStatus) await admin.from("document_equipment_suggestions").update({ applied, status: "pending" }).eq("org_id", orgId).eq("document_id", documentId);
   const { data: doc } = await admin.from("documents").select("library_id, metadata").eq("id", documentId).eq("org_id", orgId).maybeSingle();
   const bridge = await loadBridgeConfig(admin, String((doc as { library_id?: string } | null)?.library_id ?? ""));
   const key = bridge?.targetColumnKey;
@@ -211,9 +246,10 @@ async function loadRegistry(admin: SupabaseClient, orgId: string): Promise<Regis
 }
 
 /** Machine-drawn links from a drawing to equipment that has the same name
- *  as a tag on it but not the ID the sheet prints (another unit's). */
+ *  as a tag on it but is not it: not the ID the sheet prints, or (no ID
+ *  printed) another unit's. */
 async function pruneWrongLinks(admin: SupabaseClient, orgId: string, documentId: string, rows: BridgeSuggestion[], registry: RegistryAsset[]): Promise<number> {
-  const read = rows.filter((r) => r.codeFrom === "sheet" && r.code);
+  const read = rows.filter((r) => r.unitCode || (r.codeFrom === "sheet" && r.code));
   if (!read.length) return 0;
   const { data: edges } = await admin.from("estate_edges").select("id, b, origin")
     .eq("org_id", orgId).eq("a", `doc:${documentId}`).eq("type", "tagged_to").in("origin", ["vision", "bridge", "resolver"]).limit(1000);
@@ -224,10 +260,23 @@ async function pruneWrongLinks(admin: SupabaseClient, orgId: string, documentId:
     const a = byId.get(e.b.replace(/^asset:/, ""));
     if (!a) continue;
     const r = read.find((x) => nameKey(x.tag) === nameKey(plain(a.tag)));
-    if (r && idKey(a.code) !== idKey(r.code) && (a.unitCode ?? null) !== r.unitCode) wrong.push(e.id);
+    if (!r || r.assetId === a.id) continue;
+    const printed = r.codeFrom === "sheet" && r.code;
+    if (printed ? idKey(a.code) !== idKey(r.code) : r.unitCode != null && (a.unitCode ?? null) !== r.unitCode) wrong.push(e.id);
   }
   if (wrong.length) await admin.from("estate_edges").delete().in("id", wrong);
   return wrong.length;
+}
+
+/** Draw the drawing's link to the equipment each row names (kept once). */
+async function linkRows(admin: SupabaseClient, orgId: string, documentId: string, rows: BridgeSuggestion[], userId: string | null): Promise<void> {
+  const edges = rows.filter((s) => s.assetId).map((s) => ({
+    org_id: orgId, a: `doc:${documentId}`, b: `asset:${s.assetId}`, type: "tagged_to", origin: "bridge", tier: "provable", confidence: 1, status: "applied",
+    summary: `${s.tag}${s.code ? ` (${s.code})` : ""} is on sheet ${s.pages.join(", ") || "?"}`,
+    evidence: { tag: s.tag, code: s.code, idFrom: s.codeFrom, where: "page" },
+    created_by: userId, created_by_name: null,
+  }));
+  if (edges.length) await admin.from("estate_edges").upsert(edges, { onConflict: "org_id,a,b,type", ignoreDuplicates: true }).then(() => undefined, () => undefined);
 }
 
 // ─── Apply ──────────────────────────────────────────────────────────────────
@@ -285,6 +334,7 @@ export async function applyForDocument(admin: SupabaseClient, input: {
     const code = input.choices?.[s.tag]?.typeCode ?? s.typeCode;
     return book.equipmentTypes.find((t) => t.code === code)?.label ?? null;
   }));
+  let ids: RegistryAsset[] | null = null;
   for (const s0 of wanted) {
     const choice = input.choices?.[s0.tag];
     if (choice?.skip) continue;
@@ -296,9 +346,10 @@ export async function applyForDocument(admin: SupabaseClient, input: {
       const dec = decodeId(typed, book);
       s.code = typed; s.codeFrom = "sheet";
       if (dec) { s.unitCode = dec.unitCode; if (dec.typeCode) { s.typeCode = dec.typeCode; s.typeLabel = dec.typeLabel; s.typeFrom = "id"; } }
-      // It may be equipment already listed under that ID.
-      const { data: hit } = await admin.from("assets").select("id").eq("org_id", orgId).eq("code", typed).limit(1);
-      s.assetId = (hit as Array<{ id: string }> | null)?.[0]?.id ?? null;
+      // It may be equipment already listed under that ID (2030.31 and
+      // 2030.031 alike, or kept in the name: "X-31 (2030.31)").
+      ids = ids ?? withIds(await loadRegistry(admin, orgId));
+      s.assetId = ids.find((a) => idKey(a.code) === idKey(typed))?.id ?? null;
       s.match = s.assetId ? "id" : null;
       s.problem = null;
     }
@@ -307,7 +358,10 @@ export async function applyForDocument(admin: SupabaseClient, input: {
       if (t) { s.typeCode = t.code; s.typeLabel = t.label; }
     }
     if (!reviewed && !s.assetId && !autoReady(s)) continue;
-    if (!reviewed && s.assetId && s.match !== "id") continue;
+    // The automatic path links by ID, or puts an ID printed plainly on the
+    // sheet on the one piece of that name in the unit with no ID yet (or
+    // one only worked out from its tag).
+    if (!reviewed && s.assetId && s.match !== "id" && !s.fixCode && !autoReady(s)) continue;
     // The sheet's ID over the registry's (an ID guessed from the tag before):
     // a person's choice, never the automatic path's.
     if (choice?.overwrite && s.clash && s.code && !s.assetId) {
@@ -327,11 +381,21 @@ export async function applyForDocument(admin: SupabaseClient, input: {
 
     if (s.assetId) {
       // Matched: fill in what the registry is missing (never overwrite).
-      const { data: cur } = await admin.from("assets").select("id, code, unit_code, description, type_id").eq("id", s.assetId).maybeSingle();
-      const a = cur as { id: string; code: string | null; unit_code: string | null; description: string | null; type_id: string | null } | null;
+      const { data: cur } = await admin.from("assets").select("id, tag, code, unit_code, description, type_id").eq("id", s.assetId).maybeSingle();
+      const a = cur as { id: string; tag: string; code: string | null; unit_code: string | null; description: string | null; type_id: string | null } | null;
       if (a) {
         const patch: Record<string, unknown> = {};
-        if (!a.code && s.code) patch.code = s.code;
+        // No ID yet, or one guessed from the tag (2010.7): the sheet's goes on,
+        // unless another piece of equipment already has it.
+        const guessed = !!s.fixCode && !!a.code && idKey(a.code) === idKey(s.fixCode);
+        if (s.code && s.codeFrom === "sheet" && (!a.code || guessed)) {
+          const { data: taken } = await admin.from("assets").select("id, tag, unit_code").eq("org_id", orgId).eq("code", s.code).neq("id", a.id).limit(1);
+          const other = (taken as Array<{ tag: string; unit_code: string | null }> | null)?.[0];
+          if (other) { failed.push({ tag: s.tag, why: `${s.code} is already ${other.tag}${other.unit_code ? ` (unit ${other.unit_code})` : ""} in the registry.` }); continue; }
+          patch.code = s.code;
+        } else if (!a.code && s.code) patch.code = s.code;
+        // A name saved with its ID in it ("X-31 (2030.31)") is just the tag.
+        if (/\(/.test(a.tag) && nameKey(a.tag.replace(/\s*\(.*$/, "")) === nameKey(s.tag)) { patch.tag = s.tag; patch.tag_normalized = assetNorm(s.tag); }
         if (!a.unit_code && s.unitCode) patch.unit_code = s.unitCode;
         if (s.name && (!a.description || (choice?.overwrite && a.description !== s.name))) patch.description = s.name;
         if (!a.type_id && s.typeLabel && typeIds.get(s.typeLabel)) patch.type_id = typeIds.get(s.typeLabel);
@@ -370,7 +434,7 @@ export async function applyForDocument(admin: SupabaseClient, input: {
         ? ((await admin.from("assets").select("tag, unit_code").eq("org_id", orgId).eq("tag_normalized", assetNorm(s.tag)).neq("unit_code", s.unitCode).limit(1)).data as Array<{ tag: string; unit_code: string | null }> | null)?.[0]
         : undefined;
       failed.push({ tag: s.tag, why: sameName
-        ? "The registry still allows each name only once across all units, and another unit already has it. Run the equipment SQL (equipment-admin-only.sql) once, then add again."
+        ? "The database still holds each name once for the whole plant (another unit has this name with its own ID). Run the equipment SQL once, then press Add again."
         : error.message });
       continue;
     }
@@ -378,15 +442,7 @@ export async function applyForDocument(admin: SupabaseClient, input: {
   }
 
   // The drawing links to exactly the equipment its IDs name.
-  if (landedRows.length) {
-    const rows = landedRows.map((s) => ({
-      org_id: orgId, a: `doc:${documentId}`, b: `asset:${s.assetId}`, type: "tagged_to", origin: "bridge", tier: "provable", confidence: 1, status: "applied",
-      summary: `${s.tag}${s.code ? ` (${s.code})` : ""} is on sheet ${s.pages.join(", ") || "?"}`,
-      evidence: { tag: s.tag, code: s.code, idFrom: s.codeFrom, where: "page" },
-      created_by: input.userId, created_by_name: null,
-    }));
-    await admin.from("estate_edges").upsert(rows, { onConflict: "org_id,a,b,type", ignoreDuplicates: true }).then(() => undefined, () => undefined);
-  }
+  await linkRows(admin, orgId, documentId, landedRows, input.userId);
 
   // ── Populate the column: array-union merge, never clobbering manual tags.
   const metadata = (doc.metadata && typeof doc.metadata === "object" ? doc.metadata : {}) as Record<string, unknown>;

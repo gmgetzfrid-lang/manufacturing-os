@@ -262,7 +262,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
           {units.length === 1 && <p className="text-[12px] text-[var(--color-text-muted)]">On {unitLabel(adding.unit)}.</p>}
           {check.kind === "same_name" && (
             <div className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[12.5px] text-amber-900 dark:text-amber-200 space-y-2">
-              <p><b>{equipmentLabel(check.asset)} is already on {unitLabel(check.asset.unitCode)}</b>. Link that one: adding it again would make two.</p>
+              <p><b>{equipmentLabel(check.asset)} is already on {unitLabel(check.asset.unitCode)}</b>. If it&apos;s that one, link it. With a different ID it&apos;s a different piece: Add makes it its own.</p>
               <button type="button" disabled={!!busy} onClick={() => void link(check.asset)} className={quiet}><Check className="w-4 h-4" /> Link {plainName(check.asset.tag)}</button>
             </div>
           )}
@@ -275,7 +275,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
         </ModalBody>
         <ModalFooter>
           <button type="button" onClick={() => setAdding(null)} className={quiet}>Back</button>
-          <button type="button" disabled={!!busy || check.kind !== "ok"} onClick={() => void save()} className={btn}>
+          <button type="button" disabled={!!busy || (check.kind !== "ok" && check.kind !== "same_name")} onClick={() => void save()} className={btn}>
             {busy === "add" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add and link
           </button>
         </ModalFooter>

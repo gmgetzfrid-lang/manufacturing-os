@@ -11,7 +11,8 @@ import Link from "next/link";
 import { Briefcase, Factory, Cpu, FileText, Plus, X, Loader2, Link2 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
-import { loadCodebook, normalizeTag } from "@/lib/codebook";
+import { loadCodebook } from "@/lib/codebook";
+import { findAssetsByTag } from "@/lib/assets";
 import { listEdgesFor, declareEdge, removeEdge, decideEdge } from "@/lib/estate/client";
 import { labelNodes, type NodeLabel } from "@/lib/estate/labels";
 import { nid, type EstateEdge } from "@/lib/estate/ids";
@@ -53,12 +54,11 @@ export default function ProjectScopePanel({ orgId, projectId, projectName, canMa
     if (!t) return;
     setBusy(true); setErr(null);
     try {
-      const { data } = await supabase.from("assets").select("id, tag").eq("org_id", orgId).eq("tag_normalized", normalizeTag(t).toLowerCase()).maybeSingle();
-      let a = data as { id: string; tag: string } | null;
-      if (!a) {
-        const { data: d2 } = await supabase.from("assets").select("id, tag").eq("org_id", orgId).ilike("tag", t).maybeSingle();
-        a = d2 as { id: string; tag: string } | null;
-      }
+      // An ID finds one piece; a name can be on several units (V-7 on the
+      // Crude and Transmix units), so then it asks for the ID.
+      const hits = await findAssetsByTag(orgId, t);
+      if (hits.length > 1) throw new Error(`${t} is on ${hits.length} units (${hits.map((h) => h.code ?? `unit ${h.unit_code ?? "?"}`).join(", ")}). Type its ID instead.`);
+      const a = hits[0] ?? null;
       if (!a) throw new Error(`No equipment tagged "${t}" in the registry.`);
       await declareEdge({ orgId, a: node, b: nid.asset(a.id), type: "project_scope", summary: `Project "${projectName}" covers ${a.tag} - set by hand`, actor: me });
       setTagInput(""); await load();

@@ -100,13 +100,13 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
     finally { setLoading(false); }
   }, [orgId, libraryId, folderId, authed]);
 
-  const sweep = useCallback(async () => {
+  const sweep = useCallback(async (keepChoices = false) => {
     setSweeping(true); setError(null); setNotice(null);
     try {
       const headers = { ...(await authed()), "Content-Type": "application/json" };
       const res = await fetch("/api/equipment-bridge", { method: "POST", headers, body: JSON.stringify({ action: "sweep", orgId, libraryId, folderId }) });
       if (!res.ok) throw new Error((await res.json()).error ?? `HTTP ${res.status}`);
-      setChoice({});
+      if (!keepChoices) setChoice({});
       await refresh();
     } catch (e) { setError((e as Error).message); }
     finally { setSweeping(false); }
@@ -137,13 +137,13 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
     finally { setUnlinking(null); }
   };
 
-  // Read with the old rules (no IDs kept): read again, once, on open.
+  // Every open reads the sheets again against today's registry, so what an
+  // earlier read got wrong (a guessed ID, another unit's link, a title-block
+  // number) sets itself right. The last read shows meanwhile.
   useEffect(() => {
     let live = true;
     void loadCodebook(orgId).then((b) => { if (live) setBook(b); });
-    void refresh().then((list) => {
-      if (live && list && list.some((r) => r.suggested.some((s) => s.codeFrom === undefined))) void sweep();
-    });
+    void refresh().then(() => { if (live) void sweep(true); });
     return () => { live = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- once on open
   }, []);
@@ -195,8 +195,9 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
   const count = (k: Kind) => all.filter((x) => x.kind === k).length;
   const picked = all.filter((x) => x.on);
   const toAdd = picked.filter((x) => x.kind === "new").length;
-  const toLink = picked.filter((x) => x.kind === "listed").length;
-  const toReplace = picked.filter((x) => x.kind === "update").length;
+  // An ID only worked out from the tag, put right from the sheet, is a replace.
+  const toLink = picked.filter((x) => x.kind === "listed" && !x.s.fixCode).length;
+  const toReplace = picked.filter((x) => x.kind === "update" || (x.kind === "listed" && !!x.s.fixCode)).length;
   const clashes = all.filter((x) => !x.applied && x.s.clash && x.s.code && !x.typed).length;
   const shown = (x: (typeof all)[number]) => filter === "all" || (filter === "needs" ? x.kind === "needs" || x.kind === "check" : filter === "ready" ? x.kind === "new" && !!x.code : x.kind === "listed" || x.kind === "linked");
 
@@ -354,7 +355,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
                 <label className="flex items-start gap-2 text-[12.5px] cursor-pointer">
                   <input type="checkbox" checked={overwriteAll} onChange={(e) => { setOverwriteAll(e.target.checked); setChoice((cur) => Object.fromEntries(Object.entries(cur).map(([k, v]) => [k, { ...v, overwrite: undefined }]))); }} className="mt-0.5 w-4 h-4 accent-[var(--color-accent)]" />
                   <span><b className="text-[var(--color-text)]">Overwrite the registry with what the sheets say</b>
-                    <span className="block text-[11.5px] text-[var(--color-text-muted)]">Where the registry has a name in this unit with another ID (one guessed from the tag before), the sheet&apos;s ID replaces it; listed equipment takes the sheet&apos;s service name.{clashes ? ` ${clashes} ID${clashes === 1 ? "" : "s"} differ here.` : ""}</span></span>
+                    <span className="block text-[11.5px] text-[var(--color-text-muted)]">Where this unit already has the name with another ID, the sheet&apos;s ID goes on it instead of adding a second one; listed equipment takes the sheet&apos;s service name.{clashes ? ` ${clashes} ID${clashes === 1 ? "" : "s"} differ here.` : ""}</span></span>
                 </label>
               )}
               <div className="flex flex-wrap gap-1.5">
@@ -423,13 +424,15 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
                             <div className="col-start-2 sm:col-start-auto min-w-0">
                               <div className={`font-bold ${KIND[x.kind].cls}`}>{KIND[x.kind].word}{x.kind === "linked" || x.kind === "listed" ? " ✓" : ""}</div>
                               {x.s.listedAs && <div className="text-[11px] text-[var(--color-text-muted)]">listed as {x.s.listedAs}</div>}
-                              {x.s.match === "name" && <div className="text-[11px] text-[var(--color-text-muted)]">matched by name in {unitName(x.unitCode)}{x.s.codeFrom === "sheet" ? "; its ID gets filled in" : ""}</div>}
+                              {x.s.match === "name" && !x.s.fixCode && <div className="text-[11px] text-[var(--color-text-muted)]">matched by name in {unitName(x.unitCode)}{x.s.codeFrom === "sheet" ? "; its ID gets filled in" : ""}</div>}
+                              {x.s.fixCode && !x.applied && <div className="text-[11px] text-amber-800 dark:text-amber-300">Its ID {x.s.fixCode} was worked out from the tag; the sheet&apos;s {x.s.code} replaces it</div>}
+                              {x.kind === "new" && x.s.clash && <div className="text-[11px] text-[var(--color-text-muted)]">{unitName(x.unitCode) ?? "This unit"} also has a {x.s.tag} as {x.s.clash.code}: a different ID, so this one is added as its own</div>}
                               {x.kind === "check" && x.problem && <div className="text-[11px] text-rose-700 dark:text-rose-400">{x.problem}</div>}
                               {x.kind === "update" && x.s.clash && <div className="text-[11px] text-amber-800 dark:text-amber-300">{x.s.clash.code} becomes {x.s.code}{x.s.name ? `, named ${x.s.name}` : ""}</div>}
                               {canAdd && !x.applied && x.s.clash && x.s.code && !x.typed && (
                                 <label className="mt-0.5 inline-flex items-center gap-1 text-[11.5px] font-bold text-[var(--color-text)] cursor-pointer">
                                   <input type="checkbox" checked={x.kind === "update"} onChange={(e) => set(x.k, { overwrite: e.target.checked, on: e.target.checked })} className="w-3.5 h-3.5 accent-[var(--color-accent)]" />
-                                  Use the sheet&apos;s ID
+                                  It&apos;s that one: change its ID to {x.s.code}
                                 </label>
                               )}
                               {x.applied && (

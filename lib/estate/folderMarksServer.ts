@@ -121,23 +121,31 @@ async function fileAsset(admin: SupabaseClient, orgId: string, assetId: string, 
   if (Object.keys(patch).length) await admin.from("assets").update(patch).eq("id", assetId).eq("org_id", orgId);
 }
 
-async function findOrCreateAsset(admin: SupabaseClient, orgId: string, tag: string, name: string | null, folderId: string, actor: Actor): Promise<{ id: string; created: boolean }> {
+async function findOrCreateAsset(admin: SupabaseClient, orgId: string, tag: string, name: string | null, folderId: string, actor: Actor, unitCode: string | null): Promise<{ id: string; created: boolean }> {
   const norm = assetNorm(tag);
-  const { data: hit } = await admin.from("assets").select("id, description").eq("org_id", orgId).eq("tag_normalized", norm).maybeSingle();
+  // A name repeats from unit to unit (the ID is what's unique): the one in
+  // the folder's unit, or one with no unit yet; never another unit's.
+  const { data: hits } = await admin.from("assets").select("id, description, unit_code").eq("org_id", orgId).eq("tag_normalized", norm).limit(20);
+  const all = (hits ?? []) as Array<{ id: string; description: string | null; unit_code: string | null }>;
+  const fit = unitCode ? all.filter((a) => a.unit_code === unitCode || !a.unit_code) : all;
+  if (!unitCode && fit.length > 1) throw new Error(`More than one piece of equipment is named ${tag}. Mark this folder's unit first.`);
+  const hit = fit.find((a) => a.unit_code === unitCode) ?? fit[0] ?? null;
   if (hit) {
     const h = hit as { id: string; description: string | null };
     if (name && !h.description) await admin.from("assets").update({ description: name }).eq("id", h.id);
     return { id: h.id, created: false };
   }
-  const insert = { org_id: orgId, tag, tag_normalized: norm, description: name, origin: "folder", discovered_from: { folderId }, created_by: actor.userId };
+  const insert = { org_id: orgId, tag, tag_normalized: norm, description: name, unit_code: unitCode, origin: "folder", discovered_from: { folderId }, created_by: actor.userId };
   let { data: made, error } = await admin.from("assets").insert(insert).select("id").single();
   if (error && /origin|discovered_from|column/i.test(error.message)) {
     const { origin: _o, discovered_from: _d, ...base } = insert; void _o; void _d;
     ({ data: made, error } = await admin.from("assets").insert(base).select("id").single());
   }
   if (error || !made) {
-    const { data: raced } = await admin.from("assets").select("id").eq("org_id", orgId).eq("tag_normalized", norm).maybeSingle();
-    if (raced) return { id: String((raced as { id: string }).id), created: false };
+    const q = admin.from("assets").select("id").eq("org_id", orgId).eq("tag_normalized", norm);
+    const { data: raced } = await (unitCode ? q.eq("unit_code", unitCode) : q.is("unit_code", null)).limit(1);
+    const r = (raced as Array<{ id: string }> | null)?.[0];
+    if (r) return { id: String(r.id), created: false };
     throw new Error(`Could not add ${tag} to the registry: ${error?.message ?? "unknown error"}`);
   }
   return { id: String((made as { id: string }).id), created: true };
@@ -176,10 +184,12 @@ export async function markFolder(admin: SupabaseClient, input: { orgId: string; 
     const tag = parsed?.tag;
     if (!tag) throw new Error(`"${m.tag}" is not shaped like an equipment tag (like H-2 or P-101A).`);
     const name = m.name?.trim() || parsed?.name || null;
-    const a = await findOrCreateAsset(admin, input.orgId, tag, name, f.id, input.actor);
-    await upsertMark(admin, input.orgId, f.id, "equipment", `asset:${a.id}`, `Folder "${f.name}" is ${tag}'s folder - marked by ${input.actor.name ?? "a person"}`, input.actor);
     const chainIds = chainOf(f.id, folders).map((c) => c.id);
-    await fileAsset(admin, input.orgId, a.id, f.id, folders, await markEdges(admin, input.orgId, chainIds));
+    const chainMarks = await markEdges(admin, input.orgId, chainIds);
+    const unitCode = [...chainIds].reverse().map((id) => chainMarks.get(id)?.area?.code).find(Boolean) ?? null;
+    const a = await findOrCreateAsset(admin, input.orgId, tag, name, f.id, input.actor, unitCode);
+    await upsertMark(admin, input.orgId, f.id, "equipment", `asset:${a.id}`, `Folder "${f.name}" is ${tag}'s folder - marked by ${input.actor.name ?? "a person"}`, input.actor);
+    await fileAsset(admin, input.orgId, a.id, f.id, folders, chainMarks);
   }
   return (await markEdges(admin, input.orgId, [f.id])).get(f.id) ?? {};
 }

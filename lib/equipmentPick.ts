@@ -2,9 +2,9 @@
 // equipment) to equipment in the project's unit, and the rules for adding
 // equipment.
 //
-//   - The ID (2010.07: unit 20, vessels 10, item 7) is one piece of
-//     equipment across the plant; the name (V-7) repeats from unit to unit,
-//     so it only has to be unique within its unit.
+//   - The ID governs: an ID (2010.07: unit 20, vessels 10, item 7) is one
+//     piece of equipment across the plant. A name (V-7) is not unique
+//     anywhere; the same name with another ID is another piece.
 //   - Only admins add equipment. Everyone else picks from the unit's list,
 //     or asks an admin to add what's missing; the ask is kept on the work
 //     order until an admin adds it (and it links itself) or it's linked to
@@ -75,7 +75,8 @@ export function idProblem(code: string, unitCode: string): string | null {
 
 export type NewCheck =
   | { kind: "ok" }
-  /** Already in this unit: link that one instead. */
+  /** This name is already in the unit: maybe that one (link it), or another
+   *  piece with its own ID (add it). Never a block: the ID decides. */
   | { kind: "same_name"; asset: PickAsset }
   /** The ID is another piece of equipment. */
   | { kind: "same_id"; asset: PickAsset }
@@ -85,12 +86,12 @@ export type NewCheck =
 /** Can this be added to the unit, or is it already there? */
 export function checkNew(x: { tag: string; code: string; unitCode: string }, registry: PickAsset[]): NewCheck {
   if (!nameKey(x.tag)) return { kind: "no_name" };
-  const here = registry.find((a) => a.unitCode === x.unitCode && nameKey(a.tag) === nameKey(x.tag));
-  if (here) return { kind: "same_name", asset: here };
   const bad = idProblem(x.code, x.unitCode);
   if (bad) return { kind: "bad_id", words: bad };
   const used = registry.find((a) => sameEquipmentId(a.code, x.code));
   if (used) return { kind: "same_id", asset: used };
+  const here = registry.find((a) => a.unitCode === x.unitCode && nameKey(a.tag) === nameKey(x.tag));
+  if (here) return { kind: "same_name", asset: here };
   return { kind: "ok" };
 }
 

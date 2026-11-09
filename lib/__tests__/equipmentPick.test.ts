@@ -46,8 +46,10 @@ describe("the ID: the plant's own number, never worked out from the name", () =>
 });
 
 describe("adding equipment without duplicates", () => {
-  it("the same name on the same unit is the one already there: link it", () => {
-    expect(checkNew({ tag: "V-08", code: "5510.08", unitCode: "55" }, reg)).toEqual({ kind: "same_name", asset: reg[3] });
+  it("the same name on the same unit is pointed out (link it if it's that one), the ID decides", () => {
+    expect(checkNew({ tag: "V-08", code: "5510.31", unitCode: "55" }, reg)).toEqual({ kind: "same_name", asset: reg[3] });
+    // Its own ID: the one already there.
+    expect(checkNew({ tag: "V-08", code: "5510.08", unitCode: "55" }, reg)).toEqual({ kind: "same_id", asset: reg[3] });
   });
   it("the same name on another unit is another piece: it can be added", () => {
     expect(checkNew({ tag: "V-7", code: "5510.07", unitCode: "55" }, reg)).toEqual({ kind: "ok" });

@@ -188,10 +188,11 @@ async function aliasHit(orgId: string, tag: string): Promise<Asset | null> {
   return (viaAlias as Asset | null) ?? null;
 }
 
-/** The database's refusals, in words: a name already in the unit, an ID
- *  already used, or a member who isn't an admin. */
+/** The database's refusals, in words: an ID already used, a name the
+ *  database still holds once (before the equipment SQL), or a member who
+ *  isn't an admin. */
 export function equipmentError(message: string, what: { tag?: string | null; code?: string | null; unitCode?: string | null }): Error {
-  if (/assets_unit_name_unique|tag_normalized/.test(message)) return new Error(`${what.tag ?? "That name"} is already in ${what.unitCode ? `unit ${what.unitCode}'s` : "the"} equipment list.`);
+  if (/assets_unit_name_unique|tag_normalized/.test(message)) return new Error(`The database still allows ${what.tag ?? "a name"} only once for the whole plant. The ID decides, not the name: run the equipment SQL once, then add it again.`);
   if (/assets_code_unique/.test(message)) return new Error(`ID ${what.code ?? ""} is already another piece of equipment.`.replace("ID  is", "That ID is"));
   if (/row-level security|violates row level|permission denied/i.test(message)) return new Error("Only admins can add or change equipment.");
   return new Error(message);

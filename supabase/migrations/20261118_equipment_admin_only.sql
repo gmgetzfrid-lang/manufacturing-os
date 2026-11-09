@@ -1,13 +1,13 @@
--- Equipment: the ID (5510.19) is one piece of equipment across the plant;
--- the name (V-7) repeats from unit to unit, so it only has to be unique
--- within its unit; and only admins change the equipment list. Everyone in
--- the org still reads it, and project members still link work orders to it.
--- Safe to run more than once.
+-- Equipment: the ID governs. An ID (5510.19) is one piece of equipment
+-- across the plant; a name (V-7) is not unique anywhere (the Crude Unit's
+-- V-7 is 2010.19, the Transmix Unit's is 5510.19: two vessels). Only admins
+-- change the equipment list. Everyone in the org still reads it, and
+-- project members still link work orders to it. Safe to run more than once.
 
 begin;
 
--- 1. A name only has to be unique within its unit (V-7 on the Crude Unit
---    and V-7 on the Transmix Unit are two vessels).
+-- 1. No limit on names: two pieces of equipment can share a name (only
+--    their IDs have to differ).
 do $$
 declare c record;
 begin
@@ -39,8 +39,7 @@ begin
     execute format('drop index public.%I', c.conname);
   end loop;
 end $$;
-create unique index if not exists assets_unit_name_unique
-  on public.assets (org_id, coalesce(unit_code, ''), tag_normalized);
+drop index if exists public.assets_unit_name_unique;
 
 -- 2. An ID (5510.19, 5516-TV-110) is one piece of equipment, plant-wide
 --    (5510.19 and 5510.019 count as the same ID).
@@ -88,6 +87,5 @@ commit;
 
 notify pgrst, 'reload schema';
 
--- Check: expect 0 rows from each.
--- select org_id, coalesce(unit_code,''), tag_normalized, count(*) from assets group by 1,2,3 having count(*) > 1;
+-- Check: expect 0 rows.
 -- select org_id, regexp_replace(upper(btrim(code)), '\.0+([0-9])', '.\1'), count(*) from assets where code is not null and btrim(code) <> '' group by 1,2 having count(*) > 1;
