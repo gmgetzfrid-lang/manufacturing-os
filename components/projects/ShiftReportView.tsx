@@ -819,6 +819,17 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       };
       const crewOf = (r: ShiftRow) => r.leaf.actualParty?.trim() || r.leaf.responsibleParty?.trim() || "Other";
       const doneIds = new Set(view.review.done.map((r) => r.leaf.id));
+      // The meeting hands over the work still to do: a step already
+      // finished before it (done last night, entered this morning) isn't.
+      const meetAt = w.start - meetingLeadMin(times) * 60_000;
+      const doneBeforeMeeting = (r: ShiftRow) => r.leaf.status === "completed" && Number.isFinite(Date.parse(String(r.leaf.actualAt ?? ""))) && Date.parse(String(r.leaf.actualAt)) < meetAt;
+      // Started this shift and no % yet: it's still work done on the shift.
+      const progressedIds = new Set(view.review.progressed.map((r) => r.leaf.id));
+      const startedHere = view.review.inProgress.filter((r) => {
+        if (doneIds.has(r.leaf.id) || progressedIds.has(r.leaf.id)) return false;
+        const a = Date.parse(String(r.leaf.actualStartAt ?? ""));
+        return Number.isFinite(a) && a >= meetAt && a < w.end;
+      });
       return shiftForm({
         project: projectName ?? "Schedule",
         date: fmtInTz(w.start, tz, { month: "long", day: "numeric", year: "numeric" }), start: ctx.T(w.start), end: ctx.T(w.end),
@@ -830,10 +841,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         incidents: sheet.incidents && (sheet.incidents.none || sheet.incidents.items?.length)
           ? { none: !!sheet.incidents.none, items: (sheet.incidents.items ?? []).map((x) => ({ kind: x.kind, text: x.text, time: ctx.T(x.at) })) } : undefined,
         safetyTopic: parts.safety,
-        planned: view.review.scheduled.map((r) => ({ crew: r.leaf.responsibleParty?.trim() || "Other", ...item(r) })),
+        planned: view.review.scheduled.filter((r) => !doneBeforeMeeting(r)).map((r) => ({ crew: r.leaf.responsibleParty?.trim() || "Other", ...item(r) })),
         completed: [
           ...view.review.done.map((r) => ({ crew: crewOf(r), ...item(r) })),
           ...view.review.progressed.filter((r) => !doneIds.has(r.leaf.id)).map((r) => ({ crew: crewOf(r), ...item(r, r.pctStart != null ? `(${r.pctStart}% to ${r.percent}%)` : `(${r.percent}%)`) })),
+          ...startedHere.map((r) => ({ crew: crewOf(r), ...item(r, "(started)") })),
         ],
         followUps: sheet.notes.filter((n) => n.followUp && !n.cleared).map((n) => n.text),
         // The hours, short, the way a shift writes them (lib/shiftHourly briefNotes).

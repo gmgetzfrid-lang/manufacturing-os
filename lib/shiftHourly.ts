@@ -463,6 +463,19 @@ export function briefWhat(task: string, step: string): string {
  *  order numbers. An hour typed over is said as typed. */
 export function briefNotes(rows: HourlyRow[], entries: TimeLogRow[] | null | undefined, slots: HourSlot[], tz: string): Array<{ clock: string; text: string }> {
   const HALF = 30 * 60_000;
+  // Two work orders on one tag with a step of the same name (V-5's vessel
+  // and V-5's piping, each with "Set Blinds"): said with their work order's
+  // name, so the lines can be told apart.
+  const tasksOf = new Map<string, Set<string>>();
+  for (const e of entries ?? []) if (e.step && e.id) {
+    const k = briefWhat(e.task, e.step);
+    tasksOf.set(k, (tasksOf.get(k) ?? new Set<string>()).add(e.task));
+  }
+  const whatOf = (task: string, step: string) => {
+    const short = briefWhat(task, step);
+    if ((tasksOf.get(short)?.size ?? 0) < 2) return short;
+    return `${noEmDash(task).replace(/\s+[-–—]\s+/, " ").replace(/\s+/g, " ").trim()} ${noEmDash(step).trim()}`;
+  };
   const bySlot = rowsBySlot(entries ?? [], slots);
   const items: Array<{ at: number; text: string }> = [];
   const said = (l: string) => noEmDash(plainLine(l)).replace(/\s+/g, " ").trim();
@@ -492,11 +505,20 @@ export function briefNotes(rows: HourlyRow[], entries: TimeLogRow[] | null | und
       const [e] = g;
       let text: string;
       if (!e.step && !e.id && !isFound(e)) text = `${e.what}: ${sentence(e.comment) || "-"}`;
-      else if (isFound(e)) text = noEmDash(plainLine(entryLine(e))).replace(/^WO \d+\s*/, "");
+      else if (isFound(e)) {
+        // "Maintenance (KE): Added scope raised: Replace V-7 Tops Line (Demo
+        // Existing Piping; Install New Pre-Fab Piping). Demo and Replace
+        // Piping. 10 h of work, a new work order, approved by TA Manager."
+        const [what, ...rest] = e.comment.split(" - ");
+        const impact = rest.join(" - ").split(/\s*·\s*/).filter((x) => x && !/unchanged$/.test(x.trim())).join(", ");
+        const kind = /^(Discovery found|Added scope raised)/.exec(e.what)?.[1] ?? e.what;
+        const task = shortTask(noEmDash(e.task ?? "")) === noEmDash(e.task ?? "").trim() ? noEmDash(e.task ?? "").trim() : noEmDash(e.task ?? "").replace(/\s+[-–—]\s+/, " ").trim();
+        text = `${e.crew ? `${e.crew}: ` : ""}${kind}${task ? `: ${task}` : ""}${e.step ? ` (${noEmDash(e.step)})` : ""}. ${sentence(what)}${impact ? ` ${sentence(impact)}` : ""}`;
+      }
       else {
         const evs = [...new Set(g.map(eventOf).filter(Boolean))];
         const said = [...new Set(g.map((x) => sentence(x.comment)).filter(Boolean))];
-        text = `${e.crew ? `${e.crew}: ` : ""}${briefWhat(e.task, e.step)}${evs.length ? ` ${evs.join(", ")}` : ""}${said.length ? `. ${said.join(" ")}` : ""}`;
+        text = `${e.crew ? `${e.crew}: ` : ""}${whatOf(e.task, e.step)}${evs.length ? ` ${evs.join(", ")}` : ""}${said.length ? `. ${said.join(" ")}` : ""}`;
       }
       text = noEmDash(text).replace(/\s+/g, " ").trim();
       if (text) items.push({ at, text });

@@ -57,4 +57,21 @@ describe("briefNotes", () => {
     const out = briefNotes(hr(typed), entries, slots, tz);
     expect(out.find((x) => x.clock === "7:00")?.text).toBe("Ancon cleaning V-4 components");
   });
+  it("two work orders on one tag with the same step: told apart by their work order's name", () => {
+    const e2 = [
+      row("07:30", { id: "v1", task: "V-5 - Transmix Unit 2 Splitter", wo: "10", step: "Set Blinds; Verify LOTO", crew: "Schultz", what: "Done" }),
+      row("08:30", { id: "v2", task: "V-5 - Overhead and Bottoms Piping", wo: "11", step: "Set Blinds; Verify LOTO", crew: "Schultz" }),
+      row("08:30", { id: "p1", task: "E-11 - Diesel Cooler", wo: "12", step: "Pull Bundle", crew: "Schultz" }),
+    ];
+    const out = briefNotes(hourlyRows(null, slots, at("18:00"), e2, tz), e2, slots, tz);
+    const by = Object.fromEntries(out.map((x) => [x.clock, x.text]));
+    expect(by["7:30"]).toBe("Schultz: V-5 Transmix Unit 2 Splitter Set Blinds; Verify LOTO done");
+    expect(by["8:30"]).toBe("Schultz: V-5 Overhead and Bottoms Piping Set Blinds; Verify LOTO started, Schultz: E-11 Pull Bundle started");
+  });
+  it("added scope: crew, what was raised, then why and what it does", () => {
+    const e3 = [row("10:00", { id: null as unknown as string, task: "Replace V-7 Tops Line", wo: "", step: "Demo Existing Piping; Install New Pre-Fab Piping", crew: "Maintenance (KE)", what: "Added scope raised",
+      comment: "Demo and replace piping - 10 h of work · task finish unchanged · a new work order · approved by TA Manager" })];
+    const out = briefNotes(hourlyRows(null, slots, at("18:00"), e3, tz), e3, slots, tz);
+    expect(out.find((x) => x.clock === "10:00")?.text).toBe("Maintenance (KE): Added scope raised: Replace V-7 Tops Line (Demo Existing Piping; Install New Pre-Fab Piping). Demo and replace piping. 10 h of work, a new work order, approved by TA Manager.");
+  });
 });
