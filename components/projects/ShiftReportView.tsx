@@ -32,6 +32,7 @@ import {
   Zap, Presentation, X, Settings2, Rocket, ArrowLeftRight, Trophy,
   Mail, FileText, Hourglass, Clock, Pencil, Plus, CalendarClock, Eye, EyeOff, ListChecks,
 } from "lucide-react";
+import MoreMenu from "@/components/ui/MoreMenu";
 import { OPEN_SETUP_EVENT } from "@/lib/scheduleSetup";
 import type { Milestone, MilestoneNote } from "@/types/schema";
 import { buildProgressIndex, leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
@@ -967,18 +968,17 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           </>
         )}
 
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
-          <div className="relative">
-            {timesSaved === false ? (
+        {/* One button in sight (the update), the rest in More: a phone shows one row, not six. */}
+        <div className="ml-auto relative flex flex-wrap items-center justify-end gap-1.5">
+          <div className="contents">
+            {timesSaved === false && (
               <button onClick={() => setShowTimes((v) => !v)} aria-expanded={showTimes} title="The day / night split is a guess until the shift times are saved"
                 className="inline-flex items-center gap-1 rounded-md border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/50 px-2 py-1 text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/50">
                 <Settings2 className="w-3.5 h-3.5" /> Set shift times
               </button>
-            ) : (
-              <button onClick={() => setShowTimes((v) => !v)} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Shift times" aria-expanded={showTimes}><Settings2 className="w-4 h-4" /></button>
             )}
             {showTimes && (
-              <div className="absolute left-0 sm:left-auto sm:right-0 top-full mt-1 z-30 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-2.5 space-y-1.5 text-[11px] w-[23rem] max-w-[calc(100vw-1.5rem)]">
+              <div className="absolute right-0 top-full mt-1 z-30 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-2.5 space-y-1.5 text-[11px] w-[23rem] max-w-[calc(100vw-1.5rem)]">
                 <div className="font-bold text-[var(--color-text)]">Shift change times (plant time)</div>
                 <label className="flex items-center justify-between gap-2 text-[var(--color-text-muted)]"><span className="inline-flex items-center gap-1"><Sun className="w-3 h-3" /> Day starts</span>
                   <input type="time" value={draft.dayStart} onChange={(e) => { setTimesMsg(null); setTimesDraft({ ...draft, dayStart: e.target.value || DEFAULT_SHIFT_TIMES.dayStart }); }} className="h-7 border border-[var(--color-border-strong)] rounded px-1 bg-[var(--color-surface)]" />
@@ -1006,16 +1006,19 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
               </div>
             )}
           </div>
-          {!inMeetingView && <div className="relative">
-            <button type="button" onClick={() => setShowSecs((v) => !v)} aria-expanded={showSecs}
-              className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border ${hiddenSecs.length ? "border-[var(--color-accent)] text-[var(--color-accent)]" : "border-[var(--color-border-strong)] text-[var(--color-text)]"} hover:bg-[var(--color-surface-2)]`}
-              title="Choose what shows on the report - on screen and in print">
-              <EyeOff className="w-3.5 h-3.5" /> Hide{hiddenSecs.length ? ` (${hiddenSecs.length})` : ""}
-            </button>
+          {!inMeetingView && <div className="contents">
+            {/* Sections left off are always said, never silently gone. */}
+            {hiddenSecs.length > 0 && (
+              <button type="button" onClick={() => setShowSecs((v) => !v)} aria-expanded={showSecs}
+                className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-[var(--color-accent)] text-[var(--color-accent)] hover:bg-[var(--color-surface-2)]"
+                title="Sections left off the report - on screen and in print">
+                <EyeOff className="w-3.5 h-3.5" /> {hiddenSecs.length} hidden
+              </button>
+            )}
             {showSecs && (
               <>
                 <div className="fixed inset-0 z-20" onClick={() => setShowSecs(false)} aria-hidden />
-                <div className="absolute right-0 top-full mt-1 z-30 w-64 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-2.5 text-[12px]">
+                <div className="absolute right-0 top-full mt-1 z-30 w-64 max-w-[calc(100vw-1.5rem)] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-2.5 text-[12px]">
                   <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Show on the report</div>
                   <div className="mt-1.5 space-y-1">
                     {reportAll.map((x) => (
@@ -1033,43 +1036,36 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
               </>
             )}
           </div>}
-          <button onClick={() => setPresenting(presenting == null ? 0 : null)}
-            className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border ${presenting != null ? "bg-slate-900 text-white border-slate-900" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}
-            title="Run the meeting one agenda item at a time (← → keys, Esc to leave)">
-            {presenting != null ? <><X className="w-3.5 h-3.5" /> Leave present</> : <><Presentation className="w-3.5 h-3.5" /> Present</>}
-          </button>
-          {meeting === "turnover" && (
+          {presenting != null && (
+            <button onClick={() => setPresenting(null)} title="Back to the report (Esc)"
+              className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border bg-slate-900 text-white border-slate-900">
+              <X className="w-3.5 h-3.5" /> Leave present
+            </button>
+          )}
+          {meeting === "turnover" && !onOpenReport && (
             <>
-              <button type="button" onClick={() => setStamps(!stamps)} aria-pressed={stamps}
-                title="Show the time each step was done in Done - off keeps the update short (the times are always in the time log)"
-                className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border ${stamps ? "bg-slate-900 text-white border-slate-900" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
-                <Clock className="w-3.5 h-3.5" /> Times {stamps ? "on" : "off"}
-              </button>
-              {onOpenReport ? (
-                <>
-                  <OpenReportButton label="Time log" onClick={() => onOpenReport({ id: "timelog", shift: { dayKey: shift.dayKey, kind: shift.kind }, scope: "shift" })} />
-                  <OpenReportButton label="Hourly log" onClick={() => onOpenReport({ id: "hourly", shift: { dayKey: shift.dayKey, kind: shift.kind } })} />
-                  {/* Which jobs run days and nights: what the next shift's list follows. */}
-                  <button type="button" onClick={() => window.dispatchEvent(new CustomEvent(OPEN_SETUP_EVENT, { detail: "night" }))} title="Which jobs run days and nights - what the night's list follows"
-                    className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-violet-300 dark:border-violet-800 text-violet-800 dark:text-violet-200 hover:bg-violet-50 dark:hover:bg-violet-950/40">
-                    <Moon className="w-3.5 h-3.5" /> Night shifts
-                  </button>
-                  {/* The shift sheet: entered for the shift ending, printed for the one starting. */}
-                  <OpenReportButton label="Enter shift sheet" title="Enter what's written on this shift's sheet" onClick={() => onOpenReport({ id: "sheet", shift: { dayKey: shift.dayKey, kind: shift.kind }, enter: true })} />
-                  <OpenReportButton label="Shift sheet" title="Print the next shift's sheet" onClick={() => onOpenReport({ id: "sheet", shift: { dayKey: report.next.dayKey, kind: report.next.kind } })} />
-                </>
-              ) : (
-                <>
-                  <TimeLogButton busy={logBusy} msg={logMsg} onExport={(sc) => void exportTimeLog(sc)} shiftLabel={shiftTitle} />
-                  <HourlyLogExport formats={["pdf", "docx"]} what={`Hourly log - ${shiftTitle}`} letterhead={!!lh} onExport={exportHourly} label="Hourly log" />
-                </>
-              )}
+              <TimeLogButton busy={logBusy} msg={logMsg} onExport={(sc) => void exportTimeLog(sc)} shiftLabel={shiftTitle} />
+              <HourlyLogExport formats={["pdf", "docx"]} what={`Hourly log - ${shiftTitle}`} letterhead={!!lh} onExport={exportHourly} label="Hourly log" />
             </>
           )}
-          <CopyUpdate doc={exportDoc} meeting={meeting} lh={lh} stamps={meeting === "turnover" ? { on: stamps, set: setStamps } : undefined} />
-          <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-3 py-1.5 rounded-lg shadow-sm">
-            <Printer className="w-3.5 h-3.5" /> Print
-          </button>
+          <CopyUpdate primary doc={exportDoc} meeting={meeting} lh={lh} stamps={meeting === "turnover" ? { on: stamps, set: setStamps } : undefined} />
+          <MoreMenu items={[
+            ...(presenting == null ? [{ icon: <Presentation className="w-4 h-4" />, label: "Present the meeting", onClick: () => setPresenting(0) }] : []),
+            ...(meeting === "turnover" && onOpenReport ? [
+              // The shift sheet: entered for the shift ending, printed for the one starting.
+              { icon: <FileText className="w-4 h-4" />, label: "Enter shift sheet", onClick: () => onOpenReport({ id: "sheet", shift: { dayKey: shift.dayKey, kind: shift.kind }, enter: true }) },
+              { icon: <FileText className="w-4 h-4" />, label: "Next shift's sheet", onClick: () => onOpenReport({ id: "sheet", shift: { dayKey: report.next.dayKey, kind: report.next.kind } }) },
+              { icon: <FileText className="w-4 h-4" />, label: "Time log", onClick: () => onOpenReport({ id: "timelog", shift: { dayKey: shift.dayKey, kind: shift.kind }, scope: "shift" }) },
+              { icon: <FileText className="w-4 h-4" />, label: "Hourly log", onClick: () => onOpenReport({ id: "hourly", shift: { dayKey: shift.dayKey, kind: shift.kind } }) },
+            ] : []),
+            { icon: <Printer className="w-4 h-4" />, label: "Print the full report", onClick: () => window.print(), line: true },
+            ...(!inMeetingView ? [{ icon: <EyeOff className="w-4 h-4" />, label: hiddenSecs.length ? `Sections shown (${hiddenSecs.length} hidden)` : "Sections shown", onClick: () => setShowSecs(true) }] : []),
+            // The time each step was done, in Done (always in the time log).
+            ...(meeting === "turnover" ? [{ icon: <Clock className="w-4 h-4" />, label: stamps ? "Done times: on" : "Done times: off", onClick: () => setStamps(!stamps) }] : []),
+            { icon: <Settings2 className="w-4 h-4" />, label: "Shift times", onClick: () => setShowTimes(true), line: true },
+            // Which jobs run days and nights: what the next shift's list follows.
+            ...(meeting === "turnover" && onOpenReport ? [{ icon: <Moon className="w-4 h-4" />, label: "Night shifts", onClick: () => { window.dispatchEvent(new CustomEvent(OPEN_SETUP_EVENT, { detail: "night" })); } }] : []),
+          ]} />
         </div>
       </div>
 
@@ -1337,7 +1333,7 @@ function OpenReportButton({ label, onClick, title }: { label: string; onClick: (
 /** Copy — the update as it will be sent, with a box per section to leave
  *  one out today (remembered for next time), then copy it for an email
  *  (tables and colors kept in Outlook, Gmail…) or as plain text. */
-function CopyUpdate({ doc, meeting, lh, stamps }: { doc: () => ExportDoc; meeting: MeetingKind; lh?: Letterhead | null;
+function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; doc: () => ExportDoc; meeting: MeetingKind; lh?: Letterhead | null;
   /** Times on Done steps — the report's switch, mirrored in the box. */
   stamps?: { on: boolean; set: (v: boolean) => void } }) {
   const key = `shiftReport.copyOff.${meeting}`;
@@ -1408,7 +1404,7 @@ function CopyUpdate({ doc, meeting, lh, stamps }: { doc: () => ExportDoc; meetin
   return (
     <>
       <button onClick={open}
-        className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+        className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg ${primary ? "text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] shadow-sm" : "border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}
         title="The short update: copy it into an email, or print it - see it first">
         <Mail className="w-3.5 h-3.5" /> Email / Print
       </button>
