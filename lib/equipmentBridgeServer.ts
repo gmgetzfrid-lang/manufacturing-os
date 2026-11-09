@@ -78,22 +78,24 @@ export async function computeForKnowledgeDoc(admin: SupabaseClient, knowledgeDoc
   // drawing number by the codebook. A sheet that prints IDs says its own.
   const book = await loadCodebookAdmin(admin, orgId);
   const { data: srcDoc } = await admin
-    .from("documents").select("id, library_id, document_number, title, name, metadata")
+    .from("documents").select("id, library_id, collection_id, document_number, title, name, metadata")
     .eq("id", documentId).maybeSingle();
   if (!srcDoc) return null;
   const bridge = await loadBridgeConfig(admin, String(srcDoc.library_id ?? ""));
   const numberCandidates = [srcDoc.document_number, kdoc.name, srcDoc.title, srcDoc.name]
     .map((x) => String(x ?? "").trim()).filter(Boolean);
-  let drawingUnit: string | null = bridge?.defaultUnitCode ?? null;
+  // Its folder's unit ("55 - Transmix" is unit 55), else its number's.
+  let drawingUnit: string | null = await folderUnitOf(admin, orgId, (srcDoc as { collection_id?: string | null }).collection_id ?? null);
   if (!drawingUnit) {
     for (const cand of numberCandidates) {
       const parsed = parseDrawingNumber(cand, book);
       if (parsed?.unitCode) { drawingUnit = parsed.unitCode; break; }
     }
   }
+  void bridge;
 
   const registry = await loadRegistry(admin, orgId);
-  const suggestions = sweepRows({ readings, registry, book, drawingUnit });
+  const suggestions = sweepRows({ readings, registry, book, drawingUnit, drawingNumber: srcDoc.document_number ?? null });
   await upsertSuggestions(admin, orgId, documentId, suggestions);
   // A link a machine drew from this drawing to equipment the sheet's own ID
   // says it isn't (the Crude Unit's V-7 for a Transmix V-7) comes off.
@@ -140,6 +142,59 @@ async function loadBridgeConfig(admin: SupabaseClient, libraryId: string): Promi
   const { data } = await admin.from("libraries").select("equipment_bridge").eq("id", libraryId).maybeSingle();
   const raw = data?.equipment_bridge as BridgeConfig | null | undefined;
   return raw && typeof raw === "object" ? raw : null;
+}
+
+/** The unit a folder (or the nearest folder above it) is linked to: a
+ *  person's link first, then one read off its name. */
+export async function folderUnitOf(admin: SupabaseClient, orgId: string, folderId: string | null): Promise<string | null> {
+  if (!folderId) return null;
+  const chain: string[] = [];
+  let cur: string | null = folderId;
+  for (let g = 0; cur && g < 25 && !chain.includes(cur); g++) {
+    chain.push(cur);
+    const res: { data: unknown } = await admin.from("collections").select("parent_id").eq("id", cur).maybeSingle();
+    cur = (res.data as { parent_id: string | null } | null)?.parent_id ?? null;
+  }
+  const { data: edges } = await admin.from("estate_edges").select("a, b, origin").eq("org_id", orgId).eq("type", "belongs_to_unit").eq("status", "applied").in("a", chain.map((id) => `folder:${id}`));
+  const list = (edges ?? []) as Array<{ a: string; b: string; origin: string }>;
+  const rank = (o: string) => (o === "person" ? 0 : o === "codebook" ? 1 : 2);
+  for (const id of chain) {
+    const mine = list.filter((e) => e.a === `folder:${id}` && e.b.startsWith("cbunit:")).sort((x, y) => rank(x.origin) - rank(y.origin));
+    if (mine.length) return mine[0].b.slice("cbunit:".length);
+  }
+  return null;
+}
+
+/** Take tags off a drawing: out of its applied list and its column, and
+ *  the links drawn for them. For a wrong link (a title-block number read as
+ *  equipment, another unit's equipment). */
+export async function unlinkForDocument(admin: SupabaseClient, input: { orgId: string; documentId: string; tags: string[]; userId: string }): Promise<{ removed: number }> {
+  const { orgId, documentId } = input;
+  const keys = new Set(input.tags.map((t) => nameKey(t)));
+  const { data: row } = await admin.from("document_equipment_suggestions").select("applied").eq("org_id", orgId).eq("document_id", documentId).maybeSingle();
+  const applied = (Array.isArray(row?.applied) ? row!.applied as string[] : []).filter((t) => !keys.has(nameKey(t)));
+  await admin.from("document_equipment_suggestions").update({ applied, status: "pending" }).eq("org_id", orgId).eq("document_id", documentId);
+  const { data: doc } = await admin.from("documents").select("library_id, metadata").eq("id", documentId).eq("org_id", orgId).maybeSingle();
+  const bridge = await loadBridgeConfig(admin, String((doc as { library_id?: string } | null)?.library_id ?? ""));
+  const key = bridge?.targetColumnKey;
+  const md = ((doc as { metadata?: Record<string, unknown> } | null)?.metadata ?? {}) as Record<string, unknown>;
+  if (key && md[key] !== undefined) {
+    const cur = md[key];
+    const list = Array.isArray(cur) ? cur.map(String) : typeof cur === "string" ? cur.split(",").map((v) => v.trim()).filter(Boolean) : [];
+    const next = list.filter((t) => !keys.has(nameKey(t)));
+    if (next.length !== list.length) await admin.from("documents").update({ metadata: { ...md, [key]: next } }).eq("id", documentId).eq("org_id", orgId);
+  }
+  const { data: edges } = await admin.from("estate_edges").select("id, b").eq("org_id", orgId).eq("a", `doc:${documentId}`).eq("type", "tagged_to").in("origin", ["vision", "bridge", "resolver"]).limit(1000);
+  const ids = ((edges ?? []) as Array<{ id: string; b: string }>).map((e) => e.b.replace(/^asset:/, ""));
+  let removed = 0;
+  if (ids.length) {
+    const { data: assets } = await admin.from("assets").select("id, tag").in("id", ids);
+    const hit = new Set(((assets ?? []) as Array<{ id: string; tag: string }>).filter((a) => keys.has(nameKey(a.tag.replace(/\s*\(.*$/, "")))).map((a) => `asset:${a.id}`));
+    const del = ((edges ?? []) as Array<{ id: string; b: string }>).filter((e) => hit.has(e.b)).map((e) => e.id);
+    if (del.length) { await admin.from("estate_edges").delete().in("id", del); removed = del.length; }
+  }
+  await admin.from("audit_logs").insert({ action: "EQUIPMENT_BRIDGE_UNLINKED", resource_type: "document", resource_id: documentId, org_id: orgId, user_id: input.userId, details: { tags: input.tags, edges: removed } }).then(() => undefined, () => undefined);
+  return { removed };
 }
 
 /** Every piece of equipment in the org, with its ID and unit. */

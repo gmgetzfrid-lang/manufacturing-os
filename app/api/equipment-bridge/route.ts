@@ -18,7 +18,20 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { computeForKnowledgeDoc, applyForDocument, type BridgeConfig } from "@/lib/equipmentBridgeServer";
+import { computeForKnowledgeDoc, applyForDocument, unlinkForDocument, folderUnitOf, type BridgeConfig } from "@/lib/equipmentBridgeServer";
+
+/** A folder and every folder under it, in a library. */
+async function folderTree(libraryId: string, folderId: string): Promise<Set<string>> {
+  const { rows: all } = await fetchAllRows<{ id: string; parent_id: string | null; deleted_at: string | null }>((from, to) => supabaseAdmin
+    .from("collections").select("id, parent_id, deleted_at").eq("library_id", libraryId).order("id").range(from, to));
+  const rows = all.filter((c) => !c.deleted_at);
+  const out = new Set<string>([folderId]);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const c of rows) if (c.parent_id && out.has(c.parent_id) && !out.has(c.id)) { out.add(c.id); grew = true; }
+  }
+  return out;
+}
 import { fetchAllRows } from "@/lib/fetchAllRows";
 
 export const runtime = "nodejs";
@@ -49,9 +62,13 @@ export async function GET(req: NextRequest) {
   const auth = await authWriter(req, orgId);
   if (auth instanceof NextResponse) return auth;
 
-  const { rows: docList } = await fetchAllRows<{ id: string; document_number: string | null; title: string | null; name: string | null; rev: string | null; sheet_number: number | null; sheet_total: number | null; metadata: Record<string, unknown> | null }>((from, to) => supabaseAdmin
-    .from("documents").select("id, document_number, title, name, rev, sheet_number, sheet_total, metadata")
+  const { rows: allDocs } = await fetchAllRows<{ id: string; collection_id: string | null; document_number: string | null; title: string | null; name: string | null; rev: string | null; sheet_number: number | null; sheet_total: number | null; metadata: Record<string, unknown> | null }>((from, to) => supabaseAdmin
+    .from("documents").select("id, collection_id, document_number, title, name, rev, sheet_number, sheet_total, metadata")
     .eq("org_id", orgId).eq("library_id", libraryId).neq("status", "Archived").order("id").range(from, to));
+  // Opened in a folder: that folder's drawings (and its subfolders'), only.
+  const folderId = req.nextUrl.searchParams.get("folderId") || null;
+  const inFolder = folderId ? await folderTree(libraryId, folderId) : null;
+  const docList = inFolder ? allDocs.filter((d) => d.collection_id && inFolder.has(d.collection_id)) : allDocs;
   const ids = docList.map((d) => d.id);
 
   const rows: Array<Record<string, unknown>> = [];
@@ -81,6 +98,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     suggestions: rows.map((r) => ({ ...r, documentLabel: nameById.get(String(r.document_id)) ?? "-", doc: infoById.get(String(r.document_id)) ?? null })),
     canAdd: auth.role === "Admin",
+    folder: folderId ? { id: folderId, unitCode: await folderUnitOf(supabaseAdmin, orgId, folderId) } : null,
     linkedDocs: ((twins ?? []) as Array<{ source_document_id: string; status: string }>)
       .map((t) => ({ documentId: t.source_document_id, status: t.status })),
     bridge: (lib?.equipment_bridge ?? null) as BridgeConfig | null,
@@ -117,10 +135,11 @@ export async function POST(req: NextRequest) {
     if (!libraryId) return bad("libraryId required");
     // Every knowledge twin of this doc-control library's documents, ready or
     // not — compute skips gracefully when there are no entities yet.
-    const { rows: docs } = await fetchAllRows<{ id: string }>((from, to) => supabaseAdmin
-      .from("documents").select("id")
+    const { rows: docs } = await fetchAllRows<{ id: string; collection_id: string | null }>((from, to) => supabaseAdmin
+      .from("documents").select("id, collection_id")
       .eq("org_id", orgId).eq("library_id", libraryId).neq("status", "Archived").order("id").range(from, to));
-    const ids = docs.map((d) => d.id);
+    const inFolder = body.folderId ? await folderTree(libraryId, String(body.folderId)) : null;
+    const ids = docs.filter((d) => !inFolder || (d.collection_id && inFolder.has(d.collection_id))).map((d) => d.id);
     let computed = 0;
     for (let i = 0; i < ids.length; i += 100) {
       const { data: twins } = await supabaseAdmin
@@ -153,6 +172,30 @@ export async function POST(req: NextRequest) {
       }
     }
     return NextResponse.json({ ok: true, results });
+  }
+
+  if (action === "unlink") {
+    const documentId = String(body.documentId ?? "");
+    const tags = Array.isArray(body.tags) ? body.tags.map(String) : [];
+    if (!documentId || !tags.length) return bad("documentId and tags required");
+    const r = await unlinkForDocument(supabaseAdmin, { orgId, documentId, tags, userId: auth.userId });
+    return NextResponse.json({ ok: true, ...r });
+  }
+
+  // A folder's unit, set by a person: it wins over one read off the name.
+  if (action === "folderUnit") {
+    const folderId = String(body.folderId ?? "");
+    const unitCode = String(body.unitCode ?? "");
+    if (!folderId || !unitCode) return bad("folderId and unitCode required");
+    const a = `folder:${folderId}`;
+    await supabaseAdmin.from("estate_edges").update({ status: "dismissed" }).eq("org_id", orgId).eq("a", a).eq("type", "belongs_to_unit").neq("b", `cbunit:${unitCode}`);
+    const { error } = await supabaseAdmin.from("estate_edges").upsert({
+      org_id: orgId, a, b: `cbunit:${unitCode}`, type: "belongs_to_unit", origin: "person", tier: "provable", confidence: 1, status: "applied",
+      summary: `Folder set to unit ${unitCode} by hand`, evidence: { where: "equipment from drawings" }, created_by: auth.userId,
+    }, { onConflict: "org_id,a,b,type" });
+    if (error) return bad(error.message, 500);
+    await supabaseAdmin.from("estate_edges").update({ status: "applied", origin: "person" }).eq("org_id", orgId).eq("a", a).eq("type", "belongs_to_unit").eq("b", `cbunit:${unitCode}`);
+    return NextResponse.json({ ok: true });
   }
 
   return bad(`Unknown action "${action}"`);

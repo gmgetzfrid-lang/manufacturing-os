@@ -61,3 +61,14 @@ describe("lining up with the registry by ID", () => {
     expect(autoReady(e12)).toBe(false);
   });
 });
+
+describe("what isn't equipment", () => {
+  it("drops a tag read out of the drawing's own number, and a name that isn't a callout", () => {
+    const rows = sweepRows({ readings: [
+      { tag: "D-2001", page: 2, raw: "W:\\2000 CRUDE UNIT\\02-P&ID\\2002-D 2001_SHT02_R37.dwg" },
+      { tag: "P-2", page: 1, raw: "DRAWING NO: 2002-D 2001 SHEET: 1 OF 16 REV: R38 TITLE: PIPING & INSTRUMENTATION DIAGRAM" },
+    ], registry: [{ id: "c-p2", tag: "P-2", code: null, unitCode: "20" }], book, drawingUnit: "20", drawingNumber: "2002-D 2001" });
+    expect(rows.map((r) => r.tag)).toEqual(["P-2"]);
+    expect(rows[0]).toMatchObject({ name: null, code: null, unitCode: "20", assetId: "c-p2", match: "name" });
+  });
+});

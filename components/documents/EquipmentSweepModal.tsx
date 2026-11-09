@@ -38,10 +38,13 @@ const KIND: Record<Kind, { word: string; cls: string }> = {
 const keyOf = (docId: string, tag: string) => `${docId}|${tag}`;
 const sheetNo = (s: string | null | undefined) => (s && /^\d+$/.test(s) ? s.padStart(2, "0") : s ?? null);
 
-export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onClose, onApplied }: {
+export default function EquipmentSweepModal({ orgId, libraryId, libraryName, folderId = null, folderName = null, onClose, onApplied }: {
   orgId: string;
   libraryId: string;
   libraryName: string;
+  /** Opened inside a folder: that folder's drawings only, and its unit. */
+  folderId?: string | null;
+  folderName?: string | null;
   onClose: () => void;
   /** Called after any apply so the page refetches documents (new chips). */
   onApplied: () => void;
@@ -51,6 +54,8 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
   const [columns, setColumns] = useState<ColumnDef[]>([]);
   const [book, setBook] = useState<Codebook>(EMPTY_CODEBOOK);
   const [canAdd, setCanAdd] = useState(false);
+  const [folderUnit, setFolderUnit] = useState<string | null>(null);
+  const [unlinking, setUnlinking] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [sweeping, setSweeping] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -70,7 +75,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
     setError(null);
     try {
       const headers = await authed();
-      const res = await fetch(`/api/equipment-bridge?orgId=${encodeURIComponent(orgId)}&libraryId=${encodeURIComponent(libraryId)}`, { headers });
+      const res = await fetch(`/api/equipment-bridge?orgId=${encodeURIComponent(orgId)}&libraryId=${encodeURIComponent(libraryId)}${folderId ? `&folderId=${encodeURIComponent(folderId)}` : ""}`, { headers });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
       const list = (json.suggestions as SuggestionRow[]).filter((r) => r.suggested.length > 0);
@@ -84,22 +89,48 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
       setBridge((json.bridge as BridgeConfig) ?? {});
       setColumns((json.customColumns as ColumnDef[]) ?? []);
       setCanAdd(!!json.canAdd);
+      setFolderUnit((json.folder as { unitCode?: string | null } | null)?.unitCode ?? null);
       return list;
     } catch (e) { setError((e as Error).message); return null; }
     finally { setLoading(false); }
-  }, [orgId, libraryId, authed]);
+  }, [orgId, libraryId, folderId, authed]);
 
   const sweep = useCallback(async () => {
     setSweeping(true); setError(null); setNotice(null);
     try {
       const headers = { ...(await authed()), "Content-Type": "application/json" };
-      const res = await fetch("/api/equipment-bridge", { method: "POST", headers, body: JSON.stringify({ action: "sweep", orgId, libraryId }) });
+      const res = await fetch("/api/equipment-bridge", { method: "POST", headers, body: JSON.stringify({ action: "sweep", orgId, libraryId, folderId }) });
       if (!res.ok) throw new Error((await res.json()).error ?? `HTTP ${res.status}`);
       setChoice({});
       await refresh();
     } catch (e) { setError((e as Error).message); }
     finally { setSweeping(false); }
-  }, [authed, orgId, libraryId, refresh]);
+  }, [authed, orgId, libraryId, folderId, refresh]);
+
+  // The folder's unit, set by a person; then the sheets are read again.
+  const setUnit = async (unitCode: string) => {
+    if (!folderId || !unitCode) return;
+    setError(null);
+    try {
+      const headers = { ...(await authed()), "Content-Type": "application/json" };
+      const res = await fetch("/api/equipment-bridge", { method: "POST", headers, body: JSON.stringify({ action: "folderUnit", orgId, folderId, unitCode }) });
+      if (!res.ok) throw new Error((await res.json()).error ?? `HTTP ${res.status}`);
+      setFolderUnit(unitCode);
+      await sweep();
+    } catch (e) { setError((e as Error).message); }
+  };
+  // A wrong link off a sheet (a title-block number, another unit's equipment).
+  const unlink = async (documentId: string, tag: string) => {
+    setUnlinking(keyOf(documentId, tag)); setError(null);
+    try {
+      const headers = { ...(await authed()), "Content-Type": "application/json" };
+      const res = await fetch("/api/equipment-bridge", { method: "POST", headers, body: JSON.stringify({ action: "unlink", orgId, documentId, tags: [tag] }) });
+      if (!res.ok) throw new Error((await res.json()).error ?? `HTTP ${res.status}`);
+      await refresh();
+      onApplied();
+    } catch (e) { setError((e as Error).message); }
+    finally { setUnlinking(null); }
+  };
 
   // Read with the old rules (no IDs kept): read again, once, on open.
   useEffect(() => {
@@ -144,11 +175,12 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
       const typeLabel = typeOptions.find((t) => t.code === typeCode)?.label ?? s.typeLabel ?? null;
       const unitCode = (typed && dec?.unitCode) || s.unitCode || null;
       const applied = r.applied.includes(s.tag);
-      const kind: Kind = applied ? "linked" : s.problem && !typed ? "check" : s.assetId && !typed ? "listed" : code ? "new" : "needs";
+      const kind: Kind = applied ? (s.assetId ? "linked" : "check") : s.problem && !typed ? "check" : s.assetId && !typed ? "listed" : code ? "new" : "needs";
       const typedBad = !!c.code?.trim() && !looksLikeId(c.code);
       const actionable = !applied && kind !== "needs" && kind !== "check" && !typedBad && (kind === "listed" || canAdd);
+      const problem = applied && !s.assetId ? "Linked earlier, but nothing in the registry has this sheet's ID, or this name in its unit. Unlink it if it isn't equipment on this sheet." : s.problem ?? null;
       const on = actionable && (c.on ?? (kind === "listed" || (kind === "new" && (s.codeFrom === "sheet" || !!typed))));
-      return { s, k, c, code, typeCode, typeLabel, unitCode, kind, actionable, on, typed, typedBad, dec };
+      return { s, k, c, code, typeCode, typeLabel, unitCode, kind, actionable, on, typed, typedBad, dec, applied, problem };
     }),
   })), [rows, choice, book, typeOptions, canAdd]);
 
@@ -221,7 +253,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
         <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-2.5">
           <ScanSearch className="w-4 h-4 text-orange-600 shrink-0" />
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-black text-[var(--color-text)]">Equipment from drawings - {libraryName}</div>
+            <div className="text-sm font-black text-[var(--color-text)]">Equipment from drawings - {folderName ?? libraryName}</div>
             <div className="text-[11.5px] text-[var(--color-text-muted)]">Read off each sheet: the tag, the ID printed beside it, what it is. Matched by the ID; you check it, then it&apos;s added.</div>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-1.5 rounded hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4 text-[var(--color-text-muted)]" /></button>
@@ -238,16 +270,21 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
             </button>
           </div>
 
+          {folderId ? (
+            <label className="flex flex-wrap items-center gap-2 text-[12.5px]">
+              <span className="font-bold text-[var(--color-text)]">Unit for this folder</span>
+              <select value={folderUnit ?? ""} onChange={(e) => void setUnit(e.target.value)} className={field} aria-label="Unit for this folder">
+                <option value="" disabled>Pick the unit</option>
+                {book.units.map((u) => <option key={u.code} value={u.code}>{u.code} - {u.label}</option>)}
+              </select>
+              <span className="text-[11.5px] text-[var(--color-text-muted)]">{folderUnit ? "Sheets here that print no IDs are this unit. A printed ID always says its own (5530.26 is unit 55)." : "Not set: sheets here that print no IDs have no unit until you pick one."}</span>
+            </label>
+          ) : (
+            <div className="text-[12px] text-[var(--color-text-muted)]">This is every folder in the library. Open it from a unit&apos;s folder to check one unit at a time.</div>
+          )}
+
           {showSettings && (
             <div className="rounded-xl border border-[var(--color-border)] p-3 space-y-2.5 text-[12.5px]">
-              <label className="flex flex-wrap items-center gap-2">
-                <span className="font-bold text-[var(--color-text-muted)]">Unit for sheets that print no IDs</span>
-                <select value={bridge.defaultUnitCode ?? ""} onChange={(e) => void saveSettings({ defaultUnitCode: e.target.value || undefined }, true)} className={field}>
-                  <option value="">From the drawing number</option>
-                  {book.units.map((u) => <option key={u.code} value={u.code}>{u.code} - {u.label}</option>)}
-                </select>
-                <span className="text-[11.5px] text-[var(--color-text-muted)]">A sheet that prints IDs says its own unit (5530.26 is unit 55).</span>
-              </label>
               <label className="flex flex-wrap items-center gap-2">
                 <span className="font-bold text-[var(--color-text-muted)]">Also write tags into the column</span>
                 <select value={bridge.targetColumnKey ?? ""} onChange={(e) => void saveSettings({ targetColumnKey: e.target.value || undefined })} className={field}>
@@ -314,18 +351,23 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
                       <ul className="divide-y divide-[var(--color-border)]">
                         {list.map((x) => (
                           <li key={x.k} className="px-3 py-2 grid grid-cols-[20px_minmax(0,1fr)] sm:grid-cols-[20px_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,0.9fr)] gap-x-3 gap-y-1 items-start text-[12.5px]">
-                            <input type="checkbox" checked={x.on} disabled={!x.actionable} onChange={(e) => set(x.k, { on: e.target.checked })}
-                              aria-label={`${x.kind === "listed" ? "Link" : "Add"} ${x.s.tag}`} className="mt-0.5 w-4 h-4 accent-[var(--color-accent)] disabled:opacity-30" />
+                            {x.applied ? <span aria-hidden /> : (
+                              <input type="checkbox" checked={x.on} disabled={!x.actionable} onChange={(e) => set(x.k, { on: e.target.checked })}
+                                aria-label={`${x.kind === "listed" ? "Link" : "Add"} ${x.s.tag}`} title={x.actionable ? undefined : x.kind === "needs" ? "Enter its ID first" : x.kind === "new" ? "Only admins add equipment" : "Check this one first"}
+                                className="mt-0.5 w-4 h-4 accent-[var(--color-accent)] disabled:opacity-30" />
+                            )}
                             <div className="min-w-0">
                               <div className="font-mono font-black text-[13px] text-[var(--color-text)]">{x.s.tag}</div>
                               {x.s.name && <div className="text-[11.5px] text-[var(--color-text-muted)] break-words">{x.s.name}</div>}
                             </div>
                             <div className="col-start-2 sm:col-start-auto min-w-0">
-                              {x.s.typeFrom === "id" && !x.c.typeCode ? (
+                              {x.kind === "linked" || x.kind === "listed" || (x.applied && x.kind === "check") ? (
+                                <div className="text-[var(--color-text)]">{x.typeLabel ?? <span className="text-[var(--color-text-muted)]">-</span>}</div>
+                              ) : x.s.typeFrom === "id" && !x.c.typeCode ? (
                                 <><div className="text-[var(--color-text)]">{x.typeLabel}</div><div className="text-[11px] text-[var(--color-text-muted)]">from the ID</div></>
                               ) : (
                                 <>
-                                  <select value={x.typeCode ?? ""} disabled={x.kind === "linked" || x.kind === "listed"} onChange={(e) => set(x.k, { typeCode: e.target.value || null })} aria-label={`${x.s.tag} type`} className={`${field} max-w-full`}>
+                                  <select value={x.typeCode ?? ""} onChange={(e) => set(x.k, { typeCode: e.target.value || null })} aria-label={`${x.s.tag} type`} className={`${field} max-w-full`}>
                                     <option value="">Type?</option>
                                     {typeOptions.map((t) => <option key={t.code} value={t.code}>{t.label}</option>)}
                                   </select>
@@ -339,7 +381,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
                                   <div className="font-mono font-bold text-[var(--color-text)]">{x.s.code}</div>
                                   <div className="text-[11px] text-[var(--color-text-muted)]">{x.s.codeFrom === "sheet" ? `printed on the sheet${x.s.pages.length > 1 ? ` (pages ${x.s.pages.join(", ")})` : ""}` : "from the registry"}{x.unitCode ? ` · ${unitName(x.unitCode)}` : ""}</div>
                                 </>
-                              ) : x.kind === "linked" ? <span className="text-[var(--color-text-muted)]">-</span> : (
+                              ) : x.applied ? <span className="text-[var(--color-text-muted)]">-</span> : (
                                 <>
                                   <input value={x.c.code ?? ""} onChange={(e) => set(x.k, { code: e.target.value, on: true })} placeholder="ID not printed - enter it" aria-label={`${x.s.tag} ID`}
                                     className={`${field} w-full font-mono ${x.typedBad ? "border-rose-400" : "border-dashed border-amber-400"}`} />
@@ -353,7 +395,13 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
                               <div className={`font-bold ${KIND[x.kind].cls}`}>{KIND[x.kind].word}{x.kind === "linked" || x.kind === "listed" ? " ✓" : ""}</div>
                               {x.s.listedAs && <div className="text-[11px] text-[var(--color-text-muted)]">listed as {x.s.listedAs}</div>}
                               {x.s.match === "name" && <div className="text-[11px] text-[var(--color-text-muted)]">matched by name in {unitName(x.unitCode)}{x.s.codeFrom === "sheet" ? "; its ID gets filled in" : ""}</div>}
-                              {x.kind === "check" && x.s.problem && <div className="text-[11px] text-rose-700 dark:text-rose-400">{x.s.problem}</div>}
+                              {x.kind === "check" && x.problem && <div className="text-[11px] text-rose-700 dark:text-rose-400">{x.problem}</div>}
+                              {x.applied && (
+                                <button type="button" onClick={() => void unlink(r.document_id, x.s.tag)} disabled={unlinking === x.k}
+                                  className="mt-0.5 inline-flex items-center gap-1 text-[11.5px] font-bold text-[var(--color-text-muted)] hover:text-rose-700 hover:underline disabled:opacity-50">
+                                  {unlinking === x.k && <Loader2 className="w-3 h-3 animate-spin" />} Unlink from this sheet
+                                </button>
+                              )}
                               {x.kind === "new" && !canAdd && <div className="text-[11px] text-[var(--color-text-muted)]">Only admins add equipment</div>}
                               {(x.s.otherUnits ?? []).map((o) => (
                                 <div key={`${o.unitCode}${o.code}`} className="text-[11px] text-amber-700 dark:text-amber-400">{unitName(o.unitCode) ?? "Another unit"} has its own {x.s.tag}{o.code ? ` (${o.code})` : ""}: a different piece of equipment, not linked</div>

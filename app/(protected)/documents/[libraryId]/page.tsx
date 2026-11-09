@@ -5271,6 +5271,8 @@ export default function LibraryExplorerPage() {
           orgId={activeOrgId}
           libraryId={libraryId}
           libraryName={library.name}
+          folderId={currentFolderId ?? null}
+          folderName={currentFolder?.name ?? null}
           onClose={() => setShowEquipmentSweep(false)}
           onApplied={() => folderDocsCache.current.clear()}
         />

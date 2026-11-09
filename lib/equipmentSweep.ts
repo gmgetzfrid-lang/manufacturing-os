@@ -21,9 +21,12 @@ export function readCallout(tag: string, raw: string | null | undefined): { code
   if (!s) return { code: null, name: null };
   const t = normalizeTag(tag);
   // Drop the tag at the front (as printed, or normalized).
+  // A callout starts with its tag; anything else (a title block, a file
+  // path an older reading kept) says nothing about the equipment.
   let rest = s;
   const lead = rest.match(/^\s*([A-Z]{1,4}\s?-?\s?\d{1,6}[A-Z]{0,2})\b\s*/i);
-  if (lead && normalizeTag(lead[1]) === t) rest = rest.slice(lead[0].length);
+  if (!lead || normalizeTag(lead[1]) !== t) return { code: null, name: null };
+  rest = rest.slice(lead[0].length);
   const m = rest.match(/^\(\s*([^)]+?)\s*\)\s*/);
   const code = m && looksLikeId(m[1]) ? m[1].trim().toUpperCase() : null;
   if (m) rest = rest.slice(m[0].length);
@@ -107,12 +110,16 @@ export function sweepRows(input: {
   registry: RegistryAsset[];
   book: Codebook;
   drawingUnit: string | null;
+  /** The drawing's own number ("2002-D 2001"): a tag read out of it (D-2001)
+   *  is the title block, not equipment. */
+  drawingNumber?: string | null;
 }): SweepRow[] {
   const { book, registry } = input;
+  const own = new Set([...String(input.drawingNumber ?? "").toUpperCase().matchAll(/([A-Z]{1,4})[\s-]?(\d{1,6})/g)].map((m) => nameKey(`${m[1]}-${m[2]}`)));
   const byTag = new Map<string, { pages: Set<number>; code: string | null; name: string | null }>();
   for (const r of input.readings) {
     const tag = normalizeTag(r.tag);
-    if (!splitTag(tag)) continue;
+    if (!splitTag(tag) || own.has(nameKey(tag))) continue;
     const cur = byTag.get(tag) ?? { pages: new Set<number>(), code: null, name: null };
     if (Number.isFinite(r.page)) cur.pages.add(r.page);
     const c = readCallout(tag, r.raw);
