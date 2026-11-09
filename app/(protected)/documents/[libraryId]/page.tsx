@@ -2531,14 +2531,21 @@ export default function LibraryExplorerPage() {
   // ── Phase 1: metadata-first upload ──────────────────────────────
   // Step 1: file selection / drag-drop → just stage the files. NO
   // bytes leave the browser yet. The staging modal opens for review.
-  const handleUploadFiles = (files: FileList | null) => {
+  const handleUploadFiles = (list: FileList | null) => {
+    // Take the files BEFORE resetting the picker: clearing it empties the
+    // very list the browser handed over (the pick then did nothing).
+    const files = list ? Array.from(list) : [];
     if (fileInputRef.current) fileInputRef.current.value = "";
-    if (!files || files.length === 0 || !activeOrgId || !uid || !library) return;
+    if (files.length === 0) return;
+    if (!activeOrgId || !uid || !library) {
+      setError("Still loading the library - pick the file again in a moment.");
+      return;
+    }
     uploadPathsRef.current = new Map(); // flat upload — no tree to recreate
     uploadFolderPlanRef.current = null;
     // OS metadata junk (.DS_Store & friends) is filtered on the folder path;
     // filter the flat path too so it never becomes a controlled document.
-    const clean = Array.from(files).filter((f) => !isJunkFile(f.name));
+    const clean = files.filter((f) => !isJunkFile(f.name));
     if (clean.length === 0) return;
     setPendingUploadFiles(clean);
     setShowStagingModal(true);

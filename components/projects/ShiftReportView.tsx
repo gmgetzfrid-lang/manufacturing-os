@@ -956,8 +956,12 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             <button onClick={() => pick(previousShift(shift, tz, times))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Previous shift"><ChevronLeft className="w-4 h-4" /></button>
             <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-md p-0.5 gap-0.5">
               {(["day", "night"] as const).map((k) => (
-                <button key={k} onClick={() => setSel({ dayKey: shift.dayKey, kind: k })} className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold ${shift.kind === k ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-                  {k === "day" ? <Sun className="w-3 h-3" /> : <Moon className="w-3 h-3" />} {k === "day" ? "Day" : "Night"}
+                // The shift handing over, and the one it hands to: Day → Night
+                // is the day's report and the plan for that night.
+                <button key={k} onClick={() => setSel({ dayKey: shift.dayKey, kind: k })} aria-pressed={shift.kind === k}
+                  title={k === "day" ? "The day shift's report, and the plan for the night shift after it" : "The night shift's report, and the plan for the day shift after it"}
+                  className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold ${shift.kind === k ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                  {k === "day" ? <Sun className="w-3 h-3" /> : <Moon className="w-3 h-3" />} {k === "day" ? "Day \u2192 Night" : "Night \u2192 Day"}
                 </button>
               ))}
             </div>

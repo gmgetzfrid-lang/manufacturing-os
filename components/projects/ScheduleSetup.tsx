@@ -415,6 +415,15 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); }
   };
+  // Each tap saves (a moment after the last one): nothing's lost by going
+  // on to the next step without pressing Save.
+  const pendingKey = JSON.stringify(next) + JSON.stringify(chosen);
+  useEffect(() => {
+    if (!canManage || !loaded || busy || same || (!touched && edited === undefined)) return;
+    const t = setTimeout(() => { void save(); }, 600);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- save reads the latest choices; the key is what changed
+  }, [pendingKey, canManage, loaded, same, touched, edited]);
 
   // ── The shifts as they'll come out: the same rule the calendar and the
   // turnover use (lib/shiftBands), on the choices made here.

@@ -77,6 +77,7 @@ interface Props {
  *  plain words (Critical path row), not in the raw list. */
 import { discoveryOf, impactLine, ADDED, kindOf } from "@/lib/discovery";
 import { IMPORT_KEY, originOf } from "@/lib/origin";
+import { timesOnShift } from "@/lib/stepShift";
 import { EQUIP_REQUEST } from "@/lib/equipmentPick";
 
 const HIDDEN_ATTRS = new Set(["ms_critical", "discovery", IMPORT_KEY, EQUIP_REQUEST]);
@@ -99,6 +100,32 @@ export default function TaskDetailPanel({
 
   const m = milestone;
   const isLeaf = subtasks.length === 0;
+  // One step on the night (or day) shift: not started, it moves into that
+  // shift's hours on the same day, its length kept; started, only its crew
+  // changes. Either way the night setup won't hand it back to days.
+  const [shiftBusy, setShiftBusy] = useState(false);
+  const putOnShift = async (kind: "day" | "night") => {
+    if (!m.id) return;
+    setShiftBusy(true); setErr(null);
+    try {
+      const started = m.status === "completed" || (m.percentComplete ?? 0) > 0 || !!m.actualStartAt;
+      const t = started ? null : timesOnShift(m, kind, tz, shiftTimes, Date.now());
+      const patch: MilestonePatch = { shift: kind };
+      if (t) { patch.plannedStartAt = new Date(t.start).toISOString(); patch.plannedAt = new Date(t.finish).toISOString(); }
+      await updateMilestone({ id: m.id, patch, updatedBy: userId, updatedByName: userName, updatedByEmail: userEmail, updatedByRole: userRole });
+      // Its task row stays around it, as when its dates are changed by hand.
+      if (t && allTasks?.length && m.projectId) {
+        const nodes: ReflowNode[] = allTasks.map((x) => ({
+          id: x.id!, parentId: x.parentId ?? null, plannedStartAt: (x.plannedStartAt as string | undefined) ?? null, plannedAt: x.plannedAt as string,
+          status: x.status, dependsOn: x.dependsOn ?? null, links: x.linkTypes ?? null,
+        }));
+        const moves = withAncestors(nodes, [{ id: m.id, plannedStartAt: new Date(t.start).toISOString(), plannedAt: new Date(t.finish).toISOString() }]).filter((c) => c.id !== m.id);
+        if (moves.length) await applyMilestoneMoves({ orgId: m.orgId, projectId: m.projectId, moves, actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole });
+      }
+      onChanged();
+    } catch (e) { failed(e); }
+    finally { setShiftBusy(false); }
+  };
   // When it really runs: a phase from its first step to its last — the same
   // times the timeline shows.
   const span = useMemo(() => {
@@ -469,6 +496,31 @@ export default function TaskDetailPanel({
                       <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">Added to the schedule{d.addedAt ? ` ${fmtInTz(d.addedAt, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}` : ""}{d.addedBy || m.createdByName ? ` by ${d.addedBy || m.createdByName}` : ""}{d.approvedBy ? "" : " · no approval recorded"}</div>
                     )}
                     <div className={`text-[11px] mt-0.5 ${d.impact.critical ? "font-bold text-rose-700 dark:text-rose-400" : "text-[var(--color-text)]"}`}>When added: {impactLine(d.impact, (h) => `${h} h`, projectWord)}</div>
+                  </div>
+                );
+              })()}
+
+              {/* Which crew does it: one tap puts this step on nights (or days). */}
+              {isLeaf && m.id && canEdit && m.status !== "completed" && (() => {
+                const k = workShiftOf(m, tz, shiftTimes);
+                const started = (m.percentComplete ?? 0) > 0 || !!m.actualStartAt;
+                const seg = (on: boolean, night: boolean) => `inline-flex items-center gap-1 px-3 py-1.5 text-[12px] font-bold border-l first:border-l-0 border-[var(--color-border-strong)] disabled:opacity-50 ${on ? (night ? "bg-violet-700 text-white" : "bg-sky-700 text-white") : "bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`;
+                return (
+                  <div className="px-4 py-2.5 border-b border-[var(--color-border)] space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Shift</span>
+                      <div className="inline-flex rounded-lg border border-[var(--color-border-strong)] overflow-hidden" role="radiogroup" aria-label="Which shift does this step">
+                        <button type="button" role="radio" aria-checked={k === "day"} disabled={shiftBusy || k === "day"} onClick={() => void putOnShift("day")} className={seg(k === "day", false)}><Sun className="w-3.5 h-3.5" aria-hidden /> Day</button>
+                        <button type="button" role="radio" aria-checked={k === "night"} disabled={shiftBusy || k === "night"} onClick={() => void putOnShift("night")} className={seg(k === "night", true)}><Moon className="w-3.5 h-3.5" aria-hidden /> Night</button>
+                      </div>
+                      {shiftBusy && <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-muted)]" />}
+                    </div>
+                    <div className="text-[11px] text-[var(--color-text-muted)] leading-snug">
+                      {k === "both" ? "Runs round the clock. Tap Day or Night to give it to one crew."
+                        : started ? "Started: its times stay as recorded; tapping the other shift hands the rest to that crew."
+                        : k === "day" ? "Night moves just this step to that day's night shift, same length, and keeps it on nights."
+                        : "Day moves just this step to the next morning's day shift, same length."}
+                    </div>
                   </div>
                 );
               })()}
