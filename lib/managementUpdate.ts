@@ -36,6 +36,9 @@ export interface UpdateFormat {
 export interface UpdateLookups {
   /** The next shift's plan, set by hand (lib/nightPlan): who set it, when. */
   plan?: ShiftPlan;
+  /** The shift after that: its report (read from the next shift) and its
+   *  plan, set the same way. Its list stands where "carries over" was. */
+  after?: { report: ShiftReport; plan?: ShiftPlan };
   /** A main task's rolled-up % complete. */
   pctOf: (id: string) => number | undefined;
   /** A main task's planned finish (its last step's finish). */
@@ -344,7 +347,12 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       ],
     });
   }
-  if (later.length > 0) {
+  // ── The shift after: the other crew's next shift, its plan (or the
+  // schedule's list, with what this crew leaves open), like the next one.
+  const ar = look.after?.report;
+  // Without the shift after's report (an older caller): where the other
+  // crew's open work goes, in its own table.
+  if (!ar && later.length > 0) {
     const shown = later.slice(0, MAX_ROWS * 3);
     const why = (r: ShiftRow): ExportCell => {
       const x = nextOf(report, r, kindOf.get(r)!, f);
@@ -362,6 +370,31 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
         textLabels: ["", "", "WO", "by", "", "done", "vs plan"], nowrap: [2, 5, 6],
         rows: [...byTask(shown, (r) => [stepCell(r), wo(r), who(r), why(r), doneCell(r), vsCell(r)], taskSub, !!look.order?.later?.length), ...more(later.length - shown.length, 7)],
       }],
+    });
+  }
+
+  if (ar) {
+    const nx = ar.next;
+    const list = turnoverPlan(ar, () => false).items.filter((x) => x.kind === "next").map((x) => x.r);
+    const hrs = Math.round(list.reduce((a, r) => a + (r.hoursNext ?? 0), 0) * 10) / 10;
+    const shown = list.slice(0, MAX_ROWS * 3);
+    const when = (r: ShiftRow): ExportCell => { const x = nextOf(ar, r, "next", f); const text = x.detail ? `${x.label} - ${x.detail}` : x.label; return x.tone && x.tone !== "muted" ? { t: text, tone: x.tone } : text; };
+    const goal = (r: ShiftRow): ExportCell => ((r.goalPct ?? r.percent) > r.percent ? `${r.goalPct}%` : { t: "-", tone: "muted" });
+    const vs = (r: ShiftRow): ExportCell => { const v = vsPlan(ar, r, f.hrs); return { t: v.text, tone: v.tone, bold: true }; };
+    const set = ar.goals.byPlan ? planSetText(look.after?.plan, f) : null;
+    out.push({
+      id: "after", title: `${shiftName(nx)} plan - ${f.D(nx.start)} ${f.win(nx)}`,
+      sub: [`${list.length} step${list.length === 1 ? "" : "s"} for the ${nx.kind} crew (${f.hrs(hrs)})`, held.length ? `${held.length} blocked or on hold` : null].filter(Boolean).join(" · "),
+      flag: held.some((r) => r.status === "blocked") ? "rose" : null,
+      blocks: [
+        list.length ? {
+          k: "table", head: ["Task", "Step", "WO", "Who", "When", "Done", "Goal", "vs plan"], align: ["left", "left", "left", "left", "left", "right", "right", "right"],
+          textLabels: ["", "", "WO", "by", "", "done", "goal", "vs plan"], nowrap: [2, 5, 6, 7],
+          rows: [...byTask(shown, (r) => [stepCell(r), wo(r), who(r), when(r), `${r.percent}%`, goal(r), vs(r)], taskSub, false), ...more(list.length - shown.length, 8)],
+        } as ExportBlock : { k: "note", text: ar.goals.byPlan ? "Nothing left open on the plan." : `Nothing planned for the ${shiftName(nx).toLowerCase()}.` } as ExportBlock,
+        ...(set ? [{ k: "note", text: set } as ExportBlock] : ar.goals.byPlan ? [] : [{ k: "note", text: `No plan set: the schedule's list, with what the ${other} crew leaves open.` } as ExportBlock]),
+        ...(held.length ? [{ k: "note", text: `Blocked or on hold, on no shift's list: ${held.map((r) => `${r.leaf.name}${r.reason ? ` (${r.reason})` : ""}`).join("; ")}.`, tone: "rose" } as ExportBlock] : []),
+      ],
     });
   }
 

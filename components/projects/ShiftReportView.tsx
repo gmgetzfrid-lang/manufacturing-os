@@ -343,6 +343,15 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     () => buildShiftReport({ milestones, progress, criticalIds, path, tz, times, shift, now: asOf, pullIds: pullKey ? pullKey.split(",") : undefined, startPct, plan: nextPlan, reviewPlan: thisPlan }),
     [milestones, progress, criticalIds, path, tz, times, shift, asOf, pullKey, startPct, nextPlan, thisPlan],
   );
+  // The shift after that (the other crew's next): its own plan, set the
+  // same way, and its list read the same way (the schedule's, with what
+  // this crew leaves open).
+  const afterWin = useMemo(() => nextShift(report.next, tz, times), [report.next, tz, times]);
+  const afterKey = handoverKey(afterWin);
+  const afterPlan = records.get(afterKey)?.plan;
+  const afterReport = useMemo(() => (meeting === "turnover"
+    ? buildShiftReport({ milestones, progress, criticalIds, path, tz, times, shift: report.next, now: asOf, plan: afterPlan })
+    : null), [meeting, milestones, progress, criticalIds, path, tz, times, report.next, asOf, afterPlan]);
   // One crew at a time: the whole turnover narrows to their steps.
   const crews = useMemo(() => crewsOnReport(report), [report]);
   const [crewPick, setCrewPick] = useState<string | null>(null);
@@ -418,13 +427,16 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     : []), [pickerOpen, milestones, progress, criticalIds, tz, times, shift, asOf, pullKey]);
   // ── Plan the next shift (ShiftPlanPicker): what to pick from is the
   // schedule's own read, without the plan.
-  const [planOpen, setPlanOpen] = useState(false);
-  const planBase = useMemo(() => (planOpen
-    ? buildShiftReport({ milestones, progress, criticalIds, path, tz, times, shift, now: asOf, lookAheadUntil: Infinity, startPct })
-    : null), [planOpen, milestones, progress, criticalIds, path, tz, times, shift, asOf, startPct]);
+  // Which shift is being planned: the next one, or the one after it.
+  const [planFor, setPlanFor] = useState<"next" | "after" | null>(null);
+  const planOpen = planFor != null;
+  const setPlanOpen = (on: boolean) => setPlanFor(on ? "next" : null);
+  const planBase = useMemo(() => (planFor
+    ? buildShiftReport({ milestones, progress, criticalIds, path, tz, times, shift: planFor === "after" ? report.next : shift, now: asOf, lookAheadUntil: Infinity, startPct: planFor === "after" ? undefined : startPct })
+    : null), [planFor, milestones, progress, criticalIds, path, tz, times, shift, report.next, asOf, startPct]);
   const planGroups = useMemo(() => (planBase ? planChoices(planBase) : []), [planBase]);
   const planPool = useMemo(() => (planBase ? planSearchPool(planBase, planGroups) : []), [planBase, planGroups]);
-  const savePlan = useCallback((p: ShiftPlan | undefined) => saveShiftRecord({ orgId, projectId, shiftKey: nextKey, userId: userId ?? "",
+  const savePlan = useCallback((p: ShiftPlan | undefined, key: string = nextKey) => saveShiftRecord({ orgId, projectId, shiftKey: key, userId: userId ?? "",
     change: (r) => { const n = { ...r }; if (p) n.plan = p; else delete n.plan; return n; } }).then(() => undefined), [orgId, projectId, nextKey, userId]);
   const togglePull = useCallback((r: ShiftRow, on: boolean) => {
     const id = r.leaf.id;
@@ -688,8 +700,10 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         onDiscovery: onDiscovery && !locked ? () => { const first = view.goals.all[0]?.parentId ?? view.review.done[0]?.parentId; const t = (first ? live.find((m) => m.id === first) : undefined) ?? live.find((m) => live.some((k) => k.parentId === m.id)); if (t) onDiscovery(t); } : undefined,
         // Only while the next shift is still ahead (or on).
         onPlanNext: onPlanNext && report.next.end > now && !locked ? () => onPlanNext(report.next) : undefined,
-        nightPlan: { plan: nextPlan, open: report.next.end > now && (canShip || nextPlan) ? () => setPlanOpen(true) : undefined } }),
-  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, hourlyExport, locked, findingsCtx, nextPlan, canShip, workDone, unscheduledWords]);
+        nightPlan: { plan: nextPlan, open: report.next.end > now && (canShip || nextPlan) ? () => setPlanOpen(true) : undefined },
+        after: afterReport ? { report: afterReport, plan: afterPlan, open: afterWin.end > now && (canShip || afterPlan) ? () => setPlanFor("after") : undefined } : undefined }),
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- setPlanOpen / setPlanFor are state setters
+  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, hourlyExport, locked, findingsCtx, nextPlan, canShip, workDone, unscheduledWords, afterReport, afterPlan, afterWin]);
   // Sections left off the report, on screen and in print — the viewer's own
   // choice for each meeting, remembered like the email's. Each comes back
   // with a tap (listed at the bottom); the email keeps its own choice.
@@ -879,6 +893,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           asked,
           pull: pullForReport,
           plan: nextPlan,
+          after: afterReport ? { report: afterReport, plan: afterPlan } : undefined,
           safetyProject: safety.project,
           safetyRecent: safety.recent,
           showTimes: stamps, timeOf, taskPct, whyOf,
@@ -1086,9 +1101,9 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       </div>
 
       {meeting === "turnover" && planOpen && planBase && (
-        <ShiftPlanPicker next={report.next} groups={planGroups} pool={planPool} byId={byId} plan={nextPlan}
+        <ShiftPlanPicker next={planFor === "after" ? afterWin : report.next} groups={planGroups} pool={planPool} byId={byId} plan={planFor === "after" ? afterPlan : nextPlan}
           locked={!canShip || !!shippedAt} fmt={{ D: ctx.D, T: ctx.T, DTs: ctx.DTs }} by={userName ?? null}
-          onSave={(p) => savePlan(p)} onRemove={() => savePlan(undefined)} onClose={() => setPlanOpen(false)} />
+          onSave={(p) => savePlan(p, planFor === "after" ? afterKey : nextKey)} onRemove={() => savePlan(undefined, planFor === "after" ? afterKey : nextKey)} onClose={() => setPlanFor(null)} />
       )}
       {meeting === "turnover" && pickerOpen && (
         <PullAheadPicker items={lookAhead} next={report.next} shiftHours={(report.next.end - report.next.start) / 3_600_000}
@@ -1751,7 +1766,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   /** Change what the next shift does, in the schedule. */
   onPlanNext?: () => void;
   /** The next shift's plan, set by hand (lib/nightPlan), and the way to set it. */
-  nightPlan?: { plan?: ShiftPlan; open?: () => void } }): Sec[] {
+  nightPlan?: { plan?: ShiftPlan; open?: () => void };
+  /** The shift after that: its list (the schedule's, or its plan) and the way to plan it. */
+  after?: { report: ShiftReport; plan?: ShiftPlan; open?: () => void } }): Sec[] {
   const { overall, review, goals, shift, next } = report;
   // A step's latest comment, as one quiet line under it (each step shows once).
   const comment = (r: ShiftRow) => {
@@ -1904,8 +1921,27 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     `${planList.length} step${planList.length === 1 ? "" : "s"} · ${c.hrs(planHrs)}`,
     tryList.length ? `${tryList.length} could try` : null,
   ].filter(Boolean).join(" · ");
-  const laterCount = plan.carries.length + plan.held.length;
-  const laterSub = [plan.carries.length ? `${plan.carries.length} for the ${otherKind} crew` : null, plan.held.length ? `${plan.held.length} blocked or on hold` : null].filter(Boolean).join(" · ") + ` - not the ${next.kind} shift's work`;
+  // The shift after: its own list, numbered, read like the next shift's.
+  const after = o.after;
+  const afterNext = after?.report.next;
+  const afterItems = after ? turnoverPlan(after.report, () => false).items.filter((x) => x.kind === "next" && (!o.crew || (x.r.leaf.actualParty?.trim() || x.r.leaf.responsibleParty?.trim()) === o.crew)) : [];
+  const afterList = afterItems.map((x) => x.r);
+  const afterHrs = afterList.reduce((a, r) => a + (r.hoursNext ?? 0), 0);
+  const afterSet = after?.report.goals.byPlan ? planSetText(after.plan, c) : null;
+  const afterRows = () => afterList.map((r, i) => {
+    const x = nextOf(after!.report, r, "next", c, { pulled: false, crew: null });
+    return rowFromShift(r, c, {
+      when: x.label, n: { num: i + 1, tone: r.critical ? "rose" : r.carryOver ? "amber" : "slate" },
+      right: standing(r, "next"), note: comment(r),
+      extraTags: [x.detail ? { t: x.detail, tone: (x.tone === "rose" ? "amber" : x.tone ?? "muted") as TagTone } : null, ...pathTags(r)],
+    });
+  });
+  const afterButton = after?.open && afterNext ? (
+    <button type="button" onClick={after.open}
+      className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-[12px] font-bold text-white hover:bg-indigo-700 print:hidden">
+      <ListChecks className="w-3.5 h-3.5" /> {after.report.goals.byPlan ? `Change the ${afterNext.kind} plan` : `Plan the ${afterNext.kind} shift`}
+    </button>
+  ) : null;
   // Past due across every crew, the held ones in the count and named: the
   // same count as the board's "8 overdue, 1 on hold".
   const pastDueRows = (o.whole ?? report).review.carryOver;
@@ -2097,20 +2133,34 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         ...(tryLine ? [{ k: "note", text: tryLine, tone: "amber" } as ExportBlock] : []),
       ],
     },
-    ...(laterCount ? [{
-      // ── Carries to the other shift: its crew's unfinished and ongoing
-      // work, and anything blocked — not the next shift's list.
-      id: "carries", title: `Carries over to ${otherKind} shift - ${c.D(next.end)}`, short: `To ${otherKind} shift`,
+    // ── The shift after: the other crew's next shift, planned the same way
+    // as the next one. Its list is the schedule's (with what this crew
+    // leaves open) until a plan is set; then the plan.
+    ...(after && afterNext ? [{
+      id: "after", title: `Plan the ${afterNext.kind} shift - ${c.D(afterNext.start)} ${c.win(afterNext)}`, short: `${afterNext.kind === "day" ? "Day" : "Night"} shift plan`,
       agenda: "also",
-      sub: laterSub, count: laterCount,
+      sub: [`${afterList.length} step${afterList.length === 1 ? "" : "s"} · ${c.hrs(afterHrs)}`, plan.held.length ? `${plan.held.length} blocked or on hold` : null].filter(Boolean).join(" · "),
+      count: afterList.length,
       flag: plan.held.some((r) => r.status === "blocked") ? "rose" : null,
       body: (print: boolean) => (
         <div className="space-y-2">
-          {putBack(print, "later")}
-          <StepTable print={print} whenHead="Why" rightHead="Done" rows={nextRows(print, false)} sort={sortOf(print, "later")} onEdit={print ? undefined : editRow} />
+          {!print && afterButton && <div className="flex flex-wrap items-center gap-2">{afterButton}{!after.report.goals.byPlan && <span className="text-[11.5px] text-[var(--color-text-muted)]">No plan set: this list is the schedule&apos;s, with what the {next.kind === "day" ? "night" : "day"} crew leaves open. Tick the work you&apos;re giving the {afterNext.kind} shift.</span>}</div>}
+          {afterSet && <div className="text-[11.5px] font-semibold text-indigo-800 dark:text-indigo-300">{afterSet} This list is the plan; nothing else is handed to the {afterNext.kind} shift.</div>}
+          {afterList.length === 0 ? <Empty>{after.report.goals.byPlan ? "Nothing left open on the plan." : `Nothing is scheduled for the ${afterNext.kind} shift.`}</Empty> : (
+            <StepTable print={print} box whenHead="When" rightHead="Done → goal" rows={afterRows()} onEdit={print ? undefined : editRow} />
+          )}
+          {plan.held.length > 0 && (
+            <div className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-300">
+              Blocked or on hold, on no shift&apos;s list: {plan.held.map((r) => `${r.leaf.name}${r.reason ? ` (${r.reason})` : ""}`).join("; ")}.
+            </div>
+          )}
         </div>
       ),
-      data: () => [stepsBlock(nextRows(true, false), "Done", "Why")],
+      data: () => [
+        ...(afterSet ? [{ k: "note", text: afterSet } as ExportBlock] : []),
+        afterList.length === 0 ? { k: "empty", text: after.report.goals.byPlan ? "Nothing left open on the plan." : `Nothing is scheduled for the ${afterNext.kind} shift.` } as ExportBlock : stepsBlock(afterRows(), "Done · goal", "When"),
+        ...(plan.held.length ? [{ k: "note", text: `Blocked or on hold, on no shift's list: ${plan.held.map((r) => `${r.leaf.name}${r.reason ? ` (${r.reason})` : ""}`).join("; ")}.`, tone: "rose" } as ExportBlock] : []),
+      ],
     } as Sec] : []),
     ...discoverySection(shift, c, o.discovery ?? [], o.onDiscovery),
     ...(sh?.hourly ? [hourlySection(sh, sh.hourly, meetings, o.hourlyExport)] : []),

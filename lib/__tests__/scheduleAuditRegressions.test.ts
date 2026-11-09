@@ -463,6 +463,16 @@ describe("the next shift sees the other crew's unfinished and paused work", () =
     // Under way, continuing on the day crew's next shift — listed with where it stands.
     expect(text).toMatch(/Retube · on plan, continues next day shift · done 30%/);
   });
+  it("with the shift after given: its plan stands where 'carries over' was, with the day crew's open work on it", () => {
+    const after = buildShiftReport({ milestones: [ext, long], tz: CHI, shift: r.next, now: d.end });
+    const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r, f, { pctOf: () => 40, finishOf: () => undefined, after: { report: after } }) });
+    expect(text).not.toMatch(/CARRIES OVER/);
+    const sec = text.split(/^DAY SHIFT PLAN/m)[1] ?? "";
+    expect(sec).toMatch(/Blind \/ open manways/);
+    expect(sec).toMatch(/Retube/);
+    expect(sec).toMatch(/No plan set: the schedule's list, with what the day crew leaves open\./);
+    expect(text).not.toMatch(/if you can/i);
+  });
 });
 
 describe("day work the day crew didn't finish carries over at shift change", () => {
