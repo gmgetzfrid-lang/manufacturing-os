@@ -2,7 +2,7 @@
 // duplicates: the ID is one piece plant-wide, the name repeats unit to unit.
 
 import { describe, it, expect } from "vitest";
-import { nameKey, idKey, sameEquipmentId, scheduleId, idProblem, checkNew, unitEquipment, sameNameElsewhere, requestOf, requestValue, EQUIP_REQUEST, type PickAsset } from "@/lib/equipmentPick";
+import { nameKey, idKey, sameEquipmentId, scheduleId, idProblem, checkNew, unitEquipment, sameNameElsewhere, requestOf, requestValue, equipmentLabel, descriptionFrom, EQUIP_REQUEST, type PickAsset } from "@/lib/equipmentPick";
 import type { Milestone } from "@/types/schema";
 
 const reg: PickAsset[] = [
@@ -83,5 +83,25 @@ describe("an ask kept on the work order", () => {
     expect(requestOf({ attributes: {} })).toBeNull();
     expect(requestOf({ attributes: { [EQUIP_REQUEST]: "{\"tag\":\"\"}" } })).toBeNull();
     expect(requestOf({ attributes: { [EQUIP_REQUEST]: "not json" } })).toBeNull();
+  });
+});
+
+describe("how equipment is written", () => {
+  it("name, (ID), what it is", () => {
+    expect(equipmentLabel({ tag: "E-26", code: "5530.19", description: "Debutanizer Trim Cooler" })).toBe("E-26 (5530.19) Debutanizer Trim Cooler");
+    expect(equipmentLabel({ tag: "V-7", code: null, description: null })).toBe("V-7");
+    // An ID written into the name the old way still shows once.
+    expect(equipmentLabel({ tag: "X-31 (2030.31)", code: null, description: "Overhead Condenser" })).toBe("X-31 (2030.31) Overhead Condenser");
+  });
+  it("what it is, from the work order's name", () => {
+    expect(descriptionFrom("V-7 - Transmix Fractionator", "V-7")).toBe("Transmix Fractionator");
+    expect(descriptionFrom("E-12 - Transmix Feed/Trans. Diesel Exchanger No. 2", "E-12")).toBe("Transmix Feed/Trans. Diesel Exchanger No. 2");
+    expect(descriptionFrom("V-07 Transmix Fractionator", "V-7")).toBe("Transmix Fractionator");
+    expect(descriptionFrom("Clean fuel gas supply header to H-1", "H-1")).toBe("");
+    expect(descriptionFrom("V-8 - Transmix Reflux Drum", "V-7")).toBe("");
+  });
+  it("found by what it is, too", () => {
+    const r: PickAsset[] = [{ id: "a", tag: "E-26", unitCode: "55", code: "5530.19", description: "Debutanizer Trim Cooler" }];
+    expect(unitEquipment(r, ["55"], "trim cooler").map((a) => a.id)).toEqual(["a"]);
   });
 });

@@ -17,10 +17,28 @@ import { codeOf } from "@/lib/woClass";
 import { searchMatcher } from "@/lib/fuzzySearch";
 
 /** A piece of equipment as the picker shows it. */
-export interface PickAsset { id: string; tag: string; unitCode: string | null; code?: string | null }
+export interface PickAsset { id: string; tag: string; unitCode: string | null; code?: string | null; description?: string | null }
 
 /** The registry's "X-31 (2030.31)" is X-31. */
 export const plainName = (tag: string) => tag.replace(/\s*\(.*$/, "").trim();
+
+/** How equipment is written everywhere: the name, its ID, what it is -
+ *  "E-26 (5530.19) Debutanizer Trim Cooler". */
+export function equipmentLabel(a: Pick<PickAsset, "tag" | "code" | "description">): string {
+  const id = a.code?.trim() || (a.tag.match(/\(([^)]+)\)/)?.[1] ?? "");
+  const what = a.description?.trim();
+  return `${plainName(a.tag)}${id ? ` (${id})` : ""}${what ? ` ${what}` : ""}`;
+}
+
+/** What a work order's name says the equipment is: "V-7 - Transmix
+ *  Fractionator" is a Transmix Fractionator. Empty when the name doesn't
+ *  lead with the tag. */
+export function descriptionFrom(name: string | null | undefined, tag: string): string {
+  const n = (name ?? "").trim();
+  const m = n.match(/^\s*([A-Z]{1,4})\s?-\s?(\d{1,5}[A-Z]{0,2})\b\s*[-–:·]?\s*(.*)$/i);
+  if (!m || nameKey(`${m[1]}-${m[2]}`) !== nameKey(tag)) return "";
+  return m[3].trim();
+}
 
 /** A name as one piece of equipment: letters and digits, lower case,
  *  no leading zeros ("V-7", "v 7", "V07" and "V-07" are one name). */
@@ -86,7 +104,7 @@ export function unitEquipment(registry: PickAsset[], unitCodes: string[], query:
   const match = searchMatcher(q);
   const exact = nameKey(q);
   return mine
-    .map((a) => ({ a, s: nameKey(a.tag) === exact || sameEquipmentId(a.code, q) ? 1000 : match(`${plainName(a.tag)} ${a.code ?? ""} ${a.tag}`) }))
+    .map((a) => ({ a, s: nameKey(a.tag) === exact || sameEquipmentId(a.code, q) ? 1000 : match(`${plainName(a.tag)} ${a.code ?? ""} ${a.tag} ${a.description ?? ""}`) }))
     .filter((x) => x.s > 0)
     .sort((p, q2) => q2.s - p.s || byName(p.a, q2.a))
     .map((x) => x.a);

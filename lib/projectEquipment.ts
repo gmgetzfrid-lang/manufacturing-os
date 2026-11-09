@@ -26,7 +26,7 @@ import { createAsset, updateAsset } from "@/lib/assets";
 import { EQUIP_ID, EQUIP_NONE, EQUIP_TAG, leadTag, tagsIn, tagKey, registryTagKey, type Equipment } from "@/lib/findings";
 import { EQUIP_REQUEST, requestValue, type EquipmentRequest } from "@/lib/equipmentPick";
 
-export interface RegistryAsset { id: string; tag: string; unitCode: string | null; code?: string | null }
+export interface RegistryAsset { id: string; tag: string; unitCode: string | null; code?: string | null; description?: string | null }
 export interface UnitChoice { code: string; label: string }
 
 export type MatchState =
@@ -191,8 +191,8 @@ export interface ProjectEquipmentData {
 export async function loadProjectEquipment(orgId: string, projectId: string): Promise<ProjectEquipmentData> {
   const [book, assets, edges] = await Promise.all([
     loadCodebook(orgId),
-    fetchAllRows<{ id: string; tag: string; unit_code: string | null; code: string | null }>((from, to) => supabase.from("assets")
-      .select("id, tag, unit_code, code").eq("org_id", orgId).eq("archived", false).order("id").range(from, to) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>),
+    fetchAllRows<{ id: string; tag: string; unit_code: string | null; code: string | null; description: string | null }>((from, to) => supabase.from("assets")
+      .select("id, tag, unit_code, code, description").eq("org_id", orgId).eq("archived", false).order("id").range(from, to) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>),
     listEdgesFor(orgId, [nid.proj(projectId)]).catch(() => [] as EstateEdge[]),
   ]);
   const units = book.units.map((u) => ({ code: u.code, label: u.label }));
@@ -201,7 +201,7 @@ export async function loadProjectEquipment(orgId: string, projectId: string): Pr
   const projectUnits = codes.map((code) => units.find((u) => u.code === code) ?? { code, label: `Unit ${code}` });
   return {
     units,
-    registry: assets.rows.map((a) => ({ id: a.id, tag: a.tag, unitCode: a.unit_code, code: a.code })),
+    registry: assets.rows.map((a) => ({ id: a.id, tag: a.tag, unitCode: a.unit_code, code: a.code, description: a.description })),
     unit: projectUnits[0] ?? null,
     projectUnits,
     book,
@@ -290,9 +290,9 @@ export async function pruneEquipmentLinks(edges: EstateEdge[], inUse: Set<string
 }
 
 /** Put a tag in the registry under the project's unit. */
-export async function addToRegistry(input: { orgId: string; tag: string; unitCode: string; createdBy: string; code?: string | null }): Promise<RegistryAsset> {
-  const a = await createAsset({ orgId: input.orgId, tag: input.tag.trim(), unitCode: input.unitCode, createdBy: input.createdBy, ...(input.code ? { code: input.code } : {}) });
-  return { id: a.id, tag: a.tag, unitCode: (a as { unit_code?: string | null }).unit_code ?? input.unitCode, code: input.code ?? null };
+export async function addToRegistry(input: { orgId: string; tag: string; unitCode: string; createdBy: string; code?: string | null; description?: string | null }): Promise<RegistryAsset> {
+  const a = await createAsset({ orgId: input.orgId, tag: input.tag.trim(), unitCode: input.unitCode, createdBy: input.createdBy, ...(input.code ? { code: input.code } : {}), ...(input.description?.trim() ? { description: input.description.trim() } : {}) });
+  return { id: a.id, tag: a.tag, unitCode: (a as { unit_code?: string | null }).unit_code ?? input.unitCode, code: input.code ?? null, description: input.description?.trim() || null };
 }
 
 /** Ask an admin to add equipment that isn't in the unit's list: kept on the

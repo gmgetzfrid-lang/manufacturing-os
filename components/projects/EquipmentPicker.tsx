@@ -25,12 +25,23 @@ import { equipmentOf, EQUIP_NONE } from "@/lib/findings";
 import { setupOrders, proposeTag, setProjectUnit, setWorkOrderEquipment, addToRegistry, requestEquipment, clearEquipmentRequest, unitName, EQUIPMENT_CHANGED, type UnitChoice } from "@/lib/projectEquipment";
 import { invalidateAssetCache } from "@/lib/assets";
 import { searchFilter } from "@/lib/fuzzySearch";
-import { nameKey, plainName, scheduleId, checkNew, unitEquipment, sameNameElsewhere, requestOf, type PickAsset } from "@/lib/equipmentPick";
+import { nameKey, plainName, scheduleId, checkNew, unitEquipment, sameNameElsewhere, requestOf, equipmentLabel, descriptionFrom, type PickAsset } from "@/lib/equipmentPick";
 import { splitTag } from "@/lib/codebook";
 
 const btn = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[13px] font-bold px-3.5 h-10 shadow-sm disabled:opacity-50";
 const quiet = "inline-flex items-center justify-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[13px] font-semibold text-[var(--color-text)] px-3 h-10 disabled:opacity-50";
 const field = "h-10 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-[14px] text-[var(--color-text)]";
+
+/** "E-26 (5530.19)" on top, what it is underneath. */
+function AssetText({ a }: { a: PickAsset }) {
+  const id = a.code?.trim() || (a.tag.match(/\(([^)]+)\)/)?.[1] ?? "");
+  return (
+    <span className="flex-1 min-w-0">
+      <span className="block text-[13.5px] text-[var(--color-text)]"><b className="font-mono">{plainName(a.tag)}</b>{id ? <span className="font-mono text-[var(--color-text-muted)]"> ({id})</span> : <span className="text-[11px] text-[var(--color-text-muted)]"> · no ID</span>}</span>
+      {a.description?.trim() && <span className="block text-[12px] text-[var(--color-text-muted)] truncate">{a.description.trim()}</span>}
+    </span>
+  );
+}
 
 /** The work order a step belongs to (the step itself when it is one). */
 function ownerOf(m: Milestone, milestones: Milestone[]): Milestone {
@@ -56,7 +67,7 @@ export function EquipmentField({ milestone, milestones, compact }: { milestone: 
   const none = (milestone.attributes ?? {})[EQUIP_NONE] === true;
   const ask = requestOf(milestone) ?? requestOf(ownerOf(milestone, milestones));
   const asset = eq?.assetId ? data?.registry.find((a) => a.id === eq.assetId) : undefined;
-  const label = asset ? `${plainName(asset.tag)}${asset.code ? ` · ${asset.code}` : ""}`
+  const label = asset ? equipmentLabel(asset)
     : ask ? `${ask.tag} · asked for`
       : eq ? `${eq.tag} · not linked`
         : none ? "No equipment" : "Equipment";
@@ -91,7 +102,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
   const [err, setErr] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [unitQuery, setUnitQuery] = useState("");
-  const [adding, setAdding] = useState<{ tag: string; unit: string; code: string; touched: boolean } | null>(null);
+  const [adding, setAdding] = useState<{ tag: string; unit: string; code: string; touched: boolean; what: string } | null>(null);
   const actor = { id: scope.userId, name: scope.userName };
 
   const units: UnitChoice[] = data?.projectUnits ?? [];
@@ -125,7 +136,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
     const equipment = { assetId: a.id, tag: plainName(a.tag) };
     await setWorkOrderEquipment({ orgId: scope.orgId, projectId: scope.projectId, projectName: scope.projectName, ownerId: saveOn.id!, title: titleOf(saveOn), equipment, unit: a.unitCode ?? undefined, actor, existing: data?.edges });
     noteEquipmentSaved(scope.projectId, saveOn.id!, { equipment, unit: a.unitCode ?? undefined });
-    done(`${titleOf(saveOn)} is on ${plainName(a.tag)}`);
+    done(`${titleOf(saveOn)} is on ${equipmentLabel(a)}`);
   });
   const setNone = () => run("none", async () => {
     await setWorkOrderEquipment({ orgId: scope.orgId, projectId: scope.projectId, projectName: scope.projectName, ownerId: saveOn.id!, title: titleOf(saveOn), equipment: null, actor, existing: data?.edges });
@@ -154,7 +165,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
     const code = idFor(tag);
     const byCode = code ? units.find((u) => code.startsWith(u.code))?.code : undefined;
     const unit = byCode ?? (ask?.unit && unitCodes.includes(ask.unit) ? ask.unit : units[0]?.code) ?? "";
-    setAdding({ tag, unit, code, touched: false });
+    setAdding({ tag, unit, code, touched: false, what: descriptionFrom(owner.name, tag) });
   };
 
   const header = <ModalHeader icon={Wrench} title="Equipment" subtitle={titleOf(owner)} onClose={onClose} />;
@@ -211,14 +222,14 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
     const check = checkNew({ tag: adding.tag, code: adding.code, unitCode: adding.unit }, registry);
     const suggested = idFor(adding.tag);
     const save = () => run("add", async () => {
-      const a = await addToRegistry({ orgId: scope.orgId, tag: plainName(adding.tag).toUpperCase(), unitCode: adding.unit, createdBy: scope.userId ?? "", code: adding.code.trim() });
+      const a = await addToRegistry({ orgId: scope.orgId, tag: plainName(adding.tag).toUpperCase(), unitCode: adding.unit, createdBy: scope.userId ?? "", code: adding.code.trim(), description: adding.what });
       invalidateAssetCache();
       await reload();
       const equipment = { assetId: a.id, tag: plainName(a.tag) };
       await setWorkOrderEquipment({ orgId: scope.orgId, projectId: scope.projectId, projectName: scope.projectName, ownerId: saveOn.id!, title: titleOf(saveOn), equipment, unit: adding.unit, actor, existing: data.edges });
       if (saveOn.id !== owner.id && requestOf(owner)) await clearEquipmentRequest(owner.id!, scope.userId);
       noteEquipmentSaved(scope.projectId, saveOn.id!, { equipment, unit: adding.unit });
-      done(`Added ${plainName(a.tag)} (${adding.code.trim()}) to ${unitLabel(adding.unit)} and linked it`);
+      done(`Added ${equipmentLabel(a)} to ${unitLabel(adding.unit)} and linked it`);
     });
     return (
       <Modal onClose={onClose} size="md">
@@ -242,17 +253,23 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
                 : "Type its ID as the plant numbers it. It isn't worked out from the name: the number after the point isn't the tag's number."}
             </span>
           </label>
+          <label className="block text-[12px] font-bold text-[var(--color-text-muted)]">Description
+            <input value={adding.what} onChange={(e) => setAdding({ ...adding, what: e.target.value })} className={`${field} mt-1`} placeholder="Debutanizer Trim Cooler" />
+          </label>
+          {adding.tag.trim() && (
+            <p className="text-[12.5px] text-[var(--color-text)]">Shows as <b>{equipmentLabel({ tag: adding.tag.trim().toUpperCase(), code: adding.code, description: adding.what })}</b></p>
+          )}
           {units.length === 1 && <p className="text-[12px] text-[var(--color-text-muted)]">On {unitLabel(adding.unit)}.</p>}
           {check.kind === "same_name" && (
             <div className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[12.5px] text-amber-900 dark:text-amber-200 space-y-2">
-              <p><b>{plainName(check.asset.tag)} is already on {unitLabel(check.asset.unitCode)}</b>{check.asset.code ? ` (${check.asset.code})` : ""}. Link that one: adding it again would make two.</p>
+              <p><b>{equipmentLabel(check.asset)} is already on {unitLabel(check.asset.unitCode)}</b>. Link that one: adding it again would make two.</p>
               <button type="button" disabled={!!busy} onClick={() => void link(check.asset)} className={quiet}><Check className="w-4 h-4" /> Link {plainName(check.asset.tag)}</button>
             </div>
           )}
-          {check.kind === "same_id" && <p className="text-[12.5px] text-rose-700 dark:text-rose-300"><AlertTriangle className="inline w-3.5 h-3.5 mr-1" />ID {adding.code.trim()} is already {plainName(check.asset.tag)} on {unitLabel(check.asset.unitCode)}. Each ID is one piece of equipment.</p>}
+          {check.kind === "same_id" && <p className="text-[12.5px] text-rose-700 dark:text-rose-300"><AlertTriangle className="inline w-3.5 h-3.5 mr-1" />ID {adding.code.trim()} is already {equipmentLabel(check.asset)} on {unitLabel(check.asset.unitCode)}. Each ID is one piece of equipment.</p>}
           {check.kind === "bad_id" && adding.code.trim() !== "" && <p className="text-[12.5px] text-rose-700 dark:text-rose-300">{check.words}</p>}
           {sameNameElsewhere(adding.tag, registry, [adding.unit]).length > 0 && check.kind !== "same_name" && (
-            <p className="text-[12px] text-[var(--color-text-muted)]">{plainName(adding.tag)} is also on {sameNameElsewhere(adding.tag, registry, [adding.unit]).map((a) => `${unitLabel(a.unitCode)}${a.code ? ` (${a.code})` : ""}`).join(", ")}: a different piece, with its own ID.</p>
+            <p className="text-[12px] text-[var(--color-text-muted)]">{plainName(adding.tag)} is also on {sameNameElsewhere(adding.tag, registry, [adding.unit]).map((a) => `${unitLabel(a.unitCode)} as ${equipmentLabel(a)}`).join(", ")}: a different piece, with its own ID.</p>
           )}
           {err && <p className="text-[12.5px] text-rose-700 dark:text-rose-300">{err}</p>}
         </ModalBody>
@@ -273,7 +290,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
       <ModalBody className="space-y-3">
         {isStep && <p className="text-[12px] text-[var(--color-text-muted)]">For the whole work order: every step on it is on the same equipment.</p>}
         <p className="text-[12px] text-[var(--color-text-muted)]">
-          From {units.map(unitName).join(" and ")}{current ? <> · now <b className="text-[var(--color-text)]">{current.tag}{current.assetId ? "" : " (not linked)"}</b></> : null}
+          From {units.map(unitName).join(" and ")}{current ? <> · now <b className="text-[var(--color-text)]">{(() => { const a = current.assetId ? registry.find((x) => x.id === current.assetId) : undefined; return a ? equipmentLabel(a) : `${current.tag}${current.assetId ? "" : " (not linked)"}`; })()}</b></> : null}
         </p>
         {ask && (
           <div className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[12.5px] text-amber-900 dark:text-amber-200 space-y-2">
@@ -292,8 +309,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
           <button type="button" disabled={!!busy} onClick={() => void link(guessHit)}
             className="w-full flex items-center gap-2 rounded-lg border-2 border-[var(--color-accent)] bg-[var(--color-accent-soft)] px-3 min-h-12 text-left">
             <span className="text-[10.5px] font-black uppercase tracking-wider text-[var(--color-accent)] shrink-0">From its name</span>
-            <span className="flex-1 min-w-0 font-mono font-bold text-[14px] text-[var(--color-text)]">{plainName(guessHit.tag)}</span>
-            <span className="font-mono text-[12px] text-[var(--color-text-muted)]">{guessHit.code ?? "no ID"}</span>
+            <AssetText a={guessHit} />
             {busy === guessHit.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4 text-[var(--color-accent)]" />}
           </button>
         )}
@@ -303,9 +319,8 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
             return (
               <li key={a.id}>
                 <button type="button" disabled={!!busy} onClick={() => void link(a)} className={`w-full flex items-center gap-2 px-3 min-h-11 text-left hover:bg-[var(--color-surface-2)] ${on ? "bg-[var(--color-accent-soft)]" : ""}`}>
-                  <span className="flex-1 min-w-0 font-mono font-bold text-[13.5px] text-[var(--color-text)]">{plainName(a.tag)}</span>
-                  {units.length > 1 && <span className="text-[11px] text-[var(--color-text-muted)]">{a.unitCode}</span>}
-                  <span className="font-mono text-[12px] text-[var(--color-text-muted)]">{a.code ?? "no ID"}</span>
+                  <AssetText a={a} />
+                  {units.length > 1 && <span className="text-[11px] text-[var(--color-text-muted)] shrink-0">{a.unitCode}</span>}
                   {busy === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : on ? <Check className="w-4 h-4 text-[var(--color-accent)]" /> : null}
                 </button>
               </li>
@@ -323,7 +338,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
         {want && !wantHere && (
           <div className="rounded-lg border border-[var(--color-border)] px-3 py-2.5 space-y-2">
             <p className="text-[12.5px] text-[var(--color-text)]"><b className="font-mono">{want}</b> isn&apos;t in {units.length === 1 ? `${units[0].label}'s` : "the units'"} list.</p>
-            {elsewhere.length > 0 && <p className="text-[12px] text-[var(--color-text-muted)]">{elsewhere.map((a) => `${plainName(a.tag)} on ${unitLabel(a.unitCode)}${a.code ? ` (${a.code})` : ""}`).join(", ")} {elsewhere.length === 1 ? "is a different piece" : "are different pieces"}: not this unit&apos;s.</p>}
+            {elsewhere.length > 0 && <p className="text-[12px] text-[var(--color-text-muted)]">{elsewhere.map((a) => `${equipmentLabel(a)} on ${unitLabel(a.unitCode)}`).join(", ")} {elsewhere.length === 1 ? "is a different piece" : "are different pieces"}: not this unit&apos;s.</p>}
             {isAdmin
               ? <button type="button" disabled={!!busy} onClick={() => startAdd(want)} className={btn}><Plus className="w-4 h-4" /> Add {want} to {units.length === 1 ? units[0].label : "the unit"}</button>
               : ask && nameKey(ask.tag) === nameKey(want)

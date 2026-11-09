@@ -22,7 +22,7 @@ import {
   addToRegistry, moveToUnit, requestEquipment, unitName, EQUIPMENT_CHANGED, type ProjectEquipmentData, type RegistryAsset, type WorkOrderMatch, type SavedHere, type UnitChoice,
 } from "@/lib/projectEquipment";
 import { typeLabel, fromWords, type WoClass } from "@/lib/woClass";
-import { sameEquipmentId, requestOf } from "@/lib/equipmentPick";
+import { sameEquipmentId, requestOf, equipmentLabel } from "@/lib/equipmentPick";
 import { EquipmentField } from "@/components/projects/EquipmentPicker";
 import { cache, read, noteSaved, savedHere, forgetRead } from "@/components/projects/equipmentData";
 
@@ -316,7 +316,8 @@ const chip = (t: string, tone: "emerald" | "amber" | "slate") => (
 );
 
 function MatchLine({ m, where }: { m: WorkOrderMatch; where: (a: RegistryAsset) => string }) {
-  const tag = m.tag ? <b className="text-[var(--color-text)]">{m.tag}</b> : null;
+  // Written as everywhere: "E-26 (5530.19) Debutanizer Trim Cooler".
+  const tag = m.asset ? <b className="text-[var(--color-text)]">{equipmentLabel(m.asset)}</b> : m.tag ? <b className="text-[var(--color-text)]">{m.tag}</b> : null;
   return (
     <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[var(--color-text-muted)]">
       {m.state === "none" && <>{chip("No equipment", "slate")}</>}
