@@ -1,5 +1,6 @@
-// equipmentPick - linking a work order (or one of its steps) to equipment
-// in the project's unit, and the rules for adding equipment.
+// equipmentPick - linking a work order (the task; its steps take its
+// equipment) to equipment in the project's unit, and the rules for adding
+// equipment.
 //
 //   - The ID (2010.07: unit 20, vessels 10, item 7) is one piece of
 //     equipment across the plant; the name (V-7) repeats from unit to unit,

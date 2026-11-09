@@ -1,7 +1,9 @@
 "use client";
 
-// EquipmentPicker - the equipment a work order (or one of its steps) is on,
-// picked from the project's unit. On a work order card and in the step panel.
+// EquipmentPicker - the equipment a work order is on, picked from the
+// project's unit. Set on the work order (the task); its steps take it from
+// there. On a work order card and in the step panel (which sets its work
+// order).
 //
 //   - No unit on the project yet: the owner, a co-owner or an admin picks it
 //     first, then goes straight on to the equipment.
@@ -82,9 +84,9 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
   const { data, error, reload } = useEquipmentRegistry(scope.orgId, scope.projectId);
   const owner = useMemo(() => ownerOf(target, milestones), [target, milestones]);
   const byId = useMemo(() => new Map(milestones.filter((x) => x.id).map((x) => [x.id!, x])), [milestones]);
+  // Equipment goes on the work order (the task); its steps take it from there.
   const isStep = owner.id !== target.id;
-  const [onlyStep, setOnlyStep] = useState(false);
-  const saveOn = onlyStep ? target : owner;
+  const saveOn = owner;
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -269,14 +271,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
     <Modal onClose={onClose} size="md">
       {header}
       <ModalBody className="space-y-3">
-        {isStep && (
-          <div className="inline-flex rounded-lg bg-[var(--color-surface-2)] p-0.5 text-[12.5px] font-bold" role="radiogroup" aria-label="Which to set">
-            {([[false, "The whole work order"], [true, "Only this step"]] as const).map(([v, w]) => (
-              <button key={w} type="button" role="radio" aria-checked={onlyStep === v} onClick={() => setOnlyStep(v)}
-                className={`px-3 h-8 rounded-md ${onlyStep === v ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)]"}`}>{w}</button>
-            ))}
-          </div>
-        )}
+        {isStep && <p className="text-[12px] text-[var(--color-text-muted)]">For the whole work order: every step on it is on the same equipment.</p>}
         <p className="text-[12px] text-[var(--color-text-muted)]">
           From {units.map(unitName).join(" and ")}{current ? <> · now <b className="text-[var(--color-text)]">{current.tag}{current.assetId ? "" : " (not linked)"}</b></> : null}
         </p>

@@ -414,7 +414,7 @@ export default function TaskDetailPanel({
                   <Field icon={<Hash className="w-3.5 h-3.5" />} label="Work order">{m.workOrderRef}</Field>
                 )}
                 {m.id && (
-                  <Field icon={<Wrench className="w-3.5 h-3.5" />} label="Equipment">
+                  <Field icon={<Wrench className="w-3.5 h-3.5" />} label="Equipment (work order)">
                     <EquipmentField milestone={m} milestones={allTasks ?? []} compact />
                   </Field>
                 )}
