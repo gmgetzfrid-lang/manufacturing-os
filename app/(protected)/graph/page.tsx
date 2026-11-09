@@ -522,7 +522,7 @@ function GraphPageInner() {
     <div className="h-full min-h-0 flex flex-col">
       {/* Top bar */}
       <div className="shrink-0 flex items-center gap-2 flex-wrap px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-        <div className="[&>div]:mb-0 mr-1">
+        <div className="[&>div]:mb-0 mr-1 min-w-0 max-w-full">
           <ViewTabs tabs={INTELLIGENCE_VIEWS} />
         </div>
         <Waypoints className="w-4 h-4 text-violet-600 shrink-0" />

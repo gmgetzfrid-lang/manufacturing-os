@@ -300,7 +300,7 @@ export default function DocumentsHomePage() {
     <div className="min-h-full p-4 sm:p-8 pb-20">
       <div className="max-w-6xl mx-auto">
         <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
-        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-8">
+        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-8">
           <div>
             <h1 className="text-3xl font-black text-[var(--color-text)] tracking-tight">Document Control</h1>
             <p className="text-sm text-[var(--color-text-muted)] mt-1">
@@ -308,8 +308,8 @@ export default function DocumentsHomePage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-3 w-full md:w-auto">
-            <div className="relative flex-1 md:flex-none">
+          <div className="flex items-center gap-3 w-full lg:w-auto min-w-0">
+            <div className="relative flex-1 min-w-0 lg:flex-none">
               <Search className="w-4 h-4 text-[var(--color-text-faint)] absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 value={search}

@@ -42,12 +42,20 @@ export default function ViewTabs({
   };
 
   const dark = variant === "dark";
+  // On a phone the views don't all fit: the strip scrolls on its own (never
+  // the page), with the one you're on brought into sight.
+  const strip = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    const el = strip.current, on = el?.querySelector<HTMLElement>("[aria-current=page]");
+    if (!el || !on || el.scrollWidth <= el.clientWidth) return;
+    el.scrollLeft = Math.max(0, on.offsetLeft - (el.clientWidth - on.offsetWidth) / 2);
+  }, [pathname]);
   return (
-    <div className={`flex items-center gap-3 flex-wrap mb-4 ${dark ? "" : ""}`}>
+    <div className={`flex items-center gap-3 flex-wrap mb-4 min-w-0 max-w-full`}>
       {title && (
         <span className={`text-xs font-black uppercase tracking-wider ${dark ? "text-[var(--color-text-muted)]" : "text-[var(--color-text-faint)]"}`}>{title}</span>
       )}
-      <div className={`inline-flex items-center gap-1 p-1 rounded-xl ${dark ? "bg-slate-900 border border-slate-800" : "bg-[var(--color-surface-2)] border border-[var(--color-border)]"}`}>
+      <div ref={strip} className={`inline-flex items-center gap-1 p-1 rounded-xl min-w-0 max-w-full overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${dark ? "bg-slate-900 border border-slate-800" : "bg-[var(--color-surface-2)] border border-[var(--color-border)]"}`}>
         {tabs.map((t) => {
           const active = isActive(t);
           const Icon = t.icon;
@@ -55,7 +63,8 @@ export default function ViewTabs({
             <Link
               key={t.href}
               href={t.href}
-              className={`inline-flex items-center gap-1.5 px-3 h-8 rounded-lg text-xs font-bold transition-colors ${
+              aria-current={active ? "page" : undefined}
+              className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3 h-8 rounded-lg text-xs font-bold transition-colors ${
                 active
                   ? (dark ? "bg-slate-700 text-white shadow" : "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm")
                   : (dark ? "text-[var(--color-text-faint)] hover:text-slate-200" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]")

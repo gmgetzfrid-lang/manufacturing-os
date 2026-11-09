@@ -59,7 +59,9 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
         <Sidebar mobileOpen={mobileNavOpen} onMobileClose={closeMobileNav} />
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
           <TopBar onOpenMobileNav={openMobileNav} />
-          <main className="flex-1 overflow-auto relative">
+          {/* Never scrolls sideways (a phone would let the page drift and
+              bounce): wide content scrolls in its own strip or table. */}
+          <main className="flex-1 overflow-y-auto overflow-x-hidden overscroll-x-none relative">
             <NotificationListener />
             <UpdatePill />
             <CornerDock />

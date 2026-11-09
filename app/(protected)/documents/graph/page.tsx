@@ -584,7 +584,7 @@ function GraphPageInner() {
   if (!activeOrgId) return null;
 
   return (
-    <div className="flex flex-col h-[calc(100vh-56px)]">
+    <div className="flex flex-col lg:h-[calc(100vh-56px)]">
       <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
       {error && (
         <div className={`mx-4 mt-3 px-3 py-2 rounded-lg border text-sm flex items-center gap-2 ${data ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-700"}`}>
@@ -593,9 +593,10 @@ function GraphPageInner() {
           <button onClick={() => setError(null)} className="opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
         </div>
       )}
-      <div className="flex-1 min-h-0 grid grid-cols-[320px_1fr_380px]">
+      {/* A phone stacks the three: find, the map, the details. */}
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[320px_1fr_380px]">
         {/* ── Left: search, drives, aliases ───────────────────────────── */}
-        <aside className="border-r border-[var(--color-border)] bg-[var(--color-surface)] flex flex-col min-h-0">
+        <aside className="border-b lg:border-b-0 lg:border-r border-[var(--color-border)] bg-[var(--color-surface)] flex flex-col min-h-0 min-w-0 h-[55vh] lg:h-auto">
           <div className="flex border-b border-[var(--color-border)] text-xs font-bold">
             {([["search", "Find", Search], ["links", "Links", Link2], ["drives", "Drives", HardDrive], ["aliases", "Aliases", Tag]] as const).map(([k, label, Icon]) => (
               <button key={k} onClick={() => setPanel(k)}
@@ -677,7 +678,7 @@ function GraphPageInner() {
         </aside>
 
         {/* ── Centre: the map ─────────────────────────────────────────── */}
-        <main className="relative min-h-0 bg-[var(--color-canvas)]">
+        <main className="relative min-h-0 min-w-0 h-[60vh] lg:h-auto bg-[var(--color-canvas)]">
           {loading && data && (
             <div className="absolute bottom-3 left-3 z-10 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-2.5 py-1 text-[11px] inline-flex items-center gap-1.5 shadow-sm">
               <RefreshCw className="w-3 h-3 animate-spin" /> {snapAt ? `Showing the map from ${Math.max(1, Math.round((Date.now() - snapAt) / 60000))} min ago while the fresh one loads` : "Refreshing…"}
@@ -723,7 +724,7 @@ function GraphPageInner() {
                 </button>
               )}
             </div>
-            <div className="flex items-center gap-1 pointer-events-auto">
+            <div className="flex items-center gap-1 flex-wrap justify-end min-w-0 max-w-full pointer-events-auto">
               {controller && <ConnectButton running={connect.running || connect.planLoading} disabled={data?.estateMissing} onClick={() => { setShowConnect(true); void connect.openPreview(); }} />}
               {controller && (
                 <button onClick={runResolver} disabled={resolving || data?.estateMissing} title={data?.estateMissing ? "Apply migration 20261020 first" : "Link every folder and file to its unit, project and equipment from names and ancestry"}
@@ -793,7 +794,7 @@ function GraphPageInner() {
         </main>
 
         {/* ── Right: results / selection ──────────────────────────────── */}
-        <aside className="border-l border-[var(--color-border)] bg-[var(--color-surface)] min-h-0 overflow-y-auto">
+        <aside className="border-t lg:border-t-0 lg:border-l border-[var(--color-border)] bg-[var(--color-surface)] min-h-0 min-w-0 lg:overflow-y-auto">
           {selSat && data && (
             <EntityPanel orgId={activeOrgId!} sat={selSat} data={data} entryById={entryById} nodeById={nodeById} serverFind={serverFind}
               onClose={() => setSelSat(null)} onOpen={(id) => void openEntry(id)} onOpenAtPage={openAtPage} onReveal={reveal}
