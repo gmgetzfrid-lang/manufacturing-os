@@ -428,11 +428,13 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   // ── Plan the next shift (ShiftPlanPicker): what to pick from is the
   // schedule's own read, without the plan.
   // Which shift is being planned: the next one, or the one after it.
-  const [planFor, setPlanFor] = useState<"next" | "after" | null>(null);
+  const [planFor, setPlanFor] = useState<"this" | "next" | "after" | null>(null);
   const planOpen = planFor != null;
   const setPlanOpen = (on: boolean) => setPlanFor(on ? "next" : null);
   const planBase = useMemo(() => (planFor
-    ? buildShiftReport({ milestones, progress, criticalIds, path, tz, times, shift: planFor === "after" ? report.next : shift, now: asOf, lookAheadUntil: Infinity, startPct: planFor === "after" ? undefined : startPct })
+    // Planned from the shift before the one being planned: this shift from
+    // the last, the next from this, the one after from the next.
+    ? buildShiftReport({ milestones, progress, criticalIds, path, tz, times, shift: planFor === "after" ? report.next : planFor === "this" ? previousShift(shift, tz, times) : shift, now: planFor === "this" ? Math.min(asOf, shift.start) : asOf, lookAheadUntil: Infinity, startPct: planFor === "next" ? startPct : undefined })
     : null), [planFor, milestones, progress, criticalIds, path, tz, times, shift, report.next, asOf, startPct]);
   const planGroups = useMemo(() => (planBase ? planChoices(planBase) : []), [planBase]);
   const planPool = useMemo(() => (planBase ? planSearchPool(planBase, planGroups) : []), [planBase, planGroups]);
@@ -701,9 +703,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         // Only while the next shift is still ahead (or on).
         onPlanNext: onPlanNext && report.next.end > now && !locked ? () => onPlanNext(report.next) : undefined,
         nightPlan: { plan: nextPlan, open: report.next.end > now && (canShip || nextPlan) ? () => setPlanOpen(true) : undefined },
-        after: afterReport ? { report: afterReport, plan: afterPlan, open: afterWin.end > now && (canShip || afterPlan) ? () => setPlanFor("after") : undefined } : undefined }),
+        after: afterReport ? { report: afterReport, plan: afterPlan, open: afterWin.end > now && (canShip || afterPlan) ? () => setPlanFor("after") : undefined } : undefined,
+        // This shift's own plan: the work after its meeting, set (or fixed) here.
+        thisPlan: { plan: thisPlan, open: canShip || thisPlan ? () => setPlanFor("this") : undefined } }),
   // eslint-disable-next-line react-hooks/exhaustive-deps -- setPlanOpen / setPlanFor are state setters
-  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, hourlyExport, locked, findingsCtx, nextPlan, canShip, workDone, unscheduledWords, afterReport, afterPlan, afterWin]);
+  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, hourlyExport, locked, findingsCtx, nextPlan, canShip, workDone, unscheduledWords, afterReport, afterPlan, afterWin, thisPlan]);
   // Sections left off the report, on screen and in print — the viewer's own
   // choice for each meeting, remembered like the email's. Each comes back
   // with a tap (listed at the bottom); the email keeps its own choice.
@@ -855,7 +859,10 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         incidents: sheet.incidents && (sheet.incidents.none || sheet.incidents.items?.length)
           ? { none: !!sheet.incidents.none, items: (sheet.incidents.items ?? []).map((x) => ({ kind: x.kind, text: x.text, time: ctx.T(x.at) })) } : undefined,
         safetyTopic: parts.safety,
-        planned: view.review.scheduled.filter((r) => !doneBeforeMeeting(r)).map((r) => ({ crew: r.leaf.responsibleParty?.trim() || "Other", ...item(r) })),
+        // The plan set for this shift (at its meeting), else the schedule's.
+        planned: (view.review.plan
+          ? (() => { const p = view.review.plan!; const rows = [...p.done, ...p.moved, ...p.untouched]; const order = new Map((thisPlan?.ids ?? []).map((id, i) => [id, i])); return rows.sort((a, b) => (order.get(a.leaf.id ?? "") ?? 0) - (order.get(b.leaf.id ?? "") ?? 0)); })()
+          : view.review.scheduled.filter((r) => !doneBeforeMeeting(r))).map((r) => ({ crew: r.leaf.responsibleParty?.trim() || "Other", ...item(r) })),
         completed: [
           ...view.review.done.map((r) => ({ crew: crewOf(r), ...item(r) })),
           ...view.review.progressed.filter((r) => !doneIds.has(r.leaf.id)).map((r) => ({ crew: crewOf(r), ...item(r, r.pctStart != null ? `(${r.pctStart}% to ${r.percent}%)` : `(${r.percent}%)`) })),
@@ -1101,9 +1108,9 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       </div>
 
       {meeting === "turnover" && planOpen && planBase && (
-        <ShiftPlanPicker next={planFor === "after" ? afterWin : report.next} groups={planGroups} pool={planPool} byId={byId} plan={planFor === "after" ? afterPlan : nextPlan}
+        <ShiftPlanPicker next={planFor === "after" ? afterWin : planFor === "this" ? shift : report.next} groups={planGroups} pool={planPool} byId={byId} plan={planFor === "after" ? afterPlan : planFor === "this" ? thisPlan : nextPlan}
           locked={!canShip || !!shippedAt} fmt={{ D: ctx.D, T: ctx.T, DTs: ctx.DTs }} by={userName ?? null}
-          onSave={(p) => savePlan(p, planFor === "after" ? afterKey : nextKey)} onRemove={() => savePlan(undefined, planFor === "after" ? afterKey : nextKey)} onClose={() => setPlanFor(null)} />
+          onSave={(p) => savePlan(p, planFor === "after" ? afterKey : planFor === "this" ? thisKey : nextKey)} onRemove={() => savePlan(undefined, planFor === "after" ? afterKey : planFor === "this" ? thisKey : nextKey)} onClose={() => setPlanFor(null)} />
       )}
       {meeting === "turnover" && pickerOpen && (
         <PullAheadPicker items={lookAhead} next={report.next} shiftHours={(report.next.end - report.next.start) / 3_600_000}
@@ -1768,7 +1775,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   /** The next shift's plan, set by hand (lib/nightPlan), and the way to set it. */
   nightPlan?: { plan?: ShiftPlan; open?: () => void };
   /** The shift after that: its list (the schedule's, or its plan) and the way to plan it. */
-  after?: { report: ShiftReport; plan?: ShiftPlan; open?: () => void } }): Sec[] {
+  after?: { report: ShiftReport; plan?: ShiftPlan; open?: () => void };
+  /** This shift's own plan (the work after its meeting) and the way to set it. */
+  thisPlan?: { plan?: ShiftPlan; open?: () => void } }): Sec[] {
   const { overall, review, goals, shift, next } = report;
   // A step's latest comment, as one quiet line under it (each step shows once).
   const comment = (r: ShiftRow) => {
@@ -2071,6 +2080,15 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       ],
       body: (print) => (
         <div className="space-y-2">
+          {!print && o.thisPlan?.open && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={o.thisPlan.open}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-400 dark:border-indigo-700 px-3 py-1.5 text-[12px] font-bold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 print:hidden">
+                <ListChecks className="w-3.5 h-3.5" /> {o.thisPlan.plan ? "Change this shift's plan" : "Plan this shift"}
+              </button>
+              <span className="text-[11.5px] text-[var(--color-text-muted)]">{o.thisPlan.plan ? `${planSetText(o.thisPlan.plan, c) ?? "Planned."} The update's "Work to be completed" is this plan.` : "The work after the meeting. Not set: the update lists the schedule's work for the shift."}</span>
+            </div>
+          )}
           {checkText && <div className="text-[11.5px] font-semibold text-indigo-800 dark:text-indigo-300">{checkText}</div>}
           {askedText && <div className="text-[11.5px] font-semibold text-slate-700 dark:text-slate-200">{askedText}</div>}
           {doneRows.length > 0 && putBack(print, "done")}
@@ -2164,10 +2182,54 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     } as Sec] : []),
     ...discoverySection(shift, c, o.discovery ?? [], o.onDiscovery),
     ...(sh?.hourly ? [hourlySection(sh, sh.hourly, meetings, o.hourlyExport)] : []),
+    // ── Follow-up items: the update's own row, kept open from shift to
+    // shift until someone marks each done.
+    ...(sh ? [(() => {
+      const open = sh.notes.filter((n) => n.followUp && !n.cleared);
+      return {
+        id: "followups", title: "Follow-up items", short: "Follow-ups", agenda: "also",
+        sub: open.length ? `${open.length} open - on every update until marked done` : "None open",
+        count: open.length || undefined, flag: null,
+        body: (print: boolean) => <FollowUpsBox open={open} edit={sh.edit && !print} T={c.T} onAdd={(text) => sh.addNote({ at: Date.now(), text, followUp: true })} onDone={(n) => sh.clearNote(n)} />,
+        data: () => [open.length ? { k: "bullets", items: open.map((n) => `${n.text}${n.from ? ` (from ${n.from})` : ""}`) } as ExportBlock : { k: "empty", text: "None." } as ExportBlock],
+      } as Sec;
+    })()] : []),
     closeSection("Close", ["Outgoing supervisor", "Incoming supervisor", "Crew lead"], undefined, sh ? (print) => (
       <ShiftNotesBox notes={sh.notes} edit={sh.edit} print={print} shift={shift} tz={sh.tz} T={c.T} D={c.D} onAdd={sh.addNote} onClear={sh.clearNote} onRemove={sh.removeNote} onEdit={sh.editNote} onUnclear={sh.unclearNote} onRestore={sh.restoreNote} />
     ) : undefined),
   ];
+}
+
+/** The update's follow-up items: each open one (from this shift or an
+ *  earlier one), marked done here; a new one in a line. */
+function FollowUpsBox({ open, edit, T, onAdd, onDone }: {
+  open: Array<ShiftNote & { from?: string; shiftKey: string }>; edit: boolean; T: (ms: number) => string;
+  onAdd: (text: string) => void; onDone: (n: ShiftNote & { shiftKey: string }) => void;
+}) {
+  const [text, setText] = useState("");
+  const add = () => { const t = text.trim(); if (!t) return; onAdd(t); setText(""); };
+  return (
+    <div className="space-y-2">
+      {open.length === 0 ? <Empty>No follow-up items open.</Empty> : (
+        <ul className="space-y-1">
+          {open.map((n) => (
+            <li key={n.id} className="flex items-start gap-2 text-[12.5px] text-[var(--color-text)]">
+              <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" aria-hidden />
+              <span className="flex-1 min-w-0 break-words">{n.text}<span className="ml-1.5 text-[11px] text-[var(--color-text-muted)]">{n.from ? `from ${n.from}` : `added ${T(n.at)}`}</span></span>
+              {edit && <button type="button" onClick={() => onDone(n)} className="shrink-0 text-[11.5px] font-bold text-emerald-700 dark:text-emerald-400 hover:underline">Done</button>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {edit && (
+        <div className="flex gap-2">
+          <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="Add a follow-up item"
+            aria-label="Add a follow-up item" className="flex-1 min-w-0 h-9 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] text-[var(--color-text)]" />
+          <button type="button" onClick={add} disabled={!text.trim()} className="h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-bold disabled:opacity-50">Add</button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** Shift notes, hour by hour: the meeting that started the shift (who
