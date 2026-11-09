@@ -55,11 +55,13 @@ export function CancelJobForm({ id, name, steps, userId, userName, userEmail, on
   );
 }
 
-export function CancelledJobsBar({ jobs, canEdit, userId, userEmail, onChanged }: {
+/** The jobs taken off the schedule: where each went, why, when and by whom,
+ *  with Put back. In the banner on Plan and Work, and as the Cancelled
+ *  filter on Work orders. */
+export function CancelledJobsList({ jobs, canEdit, userId, userEmail, onChanged }: {
   jobs: CancelledJob[]; canEdit: boolean; userId: string; userEmail?: string; onChanged: () => void | Promise<void>;
 }) {
   const tz = useScheduleTz();
-  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const putBack = async (id: string) => {
@@ -68,6 +70,43 @@ export function CancelledJobsBar({ jobs, canEdit, userId, userEmail, onChanged }
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(null); }
   };
+  return (
+    <div className="divide-y divide-amber-200 dark:divide-amber-900/60">
+      {err && <div className="px-3 py-2 text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
+      {jobs.map((j) => (
+        <div key={j.m.id} className="px-3 py-2 flex items-start gap-3">
+          <div className="flex-1 min-w-0 text-[12.5px] space-y-0.5">
+            <div className="text-[var(--color-text)]">
+              {j.m.workOrderRef && <span className="font-mono font-bold">WO {j.m.workOrderRef} · </span>}
+              <b className="break-words">{j.m.name}</b>
+              {j.crumbs.length > 0 && <span className="text-[11px] text-[var(--color-text-muted)]"> · {j.crumbs.join(" › ")}</span>}
+              {j.steps > 1 && <span className="text-[11px] text-[var(--color-text-muted)]"> · {j.steps} steps</span>}
+            </div>
+            <div className="text-[var(--color-text)]">
+              <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-400">Moved to </span>
+              {j.m.movedTo ? <b>{j.m.movedTo}</b> : <span className="text-[var(--color-text-faint)]">not said</span>}
+            </div>
+            {j.m.cancelNote && <div className="italic text-[var(--color-text-muted)] break-words">“{j.m.cancelNote}”</div>}
+            <div className="text-[10.5px] text-[var(--color-text-faint)]">
+              Cancelled {j.at != null && Number.isFinite(j.at) ? fmtInTz(j.at, tz, { weekday: "short", month: "short", day: "numeric" }) : ""}{j.m.cancelledByName ? ` · ${j.m.cancelledByName}` : ""}
+            </div>
+          </div>
+          {canEdit && j.m.id && (
+            <button onClick={() => void putBack(j.m.id!)} disabled={busy != null} title="Put this job back on the schedule"
+              className="shrink-0 inline-flex items-center gap-1 rounded-md border border-amber-300 dark:border-amber-800 px-2 py-1 text-[11px] font-bold text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 disabled:opacity-50">
+              {busy === j.m.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />} Put back
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function CancelledJobsBar({ jobs, canEdit, userId, userEmail, onChanged }: {
+  jobs: CancelledJob[]; canEdit: boolean; userId: string; userEmail?: string; onChanged: () => void | Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
   const n = jobs.length;
   return (
     <div className="rounded-xl border border-amber-300 dark:border-amber-800/70 bg-amber-50 dark:bg-amber-950/30">
@@ -78,33 +117,8 @@ export function CancelledJobsBar({ jobs, canEdit, userId, userEmail, onChanged }
         {open ? <ChevronDown className="w-4 h-4 shrink-0" /> : <ChevronRight className="w-4 h-4 shrink-0" />}
       </button>
       {open && (
-        <div className="border-t border-amber-200 dark:border-amber-900/60 divide-y divide-amber-200 dark:divide-amber-900/60">
-          {err && <div className="px-3 py-2 text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
-          {jobs.map((j) => (
-            <div key={j.m.id} className="px-3 py-2 flex items-start gap-3">
-              <div className="flex-1 min-w-0 text-[12.5px] space-y-0.5">
-                <div className="text-[var(--color-text)]">
-                  <b className="break-words">{j.m.name}</b>
-                  {j.crumbs.length > 0 && <span className="text-[11px] text-[var(--color-text-muted)]"> · {j.crumbs.join(" › ")}</span>}
-                  {j.steps > 1 && <span className="text-[11px] text-[var(--color-text-muted)]"> · {j.steps} steps</span>}
-                </div>
-                <div className="text-[var(--color-text)]">
-                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-400">Moved to </span>
-                  {j.m.movedTo ? <b>{j.m.movedTo}</b> : <span className="text-[var(--color-text-faint)]">not said</span>}
-                </div>
-                {j.m.cancelNote && <div className="italic text-[var(--color-text-muted)] break-words">“{j.m.cancelNote}”</div>}
-                <div className="text-[10.5px] text-[var(--color-text-faint)]">
-                  Cancelled {j.at != null && Number.isFinite(j.at) ? fmtInTz(j.at, tz, { weekday: "short", month: "short", day: "numeric" }) : ""}{j.m.cancelledByName ? ` · ${j.m.cancelledByName}` : ""}
-                </div>
-              </div>
-              {canEdit && j.m.id && (
-                <button onClick={() => void putBack(j.m.id!)} disabled={busy != null} title="Put this job back on the schedule"
-                  className="shrink-0 inline-flex items-center gap-1 rounded-md border border-amber-300 dark:border-amber-800 px-2 py-1 text-[11px] font-bold text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 disabled:opacity-50">
-                  {busy === j.m.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />} Put back
-                </button>
-              )}
-            </div>
-          ))}
+        <div className="border-t border-amber-200 dark:border-amber-900/60">
+          <CancelledJobsList jobs={jobs} canEdit={canEdit} userId={userId} userEmail={userEmail} onChanged={onChanged} />
         </div>
       )}
     </div>

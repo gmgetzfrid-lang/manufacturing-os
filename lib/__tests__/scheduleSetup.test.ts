@@ -5,9 +5,10 @@ describe("schedule setup", () => {
   it("time zone and shift times are required; night crews are required; critical path and baseline are offered", () => {
     const items = setupChecklist({ timezoneSet: false, shiftTimesSaved: false, criticalChosen: false, hasBaseline: false });
     expect(missingRequired(items).map((i) => i.id)).toEqual(["timezone", "shifts", "night"]);
-    expect(items.filter((i) => !i.required).map((i) => i.id)).toEqual(["type", "critical", "baseline", "print"]);
+    expect(items.filter((i) => !i.required).map((i) => i.id)).toEqual(["type", "critical", "baseline", "manpower", "print"]);
     // The letterhead is optional: never counted as something to do.
     expect(toDo(items).map((i) => i.id)).not.toContain("print");
+    expect(toDo(items).map((i) => i.id)).not.toContain("manpower");
     // So is the project type (read from the name until it's set).
     expect(toDo(items).map((i) => i.id)).not.toContain("type");
   });

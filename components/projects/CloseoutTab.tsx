@@ -36,6 +36,10 @@ import { fmtInTz } from "@/lib/scheduleTz";
 import { NewChecklistFlow } from "@/components/projects/QualityTab";
 import { LinesChart } from "@/components/projects/cost/BudgetTable";
 import { Modal, ModalBody, ModalHeader } from "@/components/ui/Modal";
+import ManpowerLook from "@/components/projects/ManpowerLook";
+import { useManpowerSettings } from "@/components/projects/ManpowerSetup";
+import { loadShiftRecords, type ShiftRecord } from "@/lib/shiftRecord";
+import { companyOf, handsAt, manpowerSummary, shiftCounts, type ManpowerSettings, type ShiftCount } from "@/lib/manpower";
 
 const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 
@@ -75,6 +79,14 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   // Where attached files are saved: the project's library, else one picked here.
   const [home, setHome] = useState<ProjectFileHome | null>(null);
   const [lib, setLib] = useState("");
+  // The shift meetings' head counts, and each company's bid (lib/manpower).
+  const [records, setRecords] = useState<Map<string, ShiftRecord> | null>(null);
+  const mp = useManpowerSettings(projectId);
+  useEffect(() => {
+    let live = true;
+    loadShiftRecords(projectId).then((r) => { if (live) setRecords(r); }).catch(() => { if (live) setRecords(new Map()); });
+    return () => { live = false; };
+  }, [projectId, tick]);
 
   useEffect(() => {
     let live = true;
@@ -387,11 +399,12 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                                 : `${ps.actualPct}% done, plan by now ${ps.plannedPct}% · ${ps.done} of ${ps.steps} steps.`}
                           </div>
                           {ps.noSchedule && canManage && <button type="button" onClick={() => importFor(p)} className={pri}><UploadCloud className="w-4 h-4" /> Import {p.name}&rsquo;s schedule</button>}
-                          {ps.shifts.length > 0 && <Progress stats={ps} tz={tz} look={look} lookById={lookById} ids={ids} loading={!look} />}
+                          {ps.shifts.length > 0 && <Progress stats={ps} tz={tz} look={look} lookById={lookById} ids={ids} loading={!look} records={records} mp={mp} />}
                         </div>
                       ))}
+                      {perPhase.length > 1 && <WholeManpower shifts={perPhase.flatMap((x) => x.ps.shifts)} records={records} mp={mp} />}
                     </div>
-                  ) : stats.shifts.length > 0 && <Progress stats={stats} tz={tz} look={look} lookById={lookById} ids={phaseIds} loading={!look} />}
+                  ) : stats.shifts.length > 0 && <Progress stats={stats} tz={tz} look={look} lookById={lookById} ids={phaseIds} loading={!look} records={records} mp={mp} />}
                 </>
               )}
               {stats.lines.length > 0 && <LinesChart rows={stats.lines} cur="USD" />}
@@ -416,9 +429,13 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
 
 /** One plan's progress, shift by shift, and why it slipped (the steps in
  *  `ids`, else all). */
-function Progress({ stats, tz, look, lookById, ids, loading }: {
+function Progress({ stats, tz, look, lookById, ids, loading, records, mp }: {
   stats: ReturnType<typeof phaseStats>; tz: string; look: LookBack | null; lookById: Map<string, StepLook>; ids: Set<string> | null; loading: boolean;
+  records: Map<string, ShiftRecord> | null; mp: ManpowerSettings | null;
 }) {
+  const [now] = useState(() => Date.now());
+  const counts = useMemo(() => (records ? shiftCounts(records, stats.shifts.filter((r) => r.start <= now).map((r) => ({ kind: r.kind, dayKey: r.dayKey, start: r.start, end: Math.min(r.end, now) })), mp) : []), [records, stats.shifts, mp, now]);
+  const steps = useMemo(() => (look?.steps ?? []).filter((x) => !ids || ids.has(x.id)), [look, ids]);
   return (
     <>
       <div>
@@ -451,7 +468,8 @@ function Progress({ stats, tz, look, lookById, ids, loading }: {
           })}
         </div>
       </div>
-      <SlipStory stats={stats} tz={tz} look={look} lookById={lookById} setbacks={(look?.setbacks ?? []).filter((x) => !ids || ids.has(x.id))} steps={(look?.steps ?? []).filter((x) => !ids || ids.has(x.id))} loading={loading} />
+      <SlipStory stats={stats} tz={tz} look={look} lookById={lookById} setbacks={(look?.setbacks ?? []).filter((x) => !ids || ids.has(x.id))} steps={steps} loading={loading} counts={counts} mp={mp} />
+      <ManpowerLook shifts={stats.shifts} records={records} settings={mp} steps={steps} tz={tz} now={now} />
     </>
   );
 }
@@ -462,18 +480,34 @@ function Progress({ stats, tz, look, lookById, ids, loading }: {
  *  late steps grouped under where their delay came from; then the biggest
  *  setbacks and where the time went. Where nothing recorded explains a
  *  late start, what was going on at the time is shown as context. */
-function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading }: {
+function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading, counts, mp }: {
   stats: ReturnType<typeof phaseStats>; tz: string; look: LookBack | null; lookById: Map<string, StepLook>; setbacks: StepLook[]; steps: StepLook[]; loading: boolean;
+  counts: ShiftCount[]; mp: ManpowerSettings | null;
 }) {
   const sl = stats.slip;
   const late = stats.finishedAt != null && stats.plannedFinish != null && stats.finishedAt > stats.plannedFinish + 1_800_000;
   const when = (t: number) => `${fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric" })}, ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`;
   const label = (x: { task: string; name: string; wo?: string; crew?: string }) => `${x.task ? `${x.task} \u203a ` : ""}${x.name}${x.wo ? ` (WO ${x.wo})` : ""}${x.crew ? `, ${x.crew}` : ""}`;
   const unexplained = (x: StepLook) => (x.lost["late-start"] ?? 0) >= 1;
+  // Waited for the crew: its company's hands then, against the bid (as
+  // counted at that shift's meeting).
+  const hands = (x: StepLook): string | null => {
+    if ((x.lost.crew ?? 0) <= 0 || !x.crew) return null;
+    const co = companyOf(x.crew, mp);
+    const h = handsAt(counts, co, x.waitFrom + (Math.max(x.waitFrom, x.as) - x.waitFrom) / 2, mp);
+    if (!h) return null;
+    // Like for like: direct against the bid's direct; a count not split
+    // against the bid's total.
+    const said = h.direct != null
+      ? `${h.direct} direct on site then${h.bidDirect != null ? `, bid ${h.bidDirect}` : ""}`
+      : `${h.total} on site then (not split direct and indirect)${h.bidTotal != null ? `, bid ${h.bidTotal}` : ""}`;
+    return `${co} had ${said}${h.carried ? "; count carried over, not checked" : ""}.`;
+  };
   const Cause = ({ x, held, self }: { x: StepLook; held?: Array<{ s: SlipStep; right: string }>; self?: number }) => (
     <li className="py-2">
       <div className="text-[12.5px] font-bold text-[var(--color-text)] leading-snug">{label(x)}</div>
       {rootWords(x).slice(0, 3).map((w) => <div key={w} className="text-[12px] text-amber-800 dark:text-amber-300 leading-snug">{w}</div>)}
+      {hands(x) && <div className="text-[11.5px] text-[var(--color-text-muted)] leading-snug">{hands(x)}</div>}
       {unexplained(x) && whileWaiting(lookById, x, 2).map((w) => <div key={w} className="text-[11.5px] text-[var(--color-text-muted)] leading-snug">While it waited: {w}</div>)}
       {self != null && self > 0 && <div className="mt-0.5 text-[11.5px] text-[var(--color-text-muted)] leading-snug">{Math.round(self * 10) / 10} h of its own planned work behind then</div>}
       {held && held.length > 0 && (
@@ -540,6 +574,7 @@ function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading }: {
                 <span className="shrink-0 text-[11.5px] tabular-nums text-rose-700 dark:text-rose-400">lost {x.lostH} h</span>
               </div>
               {lostWords(x).slice(0, 3).map((w) => <div key={w} className="text-[11.5px] text-amber-800 dark:text-amber-300 leading-snug">{w}</div>)}
+              {hands(x) && <div className="text-[11.5px] text-[var(--color-text-muted)] leading-snug">{hands(x)}</div>}
               {unexplained(x) && whileWaiting(lookById, x, 1).map((w) => <div key={w} className="text-[11.5px] text-[var(--color-text-muted)] leading-snug">While it waited: {w}</div>)}
             </li>
           ))}</ul>
@@ -558,6 +593,31 @@ function SlipStory({ stats, tz, look, lookById, setbacks, steps, loading }: {
           ))}</div>
         </>
       )}
+    </div>
+  );
+}
+
+/** All phases: the manpower over the whole project, in one line. */
+function WholeManpower({ shifts, records, mp }: { shifts: ReturnType<typeof phaseStats>["shifts"]; records: Map<string, ShiftRecord> | null; mp: ManpowerSettings | null }) {
+  const [now] = useState(() => Date.now());
+  const sum = useMemo(() => {
+    if (!records) return null;
+    const seen = new Set<string>();
+    const w = shifts.filter((r) => r.start <= now && !seen.has(`${r.dayKey}:${r.kind}`) && seen.add(`${r.dayKey}:${r.kind}`))
+      .sort((a, b) => a.start - b.start).map((r) => ({ kind: r.kind, dayKey: r.dayKey, start: r.start, end: Math.min(r.end, now) }));
+    return manpowerSummary(shiftCounts(records, w, mp), records, mp);
+  }, [shifts, records, mp, now]);
+  if (!sum || sum.counted === 0) return null;
+  const n0 = (x: number) => Math.round(x).toLocaleString("en-US");
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] px-3 py-2 text-[12.5px] leading-snug">
+      <b className="text-[var(--color-text)]">Whole project manpower: </b>
+      <span className="text-[var(--color-text-muted)]">
+        {n0(sum.totalMH)} man-hours{sum.directMH + sum.indirectMH > 0 ? ` (${n0(sum.directMH)} direct, ${n0(sum.indirectMH)} indirect)` : ""}, peak {sum.peak?.n ?? 0} on site
+        {sum.cost != null ? `, ${money(sum.cost)} at the bid rates` : ""}.
+        {" "}{sum.incidents.recordable} recordable{sum.incidents.recordable === 1 ? "" : "s"}{sum.recordableRate != null ? `, rate ${sum.recordableRate.toFixed(2)} per 200,000 man-hours` : ""}.
+        {" "}Counted on {sum.counted} of {sum.shifts} shifts{sum.carried ? `, ${sum.carried} carried over, not checked` : ""}.
+      </span>
     </div>
   );
 }

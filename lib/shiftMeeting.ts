@@ -53,7 +53,7 @@ export function setNames(c: CrewCount | undefined, change: (names: string[]) => 
   return { ...rest, names: change(crewNames(c)) };
 }
 
-export interface MeetingCrew { crew: string; names: string[]; headcount: number | null; plant: boolean }
+export interface MeetingCrew { crew: string; names: string[]; headcount: number | null; plant: boolean; direct?: number | null; indirect?: number | null }
 
 /** The crews at the meeting with anyone named or counted, in `order` first
  *  (the crews on the plan), then the rest as added. */
@@ -62,7 +62,9 @@ export function meetingCrews(rec: ShiftRecord | undefined, order: string[] = [])
   const keys = [...order.filter((k) => k in crews), ...Object.keys(crews).filter((k) => !order.includes(k))];
   return keys.map((crew) => {
     const plant = !!crews[crew]?.plant;
-    return { crew, names: crewNames(crews[crew]), headcount: plant ? null : crews[crew]?.headcount ?? null, plant };
+    const c = crews[crew];
+    const split = !plant && (c?.direct != null || c?.indirect != null);
+    return { crew, names: crewNames(c), headcount: plant ? null : c?.headcount ?? null, plant, ...(split ? { direct: c?.direct ?? 0, indirect: c?.indirect ?? 0 } : {}) };
   }).filter((x) => x.names.length || x.headcount != null || x.plant);
 }
 
@@ -83,7 +85,7 @@ export function earlierMeetingLines(rec: ShiftRecord | undefined, shiftStart: nu
  *  of it are on site (plant staff: not counted); the total on the job;
  *  then the safety topic and notes. */
 export interface MeetingParts {
-  rows: Array<{ crew: string; attendees: string; onSite: number | null; plant: boolean }>;
+  rows: Array<{ crew: string; attendees: string; onSite: number | null; plant: boolean; direct?: number | null; indirect?: number | null }>;
   /** Everyone on the job (two or more resources counted), else null. */
   total: number | null;
   safety: string;
@@ -93,7 +95,7 @@ export function meetingParts(rec: ShiftRecord | undefined, shiftStart: number, o
   const crews = meetingCrews(rec, order);
   const total = totalOnSite(crews);
   return {
-    rows: crews.map((x) => ({ crew: noEmDash(x.crew), attendees: noEmDash(x.names.join(", ")), onSite: x.headcount, plant: x.plant })),
+    rows: crews.map((x) => ({ crew: noEmDash(x.crew), attendees: noEmDash(x.names.join(", ")), onSite: x.headcount, plant: x.plant, ...(x.direct != null || x.indirect != null ? { direct: x.direct, indirect: x.indirect } : {}) })),
     total: total != null && crews.filter((x) => !x.plant && x.headcount != null).length > 1 ? total : null,
     safety: noEmDash(rec?.meeting?.safety?.trim() ?? ""),
     notes: [...earlierMeetingLines(rec, shiftStart), ...(rec?.meeting?.note ?? "").split("\n").map((x) => noEmDash(x).trim()).filter(Boolean)],
@@ -101,7 +103,8 @@ export function meetingParts(rec: ShiftRecord | undefined, shiftStart: number, o
 }
 export const meetingEmpty = (m: MeetingParts) => !m.rows.length && !m.safety && !m.notes.length;
 /** A resource's on-site column: its count, "Plant staff", or "-". */
-export const onSiteCell = (r: { onSite: number | null; plant: boolean }) => (r.plant ? "Plant staff" : r.onSite != null ? String(r.onSite) : "-");
+export const onSiteCell = (r: { onSite: number | null; plant: boolean; direct?: number | null; indirect?: number | null }) =>
+  (r.plant ? "Plant staff" : r.onSite != null ? (r.direct != null || r.indirect != null ? `${r.onSite} (${r.direct ?? 0} direct, ${r.indirect ?? 0} indirect)` : String(r.onSite)) : "-");
 
 /** The meeting as plain text, one item a line (Excel, copied text):
  *  "Schultz. Attendees: Mike Leonard. On site: 12.",

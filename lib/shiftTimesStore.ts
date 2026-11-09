@@ -74,15 +74,17 @@ export async function saveProjectShiftTimes(projectId: string, t: ShiftTimes): P
   };
   // Keep the letterhead and the project type saved beside the times
   // (lib/letterheadStore, saveProjectType).
-  const { data: kept } = await supabase.from("projects").select("lh:shift_times->letterhead, pt:shift_times->projectType, ph:shift_times->phases, co:shift_times->closeout").eq("id", projectId).maybeSingle();
+  const { data: kept } = await supabase.from("projects").select("lh:shift_times->letterhead, pt:shift_times->projectType, ph:shift_times->phases, co:shift_times->closeout, mp:shift_times->manpower").eq("id", projectId).maybeSingle();
   const lh = (kept as { lh?: unknown } | null)?.lh;
   // The project's phases are kept here too (lib/projectPhases).
   const ph = (kept as { ph?: unknown } | null)?.ph;
   // And the close-out's settings (components/projects/CloseoutTab).
   const co = (kept as { co?: unknown } | null)?.co;
+  // And the manpower setup: crews' companies, bids and rates (lib/manpower).
+  const mp = (kept as { mp?: unknown } | null)?.mp;
   const pt = cleanProjectType((kept as { pt?: unknown } | null)?.pt) ?? cleanProjectType(t.projectType);
   if (pt) clean.projectType = pt;
-  const { data, error } = await supabase.from("projects").update({ shift_times: { ...clean, ...(lh ? { letterhead: lh } : {}), ...(Array.isArray(ph) ? { phases: ph } : {}), ...(co && typeof co === "object" ? { closeout: co } : {}) } }).eq("id", projectId).select("id");
+  const { data, error } = await supabase.from("projects").update({ shift_times: { ...clean, ...(lh ? { letterhead: lh } : {}), ...(Array.isArray(ph) ? { phases: ph } : {}), ...(co && typeof co === "object" ? { closeout: co } : {}), ...(mp && typeof mp === "object" ? { manpower: mp } : {}) } }).eq("id", projectId).select("id");
   if (error) {
     // The column isn't there yet: keep them on this device meanwhile.
     if (/shift_times/.test(error.message)) {

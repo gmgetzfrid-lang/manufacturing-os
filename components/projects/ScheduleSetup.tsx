@@ -6,7 +6,7 @@
 // now filled in, so confirming a right answer is one click.
 
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Check, ChevronLeft, ChevronRight, Clock, Factory, Flag, Globe2, Loader2, Moon, Printer, Settings2, Sun, Tag, Zap } from "lucide-react";
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Clock, Factory, Flag, Globe2, HardHat, Loader2, Moon, Printer, Settings2, Sun, Tag, Zap } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { setupChecklist, missingRequired, toDo, OPEN_SETUP_EVENT, type SetupItem, type SetupItemId } from "@/lib/scheduleSetup";
 import { useLetterhead } from "@/lib/letterheadStore";
@@ -27,8 +27,9 @@ import { useCriticalMode, useCriticalModeLoaded, saveCriticalMode } from "@/lib/
 import { CRITICAL_MODES, resolveCriticalPath, effectiveCriticalMode, type CriticalMode } from "@/lib/criticalPath";
 import type { Milestone } from "@/types/schema";
 import { EquipmentStep, useProjectEquipment } from "@/components/projects/EquipmentSetup";
+import { ManpowerStep, useManpowerSettings, manpowerSet } from "@/components/projects/ManpowerSetup";
 
-const ICON: Record<SetupItemId, typeof Clock> = { type: Tag, equipment: Factory, timezone: Globe2, shifts: Clock, night: Moon, critical: Zap, baseline: Flag, print: Printer };
+const ICON: Record<SetupItemId, typeof Clock> = { type: Tag, equipment: Factory, timezone: Globe2, shifts: Clock, night: Moon, critical: Zap, baseline: Flag, manpower: HardHat, print: Printer };
 // Opened by itself once per project on this device — after that the banner
 // (while anything's really missing) and the Setup button are the way in.
 const SHOWN_KEY = (projectId: string) => `scheduleSetup.autoOpened:${projectId}`;
@@ -70,9 +71,10 @@ export function ScheduleSetup(p: Props) {
   const letterheadSet = !!useLetterhead(p.projectId).lh;
   const typeSet = projectTypeSet(st.times.projectType);
   const equipmentSet = useEquipmentSet(p);
+  const mpSet = manpowerSet(useManpowerSettings(p.projectId));
   const items = useMemo(() => setupChecklist({
-    timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided, letterheadSet, typeSet, equipmentSet,
-  }), [p.timezone, saved, critical, p.hasBaseline, nightDecided, letterheadSet, typeSet, equipmentSet]);
+    timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided, letterheadSet, typeSet, equipmentSet, manpowerSet: mpSet,
+  }), [p.timezone, saved, critical, p.hasBaseline, nightDecided, letterheadSet, typeSet, equipmentSet, mpSet]);
   const missing = missingRequired(items);
   // Opens by itself for someone who can fix it — only once everything has
   // been read (nothing "checking"), and only once on this device.
@@ -202,6 +204,7 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
             {at === "night" && <NightStep {...p} done={item.done} onSaved={() => undefined} />}
             {at === "critical" && <CriticalStep {...p} critical={critical} onSaved={() => go(1)} />}
             {at === "baseline" && <BaselineStep {...p} done={item.done} />}
+            {at === "manpower" && <ManpowerStep projectId={p.projectId} milestones={p.milestones} canManage={p.canManage} />}
             {at === "print" && <LetterheadStep projectId={p.projectId} canManage={p.canManage} />}
           </div>
         </div>

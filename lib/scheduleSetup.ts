@@ -16,7 +16,7 @@
 //                 the project on the Intelligence graph, findings tied to
 //                 equipment for the next job
 
-export type SetupItemId = "type" | "equipment" | "timezone" | "shifts" | "night" | "critical" | "baseline" | "print";
+export type SetupItemId = "type" | "equipment" | "timezone" | "shifts" | "night" | "critical" | "baseline" | "manpower" | "print";
 
 export interface SetupItem {
   id: SetupItemId;
@@ -46,6 +46,8 @@ export function setupChecklist(s: {
   /** The unit picked and every work order's equipment confirmed. null =
    *  still loading; undefined = not asked (left off the list). */
   equipmentSet?: boolean | null;
+  /** Some company's bid manpower set. null = still loading. */
+  manpowerSet?: boolean | null;
 }): SetupItem[] {
   return [
     { id: "type", label: "Project type", required: false, extra: true, done: !!s.typeSet,
@@ -65,6 +67,8 @@ export function setupChecklist(s: {
       why: "Schedule files often mark nearly everything critical - choose where it comes from." },
     { id: "baseline", label: "Baseline", required: false, done: s.hasBaseline,
       why: "Without one, moving work later quietly erases the slip - progress is measured against today's plan." },
+    { id: "manpower", label: "Manpower & bids", required: false, extra: true, done: s.manpowerSet === true, checking: s.manpowerSet === null,
+      why: "Each crew's company, and each company's bid hands per shift (and rate): the meeting's head counts are held to them on the look-back." },
     { id: "print", label: "Printed reports", required: false, extra: true, done: !!s.letterheadSet,
       why: "Optional - upload your company letterhead (Word or PDF) and printed reports come out on it." },
   ];

@@ -11,6 +11,7 @@
 // changing the view; the shift sheet for the field is in Reports.
 
 import { EquipmentField } from "@/components/projects/EquipmentPicker";
+import { searchFilter } from "@/lib/fuzzySearch";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Search, ChevronDown, ChevronUp, Printer, Ban, Plus, Lightbulb } from "lucide-react";
 import { notesFor } from "@/lib/milestones";
@@ -30,13 +31,16 @@ import { groupWorkOrders, showsOrder, findOrders, workOrdersPrintDocument, SHOW_
 import { printHtml } from "@/lib/updatePrint";
 import type { ReportLink } from "@/lib/reportLinks";
 import { useProjectWord } from "@/components/projects/ProjectTypeContext";
-import { CancelJobForm } from "@/components/projects/CancelledJobs";
+import { CancelJobForm, CancelledJobsList } from "@/components/projects/CancelledJobs";
+import type { CancelledJob } from "@/lib/cancelledJobs";
 import AddWorkPicker from "@/components/projects/AddWorkPicker";
 import { useWoClasses, passes, WoClassSelects } from "@/components/projects/WoClassFilter";
 import { typeLabel, unitLabel } from "@/lib/woClass";
 
-export default function WorkOrdersView({ milestones, childrenByParent, tz, times, progress, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery, onNewWorkOrder, projectId, projectName, user, onCancelled, onOpenReport }: {
+export default function WorkOrdersView({ milestones, cancelled = [], childrenByParent, tz, times, progress, canEdit, onUpdate, onFixTimes, onOpenDetail, onMoveDays, marks, onDiscovery, onNewWorkOrder, projectId, projectName, user, onCancelled, onOpenReport }: {
   milestones: Milestone[];
+  /** Work orders taken off the schedule: the Cancelled filter. */
+  cancelled?: CancelledJob[];
   /** Print opens the report in Reports, set to the work orders shown (or one). */
   onOpenReport?: (link: ReportLink) => void;
   /** For printing: the project's letterhead, history and name. */
@@ -62,6 +66,12 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
   const word = useProjectWord();
   const [query, setQuery] = useState("");
   const [show, setShow] = useState<Show>("all");
+  // The Cancelled filter: the jobs taken off the schedule, not the live ones.
+  const [showCancelled, setShowCancelled] = useState(false);
+  const cancelledShown = useMemo(() => {
+    const q = query.trim();
+    return q ? searchFilter(cancelled, q, (j) => [j.m.workOrderRef, j.m.name, ...j.crumbs, j.m.movedTo, j.m.cancelNote, j.m.cancelledByName].filter(Boolean).join(" ")) : cancelled;
+  }, [cancelled, query]);
   // Who: the crew named on the steps ("" = steps with no crew named).
   const [who, setWho] = useState<string | null>(null);
   // Unit and equipment type (Setup › Units & equipment).
@@ -224,12 +234,16 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
           {([["all", "All"], ["open", "Open"], ["critical", "Critical path"], ["behind", "Behind"], ["notStarted", "Not started"], ["held", "Held"], ["done", "Done"], ["added", "Discovery & added"]] as const).map(([k, l]) => {
             const n = found.filter(is(k)).length;
             return (
-              <button key={k} type="button" aria-pressed={show === k} onClick={() => setShow(k)}
-                className={`h-8 px-2.5 rounded-full border text-[12px] font-semibold ${show === k ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+              <button key={k} type="button" aria-pressed={!showCancelled && show === k} onClick={() => { setShow(k); setShowCancelled(false); }}
+                className={`h-8 px-2.5 rounded-full border text-[12px] font-semibold ${!showCancelled && show === k ? "border-[var(--color-accent)] bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                 {l} <span className="tabular-nums opacity-80">{n}</span>
               </button>
             );
           })}
+          <button type="button" aria-pressed={showCancelled} onClick={() => setShowCancelled((v) => !v)} title="Work orders taken off this schedule: where they went, why, and Put back"
+            className={`h-8 px-2.5 rounded-full border text-[12px] font-semibold ${showCancelled ? "border-amber-600 bg-amber-600 text-white" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+            Cancelled <span className="tabular-nums opacity-80">{showCancelled ? cancelledShown.length : cancelled.length}</span>
+          </button>
         </div>
         {canEdit && onNewWorkOrder && (
           <button type="button" onClick={() => onNewWorkOrder()}
@@ -244,7 +258,7 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
           </button>
         )}
         <span className={`relative inline-flex ${canEdit && (onDiscovery || onNewWorkOrder) ? "" : "ml-auto"}`}>
-          <button type="button" onClick={() => setPrintMenu((v) => !v)} aria-expanded={printMenu} disabled={shown.length === 0}
+          <button type="button" onClick={() => setPrintMenu((v) => !v)} aria-expanded={printMenu} disabled={shown.length === 0 || showCancelled}
             className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
             <Printer className="w-3.5 h-3.5" /> Print
           </button>
@@ -274,7 +288,20 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
       </div>
       {printMsg && <div role="alert" className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-400">{printMsg}</div>}
 
-      {shown.length === 0 ? (
+      {showCancelled ? (
+        cancelledShown.length === 0 ? (
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-6 text-center text-[12.5px] text-[var(--color-text-muted)]">
+            {cancelled.length === 0 ? "No work orders cancelled from this schedule." : "No cancelled work orders match."}
+          </div>
+        ) : (
+          <div className="rounded-xl border border-amber-300 dark:border-amber-800/70 bg-amber-50 dark:bg-amber-950/30">
+            <div className="px-3 py-2 text-[12px] text-amber-900 dark:text-amber-200 border-b border-amber-200 dark:border-amber-900/60">
+              <b>{cancelledShown.length} cancelled</b> from this schedule, still to be done elsewhere. Not counted in any progress, plan or report except the close-out&apos;s cancelled list.
+            </div>
+            <CancelledJobsList jobs={cancelledShown} canEdit={canEdit && !!user} userId={user?.id ?? ""} userEmail={user?.email} onChanged={() => onCancelled?.()} />
+          </div>
+        )
+      ) : shown.length === 0 ? (
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-6 text-center text-[12.5px] text-[var(--color-text-muted)]">
           {orders.length === 0 ? "No steps on the schedule yet." : "No work orders match."}
         </div>

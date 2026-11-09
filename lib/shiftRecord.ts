@@ -23,8 +23,12 @@ export interface CrewCount {
   names?: string[];
   /** Earlier: the crew's supervisor at the meeting (one name). */
   supervisor?: string;
-  /** On site this shift. */
+  /** On site this shift (direct + indirect when they're entered). */
   headcount?: number | null;
+  /** Of those: on the tools. */
+  direct?: number | null;
+  /** Of those: supervision, safety, hole and fire watch, QC, tool room. */
+  indirect?: number | null;
   /** Plant staff at the meeting (Operations on all the units): not on the
    *  job, not counted on site. */
   plant?: boolean;

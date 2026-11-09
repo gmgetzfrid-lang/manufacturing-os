@@ -1381,7 +1381,7 @@ export default function ExecutionView({
       )}
 
       {layout === "wo" ? (
-        <WorkOrdersView milestones={items} childrenByParent={childrenOf} tz={tz} times={shiftTimes} progress={progressIndex} canEdit={canEdit} marks={marks}
+        <WorkOrdersView milestones={items} cancelled={cancelled} childrenByParent={childrenOf} tz={tz} times={shiftTimes} progress={progressIndex} canEdit={canEdit} marks={marks}
           projectId={projectId} projectName={projectName}
           user={userId ? { id: userId, name: userName ?? undefined, email: userEmail ?? undefined } : undefined} onCancelled={onRefresh}
           onUpdate={canEdit ? updateStep : undefined} onFixTimes={canEdit ? fixTimes : undefined}
