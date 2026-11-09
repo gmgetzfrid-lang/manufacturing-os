@@ -52,6 +52,9 @@ describe("lining up with the registry by ID", () => {
     expect(rows[0]).toMatchObject({ tag: "E-12", assetId: "t-e12", match: "name" });
     expect(rows[1]).toMatchObject({ tag: "E-16", assetId: null });
     expect(rows[1].problem).toMatch(/has E-16 as 5530\.99; the sheet says 5530\.09/);
+    // What the sheet's ID can replace, if a person says so.
+    expect(rows[1].clash).toEqual({ assetId: "t-e16", code: "5530.99" });
+    expect(rows[0].clash).toBeNull();
   });
   it("no ID printed: the sheet's unit from its other IDs, a name match only in that unit, else it needs an ID", () => {
     const reg: RegistryAsset[] = [...crude];

@@ -27,13 +27,14 @@ interface SuggestionRow {
 }
 interface ColumnDef { key: string; label?: string; type?: string; isPill?: boolean }
 
-type Kind = "linked" | "listed" | "new" | "needs" | "check";
+type Kind = "linked" | "listed" | "new" | "needs" | "check" | "update";
 const KIND: Record<Kind, { word: string; cls: string }> = {
   linked: { word: "Linked", cls: "text-emerald-700 dark:text-emerald-400" },
   listed: { word: "Already listed", cls: "text-emerald-700 dark:text-emerald-400" },
   new: { word: "New", cls: "text-violet-700 dark:text-violet-300" },
   needs: { word: "Needs an ID", cls: "text-amber-700 dark:text-amber-400" },
   check: { word: "Check this", cls: "text-rose-700 dark:text-rose-400" },
+  update: { word: "Replace the ID", cls: "text-amber-700 dark:text-amber-400" },
 };
 const keyOf = (docId: string, tag: string) => `${docId}|${tag}`;
 const sheetNo = (s: string | null | undefined) => (s && /^\d+$/.test(s) ? s.padStart(2, "0") : s ?? null);
@@ -56,6 +57,10 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
   const [canAdd, setCanAdd] = useState(false);
   const [folderUnit, setFolderUnit] = useState<string | null>(null);
   const [unlinking, setUnlinking] = useState<string | null>(null);
+  // Overwrite the registry with what the sheets say: IDs that clash (often
+  // guessed from the tag before) and service names.
+  const [overwriteAll, setOverwriteAll] = useState(false);
+  const [notAdded, setNotAdded] = useState<Array<{ tag: string; why: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [sweeping, setSweeping] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -175,20 +180,24 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
       const typeLabel = typeOptions.find((t) => t.code === typeCode)?.label ?? s.typeLabel ?? null;
       const unitCode = (typed && dec?.unitCode) || s.unitCode || null;
       const applied = r.applied.includes(s.tag);
-      const kind: Kind = applied ? (s.assetId ? "linked" : "check") : s.problem && !typed ? "check" : s.assetId && !typed ? "listed" : code ? "new" : "needs";
+      const replace = !applied && !typed && !!s.clash && !!s.code && (c.overwrite ?? overwriteAll);
+      const kind: Kind = applied ? (s.assetId ? "linked" : "check") : replace ? "update" : s.problem && !typed ? "check" : s.assetId && !typed ? "listed" : code ? "new" : "needs";
       const typedBad = !!c.code?.trim() && !looksLikeId(c.code);
       const actionable = !applied && kind !== "needs" && kind !== "check" && !typedBad && (kind === "listed" || canAdd);
+      const overwrite = kind === "update" || (kind === "listed" && overwriteAll);
       const problem = applied && !s.assetId ? "Linked earlier, but nothing in the registry has this sheet's ID, or this name in its unit. Unlink it if it isn't equipment on this sheet." : s.problem ?? null;
-      const on = actionable && (c.on ?? (kind === "listed" || (kind === "new" && (s.codeFrom === "sheet" || !!typed))));
-      return { s, k, c, code, typeCode, typeLabel, unitCode, kind, actionable, on, typed, typedBad, dec, applied, problem };
+      const on = actionable && (c.on ?? (kind === "listed" || kind === "update" || (kind === "new" && (s.codeFrom === "sheet" || !!typed))));
+      return { s, k, c, code, typeCode, typeLabel, unitCode, kind, actionable, on, typed, typedBad, dec, applied, problem, overwrite };
     }),
-  })), [rows, choice, book, typeOptions, canAdd]);
+  })), [rows, choice, book, typeOptions, canAdd, overwriteAll]);
 
   const all = view.flatMap((v) => v.items);
   const count = (k: Kind) => all.filter((x) => x.kind === k).length;
   const picked = all.filter((x) => x.on);
   const toAdd = picked.filter((x) => x.kind === "new").length;
   const toLink = picked.filter((x) => x.kind === "listed").length;
+  const toReplace = picked.filter((x) => x.kind === "update").length;
+  const clashes = all.filter((x) => !x.applied && x.s.clash && x.s.code && !x.typed).length;
   const shown = (x: (typeof all)[number]) => filter === "all" || (filter === "needs" ? x.kind === "needs" || x.kind === "check" : filter === "ready" ? x.kind === "new" && !!x.code : x.kind === "listed" || x.kind === "linked");
 
   // The summary: by unit, its equipment by type.
@@ -208,7 +217,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
   const set = (k: string, patch: Partial<RowChoice & { on?: boolean }>) => setChoice((cur) => ({ ...cur, [k]: { ...(cur[k] ?? {}), ...patch } }));
 
   const apply = async () => {
-    setApplying(true); setError(null); setNotice(null);
+    setApplying(true); setError(null); setNotice(null); setNotAdded([]);
     try {
       const perDoc: Record<string, { tags: string[]; choices: Record<string, RowChoice> }> = {};
       for (const v of view) for (const x of v.items) {
@@ -218,6 +227,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
         const ch: RowChoice = {};
         if (x.typed) ch.code = x.typed;
         if (x.c.typeCode) ch.typeCode = x.c.typeCode;
+        if (x.overwrite) ch.overwrite = true;
         if (Object.keys(ch).length) d.choices[x.s.tag] = ch;
         perDoc[v.r.document_id] = d;
       }
@@ -227,9 +237,10 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
       const res = await fetch("/api/equipment-bridge", { method: "POST", headers, body: JSON.stringify({ action: "apply", orgId, documentIds, perDoc }) });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
-      const results = json.results as Array<{ appliedTags?: string[]; createdAssets?: number; error?: string }>;
+      const results = json.results as Array<{ appliedTags?: string[]; createdAssets?: number; updatedAssets?: number; failed?: Array<{ tag: string; why: string }>; error?: string }>;
       const failed = results.filter((r) => r.error);
       const added = results.reduce((n, r) => n + (r.createdAssets ?? 0), 0);
+      setNotAdded(results.flatMap((r) => r.failed ?? []));
       const linked = results.reduce((n, r) => n + (r.appliedTags?.length ?? 0), 0);
       setNotice(`${added} added to the registry, ${linked} linked to their sheets.${failed.length ? ` ${failed.length} sheet${failed.length === 1 ? "" : "s"} failed: ${failed[0].error}` : ""}`);
       setChoice({});
@@ -304,6 +315,17 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
           )}
 
           {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-800 p-3 text-[12.5px] text-rose-800 dark:text-rose-200 flex items-start gap-2"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}</div>}
+          {notAdded.length > 0 && (() => {
+            // One reason for many (the usual: one name across all units), said once.
+            const by = new Map<string, string[]>();
+            for (const f of notAdded) by.set(f.why, [...(by.get(f.why) ?? []), f.tag]);
+            return (
+              <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-3 text-[12.5px] text-amber-900 dark:text-amber-200 space-y-1">
+                <b>{notAdded.length} not added</b>
+                {[...by.entries()].map(([why, tags]) => <div key={why}><span className="font-mono font-bold">{tags.join(", ")}</span>: {why}</div>)}
+              </div>
+            );
+          })()}
           {notice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-800 p-3 text-[12.5px] text-emerald-800 dark:text-emerald-200 flex items-start gap-2"><Check className="w-4 h-4 shrink-0 mt-0.5" /> {notice}</div>}
 
           {loading ? (
@@ -328,6 +350,13 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
                 </div>
               </div>
 
+              {canAdd && (
+                <label className="flex items-start gap-2 text-[12.5px] cursor-pointer">
+                  <input type="checkbox" checked={overwriteAll} onChange={(e) => { setOverwriteAll(e.target.checked); setChoice((cur) => Object.fromEntries(Object.entries(cur).map(([k, v]) => [k, { ...v, overwrite: undefined }]))); }} className="mt-0.5 w-4 h-4 accent-[var(--color-accent)]" />
+                  <span><b className="text-[var(--color-text)]">Overwrite the registry with what the sheets say</b>
+                    <span className="block text-[11.5px] text-[var(--color-text-muted)]">Where the registry has a name in this unit with another ID (one guessed from the tag before), the sheet&apos;s ID replaces it; listed equipment takes the sheet&apos;s service name.{clashes ? ` ${clashes} ID${clashes === 1 ? "" : "s"} differ here.` : ""}</span></span>
+                </label>
+              )}
               <div className="flex flex-wrap gap-1.5">
                 {chip("all", "All", all.length)}
                 {chip("needs", "Needs you", count("needs") + count("check"))}
@@ -396,6 +425,13 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
                               {x.s.listedAs && <div className="text-[11px] text-[var(--color-text-muted)]">listed as {x.s.listedAs}</div>}
                               {x.s.match === "name" && <div className="text-[11px] text-[var(--color-text-muted)]">matched by name in {unitName(x.unitCode)}{x.s.codeFrom === "sheet" ? "; its ID gets filled in" : ""}</div>}
                               {x.kind === "check" && x.problem && <div className="text-[11px] text-rose-700 dark:text-rose-400">{x.problem}</div>}
+                              {x.kind === "update" && x.s.clash && <div className="text-[11px] text-amber-800 dark:text-amber-300">{x.s.clash.code} becomes {x.s.code}{x.s.name ? `, named ${x.s.name}` : ""}</div>}
+                              {canAdd && !x.applied && x.s.clash && x.s.code && !x.typed && (
+                                <label className="mt-0.5 inline-flex items-center gap-1 text-[11.5px] font-bold text-[var(--color-text)] cursor-pointer">
+                                  <input type="checkbox" checked={x.kind === "update"} onChange={(e) => set(x.k, { overwrite: e.target.checked, on: e.target.checked })} className="w-3.5 h-3.5 accent-[var(--color-accent)]" />
+                                  Use the sheet&apos;s ID
+                                </label>
+                              )}
                               {x.applied && (
                                 <button type="button" onClick={() => void unlink(r.document_id, x.s.tag)} disabled={unlinking === x.k}
                                   className="mt-0.5 inline-flex items-center gap-1 text-[11.5px] font-bold text-[var(--color-text-muted)] hover:text-rose-700 hover:underline disabled:opacity-50">
@@ -423,7 +459,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
             <button type="button" onClick={() => void apply()} disabled={applying || picked.length === 0}
               className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[13px] font-bold disabled:opacity-50">
               {applying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-              {toAdd > 0 && toLink > 0 ? `Add ${toAdd}, link ${toLink}` : toAdd > 0 ? `Add ${toAdd} to the registry` : toLink > 0 ? `Link ${toLink}` : "Nothing ticked"}
+              {[toAdd ? `Add ${toAdd}` : null, toReplace ? `replace ${toReplace} ID${toReplace === 1 ? "" : "s"}` : null, toLink ? `link ${toLink}` : null].filter(Boolean).join(", ").replace(/^./, (ch) => ch.toUpperCase()) || "Nothing ticked"}
             </button>
             <span className="text-[11.5px] text-[var(--color-text-muted)]">Ticked rows only. Each is linked to the sheets it&apos;s on.{canAdd ? "" : " Only admins add new equipment; you can link what's already listed."}</span>
           </div>

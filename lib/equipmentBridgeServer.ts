@@ -247,8 +247,10 @@ export async function applyForDocument(admin: SupabaseClient, input: {
   choices?: Record<string, RowChoice>;
   /** False: link only, add nothing (only admins add equipment). */
   mayCreate?: boolean;
-}): Promise<{ appliedTags: string[]; createdAssets: number }> {
+}): Promise<{ appliedTags: string[]; createdAssets: number; updatedAssets: number; failed: Array<{ tag: string; why: string }> }> {
   const { orgId, documentId } = input;
+  const failed: Array<{ tag: string; why: string }> = [];
+  let updatedAssets = 0;
   const { data: row } = await admin
     .from("document_equipment_suggestions").select("suggested, applied")
     .eq("org_id", orgId).eq("document_id", documentId).maybeSingle();
@@ -257,7 +259,7 @@ export async function applyForDocument(admin: SupabaseClient, input: {
   const alreadyApplied = new Set<string>(Array.isArray(row.applied) ? (row.applied as string[]) : []);
   const wanted = suggested.filter((s) =>
     (!input.tags || input.tags.includes(s.tag)));
-  if (wanted.length === 0) return { appliedTags: [], createdAssets: 0 };
+  if (wanted.length === 0) return { appliedTags: [], createdAssets: 0, updatedAssets: 0, failed: [] };
 
   const { data: doc } = await admin
     .from("documents").select("id, library_id, metadata")
@@ -306,6 +308,21 @@ export async function applyForDocument(admin: SupabaseClient, input: {
     }
     if (!reviewed && !s.assetId && !autoReady(s)) continue;
     if (!reviewed && s.assetId && s.match !== "id") continue;
+    // The sheet's ID over the registry's (an ID guessed from the tag before):
+    // a person's choice, never the automatic path's.
+    if (choice?.overwrite && s.clash && s.code && !s.assetId) {
+      const { data: taken } = await admin.from("assets").select("id, tag, unit_code").eq("org_id", orgId).eq("code", s.code).neq("id", s.clash.assetId).limit(1);
+      const other = (taken as Array<{ id: string; tag: string; unit_code: string | null }> | null)?.[0];
+      if (other) { failed.push({ tag: s.tag, why: `${s.code} is already ${other.tag}${other.unit_code ? ` (unit ${other.unit_code})` : ""} in the registry.` }); continue; }
+      const patch: Record<string, unknown> = { code: s.code };
+      if (s.name) patch.description = s.name;
+      const { error } = await admin.from("assets").update(patch).eq("id", s.clash.assetId).eq("org_id", orgId);
+      if (error) { failed.push({ tag: s.tag, why: error.message }); continue; }
+      updatedAssets++;
+      s.assetId = s.clash.assetId; s.match = "id"; s.problem = null;
+      landedRows.push(s);
+      continue;
+    }
     if (s.problem && !choice) continue;
 
     if (s.assetId) {
@@ -316,15 +333,19 @@ export async function applyForDocument(admin: SupabaseClient, input: {
         const patch: Record<string, unknown> = {};
         if (!a.code && s.code) patch.code = s.code;
         if (!a.unit_code && s.unitCode) patch.unit_code = s.unitCode;
-        if (!a.description && s.name) patch.description = s.name;
+        if (s.name && (!a.description || (choice?.overwrite && a.description !== s.name))) patch.description = s.name;
         if (!a.type_id && s.typeLabel && typeIds.get(s.typeLabel)) patch.type_id = typeIds.get(s.typeLabel);
-        if (Object.keys(patch).length) await admin.from("assets").update(patch).eq("id", a.id).then(() => undefined, () => undefined);
+        if (Object.keys(patch).length) { await admin.from("assets").update(patch).eq("id", a.id).then(() => undefined, () => undefined); updatedAssets++; }
       }
       landedRows.push(s);
       continue;
     }
     // New: only with an ID and a unit, and only when the library adds equipment.
-    if (bridge?.createAssets === false || input.mayCreate === false || !s.code || !s.unitCode) continue;
+    if (bridge?.createAssets === false || input.mayCreate === false || !s.code || !s.unitCode) {
+      if (reviewed && input.mayCreate === false) failed.push({ tag: s.tag, why: "Only admins add equipment." });
+      else if (reviewed && !s.code) failed.push({ tag: s.tag, why: "No ID: enter it first." });
+      continue;
+    }
     const insert = {
       org_id: orgId,
       tag: s.tag,
@@ -342,8 +363,16 @@ export async function applyForDocument(admin: SupabaseClient, input: {
       // Someone added it meanwhile: it's the one with this ID.
       const { data: raced } = await admin.from("assets").select("id").eq("org_id", orgId).eq("code", s.code).limit(1);
       const id = (raced as Array<{ id: string }> | null)?.[0]?.id;
-      if (id) { s.assetId = id; landedRows.push(s); }
-      continue; // one bad tag never sinks the batch
+      if (id) { s.assetId = id; landedRows.push(s); continue; }
+      // Said plainly, one bad tag never sinking the batch. The usual one: the
+      // registry still holds one name across the whole plant.
+      const sameName = /duplicate key|unique/i.test(error.message)
+        ? ((await admin.from("assets").select("tag, unit_code").eq("org_id", orgId).eq("tag_normalized", assetNorm(s.tag)).neq("unit_code", s.unitCode).limit(1)).data as Array<{ tag: string; unit_code: string | null }> | null)?.[0]
+        : undefined;
+      failed.push({ tag: s.tag, why: sameName
+        ? "The registry still allows each name only once across all units, and another unit already has it. Run the equipment SQL (equipment-admin-only.sql) once, then add again."
+        : error.message });
+      continue;
     }
     if (created) { s.assetId = String(created.id); createdAssets++; landedRows.push(s); }
   }
@@ -400,7 +429,7 @@ export async function applyForDocument(admin: SupabaseClient, input: {
     details: { tags: appliedNow, createdAssets, column: targetKey, auto: input.userId === null },
   }).then(() => undefined, () => undefined);
 
-  return { appliedTags: appliedNow, createdAssets };
+  return { appliedTags: appliedNow, createdAssets, updatedAssets, failed };
 }
 
 /** Find-or-create asset_types matching the codebook equipment-type labels

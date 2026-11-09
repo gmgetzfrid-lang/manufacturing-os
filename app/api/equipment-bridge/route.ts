@@ -158,15 +158,19 @@ export async function POST(req: NextRequest) {
     const tags = Array.isArray(body.tags) ? body.tags.map(String) : undefined;
     // Per drawing: the tags ticked, and what was decided for each.
     const perDoc = (body.perDoc && typeof body.perDoc === "object" ? body.perDoc : {}) as Record<string, { tags?: unknown; choices?: unknown }>;
-    const results: Array<{ documentId: string; appliedTags?: string[]; createdAssets?: number; error?: string }> = [];
+    const results: Array<{ documentId: string; appliedTags?: string[]; createdAssets?: number; updatedAssets?: number; failed?: Array<{ tag: string; why: string }>; error?: string }> = [];
     for (const documentId of documentIds.slice(0, 500)) {
       try {
         const own = perDoc[documentId];
         const ownTags = Array.isArray(own?.tags) ? (own!.tags as unknown[]).map(String) : tags;
-        const choices = own?.choices && typeof own.choices === "object" ? own.choices as Record<string, { skip?: boolean; code?: string | null; typeCode?: string | null }> : undefined;
+        const choices = own?.choices && typeof own.choices === "object" ? own.choices as Record<string, { skip?: boolean; code?: string | null; typeCode?: string | null; overwrite?: boolean }> : undefined;
         // Only admins add equipment; others link what's already listed.
         const r = await applyForDocument(supabaseAdmin, { orgId, documentId, userId: auth.userId, tags: ownTags, choices, byPerson: true, mayCreate: auth.role === "Admin" });
         results.push({ documentId, ...r });
+        // Read the sheet again against the registry as it is now, so what
+        // was just added or linked shows as listed.
+        const { data: twins } = await supabaseAdmin.from("knowledge_documents").select("id").eq("source_document_id", documentId);
+        for (const t of (twins ?? []) as Array<{ id: string }>) await computeForKnowledgeDoc(supabaseAdmin, t.id, { autoApply: false }).catch(() => undefined);
       } catch (e) {
         results.push({ documentId, error: (e as Error).message });
       }

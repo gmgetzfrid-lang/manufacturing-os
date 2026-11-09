@@ -100,6 +100,9 @@ export interface SweepRow {
   otherUnits: Array<{ unitCode: string | null; code: string | null }>;
   /** Something a person should look at before it's added. */
   problem: string | null;
+  /** The registry has this name in the unit with another ID (often one
+   *  guessed from the tag before): the equipment the sheet's ID can replace. */
+  clash?: { assetId: string; code: string } | null;
 }
 
 /** Each tag on a drawing, lined up with the registry. `drawingUnit` is the
@@ -145,6 +148,7 @@ export function sweepRows(input: {
     let match: SweepRow["match"] = null;
     let problem: string | null = null;
     let listedAs: string | null = null;
+    let clash: SweepRow["clash"] = null;
     if (v.code) {
       asset = byId.get(idKey(v.code)) ?? null;
       if (asset) {
@@ -156,7 +160,10 @@ export function sweepRows(input: {
         // it's a clash for a person.
         const named = inUnit[0];
         if (named && !named.code) { asset = named; match = "name"; }
-        else if (named?.code) problem = `The ${unitWord(named.unitCode, book)} list has ${tag} as ${named.code}; the sheet says ${v.code}.`;
+        else if (named?.code) {
+          problem = `The ${unitWord(named.unitCode, book)} list has ${tag} as ${named.code}; the sheet says ${v.code}.`;
+          clash = { assetId: named.id, code: named.code };
+        }
       }
     } else if (inUnit.length === 1) {
       asset = inUnit[0]; match = "name";
@@ -174,6 +181,7 @@ export function sweepRows(input: {
       assetId: asset?.id ?? null, assetStatus: asset ? "existing" : "new", match, listedAs,
       otherUnits: sameName.filter((a) => a.id !== asset?.id && a.unitCode !== unitCode).map((a) => ({ unitCode: a.unitCode, code: a.code })),
       problem,
+      clash,
     };
   }).sort((a, b) => a.tag.localeCompare(b.tag, undefined, { numeric: true }));
 }
@@ -185,4 +193,9 @@ const unitWord = (code: string | null, book: Codebook) => (code ? book.units.fin
 export const autoReady = (r: SweepRow) => r.codeFrom === "sheet" && r.typeFrom === "id" && !!r.unitCode && !r.problem;
 
 /** What a person decided about one row in the review. */
-export interface RowChoice { skip?: boolean; code?: string | null; typeCode?: string | null }
+export interface RowChoice {
+  skip?: boolean; code?: string | null; typeCode?: string | null;
+  /** Replace what the registry says with the sheet's: its ID (where they
+   *  clash) and its service name. */
+  overwrite?: boolean;
+}
