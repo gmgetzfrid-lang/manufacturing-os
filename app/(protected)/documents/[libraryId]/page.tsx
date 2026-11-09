@@ -1299,6 +1299,9 @@ export default function LibraryExplorerPage() {
   useEffect(() => { colWidthsRef.current = colWidths; }, [colWidths]);
 
   const [activeColumns, setActiveColumns] = useState<string[]>([]);
+  // A column header being dragged to a new place, and where it would land.
+  const [dragCol, setDragCol] = useState<string | null>(null);
+  const [dropCol, setDropCol] = useState<string | null>(null);
   const [columnDefs, setColumnDefs] = useState<MetadataFieldDefinition[]>([]);
   const [showFullScreen, setShowFullScreen] = useState(false);
   const [showRevUp, setShowRevUp] = useState(false);
@@ -4385,11 +4388,29 @@ export default function LibraryExplorerPage() {
                             return (
                               <th
                                 key={colKey}
-                                className={`relative px-2 ${headerPad} cursor-pointer hover:bg-[var(--color-surface-2)] select-none transition-colors group`}
+                                className={`relative px-2 ${headerPad} cursor-pointer hover:bg-[var(--color-surface-2)] select-none transition-colors group ${dropCol === colKey && dragCol && dragCol !== colKey ? (activeColumns.indexOf(dragCol) < activeColumns.indexOf(colKey) ? "shadow-[inset_-3px_0_0_0_var(--color-accent)]" : "shadow-[inset_3px_0_0_0_var(--color-accent)]") : ""} ${dragCol === colKey ? "opacity-50" : ""}`}
                                 style={width ? { width } : undefined}
                                 onClick={() => handleSort(colKey)}
+                                // Drag a header onto another to move it there; saved to your view.
+                                onDragOver={(e) => { if (!dragCol || !e.dataTransfer.types.includes("application/x-doc-column")) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (dropCol !== colKey) setDropCol(colKey); }}
+                                onDragLeave={() => { if (dropCol === colKey) setDropCol(null); }}
+                                onDrop={(e) => {
+                                  if (!dragCol || !e.dataTransfer.types.includes("application/x-doc-column")) return;
+                                  e.preventDefault();
+                                  const from = dragCol;
+                                  setDragCol(null); setDropCol(null);
+                                  if (from === colKey) return;
+                                  // Moving right lands after the column dropped on; moving left, before it.
+                                  const right = activeColumns.indexOf(from) < activeColumns.indexOf(colKey);
+                                  const next = activeColumns.filter((k) => k !== from);
+                                  next.splice(next.indexOf(colKey) + (right ? 1 : 0), 0, from);
+                                  void updateColumns(next);
+                                }}
                               >
-                                <div className="flex items-center gap-1 min-w-0 pr-2">
+                                <div className="flex items-center gap-1 min-w-0 pr-2 cursor-grab active:cursor-grabbing" draggable
+                                  title="Drag to move this column · click to sort"
+                                  onDragStart={(e) => { e.dataTransfer.setData("application/x-doc-column", colKey); e.dataTransfer.effectAllowed = "move"; setDragCol(colKey); }}
+                                  onDragEnd={() => { setDragCol(null); setDropCol(null); }}>
                                   <span className="truncate flex-1">{label}</span>
                                   {sortKey === colKey ? (
                                     sortDir === "asc"

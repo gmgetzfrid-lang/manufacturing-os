@@ -9,6 +9,8 @@
 // Insert-only on conflict: a row that exists (applied, dismissed, or a human's)
 // is left exactly as it was. Re-running is free and idempotent.
 
+import { readCallout, decodeId } from "@/lib/equipmentSweep";
+import { idKey } from "@/lib/equipmentPick";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadCodebook, parseDrawingNumber } from "@/lib/codebook";
 import { canonicalForm } from "@/lib/fileFinder/tagForms";
@@ -55,14 +57,21 @@ export async function loadResolveContext(admin: SupabaseClient, orgId: string): 
     loadCodebook(orgId, admin),
     admin.from("finder_aliases").select("*").eq("org_id", orgId),
     admin.from("projects").select("id, name").eq("org_id", orgId).limit(2000),
-    admin.from("assets").select("id, tag").eq("org_id", orgId).limit(20000),
+    admin.from("assets").select("id, tag, code, unit_code").eq("org_id", orgId).limit(20000),
     admin.from("collections").select("*").eq("org_id", orgId),
     admin.from("estate_edges").select("a, b, type").eq("org_id", orgId).eq("status", "applied").in("type", ["belongs_to_unit", "in_project", "about_asset"]).like("a", "folder:%"),
   ]);
   const aliases = ((aliasesRes.data as Record<string, unknown>[] | null) ?? []).map(aliasFromRow);
   const projects = ((projectsRes.data as Array<{ id: string; name: string }> | null) ?? []);
   const assets = new Map<string, { id: string; tag: string }>();
-  for (const a of (assetsRes.data as Array<{ id: string; tag: string }> | null) ?? []) assets.set(canonicalForm(a.tag), a);
+  const assetsByCode = new Map<string, { id: string; tag: string }>();
+  const assetsByName = new Map<string, Array<{ id: string; tag: string; unitCode: string | null }>>();
+  for (const a of (assetsRes.data as Array<{ id: string; tag: string; code: string | null; unit_code: string | null }> | null) ?? []) {
+    assets.set(canonicalForm(a.tag), a);
+    if (a.code && idKey(a.code)) assetsByCode.set(idKey(a.code), a);
+    const k = canonicalForm(a.tag.replace(/\s*\(.*$/, ""));
+    assetsByName.set(k, [...(assetsByName.get(k) ?? []), { id: a.id, tag: a.tag, unitCode: a.unit_code }]);
+  }
   const folders = new Map<string, { id: string; libraryId: string; parentId: string | null; name: string }>();
   for (const c of (foldersRes.data as Record<string, unknown>[] | null) ?? []) {
     if (c.deleted_at) continue;
@@ -79,7 +88,7 @@ export async function loadResolveContext(admin: SupabaseClient, orgId: string): 
   }
   return {
     units: book.units.map((u) => ({ code: u.code, label: u.label })),
-    aliases, projects, assets, folderUnits, folderProjects, folderAssets, folders,
+    aliases, projects, assets, assetsByCode, assetsByName, book, folderUnits, folderProjects, folderAssets, folders,
     unitFromDrawingNumber: (raw) => {
       const p = parseDrawingNumber(raw, book);
       return p?.unitCode ?? null;
@@ -154,20 +163,29 @@ export async function resolveEstate(admin: SupabaseClient, input: ResolveRunInpu
   }
   // Tags read off pages, through the knowledge mirror, for the docs we have.
   const pageTags = new Map<string, Set<string>>();
+  // The ID printed beside each tag, and the unit those IDs say.
+  const pageCodes = new Map<string, Record<string, string>>();
+  const pageUnits = new Map<string, Map<string, number>>();
   if (docs.length) {
     const ids = docs.map((d) => d.id);
     for (let i = 0; i < ids.length; i += 200) {
       const { data: mirrors } = await admin.from("knowledge_documents").select("id, source_document_id").eq("org_id", input.orgId).in("source_document_id", ids.slice(i, i + 200));
       const m = (mirrors as Array<{ id: string; source_document_id: string }> | null) ?? [];
       if (!m.length) continue;
-      const { data: ents } = await admin.from("knowledge_page_entities").select("document_id, tag").eq("org_id", input.orgId).eq("kind", "equipment").in("document_id", m.map((x) => x.id)).limit(20000);
+      const { data: ents } = await admin.from("knowledge_page_entities").select("document_id, tag, raw").eq("org_id", input.orgId).eq("kind", "equipment").in("document_id", m.map((x) => x.id)).limit(20000);
       const byMirror = new Map(m.map((x) => [x.id, x.source_document_id]));
-      for (const e of (ents as Array<{ document_id: string; tag: string }> | null) ?? []) {
+      for (const e of (ents as Array<{ document_id: string; tag: string; raw: string | null }> | null) ?? []) {
         const docId = byMirror.get(e.document_id);
         if (!docId) continue;
         const set = pageTags.get(docId) ?? new Set<string>();
         set.add(e.tag);
         pageTags.set(docId, set);
+        const code = readCallout(e.tag, e.raw).code;
+        if (code) {
+          pageCodes.set(docId, { ...(pageCodes.get(docId) ?? {}), [e.tag]: idKey(code) });
+          const u = decodeId(code, ctx.book!)?.unitCode;
+          if (u) { const c = pageUnits.get(docId) ?? new Map<string, number>(); c.set(u, (c.get(u) ?? 0) + 1); pageUnits.set(docId, c); }
+        }
       }
     }
   }
@@ -177,6 +195,7 @@ export async function resolveEstate(admin: SupabaseClient, input: ResolveRunInpu
       kind: "document", id: d.id, name: d.name || d.document_number || d.title || "Untitled",
       path: chain.names, pathIds: chain.ids, documentNumber: d.document_number,
       pageTags: [...(pageTags.get(d.id) ?? [])], versionId: d.current_version_id,
+      pageCodes: pageCodes.get(d.id), pageUnit: [...(pageUnits.get(d.id)?.entries() ?? [])].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null,
     };
     proposals.push(...resolveTarget(t, ctx));
     res.documents++;

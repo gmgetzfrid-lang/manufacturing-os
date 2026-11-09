@@ -500,8 +500,12 @@ export async function correctDocument(orgId: string, knowledgeDocId: string, doc
     const m = String(c.raw ?? "").match(/^\S+(?:\s+\(([^)]+)\))?\s*([^·]*?)\s*(?:·\s*(.*))?$/);
     const code = m?.[1]?.trim() || null, name = m?.[2]?.trim() || null, details = m?.[3]?.trim() || null;
     if (!name && !details && !code) continue;
-    const { data: a } = await supabaseAdmin.from("assets").select("id, description, code, metadata").eq("org_id", orgId).eq("tag_normalized", norm(c.tag)).maybeSingle();
-    const asset = a as { id: string; description: string | null; code: string | null; metadata: Record<string, unknown> | null } | null;
+    // The equipment its printed ID names, nothing else: the name repeats
+    // from unit to unit (the Crude Unit's V-7 is not the Transmix V-7).
+    if (!code) continue;
+    const { data: hits } = await supabaseAdmin.from("assets").select("id, description, code, metadata").eq("org_id", orgId).eq("code", code).limit(2);
+    const list = (hits as Array<{ id: string; description: string | null; code: string | null; metadata: Record<string, unknown> | null }> | null) ?? [];
+    const asset = list.length === 1 ? list[0] : null;
     if (!asset) continue;
     const patch: Record<string, unknown> = {};
     if (!asset.description && name) patch.description = name;

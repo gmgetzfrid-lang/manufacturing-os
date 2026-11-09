@@ -35,6 +35,11 @@ export interface ResolveTarget {
   documentNumber?: string | null;
   /** Equipment tags read off its pages (canonical), when it has been read. */
   pageTags?: string[];
+  /** The ID printed beside each tag on its pages, by tag. The ID is the
+   *  key: a tag with one links only to the equipment with that ID. */
+  pageCodes?: Record<string, string>;
+  /** The unit its printed IDs say (most of them), for tags printed without one. */
+  pageUnit?: string | null;
   versionId?: string | null;
 }
 
@@ -44,6 +49,12 @@ export interface ResolveContext {
   projects: Array<{ id: string; name: string }>;
   /** canonical tag → asset id */
   assets: Map<string, { id: string; tag: string }>;
+  /** Equipment by its ID (lib/equipmentPick idKey), and every one sharing a
+   *  name with its unit: names repeat from unit to unit. */
+  assetsByCode?: Map<string, { id: string; tag: string }>;
+  assetsByName?: Map<string, Array<{ id: string; tag: string; unitCode: string | null }>>;
+  /** The site codebook (the server's), for what an ID says. */
+  book?: import("@/lib/codebook").Codebook;
   /** Decodes a drawing number to a unit code through the Site Codebook, or null. */
   unitFromDrawingNumber?: (raw: string) => string | null;
   /** Folder id → unit code already linked (applied edges), so children inherit. */
@@ -210,7 +221,15 @@ export function resolveTarget(t: ResolveTarget, ctx: ResolveContext): ProposedEd
         summary: `"${t.name}" names ${a.tag}`, evidence: { tag: a.tag, where: "name" }, versionId: t.versionId ?? null });
     }
     for (const c of t.pageTags ?? []) {
-      const a = ctx.assets.get(canonicalForm(c));
+      // By the ID printed beside it; with none, by name only inside the
+      // sheet's unit. Never another unit's equipment of the same name.
+      const code = t.pageCodes?.[c];
+      let a: { id: string; tag: string } | undefined;
+      if (ctx.assetsByCode && code) a = ctx.assetsByCode.get(code);
+      else if (ctx.assetsByName) {
+        const fit = t.pageUnit ? (ctx.assetsByName.get(canonicalForm(c)) ?? []).filter((x) => x.unitCode === t.pageUnit) : [];
+        a = fit.length === 1 ? fit[0] : undefined;
+      } else a = ctx.assets.get(canonicalForm(c));
       if (!a || seen.has(a.id)) continue;
       seen.add(a.id);
       out.push({ a: self, b: nid.asset(a.id), type: "tagged_to", origin: "vision", tier: "provable", confidence: 1,

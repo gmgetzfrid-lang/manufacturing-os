@@ -30,7 +30,7 @@ function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
 }
 
-async function authWriter(req: NextRequest, orgId: string): Promise<{ userId: string } | NextResponse> {
+async function authWriter(req: NextRequest, orgId: string): Promise<{ userId: string; role: string } | NextResponse> {
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) return bad("Not authenticated", 401);
   const { data: { user }, error } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
@@ -39,7 +39,7 @@ async function authWriter(req: NextRequest, orgId: string): Promise<{ userId: st
     .from("org_members").select("role").eq("org_id", orgId).eq("uid", user.id)
     .eq("status", "active").maybeSingle();
   if (!member || !WRITER_ROLES.has(String(member.role))) return bad("Not permitted", 403);
-  return { userId: user.id };
+  return { userId: user.id, role: String(member.role) };
 }
 
 export async function GET(req: NextRequest) {
@@ -49,8 +49,8 @@ export async function GET(req: NextRequest) {
   const auth = await authWriter(req, orgId);
   if (auth instanceof NextResponse) return auth;
 
-  const { rows: docList } = await fetchAllRows<{ id: string; document_number: string | null; title: string | null; name: string | null }>((from, to) => supabaseAdmin
-    .from("documents").select("id, document_number, title, name")
+  const { rows: docList } = await fetchAllRows<{ id: string; document_number: string | null; title: string | null; name: string | null; rev: string | null; sheet_number: number | null; sheet_total: number | null; metadata: Record<string, unknown> | null }>((from, to) => supabaseAdmin
+    .from("documents").select("id, document_number, title, name, rev, sheet_number, sheet_total, metadata")
     .eq("org_id", orgId).eq("library_id", libraryId).neq("status", "Archived").order("id").range(from, to));
   const ids = docList.map((d) => d.id);
 
@@ -62,6 +62,13 @@ export async function GET(req: NextRequest) {
     rows.push(...((data ?? []) as Array<Record<string, unknown>>));
   }
   const nameById = new Map(docList.map((d) => [d.id, d.document_number || d.title || d.name || d.id.slice(0, 8)]));
+  // The sheet each row is off, so it can be checked against the drawing.
+  const sheetOf = (d: (typeof docList)[number]) => {
+    const md = d.metadata ?? {};
+    const own = d.sheet_number ?? (typeof md.sheet === "string" || typeof md.sheet === "number" ? String(md.sheet) : null);
+    return own == null || own === "" ? null : String(own);
+  };
+  const infoById = new Map(docList.map((d) => [d.id, { number: d.document_number, title: d.title, rev: d.rev, sheet: sheetOf(d), sheetTotal: d.sheet_total }]));
 
   // Which docs have knowledge twins at all (so the wizard can say "N linked").
   const { data: twins } = await supabaseAdmin
@@ -72,7 +79,8 @@ export async function GET(req: NextRequest) {
     .from("libraries").select("equipment_bridge, custom_columns").eq("id", libraryId).maybeSingle();
 
   return NextResponse.json({
-    suggestions: rows.map((r) => ({ ...r, documentLabel: nameById.get(String(r.document_id)) ?? "-" })),
+    suggestions: rows.map((r) => ({ ...r, documentLabel: nameById.get(String(r.document_id)) ?? "-", doc: infoById.get(String(r.document_id)) ?? null })),
+    canAdd: auth.role === "Admin",
     linkedDocs: ((twins ?? []) as Array<{ source_document_id: string; status: string }>)
       .map((t) => ({ documentId: t.source_document_id, status: t.status })),
     bridge: (lib?.equipment_bridge ?? null) as BridgeConfig | null,
@@ -129,10 +137,16 @@ export async function POST(req: NextRequest) {
     const documentIds = Array.isArray(body.documentIds) ? body.documentIds.map(String) : [];
     if (documentIds.length === 0) return bad("documentIds required");
     const tags = Array.isArray(body.tags) ? body.tags.map(String) : undefined;
+    // Per drawing: the tags ticked, and what was decided for each.
+    const perDoc = (body.perDoc && typeof body.perDoc === "object" ? body.perDoc : {}) as Record<string, { tags?: unknown; choices?: unknown }>;
     const results: Array<{ documentId: string; appliedTags?: string[]; createdAssets?: number; error?: string }> = [];
     for (const documentId of documentIds.slice(0, 500)) {
       try {
-        const r = await applyForDocument(supabaseAdmin, { orgId, documentId, userId: auth.userId, tags, byPerson: true });
+        const own = perDoc[documentId];
+        const ownTags = Array.isArray(own?.tags) ? (own!.tags as unknown[]).map(String) : tags;
+        const choices = own?.choices && typeof own.choices === "object" ? own.choices as Record<string, { skip?: boolean; code?: string | null; typeCode?: string | null }> : undefined;
+        // Only admins add equipment; others link what's already listed.
+        const r = await applyForDocument(supabaseAdmin, { orgId, documentId, userId: auth.userId, tags: ownTags, choices, byPerson: true, mayCreate: auth.role === "Admin" });
         results.push({ documentId, ...r });
       } catch (e) {
         results.push({ documentId, error: (e as Error).message });
