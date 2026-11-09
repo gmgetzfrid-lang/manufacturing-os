@@ -10,6 +10,7 @@
 // — report, or report with history (lib/workOrdersPrint) — without
 // changing the view; the shift sheet for the field is in Reports.
 
+import { EquipmentField } from "@/components/projects/EquipmentPicker";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Search, ChevronDown, ChevronUp, Printer, Ban, Plus, Lightbulb } from "lucide-react";
 import { notesFor } from "@/lib/milestones";
@@ -318,8 +319,9 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
                       <div className="ml-9">{detailsOf(o)}</div>
                       {barOf(o)}
                     </div>
-                    {(canEdit || onOpenReport) && (
-                      <div className="px-3 pt-2.5 flex flex-wrap gap-1.5">
+                    <div className="px-3 pt-2.5 flex flex-wrap gap-1.5">
+                        {/* The equipment it's on: picked from the project's unit. */}
+                        <EquipmentField milestone={o.owner} milestones={milestones} />
                         {canEdit && onDiscovery && (
                           <button type="button" onClick={() => onDiscovery(o.owner)}
                             className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-dashed border-[var(--color-accent)] text-[12px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
@@ -338,8 +340,7 @@ export default function WorkOrdersView({ milestones, childrenByParent, tz, times
                             <Lightbulb className="w-3.5 h-3.5" /> + Finding
                           </button>
                         )}
-                      </div>
-                    )}
+                    </div>
                     {/* Its steps: inside the work order, indented, each a row that opens to its card. */}
                     <div className="px-2 sm:px-3 pt-2.5 pb-1">
                       <div className="ml-2 sm:ml-5 pl-2 sm:pl-3 border-l-2 border-[var(--color-accent)]/40">

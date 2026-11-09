@@ -18,7 +18,7 @@ import { useViewerPanZoom } from "@/lib/useViewerPanZoom";
 import { stampPdf } from "@/lib/stamping";
 import { publicOrigin } from "@/lib/publicOrigin";
 import {
-  getAssetByTag, createAsset, listAssetFiles, linkAssetFile, unlinkAssetFile,
+  getAssetByTag, listAssetFiles, linkAssetFile, unlinkAssetFile,
   type Asset, type AssetFile, type LinkedDocument,
 } from "@/lib/assets";
 import DocumentLinkPicker from "@/components/documents/DocumentLinkPicker";
@@ -139,8 +139,10 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
 
   const handlePick = async (docId: string) => {
     if (!userId) return;
-    let a = asset ?? await getAssetByTag(orgId, tag);
-    if (!a) a = await createAsset({ orgId, tag, createdBy: userId });
+    // Files go on equipment that's in the list; adding equipment is an
+    // admin's job (Operating areas), never a side effect of linking a file.
+    const a = asset ?? await getAssetByTag(orgId, tag);
+    if (!a) { await appAlert({ message: `${tag} isn't in the equipment list yet. An admin adds it in Operating areas, under its unit; then files can be linked to it.`, tone: "default" }); return; }
     await linkAssetFile({ orgId, assetId: a.id, documentId: docId, createdBy: userId });
     setPickerOpen(false);
     setAsset(a);

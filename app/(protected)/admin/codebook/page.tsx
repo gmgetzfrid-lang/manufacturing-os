@@ -329,6 +329,7 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
 }) {
   const [segments, setSegments] = useState<DrawingSegment[]>(book.drawingNumber?.segments ?? []);
   const [padTo, setPadTo] = useState(book.iterableRule.padTo);
+  const [mirrors, setMirrors] = useState(book.iterableRule.mirrorsTag);
   const [sample, setSample] = useState("2002-D-10001 SHT.4");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -343,7 +344,7 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
     try {
       await saveConfig(orgId, {
         drawingNumber: segments.length > 0 ? { segments } : null,
-        iterableRule: { mirrorsTag: true, padTo: Math.max(0, Math.min(6, padTo)) },
+        iterableRule: { mirrorsTag: mirrors, padTo: Math.max(0, Math.min(6, padTo)) },
       }, uid);
       setSaved(true); setTimeout(() => setSaved(false), 1800);
       onChanged();
@@ -421,11 +422,14 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
 
       <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 flex items-center gap-4 flex-wrap">
         <div>
-          <div className="text-xs font-black text-[var(--color-text)]">Code iterable padding</div>
-          <p className="text-[11px] text-[var(--color-text-muted)]">E-5 → .5 with no padding; set 2 for .05 style.</p>
+          <div className="text-xs font-black text-[var(--color-text)]">The number after the point</div>
+          <p className="text-[11px] text-[var(--color-text-muted)]">Is it the tag&apos;s number (E-5 is 2030.05)? If not, equipment IDs are never worked out from the name: they come from the schedule or are typed in.</p>
         </div>
         <label className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
-          pad to <Input type="number" value={padTo} disabled={!canWrite} min={0} max={6}
+          <input type="checkbox" checked={mirrors} disabled={!canWrite} onChange={(e) => setMirrors(e.target.checked)} className="w-4 h-4 accent-[var(--color-accent)]" /> it&apos;s the tag&apos;s number
+        </label>
+        <label className={`text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5 ${mirrors ? "" : "opacity-40"}`}>
+          pad to <Input type="number" value={padTo} disabled={!canWrite || !mirrors} min={0} max={6}
             onChange={(e) => setPadTo(Math.max(0, Math.min(6, Number(e.target.value) || 0)))} className="w-14 h-8" /> digits
         </label>
         {canWrite && (

@@ -8,6 +8,7 @@
 // asset rows by normalized tag.
 
 import { supabase } from "@/lib/supabase";
+import { sameEquipmentId } from "@/lib/equipmentPick";
 import type { WhiteboardState } from "@/types/schema";
 
 export interface AssetType {
@@ -144,17 +145,35 @@ export async function getAsset(id: string): Promise<Asset | null> {
   return (data as Asset | null) ?? null;
 }
 
-export async function getAssetByTag(orgId: string, tag: string): Promise<Asset | null> {
-  const { data, error } = await supabase
-    .from("assets")
-    .select("*")
-    .eq("org_id", orgId)
-    .eq("tag_normalized", normalizeTag(tag))
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  const hit = (data as Asset | null) ?? null;
-  if (hit) return hit;
+/** The equipment a tag names. A name like V-7 repeats from unit to unit:
+ *  with `unitCode`, that unit's; without it, the one only if there's one
+ *  (two V-7s and no unit to tell them apart is no answer, not a guess). An ID
+ *  (2010.07) finds its one piece. */
+export async function getAssetByTag(orgId: string, tag: string, unitCode?: string | null): Promise<Asset | null> {
+  const hits = await findAssetsByTag(orgId, tag);
+  const inUnit = unitCode ? hits.filter((a) => a.unit_code === unitCode) : hits;
+  if (inUnit.length === 1) return inUnit[0];
+  if (hits.length > 0) return null;
+  return aliasHit(orgId, tag);
+}
 
+/** Every piece of equipment a name or ID could be. */
+export async function findAssetsByTag(orgId: string, tag: string): Promise<Asset[]> {
+  const t = tag.trim();
+  const isCode = /^\d+\.\w+$/.test(t);
+  const { data, error } = isCode
+    ? await supabase.from("assets").select("*").eq("org_id", orgId).not("code", "is", null).ilike("code", `${t.split(".")[0]}.%`).limit(50)
+    : await supabase.from("assets").select("*").eq("org_id", orgId).eq("tag_normalized", normalizeTag(t)).limit(20);
+  if (error) throw new Error(error.message);
+  const rows = (data as Asset[] | null) ?? [];
+  return isCode ? rows.filter((a) => sameEquipmentId(a.code, t)) : rows;
+}
+
+/** Two IDs are one when they differ only in leading zeros after the point
+ *  (2010.7 and 2010.07). */
+export { sameEquipmentId } from "@/lib/equipmentPick";
+
+async function aliasHit(orgId: string, tag: string): Promise<Asset | null> {
   // No canonical match — try what people actually call it. A nickname, a
   // pre-renumber tag or a vendor name resolves to the same hub, so an old
   // link in an email still lands somewhere real.
@@ -167,6 +186,15 @@ export async function getAssetByTag(orgId: string, tag: string): Promise<Asset |
   const { data: viaAlias } = await supabase
     .from("assets").select("*").eq("id", assetId).maybeSingle();
   return (viaAlias as Asset | null) ?? null;
+}
+
+/** The database's refusals, in words: a name already in the unit, an ID
+ *  already used, or a member who isn't an admin. */
+export function equipmentError(message: string, what: { tag?: string | null; code?: string | null; unitCode?: string | null }): Error {
+  if (/assets_unit_name_unique|tag_normalized/.test(message)) return new Error(`${what.tag ?? "That name"} is already in ${what.unitCode ? `unit ${what.unitCode}'s` : "the"} equipment list.`);
+  if (/assets_code_unique/.test(message)) return new Error(`ID ${what.code ?? ""} is already another piece of equipment.`.replace("ID  is", "That ID is"));
+  if (/row-level security|violates row level|permission denied/i.test(message)) return new Error("Only admins can add or change equipment.");
+  return new Error(message);
 }
 
 export async function createAsset(input: {
@@ -199,7 +227,7 @@ export async function createAsset(input: {
   if (resp.error && /unit_code|column/i.test(resp.error.message)) {
     resp = await supabase.from("assets").insert(base).select("*").single();
   }
-  if (resp.error) throw new Error(resp.error.message);
+  if (resp.error) throw equipmentError(resp.error.message, { tag: input.tag.trim(), code: input.code, unitCode: input.unitCode });
   return resp.data as Asset;
 }
 
@@ -210,13 +238,17 @@ export async function updateAsset(id: string, patch: Partial<Pick<Asset, "tag" |
     updated_at: new Date().toISOString(),
   };
   if (patch.tag) update.tag_normalized = normalizeTag(patch.tag);
-  const { error } = await supabase.from("assets").update(update).eq("id", id);
-  if (error) throw new Error(error.message);
+  // A change the database refuses (not an admin) comes back as no rows, not
+  // an error: said, never taken as saved.
+  const { data, error } = await supabase.from("assets").update(update).eq("id", id).select("id");
+  if (error) throw equipmentError(error.message, { tag: patch.tag, code: patch.code, unitCode: patch.unit_code });
+  if (Array.isArray(data) && data.length === 0) throw new Error("Only admins can add or change equipment.");
 }
 
 export async function deleteAsset(id: string): Promise<void> {
-  const { error } = await supabase.from("assets").delete().eq("id", id);
-  if (error) throw new Error(error.message);
+  const { data, error } = await supabase.from("assets").delete().eq("id", id).select("id");
+  if (error) throw equipmentError(error.message, {});
+  if (Array.isArray(data) && data.length === 0) throw new Error("Only admins can add or change equipment.");
 }
 
 // ─── Photos ─────────────────────────────────────────────────────

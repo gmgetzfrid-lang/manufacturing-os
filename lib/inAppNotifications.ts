@@ -35,6 +35,7 @@ export type NotificationKind =
   | "task_nudge"              // someone sent you a scratchpad task as a heads-up
   | "task_reminder"           // a precise scratchpad alarm ("remind me at 3pm") just elapsed
   | "request_pending_approval" // a new drafting request needs approval / assignment
+  | "equipment_request"       // (to admins) a crew asked for equipment to be added to a unit
   | "review_due"              // a controlled document is due (or overdue) for periodic review
   | "owner_assigned"          // you were made the owner of a document / folder / library
   | "owner_behind"            // (to Admin/DocCtrl) an owned document is overdue past the grace window

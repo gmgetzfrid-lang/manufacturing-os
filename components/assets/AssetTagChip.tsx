@@ -16,7 +16,7 @@ import React, { useRef, useState } from "react";
 import {
   Settings, Zap, Droplet, Box, Activity, Camera, Tag, Loader2,
 } from "lucide-react";
-import { useAssetByTag, createAsset, getAssetByTag, listAssetPhotos, invalidateAssetCache } from "@/lib/assets";
+import { useAssetByTag, findAssetsByTag, getAssetByTag, listAssetPhotos, invalidateAssetCache, type Asset } from "@/lib/assets";
 import AssetPhotoCarousel from "./AssetPhotoCarousel";
 import AssetPhotoUploader from "./AssetPhotoUploader";
 import AssetPhotoPopover from "./AssetPhotoPopover";
@@ -61,7 +61,7 @@ function PhotoTagChip({
   const [carouselOpen, setCarouselOpen] = useState(false);
   const [uploaderOpen, setUploaderOpen] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [createdAsset, setCreatedAsset] = useState<Awaited<ReturnType<typeof createAsset>> | null>(null);
+  const [createdAsset, setCreatedAsset] = useState<Asset | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
 
   const lookup = useAssetByTag(orgId, tag);
@@ -84,44 +84,20 @@ function PhotoTagChip({
     // Asset exists, no photos, non-manager — popover shows empty state.
     if (cachedAsset)               { setPopoverOpen(true); return; }
 
-    // No asset record yet. Find-or-create flow.
+    // No record yet: look it up. Clicking a tag never adds equipment; an
+    // admin adds it on purpose, under its unit with its ID (Operating areas).
     if (!orgId || !userId) return;
-    if (!canManage) {
-      // Non-managers do a lookup-only.
-      setCreating(true);
-      try {
-        const existing = await getAssetByTag(orgId, tag);
-        if (existing) {
-          setCreatedAsset(existing);
-          const photos = await listAssetPhotos(existing.id);
-          if (photos.length > 0) setPopoverOpen(true);
-          else setPopoverOpen(true);  // popover shows empty state too
-        }
-      } catch (err) {
-        console.warn("Asset lookup failed:", err);
-      } finally { setCreating(false); }
-      return;
-    }
-
     setCreating(true);
     try {
-      let asset = await getAssetByTag(orgId, tag);
+      const hits = await findAssetsByTag(orgId, tag);
+      const asset = hits.length === 1 ? hits[0] : await getAssetByTag(orgId, tag);
       if (!asset) {
-        try {
-          asset = await createAsset({ orgId, tag, createdBy: userId });
-        } catch (createErr) {
-          const msg = (createErr as Error).message || "";
-          if (msg.includes("duplicate key") || msg.includes("23505")) {
-            asset = await getAssetByTag(orgId, tag);
-          } else {
-            throw createErr;
-          }
-        }
+        showToast({ type: "info", title: hits.length > 1 ? `${tag} is on ${hits.length} units` : `${tag} isn't in the equipment list`,
+          message: hits.length > 1 ? "Open it from its unit in Operating areas." : "Admins add equipment in Operating areas, under its unit." });
+        return;
       }
-      if (!asset) throw new Error("Couldn't find or create asset record");
-      invalidateAssetCache();
       setCreatedAsset(asset);
-
+      if (!canManage) { setPopoverOpen(true); return; }
       const photos = await listAssetPhotos(asset.id);
       if (photos.length > 0) setPopoverOpen(true);
       else setUploaderOpen(true);

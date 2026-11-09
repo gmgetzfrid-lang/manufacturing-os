@@ -46,6 +46,7 @@ import RebaseScheduleModal from "@/components/projects/RebaseScheduleModal";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { DEFAULT_SCHEDULE_TZ, fmtInTz, fromDateTimeInput, tzLabel, dayKey } from "@/lib/scheduleTz";
 import { inPhase, phaseOnDay, setNewWorkPhase, type ProjectPhase } from "@/lib/projectPhases";
+import { EquipmentScopeProvider } from "@/components/projects/EquipmentScope";
 import { PhaseProvider } from "@/components/projects/PhaseContext";
 import { ProjectTypeProvider } from "@/components/projects/ProjectTypeContext";
 import ExecutionView from "@/components/projects/ExecutionView";
@@ -142,6 +143,10 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   // Timeline whenever they changed a task's status. We only show the full
   // loading state on the very first load (initialized true), then keep the view
   // mounted and let the data update in place.
+  // Who's working, for the equipment field on work orders and steps.
+  const refreshRef = useRef<() => void>(() => undefined);
+  const equipmentScope = useMemo(() => ({ orgId, projectId, projectName: projectName ?? "", canEdit, canManage: !!canManage, userId: userId ?? null, userName: userName ?? userEmail ?? null, onChanged: () => refreshRef.current() }),
+    [orgId, projectId, projectName, canEdit, canManage, userId, userName, userEmail]);
   const refresh = useCallback(async () => {
     setError(null);
     try {
@@ -152,6 +157,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   }, [orgId, projectId]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { refreshRef.current = () => { void refresh(); }; }, [refresh]);
 
   // Live multi-user sync: another planner's edits stream in (debounced) so
   // two people can work the same schedule without silently overwriting each
@@ -360,6 +366,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   return (
     <ProjectTypeProvider projectId={projectId} projectName={projectName} groups={groupNames}>
     <PhaseProvider value={phaseCtx}>
+    <EquipmentScopeProvider value={equipmentScope}>
     <div className="space-y-4">
       <ScheduleSetup {...setupProps} />
       {/* + Finding (a step, a work order, an hour) and the close-out review, on every tab. */}
@@ -724,6 +731,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
         );
       })()}
     </div>
+    </EquipmentScopeProvider>
     </PhaseProvider>
     </ProjectTypeProvider>
   );

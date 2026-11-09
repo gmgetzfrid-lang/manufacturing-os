@@ -19,35 +19,14 @@ import type { Milestone } from "@/types/schema";
 import { tagKey, registryTagKey } from "@/lib/findings";
 import {
   loadProjectEquipment, matchWorkOrders, setupOrders, undecided, withEquipment, setProjectUnitOn, setWorkOrderEquipment, pruneEquipmentLinks,
-  addToRegistry, moveToUnit, unitName, EQUIPMENT_CHANGED, type ProjectEquipmentData, type RegistryAsset, type WorkOrderMatch, type SavedHere, type UnitChoice,
+  addToRegistry, moveToUnit, requestEquipment, unitName, EQUIPMENT_CHANGED, type ProjectEquipmentData, type RegistryAsset, type WorkOrderMatch, type SavedHere, type UnitChoice,
 } from "@/lib/projectEquipment";
 import { typeLabel, fromWords, type WoClass } from "@/lib/woClass";
+import { sameEquipmentId, requestOf } from "@/lib/equipmentPick";
+import { EquipmentField } from "@/components/projects/EquipmentPicker";
+import { cache, read, noteSaved, savedHere, forgetRead } from "@/components/projects/equipmentData";
 
-const cache = new Map<string, ProjectEquipmentData>();
-// Work orders' equipment, unit and type saved here, by project: shown at
-// once, before the schedule on screen is read again.
-const savedHere = new Map<string, Map<string, SavedHere>>();
-const noteSaved = (projectId: string, ownerId: string, patch: SavedHere) => {
-  const m = savedHere.get(projectId) ?? new Map<string, SavedHere>();
-  m.set(ownerId, { ...(m.get(ownerId) ?? {}), ...patch });
-  savedHere.set(projectId, m);
-};
-/** The schedule with what was saved here laid over it (every view's unit
- *  and type filters read it too). */
-export const withSavedHere = (projectId: string, milestones: Milestone[]) => withEquipment(milestones, savedHere.get(projectId));
-// One read shared by everything on the page that asks at once (the banner
-// and the Setup button); a change starts a fresh one.
-const inflight = new Map<string, Promise<ProjectEquipmentData>>();
-const read = (orgId: string, projectId: string, fresh: boolean) => {
-  if (fresh) inflight.delete(projectId);
-  let p = inflight.get(projectId);
-  if (!p) {
-    p = loadProjectEquipment(orgId, projectId);
-    inflight.set(projectId, p);
-    p.finally(() => setTimeout(() => { if (inflight.get(projectId) === p) inflight.delete(projectId); }, 10_000)).catch(() => undefined);
-  }
-  return p;
-};
+export { withSavedHere, useEquipmentRegistry, noteEquipmentSaved } from "@/components/projects/equipmentData";
 
 /** The project's unit, the registry and each work order's match, re-read
  *  whenever any of it changes. `set`: unit chosen and nothing left to
@@ -84,7 +63,10 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
   projectId: string; projectName?: string; milestones: Milestone[]; canManage: boolean; userId: string;
 }) {
   const orgId = milestones.find((m) => m.orgId)?.orgId ?? null;
-  const { userEmail } = useRole();
+  const { userEmail, hasAnyRole } = useRole();
+  // Adding or moving equipment in a unit: admins only. Anyone else's
+  // missing tags go to the admins as asks, kept on the work order.
+  const canEditEquipment = hasAnyRole(["Admin"]);
   const actor = useMemo(() => ({ id: userId || null, name: userEmail ?? null }), [userId, userEmail]);
   const { data, matches, error } = useProjectEquipment(orgId, projectId, milestones);
   const [busy, setBusy] = useState<string | null>(null);
@@ -93,6 +75,7 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
   const [adding, setAdding] = useState(false);
   const name = projectName ?? "this project";
   const pUnits = data?.projectUnits ?? [];
+  const asks = useMemo(() => milestones.filter((m) => !m.cancelledAt && m.id).map((m) => ({ m, r: requestOf(m) })).filter((x): x is { m: Milestone; r: NonNullable<ReturnType<typeof requestOf>> } => !!x.r), [milestones]);
   const todo = undecided(matches);
   const unitOf = (code: string | null | undefined): UnitChoice | undefined => (code ? data?.units.find((u) => u.code === code) ?? { code, label: `Unit ${code}` } : undefined);
   const where = (a: RegistryAsset) => (a.unitCode ? unitName(unitOf(a.unitCode)) : "no unit");
@@ -114,7 +97,7 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
     setBusy(what); setErr(null);
     try { await fn(); }
     catch (e) { setErr(/permission|policy|row-level/i.test((e as Error).message) ? `Linking the project to its units and equipment needs the database update (20261115_project_findings.sql), or an org Admin, Manager, Supervisor or Document Control.` : (e as Error).message); }
-    finally { setBusy(null); inflight.delete(projectId); window.dispatchEvent(new CustomEvent(EQUIPMENT_CHANGED)); }
+    finally { setBusy(null); forgetRead(projectId); window.dispatchEvent(new CustomEvent(EQUIPMENT_CHANGED)); }
   };
   const unitOn = (u: UnitChoice, on: boolean) => { if (orgId && data) void run(`unit:${u.code}`, () => setProjectUnitOn({ orgId, projectId, projectName: name, unit: u, on, before: data.edges, actor })); };
   const addUnits = (codes: string[]) => { if (orgId && data) void run("units", async () => { for (const c of codes) await setProjectUnitOn({ orgId, projectId, projectName: name, unit: unitOf(c)!, on: true, before: data.edges, actor }); }); };
@@ -150,7 +133,19 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
     const sure = cls.unit != null;
     let asset = (m.asset && registryTagKey(m.asset.tag) === k && (!sure || m.asset.unitCode === home) ? m.asset : null)
       ?? hits.find((a) => a.unitCode === home) ?? (sure ? null : hits[0] ?? null) ?? made.get(`${home}:${k}`) ?? null;
-    if (!asset && home) { asset = await addToRegistry({ orgId, tag, unitCode: home, createdBy: userId, code: codeFor(home, k) }); made.set(`${home}:${k}`, asset); }
+    if (!asset && home && !canEditEquipment) {
+      await requestEquipment({ orgId, projectId, projectName: name, ownerId: m.ownerId, title: m.title, tag: tag.trim(), unit: unitOf(home) ?? null, actor });
+      noteSaved(projectId, m.ownerId, { equipment: { assetId: null, tag: tag.trim() }, ...keep });
+      return null;
+    }
+    if (!asset && home) {
+      // The ID: the plant's number from the schedule's Equipment column (never
+      // worked out from the name); one already used isn't taken twice.
+      const code = codeFor(home, k);
+      const free = code && !(data?.registry ?? []).some((a) => sameEquipmentId(a.code, code)) ? code : null;
+      asset = await addToRegistry({ orgId, tag, unitCode: home, createdBy: userId, code: free });
+      made.set(`${home}:${k}`, asset);
+    }
     const equipment = { assetId: asset?.id ?? null, tag: asset ? asset.tag.replace(/\s*\(.*$/, "") : tag.trim() };
     await setWorkOrderEquipment({ orgId, projectId, projectName: name, ownerId: m.ownerId, title: m.title, equipment, ...keep, actor, existing: data?.edges });
     noteSaved(projectId, m.ownerId, { equipment, ...keep });
@@ -228,6 +223,23 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
         )}
       </div>
 
+      {/* Asks waiting on an admin: each opens on its work order, ready to add. */}
+      {asks.length > 0 && (
+        <div className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-2.5 space-y-2">
+          <div className="text-[12.5px] font-bold text-amber-900 dark:text-amber-200">
+            {asks.length === 1 ? "1 work order is" : `${asks.length} work orders are`} waiting on equipment to be added{canEditEquipment ? "" : " by an admin"}
+          </div>
+          <ul className="space-y-1.5">
+            {asks.map(({ m, r }) => (
+              <li key={m.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px]">
+                <span className="flex-1 min-w-[10rem] text-[var(--color-text)]">{m.workOrderRef ? `WO ${m.workOrderRef} · ` : ""}{m.name}<span className="text-[var(--color-text-muted)]">{r.byName ? ` · asked by ${r.byName}` : ""}</span></span>
+                <EquipmentField milestone={m} milestones={milestones} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* The work orders */}
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -241,7 +253,7 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
         {todo.length > 0 && (
           <p className="text-[12px] text-[var(--color-text-muted)]">
             {!pUnits.length ? "Pick the project's unit first. " : ""}
-            Confirm all saves each work order&apos;s equipment, unit and type as shown{notIn.length && pUnits.length ? `, and adds ${notIn.length === 1 ? "the 1 tag" : `the ${notIn.length} tags`} not in the registry under their unit` : ""}. Change any one first if it&apos;s wrong.
+            Confirm all saves each work order&apos;s equipment, unit and type as shown{notIn.length && pUnits.length ? (canEditEquipment ? `, and adds ${notIn.length === 1 ? "the 1 tag" : `the ${notIn.length} tags`} not in the equipment list under their unit` : `, and asks an admin to add ${notIn.length === 1 ? "the 1 tag" : `the ${notIn.length} tags`} not in the equipment list (only admins add equipment)`) : ""}. Change any one first if it&apos;s wrong.
           </p>
         )}
         {unknownTypes.length > 0 && (
@@ -258,10 +270,10 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
                 {" "}If that&apos;s wrong, move {flaggedAssets.length === 1 ? "it" : "them"}. If that unit has its own, leave {flaggedAssets.length === 1 ? "it" : "them"} and change the work order.
               </span>
             </div>
-            <button type="button" disabled={!!busy} className={quiet}
+            {canEditEquipment ? <button type="button" disabled={!!busy} className={quiet}
               onClick={() => void run("move", async () => { for (const x of flaggedAssets) await moveToUnit(x.asset.id, x.to!, userId); })}>
               {busy === "move" && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Move {flaggedAssets.length === 1 ? flaggedAssets[0].asset.tag : `all ${flaggedAssets.length}`} to {flaggedAssets.length === 1 ? unitOf(flaggedAssets[0].to)?.label : "their work order's unit"}
-            </button>
+            </button> : <span className="text-[12px]">Only an admin can move equipment to another unit.</span>}
           </div>
         )}
         {matches.length === 0 ? (

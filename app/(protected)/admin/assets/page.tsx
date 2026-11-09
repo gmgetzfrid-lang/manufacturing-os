@@ -65,8 +65,12 @@ export default function AssetsPage() {
 }
 
 function AssetsPageInner() {
-  const { activeOrgId, activeRole, uid, userEmail } = useRole();
+  const { activeOrgId, activeRole, uid, userEmail, hasAnyRole } = useRole();
   const isAdmin = ADMIN_ROLES.includes(activeRole);
+  // Adding, changing or removing equipment: admins only (the database holds
+  // the same rule). The rest of the managing roles keep labels, photos and
+  // categories.
+  const canEditEquipment = hasAnyRole(["Admin"]);
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -308,12 +312,12 @@ function AssetsPageInner() {
               >
                 <QrCode className="w-4 h-4" /> QR labels ({filtered.length})
               </button>
-              <button
+              {canEditEquipment && <button
                 onClick={() => setCsvOpen(true)}
                 className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-sm font-bold border border-[var(--color-border)]"
               >
                 <Upload className="w-4 h-4" /> Import CSV
-              </button>
+              </button>}
               {!unitFilter ? (
                 // The root IS the site — the primary act here is defining an
                 // operating area, not dropping a loose asset.
@@ -327,12 +331,12 @@ function AssetsPageInner() {
                 <>
                   {/* CATEGORY leads — it is the next level of the hierarchy.
                       Assets are added inside their category's section. */}
-                  <button
+                  {canEditEquipment && <button
                     onClick={() => openCreate({ unitCode: unitFilter === "__unassigned" ? undefined : unitFilter })}
                     className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-sm font-bold border border-[var(--color-border)]"
                   >
                     <Plus className="w-4 h-4" /> New asset
-                  </button>
+                  </button>}
                   <button
                     onClick={() => setAddCategoryOpen(true)}
                     className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-black shadow-lg shadow-purple-900/20"
@@ -345,10 +349,10 @@ function AssetsPageInner() {
           )}
         </div>
 
-        {!isAdmin && (
+        {!canEditEquipment && (
           <div className="mb-6 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-start gap-2">
             <Lock className="w-4 h-4 mt-0.5 shrink-0" />
-            <span>Only Admin / Doc Control / Manager / Supervisor roles can create or edit assets. Your role: <b>{activeRole}</b>. You can still browse + view photos.</span>
+            <span>Only admins add or change equipment. Your role: <b>{activeRole}</b>. You can browse it{isAdmin ? ", print labels and add photos" : " and view photos"}; on a work order, ask an admin to add what&apos;s missing.</span>
           </div>
         )}
 
@@ -407,7 +411,7 @@ function AssetsPageInner() {
                 onChanged={() => { void loadCodebook(activeOrgId).then(setBook); }}
               />
             )}
-            {unitFilter === "__unassigned" && isAdmin && book.units.length > 0 && filtered.length > 0 && (
+            {unitFilter === "__unassigned" && canEditEquipment && book.units.length > 0 && filtered.length > 0 && (
               <UnassignedAssignPanel
                 assets={filtered}
                 book={book}
@@ -431,7 +435,7 @@ function AssetsPageInner() {
         )}
 
         {/* The Site Codebook already knows the taxonomy — put it to work. */}
-        {isAdmin && !loading && uid && activeOrgId && (
+        {canEditEquipment && !loading && uid && activeOrgId && (
           <CategorizeBanner orgId={activeOrgId} userId={uid} assets={assets} types={types} book={book}
             onDone={() => { invalidateAssetCache(); void refresh(); }} />
         )}
@@ -480,7 +484,7 @@ function AssetsPageInner() {
                   </button>
                 </div>
               ) : (
-                <EmptyState onCreate={isAdmin ? () => setCreating(true) : undefined} hasAny={assets.length > 0} />
+                <EmptyState onCreate={canEditEquipment ? () => setCreating(true) : undefined} hasAny={assets.length > 0} />
               )
             ) : (
               groupedByType?.map((g) => {
@@ -538,7 +542,7 @@ function AssetsPageInner() {
                         )}
                       </span>
                     </button>
-                    {isAdmin && (
+                    {canEditEquipment && (
                       <button type="button"
                         onClick={() => openCreate({
                           typeId: g.typeId === "__none" ? undefined : g.typeId,
@@ -551,12 +555,12 @@ function AssetsPageInner() {
                   </div>
                   {open && (g.list.length === 0 ? (
                     <button type="button"
-                      onClick={() => isAdmin && openCreate({
+                      onClick={() => canEditEquipment && openCreate({
                         typeId: g.typeId === "__none" ? undefined : g.typeId,
                         unitCode: unitFilter === "__unassigned" ? undefined : (unitFilter ?? undefined),
                       })}
                       className="w-full rounded-xl border-2 border-dashed border-[var(--color-border)] py-5 text-xs font-bold text-[var(--color-text-faint)] hover:border-purple-400 hover:text-purple-700">
-                      No {g.name.toLowerCase()} in this area yet{isAdmin ? " - add the first" : ""}
+                      No {g.name.toLowerCase()} in this area yet{canEditEquipment ? " - add the first" : ""}
                     </button>
                   ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -566,7 +570,7 @@ function AssetsPageInner() {
                       return (
                         <AssetCard key={a.id} asset={a} type={type} photoCount={count} coverUrl={coverUrls.get(a.id)}
                           onClick={() => count > 0 ? setCarouselOpenFor(a) : setSelectedAsset(a)}
-                          onEdit={isAdmin ? () => setSelectedAsset(a) : undefined}
+                          onEdit={canEditEquipment ? () => setSelectedAsset(a) : undefined}
                           onAddPhotos={isAdmin ? () => setUploaderOpenFor(a) : undefined} />
                       );
                     })}
@@ -615,7 +619,7 @@ function AssetsPageInner() {
             )}
           </div>
         ) : filtered.length === 0 ? (
-          <EmptyState onCreate={isAdmin ? () => setCreating(true) : undefined} hasAny={assets.length > 0} />
+          <EmptyState onCreate={canEditEquipment ? () => setCreating(true) : undefined} hasAny={assets.length > 0} />
         ) : (
           // Search results (across every unit) or a no-codebook org's flat registry.
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -630,7 +634,7 @@ function AssetsPageInner() {
                   photoCount={count}
                   coverUrl={coverUrls.get(a.id)}
                   onClick={() => count > 0 ? setCarouselOpenFor(a) : setSelectedAsset(a)}
-                  onEdit={isAdmin ? () => setSelectedAsset(a) : undefined}
+                  onEdit={canEditEquipment ? () => setSelectedAsset(a) : undefined}
                   onAddPhotos={isAdmin ? () => setUploaderOpenFor(a) : undefined}
                 />
               );
@@ -675,7 +679,7 @@ function AssetsPageInner() {
           userId={uid || ""}
           userEmail={userEmail ?? undefined}
           types={types}
-          canEdit={isAdmin}
+          canEdit={canEditEquipment}
           book={book}
           onClose={() => { setSelectedAsset(null); setCreating(false); }}
           onSaved={() => { void refresh(); }}

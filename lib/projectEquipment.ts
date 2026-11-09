@@ -24,6 +24,7 @@ import { listEdgesFor, declareEdge, removeEdge } from "@/lib/estate/client";
 import { nid, type EstateEdge } from "@/lib/estate/ids";
 import { createAsset, updateAsset } from "@/lib/assets";
 import { EQUIP_ID, EQUIP_NONE, EQUIP_TAG, leadTag, tagsIn, tagKey, registryTagKey, type Equipment } from "@/lib/findings";
+import { EQUIP_REQUEST, requestValue, type EquipmentRequest } from "@/lib/equipmentPick";
 
 export interface RegistryAsset { id: string; tag: string; unitCode: string | null; code?: string | null }
 export interface UnitChoice { code: string; label: string }
@@ -259,6 +260,8 @@ export async function setWorkOrderEquipment(input: { orgId: string; projectId: s
   const attrs = { ...(((data as { attributes?: Record<string, unknown> | null } | null)?.attributes) ?? {}) };
   if (input.equipment !== undefined) {
     delete attrs[EQUIP_ID]; delete attrs[EQUIP_TAG]; delete attrs[EQUIP_NONE];
+    // Linked (or settled as on none): an ask waiting on it is answered.
+    if (input.equipment === null || input.equipment.assetId) delete attrs[EQUIP_REQUEST];
     if (input.equipment) {
       attrs[EQUIP_TAG] = input.equipment.tag.trim();
       if (input.equipment.assetId) attrs[EQUIP_ID] = input.equipment.assetId;
@@ -290,6 +293,47 @@ export async function pruneEquipmentLinks(edges: EstateEdge[], inUse: Set<string
 export async function addToRegistry(input: { orgId: string; tag: string; unitCode: string; createdBy: string; code?: string | null }): Promise<RegistryAsset> {
   const a = await createAsset({ orgId: input.orgId, tag: input.tag.trim(), unitCode: input.unitCode, createdBy: input.createdBy, ...(input.code ? { code: input.code } : {}) });
   return { id: a.id, tag: a.tag, unitCode: (a as { unit_code?: string | null }).unit_code ?? input.unitCode, code: input.code ?? null };
+}
+
+/** Ask an admin to add equipment that isn't in the unit's list: kept on the
+ *  work order (or step) with its name, so the work order says what it's on
+ *  meanwhile, and admins are told. */
+export async function requestEquipment(input: { orgId: string; projectId: string; projectName: string; ownerId: string; title: string;
+  tag: string; unit: UnitChoice | null; actor: { id: string | null; name: string | null } }): Promise<void> {
+  const tag = input.tag.trim();
+  const { data, error } = await supabase.from("milestones").select("attributes").eq("id", input.ownerId).maybeSingle();
+  if (error) throw new Error(error.message);
+  const attrs = { ...(((data as { attributes?: Record<string, unknown> | null } | null)?.attributes) ?? {}) };
+  delete attrs[EQUIP_ID]; delete attrs[EQUIP_NONE];
+  attrs[EQUIP_TAG] = tag;
+  const req: EquipmentRequest = { tag, unit: input.unit?.code ?? null, by: input.actor.id, byName: input.actor.name, at: new Date().toISOString() };
+  attrs[EQUIP_REQUEST] = requestValue(req);
+  const { error: e2 } = await supabase.from("milestones").update({ attributes: attrs, updated_at: new Date().toISOString(), updated_by: input.actor.id }).eq("id", input.ownerId);
+  if (e2) throw new Error(e2.message);
+  try {
+    const { emit } = await import("@/lib/notify/dispatch");
+    const where = input.unit ? unitName(input.unit) : "its unit";
+    await emit({
+      orgId: input.orgId, category: "assignment", kind: "equipment_request",
+      title: `Add ${tag} to ${where}?`,
+      body: `${input.actor.name || "Someone"} asked for ${tag} on ${input.title} (${input.projectName}). Only admins add equipment: add it on the work order and it links itself.`,
+      link: `/projects/${input.projectId}`,
+      resource: { type: "project", id: input.projectId },
+      actorUserId: input.actor.id ?? undefined, actorName: input.actor.name ?? undefined,
+      audience: { roles: ["Admin"] },
+    });
+  } catch { /* the ask is saved on the work order either way */ }
+}
+
+/** Take an ask off a work order (an admin turned it down, or it was a mistake). */
+export async function clearEquipmentRequest(ownerId: string, by: string | null): Promise<void> {
+  const { data, error } = await supabase.from("milestones").select("attributes").eq("id", ownerId).maybeSingle();
+  if (error) throw new Error(error.message);
+  const attrs = { ...(((data as { attributes?: Record<string, unknown> | null } | null)?.attributes) ?? {}) };
+  if (!(EQUIP_REQUEST in attrs)) return;
+  delete attrs[EQUIP_REQUEST];
+  const { error: e2 } = await supabase.from("milestones").update({ attributes: attrs, updated_at: new Date().toISOString(), updated_by: by }).eq("id", ownerId);
+  if (e2) throw new Error(e2.message);
 }
 
 /** Move registry equipment to the project's unit (the registry had it

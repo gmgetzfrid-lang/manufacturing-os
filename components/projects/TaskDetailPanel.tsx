@@ -7,6 +7,7 @@
 // captured note, the subtask checklist, and the task's breadcrumb
 // activity trail.
 
+import { EquipmentField } from "@/components/projects/EquipmentPicker";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useProjectWord } from "@/components/projects/ProjectTypeContext";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
@@ -20,6 +21,7 @@ import {
   User, HardHat, AlertTriangle, Sun, Moon, Sunset,
   CalendarDays, Layers, MessageSquarePlus, History, ChevronRight, ChevronLeft,
   Link2, Target, Zap, Ban, ArrowRight,
+  Wrench,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus, MilestoneNote, ProjectMember } from "@/types/schema";
 import { wouldCreateCycle, cascadeDependents, withAncestors, type ReflowNode } from "@/lib/scheduleReflow";
@@ -410,6 +412,11 @@ export default function TaskDetailPanel({
                 )}
                 {m.workOrderRef && (
                   <Field icon={<Hash className="w-3.5 h-3.5" />} label="Work order">{m.workOrderRef}</Field>
+                )}
+                {m.id && (
+                  <Field icon={<Wrench className="w-3.5 h-3.5" />} label="Equipment">
+                    <EquipmentField milestone={m} milestones={allTasks ?? []} compact />
+                  </Field>
                 )}
                 {(m.responsibleParty || m.responsibleOrg) && (
                   <Field icon={<User className="w-3.5 h-3.5" />} label="Responsible (planned)">
