@@ -356,7 +356,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading || oauthLoading}
-              className="w-full py-4 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl shadow-xl hover:shadow-2xl hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed disabled:transform-none"
+              className="w-full py-4 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl shadow-xl hover:shadow-2xl hover:scale-[1.01] active:scale-[0.99] cursor-pointer transition-all flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed disabled:transform-none"
             >
               {loading ? (
                 <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Signing in…</>
@@ -378,7 +378,7 @@ export default function LoginPage() {
             type="button"
             onClick={handleMicrosoft}
             disabled={oauthLoading || loading}
-            className="w-full py-3.5 bg-white hover:bg-slate-50 text-slate-800 font-bold rounded-xl border border-slate-300 shadow-sm hover:shadow transition-all flex items-center justify-center gap-3 disabled:opacity-70 disabled:cursor-not-allowed"
+            className="w-full py-3.5 bg-white hover:bg-slate-100 text-slate-800 font-bold rounded-xl border border-slate-300 hover:border-slate-500 shadow-sm hover:shadow-lg hover:scale-[1.01] active:scale-[0.99] cursor-pointer transition-all flex items-center justify-center gap-3 disabled:opacity-70 disabled:cursor-not-allowed disabled:transform-none"
           >
             {oauthLoading ? (
               <><Loader2 className="w-5 h-5 animate-spin" /> Redirecting to Microsoft…</>
