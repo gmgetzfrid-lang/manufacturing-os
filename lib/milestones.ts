@@ -26,6 +26,7 @@ import { mergeImportedProgress } from "@/lib/scheduleRules";
 import { DEFAULT_SCHEDULE_TZ, naiveToIso, normalizeTimeZone, shiftWallClock, addDays, hasTimeOfDay, dayDiff } from "@/lib/scheduleTz";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { discoveryOf, discoveryAttr, addedNote, kindOf, relinkWithout, type AddedKind } from "@/lib/discovery";
+import { IMPORT_KEY, importStampValue } from "@/lib/origin";
 import type {
   Milestone, MilestoneStatus, MilestoneSource, MilestoneNote, MilestoneAttributes,
 } from "@/types/schema";
@@ -1774,6 +1775,8 @@ export interface ImportParsedInput {
   /** Don't match old line-numbered rows by name (a phase's import: those
    *  rows belong to the phase there before it, lib/projectPhases). */
   noLegacyMatch?: boolean;
+  /** The file it came from, kept on every row it writes (lib/origin). */
+  importFile?: string | null;
 }
 
 /** Bare "2026-08-15" / naive "2026-08-15 08:00" → plant time; anything
@@ -1917,6 +1920,10 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
       baseFields.duration_hours = r.durationHours ?? null;
       baseFields.attributes = r.attributes && Object.keys(r.attributes).length > 0 ? r.attributes : {};
     }
+    // Where it came from: this file, now, by whom (lib/origin).
+    if (input.source !== "manual") {
+      baseFields.attributes = { ...((baseFields.attributes as Record<string, unknown> | undefined) ?? {}), [IMPORT_KEY]: importStampValue({ file: input.importFile?.trim() || null, at: nowIso, by: input.createdByName ?? null }) };
+    }
 
     try {
       if (r.externalRef) {
@@ -1972,7 +1979,7 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
             const file = planFields.attributes as Record<string, unknown>;
             planFields.attributes = { ...file, ...cur };
             // The working calendar is the schedule's — always the file's.
-            for (const k of ["work_calendar", "work_hours", "ms_critical"]) {
+            for (const k of ["work_calendar", "work_hours", "ms_critical", IMPORT_KEY]) {
               if (file[k] != null) (planFields.attributes as Record<string, unknown>)[k] = file[k];
             }
           }

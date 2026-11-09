@@ -11,6 +11,7 @@
 
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { discoveryText, discoveryOf, kindOf, type AddedKind } from "@/lib/discovery";
+import { IMPORT_KEY } from "@/lib/origin";
 import { searchMatcher, hasQuery } from "@/lib/fuzzySearch";
 import { classPasses, type WoClass } from "@/lib/woClass";
 
@@ -67,7 +68,7 @@ function haystack(m: Milestone): string {
   if (m.location) parts.push(m.location);
   if (m.description) parts.push(m.description);
   // Added work: what was found, not the record it's kept in.
-  if (m.attributes) for (const [k, v] of Object.entries(m.attributes)) if (v != null && k !== "discovery") parts.push(String(v));
+  if (m.attributes) for (const [k, v] of Object.entries(m.attributes)) if (v != null && k !== "discovery" && k !== IMPORT_KEY) parts.push(String(v));
   const found = discoveryText(m);
   if (found) parts.push(found);
   return parts.join(" ").toLowerCase();

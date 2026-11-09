@@ -76,8 +76,10 @@ interface Props {
 /** Schedule-file values the app reads for itself, shown elsewhere in
  *  plain words (Critical path row), not in the raw list. */
 import { discoveryOf, impactLine, ADDED, kindOf } from "@/lib/discovery";
+import { IMPORT_KEY, originOf } from "@/lib/origin";
+import { EQUIP_REQUEST } from "@/lib/equipmentPick";
 
-const HIDDEN_ATTRS = new Set(["ms_critical", "discovery"]);
+const HIDDEN_ATTRS = new Set(["ms_critical", "discovery", IMPORT_KEY, EQUIP_REQUEST]);
 
 export default function TaskDetailPanel({
   milestone, subtasks, allTasks, childCount, ancestors, canEdit, userId, userName, userEmail, userRole,
@@ -463,10 +465,23 @@ export default function TaskDetailPanel({
                     <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
                       {ADDED[kindOf(d)].found[0].toUpperCase() + ADDED[kindOf(d)].found.slice(1)} {fmtInTz(d.foundAt, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}{d.foundBy ? ` by ${d.foundBy}` : ""}{d.approvedBy ? ` · approved by ${d.approvedBy}` : ""}
                     </div>
+                    {(d.addedAt || d.addedBy || m.createdByName) && (
+                      <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">Added to the schedule{d.addedAt ? ` ${fmtInTz(d.addedAt, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}` : ""}{d.addedBy || m.createdByName ? ` by ${d.addedBy || m.createdByName}` : ""}{d.approvedBy ? "" : " · no approval recorded"}</div>
+                    )}
                     <div className={`text-[11px] mt-0.5 ${d.impact.critical ? "font-bold text-rose-700 dark:text-rose-400" : "text-[var(--color-text)]"}`}>When added: {impactLine(d.impact, (h) => `${h} h`, projectWord)}</div>
                   </div>
                 );
               })()}
+
+              {/* Where it came from: imported with the schedule, or added by hand. */}
+              {!discoveryOf(m) && (
+                <div className="px-4 py-2.5 border-b border-[var(--color-border)]">
+                  <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-1">Where it came from</div>
+                  {originOf(m, (t) => fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })).lines.map((l) => (
+                    <div key={l} className="text-xs text-[var(--color-text)] break-words">{l}</div>
+                  ))}
+                </div>
+              )}
 
               {/* Source attributes (the labeled columns from the schedule) */}
               {m.attributes && Object.keys(m.attributes).some((k) => !HIDDEN_ATTRS.has(k)) && (

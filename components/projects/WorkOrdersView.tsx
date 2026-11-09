@@ -23,6 +23,7 @@ import type { ShiftTimes } from "@/lib/shiftReport";
 import { dayKey } from "@/lib/scheduleTz";
 import { whenDated } from "@/lib/timeWords";
 import { ADDED } from "@/lib/discovery";
+import { workOrderOrigin } from "@/lib/origin";
 import type { PathMarks } from "@/lib/criticalPath";
 import CalendarQuickView, { type StepUpdate } from "@/components/projects/CalendarQuickView";
 import { useLetterhead } from "@/lib/letterheadStore";
@@ -180,6 +181,25 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
     if (!c || !wc.book) return null;
     const unitShort = (code: string) => { const l = unitLabel(code, wc.book!); return l.match(/\(([^)]+)\)\s*$/)?.[1] ?? l; };
     return [c.type ? typeLabel(c.type, wc.book) : null, c.unit && wc.choices.units.length > 1 ? unitShort(c.unit) : null].filter(Boolean).join(", ") || null;
+  };
+  // Where it came from: imported with the schedule, or added during the
+  // job (what for, who found it, who added it, who approved it, when).
+  const originBlock = (o: WorkOrder) => {
+    const w = workOrderOrigin(o.owner, o.steps, fmt);
+    const block = (key: string, lines: string[], tone?: string) => (
+      <div key={key} className="text-[11.5px] leading-snug">
+        {lines.map((l, i) => <div key={l} className={i === 0 ? `font-semibold ${tone ?? "text-[var(--color-text)]"}` : "text-[var(--color-text-muted)]"}>{l}</div>)}
+      </div>
+    );
+    const toneOf = (k: string) => (k === "added" ? "text-teal-800 dark:text-teal-300" : k === "discovery" ? "text-violet-800 dark:text-violet-300" : undefined);
+    return (
+      <div className="ml-9 mt-2 space-y-1.5">
+        <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Where it came from</div>
+        {block("own", w.own.lines, toneOf(w.own.kind))}
+        {w.added.map((a, i) => block(`a${i}`, [`${a.lines[0]} (${a.steps} step${a.steps === 1 ? "" : "s"})`, ...a.lines.slice(1)], toneOf(a.lines[0].startsWith(ADDED.added.word) ? "added" : "discovery")))}
+        {w.byHand && block("hand", w.byHand.lines)}
+      </div>
+    );
   };
   const detailsOf = (o: WorkOrder) => {
     const single = o.steps.length === 1 && o.steps[0].id === o.owner.id;
@@ -345,6 +365,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                     <div className="px-3 pt-2 pb-2.5 bg-[var(--color-surface)] border-b border-[var(--color-border)]">
                       <div className="ml-9">{detailsOf(o)}</div>
                       {barOf(o)}
+                      {originBlock(o)}
                     </div>
                     <div className="px-3 pt-2.5 flex flex-wrap gap-1.5">
                         {/* The equipment it's on: picked from the project's unit. */}

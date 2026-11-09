@@ -238,6 +238,7 @@ export default function ScheduleImportModal({
         baselineInserted: phased && (existingCount ?? 0) === 0,
         noLegacyMatch: ownKeys,
         source: FORMAT_TO_SOURCE[parseResult.format],
+        importFile: filename,
         // CRITICAL: pass through every hierarchy + duration field
         // the parser captured. Previous code dropped these on the
         // floor — the importer then wrote rows with no parent_id,
