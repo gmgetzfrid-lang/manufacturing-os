@@ -34,7 +34,7 @@ export const AI_JOBS: AiJobInfo[] = [
   { id: "knowledge", label: "Ask Knowledge", what: "Questions answered from your documents", ops: ["knowledgeAsk", "orchestrator"], use: { inputTokens: 127_000, outputTokens: 3_700, per: "question" } },
   { id: "reading", label: "Reading drawings & scans", what: "Pages with no text layer, read when a library is indexed", ops: ["knowledgeVision", "drawingLocate"], use: { inputTokens: 3_400, outputTokens: 620, per: "page" } },
   { id: "drafting", label: "Forms & templates", what: "Filling forms and drafting from templates", ops: ["formDraft", "templateDraft"], use: { inputTokens: 20_000, outputTokens: 3_000, per: "draft" } },
-  { id: "fieldUpdates", label: "Field updates", what: "Notes typed or spoken into Update by note, read into step updates for you to check", ops: ["quickUpdate"], use: { inputTokens: 14_000, outputTokens: 1_500, per: "note" } },
+  { id: "fieldUpdates", label: "Field updates", what: "Notes typed or spoken into Update by note, read into step updates for you to check; what you tell the suggested schedule", ops: ["quickUpdate", "nextPlan"], use: { inputTokens: 14_000, outputTokens: 1_500, per: "note" } },
   { id: "projectDocs", label: "Project documents", what: "Quotes, invoices, budgets, checklists, quality manuals", ops: ["quoteParse", "invoiceParse", "budgetDocParse", "checklistSegment", "checklistAssess", "qualityManualReview"], use: { inputTokens: 15_000, outputTokens: 2_000, per: "document" } },
 ];
 

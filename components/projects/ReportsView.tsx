@@ -41,6 +41,7 @@ import { buildShiftSheet, shiftSheetHtml, shiftSheetDocument, sheetPages, sheetI
 import ShiftSheetEntry from "@/components/projects/ShiftSheetEntry";
 import ShiftReportView from "@/components/projects/ShiftReportView";
 import ExecutionReportView from "@/components/projects/ExecutionReportView";
+import AsBuiltScheduleView from "@/components/projects/AsBuiltScheduleView";
 import { defaultMeeting, type MeetingKind } from "@/lib/meetingPlan";
 import { useProjectWord } from "@/components/projects/ProjectTypeContext";
 import { useWoClasses, passes, WoClassSelects } from "@/components/projects/WoClassFilter";
@@ -610,6 +611,10 @@ export default function ReportsView(p: Props) {
       </div>
       {sel === "schedule" ? (
         <ExecutionReportView milestones={p.milestones} shiftTimes={times} critical={p.critical} criticalSource={p.criticalSource} projectId={projectId} projectName={p.projectName} />
+      ) : sel === "asbuilt" ? (
+        <AsBuiltScheduleView projectId={projectId} orgId={live[0]?.orgId ?? null} milestones={p.milestones} childrenByParent={p.childrenByParent} cancelled={p.cancelled}
+          phases={ph.phases} phase={ph.phase} tz={tz} times={times} canEdit={!!p.canEdit} userName={p.userName ?? null}
+          onExcel={() => void run("download")} onPrint={() => void run("print")} />
       ) : (
         <div className="grid gap-5 grid-cols-[minmax(0,1fr)] lg:grid-cols-[minmax(280px,360px)_minmax(0,1fr)] items-start">
           <div className="space-y-4 min-w-0">
@@ -702,7 +707,7 @@ const DESCRIBE: Record<ReportId, string> = {
   timelog: "Every step and the time each thing was done, for the project file.",
   schedule: "Complete, pace and the forecast finish, with what's blocked and overdue.",
   workorders: "Each work order opened up with all its steps: plan against actual, status, % and the latest comment.",
-  asbuilt: "The job as it was really done: every work order and step, when it was planned (the original plan as saved) and when it really started and finished, how far off the plan, what was added and what was taken off. A timeline and the full table; Excel for the project file.",
+  asbuilt: "The job as it was really worked, shift by shift: when each activity moved, when it sat and why, when it was ready but its crew was elsewhere, and the hands against the work. Switch to Suggested for next time: this job with what it taught put in, a crew load and hands for each shift, and changes you tell it.",
   kickoff: "The start of the project: the job, the first shifts, readiness and safety.",
   closeout: "The end of the project: how it went, what was added, what's open, and the Lessons & findings review for next time.",
   phase: "How the phase picked at the top did: progress against plan day by day, the finish, the work added and its share of the budget, beside the other phases and the whole project. With All phases picked: every phase and the project.",
