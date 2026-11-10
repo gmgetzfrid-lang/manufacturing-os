@@ -18,7 +18,7 @@ import { fetchAllRows } from "@/lib/fetchAllRows";
 import { loadCodebook } from "@/lib/codebook";
 import type { GraphNode, GraphEdge } from "@/lib/orgGraph";
 import {
-  equipScore, rankEquip, tagKey, unitOfChain, equipLabel,
+  equipScore, rankEquip, tagKey, unitOfChain, unitFromFolderName, equipLabel,
   type FindDoc, type FindEquip, type FindFolder, type FindUnit, type FindWorkOrder,
 } from "@/lib/findCore";
 
@@ -293,6 +293,54 @@ export async function folderUnit(orgId: string, chain: Array<{ id: string; name:
   return unitOfChain(chain, marks, units);
 }
 
+export interface UnitFolder { libraryId: string; chain: Array<{ id: string; name: string; parent_id: string | null }> }
+
+/** The folder a unit's documents live in, for "tap a unit on the map, open
+ *  its folder": a folder marked with the unit, else one named for it
+ *  ("55 - Transmix"). The library you're in wins, then the one with the most
+ *  documents directly in it. Null when no folder belongs to the unit. */
+export async function folderForUnit(orgId: string, unitCode: string, preferLibraryId?: string | null): Promise<UnitFolder | null> {
+  const units = await findUnits(orgId);
+  const { data: marks } = await supabase.from("estate_edges").select("a").eq("org_id", orgId).eq("type", "belongs_to_unit")
+    .eq("status", "applied").eq("b", `cbunit:${unitCode}`).limit(200);
+  let ids = ((marks ?? []) as Array<{ a: string }>).map((m) => m.a).filter((a) => a.startsWith("folder:")).map((a) => a.slice(7));
+  type Col = { id: string; name: string; parent_id: string | null; library_id: string; deleted_at: string | null };
+  let cands: Col[] = [];
+  if (ids.length) {
+    const { data } = await supabase.from("collections").select("id, name, parent_id, library_id, deleted_at").in("id", ids.slice(0, 200));
+    cands = ((data ?? []) as Col[]).filter((c) => !c.deleted_at);
+  }
+  if (!cands.length) {
+    const { data } = await supabase.from("collections").select("id, name, parent_id, library_id, deleted_at").eq("org_id", orgId).ilike("name", `${unitCode}%`).limit(50);
+    cands = ((data ?? []) as Col[]).filter((c) => !c.deleted_at && unitFromFolderName(c.name, units) === unitCode);
+  }
+  if (!cands.length) return null;
+  // A marked folder can sit inside another marked one: the outermost is the unit's home.
+  ids = cands.map((c) => c.id);
+  const outer = cands.filter((c) => !c.parent_id || !ids.includes(c.parent_id));
+  const pool = outer.length ? outer : cands;
+  const here = preferLibraryId ? pool.filter((c) => c.library_id === preferLibraryId) : [];
+  let pick = here[0] ?? null;
+  if (!pick) {
+    const counts = await Promise.all(pool.slice(0, 12).map(async (c) => {
+      const { count } = await supabase.from("documents").select("id", { count: "exact", head: true }).eq("collection_id", c.id).neq("status", "Archived");
+      return [c, count ?? 0] as const;
+    }));
+    pick = counts.sort((a, b) => b[1] - a[1])[0]?.[0] ?? pool[0];
+  }
+  // Walk up to the library root for the crumbs.
+  const chain: UnitFolder["chain"] = [{ id: pick.id, name: pick.name, parent_id: pick.parent_id }];
+  let parent = pick.parent_id;
+  for (let i = 0; parent && i < 12; i++) {
+    const { data } = await supabase.from("collections").select("id, name, parent_id").eq("id", parent).maybeSingle();
+    const row = data as { id: string; name: string; parent_id: string | null } | null;
+    if (!row) break;
+    chain.unshift(row);
+    parent = row.parent_id;
+  }
+  return { libraryId: pick.library_id, chain };
+}
+
 // ── The map: unit > type > equipment > documents ─────────────────────────
 export interface MapBase { nodes: GraphNode[]; edges: GraphEdge[] }
 const mapCache = new Map<string, Promise<MapBase>>();
@@ -312,7 +360,8 @@ export function findMapBase(orgId: string): Promise<MapBase> {
       }
       const used = new Set(assets.map((a) => a.unit_code).filter(Boolean));
       const nodes: GraphNode[] = units.filter((u) => used.has(u.code)).map((u) => ({
-        id: `cbunit:${u.code}`, type: "unit", label: `${u.code} ${u.label}`, sub: `Unit ${u.code}`, href: `/admin/assets?unit=${encodeURIComponent(u.code)}`, degree: 0,
+        // "55 Transmix Unit", not "55 Transmix Unit (Old Solvent Unit)": it has to fit under a dot.
+        id: `cbunit:${u.code}`, type: "unit", label: `${u.code} ${u.label.replace(/\s*\([^)]*\)\s*$/, "").trim() || u.label}`, sub: `Unit ${u.code}`, href: `/admin/assets?unit=${encodeURIComponent(u.code)}`, degree: 0,
       }));
       const edges: GraphEdge[] = [];
       for (const a of assets) {

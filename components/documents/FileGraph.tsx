@@ -130,7 +130,9 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
 
   // Target layout; current positions ease toward it.
   const target = useMemo(() => balloonLayout(
-    visible.map((n) => ({ id: n.id, parentId: n.parentId && byId.has(n.parentId) ? n.parentId : null, r: RADIUS[n.kind], labelPad: isContainer(n.kind) ? 16 : 14 })),
+    // A container's name is drawn under it; a long one ("56 LPG Recovery
+    // Unit") needs its neighbours further off or the names run together.
+    visible.map((n) => ({ id: n.id, parentId: n.parentId && byId.has(n.parentId) ? n.parentId : null, r: RADIUS[n.kind], labelPad: isContainer(n.kind) ? Math.max(16, Math.min(64, n.label.length * 2.6)) : 14 })),
     { gap: 12 },
   ), [visible, byId]);
   /** Where the "up" node sits: above the whole layout, over the root. */
@@ -149,6 +151,12 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
     const canvas = canvasRef.current;
     if (!canvas || !pos.size) return;
     const b = layoutBounds(pos, 60);
+    // Names are drawn centred under their dots: keep the widest ones on screen.
+    const labelOf = new Map(visibleRef.current.map((n) => [n.id, n.label]));
+    for (const [id, p] of pos) {
+      const half = Math.min(110, (labelOf.get(id)?.length ?? 0) * 3.4) + 12;
+      b.minX = Math.min(b.minX, p.x - half); b.maxX = Math.max(b.maxX, p.x + half);
+    }
     if (up) b.minY = Math.min(b.minY, up.y - 50);
     const w = canvas.clientWidth, h = canvas.clientHeight;
     const scale = Math.min(2.5, Math.max(0.08, Math.min(w / (b.maxX - b.minX), h / (b.maxY - b.minY))));

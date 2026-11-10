@@ -30,6 +30,8 @@ export interface FindState {
   /** Picked for you because of the folder you're in. */
   pickedByFolder: boolean;
   pick: (id: string | null) => void;
+  /** Pick this equipment as soon as a search finds it (a tap on the map). */
+  pickWhenFound: (id: string) => void;
   detail: EquipDetail | null;
   /** Documents, best first: the find service's order, then quick finds. */
   docOrder: string[];
@@ -50,6 +52,7 @@ export function useFind(orgId: string | null, query: string, contextUnit: string
   const [deep, setDeep] = useState<(DeepFind & { q: string }) | null>(null);
   const [deepLoading, setDeepLoading] = useState(false);
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const [wanted, setWanted] = useState<string | null>(null);
 
   // ── Equipment, folders and documents by number: as you type ──────────
   useEffect(() => {
@@ -78,9 +81,14 @@ export function useFind(orgId: string | null, query: string, contextUnit: string
   // ── Which one: the person's pick, else the folder's unit ─────────────
   const exact = useMemo(() => (quick ? exactTagMatches(quick.q, quick.equipment) : []), [quick]);
   useEffect(() => {
-    if (!quick || userPicked) return;
+    if (!quick) return;
+    if (wanted && quick.equipment.some((e) => e.id === wanted)) {
+      setUserPicked(true); setPickedId(wanted); setWanted(null); setPreviewId(null);
+      return;
+    }
+    if (userPicked) return;
     setPickedId(defaultPick(quick.q, quick.equipment, contextUnit));
-  }, [quick, contextUnit, userPicked]);
+  }, [quick, contextUnit, userPicked, wanted]);
   const picked = quick?.equipment.find((e) => e.id === pickedId) ?? null;
   const pickedByFolder = !!picked && !userPicked && exact.length > 1;
 
@@ -131,6 +139,7 @@ export function useFind(orgId: string | null, query: string, contextUnit: string
   return {
     q, loading: loading || q !== query.trim(), quick, exact, picked, pickedDocIds, pickedByFolder,
     pick: (id) => { setUserPicked(true); setPickedId(id); setPreviewId(null); },
+    pickWhenFound: (id) => setWanted(id),
     detail, docOrder, deepLoading: deepLoading || qDeep !== query.trim(),
     preview, setPreview: setPreviewId, docs,
   };

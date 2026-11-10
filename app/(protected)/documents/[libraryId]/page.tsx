@@ -136,7 +136,7 @@ import AlsoFiledHere from "@/components/documents/AlsoFiledHere";
 import { useFind } from "@/components/find/useFind";
 import FindPanel from "@/components/find/FindPanel";
 import FindMap from "@/components/find/FindMap";
-import { folderUnit } from "@/lib/findEverywhere";
+import { folderUnit, folderForUnit } from "@/lib/findEverywhere";
 import type {
   AccessControl,
   CheckoutSession,
@@ -1898,6 +1898,17 @@ export default function LibraryExplorerPage() {
   }, [activeOrgId, folderChainKey]);
   const finder = useFind(activeOrgId, find, folderUnitCode, { controller: isControllerRole(activeRole) });
   const findOn = find.trim().length >= 2;
+  // The map drives the page: a unit opens its folder, equipment is searched.
+  const openUnitFolder = async (code: string) => {
+    if (!activeOrgId) return;
+    const f = await folderForUnit(activeOrgId, code, libraryId);
+    if (!f) return;
+    const target = f.chain[f.chain.length - 1].id;
+    setFind("");
+    if (f.libraryId === libraryId) setCurrentFolderId(target);
+    else router.push(`/documents/${f.libraryId}?folderId=${target}`);
+  };
+  const searchAsset = (id: string, tag: string) => { setFind(tag); finder.pickWhenFound(id); };
 
   // Resolved hero header (inherits cover/color up the folder→library chain).
   const pageHeader = useMemo(
@@ -3979,6 +3990,7 @@ export default function LibraryExplorerPage() {
                   </button>
                 </div>
                 <FindPanel orgId={activeOrgId} f={finder} unit={folderUnitCode}
+                  onSearchAsset={searchAsset} onUnit={(code) => void openUnitFolder(code)}
                   onOpenFolder={(fo) => {
                     setFind("");
                     if (fo.libraryId === libraryId) setCurrentFolderId(fo.id);
@@ -4159,7 +4171,8 @@ export default function LibraryExplorerPage() {
                   </button>
                   {mapOpen && (
                     <div className="px-5 pb-4">
-                      <FindMap orgId={activeOrgId} unit={folderUnitCode} assetId={null} className="h-[300px]"
+                      <FindMap orgId={activeOrgId} unit={folderUnitCode} assetId={null} className="h-[340px]"
+                        onUnit={(code) => void openUnitFolder(code)} onPickAsset={searchAsset}
                         onDoc={(d) => {
                           const hit = documents.find((x) => x.id === d.id);
                           if (hit) setSelectedDoc(hit); else router.push(d.href);

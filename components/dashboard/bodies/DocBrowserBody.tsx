@@ -5,9 +5,10 @@
 // Libraries → folders → documents, right in the card: a breadcrumb you can
 // click back along, an Up button, and the same search as Documents: tags,
 // equipment IDs, drawing numbers and words inside the documents, with "E-22
-// is on 3 units. Which one?", the map and a preview. It all stays in the
-// widget; Enter never takes you away. Opening a document goes straight to
-// it; "Open here" opens the Documents page at the same folder.
+// is on 3 units. Which one?" and a preview. The map sits beside the list at
+// full height and shows where you are; tap a unit there to open its folder,
+// a piece of equipment to search it. It all stays in the widget; Enter
+// never takes you away. "Open here" opens the Documents page at the folder.
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
@@ -18,12 +19,13 @@ import { useRole } from "@/components/providers/RoleContext";
 import { isControllerRole } from "@/lib/permissions";
 import NodeCover from "@/components/documents/NodeCover";
 import { useFind } from "@/components/find/useFind";
-import FindPanel from "@/components/find/FindPanel";
-import { folderUnit } from "@/lib/findEverywhere";
+import FindPanel, { findMapState } from "@/components/find/FindPanel";
+import FindMap from "@/components/find/FindMap";
+import { folderUnit, folderForUnit } from "@/lib/findEverywhere";
 import { TrendChip, MiniBars, dayBuckets } from "../viz";
 import {
   useWidget, useSetting, useSessionState, useWidgetData, SearchField, Skeleton, Empty, timeAgo,
-  headCount, fetchRecentDates, weekSplit, sum, SCROLL,
+  headCount, fetchRecentDates, weekSplit, sum,
 } from "../kit";
 
 interface Lib { id: string; name: string; color?: string | null; icon?: string | null; type?: string | null; cover_image_url?: string | null; cover_tint?: "none" | "brand" | "mono" | null; count?: number }
@@ -129,139 +131,157 @@ export default function DocBrowserBody() {
     return <Empty><Link href="/admin/libraries" className="font-bold text-[var(--color-accent)] hover:underline">No libraries yet - create your first library →</Link></Empty>;
   }
 
+  // ── The map: always beside the list, showing where you are ────────
+  const ms = findMapState(finder);
+  const openUnitFolder = async (code: string) => {
+    if (!activeOrgId) return;
+    const f = await folderForUnit(activeOrgId, code, libId);
+    if (!f) return;
+    setQ(""); setLibId(f.libraryId); setPath(f.chain.map((c) => ({ id: c.id, name: c.name, parent_id: c.parent_id })));
+  };
+  const map = activeOrgId ? (
+    <FindMap orgId={activeOrgId} unit={searching ? (ms.unit ?? unit) : unit}
+      assetId={searching ? ms.assetId : null} docs={searching ? ms.docs : null} candidates={searching ? ms.candidates : undefined}
+      onPickAsset={(id, tag) => {
+        if (searching && finder.quick?.equipment.some((e) => e.id === id)) finder.pick(id);
+        else { setQ(tag); finder.pickWhenFound(id); }
+      }}
+      onUnit={(code) => void openUnitFolder(code)}
+      onDoc={(d) => { if (searching && finder.docs[d.id]) finder.setPreview(d.id); else router.push(d.href); }}
+      className="h-full" />
+  ) : null;
+
   const search = (
     <SearchField value={q} onChange={setQ}
       placeholder="Search: tag, equipment ID, drawing number, words"
       title="Results, the map and a preview show right here" />
   );
 
-  // ── Search results replace the listing while there's a query ──────
+  // List on the left, map on the right at full height; stacked when narrow.
+  const shell = (head: React.ReactNode, left: React.ReactNode) => (
+    <div className="mt-3 flex-1 min-h-0 flex flex-col">
+      {head}
+      <div className="shrink-0">{search}</div>
+      <div className="mt-2 flex-1 min-h-0 @container">
+        <div className="h-full flex flex-col @min-[34rem]:flex-row gap-3">
+          <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain pr-0.5" data-widget-list>{left}</div>
+          <div className="h-56 shrink-0 @min-[34rem]:h-auto @min-[34rem]:w-[44%]">{map}</div>
+        </div>
+      </div>
+    </div>
+  );
+
   const results = searching && activeOrgId ? (
-    <div className={`${SCROLL} mt-2`} data-widget-find>
-      <FindPanel orgId={activeOrgId} f={finder} unit={unit} compact
+    <div data-widget-find>
+      <FindPanel orgId={activeOrgId} f={finder} unit={unit} compact hideMap
         onOpenFolder={(fo) => { setLibId(fo.libraryId); setPath([{ id: fo.id, name: fo.name, parent_id: null }]); setQ(""); }}
         onOpenHref={(href) => router.push(href)} />
     </div>
   ) : null;
 
-  // ── Top level ─────────────────────────────────────────────────────
+  // ── Top level: the libraries, one line each ───────────────────────
   if (!libId) {
     const chosen = pinned.length ? (pinned.map((id) => libs.find((l) => l.id === id)).filter(Boolean) as Lib[]) : libs;
     const buckets = dayBuckets(top?.newDates ?? [], 14);
     const wk = weekSplit(top?.newDates ?? []);
-    return (
-      <div className="mt-3 flex-1 min-h-0 flex flex-col">
-        <div className="mb-2 flex items-end justify-between gap-4 shrink-0">
-          <div className="flex items-end gap-2">
-            <span className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{(top?.totalDocs ?? 0).toLocaleString()}</span>
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] pb-0.5">controlled documents</span>
-          </div>
-          <div className="flex items-center gap-3 min-w-0">
-            <TrendChip current={wk.cur} previous={wk.prev} />
-            {sum(buckets.counts) > 0 && <div className="w-28 hidden sm:block"><MiniBars values={buckets.counts} labels={buckets.labels} height={28} /></div>}
-          </div>
+    const head = (
+      <div className="mb-2 flex items-end justify-between gap-4 shrink-0">
+        <div className="flex items-end gap-2">
+          <span className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{(top?.totalDocs ?? 0).toLocaleString()}</span>
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] pb-0.5">controlled documents</span>
         </div>
-        <div className="shrink-0">{search}</div>
-        {results ?? (
-          <div className={`mt-2 grid grid-cols-[repeat(auto-fill,minmax(170px,1fr))] gap-2 content-start ${SCROLL}`}>
-            {chosen.map((l) => (
-              <button key={l.id} type="button" onClick={() => go(l.id)}
-                className="group text-left rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden hover:border-[var(--color-accent)] hover:shadow-md transition-[border-color,box-shadow]">
-                <NodeCover appearance={{ color: l.color, icon: l.icon, coverImageUrl: l.cover_image_url, coverTint: l.cover_tint }}
-                  className="w-full h-14" rounded="rounded-none" iconSize="w-5 h-5" />
-                <div className="p-2.5 flex items-end justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="text-sm font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{l.name}</div>
-                    <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 truncate">
-                      {l.count != null ? `${l.count.toLocaleString()} document${l.count === 1 ? "" : "s"}` : (l.type || "Library")}
-                    </div>
-                  </div>
-                  <ChevronRight className="w-4 h-4 shrink-0 text-[var(--color-text-faint)] group-hover:text-[var(--color-accent)] group-hover:translate-x-0.5 transition-all" />
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="flex items-center gap-3 min-w-0">
+          <TrendChip current={wk.cur} previous={wk.prev} />
+          {sum(buckets.counts) > 0 && <div className="w-28 hidden sm:block"><MiniBars values={buckets.counts} labels={buckets.labels} height={28} /></div>}
+        </div>
       </div>
     );
+    return shell(head, results ?? (
+      <div className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+        {chosen.map((l) => (
+          <button key={l.id} type="button" onClick={() => go(l.id)} data-widget-lib={l.id}
+            className="group w-full text-left flex items-center gap-3 px-3 py-2 hover:bg-[var(--color-surface-2)] transition-colors">
+            <NodeCover appearance={{ color: l.color, icon: l.icon, coverImageUrl: l.cover_image_url, coverTint: l.cover_tint }}
+              className="w-7 h-7 shrink-0" rounded="rounded-md" iconSize="w-3.5 h-3.5" />
+            <span className="min-w-0 flex-1 text-[13px] font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)]">{l.name}</span>
+            <span className="shrink-0 text-[12px] tabular-nums text-[var(--color-text-muted)]">{l.count != null ? `${l.count.toLocaleString()} doc${l.count === 1 ? "" : "s"}` : ""}</span>
+            <ChevronRight className="w-4 h-4 shrink-0 text-[var(--color-text-faint)] group-hover:text-[var(--color-accent)]" />
+          </button>
+        ))}
+      </div>
+    ));
   }
 
   // ── Inside a library ──────────────────────────────────────────────
-  return (
-    <div className="mt-3 flex-1 min-h-0 flex flex-col">
-      {/* Where you are — every crumb is a way back. */}
-      <div className="shrink-0 flex items-center gap-1 min-w-0">
-        <button type="button" onClick={up} title={path.length ? "Up one folder" : "Back to all libraries"}
-          className="shrink-0 inline-flex items-center gap-1 h-7 px-2 rounded-lg border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-accent)]">
-          <ArrowUp className="w-3.5 h-3.5" /> Up
+  const crumbs = (
+    <div className="mb-2 shrink-0 flex items-center gap-1 min-w-0">
+      <button type="button" onClick={up} title={path.length ? "Up one folder" : "Back to all libraries"}
+        className="shrink-0 inline-flex items-center gap-1 h-7 px-2 rounded-lg border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-accent)]">
+        <ArrowUp className="w-3.5 h-3.5" /> Up
+      </button>
+      <nav className="min-w-0 flex-1 flex items-center gap-0.5 overflow-x-auto no-scrollbar text-[11px] font-bold">
+        <button type="button" onClick={() => go(null)} className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-accent)]" title="All libraries">
+          <Home className="w-3.5 h-3.5" />
         </button>
-        <nav className="min-w-0 flex-1 flex items-center gap-0.5 overflow-x-auto no-scrollbar text-[11px] font-bold">
-          <button type="button" onClick={() => go(null)} className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-accent)]" title="All libraries">
-            <Home className="w-3.5 h-3.5" />
-          </button>
-          <ChevronRight className="w-3 h-3 shrink-0 text-[var(--color-text-faint)]" />
-          <button type="button" onClick={() => { setPath([]); setQ(""); }}
-            className={`shrink-0 px-1 rounded truncate max-w-[10rem] ${path.length ? "text-[var(--color-text-muted)] hover:text-[var(--color-accent)]" : "text-[var(--color-text)]"}`}>
-            {lib?.name ?? "Library"}
-          </button>
-          {path.map((f, i) => (
-            <React.Fragment key={f.id}>
-              <ChevronRight className="w-3 h-3 shrink-0 text-[var(--color-text-faint)]" />
-              <button type="button" onClick={() => { setPath((p) => p.slice(0, i + 1)); setQ(""); }}
-                className={`shrink-0 px-1 rounded truncate max-w-[10rem] ${i === path.length - 1 ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"}`}>
-                {f.name}
-              </button>
-            </React.Fragment>
-          ))}
-          {refreshing && <Loader2 className="w-3 h-3 ml-1 shrink-0 animate-spin text-[var(--color-text-faint)]" />}
-        </nav>
-        <Link href={openHere} title="Open this folder in Documents"
-          className="shrink-0 inline-flex items-center gap-1 h-7 px-2 rounded-lg text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
-          Open here <ArrowUpRight className="w-3.5 h-3.5" />
-        </Link>
-      </div>
-      <div className="mt-2 shrink-0">{search}</div>
-
-      {results ?? (
-        // Never show the previous folder's contents under the new crumb.
-        !here || here.at !== `${libId}|${folderId ?? ""}` ? <Skeleton /> : (
-          <div className={`${SCROLL} mt-2`}>
-            {here.folders.length === 0 && here.docs.length === 0 ? (
-              <Empty>This folder is empty.</Empty>
-            ) : (
-              <>
-                {here.folders.length > 0 && (
-                  <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-1.5 mb-2">
-                    {here.folders.map((f) => (
-                      <button key={f.id} type="button" onClick={() => { setPath((p) => [...p, f]); setQ(""); }}
-                        className="group flex items-center gap-2 px-2.5 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-accent)] text-left transition-colors">
-                        <Folder className="w-4 h-4 shrink-0 text-amber-500" fill="currentColor" fillOpacity={0.25} />
-                        <span className="min-w-0 flex-1 truncate text-[12px] font-bold text-[var(--color-text)] group-hover:text-[var(--color-accent)]">{f.name}</span>
-                        <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {here.docs.length > 0 && (
-                  <>
-                    <div className="px-2 pb-1 text-[10px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">
-                      {here.docCount.toLocaleString()} document{here.docCount === 1 ? "" : "s"} here{here.docCount > here.docs.length ? ` · newest ${here.docs.length}` : ""}
-                    </div>
-                    <div className="space-y-0.5">
-                      {here.docs.map((d) => <DocLine key={d.id} d={{ ...d, library_id: d.library_id ?? libId }} />)}
-                    </div>
-                    {here.docCount > here.docs.length && (
-                      <Link href={openHere} className="mt-1 block px-2 py-1.5 text-[11px] font-bold text-[var(--color-accent)] hover:underline">
-                        See all {here.docCount.toLocaleString()} in Documents →
-                      </Link>
-                    )}
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        )
-      )}
+        <ChevronRight className="w-3 h-3 shrink-0 text-[var(--color-text-faint)]" />
+        <button type="button" onClick={() => { setPath([]); setQ(""); }}
+          className={`shrink-0 px-1 rounded truncate max-w-[10rem] ${path.length ? "text-[var(--color-text-muted)] hover:text-[var(--color-accent)]" : "text-[var(--color-text)]"}`}>
+          {lib?.name ?? "Library"}
+        </button>
+        {path.map((f, i) => (
+          <React.Fragment key={f.id}>
+            <ChevronRight className="w-3 h-3 shrink-0 text-[var(--color-text-faint)]" />
+            <button type="button" onClick={() => { setPath((p) => p.slice(0, i + 1)); setQ(""); }}
+              className={`shrink-0 px-1 rounded truncate max-w-[10rem] ${i === path.length - 1 ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-accent)]"}`}>
+              {f.name}
+            </button>
+          </React.Fragment>
+        ))}
+        {refreshing && <Loader2 className="w-3 h-3 ml-1 shrink-0 animate-spin text-[var(--color-text-faint)]" />}
+      </nav>
+      <Link href={openHere} title="Open this folder in Documents"
+        className="shrink-0 inline-flex items-center gap-1 h-7 px-2 rounded-lg text-[11px] font-bold text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)]">
+        Open here <ArrowUpRight className="w-3.5 h-3.5" />
+      </Link>
     </div>
   );
+
+  return shell(crumbs, results ?? (
+    // Never show the previous folder's contents under the new crumb.
+    !here || here.at !== `${libId}|${folderId ?? ""}` ? <Skeleton /> : (
+      here.folders.length === 0 && here.docs.length === 0 ? (
+        <Empty>This folder is empty.</Empty>
+      ) : (
+        <div className="space-y-2">
+          {here.folders.length > 0 && (
+            <div className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+              {here.folders.map((f) => (
+                <button key={f.id} type="button" onClick={() => { setPath((p) => [...p, f]); setQ(""); }} data-widget-folder={f.id}
+                  className="group w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] transition-colors">
+                  <Folder className="w-4 h-4 shrink-0 text-amber-500" fill="currentColor" fillOpacity={0.25} />
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-[var(--color-text)] group-hover:text-[var(--color-accent)]">{f.name}</span>
+                  <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)]" />
+                </button>
+              ))}
+            </div>
+          )}
+          {here.docs.length > 0 && (
+            <div>
+              <div className="px-1 pb-1 text-[10px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">
+                {here.docCount.toLocaleString()} document{here.docCount === 1 ? "" : "s"} here{here.docCount > here.docs.length ? ` · newest ${here.docs.length}` : ""}
+              </div>
+              <div className="space-y-0.5">
+                {here.docs.map((d) => <DocLine key={d.id} d={{ ...d, library_id: d.library_id ?? libId }} />)}
+              </div>
+              {here.docCount > here.docs.length && (
+                <Link href={openHere} className="mt-1 block px-2 py-1.5 text-[11px] font-bold text-[var(--color-accent)] hover:underline">
+                  See all {here.docCount.toLocaleString()} in Documents →
+                </Link>
+              )}
+            </div>
+          )}
+        </div>
+      )
+    )
+  ));
 }

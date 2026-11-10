@@ -82,7 +82,8 @@ export default function EstateMap({ nodes, edges, query, selectedId, highlightId
     for (const r of roots) vis.set(r.id, r);
     let frontier = roots, count = roots.length, first = true, depth = 0;
     // A small box opens one level at a time so every label can be read.
-    while (frontier.length && depth < (compact ? 1 : MAX_DEPTH)) {
+    // At the top only the units; inside one, one level: every label readable.
+    while (frontier.length && depth < (compact ? (focusId ? 1 : 0) : MAX_DEPTH)) {
       depth++;
       // At the top, open each operating area one level (its equipment types)
       // but keep big groups ("Not placed yet", Projects) closed with a
@@ -138,6 +139,9 @@ export default function EstateMap({ nodes, edges, query, selectedId, highlightId
     if (t.parentId && t.parentId !== focusId) setFocusId(t.parentId);
     // A small box shows the picked thing with its neighbours and documents, not a close-up.
     window.setTimeout(() => ref.current?.focus(id, compact ? 1 : undefined), 140);
+    // The view refits when what's in it changes (documents hung under the
+    // pick, the level opening); land on the pick again once that settles.
+    if (compact) window.setTimeout(() => ref.current?.focus(id, 1), 700);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flyTo?.nonce]);
 

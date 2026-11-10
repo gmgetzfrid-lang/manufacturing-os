@@ -15,6 +15,7 @@ import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { globalSearch, type GlobalHit, type GlobalHitKind } from "@/lib/globalSearch";
 import { useFind } from "@/components/find/useFind";
 import FindPanel from "@/components/find/FindPanel";
+import { folderForUnit } from "@/lib/findEverywhere";
 
 const OTHER_ICON: Partial<Record<GlobalHitKind, React.ComponentType<{ className?: string }>>> = {
   ticket: Hash, project: Briefcase, note: StickyNote, transmittal: Send,
@@ -33,11 +34,9 @@ export default function SearchPage() {
   // ?pick= from the top search bar: that piece of equipment, once found.
   const wantPick = useRef(params.get("pick"));
   useEffect(() => {
-    const id = wantPick.current;
-    if (!id || !finder.quick?.equipment.some((e) => e.id === id)) return;
-    wantPick.current = null;
-    finder.pick(id);
-  }, [finder]);
+    if (wantPick.current) { finder.pickWhenFound(wantPick.current); wantPick.current = null; }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Requests, projects, notes and transmittals that match.
   const [otherFind, setOtherFind] = useState<{ q: string; hits: GlobalHit[] } | null>(null);
@@ -86,6 +85,8 @@ export default function SearchPage() {
       {activeOrgId && (
         <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm p-3 lg:p-4">
           <FindPanel orgId={activeOrgId} f={finder} unit={null}
+            onSearchAsset={(id, tag) => { setQuery(tag); finder.pickWhenFound(id); }}
+            onUnit={(code) => void folderForUnit(activeOrgId, code, null).then((f) => { if (f) router.push(`/documents/${f.libraryId}?folderId=${f.chain[f.chain.length - 1].id}`); })}
             onOpenFolder={(fo) => router.push(`/documents/${fo.libraryId}?folderId=${fo.id}`)}
             onOpenHref={(href) => router.push(href)} />
         </div>

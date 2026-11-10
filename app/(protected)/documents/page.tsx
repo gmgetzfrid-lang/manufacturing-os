@@ -21,9 +21,13 @@ import {
   Trash2,
   KeyRound,
   Palette,
-  FileText,
+  ChevronRight,
+  X,
 } from "lucide-react";
-import { searchDocuments, type DocumentRow } from "@/lib/search";
+import { useFind } from "@/components/find/useFind";
+import FindPanel, { findMapState } from "@/components/find/FindPanel";
+import FindMap from "@/components/find/FindMap";
+import { folderForUnit } from "@/lib/findEverywhere";
 import RouteLoader from "@/components/ui/RouteLoader";
 import NodeCover from "@/components/documents/NodeCover";
 import CustomizeNodeModal, { type CustomizeValue } from "@/components/documents/CustomizeNodeModal";
@@ -206,30 +210,16 @@ export default function DocumentsHomePage() {
     });
   }, [libraries, search]);
 
-  // The search box reaches INSIDE the libraries too: typing here sweeps every
-  // document in the workspace (title, number, and equipment tags — "e22"
-  // finds E-22), not just library names. Results respect library read access
-  // by only showing hits from libraries this user can already see.
-  const [docHits, setDocHits] = useState<DocumentRow[] | null>(null);
-  const [docSearching, setDocSearching] = useState(false);
-  useEffect(() => {
-    const q = search.trim();
-    const t = setTimeout(() => {
-      if (!activeOrgId || q.length < 2) { setDocHits(null); return; }
-      setDocSearching(true);
-      searchDocuments({ orgId: activeOrgId, query: q, limit: 12 })
-        .then(setDocHits)
-        .catch(() => setDocHits([]))
-        .finally(() => setDocSearching(false));
-    }, 250);
-    return () => clearTimeout(t);
-  }, [search, activeOrgId]);
-
-  const libById = useMemo(() => new Map(libraries.map((l) => [l._id, l])), [libraries]);
-  const visibleDocHits = useMemo(
-    () => (docHits ?? []).filter((d) => libById.has(d.library_id)),
-    [docHits, libById],
-  );
+  // The search box is the one search (equipment with its unit and ID,
+  // drawings, words inside them), and the map beside the list follows it.
+  const finder = useFind(activeOrgId, search, null, { controller: isController });
+  const searching = search.trim().length >= 2;
+  const ms = findMapState(finder);
+  const openUnitFolder = async (code: string) => {
+    if (!activeOrgId) return;
+    const f = await folderForUnit(activeOrgId, code, null);
+    if (f) router.push(`/documents/${f.libraryId}?folderId=${f.chain[f.chain.length - 1].id}`);
+  };
 
   if (!activeOrgId) {
     return (
@@ -296,45 +286,121 @@ export default function DocumentsHomePage() {
     return <RouteLoader label="Loading libraries…" />;
   }
 
+  const openLib = (id: string) => {
+    setPendingLibId(id);
+    startTransition(() => { router.push(`/documents/${id}`); });
+  };
+
+  // One line per library: what it is, how many documents, who can read it.
+  const libraryRows = (list: UiLibrary[]) => (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto_2rem] sm:grid-cols-[minmax(0,1fr)_auto_7.5rem_2rem] items-center gap-3 px-4 py-2 border-b border-[var(--color-border)] text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">
+        <span>Library</span><span className="text-right">Documents</span><span className="hidden sm:block">Access</span><span />
+      </div>
+      {list.map((lib) => {
+        const isPending = pendingLibId === lib._id;
+        const menuOpen = menuOpenForLibId === lib._id;
+        const n = libCounts.get(lib._id!);
+        return (
+          <div key={lib._id} role="link" tabIndex={0} data-doc-lib={lib._id}
+            onClick={() => { if (!menuOpen) openLib(lib._id!); }}
+            onKeyDown={(e) => { if (e.key === "Enter") openLib(lib._id!); }}
+            className={`group grid grid-cols-[minmax(0,1fr)_auto_2rem] sm:grid-cols-[minmax(0,1fr)_auto_7.5rem_2rem] items-center gap-3 px-4 py-2.5 border-b last:border-b-0 border-[var(--color-border)] cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors ${isPending ? "opacity-60" : ""}`}>
+            <span className="flex items-center gap-3 min-w-0">
+              <NodeCover appearance={{ color: lib.color, icon: lib.icon, coverImageUrl: lib.coverImageUrl, coverTint: lib.coverTint }}
+                className="w-8 h-8 shrink-0" rounded="rounded-md" iconSize="w-4 h-4" />
+              <span className="min-w-0">
+                <span className="flex items-center gap-1.5 text-sm font-bold text-[var(--color-text)] group-hover:text-[var(--color-accent)]">
+                  <span className="truncate">{lib.name}</span>
+                  {isPending && <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin text-[var(--color-text-faint)]" />}
+                </span>
+                {lib.description && <span className="block text-xs text-[var(--color-text-muted)] truncate">{lib.description}</span>}
+              </span>
+            </span>
+            <span className="text-right text-sm font-semibold tabular-nums text-[var(--color-text)]">{n != null ? n.toLocaleString() : ""}</span>
+            <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--color-text-muted)]">
+              {!lib._canRead && !isController ? <><AlertTriangle className="w-3 h-3 text-amber-600" /> No access</>
+                : lib._isPublicRead ? <><Eye className="w-3 h-3" /> Public read</> : <><Lock className="w-3 h-3" /> Controlled</>}
+            </span>
+            <span className="flex justify-end">
+              {isController ? (
+                <LibraryAdminMenu inline
+                  libId={lib._id!}
+                  libName={lib.name}
+                  open={menuOpen}
+                  onToggle={() => setMenuOpenForLibId(menuOpen ? null : lib._id!)}
+                  onClose={() => setMenuOpenForLibId(null)}
+                  onCustomize={() => setCustomizeLib(lib)}
+                  deleting={deletingLibId === lib._id}
+                  onDelete={async () => {
+                    setDeletingLibId(lib._id!);
+                    try {
+                      const { error } = await supabase.from("libraries").delete().eq("id", lib._id!);
+                      if (error) { await appAlert({ message: `Delete failed: ${error.message}`, tone: "danger" }); return; }
+                      setLibraries((arr) => arr.filter((l) => l._id !== lib._id));
+                    } finally {
+                      setDeletingLibId(null);
+                      setMenuOpenForLibId(null);
+                    }
+                  }}
+                />
+              ) : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] group-hover:text-[var(--color-accent)]" />}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const totalDocs = [...libCounts.values()].reduce((a, b) => a + b, 0);
+
   return (
-    <div className="min-h-full p-4 sm:p-8 pb-20">
-      <div className="max-w-6xl mx-auto">
+    <div className="min-h-full p-4 sm:p-6 pb-20">
+      <div className="max-w-[1500px] mx-auto">
         <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
-        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-8">
+        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3 mb-4">
           <div>
-            <h1 className="text-3xl font-black text-[var(--color-text)] tracking-tight">Document Control</h1>
-            <p className="text-sm text-[var(--color-text-muted)] mt-1">
-              Secure libraries{orgName ? <> for <span className="font-bold text-[var(--color-text)]">{orgName}</span></> : ""}.
+            <h1 className="text-2xl font-black text-[var(--color-text)] tracking-tight">Document Control</h1>
+            <p className="text-sm text-[var(--color-text-muted)] mt-0.5">
+              {libraries.length} librar{libraries.length === 1 ? "y" : "ies"}{totalDocs ? ` · ${totalDocs.toLocaleString()} documents` : ""}{orgName ? <> · <span className="font-semibold text-[var(--color-text)]">{orgName}</span></> : ""}
             </p>
           </div>
 
-          <div className="flex items-center gap-3 w-full lg:w-auto min-w-0">
-            <div className="relative flex-1 min-w-0 lg:flex-none">
+          <div className="flex items-center gap-2 w-full lg:w-auto min-w-0">
+            <form role="search" onSubmit={(e) => e.preventDefault()} className="relative flex-1 min-w-0 lg:w-[30rem] lg:flex-none">
               <Search className="w-4 h-4 text-[var(--color-text-faint)] absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search libraries & documents… (e.g. E-22)"
-                className="pl-9 pr-4 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10 w-full md:w-72"
+                onKeyDown={(e) => { if (e.key === "Escape") setSearch(""); }}
+                placeholder="Search tags, equipment IDs, drawing numbers, words"
+                aria-label="Search documents and equipment"
+                data-find-input
+                className="pl-9 pr-8 h-10 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/30 focus:border-[var(--color-accent)] w-full"
               />
-            </div>
-
+              {search && (
+                <button type="button" onClick={() => setSearch("")} title="Clear the search"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </form>
             <button
               onClick={async () => {
                 setRefreshing(true);
                 await fetchLibraries({ silent: true });
                 setRefreshing(false);
               }}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-sm hover:bg-[var(--color-surface-2)] font-bold text-sm"
+              title="Refresh"
+              className="shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
             >
               <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
-              Refresh
             </button>
           </div>
         </div>
 
         {error && (
-          <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
             <div className="flex items-center gap-2 font-bold">
               <AlertTriangle className="h-4 w-4" />
               {error}
@@ -345,149 +411,40 @@ export default function DocumentsHomePage() {
           </div>
         )}
 
-        {/* Document hits across every library — the search box looks inside,
-            not just at library names. */}
-        {search.trim().length >= 2 && (docSearching || visibleDocHits.length > 0) && (
-          <div className="mb-6">
-            <div className="flex items-center gap-2 mb-2">
-              <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-              <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">
-                Documents matching &ldquo;{search.trim()}&rdquo;
-              </span>
-              {docSearching && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-faint)]" />}
-            </div>
-            {visibleDocHits.length > 0 && (
-              <ul className="rounded-2xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden">
-                {visibleDocHits.map((d) => (
-                  <li key={String(d.id)}>
-                    <Link
-                      href={`/documents/${d.library_id}?doc=${d.id}`}
-                      className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)]/70 transition-colors"
-                    >
-                      <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <span className="text-sm font-bold text-[var(--color-text)]">
-                          {d.document_number || d.title || d.name || "Untitled"}
-                        </span>
-                        {d.title && d.document_number && (
-                          <span className="text-sm text-[var(--color-text-muted)]"> · {d.title}</span>
-                        )}
-                      </div>
-                      <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] rounded-full px-2 py-0.5 shrink-0 max-w-[180px] truncate">
-                        {libById.get(d.library_id)?.name ?? "Library"}
-                      </span>
-                      <ArrowRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
-
-        {filtered.length === 0 ? (
-          search.trim() ? (
-            visibleDocHits.length === 0 && !docSearching ? (
-              <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-10 text-center">
-                <p className="text-sm font-bold text-[var(--color-text)]">No libraries or documents match &ldquo;{search.trim()}&rdquo;.</p>
-                <button onClick={() => setSearch("")} className="mt-3 text-sm font-bold text-[var(--color-accent)] hover:underline">
-                  Clear search
-                </button>
-              </div>
-            ) : null
-          ) : (
-            <EmptyState />
-          )
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {filtered.map((lib) => {
-              const isPending = pendingLibId === lib._id;
-              const menuOpen = menuOpenForLibId === lib._id;
-              return (
-              <button
-                key={lib._id}
-                onClick={() => {
-                  if (menuOpen) return;
-                  setPendingLibId(lib._id);
-                  startTransition(() => {
-                    router.push(`/documents/${lib._id}`);
-                  });
-                }}
-                disabled={isPending}
-                className={`text-left bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm hover:border-[var(--color-border-strong)] hover-lift transition cursor-pointer relative overflow-hidden ${isPending ? "opacity-60 ring-2 ring-slate-900/10" : ""}`}
-              >
-                {/* Cover banner — image (with palette tint) or color/brand panel */}
-                <NodeCover
-                  appearance={{ color: lib.color, icon: lib.icon, coverImageUrl: lib.coverImageUrl, coverTint: lib.coverTint }}
-                  className="h-24 w-full"
-                  rounded="rounded-none"
-                  iconSize="w-7 h-7"
-                />
-                {isController && (
-                  <LibraryAdminMenu
-                    libId={lib._id!}
-                    libName={lib.name}
-                    open={menuOpen}
-                    onToggle={() => setMenuOpenForLibId(menuOpen ? null : lib._id!)}
-                    onClose={() => setMenuOpenForLibId(null)}
-                    onCustomize={() => setCustomizeLib(lib)}
-                    deleting={deletingLibId === lib._id}
-                    onDelete={async () => {
-                      setDeletingLibId(lib._id!);
-                      try {
-                        const { error } = await supabase.from("libraries").delete().eq("id", lib._id!);
-                        if (error) { await appAlert({ message: `Delete failed: ${error.message}`, tone: "danger" }); return; }
-                        setLibraries((arr) => arr.filter((l) => l._id !== lib._id));
-                      } finally {
-                        setDeletingLibId(null);
-                        setMenuOpenForLibId(null);
-                      }
-                    }}
-                  />
-                )}
-                {isPending && (
-                  <div className="absolute top-3 right-12 inline-flex items-center gap-1.5 text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-wider bg-[var(--color-surface-2)] px-2 py-1 rounded-md">
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                    Opening
+        {/* The list (or the search) on the left; the map beside it, always. */}
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(380px,44%)] items-start">
+          <div className="min-w-0 space-y-4">
+            {searching ? (
+              <>
+                {filtered.length > 0 && (
+                  <div>
+                    <div className="mb-1.5 text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">Libraries</div>
+                    {libraryRows(filtered)}
                   </div>
                 )}
-                <div className="p-6 flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-lg font-black text-[var(--color-text)] truncate">{lib.name}</div>
-                    <div className="text-sm text-[var(--color-text-muted)] mt-1 line-clamp-2">{lib.description}</div>
-
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {libCounts.has(lib._id!) && (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-black bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] tabular-nums">
-                          {libCounts.get(lib._id!)!.toLocaleString()} document{libCounts.get(lib._id!) === 1 ? "" : "s"}
-                        </span>
-                      )}
-                      {lib._isPublicRead ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          <Eye className="w-3 h-3" /> Public Read
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)]">
-                          <Lock className="w-3 h-3" /> Controlled
-                        </span>
-                      )}
-                      {!lib._canRead && !isController && (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                          <AlertTriangle className="w-3 h-3" /> No Access
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="shrink-0 inline-flex items-center gap-2 text-[var(--color-text)] font-black">
-                    Open <ArrowRight className="w-4 h-4" />
-                  </div>
+                <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm p-3">
+                  <FindPanel orgId={activeOrgId} f={finder} unit={null} hideMap
+                    onOpenFolder={(fo) => router.push(`/documents/${fo.libraryId}?folderId=${fo.id}`)}
+                    onOpenHref={(href) => router.push(href)} />
                 </div>
-              </button>
-              );
-            })}
+              </>
+            ) : libraries.length === 0 ? <EmptyState /> : libraryRows(libraries)}
           </div>
-        )}
+
+          {/* On a phone the map leads, so it is never a scroll away. */}
+          <div className="min-w-0 order-first lg:order-none lg:sticky lg:top-4">
+            <FindMap orgId={activeOrgId} unit={searching ? ms.unit : null}
+              assetId={searching ? ms.assetId : null} docs={searching ? ms.docs : null} candidates={searching ? ms.candidates : undefined}
+              onPickAsset={(id, tag) => {
+                if (searching && finder.quick?.equipment.some((e) => e.id === id)) finder.pick(id);
+                else { setSearch(tag); finder.pickWhenFound(id); }
+              }}
+              onUnit={(code) => void openUnitFolder(code)}
+              onDoc={(d) => { if (searching && finder.docs[d.id]) finder.setPreview(d.id); else router.push(d.href); }}
+              className="h-64 lg:h-[calc(100vh-13rem)] lg:min-h-[28rem]" />
+            <p className="mt-1.5 text-[11px] text-[var(--color-text-muted)]">Tap a unit to open its drawings, a piece of equipment to see its documents.</p>
+          </div>
+        </div>
       </div>
 
       {customizeLib && (
@@ -520,9 +477,10 @@ export default function DocumentsHomePage() {
 // Stops click propagation so opening the menu doesn't trigger the
 // tile's navigation. Delete prompts for confirm before firing.
 function LibraryAdminMenu({
-  libId, libName, open, deleting,
+  libId, libName, open, deleting, inline,
   onToggle, onClose, onDelete, onCustomize,
 }: {
+  inline?: boolean;
   libId: string;
   libName: string;
   open: boolean;
@@ -533,7 +491,7 @@ function LibraryAdminMenu({
   onCustomize: () => void;
 }) {
   return (
-    <div className="absolute top-3 right-3 z-10" onClick={(e) => e.stopPropagation()}>
+    <div className={inline ? "relative z-10" : "absolute top-3 right-3 z-10"} onClick={(e) => e.stopPropagation()}>
       <button
         onClick={(e) => { e.stopPropagation(); onToggle(); }}
         title="Library admin"

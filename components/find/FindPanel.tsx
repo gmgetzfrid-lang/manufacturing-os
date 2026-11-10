@@ -34,6 +34,22 @@ interface Props {
   onOpenFolder: (folder: FindFolder) => void;
   /** A document picked on the map that isn't in the results. */
   onOpenHref?: (href: string) => void;
+  /** The page shows the map itself (beside its list): leave it out here. */
+  hideMap?: boolean;
+  /** Equipment tapped on the map that this search didn't find: search it. */
+  onSearchAsset?: (assetId: string, tag: string) => void;
+  /** A unit tapped on the map. */
+  onUnit?: (unitCode: string) => void;
+}
+
+/** What the map beside a search shows: the pick and its documents, or the
+ *  candidates of an open "which one?". For pages that draw the map themselves. */
+export function findMapState(f: FindState): { assetId: string | null; docs: FindDoc[]; candidates?: string[]; unit: string | null } {
+  const docs = f.pickedDocIds.map((id) => f.docs[id]).filter((d): d is FindDoc => !!d);
+  return {
+    assetId: f.picked?.id ?? null, docs, unit: f.picked?.unitCode ?? null,
+    candidates: !f.picked && f.exact.length > 1 ? f.exact.map((e) => e.id) : undefined,
+  };
 }
 
 const UNIT_CLS = "shrink-0 w-8 h-8 rounded-full grid place-items-center text-[11px] font-black text-white";
@@ -100,7 +116,7 @@ function EquipRow({ e, on, onPick }: { e: FindEquip; on: boolean; onPick: () => 
   );
 }
 
-export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpenHref }: Props) {
+export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpenHref, hideMap, onSearchAsset, onUnit }: Props) {
   const quick = f.quick;
   const picked = f.picked;
   const ask = whichOneLine(f.exact[0]?.tag ?? f.q, f.exact);
@@ -135,7 +151,7 @@ export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpe
 
   return (
     <div className="@container" data-find-panel>
-      <div className="grid gap-3 @2xl:grid-cols-[minmax(0,1fr)_minmax(260px,40%)]">
+      <div className={`grid gap-3 ${!hideMap || pv ? "@2xl:grid-cols-[minmax(0,1fr)_minmax(260px,40%)]" : ""}`}>
         {/* ── Results ───────────────────────────────────────────── */}
         <div className="min-w-0 space-y-3">
           {!quick && f.loading && (
@@ -223,11 +239,14 @@ export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpe
 
         {/* ── The map, then the preview ─────────────────────────── */}
         <div className="min-w-0 space-y-3 @2xl:sticky @2xl:top-0 self-start">
-          <FindMap orgId={orgId} unit={picked?.unitCode ?? unit} assetId={picked?.id ?? null} docs={pickedDocs}
-            candidates={!picked && f.exact.length > 1 ? f.exact.map((e) => e.id) : undefined}
-            onPickAsset={(id) => { if (quick?.equipment.some((e) => e.id === id)) f.pick(id); }}
-            onDoc={(d) => { if (f.docs[d.id]) f.setPreview(d.id); else onOpenHref?.(d.href); }}
-            className={compact ? "h-56" : "h-72"} />
+          {!hideMap && (
+            <FindMap orgId={orgId} unit={picked?.unitCode ?? unit} assetId={picked?.id ?? null} docs={pickedDocs}
+              candidates={!picked && f.exact.length > 1 ? f.exact.map((e) => e.id) : undefined}
+              onPickAsset={(id, tag) => { if (quick?.equipment.some((e) => e.id === id)) f.pick(id); else onSearchAsset?.(id, tag); }}
+              onUnit={onUnit}
+              onDoc={(d) => { if (f.docs[d.id]) f.setPreview(d.id); else onOpenHref?.(d.href); }}
+              className={compact ? "h-64" : "h-[22rem]"} />
+          )}
           {pv && (
             <div className="hidden @2xl:block rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-2.5">
               {preview(pv, false)}
