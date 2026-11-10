@@ -99,8 +99,11 @@ export async function GET(req: NextRequest) {
     suggestions: rows.map((r) => ({ ...r, documentLabel: nameById.get(String(r.document_id)) ?? "-", doc: infoById.get(String(r.document_id)) ?? null })),
     canAdd: auth.role === "Admin",
     folder: folderId ? { id: folderId, unitCode: await folderUnitOf(supabaseAdmin, orgId, folderId) } : null,
-    linkedDocs: ((twins ?? []) as Array<{ source_document_id: string; status: string }>)
-      .map((t) => ({ documentId: t.source_document_id, status: t.status })),
+    // Every drawing here, with its read copy: the sheets the drawing reader
+    // hasn't read yet are found from these.
+    sheets: docList.length,
+    linkedDocs: ((twins ?? []) as Array<{ id: string; source_document_id: string; status: string }>)
+      .map((t) => ({ documentId: t.source_document_id, knowledgeDocumentId: t.id, status: t.status })),
     bridge: (lib?.equipment_bridge ?? null) as BridgeConfig | null,
     customColumns: lib?.custom_columns ?? [],
   });

@@ -14,6 +14,7 @@ import { X, Loader2, Check, RefreshCw, AlertTriangle, ScanSearch, GraduationCap,
 import { supabase } from "@/lib/supabase";
 import { loadCodebook, EMPTY_CODEBOOK, type Codebook } from "@/lib/codebook";
 import { decodeId, looksLikeId, type SweepRow, type RowChoice } from "@/lib/equipmentSweep";
+import { pendingDrawings, readDrawing, newRunId } from "@/lib/drawingCensusClient";
 import type { BridgeConfig } from "@/lib/equipmentBridgeServer";
 
 interface DocInfo { number: string | null; title: string | null; rev: string | null; sheet: string | null; sheetTotal: number | null }
@@ -70,6 +71,13 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
   const [filter, setFilter] = useState<"all" | "needs" | "ready" | "listed">("all");
   // A person's ticks and fixes, by drawing and tag.
   const [choice, setChoice] = useState<Record<string, RowChoice & { on?: boolean }>>({});
+  // Sheets here the drawing reader hasn't read yet: a sheet drawn in
+  // AutoCAD keeps its tags as linework, so its text gives only the title
+  // block, and its equipment is found only once it's read.
+  const [sheetCount, setSheetCount] = useState(0);
+  const [unread, setUnread] = useState<Array<{ knowledgeDocumentId: string; name: string; pages: number[] }>>([]);
+  const [reading, setReading] = useState<{ done: number; total: number; current: string | null } | null>(null);
+  const stopRead = React.useRef(false);
 
   const authed = useCallback(async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -95,6 +103,11 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
       setColumns((json.customColumns as ColumnDef[]) ?? []);
       setCanAdd(!!json.canAdd);
       setFolderUnit((json.folder as { unitCode?: string | null } | null)?.unitCode ?? null);
+      setSheetCount(Number(json.sheets ?? 0));
+      const here = new Set(((json.linkedDocs ?? []) as Array<{ knowledgeDocumentId?: string }>).map((d) => d.knowledgeDocumentId).filter(Boolean));
+      void pendingDrawings(orgId, [libraryId])
+        .then((p) => setUnread(p.pending.filter((d) => here.has(d.knowledgeDocumentId))))
+        .catch(() => setUnread([]));
       return list;
     } catch (e) { setError((e as Error).message); return null; }
     finally { setLoading(false); }
@@ -111,6 +124,35 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
     } catch (e) { setError((e as Error).message); }
     finally { setSweeping(false); }
   }, [authed, orgId, libraryId, folderId, refresh]);
+
+  // Read the sheets the drawing reader hasn't, one by one, then line up
+  // what they say. Billed to the person's AI key, under its monthly cap.
+  const readUnread = async () => {
+    const todo = [...unread];
+    if (!todo.length) return;
+    const pages = todo.reduce((n, d) => n + d.pages.length, 0);
+    if (!window.confirm(`Read ${pages} sheet${pages === 1 ? "" : "s"} with your AI model?\n\nEach sheet is read zoomed in, region by region, for its equipment tags and IDs. Billed to your key under your monthly cap. You can stop at any time and undo the run afterwards.`)) return;
+    stopRead.current = false; setError(null); setNotice(null);
+    const runId = newRunId();
+    const runLabel = `Read ${todo.length} drawing${todo.length === 1 ? "" : "s"} with AI${folderName ? ` (${folderName})` : ""}`;
+    let done = 0, failed = 0, lastError: string | null = null;
+    setReading({ done: 0, total: todo.length, current: todo[0].name });
+    for (const d of todo) {
+      if (stopRead.current) break;
+      setReading({ done, total: todo.length, current: d.name });
+      try { await readDrawing(orgId, { knowledgeDocumentId: d.knowledgeDocumentId }, undefined, { runId, runLabel }, d.pages); }
+      catch (e) {
+        failed++; lastError = (e as Error).message;
+        // No key, out of budget: every next sheet would fail the same way.
+        if (/budget|key|agreement|cap/i.test(lastError)) break;
+      }
+      done++;
+    }
+    setReading(null);
+    if (lastError) setError(`${failed} sheet${failed === 1 ? "" : "s"} not read: ${lastError}`);
+    else setNotice(`Read ${done} sheet${done === 1 ? "" : "s"}${stopRead.current ? " (stopped)" : ""}. Undo it from Documents › Graph › Connect everything › Undo a run.`);
+    await sweep(true);
+  };
 
   // The folder's unit, set by a person; then the sheets are read again.
   const setUnit = async (unitCode: string) => {
@@ -327,6 +369,25 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
               </div>
             );
           })()}
+          {(unread.length > 0 || reading) && (
+            <div role="status" className="rounded-xl border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/30 px-3 py-2.5 text-[12.5px] text-violet-900 dark:text-violet-200 space-y-2">
+              {reading ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                  <span><b>Reading sheet {Math.min(reading.done + 1, reading.total)} of {reading.total}</b>{reading.current ? `: ${reading.current}` : ""}. Keep this open.</span>
+                  <button type="button" onClick={() => { stopRead.current = true; }} className="ml-auto rounded-lg border border-violet-400 px-2.5 py-1 font-bold hover:bg-violet-100 dark:hover:bg-violet-900/40 cursor-pointer">Stop</button>
+                </div>
+              ) : (
+                <>
+                  <p><b>{unread.length} of {sheetCount || unread.length} sheets here haven&apos;t been read with AI yet.</b> Only their text was read, and on drawings from AutoCAD the tags are drawn as lines, so the text holds little more than the title block. Their equipment shows up here once they&apos;re read.</p>
+                  <button type="button" onClick={() => void readUnread()} disabled={sweeping || applying}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-violet-700 hover:bg-violet-800 text-white px-3 py-1.5 font-bold disabled:opacity-50 cursor-pointer">
+                    <ScanSearch className="w-4 h-4" /> Read {unread.length} sheet{unread.length === 1 ? "" : "s"} with AI
+                  </button>
+                </>
+              )}
+            </div>
+          )}
           {notice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-800 p-3 text-[12.5px] text-emerald-800 dark:text-emerald-200 flex items-start gap-2"><Check className="w-4 h-4 shrink-0 mt-0.5" /> {notice}</div>}
 
           {loading ? (
