@@ -154,7 +154,7 @@ describe("sanitizeDashboardConfig", () => {
     expect(byId.b.w).toBe(6);
     expect(byId.c.w).toBe(6);
     // Heights are defaulted by type — list widgets taller than banners.
-    expect(byId.a.h).toBe(3); // documentControl banner
+    expect(byId.a.h).toBe(5); // documentControl: room for search, map and preview
     expect(byId.b.h).toBe(4); // draftingRequests list
     expect(byId.c.h).toBe(4); // inbox/command deck
   });
@@ -185,6 +185,22 @@ describe("sanitizeDashboardConfig", () => {
     });
     expect(out!.widgets).toHaveLength(1);
     expect(out!.widgets[0].type).toBe("inbox");
+  });
+
+  it("grows a saved Document Control smaller than its minimum, without overlap", () => {
+    const out = sanitizeDashboardConfig({
+      version: 3,
+      widgets: [
+        { id: "dc", type: "documentControl", x: 0, y: 0, w: 4, h: 3 },
+        { id: "ib", type: "inbox", x: 4, y: 0, w: 4, h: 3 },
+      ],
+    });
+    const dc = out!.widgets.find((w) => w.id === "dc")!;
+    const ib = out!.widgets.find((w) => w.id === "ib")!;
+    expect(dc.w).toBeGreaterThanOrEqual(6);
+    expect(dc.h).toBeGreaterThanOrEqual(5);
+    const overlap = dc.x < ib.x + ib.w && ib.x < dc.x + dc.w && dc.y < ib.y + ib.h && ib.y < dc.y + dc.h;
+    expect(overlap).toBe(false);
   });
 
   it("never throws on hostile input", () => {

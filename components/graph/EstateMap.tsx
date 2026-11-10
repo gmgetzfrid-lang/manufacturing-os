@@ -25,6 +25,10 @@ interface Props {
   flyTo: { ids: string[]; nonce: number } | null;
   onSelect: (n: GraphNode | null) => void;
   onOpen: (n: GraphNode) => void;
+  /** Go into this node (a unit, say) without picking anything. */
+  enter?: { id: string; nonce: number } | null;
+  /** Small boxes: no how-to line, short crumbs. */
+  compact?: boolean;
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
@@ -43,7 +47,7 @@ function typeOf(t: TreeNode): { kind: FileGraphNode["kind"]; type: FileTypeInfo 
   }
 }
 
-export default function EstateMap({ nodes, edges, query, selectedId, highlightIds, flyTo, onSelect, onOpen }: Props) {
+export default function EstateMap({ nodes, edges, query, selectedId, highlightIds, flyTo, onSelect, onOpen, enter, compact }: Props) {
   const ref = useRef<FileGraphHandle | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
@@ -77,7 +81,8 @@ export default function EstateMap({ nodes, edges, query, selectedId, highlightId
     const roots = focusId && treeById.has(focusId) ? [treeById.get(focusId)!] : tree.filter((t) => !t.parentId);
     for (const r of roots) vis.set(r.id, r);
     let frontier = roots, count = roots.length, first = true, depth = 0;
-    while (frontier.length && depth < MAX_DEPTH) {
+    // A small box opens one level at a time so every label can be read.
+    while (frontier.length && depth < (compact ? 1 : MAX_DEPTH)) {
       depth++;
       // At the top, open each operating area one level (its equipment types)
       // but keep big groups ("Not placed yet", Projects) closed with a
@@ -105,7 +110,7 @@ export default function EstateMap({ nodes, edges, query, selectedId, highlightId
     const upNode = focusNode ? (focusNode.parentId ? treeById.get(focusNode.parentId) ?? null : { id: "__all__", kind: "library" as const, label: "Whole estate", parentId: null, childCount: 0, type: CONTAINER_TYPES.estate }) : null;
     return { visible: [...vis.values()], collapsed, upNode };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tree, treeById, children, focusId, lit]);
+  }, [tree, treeById, children, focusId, lit, compact]);
 
   // Other ties of the picked thing only: a document's second piece of
   // equipment, its project. Never a web over the whole view.
@@ -131,9 +136,18 @@ export default function EstateMap({ nodes, edges, query, selectedId, highlightId
     if (!id) return;
     const t = treeById.get(id)!;
     if (t.parentId && t.parentId !== focusId) setFocusId(t.parentId);
-    window.setTimeout(() => ref.current?.focus(id), 140);
+    // A small box shows the picked thing with its neighbours and documents, not a close-up.
+    window.setTimeout(() => ref.current?.focus(id, compact ? 1 : undefined), 140);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flyTo?.nonce]);
+
+  // The tree can land after the request to go in: try again when it does.
+  const enterReady = !!enter?.id && (enter.id === "__all__" || treeById.has(enter.id));
+  useEffect(() => {
+    if (!enter?.id || !enterReady) return;
+    setFocusId(enter.id === "__all__" ? null : enter.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enter?.nonce, enterReady]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -156,15 +170,17 @@ export default function EstateMap({ nodes, edges, query, selectedId, highlightId
         onUp={() => setFocusId(focusId ? treeById.get(focusId)?.parentId ?? null : null)}
         onOpen={(id) => { const n = byId.get(id); if (n) onOpen(n); }} filedLinks={filedLinks} />
       </div>
-      <div className="absolute top-2 left-1/2 -translate-x-1/2 flex items-center gap-1 text-[11px] pointer-events-auto max-w-[70%] flex-wrap justify-center">
-        <button onClick={() => setFocusId(null)} className={`rounded-md border px-2 py-1 font-semibold ${focusId ? "bg-[var(--color-surface)]/90 border-[var(--color-border)]" : "bg-violet-600 text-white border-transparent"}`}>Whole estate</button>
+      <div className={compact
+        ? "absolute top-2 left-2 right-2 flex items-center gap-1 text-[10.5px] pointer-events-auto overflow-x-auto no-scrollbar whitespace-nowrap"
+        : "absolute top-2 left-1/2 -translate-x-1/2 flex items-center gap-1 text-[11px] pointer-events-auto max-w-[70%] flex-wrap justify-center"}>
+        <button onClick={() => setFocusId(null)} className={`shrink-0 rounded-md border px-2 py-1 font-semibold ${focusId ? "bg-[var(--color-surface)]/90 border-[var(--color-border)]" : "bg-violet-600 text-white border-transparent"}`}>Whole estate</button>
         {crumbs.map((c) => (
           <React.Fragment key={c.id}>
             <span className="text-[var(--color-text-faint)]">›</span>
-            <button onClick={() => setFocusId(c.id)} className={`rounded-md border px-2 py-1 font-semibold ${c.id === focusId ? "bg-violet-600 text-white border-transparent" : "bg-[var(--color-surface)]/90 border-[var(--color-border)]"}`}>{c.label}</button>
+            <button onClick={() => setFocusId(c.id)} className={`shrink-0 rounded-md border px-2 py-1 font-semibold ${c.id === focusId ? "bg-violet-600 text-white border-transparent" : "bg-[var(--color-surface)]/90 border-[var(--color-border)]"}`}>{c.label}</button>
           </React.Fragment>
         ))}
-        {!focusId
+        {compact ? null : !focusId
           ? <span className="ml-2 text-[var(--color-text-muted)]">operating area › equipment type › equipment › documents · click to go in · Esc to climb out</span>
           : <span className="ml-2 text-[var(--color-text-muted)]">Esc or ↑ to climb out</span>}
       </div>

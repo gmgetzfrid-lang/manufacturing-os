@@ -10,7 +10,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { WIDGET_TYPES, type DashboardConfig, type DashboardWidget, type WidgetType } from "./types";
-import { packLayout, firstFreeSlot } from "./layout";
+import { packLayout, firstFreeSlot, resizeElement } from "./layout";
 
 const LS_PREFIX = "manufacturingos.dashboard.";
 
@@ -22,13 +22,20 @@ export const MAX_H = 12;
 
 const KNOWN_TYPES: readonly WidgetType[] = WIDGET_TYPES;
 
+/** Widgets that need room to work. Document Control holds a search with its
+ *  list, the map and a preview side by side, so a saved layout smaller than
+ *  this grows to it. */
+export const MIN_SIZE_BY_TYPE: Partial<Record<WidgetType, { w: number; h: number }>> = {
+  documentControl: { w: 6, h: 5 },
+};
+
 // Fallback default heights by type, used when migrating legacy widgets that
 // only carried a `width` (no row-unit height). List-style widgets get taller
 // defaults; banners/summaries stay short.
 const DEFAULT_H_BY_TYPE: Record<WidgetType, number> = {
   commandDeck: 4,
   askKnowledge: 5,
-  documentControl: 3,
+  documentControl: 5,
   draftingRequests: 4,
   inbox: 4,
   dailyBrief: 3,
@@ -163,7 +170,12 @@ function sanitize(raw: unknown): DashboardConfig | null {
           )
         : normalizeCoords(bare, GRID_COLS);
 
-    return { version: 3, widgets };
+    let sized = widgets;
+    for (const w of widgets) {
+      const min = MIN_SIZE_BY_TYPE[w.type];
+      if (min && (w.w < min.w || w.h < min.h)) sized = resizeElement(sized, w.id, Math.max(w.w, min.w), Math.max(w.h, min.h), GRID_COLS);
+    }
+    return { version: 3, widgets: sized };
   } catch {
     return null;
   }

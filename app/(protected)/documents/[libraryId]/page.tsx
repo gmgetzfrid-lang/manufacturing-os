@@ -133,6 +133,10 @@ import { nid } from "@/lib/estate/ids";
 import type { HomeSuggestion } from "@/lib/estate/watchdog";
 import WatchdogBanner from "@/components/documents/WatchdogBanner";
 import AlsoFiledHere from "@/components/documents/AlsoFiledHere";
+import { useFind } from "@/components/find/useFind";
+import FindPanel from "@/components/find/FindPanel";
+import FindMap from "@/components/find/FindMap";
+import { folderUnit } from "@/lib/findEverywhere";
 import type {
   AccessControl,
   CheckoutSession,
@@ -387,6 +391,17 @@ export default function LibraryExplorerPage() {
     } finally { setWatchdogBusy(null); }
   };
   const [search, setSearch] = useState("");
+  // One search for everything (tags, IDs, drawing numbers, words inside the
+  // documents). It stays on this page. ?find= opens it from the top search
+  // bar's "Show on map".
+  const [find, setFind] = useState(() => searchParams.get("find") ?? "");
+  const [mapOpen, setMapOpenRaw] = useState(true);
+  useEffect(() => { try { if (window.localStorage.getItem("docs:mapOpen") === "0") setMapOpenRaw(false); } catch { /* default open */ } }, []);
+  const setMapOpen = (fn: (v: boolean) => boolean) => setMapOpenRaw((v) => {
+    const next = fn(v);
+    try { window.localStorage.setItem("docs:mapOpen", next ? "1" : "0"); } catch { /* per-viewer only */ }
+    return next;
+  });
 
   const [selectedDoc, setSelectedDoc] = useState<DocumentRecord | null>(null);
   const [numberingOpen, setNumberingOpen] = useState(false);
@@ -1865,6 +1880,24 @@ export default function LibraryExplorerPage() {
 
   useEffect(() => { folderMapRef.current = folderMap; }, [folderMap]);
   const currentFolder = currentFolderId ? folderMap.get(currentFolderId) ?? null : null;
+
+  // The unit of the folder you're in: the map goes into it and a tag on
+  // several units picks this unit's one.
+  const [folderUnitCode, setFolderUnitCode] = useState<string | null>(null);
+  const folderChainKey = currentFolder ? [...(currentFolder.pathIds ?? []), currentFolder.id].join("/") : "";
+  useEffect(() => {
+    if (!activeOrgId || !currentFolder?.id) { setFolderUnitCode(null); return; }
+    let alive = true;
+    const chain = [
+      ...(currentFolder.pathIds ?? []).map((id, i) => ({ id, name: currentFolder.pathNames?.[i] ?? folderMapRef.current?.get(id)?.name ?? "" })),
+      { id: currentFolder.id, name: currentFolder.name },
+    ];
+    void folderUnit(activeOrgId, chain).then((u) => { if (alive) setFolderUnitCode(u); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOrgId, folderChainKey]);
+  const finder = useFind(activeOrgId, find, folderUnitCode, { controller: isControllerRole(activeRole) });
+  const findOn = find.trim().length >= 2;
 
   // Resolved hero header (inherits cover/color up the folder→library chain).
   const pageHeader = useMemo(
@@ -3628,16 +3661,25 @@ export default function LibraryExplorerPage() {
 
         <div className="flex-1" />
 
-        {/* Search */}
-        <div className="relative group">
+        {/* Search everything: results stay on this page. */}
+        <form className="relative group flex-1 min-w-[11rem] sm:min-w-[20rem] max-w-xl" role="search" onSubmit={(e) => e.preventDefault()}>
           <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)] absolute left-2.5 top-1/2 -translate-y-1/2 group-focus-within:text-[var(--color-text)] transition-colors pointer-events-none" />
           <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Filter…"
-            className="pl-7 pr-2 h-8 sm:h-7 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]/60 focus:bg-[var(--color-surface)] focus:outline-none focus:ring-2 focus:ring-blue-500/30 w-32 sm:w-44 text-base sm:text-xs font-medium transition-all"
+            value={find}
+            onChange={(e) => setFind(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Escape") setFind(""); }}
+            placeholder="Search tags, IDs, drawings, words"
+            aria-label="Search documents and equipment"
+            data-find-input
+            className="w-full pl-7 pr-7 h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40 focus:border-[var(--color-accent)] text-base sm:text-xs font-medium transition-all"
           />
-        </div>
+          {find && (
+            <button type="button" onClick={() => setFind("")} title="Clear the search"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </form>
 
         {/* Library quick-jump (folders + sheets in this library, plus
             in-library actions). ⌘K is the global palette. */}
@@ -3927,6 +3969,26 @@ export default function LibraryExplorerPage() {
         <div className={`flex-1 overflow-auto p-3 lg:p-4 ${stagedDocs.length > 0 ? "pb-20" : ""}`}>
           <div className="max-w-[1920px] mx-auto">
 
+            {findOn && activeOrgId && (
+              <div className="mb-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm p-3 lg:p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <div className="text-sm font-black text-[var(--color-text)] truncate">Search: “{find.trim()}”</div>
+                  <button type="button" onClick={() => setFind("")}
+                    className="ml-auto shrink-0 h-7 px-2.5 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                    Back to {currentFolder?.name ?? library.name}
+                  </button>
+                </div>
+                <FindPanel orgId={activeOrgId} f={finder} unit={folderUnitCode}
+                  onOpenFolder={(fo) => {
+                    setFind("");
+                    if (fo.libraryId === libraryId) setCurrentFolderId(fo.id);
+                    else router.push(`/documents/${fo.libraryId}?folderId=${fo.id}`);
+                  }}
+                  onOpenHref={(href) => router.push(href)} />
+              </div>
+            )}
+            <div className={findOn ? "hidden" : "contents"}>
+
             <WatchdogBanner suggestions={watchdog} busyId={watchdogBusy} onLink={watchdogLink} onDismiss={watchdogDismiss} onClose={() => setWatchdog([])} />
             {currentFolderId && activeOrgId && <AlsoFiledHere orgId={activeOrgId} folderId={currentFolderId} />}
 
@@ -4081,6 +4143,29 @@ export default function LibraryExplorerPage() {
                     selectedIds={selectedFolderIds}
                     onTileSelect={handleFolderTileSelect}
                   />
+                </div>
+              )}
+
+              {/* THE MAP — under the folders: the unit this folder is in, its
+                  equipment by type, and each one's documents. */}
+              {!findOn && activeOrgId && (
+                <div className="border-b border-[var(--color-border)] bg-[var(--color-surface-2)]/30">
+                  <button type="button" onClick={() => setMapOpen((v) => !v)}
+                    className="w-full px-5 pt-3 pb-2 flex items-center gap-1.5 text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider hover:text-[var(--color-text)]">
+                    <ChevronDown className={`w-3 h-3 transition-transform ${mapOpen ? "" : "-rotate-90"}`} /> Map
+                    <span className="normal-case tracking-normal font-medium text-[var(--color-text-muted)]">
+                      {folderUnitCode ? `· unit ${folderUnitCode} › type › equipment › its documents` : "· unit › type › equipment › its documents"}
+                    </span>
+                  </button>
+                  {mapOpen && (
+                    <div className="px-5 pb-4">
+                      <FindMap orgId={activeOrgId} unit={folderUnitCode} assetId={null} className="h-[300px]"
+                        onDoc={(d) => {
+                          const hit = documents.find((x) => x.id === d.id);
+                          if (hit) setSelectedDoc(hit); else router.push(d.href);
+                        }} />
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -4703,6 +4788,7 @@ export default function LibraryExplorerPage() {
               </div>
             </div>
 
+            </div>
           </div>
         </div>
       </div>

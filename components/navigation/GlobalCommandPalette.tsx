@@ -32,6 +32,7 @@ import type { FindResult } from "@/lib/find/types";
 import { openEvidencePack, openProjectEvidencePack } from "@/lib/evidencePack";
 import { openRelationshipGraph } from "@/components/documents/RelationshipGraphHost";
 import { searchAtlas } from "@/lib/featureAtlas";
+import { tagKey } from "@/lib/findCore";
 import { requestSignature } from "@/components/signatures/SignatureCaptureHost";
 
 const KIND_ICON: Record<GlobalHitKind, React.ComponentType<{ className?: string }>> = {
@@ -267,11 +268,28 @@ export default function GlobalCommandPalette() {
           href: p.href, isAction: true, badge: "Place",
         });
       }
+      // Equipment first when the query is a tag: one tag can be on several
+      // units, so say so and list each with its unit, ID and description.
+      const assetHits = hits.filter((h) => h.kind === "asset");
+      const baseTag = (h: GlobalHit) => h.title.split(" · ")[0];
+      const sameTag = assetHits.filter((h) => tagKey(baseTag(h)) === tagKey(trimmed));
+      if (sameTag.length > 1) {
+        const units = new Set(sameTag.map((x) => x.subtitle?.split(" · ")[0] ?? ""));
+        items.push({
+          key: "which-one", label: units.size === sameTag.length ? `${baseTag(sameTag[0])} is on ${sameTag.length} units. Which one?` : `There are ${sameTag.length} called ${baseTag(sameTag[0])}. Which one?`,
+          subtitle: "Pick one below, or see them all with their documents and the map", href: `/search?q=${encodeURIComponent(trimmed)}`, isAction: true, badge: "Equipment",
+        });
+      }
+      for (const h of assetHits) items.push({ key: `asset-${h.id}`, label: h.title, subtitle: h.subtitle, href: h.href, kind: "asset", badge: h.badge });
+      // A document's equipment named the way the list above names it, unit
+      // and all: "tagged to E-22 · 5530.29 (55 Transmix Unit ...)".
+      const assetName = new Map(assetHits.map((h) => [`asset:${h.id}`, `${h.title}${h.subtitle ? ` (${h.subtitle.split(" · ")[0]})` : ""}`]));
       // The finder's best, with the reason it was found.
       const seenDocs = new Set<string>();
       for (const r of findHits) {
         seenDocs.add(r.documentId);
-        const why = r.relations[0] ? `${r.relations[0].rel.replace("_", " ")} ${r.relations[0].label}${r.relations[0].detail ? ` · ${r.relations[0].detail}` : ""}` : r.evidence[0]?.label ?? "";
+        const rel = r.relations[0];
+        const why = rel ? `${rel.rel.replace("_", " ")} ${assetName.get(rel.node) ?? rel.label}${rel.detail ? ` · ${rel.detail}` : ""}` : r.evidence[0]?.label ?? "";
         items.push({
           key: `find-${r.id}`, label: r.name, subtitle: why || [r.libraryName, ...r.path].filter(Boolean).join(" / "),
           href: r.href, kind: "document", badge: r.verdict === "strong" ? "Strong" : r.verdict === "possible" ? "Possible" : undefined,
@@ -279,6 +297,7 @@ export default function GlobalCommandPalette() {
       }
       items.push({ key: "find-explore", label: `Explore “${trimmed}” on the map`, subtitle: "Documents › Graph - every match lit, with reasons", href: `/documents/graph?q=${encodeURIComponent(trimmed)}`, isAction: true, badge: "Find" });
       for (const h of hits) {
+        if (h.kind === "asset") continue;
         if (h.kind === "document" && seenDocs.has(h.id)) continue;
         items.push({
           key: `${h.kind}-${h.id}`, label: h.title, subtitle: h.subtitle, href: h.href,

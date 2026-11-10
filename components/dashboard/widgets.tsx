@@ -787,7 +787,8 @@ export const WIDGET_CATALOG: Record<WidgetType, WidgetMeta> = {
   documentControl: {
     type: "documentControl", title: "Document Control", description: "Browse libraries, folders and documents.",
     icon: FileStack, tone: "blue", href: "/documents", cta: "Open Document Control", category: "Documents",
-    defaultW: 12, defaultH: 4, minW: 4, minH: 3, multi: true,
+    // Room for the search, its list, the map and a preview side by side.
+    defaultW: 12, defaultH: 5, minW: 6, minH: 5, multi: true,
     settings: [
       { key: "libraryIds", type: "docLibraries", label: "Libraries to show", help: "Leave all unchecked to show every library." },
     ],

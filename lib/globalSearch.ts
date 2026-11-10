@@ -10,6 +10,8 @@
 
 import { searchDocuments, searchAssets, searchTickets } from "@/lib/search";
 import { supabase } from "@/lib/supabase";
+import { findUnits } from "@/lib/findEverywhere";
+import { tagKey } from "@/lib/findCore";
 
 export type GlobalHitKind = "document" | "ticket" | "project" | "asset" | "note" | "transmittal";
 
@@ -35,7 +37,8 @@ export async function globalSearch({ orgId, query, perKindLimit = 5 }: GlobalSea
   const results = await Promise.allSettled([
     searchDocuments({ orgId, query: q, limit: perKindLimit }),
     searchTickets({ orgId, query: q, limit: perKindLimit }),
-    searchAssets({ orgId, query: q, limit: perKindLimit }),
+    // Room for every unit's copy of a tag: "E-22" is on three units.
+    searchAssets({ orgId, query: q, limit: Math.max(perKindLimit, 8), archived: false }),
     searchProjects(orgId, q, perKindLimit),
     searchNotes(orgId, q, perKindLimit),
     searchTransmittals(orgId, q, perKindLimit),
@@ -70,13 +73,20 @@ export async function globalSearch({ orgId, query, perKindLimit = 5 }: GlobalSea
   }
 
   if (results[2].status === "fulfilled") {
-    for (const a of results[2].value) {
+    // Names are never unique; say the unit, the ID and what it is, and open
+    // the search with that one picked (its documents, the map, a preview).
+    const units = new Map((await findUnits(orgId)).map((u) => [u.code, u.label]));
+    const rows = results[2].value as Array<{ id: string; tag: string; description: string | null; unit_code?: string | null; code?: string | null }>;
+    const key = tagKey(q);
+    rows.sort((x, y) => Number(tagKey(y.tag) === key) - Number(tagKey(x.tag) === key));
+    for (const a of rows) {
+      const unit = a.unit_code ? `${a.unit_code} ${units.get(a.unit_code) ?? ""}`.trim() : "No unit set";
       hits.push({
         id: String(a.id),
         kind: "asset",
-        title: a.tag,
-        subtitle: a.description || undefined,
-        href: `/admin/assets?tag=${encodeURIComponent(a.tag)}`,
+        title: a.code && !a.tag.includes(a.code) ? `${a.tag} · ${a.code}` : a.tag,
+        subtitle: [unit, a.description].filter(Boolean).join(" · "),
+        href: `/search?q=${encodeURIComponent(a.tag)}&pick=${encodeURIComponent(String(a.id))}`,
       });
     }
   }

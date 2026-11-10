@@ -3,11 +3,13 @@
 // Document Control — browse your libraries without leaving the dashboard.
 //
 // Libraries → folders → documents, right in the card: a breadcrumb you can
-// click back along, an Up button, and a search that looks across the whole
-// library you're in (or everything, at the top). Opening a document goes
-// straight to it; "Open here" opens the Documents page at the same folder.
+// click back along, an Up button, and the same search as Documents: tags,
+// equipment IDs, drawing numbers and words inside the documents, with "E-22
+// is on 3 units. Which one?", the map and a preview. It all stays in the
+// widget; Enter never takes you away. Opening a document goes straight to
+// it; "Open here" opens the Documents page at the same folder.
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowUp, ChevronRight, Folder, FileText, ArrowUpRight, Home, Loader2 } from "lucide-react";
@@ -15,9 +17,12 @@ import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import { isControllerRole } from "@/lib/permissions";
 import NodeCover from "@/components/documents/NodeCover";
+import { useFind } from "@/components/find/useFind";
+import FindPanel from "@/components/find/FindPanel";
+import { folderUnit } from "@/lib/findEverywhere";
 import { TrendChip, MiniBars, dayBuckets } from "../viz";
 import {
-  useWidget, useSetting, useSessionState, useWidgetData, SearchField, useDebounced, Skeleton, Empty, timeAgo,
+  useWidget, useSetting, useSessionState, useWidgetData, SearchField, Skeleton, Empty, timeAgo,
   headCount, fetchRecentDates, weekSplit, sum, SCROLL,
 } from "../kit";
 
@@ -57,7 +62,7 @@ function DocLine({ d, folderName }: { d: DocRow; folderName?: string | null }) {
 }
 
 export default function DocBrowserBody() {
-  const { activeRole } = useRole();
+  const { activeRole, activeOrgId } = useRole();
   const router = useRouter();
   const { expanded } = useWidget();
   const [pinned] = useSetting<string[]>("libraryIds", []);
@@ -65,8 +70,20 @@ export default function DocBrowserBody() {
   const [libId, setLibId] = useSessionState<string | null>("libId", null);
   const [path, setPath] = useSessionState<FolderRow[]>("path", []);
   const [q, setQ] = useState("");
-  const dq = useDebounced(q.trim(), 250);
   const folderId = path.length ? path[path.length - 1].id : null;
+  // The unit of the folder you're in: the map follows it and a tag on
+  // several units picks this unit's one.
+  const [unit, setUnit] = useState<string | null>(null);
+  const pathKey = path.map((f) => f.id).join("/");
+  useEffect(() => {
+    if (!activeOrgId || !path.length) { setUnit(null); return; }
+    let alive = true;
+    void folderUnit(activeOrgId, path.map((f) => ({ id: f.id, name: f.name }))).then((u) => { if (alive) setUnit(u); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOrgId, pathKey]);
+  const finder = useFind(activeOrgId, q, unit, { controller: isControllerRole(activeRole) });
+  const searching = q.trim().length >= 2;
 
   // ── Top level: libraries ──────────────────────────────────────────
   const { data: top, loading: topLoading } = useWidgetData(async (orgId) => {
@@ -101,24 +118,6 @@ export default function DocBrowserBody() {
     return { at: `${libId}|${folderId ?? ""}`, folders, docs: (docRes.data ?? []) as unknown as DocRow[], docCount: docRes.count ?? 0 };
   }, [libId, folderId, expanded]);
 
-  // ── Search: the library you're in, or everything ──────────────────
-  const { data: hits, refreshing: searching } = useWidgetData(async (orgId) => {
-    if (dq.length < 2) return null;
-    const term = dq.replace(/[%_,()]/g, " ").trim();
-    let s = supabase.from("documents").select(DOC_COLS).eq("org_id", orgId).neq("status", "Archived")
-      .or(`document_number.ilike.%${term}%,title.ilike.%${term}%,name.ilike.%${term}%`);
-    if (libId) s = s.eq("library_id", libId);
-    const { data } = await s.order("updated_at", { ascending: false }).limit(40);
-    const rows = (data ?? []) as unknown as DocRow[];
-    const fids = [...new Set(rows.map((r) => r.collection_id).filter((x): x is string => !!x))].slice(0, 100);
-    const names = new Map<string, string>();
-    if (fids.length) {
-      const { data: fs } = await supabase.from("collections").select("id, name").in("id", fids);
-      for (const f of (fs ?? []) as Array<{ id: string; name: string }>) names.set(f.id, f.name);
-    }
-    return { rows, names };
-  }, [dq, libId]);
-
   const libs = top?.libs ?? [];
   const lib = libId ? libs.find((l) => l.id === libId) ?? null : null;
   const go = (id: string | null) => { setLibId(id); setPath([]); setQ(""); };
@@ -132,17 +131,16 @@ export default function DocBrowserBody() {
 
   const search = (
     <SearchField value={q} onChange={setQ}
-      onSubmit={(v) => router.push(`/search?q=${encodeURIComponent(v)}`)}
-      placeholder={lib ? `Search ${lib.name} - number, title…` : "Search every library - number, title…"}
-      title="Results appear as you type; Enter opens full search" />
+      placeholder="Search: tag, equipment ID, drawing number, words"
+      title="Results, the map and a preview show right here" />
   );
 
   // ── Search results replace the listing while there's a query ──────
-  const results = dq.length >= 2 ? (
-    <div className={`${SCROLL} mt-2 space-y-0.5`}>
-      {searching && !hits ? <Skeleton rows={2} />
-        : (hits?.rows.length ?? 0) === 0 ? <Empty>No documents match “{dq}”{lib ? ` in ${lib.name}` : ""}.</Empty>
-        : hits!.rows.map((d) => <DocLine key={d.id} d={d} folderName={d.collection_id ? hits!.names.get(d.collection_id) : (libId ? "top level" : libs.find((l) => l.id === d.library_id)?.name)} />)}
+  const results = searching && activeOrgId ? (
+    <div className={`${SCROLL} mt-2`} data-widget-find>
+      <FindPanel orgId={activeOrgId} f={finder} unit={unit} compact
+        onOpenFolder={(fo) => { setLibId(fo.libraryId); setPath([{ id: fo.id, name: fo.name, parent_id: null }]); setQ(""); }}
+        onOpenHref={(href) => router.push(href)} />
     </div>
   ) : null;
 
