@@ -130,16 +130,14 @@ describe("put off, not behind: how each chain reads", () => {
   it("hours by how they read, flagged first", () => {
     expect(labelHours(w).map((x) => x.short)).toEqual(["late, critical path", "on hold", "put off", "slower than plan"]);
   });
-  it("ahead overall: the line says worked out of order, net, and only the flagged ones are listed", () => {
-    expect(whyTitle(w, false, f.hrs)).toBe("Worked out of order - 30 h done ahead of plan, 23 h put off or slower. Net 7 h ahead.");
-    const blocks = behindWhyBlocks(w, f, 8, false);
-    const table = blocks.find((b) => b.k === "table") as { rows: unknown[][] } | undefined;
-    expect(table?.rows).toHaveLength(2);
-    expect(blocks.some((b) => b.k === "stats")).toBe(false);
-  });
   it("behind overall: why we're behind, every chain", () => {
-    expect(whyTitle(w, true, f.hrs)).toBe("Why we're behind - 23 h of work behind plan, 30 h ahead elsewhere");
-    const table = behindWhyBlocks(w, f, 8, true).find((b) => b.k === "table") as { rows: unknown[][] };
+    expect(whyTitle(w, f.hrs)).toBe("Why we're behind - 23 h of work behind plan, 30 h ahead elsewhere");
+    const blocks = behindWhyBlocks(w, f, 8);
+    const table = blocks.find((b) => b.k === "table") as { rows: unknown[][] };
     expect(table.rows).toHaveLength(4);
+    expect(blocks.some((b) => b.k === "stats")).toBe(true);
+  });
+  it("never says the work was done out of order", () => {
+    expect(JSON.stringify(behindWhyBlocks(w, f, 8)) + whyTitle(w, f.hrs)).not.toMatch(/out of order/i);
   });
 });

@@ -2043,7 +2043,8 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           <StandTiles print={print} actual={overall.actualPct} planned={overall.plannedPct} standing={overall.standing}
             gap={{ label: standStats[2].label, value: standStats[2].value }} done={overall.stepsDone} total={overall.stepsTotal}
             pastDue={pastDueAll} pastDueHeld={pastDueHeld} pastDueLabel={standStats[4].label} />
-          {o.why && o.why.total >= 0.5 && <WhyBehind why={o.why} c={c} print={print} behind={overall.standing === "behind"} />}
+          {/* Only when the job is behind: on track or ahead, the order the work was done in is not reported. */}
+          {o.why && o.why.total >= 0.5 && overall.standing === "behind" && <WhyBehind why={o.why} c={c} print={print} />}
           {!print && o.pathSource && (
             <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-[var(--color-text-muted)] print:hidden">
               <span>Critical path: <b className="text-[var(--color-text)]">{o.pathSource.label}</b> ({o.pathSource.theirs} step{o.pathSource.theirs === 1 ? "" : "s"}). From the schedule&apos;s links it&apos;s {o.pathSource.calculated}, recalculated as work moves - near-critical and float come with it.</span>
@@ -2957,32 +2958,26 @@ function StandTiles({ actual, planned, standing, gap, done, total, pastDue, past
 /** Why it's behind: the hours of work behind by cause — found work, added
  *  scope, holds, or late / slow with nothing in the way — then what holds
  *  each chain up and the steps waiting on it (lib/behindWhy). */
-function WhyBehind({ why, c, print, behind }: { why: BehindWhy; c: Ctx; print: boolean; behind: boolean }) {
+function WhyBehind({ why, c, print }: { why: BehindWhy; c: Ctx; print: boolean }) {
   const [all, setAll] = useState(false);
   const h = (x: number) => c.hrs(Math.round(x * 10) / 10);
-  // Behind overall: every chain, biggest first. Not behind: work done out
-  // of order says so in a line; only what's worth a look (critical path,
-  // holds) is listed, the rest a tap away.
-  const flagged = why.chains.filter((ch) => chainLabel(ch).flag);
-  const list = behind || all ? why.chains : flagged;
-  const shown = behind && !print && !all ? list.slice(0, 6) : list;
-  const more = (behind ? why.chains.length : why.chains.length - flagged.length) - (behind ? shown.length : 0);
+  // Every chain, biggest first: the top six on screen, the rest a tap away.
+  const list = why.chains;
+  const shown = !print && !all ? list.slice(0, 6) : list;
+  const more = why.chains.length - shown.length;
   const text = print ? "text-[8pt]" : "text-[12px]";
   const small = print ? "text-[7.5pt]" : "text-[11px]";
   const tag = (flag: boolean) => (flag ? "border-rose-300 bg-rose-50 text-rose-900 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200" : "border-slate-300 bg-slate-50 text-slate-800 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200");
   return (
     <div className={`mt-2 rounded-lg border border-slate-200 dark:border-slate-700 ${print ? "px-2 py-1.5" : "px-3 py-2.5"} keep`}>
-      <div className={`font-bold ${print ? "text-[9pt]" : "text-[13px]"} ${behind ? "" : "font-semibold text-[var(--color-text)]"}`}>{whyTitle(why, behind, c.hrs)}</div>
-      {behind && (
-        <div className={`mt-1.5 flex flex-wrap gap-1.5 ${small}`}>
-          {labelHours(why).map((x) => (
-            <span key={x.short} className={`rounded-full border px-2 py-0.5 font-bold ${tag(x.flag)}`}>
-              {x.short[0].toUpperCase() + x.short.slice(1)} <span className="font-mono">{h(x.hours)}</span>
-            </span>
-          ))}
-        </div>
-      )}
-      {!behind && flagged.length > 0 && !all && <div className={`mt-1 ${small} font-semibold text-[var(--color-text-muted)]`}>Worth a look - on the critical path or on hold:</div>}
+      <div className={`font-bold ${print ? "text-[9pt]" : "text-[13px]"}`}>{whyTitle(why, c.hrs)}</div>
+      <div className={`mt-1.5 flex flex-wrap gap-1.5 ${small}`}>
+        {labelHours(why).map((x) => (
+          <span key={x.short} className={`rounded-full border px-2 py-0.5 font-bold ${tag(x.flag)}`}>
+            {x.short[0].toUpperCase() + x.short.slice(1)} <span className="font-mono">{h(x.hours)}</span>
+          </span>
+        ))}
+      </div>
       {shown.length > 0 && (
         <ul className={`mt-2 divide-y divide-slate-200 dark:divide-slate-700/60 ${text}`}>
           {shown.map((ch) => {
@@ -3005,7 +3000,7 @@ function WhyBehind({ why, c, print, behind }: { why: BehindWhy; c: Ctx; print: b
       )}
       {!print && more > 0 && !all && (
         <button type="button" onClick={() => setAll(true)} className="mt-1 text-[11.5px] font-bold text-[var(--color-accent)] hover:underline print:hidden">
-          {behind ? `Show ${more} more` : `See what was put off or slower (${more})`}
+          Show {more} more
         </button>
       )}
       {all && (

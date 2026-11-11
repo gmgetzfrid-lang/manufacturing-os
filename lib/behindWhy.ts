@@ -216,13 +216,13 @@ export function labelHours(why: BehindWhy): Array<{ short: string; hours: number
   return [...m.values()].map((x) => ({ ...x, hours: r1(x.hours) })).sort((a, b) => Number(b.flag) - Number(a.flag) || b.hours - a.hours);
 }
 
-/** The section's title line: why we're behind, only when we are; else the
- *  work done out of order, net. */
-export function whyTitle(why: BehindWhy, behind: boolean, hrs: (h: number) => string): string {
+/** The section's title line: why we're behind. Said only when the job is
+ *  behind. On track or ahead, nothing is said about the order the work was
+ *  done in: what is late on the critical path or on hold has its own
+ *  sections (Critical path, Blocked). */
+export function whyTitle(why: BehindWhy, hrs: (h: number) => string): string {
   const h = (x: number) => hrs(r1(x));
-  if (behind) return `Why we're behind - ${h(why.total)} of work behind plan${why.ahead >= 0.5 ? `, ${h(why.ahead)} ahead elsewhere` : ""}`;
-  const net = why.ahead - why.total;
-  return `Worked out of order - ${h(why.ahead)} done ahead of plan, ${h(why.total)} put off or slower. Net ${net >= 0.5 ? `${h(net)} ahead` : net <= -0.5 ? `${h(-net)} behind` : "even"}.`;
+  return `Why we're behind - ${h(why.total)} of work behind plan${why.ahead >= 0.5 ? `, ${h(why.ahead)} ahead elsewhere` : ""}`;
 }
 
 /** A chain in words, for the screen and the email alike. */
@@ -258,17 +258,15 @@ export function chainText(ch: BehindChain, f: { DTs: (ms: number) => string; hrs
 const CAUSE_EXPORT_TONE: Record<BehindCause, Tone> = { discovery: "slate", added: "amber", held: "rose", own: "slate" };
 
 /** The same, as blocks for the emailed update: the causes, then a table of
- *  what holds each chain up (the eight biggest, and how much more). Not
- *  behind overall: the line, and only what's worth a look (critical path,
- *  holds). */
-export function behindWhyBlocks(why: BehindWhy, f: { DTs: (ms: number) => string; hrs: (h: number) => string }, max = 8, behind = true): ExportBlock[] {
+ *  what holds each chain up (the eight biggest, and how much more). For a
+ *  job that is behind; callers leave it out otherwise. */
+export function behindWhyBlocks(why: BehindWhy, f: { DTs: (ms: number) => string; hrs: (h: number) => string }, max = 8): ExportBlock[] {
   const h = (x: number) => f.hrs(r1(x));
-  const list = behind ? why.chains : why.chains.filter((ch) => chainLabel(ch).flag);
+  const list = why.chains;
   const top = list.slice(0, max), rest = list.slice(max);
-  if (!behind && !list.length) return [{ k: "label", text: whyTitle(why, false, f.hrs) }];
   return [
-    { k: "label", text: whyTitle(why, behind, f.hrs) + (behind ? "" : " Worth a look:") },
-    ...(behind ? [{ k: "stats", items: labelHours(why).map((x) => ({ label: x.short[0].toUpperCase() + x.short.slice(1), value: h(x.hours), tone: (x.flag ? "rose" : "slate") as Tone })) } as ExportBlock] : []),
+    { k: "label", text: whyTitle(why, f.hrs) },
+    { k: "stats", items: labelHours(why).map((x) => ({ label: x.short[0].toUpperCase() + x.short.slice(1), value: h(x.hours), tone: (x.flag ? "rose" : "slate") as Tone })) } as ExportBlock,
     {
       k: "table", head: ["Holding it up", "Cause", "Work behind"], align: ["left", "left", "right"], textLabels: ["", "", "behind"], nowrap: [2],
       rows: [

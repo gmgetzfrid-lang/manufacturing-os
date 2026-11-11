@@ -230,7 +230,9 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
         title: "", lines: [],
       },
       // Why: the hours behind by cause, and what holds each chain up.
-      ...(look.why && look.why.total >= 0.5 ? behindWhyBlocks(look.why, f, 8, overall.standing === "behind") : []),
+      // Only when the job is behind: on track or ahead, the order the work
+      // was done in is not reported.
+      ...(look.why && look.why.total >= 0.5 && overall.standing === "behind" ? behindWhyBlocks(look.why, f, 8) : []),
     ],
   });
 
