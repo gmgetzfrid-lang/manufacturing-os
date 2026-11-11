@@ -57,6 +57,17 @@ export function cleanPullCrew(c: { crew?: string | null; hands?: number; hours?:
   return { crew: (c.crew ?? "").trim() || null, hands: n(c.hands, 50, 2), hours: n(c.hours, 24, 12) };
 }
 
+/** The keys the shift-times form owns. Saving the form replaces these and
+ *  nothing else. */
+export const SHIFT_TIME_KEYS = ["dayStart", "nightStart", "meetingBefore", "nightJobs", "helpers", "breaks", "projectType"] as const;
+
+/** The saved settings with the times replaced and every other key kept. */
+export function mergeShiftTimes(existing: Record<string, unknown> | null | undefined, times: object): Record<string, unknown> {
+  const keep: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(existing ?? {})) if (!(SHIFT_TIME_KEYS as readonly string[]).includes(k)) keep[k] = v;
+  return { ...keep, ...(times as Record<string, unknown>) };
+}
+
 /** Save the times for everyone on the project. */
 export async function saveProjectShiftTimes(projectId: string, t: ShiftTimes): Promise<void> {
   const problem = shiftTimesProblem(t);
@@ -72,19 +83,15 @@ export async function saveProjectShiftTimes(projectId: string, t: ShiftTimes): P
       .filter((b) => (b.shift === "day" || b.shift === "night") && /^\d{1,2}:\d{2}$/.test(b.start?.trim() ?? "") && b.minutes > 0 && b.minutes <= 240)
       .map((b) => ({ shift: b.shift, start: b.start.trim().padStart(5, "0"), minutes: Math.round(b.minutes), label: (b.label?.trim() || "Break").slice(0, 24) })) } : {}),
   };
-  // Keep the letterhead and the project type saved beside the times
-  // (lib/letterheadStore, saveProjectType).
-  const { data: kept } = await supabase.from("projects").select("lh:shift_times->letterhead, pt:shift_times->projectType, ph:shift_times->phases, co:shift_times->closeout, mp:shift_times->manpower").eq("id", projectId).maybeSingle();
-  const lh = (kept as { lh?: unknown } | null)?.lh;
-  // The project's phases are kept here too (lib/projectPhases).
-  const ph = (kept as { ph?: unknown } | null)?.ph;
-  // And the close-out's settings (components/projects/CloseoutTab).
-  const co = (kept as { co?: unknown } | null)?.co;
-  // And the manpower setup: crews' companies, bids and rates (lib/manpower).
-  const mp = (kept as { mp?: unknown } | null)?.mp;
-  const pt = cleanProjectType((kept as { pt?: unknown } | null)?.pt) ?? cleanProjectType(t.projectType);
+  // Everything else saved beside the times stays exactly as it is: the
+  // letterhead, phases, close-out, manpower, the suggested schedule's changes,
+  // staffing plans, and anything added later. Only the times' own keys are
+  // replaced.
+  const { data: kept } = await supabase.from("projects").select("shift_times").eq("id", projectId).maybeSingle();
+  const existing = ((kept as { shift_times?: Record<string, unknown> | null } | null)?.shift_times) ?? {};
+  const pt = cleanProjectType(existing.projectType) ?? cleanProjectType(t.projectType);
   if (pt) clean.projectType = pt;
-  const { data, error } = await supabase.from("projects").update({ shift_times: { ...clean, ...(lh ? { letterhead: lh } : {}), ...(Array.isArray(ph) ? { phases: ph } : {}), ...(co && typeof co === "object" ? { closeout: co } : {}), ...(mp && typeof mp === "object" ? { manpower: mp } : {}) } }).eq("id", projectId).select("id");
+  const { data, error } = await supabase.from("projects").update({ shift_times: mergeShiftTimes(existing, clean) }).eq("id", projectId).select("id");
   if (error) {
     // The column isn't there yet: keep them on this device meanwhile.
     if (/shift_times/.test(error.message)) {
