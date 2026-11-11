@@ -24,7 +24,9 @@ import { listEdgesFor, declareEdge, removeEdge } from "@/lib/estate/client";
 import { nid, type EstateEdge } from "@/lib/estate/ids";
 import { createAsset, updateAsset } from "@/lib/assets";
 import { EQUIP_ID, EQUIP_NONE, EQUIP_TAG, leadTag, tagsIn, tagKey, registryTagKey, type Equipment } from "@/lib/findings";
-import { EQUIP_REQUEST, requestValue, type EquipmentRequest } from "@/lib/equipmentPick";
+import { EQUIP_REQUEST, requestValue, sameEquipmentId, type EquipmentRequest } from "@/lib/equipmentPick";
+import { readCallout } from "@/lib/equipmentSweep";
+import { drawingLabel, drawingOf, sheetFromName, sheetKey } from "@/lib/drawingConnectors";
 
 export interface RegistryAsset { id: string; tag: string; unitCode: string | null; code?: string | null; description?: string | null }
 export interface UnitChoice { code: string; label: string }
@@ -41,7 +43,10 @@ export type MatchState =
   /** A tag, not in the registry yet. */
   | "not_in_registry"
   /** No tag in its name. */
-  | "no_tag";
+  | "no_tag"
+  /** Its name is one piece of equipment and its equipment ID another: a
+   *  person picks, nothing is assumed. */
+  | "two_answers";
 
 export interface WorkOrderMatch {
   /** The task the work order is on. */
@@ -56,6 +61,15 @@ export interface WorkOrderMatch {
   otherUnit: boolean;
   /** Its unit and equipment type, and where each came from. */
   cls: WoClass;
+  /** Found by the equipment ID the work order carries (its Equipment
+   *  column), not by its name: the ID decides. */
+  byId?: boolean;
+  /** The registry's name for that ID, when it is not the work order's
+   *  ("V-5" for the 5510.19 the work order and the P&ID call V-7). */
+  listedAs?: string | null;
+  /** The two pieces the work order points at: one by its name, one by its
+   *  equipment ID (state "two_answers"). */
+  clash?: { byId: RegistryAsset; byName: RegistryAsset };
 }
 
 /** What a task has saved: equipment, "none", or nothing yet. */
@@ -129,14 +143,31 @@ export function matchWorkOrders(orders: Array<{ owner: Milestone; wo: string | n
     const sure = first.unitFrom === "saved" || first.unitFrom === "code";
     const want = first.unit ?? projectUnits[0] ?? null;
     const hits = tag ? byTag.get(tagKey(tag)) ?? [] : [];
-    const asset = (saved?.assetId ? registry.find((a) => a.id === saved.assetId) : undefined)
-      ?? hits.find((a) => !!want && a.unitCode === want) ?? (sure ? undefined : hits[0]) ?? null;
+    const savedAsset = saved?.assetId ? registry.find((a) => a.id === saved.assetId) : undefined;
+    // The equipment ID decides. A work order that carries one (the plant's
+    // number in its Equipment column) is that equipment, whatever name the
+    // registry lists it under; only then does the name look for it.
+    const idAsset = !savedAsset && first.code ? registry.find((a) => sameEquipmentId(a.code, first.code)) : undefined;
+    // Two pieces of one name in a unit (two V-5s): the ID says which.
+    const nameAsset = (idAsset && hits.includes(idAsset) ? idAsset : undefined) ?? hits.find((a) => !!want && a.unitCode === want) ?? (sure ? undefined : hits[0]);
+    // The name says one registered piece and the ID another ("at H-1" with
+    // H-2's number): the work order is wrong in one of the two, and nothing
+    // here can tell which. Neither is taken; a person picks.
+    const clash = !savedAsset && idAsset && nameAsset && idAsset.id !== nameAsset.id ? { byId: idAsset, byName: nameAsset } : null;
+    const asset = savedAsset ?? (clash ? null : idAsset ?? nameAsset) ?? null;
+    const foundById = !!idAsset && !clash && asset === idAsset;
+    const shown = asset ?? null;
+    const listedAs = shown && tag && (foundById || !!savedAsset) && sameEquipmentId(shown.code, first.code) && registryTagKey(shown.tag) !== tagKey(tag) ? shown.tag.replace(/\s*\(.*$/, "") : null;
     // Only equipment already linked speaks for the unit and type.
     const cls = saved?.assetId && asset ? classOf(tag, asset) : first;
     const unit = cls.unit ?? want;
     const otherUnit = !!asset && !!unit && asset.unitCode !== unit;
-    const state: MatchState = saved ? "linked" : !tag ? "no_tag" : !asset ? "not_in_registry" : otherUnit ? "other_unit" : "found";
-    out.push({ ...base, tag, asset, state, otherUnit, cls });
+    // Saved means decided: linked to its equipment, or a name kept with
+    // nothing in the registry to link it to. A name kept that the unit's
+    // registry can now answer (by the ID, or by the name) is asked again.
+    const decided = !!saved && (!!savedAsset || !asset || otherUnit) && !clash;
+    const state: MatchState = decided ? "linked" : !tag ? "no_tag" : clash ? "two_answers" : !asset ? "not_in_registry" : otherUnit ? "other_unit" : "found";
+    out.push({ ...base, tag, asset, state, otherUnit, cls, ...(foundById ? { byId: true } : {}), ...(listedAs ? { listedAs } : {}), ...(clash ? { clash } : {}) });
   }
   return out;
 }
@@ -171,7 +202,7 @@ export const classToConfirm = (c: WoClass) => (!!c.unit && c.unitFrom !== "saved
 
 /** Still to decide: a match not saved yet (no tag to go on doesn't count),
  *  or a unit or type not confirmed. */
-export const undecided = (ms: WorkOrderMatch[]) => ms.filter((m) => m.state === "found" || m.state === "other_unit" || m.state === "not_in_registry" || classToConfirm(m.cls));
+export const undecided = (ms: WorkOrderMatch[]) => ms.filter((m) => m.state === "found" || m.state === "other_unit" || m.state === "not_in_registry" || m.state === "two_answers" || classToConfirm(m.cls));
 
 // ─── Database ──────────────────────────────────────────────────────
 
@@ -362,3 +393,44 @@ export async function loadProjectUnits(orgId: string): Promise<{ byProject: Map<
 
 /** Fired after a change, so every open view re-reads. */
 export const EQUIPMENT_CHANGED = "project-equipment:changed";
+
+/** What a drawing prints for an equipment ID: the tag and name beside it,
+ *  and the sheet. */
+export interface DrawnName { tag: string; name: string | null; sheet: string; documentId: string; libraryId: string }
+
+/** Every sheet that prints this equipment ID, with the tag and name it
+ *  prints beside it ("5502-D 2000 sheet 2 prints V-7 (5510.19) TRANSMIX
+ *  FRACTIONATOR"). For settling a registry name the drawings disagree with. */
+export async function drawnNamesForId(orgId: string, code: string): Promise<DrawnName[]> {
+  const id = code.trim();
+  if (!id) return [];
+  const { data: ents } = await supabase.from("knowledge_page_entities").select("document_id, page, tag, raw")
+    .eq("org_id", orgId).eq("kind", "equipment").ilike("raw", `%(${id.replace(/[%_]/g, "")})%`).limit(60);
+  const rows = ((ents ?? []) as Array<{ document_id: string; page: number; tag: string; raw: string | null }>)
+    .filter((r) => sameEquipmentId(readCallout(r.tag, r.raw).code, id));
+  if (!rows.length) return [];
+  const { data: mirrors } = await supabase.from("knowledge_documents").select("id, source_document_id").in("id", [...new Set(rows.map((r) => r.document_id))]);
+  const toDoc = new Map(((mirrors ?? []) as Array<{ id: string; source_document_id: string | null }>).filter((m) => m.source_document_id).map((m) => [m.id, m.source_document_id!]));
+  const docIds = [...new Set([...toDoc.values()])];
+  if (!docIds.length) return [];
+  const { data: docs } = await supabase.from("documents").select("id, library_id, document_number, name, sheet:metadata->>sheet").in("id", docIds);
+  const byId = new Map(((docs ?? []) as unknown as Array<{ id: string; library_id: string; document_number: string | null; name: string | null; sheet: string | null }>).map((d) => [d.id, d]));
+  const out = new Map<string, DrawnName>();
+  for (const r of rows) {
+    const d = byId.get(toDoc.get(r.document_id) ?? "");
+    if (!d) continue;
+    const number = d.document_number ?? d.name ?? "a drawing";
+    const sh = d.sheet && /\d/.test(d.sheet) ? sheetKey(d.sheet) : sheetFromName(d.name ?? "");
+    // A set kept in one file (a PFD book) is told apart by its page.
+    const sheet = `${drawingLabel(drawingOf(number) ?? number)}${sh ? ` sheet ${sh}` : ` page ${r.page}`}`;
+    const name = String(r.raw ?? "").replace(/^\S+\s*(\([^)]*\))?\s*/, "").split("·")[0].trim() || null;
+    out.set(`${d.id}|${r.tag}`, { tag: r.tag, name, sheet, documentId: d.id, libraryId: d.library_id });
+  }
+  return [...out.values()].sort((a, b) => a.sheet.localeCompare(b.sheet, undefined, { numeric: true }));
+}
+
+/** Give a registry entry the name the plant uses for its ID (admins only:
+ *  the database refuses anyone else). */
+export async function renameEquipment(assetId: string, tag: string, userId: string): Promise<void> {
+  await updateAsset(assetId, { tag: tag.trim() }, userId);
+}

@@ -24,7 +24,7 @@ import { parseQuery, type ParsedQuery } from "@/lib/fileFinder/queryParse";
 import { rankEntries } from "@/lib/fileFinder/rank";
 import { clusterByHash, type IndexEntry } from "@/lib/fileFinder/fileIndex";
 import { canonicalForm, tagVariants } from "@/lib/fileFinder/tagForms";
-import { buildAssetIndex } from "./assetMatch";
+import { assetOnSheet, buildAssetIndex } from "./assetMatch";
 import { words } from "@/lib/fileFinder/tokens";
 import type { FinderAlias } from "@/lib/fileFinder/aliasTypes";
 import { normalizeTag } from "@/lib/codebook";
@@ -197,14 +197,35 @@ export async function findEstate(admin: SupabaseClient, principal: KnowledgePrin
     // left) says a quarter of the sheet; the raw PDF numbers do not, and a
     // tag with no measured place gets no place said.
     const drawnPerDoc = new Map<string, number>();
-    for (const r of (ents.data as Array<{ document_id: string; page: number; tag: string; nx: number | null; ny: number | null }> | null) ?? []) {
+    const entRows = (ents.data as Array<{ document_id: string; page: number; tag: string; nx: number | null; ny: number | null }> | null) ?? [];
+    // Which piece of equipment a tag on a sheet is. A name repeats from unit
+    // to unit (three E-22s), so the name alone never says: the sheet's own
+    // link to the registry does (drawn from the ID printed beside the tag),
+    // then the sheet's unit. A sheet that says neither is tied to none of
+    // them, never to whichever same-named one came first.
+    const drawnDocs = [...new Set(entRows.map((r) => mirrorToDoc.get(r.document_id)).filter((x): x is string => !!x))];
+    const linkedOn = new Map<string, Set<string>>();
+    for (let i = 0; i < drawnDocs.length; i += 100) {
+      const { data: de } = await admin.from("estate_edges").select("a, b").eq("org_id", orgId).eq("status", "applied").eq("type", "tagged_to")
+        .in("a", drawnDocs.slice(i, i + 100).map((d) => `doc:${d}`)).order("id").range(0, 999);
+      for (const e of (de as Array<{ a: string; b: string }> | null) ?? []) {
+        if (!e.b.startsWith("asset:")) continue;
+        const d = e.a.slice(4);
+        linkedOn.set(d, (linkedOn.get(d) ?? new Set<string>()).add(e.b.slice(6)));
+      }
+    }
+    const sheetAsset = (docId: string, tag: string): { asset: AssetLite | null; known: boolean } => {
+      const named = assets.filter((a) => canonicalForm(a.tag) === canonicalForm(tag));
+      if (!named.length) { const reg = aidx.best(tag); return reg && reg.tier !== "close" ? { asset: reg.asset, known: true } : { asset: null, known: false }; }
+      return { asset: assetOnSheet(named, linkedOn.get(docId), entryByDoc.get(docId)?.unitCodes ?? []), known: true };
+    };
+    for (const r of entRows) {
       const docId = mirrorToDoc.get(r.document_id);
       if (!docId) continue;
-      const hit = [...assetHits.values()].find(({ asset }) => canonicalForm(asset.tag) === canonicalForm(r.tag)) ?? null;
-      const reg = hit ? null : aidx.best(r.tag);
-      const assetId = hit?.asset.id ?? (reg && reg.tier !== "close" ? reg.asset.id : undefined);
-      if (!hit && reg && reg.tier !== "close" && !assetHits.has(reg.asset.id)) drawnExtra.set(reg.asset.id, reg.asset);
-      if (!assetId) drawnUnregistered.set(r.tag, (drawnUnregistered.get(r.tag) ?? 0) + 1);
+      const which = sheetAsset(docId, r.tag);
+      const assetId = which.asset?.id;
+      if (which.asset && !assetHits.has(which.asset.id)) drawnExtra.set(which.asset.id, which.asset);
+      if (!which.known) drawnUnregistered.set(r.tag, (drawnUnregistered.get(r.tag) ?? 0) + 1);
       const n = (drawnPerDoc.get(docId) ?? 0) + 1;
       drawnPerDoc.set(docId, n);
       const where = sheetQuarter(r.nx, r.ny);

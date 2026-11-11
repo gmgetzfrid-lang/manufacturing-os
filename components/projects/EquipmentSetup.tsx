@@ -13,6 +13,7 @@
 // that equipment reaches the next job on it.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { AlertTriangle, Check, Loader2, Pencil, Plus, X } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import type { Milestone } from "@/types/schema";
@@ -20,9 +21,10 @@ import { tagKey, registryTagKey } from "@/lib/findings";
 import {
   loadProjectEquipment, matchWorkOrders, setupOrders, undecided, withEquipment, setProjectUnitOn, setWorkOrderEquipment, pruneEquipmentLinks,
   addToRegistry, moveToUnit, requestEquipment, unitName, EQUIPMENT_CHANGED, type ProjectEquipmentData, type RegistryAsset, type WorkOrderMatch, type SavedHere, type UnitChoice,
+  drawnNamesForId, renameEquipment, type DrawnName,
 } from "@/lib/projectEquipment";
 import { typeLabel, fromWords, type WoClass } from "@/lib/woClass";
-import { sameEquipmentId, requestOf, equipmentLabel } from "@/lib/equipmentPick";
+import { sameEquipmentId, requestOf, equipmentLabel, linkedLabel } from "@/lib/equipmentPick";
 import { EquipmentField } from "@/components/projects/EquipmentPicker";
 import { cache, read, noteSaved, savedHere, forgetRead } from "@/components/projects/equipmentData";
 
@@ -131,7 +133,10 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
     const hits = (data?.registry ?? []).filter((a) => registryTagKey(a.tag) === k);
     // Sure of the unit: only that unit's equipment by this tag.
     const sure = cls.unit != null;
-    let asset = (m.asset && registryTagKey(m.asset.tag) === k && (!sure || m.asset.unitCode === home) ? m.asset : null)
+    // Found by the ID the work order carries: that equipment, whatever name
+    // the registry lists it under (never a second entry for the same ID).
+    const byId = m.byId && m.asset && m.tag && tagKey(m.tag) === k ? m.asset : null;
+    let asset = byId ?? (m.asset && registryTagKey(m.asset.tag) === k && (!sure || m.asset.unitCode === home) ? m.asset : null)
       ?? hits.find((a) => a.unitCode === home) ?? (sure ? null : hits[0] ?? null) ?? made.get(`${home}:${k}`) ?? null;
     if (!asset && home && !canEditEquipment) {
       await requestEquipment({ orgId, projectId, projectName: name, ownerId: m.ownerId, title: m.title, tag: tag.trim(), unit: unitOf(home) ?? null, actor });
@@ -146,7 +151,8 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
       asset = await addToRegistry({ orgId, tag, unitCode: home, createdBy: userId, code: free });
       made.set(`${home}:${k}`, asset);
     }
-    const equipment = { assetId: asset?.id ?? null, tag: asset ? asset.tag.replace(/\s*\(.*$/, "") : tag.trim() };
+    // The work order keeps the name it uses when the registry's differs for the same ID.
+    const equipment = { assetId: asset?.id ?? null, tag: asset && asset !== byId ? asset.tag.replace(/\s*\(.*$/, "") : tag.trim() };
     await setWorkOrderEquipment({ orgId, projectId, projectName: name, ownerId: m.ownerId, title: m.title, equipment, ...keep, actor, existing: data?.edges });
     noteSaved(projectId, m.ownerId, { equipment, ...keep });
     return asset?.id ?? null;
@@ -286,6 +292,24 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
                   <div className="flex-1 min-w-[12rem]">
                     <div className="font-semibold text-[var(--color-text)] break-words">{m.title}{m.wo ? <span className="font-normal text-[var(--color-text-muted)]"> · WO {m.wo}</span> : null}</div>
                     <MatchLine m={m} where={where} />
+                    {m.state === "two_answers" && m.clash && (
+                      <div className="mt-1.5 flex flex-wrap gap-1.5" data-two-answers>
+                        {[m.clash.byName, m.clash.byId].map((a) => (
+                          <button key={a.id} type="button" disabled={!!busy} className={quiet}
+                            onClick={() => void run(`pick:${m.ownerId}:${a.id}`, async () => {
+                              const equipment = { assetId: a.id, tag: a.tag.replace(/\s*\(.*$/, "") };
+                              await setWorkOrderEquipment({ orgId: orgId!, projectId, projectName: name, ownerId: m.ownerId, title: m.title, equipment, unit: m.cls.unit, type: m.cls.type, actor, existing: data.edges });
+                              noteSaved(projectId, m.ownerId, { equipment, unit: m.cls.unit, type: m.cls.type });
+                            })}>
+                            {busy === `pick:${m.ownerId}:${a.id}` && <Loader2 className="w-3.5 h-3.5 animate-spin" />} {equipmentLabel(a)}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {m.listedAs && m.asset && m.tag && (
+                      <NameDiffers orgId={orgId!} m={m} canRename={canEditEquipment} busy={!!busy}
+                        onRename={() => void run(`rename:${m.ownerId}`, () => renameEquipment(m.asset!.id, m.tag!, userId))} />
+                    )}
                     <ClassLine c={m.cls} unit={(c) => (c ? unitName(unitOf(c)) : "")} type={(t) => typeLabel(t, data.book)} known={(t) => data.book.equipmentTypes.some((x) => x.code === t)} />
                   </div>
                   {editing !== m.ownerId && (
@@ -315,17 +339,52 @@ const chip = (t: string, tone: "emerald" | "amber" | "slate") => (
   <span className={`inline-block rounded px-1.5 py-px text-[10.5px] font-black uppercase tracking-wider ${tone === "emerald" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300" : tone === "amber" ? "bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}>{t}</span>
 );
 
+/** The registry lists the work order's equipment ID under another name
+ *  ("V-5" for the 5510.19 the work order calls V-7). Says so, shows what
+ *  each drawing prints beside that ID, and renames it in one tap. */
+function NameDiffers({ orgId, m, canRename, busy, onRename }: { orgId: string; m: WorkOrderMatch; canRename: boolean; busy: boolean; onRename: () => void }) {
+  const code = m.asset?.code ?? m.cls.code ?? "";
+  const [drawn, setDrawn] = useState<DrawnName[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    if (!code) return;
+    void drawnNamesForId(orgId, code).then((d) => { if (live) setDrawn(d); }).catch(() => { if (live) setDrawn([]); });
+    return () => { live = false; };
+  }, [orgId, code]);
+  const backed = !!m.tag && !!drawn?.some((d) => tagKey(d.tag) === tagKey(m.tag!));
+  return (
+    <div className="mt-1.5 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-2 text-[12.5px] text-amber-900 dark:text-amber-200 space-y-1.5" data-name-differs>
+      <div><b>{code}</b> is in the equipment list as <b>{m.listedAs}</b>. This work order calls it <b>{m.tag}</b>. It is matched by its equipment number.</div>
+      {drawn && drawn.length > 0 && (
+        <ul className="space-y-0.5">
+          {drawn.map((d) => (
+            <li key={`${d.documentId}|${d.tag}`} className="break-words">
+              <Link href={`/documents/${d.libraryId}?doc=${d.documentId}`} className="font-bold underline decoration-dotted underline-offset-2 hover:decoration-solid">{d.sheet}</Link> prints <b>{d.tag}</b>{d.name ? ` ${d.name}` : ""}
+            </li>
+          ))}
+        </ul>
+      )}
+      {/* A rename only on the drawings' word: some sheet prints this name beside this number. */}
+      {drawn && !backed && <div>No drawing on file prints {m.tag} beside {code}. Check the work order&apos;s name and its equipment number before changing the list.</div>}
+      {backed && (canRename
+        ? <button type="button" disabled={busy} onClick={onRename} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-amber-400 dark:border-amber-700 bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Rename it {m.tag} in the equipment list</button>
+        : <div className="text-[12px]">Only an admin can rename equipment.</div>)}
+    </div>
+  );
+}
+
 function MatchLine({ m, where }: { m: WorkOrderMatch; where: (a: RegistryAsset) => string }) {
   // Written as everywhere: "E-26 (5530.19) Debutanizer Trim Cooler".
-  const tag = m.asset ? <b className="text-[var(--color-text)]">{equipmentLabel(m.asset)}</b> : m.tag ? <b className="text-[var(--color-text)]">{m.tag}</b> : null;
+  const tag = m.asset ? <b className="text-[var(--color-text)]">{linkedLabel(m.asset, m.listedAs ? m.tag : null)}</b> : m.tag ? <b className="text-[var(--color-text)]">{m.tag}</b> : null;
   return (
     <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[var(--color-text-muted)]">
       {m.state === "none" && <>{chip("No equipment", "slate")}</>}
       {m.state === "no_tag" && <span>No tag in the name.</span>}
       {m.state === "linked" && <>{chip("Linked", "emerald")} {tag} {m.asset ? <span>· {where(m.asset)}</span> : <span>· not in the registry</span>}</>}
-      {m.state === "found" && <>{tag} <span>· in the registry, {m.asset ? where(m.asset) : ""}</span></>}
+      {m.state === "found" && <>{tag} <span>· in the registry, {m.asset ? where(m.asset) : ""}{m.byId ? ", found by its ID" : ""}</span></>}
       {m.state === "other_unit" && <>{tag} <span>· in the registry under {m.asset ? where(m.asset) : ""}</span></>}
       {m.state === "not_in_registry" && <>{tag} <span>· not in the registry, will be added under its unit</span></>}
+      {m.state === "two_answers" && m.clash && <span className="text-amber-800 dark:text-amber-300">Its name says <b>{equipmentLabel(m.clash.byName)}</b>. Its equipment number {m.cls.code ?? m.clash.byId.code} is <b>{equipmentLabel(m.clash.byId)}</b>. Pick the one it is on.</span>}
       {m.otherUnit && chip("Different unit", "amber")}
     </div>
   );

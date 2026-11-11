@@ -107,3 +107,15 @@ describe("how equipment is written", () => {
     expect(unitEquipment(r, ["55"], "trim cooler").map((a) => a.id)).toEqual(["a"]);
   });
 });
+
+describe("linked equipment on a work order that calls it by another name", () => {
+  it("same name: the registry's label", async () => {
+    const { linkedLabel } = await import("@/lib/equipmentPick");
+    expect(linkedLabel({ tag: "V-7", code: "5510.19", description: "Transmix Fractionator" }, "V-7")).toBe("V-7 (5510.19) Transmix Fractionator");
+    expect(linkedLabel({ tag: "V-7", code: "5510.19", description: null }, null)).toBe("V-7 (5510.19)");
+  });
+  it("another name: the work order's name, the ID, and how the list has it", async () => {
+    const { linkedLabel } = await import("@/lib/equipmentPick");
+    expect(linkedLabel({ tag: "V-5", code: "5510.19", description: "TRANSMIX UNIT 2 SPLITTER" }, "V-7")).toBe("V-7 (5510.19) · listed as V-5");
+  });
+});

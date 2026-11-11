@@ -86,3 +86,17 @@ export function buildAssetIndex<A extends MatchableAsset>(assets: A[], unitCodes
   };
   return { find, best: (c) => find(c)[0] ?? null, byId: (id) => byId.get(id) };
 }
+
+/** Which piece of equipment a tag read on a sheet is, among the ones that
+ *  share its name. A name repeats from unit to unit (three E-22s), so the
+ *  name alone never says: the sheet's own link to the registry does (drawn
+ *  from the ID printed beside the tag), then the sheet's unit. A sheet that
+ *  says neither is tied to none of them, never to whichever came first. */
+export function assetOnSheet<A extends { id: string; unit_code?: string | null }>(named: A[], linkedIds: ReadonlySet<string> | undefined, sheetUnits: readonly string[]): A | null {
+  if (!named.length) return null;
+  const linked = named.filter((a) => linkedIds?.has(a.id));
+  if (linked.length === 1) return linked[0];
+  if (named.length === 1) return named[0];
+  const inUnit = named.filter((a) => !!a.unit_code && sheetUnits.includes(a.unit_code));
+  return inUnit.length === 1 ? inUnit[0] : null;
+}

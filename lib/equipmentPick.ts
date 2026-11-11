@@ -30,6 +30,16 @@ export function equipmentLabel(a: Pick<PickAsset, "tag" | "code" | "description"
   return `${plainName(a.tag)}${id ? ` (${id})` : ""}${what ? ` ${what}` : ""}`;
 }
 
+/** How linked equipment reads on a work order. The registry's label, or,
+ *  when the work order calls it by another name (it was matched by its
+ *  ID), that name with the ID and how the list has it:
+ *  "V-7 (5510.19) · listed as V-5". */
+export function linkedLabel(a: Pick<PickAsset, "tag" | "code" | "description">, woTag: string | null | undefined): string {
+  if (!woTag?.trim() || nameKey(woTag) === nameKey(a.tag)) return equipmentLabel(a);
+  const id = a.code?.trim();
+  return `${plainName(woTag)}${id ? ` (${id})` : ""} · listed as ${plainName(a.tag)}`;
+}
+
 /** What a work order's name says the equipment is: "V-7 - Transmix
  *  Fractionator" is a Transmix Fractionator. Empty when the name doesn't
  *  lead with the tag. */

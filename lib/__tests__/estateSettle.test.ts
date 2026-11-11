@@ -109,3 +109,30 @@ describe("where a tag sits on a sheet", () => {
     expect(sheetQuarter(null, 0.4)).toBe("");
   });
 });
+
+describe("which same-named equipment a tag on a sheet is", () => {
+  // The site's three E-22s.
+  const e22 = [
+    { id: "tm", tag: "E-22", unit_code: "55" },
+    { id: "lru", tag: "E-22", unit_code: "56" },
+    { id: "kht", tag: "E-22", unit_code: "30" },
+  ];
+  it("the one the sheet itself is linked to (by the ID printed beside the tag)", async () => {
+    const { assetOnSheet } = await import("@/lib/find/assetMatch");
+    expect(assetOnSheet(e22, new Set(["lru"]), ["55"])?.id).toBe("lru");
+  });
+  it("else the one in the sheet's unit", async () => {
+    const { assetOnSheet } = await import("@/lib/find/assetMatch");
+    expect(assetOnSheet(e22, undefined, ["30"])?.id).toBe("kht");
+  });
+  it("else none of them: never whichever came first", async () => {
+    const { assetOnSheet } = await import("@/lib/find/assetMatch");
+    expect(assetOnSheet(e22, undefined, [])).toBeNull();
+    expect(assetOnSheet(e22, new Set(["other"]), ["20"])).toBeNull();
+  });
+  it("a name only one piece of equipment has is that one", async () => {
+    const { assetOnSheet } = await import("@/lib/find/assetMatch");
+    expect(assetOnSheet([e22[0]], undefined, [])?.id).toBe("tm");
+    expect(assetOnSheet([], undefined, ["55"])).toBeNull();
+  });
+});

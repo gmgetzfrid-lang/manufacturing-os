@@ -161,6 +161,9 @@ const when = (t: number | null, tz: string) => (t == null ? "-" : `${fmtInTz(t, 
 const hatch = (a: string, b: string) => ({ background: `repeating-linear-gradient(135deg, ${a} 0 4px, ${b} 4px 8px)` });
 const WAIT = { ...hatch("#fde68a", "#fff7d6"), border: "1px solid #f59e0b" };
 const READY = { ...hatch("#bfdbfe", "#eff6ff"), border: "1px solid #60a5fa" };
+/** On a work order's own line: a shift between its first and last work with
+ *  nothing logged on any of its activities (its "shifts waited"). */
+const ORDER_WAIT = hatch("#94a3b8", "#f1f5f9");
 
 function Legend({ items }: { items: Array<[React.CSSProperties, string]> }) {
   return (
@@ -198,7 +201,7 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
         <Chip>Sat in progress: <b>{t.waitedSteps}</b> activities, <b>{t.waitedShifts}</b> shifts</Chip>
         <Chip>Ready but not started: <b>{t.readySteps}</b> activities, <b>{t.readyShifts}</b> shifts</Chip>
       </div>
-      <Legend items={[[{ background: "#334155" }, "Progress logged that shift"], [WAIT, "In progress, nothing logged"], [READY, "Ready, not started: its crew was elsewhere"], [{ background: "#cbd5e1", height: 4 }, "Plan"], [{ borderLeft: "2px solid #dc2626", width: 2 }, "Planned finish"]]} />
+      <Legend items={[[{ background: "#334155" }, "Progress logged that shift"], [ORDER_WAIT, "Work order open, nothing logged that shift"], [WAIT, "Activity in progress, nothing logged"], [READY, "Ready, not started: its crew was elsewhere"], [{ background: "#cbd5e1", height: 4 }, "Plan"], [{ borderLeft: "2px solid #dc2626", width: 2 }, "Planned finish"]]} />
       <div className="overflow-auto max-h-[75vh] rounded-xl border border-[var(--color-border)]">
         <table className="border-separate border-spacing-0 w-max text-[12px]">
           <thead className="sticky top-0 z-[4] bg-[var(--color-surface-2)]">
@@ -226,7 +229,7 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
                     <td className="p-0 relative"><div className="relative h-11" style={{ width }}>
                       <Grid shifts={work.shifts} />
                       {o.planStart != null && o.planFinish != null && <i className="absolute top-1.5 h-1 rounded bg-slate-300" style={{ left: x(o.planStart), width: Math.max(2, x(o.planFinish) - x(o.planStart)) }} />}
-                      {ow?.cells.map((c, i) => c && <i key={i} className="absolute top-4 h-2.5 rounded-sm" style={{ left: i * PX + 1, width: PX - 2, ...(c === "work" ? { background: "#334155" } : hatch("#94a3b8", "#f1f5f9")) }} />)}
+                      {ow?.cells.map((c, i) => c && <i key={i} className="absolute top-4 h-2.5 rounded-sm" style={{ left: i * PX + 1, width: PX - 2, ...(c === "work" ? { background: "#334155" } : ORDER_WAIT) }} title={c === "work" ? "Progress logged that shift" : "Work order open, nothing logged that shift"} />)}
                       {line}
                     </div></td>
                   </tr>

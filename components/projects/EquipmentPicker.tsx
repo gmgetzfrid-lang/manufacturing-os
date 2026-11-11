@@ -13,7 +13,7 @@
 //     anyone else asks an admin, and the ask stays on the work order until
 //     it's answered.
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Wrench, Loader2, Plus, Search, Check, AlertTriangle, Send, X, Ban } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
@@ -22,10 +22,10 @@ import { useToast } from "@/components/providers/ToastProvider";
 import { useEquipmentScope } from "@/components/projects/EquipmentScope";
 import { useEquipmentRegistry, noteEquipmentSaved } from "@/components/projects/equipmentData";
 import { equipmentOf, EQUIP_NONE } from "@/lib/findings";
-import { setupOrders, proposeTag, setProjectUnit, setWorkOrderEquipment, addToRegistry, requestEquipment, clearEquipmentRequest, unitName, EQUIPMENT_CHANGED, type UnitChoice } from "@/lib/projectEquipment";
+import { setupOrders, proposeTag, setProjectUnit, setWorkOrderEquipment, addToRegistry, requestEquipment, clearEquipmentRequest, unitName, drawnNamesForId, renameEquipment, EQUIPMENT_CHANGED, type UnitChoice, type DrawnName } from "@/lib/projectEquipment";
 import { invalidateAssetCache } from "@/lib/assets";
 import { searchFilter } from "@/lib/fuzzySearch";
-import { nameKey, plainName, scheduleId, checkNew, unitEquipment, sameNameElsewhere, requestOf, equipmentLabel, descriptionFrom, type PickAsset } from "@/lib/equipmentPick";
+import { nameKey, plainName, scheduleId, sameEquipmentId, linkedLabel, checkNew, unitEquipment, sameNameElsewhere, requestOf, equipmentLabel, descriptionFrom, type PickAsset } from "@/lib/equipmentPick";
 import { splitTag } from "@/lib/codebook";
 
 const btn = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[13px] font-bold px-3.5 h-10 shadow-sm disabled:opacity-50";
@@ -67,7 +67,7 @@ export function EquipmentField({ milestone, milestones, compact }: { milestone: 
   const none = (milestone.attributes ?? {})[EQUIP_NONE] === true;
   const ask = requestOf(milestone) ?? requestOf(ownerOf(milestone, milestones));
   const asset = eq?.assetId ? data?.registry.find((a) => a.id === eq.assetId) : undefined;
-  const label = asset ? equipmentLabel(asset)
+  const label = asset ? linkedLabel(asset, eq?.tag)
     : ask ? `${ask.tag} · asked for`
       : eq ? `${eq.tag} · not linked`
         : none ? "No equipment" : "Equipment";
@@ -114,10 +114,33 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
   // What the work order's name says it's on (E-12 - Transmix Feed…).
   const guess = useMemo(() => ask?.tag ?? proposeTag(owner, byId), [ask, owner, byId]);
   const list = useMemo(() => unitEquipment(registry, unitCodes, query), [registry, unitCodes, query]);
-  const guessHit = guess ? registry.find((a) => a.unitCode != null && unitCodes.includes(a.unitCode) && nameKey(a.tag) === nameKey(guess)) : undefined;
+  // The plant's number for the work order's own equipment, from the
+  // schedule's Equipment column. The ID decides: the equipment with that ID
+  // is the work order's, whatever name the list has it under.
+  const fromSchedule = useMemo(() => scheduleId(saveOn, byId) ?? scheduleId(owner, byId), [saveOn, owner, byId]);
+  const idHit = useMemo(() => (fromSchedule ? registry.find((a) => sameEquipmentId(a.code, fromSchedule)) : undefined), [fromSchedule, registry]);
+  // By its name, in the project's units. Two pieces of one name in a unit
+  // (two V-5s): the ID says which.
+  const guessHit = guess
+    ? (idHit && nameKey(idHit.tag) === nameKey(guess) ? idHit : registry.find((a) => a.unitCode != null && unitCodes.includes(a.unitCode) && nameKey(a.tag) === nameKey(guess)))
+    : undefined;
+  const idNameDiffers = !!idHit && !!guess && nameKey(idHit.tag) !== nameKey(guess);
+  // Its name is one registered piece and its number another: a person picks.
+  const twoAnswers = !!idHit && !!guessHit && idHit.id !== guessHit.id;
+  const [drawnFor, setDrawnFor] = useState<{ id: string; rows: DrawnName[] } | null>(null);
+  useEffect(() => {
+    let live = true;
+    if (!idNameDiffers || !fromSchedule) return;
+    void drawnNamesForId(scope.orgId, fromSchedule).then((rows) => { if (live) setDrawnFor({ id: fromSchedule, rows }); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [idNameDiffers, fromSchedule, scope.orgId]);
+  // What the drawings print beside that number (read: the answer is in).
+  const drawnRead = !!drawnFor && drawnFor.id === fromSchedule;
+  const drawn = drawnRead ? drawnFor!.rows : [];
+  const drawnBacks = !!guess && drawn.some((d) => nameKey(d.tag) === nameKey(guess));
   // The name to add or ask for: what's typed when it reads as a tag, else the guess.
   const typedTag = query.trim() && splitTag(query.trim()) ? query.trim().toUpperCase() : null;
-  const want = typedTag ?? (guessHit ? null : guess);
+  const want = typedTag ?? (guessHit || idHit ? null : guess);
   const wantHere = want ? registry.some((a) => a.unitCode != null && unitCodes.includes(a.unitCode) && nameKey(a.tag) === nameKey(want)) : false;
   const elsewhere = want ? sameNameElsewhere(want, registry, unitCodes) : [];
 
@@ -133,10 +156,11 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
   };
   const titleOf = (m: Milestone) => `${m.workOrderRef ? `WO ${m.workOrderRef} · ` : ""}${m.name}`;
   const link = (a: PickAsset) => run(a.id, async () => {
-    const equipment = { assetId: a.id, tag: plainName(a.tag) };
+    // Found by its ID under another name: the work order keeps the name it uses.
+    const equipment = { assetId: a.id, tag: idHit && a.id === idHit.id && idNameDiffers && !twoAnswers && guess ? guess : plainName(a.tag) };
     await setWorkOrderEquipment({ orgId: scope.orgId, projectId: scope.projectId, projectName: scope.projectName, ownerId: saveOn.id!, title: titleOf(saveOn), equipment, unit: a.unitCode ?? undefined, actor, existing: data?.edges });
     noteEquipmentSaved(scope.projectId, saveOn.id!, { equipment, unit: a.unitCode ?? undefined });
-    done(`${titleOf(saveOn)} is on ${equipmentLabel(a)}`);
+    done(`${titleOf(saveOn)} is on ${linkedLabel(a, equipment.tag)}`);
   });
   const setNone = () => run("none", async () => {
     await setWorkOrderEquipment({ orgId: scope.orgId, projectId: scope.projectId, projectName: scope.projectName, ownerId: saveOn.id!, title: titleOf(saveOn), equipment: null, actor, existing: data?.edges });
@@ -157,9 +181,14 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
     if (saveOn.id !== owner.id) await clearEquipmentRequest(owner.id!, scope.userId);
     done(isAdmin ? "Turned down" : "Ask withdrawn");
   });
-  // The plant's number for the work order's own equipment, from the
-  // schedule's Equipment column; a different name typed gets no number.
-  const fromSchedule = useMemo(() => scheduleId(saveOn, byId) ?? scheduleId(owner, byId), [saveOn, owner, byId]);
+  const rename = () => run("rename", async () => {
+    if (!idHit || !guess) return;
+    await renameEquipment(idHit.id, guess, scope.userId ?? "");
+    invalidateAssetCache();
+    await reload();
+    window.dispatchEvent(new CustomEvent(EQUIPMENT_CHANGED));
+  });
+  // A different name typed gets no number.
   const idFor = (tag: string) => (fromSchedule && guess && nameKey(tag) === nameKey(guess) ? fromSchedule : "");
   const startAdd = (tag: string) => {
     const code = idFor(tag);
@@ -290,7 +319,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
       <ModalBody className="space-y-3">
         {isStep && <p className="text-[12px] text-[var(--color-text-muted)]">For the whole work order: every step on it is on the same equipment.</p>}
         <p className="text-[12px] text-[var(--color-text-muted)]">
-          From {units.map(unitName).join(" and ")}{current ? <> · now <b className="text-[var(--color-text)]">{(() => { const a = current.assetId ? registry.find((x) => x.id === current.assetId) : undefined; return a ? equipmentLabel(a) : `${current.tag}${current.assetId ? "" : " (not linked)"}`; })()}</b></> : null}
+          From {units.map(unitName).join(" and ")}{current ? <> · now <b className="text-[var(--color-text)]">{(() => { const a = current.assetId ? registry.find((x) => x.id === current.assetId) : undefined; return a ? linkedLabel(a, current.tag) : `${current.tag}${current.assetId ? "" : " (not linked)"}`; })()}</b></> : null}
         </p>
         {ask && (
           <div className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[12.5px] text-amber-900 dark:text-amber-200 space-y-2">
@@ -305,6 +334,36 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
           <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="V-7, 5510.19 or a word" aria-label="Find equipment" className={`${field} pl-9`} />
         </div>
+        {!query && idHit && (!guessHit || guessHit.id !== idHit.id) && (
+          <div className="space-y-2" data-id-hit>
+            <button type="button" disabled={!!busy} onClick={() => void link(idHit)}
+              className="w-full flex items-center gap-2 rounded-lg border-2 border-[var(--color-accent)] bg-[var(--color-accent-soft)] px-3 min-h-12 text-left">
+              <span className="text-[10.5px] font-black uppercase tracking-wider text-[var(--color-accent)] shrink-0">From its ID</span>
+              <AssetText a={idHit} />
+              {busy === idHit.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4 text-[var(--color-accent)]" />}
+            </button>
+            {twoAnswers && guessHit && (
+              <p className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2.5 text-[12.5px] text-amber-900 dark:text-amber-200" data-two-answers>
+                The work order&apos;s name says <b>{equipmentLabel(guessHit)}</b>. Its equipment number <b className="font-mono">{fromSchedule}</b> is <b>{equipmentLabel(idHit)}</b>. One of the two is wrong on the work order: pick the one it is on.
+              </p>
+            )}
+            {idNameDiffers && !twoAnswers && (
+              <div className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2.5 space-y-1.5 text-[12.5px] text-amber-900 dark:text-amber-200">
+                <p>The work order&apos;s equipment number is <b className="font-mono">{fromSchedule}</b>. The equipment list has that number as <b>{plainName(idHit.tag)}</b>; this work order calls it <b>{guess}</b>.</p>
+                {drawn.length > 0 && (
+                  <ul className="space-y-0.5">
+                    {drawn.map((d) => <li key={`${d.documentId}|${d.tag}`} className="break-words"><b>{d.sheet}</b> prints <b>{d.tag}</b>{d.name ? ` ${d.name}` : ""}</li>)}
+                  </ul>
+                )}
+                {/* A rename only on the drawings' word: some sheet prints this name beside this number. */}
+                {drawnRead && !drawnBacks && <p>No drawing on file prints {guess} beside {fromSchedule}. Check the work order&apos;s name and its equipment number before changing the list.</p>}
+                {drawnBacks && (isAdmin
+                  ? <button type="button" disabled={!!busy} onClick={() => void rename()} className={quiet}>{busy === "rename" && <Loader2 className="w-4 h-4 animate-spin" />} Rename it {guess} in the equipment list</button>
+                  : <p className="text-[12px]">An admin can rename it in the equipment list.</p>)}
+              </div>
+            )}
+          </div>
+        )}
         {!query && guessHit && (
           <button type="button" disabled={!!busy} onClick={() => void link(guessHit)}
             className="w-full flex items-center gap-2 rounded-lg border-2 border-[var(--color-accent)] bg-[var(--color-accent-soft)] px-3 min-h-12 text-left">

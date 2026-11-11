@@ -126,3 +126,91 @@ describe("Setup matching with the site code", () => {
     expect(undecided(matchWorkOrders(setupOrders(saved), saved, registry, ["56"], book))).toHaveLength(0);
   });
 });
+
+describe("the equipment ID decides, whatever name the registry lists it under", () => {
+  const ms = [
+    m("v7", "V-7 - Transmix Fractionator", { Equipment: "5510.19", "Work Order": "301235" }),
+    m("pipe", "V-7 - Overhead and Bottoms Piping", { Equipment: "5510.19", "Work Order": "310989" }),
+  ];
+  const registry = [
+    { id: "crude-v7", tag: "V-7", unitCode: "20", code: "2010.7" },
+    { id: "kht-v7", tag: "V-7", unitCode: "30", code: "3010.03" },
+    { id: "tmx-v5", tag: "V-5", unitCode: "55", code: "5510.09" },
+    { id: "tmx-19", tag: "V-5", unitCode: "55", code: "5510.19" },
+  ];
+  it("5510.19 is found though the registry calls it V-5, and says so", () => {
+    const r = matchWorkOrders(setupOrders(ms), ms, registry, ["55"], book);
+    for (const id of ["v7", "pipe"]) {
+      expect(r.find((x) => x.ownerId === id)).toMatchObject({ tag: "V-7", state: "found", otherUnit: false, byId: true, listedAs: "V-5", asset: { id: "tmx-19" } });
+    }
+  });
+  it("renamed in the registry: found, nothing more to say", () => {
+    const fixed = registry.map((a) => (a.id === "tmx-19" ? { ...a, tag: "V-7" } : a));
+    const v7 = matchWorkOrders(setupOrders(ms), ms, fixed, ["55"], book).find((x) => x.ownerId === "v7")!;
+    expect(v7).toMatchObject({ state: "found", asset: { id: "tmx-19" } });
+    expect(v7.listedAs).toBeUndefined();
+  });
+  it("no ID on the work order: the name looks for it, as before", () => {
+    const bare = [m("v7", "V-7 - Transmix Fractionator", { "Work Order": "301235" })];
+    const v7 = matchWorkOrders(setupOrders(bare), bare, registry, ["55"], book).find((x) => x.ownerId === "v7")!;
+    expect(v7.byId).toBeUndefined();
+    expect(v7.asset?.id).not.toBe("tmx-19");
+  });
+  it("linked by its ID under the work order's own name: still says how the registry lists it", () => {
+    const saved = ms.map((x) => (x.id === "v7" ? { ...x, attributes: { ...x.attributes, equipment_tag: "V-7", equipment_asset_id: "tmx-19" } } : x));
+    const v7 = matchWorkOrders(setupOrders(saved), saved, registry, ["55"], book).find((x) => x.ownerId === "v7")!;
+    expect(v7).toMatchObject({ state: "linked", listedAs: "V-5", asset: { id: "tmx-19" } });
+  });
+});
+
+describe("a work order whose name and equipment ID are two different pieces", () => {
+  const registry = [
+    { id: "h1", tag: "H-1", unitCode: "55", code: "5535.01" },
+    { id: "h2", tag: "H-2", unitCode: "55", code: "5535.02" },
+  ];
+  const ms = [
+    m("a", "Shutdown-Required Fire Eye Cleaning at H-1", { Equipment: "5535.01", "Work Order": "300823" }),
+    m("b", "Shutdown-Required Fire Eye Cleaning at H-1", { Equipment: "5535.02", "Work Order": "300824" }),
+  ];
+  it("neither is taken: a person picks, and it stays to do", () => {
+    const r = matchWorkOrders(setupOrders(ms), ms, registry, ["55"], book);
+    expect(r.find((x) => x.ownerId === "a")).toMatchObject({ state: "found", asset: { id: "h1" } });
+    const b = r.find((x) => x.ownerId === "b")!;
+    expect(b).toMatchObject({ state: "two_answers", asset: null, clash: { byId: { id: "h2" }, byName: { id: "h1" } } });
+    expect(b.listedAs).toBeUndefined();
+    expect(undecided(r).map((x) => x.ownerId)).toContain("b");
+  });
+  it("picked: linked, nothing more asked", () => {
+    const saved = ms.map((x) => (x.id === "b" ? { ...x, attributes: { ...x.attributes, equipment_tag: "H-2", equipment_asset_id: "h2" } } : x));
+    const b = matchWorkOrders(setupOrders(saved), saved, registry, ["55"], book).find((x) => x.ownerId === "b")!;
+    expect(b).toMatchObject({ state: "linked", asset: { id: "h2" } });
+    expect(b.clash).toBeUndefined();
+  });
+});
+
+describe("a name kept with nothing to link it to, once the registry can answer", () => {
+  const ms = [m("v7", "V-7 - Transmix Fractionator", { Equipment: "5510.19", "Work Order": "301235", equipment_tag: "V-7" })];
+  it("nothing in the registry: decided, as before", () => {
+    const r = matchWorkOrders(setupOrders(ms), ms, [{ id: "crude-v7", tag: "V-7", unitCode: "20", code: "2010.7" }], ["55"], book);
+    expect(r[0]).toMatchObject({ state: "linked", asset: null });
+  });
+  it("its ID is in the registry now: asked again, found by its ID", () => {
+    const r = matchWorkOrders(setupOrders(ms), ms, [{ id: "tmx-19", tag: "V-5", unitCode: "55", code: "5510.19" }], ["55"], book);
+    expect(r[0]).toMatchObject({ state: "found", byId: true, listedAs: "V-5", asset: { id: "tmx-19" } });
+    expect(undecided(r)).toHaveLength(1);
+  });
+});
+
+describe("two pieces of one name in a unit", () => {
+  const registry = [
+    { id: "v5-wrong", tag: "V-5", unitCode: "55", code: "5510.19" },
+    { id: "v5", tag: "V-5", unitCode: "55", code: "5510.09" },
+  ];
+  const ms = [m("s", "V-5 - Transmix Unit 2 Splitter", { Equipment: "5510.09", "Work Order": "310256" })];
+  it("the ID says which: found, no question", () => {
+    const r = matchWorkOrders(setupOrders(ms), ms, registry, ["55"], book);
+    expect(r[0]).toMatchObject({ state: "found", byId: true, asset: { id: "v5" } });
+    expect(r[0].clash).toBeUndefined();
+    expect(r[0].listedAs).toBeUndefined();
+  });
+});
