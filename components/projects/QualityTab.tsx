@@ -45,7 +45,8 @@ import {
 } from "@/lib/turnover";
 import type { SegmentedItem } from "@/lib/checklistEngine";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
-import { projectFileHome, uploadProjectFile, type ProjectFileHome } from "@/lib/projectUpload";
+import { uploadProjectFile } from "@/lib/projectUpload";
+import ProjectFilePlace, { useProjectFileHome } from "@/components/projects/ProjectFilePlace";
 import UndoToastHost from "@/components/projects/UndoToastHost";
 import { useUndoableActions } from "@/components/projects/useUndoableActions";
 
@@ -176,28 +177,30 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onC
 /** A new checklist: upload the file right here (it goes into the project's
  *  documents) or find one already in document control; the AI reads it
  *  into items; you check them and save. */
-export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone, onCancel, setErr, kindDefault = "pssr" }: {
+export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone, onCancel, setErr, kindDefault = "pssr", part }: {
   orgId: string; projectId: string; projectName?: string; actor: Actor;
   onDone: () => void; onCancel: () => void; setErr: (m: string | null) => void;
   kindDefault?: ChecklistKind;
+  /** The phase it is for, when there is one: it goes in the file's number. */
+  part?: string | null;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Array<{ id: string; label: string }>>([]);
   const [doc, setDoc] = useState<{ id: string; label: string } | null>(null);
   const [kind, setKind] = useState<ChecklistKind>(kindDefault);
-  // Upload: where the project's files go (picked once when it has no home yet).
-  const [home, setHome] = useState<ProjectFileHome | null>(null);
-  const [lib, setLib] = useState("");
+  // Upload: where the project's files go. Asked the first time, never
+  // guessed: nothing uploads until a library and folder are picked.
+  const { home, setHome } = useProjectFileHome(orgId, projectId);
   const [uploading, setUploading] = useState(false);
   const fileRef = React.useRef<HTMLInputElement | null>(null);
-  useEffect(() => { let live = true; void projectFileHome(orgId, projectId).then((h) => { if (live) { setHome(h); setLib(h.libraryId ?? h.libraries[0]?.id ?? ""); } }); return () => { live = false; }; }, [orgId, projectId]);
   const upload = async (file: File | null | undefined) => {
     if (!file) return;
+    if (!home?.place) { setErr("Pick where this project's files go first."); return; }
     if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") { setErr("Upload the checklist as a PDF (in Word or Excel: File › Save As › PDF)."); return; }
     setUploading(true); setErr(null);
     try {
       const d = await uploadProjectFile({ orgId, projectId, projectName: projectName ?? home?.name ?? "Project", file, prefix: kind === "pssr" ? "PSSR" : kind === "mi" ? "MI" : kind === "qaqc" ? "QAQC" : "CHECKLIST",
-        title: file.name.replace(/\.pdf$/i, ""), libraryId: lib || null, actorUserId: actor.uid, actorEmail: actor.email });
+        title: file.name.replace(/\.pdf$/i, ""), part, actorUserId: actor.uid, actorEmail: actor.email });
       const picked = { id: d.documentId, label: d.label };
       setDoc(picked);
       await read(picked);
@@ -269,18 +272,14 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
           {!doc && (
             <div className="rounded-xl border-2 border-dashed border-[var(--color-accent)]/50 bg-[var(--color-surface)] p-3 flex items-center gap-3 flex-wrap">
               <input ref={fileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={(e) => void upload(e.target.files?.[0])} />
-              <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading || reading || (!!home && !home.libraryId && !lib)}
+              <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading || reading || !home?.place}
                 className="h-9 inline-flex items-center gap-1.5 px-3.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-black disabled:opacity-50">
                 {uploading || reading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />} {uploading ? "Uploading…" : reading ? "Reading it…" : `Upload the ${kind === "pssr" ? "PSSR" : "checklist"} (PDF)`}
               </button>
-              <span className="text-[12px] text-[var(--color-text-muted)] flex-1 min-w-48">Or drop it here. It&apos;s saved to this project&apos;s documents, then read into items for you to check.</span>
-              {home && !home.libraryId && (
-                <label className="flex items-center gap-1.5 text-[12px] font-bold text-[var(--color-text)]">Save in
-                  <select value={lib} onChange={(e) => setLib(e.target.value)} className="h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
-                    {home.libraries.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-                  </select>
-                </label>
-              )}
+              <span className="text-[12px] text-[var(--color-text-muted)] flex-1 min-w-48">Or drop it here. It&apos;s filed where you pick below, then read into items for you to check.</span>
+              <div className="basis-full">
+                <ProjectFilePlace orgId={orgId} projectId={projectId} uid={actor.uid} canManage home={home} onChange={setHome} what={kind === "pssr" ? "the PSSR" : "the checklist"} />
+              </div>
             </div>
           )}
           <div className="flex items-center gap-2 flex-wrap">

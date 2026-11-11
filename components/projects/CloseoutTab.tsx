@@ -24,6 +24,7 @@ import type { ProjectStateSnapshot } from "@/lib/projectHealth";
 import { listChecklists, listChecklistItems, computeChecklistProgress, type Checklist } from "@/lib/checklists";
 import { listTurnoverItems, seedTurnoverItems, addTurnoverItem, updateTurnoverItem, attachTurnoverDocument, reviewTurnoverItem, type TurnoverItem } from "@/lib/turnover";
 import { uploadProjectFile, projectFileHome, type ProjectFileHome } from "@/lib/projectUpload";
+import ProjectFilePlace from "@/components/projects/ProjectFilePlace";
 import { loadCloseoutSettings, saveCloseoutSettings, type CloseoutSettings } from "@/lib/closeoutSettings";
 import { workSummary, vsPlanWords } from "@/lib/closeoutStatus";
 import { phaseStats, chartKey, shiftLabel, behindAt, noScheduleWords, slipWords, slipStepLine, type CostLine, type CostEntry, type SlipStep } from "@/lib/phaseReport";
@@ -78,7 +79,6 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   const [phasePick, setPhasePick] = useState<string | null>(null);
   // Where attached files are saved: the project's library, else one picked here.
   const [home, setHome] = useState<ProjectFileHome | null>(null);
-  const [lib, setLib] = useState("");
   // The shift meetings' head counts, and each company's bid (lib/manpower).
   const [records, setRecords] = useState<Map<string, ShiftRecord> | null>(null);
   const mp = useManpowerSettings(projectId);
@@ -293,24 +293,19 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
               detail={!items ? "Checking…" : items.length === 0 ? "No documents set for this job yet." : `${inCount} of ${required.length} required in · you pick what this job needs`}>
               {items && (
                 <div className="mt-2 rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
-                  {canManage && home && !home.libraryId && items.some((i) => i.required && (i.status === "open" || i.status === "rejected")) && (
-                    <label className="px-3 py-2 flex items-center gap-2 flex-wrap text-[12.5px] bg-[var(--color-surface-2)]/40">
-                      <span className="font-bold text-[var(--color-text)]">Attached files are saved in</span>
-                      <select value={lib} onChange={(e) => setLib(e.target.value)} aria-label="Library for attached files"
-                        className={`h-8 rounded-lg border bg-[var(--color-surface)] px-2 text-[12.5px] ${lib ? "border-[var(--color-border-strong)]" : "border-orange-400"}`}>
-                        <option value="">Pick a library</option>
-                        {home.libraries.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-                      </select>
-                      <span className="text-[11.5px] text-[var(--color-text-muted)]">asked once: the project&rsquo;s files go there from now on</span>
-                    </label>
+                  {/* Where attached files go: asked once, picked by the person, changeable here. */}
+                  {home && items.length > 0 && (
+                    <div className="px-3 py-2 bg-[var(--color-surface-2)]/40">
+                      <ProjectFilePlace orgId={orgId} projectId={projectId} uid={uid} canManage={canManage} home={home} onChange={setHome} />
+                    </div>
                   )}
                   {items.map((it) => (
                     <TurnoverRow key={it.id} it={it} canManage={canManage} busy={busy === it.id}
                       onRequired={() => void run(it.id, () => updateTurnoverItem({ item: it, patch: { required: !it.required }, actor }))}
                       onAccept={() => void run(it.id, () => reviewTurnoverItem({ item: it, status: "accepted", actor }))}
                       onFile={(file) => void run(it.id, async () => {
-                        if (home && !home.libraryId && !lib) return { ok: false, error: "Pick where attached files are saved first (above the list)." };
-                        const d = await uploadProjectFile({ orgId, projectId, projectName, file, prefix: "TURNOVER", title: `${it.name} - ${file.name.replace(/\.[a-z0-9]+$/i, "")}`, libraryId: lib || null, actorUserId: uid, actorEmail: userEmail });
+                        if (!home?.place) return { ok: false, error: "Pick where this project's files go first (above the list)." };
+                        const d = await uploadProjectFile({ orgId, projectId, projectName, file, prefix: "TURNOVER", title: `${it.name} - ${file.name.replace(/\.[a-z0-9]+$/i, "")}`, actorUserId: uid, actorEmail: userEmail });
                         return attachTurnoverDocument({ item: it, documentId: d.documentId, documentLabel: d.label, actor });
                       })} />
                   ))}
@@ -415,11 +410,12 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
 
       {uploading && (
         <Modal onClose={() => setUploading(null)} size="lg">
-          <ModalHeader icon={UploadCloud} title={uploading === "all" ? "Upload the PSSR" : `Upload ${phases.find((p) => p.id === uploading)?.name ?? "the phase"}'s PSSR`} subtitle="Saved to this project's documents, then read into checklist items. You check them before anything is kept." onClose={() => setUploading(null)} />
+          <ModalHeader icon={UploadCloud} title={uploading === "all" ? "Upload the PSSR" : `Upload ${phases.find((p) => p.id === uploading)?.name ?? "the phase"}'s PSSR`} subtitle="Filed where you pick, then read into checklist items. You check them before anything is kept." onClose={() => setUploading(null)} />
           <ModalBody className="!p-0">
             {err && <div role="alert" className="px-4 pt-3 text-[12.5px] font-semibold text-rose-700 dark:text-rose-400">{err}</div>}
             <NewChecklistFlow orgId={orgId} projectId={projectId} projectName={projectName} actor={actor}
-              onDone={() => { const forPhase = uploading; setUploading(null); void tieNewPssr(forPhase); }} onCancel={() => setUploading(null)} setErr={setErr} kindDefault="pssr" />
+              part={uploading === "all" ? null : phases.find((p) => p.id === uploading)?.name ?? null}
+              onDone={() => { const forPhase = uploading; setUploading(null); void tieNewPssr(forPhase); void projectFileHome(orgId, projectId).then(setHome).catch(() => undefined); }} onCancel={() => setUploading(null)} setErr={setErr} kindDefault="pssr" />
           </ModalBody>
         </Modal>
       )}
