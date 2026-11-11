@@ -83,3 +83,15 @@ describe("folderAsTypeName", () => {
     expect(folderAsTypeName("Isometrics")).toBe("Isometrics");
   });
 });
+
+describe("a sheet saved on the end of a number", () => {
+  const sheets = [
+    ...Array.from({ length: 6 }, (_, i) => ({ number: `3002-D 1086-${i + 8}`, topFolder: "P&ID's" })),
+    { number: "5503-D 1000", topFolder: "PFD's" },
+  ];
+  it("is said as the sheet, not left unexplained", () => {
+    const r = learnDrawingNumbers(sheets, book)!;
+    expect(r.examples.find((x) => x.number === "3002-D 1086-8")).toMatchObject({ serial: "1086", sheet: "8" });
+    expect(r.examples.find((x) => x.number === "5503-D 1000")).toMatchObject({ serial: "1000", sheet: null });
+  });
+});

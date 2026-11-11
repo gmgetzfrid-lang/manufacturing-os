@@ -98,9 +98,12 @@ export default function CodebookLearn({ orgId, uid, book, canWrite, onChanged, o
               </p>
               <ul className="mt-2 space-y-0.5">
                 {best.learned.examples.map((x) => (
-                  <li key={x.number} className="break-words"><b className="font-mono">{x.number}</b>: {x.unitLabel} ({x.unit}), type {x.type}, size {x.size}, number {x.serial}</li>
+                  <li key={x.number} className="break-words"><b className="font-mono">{x.number}</b>: {x.unitLabel} ({x.unit}), type {x.type}, size {x.size}, number {x.serial}{x.sheet ? <>, <b>sheet {x.sheet}</b></> : null}</li>
                 ))}
               </ul>
+              {best.learned.examples.some((x) => x.sheet) && (
+                <p className="mt-1 text-[12px] text-[var(--color-text-muted)]">The digits after the last dash are the sheet, saved on the end of the number. Name check in a library&rsquo;s Health panel moves them into the sheet field.</p>
+              )}
               <ul className="mt-2 space-y-0.5">
                 {best.learned.types.map((t) => (
                   <li key={t.code}>Type <b className="font-mono">{t.code}</b>: {t.count} drawing{t.count === 1 ? "" : "s"}{t.folder ? `, ${t.inFolder === t.count ? "all" : `${t.inFolder}`} under ${t.folder}` : ""}{t.known ? `. Already named ${t.known}.` : t.label ? <>. Named <b>{t.label}</b>.</> : ". Filed in more than one place: name it in the Drawings tab."}</li>

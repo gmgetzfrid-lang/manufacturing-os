@@ -24,7 +24,9 @@ export interface LearnedNumbering {
   segments: DrawingSegment[];
   /** Numbers that read as the pattern, of the numbers looked at. */
   fit: number; total: number;
-  examples: Array<{ number: string; unit: string; unitLabel: string; type: string; size: string; serial: string }>;
+  /** `sheet`: the sheet number saved on the end of the number
+   *  ("3002-D 1086-13" is drawing 1086, sheet 13), when there is one. */
+  examples: Array<{ number: string; unit: string; unitLabel: string; type: string; size: string; serial: string; sheet: string | null }>;
   types: LearnedType[];
   misses: string[];
 }
@@ -70,7 +72,10 @@ export function learnDrawingNumbers(samples: NumberSample[], book: Codebook): Le
   }).sort((a, b) => b.count - a.count);
   const seen = new Set<string>();
   const examples = hits.filter(({ m }) => { const k = `${m[1]}${m[2]}`; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 4)
-    .map(({ s, m }) => ({ number: s.number.trim(), unit: m[1], unitLabel: unit.get(m[1]) ?? m[1], type: m[2], size: m[3].toUpperCase(), serial: m[4] }));
+    .map(({ s, m }) => ({
+      number: s.number.trim(), unit: m[1], unitLabel: unit.get(m[1]) ?? m[1], type: m[2], size: m[3].toUpperCase(), serial: m[4],
+      sheet: s.number.trim().slice(m[0].length).match(/^[-_. ]+0*(\d{1,3})$/)?.[1] ?? null,
+    }));
   return {
     segments: [{ kind: "unit", digits: U }, { kind: "drawing_type", digits: 2 }, { kind: "size", letters: 1 }, { kind: "iterable" }],
     fit: hits.length, total: withNumber.length, examples, types, misses: misses.slice(0, 8),
