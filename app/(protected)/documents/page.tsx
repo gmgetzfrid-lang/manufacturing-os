@@ -440,9 +440,8 @@ export default function DocumentsHomePage() {
                 else { setSearch(tag); finder.pickWhenFound(id); }
               }}
               onUnit={(code) => void openUnitFolder(code)}
-              onDoc={(d) => { if (searching && finder.docs[d.id]) finder.setPreview(d.id); else router.push(d.href); }}
               className="h-64 lg:h-[calc(100vh-13rem)] lg:min-h-[28rem]" />
-            <p className="mt-1.5 text-[11px] text-[var(--color-text-muted)]">Tap a unit to open its drawings, a piece of equipment to see its documents.</p>
+            <p className="mt-1.5 text-[11px] text-[var(--color-text-muted)]">Tap a unit to open its drawings, a piece of equipment to see its documents, a document to open it here.</p>
           </div>
         </div>
       </div>

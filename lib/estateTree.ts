@@ -19,7 +19,7 @@ import { EQUIPMENT_CATEGORIES } from "@/lib/drawingText";
 
 export interface TreeInNode { id: string; type: string; label: string; sub?: string; category?: string }
 export interface TreeInEdge { a: string; b: string; type: string }
-export interface TreeNode { id: string; label: string; parentId: string | null; kind: "group" | "area" | "category" | "asset" | "project" | "document" | "library"; graphId: string | null }
+export interface TreeNode { id: string; label: string; parentId: string | null; kind: "group" | "area" | "category" | "asset" | "project" | "document" | "library" | "folder"; graphId: string | null }
 
 const SPLIT_AT = 9;
 

@@ -39,6 +39,8 @@ export interface FileGraphNode {
   badge?: string;
   /** Equipment linked to it: a green count on the icon's shoulder. */
   equipment?: number;
+  /** What a click does here, said on hover in place of the usual line. */
+  hint?: string;
 }
 
 export interface FileGraphLight {
@@ -643,7 +645,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         >
           <div className="font-bold truncate">{hoverNode.label}</div>
           <div className="text-[var(--color-text-muted)]">
-            {hoverId === "__up__" ? "Click to go back up" : hoverSat ? `${hoverSat.sub ?? "Entity"} · ${hoverSat.links.length} linked file${hoverSat.links.length === 1 ? "" : "s"} · click to open` : isContainer(hoverNode.kind) ? `${hoverNode.type.label} · ${hoverNode.childCount} inside · click to explore` : `${hoverNode.type.label} · click for details · double-click to open`}
+            {hoverId === "__up__" ? "Click to go back up" : hoverSat ? `${hoverSat.sub ?? "Entity"} · ${hoverSat.links.length} linked file${hoverSat.links.length === 1 ? "" : "s"} · click to open` : "hint" in hoverNode && hoverNode.hint ? hoverNode.hint : isContainer(hoverNode.kind) ? `${hoverNode.type.label} · ${hoverNode.childCount} inside · click to explore` : `${hoverNode.type.label} · click for details · double-click to open`}
           </div>
         </div>
       )}

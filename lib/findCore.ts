@@ -42,6 +42,11 @@ export interface FindDoc {
   hit?: { page: number; text: string };
 }
 
+/** A link to a document where it is filed: its folder opens with it picked
+ *  (never the top of the library with the file out of sight). */
+export const docHref = (d: Pick<FindDoc, "id" | "libraryId"> & { folderId?: string | null }, full = false) =>
+  `/documents/${d.libraryId}?${d.folderId ? `folderId=${d.folderId}&` : ""}doc=${d.id}${full ? "&fs=1" : ""}`;
+
 export interface FindFolder { id: string; libraryId: string; name: string; parentName: string | null }
 
 export interface FindWorkOrder {

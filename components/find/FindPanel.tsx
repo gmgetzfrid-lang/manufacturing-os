@@ -12,14 +12,14 @@
 //   the preview                        beside the list (under the row when
 //                                      the box is narrow)
 
-import React from "react";
+import React, { useState } from "react";
 import Link from "next/link";
 import { Folder, Loader2, Search, Wrench, FileText } from "lucide-react";
 import DocThumb from "@/components/documents/DocThumb";
 import FindMap from "./FindMap";
-import FindPreview from "./FindPreview";
+import DocInPlace from "@/components/documents/DocInPlace";
 import type { FindState } from "./useFind";
-import {
+import { docHref,
   whichOneLine, equipLabel, docLabel, docMeta, otherDocs, plural,
   type FindEquip, type FindDoc, type FindFolder,
 } from "@/lib/findEverywhere";
@@ -79,20 +79,27 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function DocRow({ d, line, on, compact, onToggle, children }: { d: FindDoc; line?: React.ReactNode; on: boolean; compact?: boolean; onToggle: () => void; children?: React.ReactNode }) {
+/** A document found: tap it and it opens right here, over the page, and
+ *  closing it leaves the search as it was. The folder button beside it goes
+ *  to where it is filed. */
+function DocRow({ d, line, compact, onOpen }: { d: FindDoc; line?: React.ReactNode; compact?: boolean; onOpen: () => void }) {
   return (
-    <div>
-      <button type="button" onClick={onToggle} data-find-doc={d.id}
-        className={`w-full text-left flex items-center gap-2.5 rounded-xl border px-2.5 py-2 bg-[var(--color-surface)] transition-colors ${on ? "border-blue-500 ring-2 ring-blue-500/20" : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
+    <div className="flex items-stretch gap-1.5">
+      <button type="button" onClick={onOpen} data-find-doc={d.id}
+        className="min-w-0 flex-1 text-left flex items-center gap-2.5 rounded-xl border px-2.5 py-2 bg-[var(--color-surface)] transition-colors border-[var(--color-border)] hover:border-[var(--color-border-strong)]">
         {compact ? <FileText className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" /> : <DocThumb documentId={d.id} width={30} />}
         <span className="min-w-0 flex-1">
           <span className="block text-[13px] font-extrabold text-[var(--color-text)] break-words">{docLabel(d)}</span>
           <span className="block text-[11.5px] text-[var(--color-text-muted)] truncate">{[docMeta(d), d.folderName ?? (d.title && d.title !== d.number ? d.title : "")].filter(Boolean).join(" · ")}</span>
           {line && <span className="block text-[11.5px] text-[var(--color-text)] mt-0.5">{line}</span>}
         </span>
-        <span className={`shrink-0 text-[11px] font-bold px-2 py-1 rounded-lg border ${on ? "border-blue-500 text-blue-600" : "border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{on ? "Showing" : "Preview"}</span>
+        <span className="shrink-0 text-[11px] font-bold px-2 py-1 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)]">Open</span>
       </button>
-      {on && children}
+      <Link href={docHref(d)} data-find-doc-folder={d.id} title={`Go to ${d.folderName ?? "where it is filed"}`}
+        className="shrink-0 w-12 flex flex-col items-center justify-center gap-0.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)]">
+        <Folder className="w-4 h-4" />
+        <span className="text-[9.5px] font-bold leading-none">Folder</span>
+      </Link>
     </div>
   );
 }
@@ -126,7 +133,8 @@ export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpe
   const exactIds = new Set(f.exact.map((e) => e.id));
   const moreEquip = (quick?.equipment ?? []).filter((e) => !exactIds.has(e.id) && e.id !== picked?.id);
   const nothing = !!quick && !f.loading && !f.deepLoading && !quick.equipment.length && !f.docOrder.length && !quick.folders.length;
-  const pv = f.preview;
+  // The document open over the page.
+  const [openId, setOpenId] = useState<string | null>(null);
   // Equipment named the way this search names it: "E-22 (5630.01)".
   const equipName = new Map((quick?.equipment ?? []).map((e) => [`asset:${e.id}`, equipLabel(e)]));
   const why = (d: FindDoc): React.ReactNode => {
@@ -141,17 +149,10 @@ export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpe
     );
   };
 
-  const preview = (doc: FindDoc, inline: boolean) => (
-    <div className={inline ? "@2xl:hidden mt-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-2.5" : ""}>
-      <FindPreview doc={doc} onSheet={f.detail?.onSheet[doc.id]} equip={picked && shown.has(doc.id) ? picked : null}
-        elsewhere={picked && shown.has(doc.id) ? pickedDocs : undefined} workOrders={picked && shown.has(doc.id) ? f.detail?.workOrders : undefined}
-        onPreview={(id) => f.setPreview(id)} onClose={inline ? () => f.setPreview(null) : undefined} />
-    </div>
-  );
-
   return (
     <div className="@container" data-find-panel>
-      <div className={`grid gap-3 ${!hideMap || pv ? "@2xl:grid-cols-[minmax(0,1fr)_minmax(260px,40%)]" : ""}`}>
+      {openId && <DocInPlace docId={openId} onClose={() => setOpenId(null)} />}
+      <div className={`grid gap-3 ${!hideMap ? "@2xl:grid-cols-[minmax(0,1fr)_minmax(260px,40%)]" : ""}`}>
         {/* ── Results ───────────────────────────────────────────── */}
         <div className="min-w-0 space-y-3">
           {!quick && f.loading && (
@@ -182,10 +183,10 @@ export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpe
                 <div className="text-[12px] text-[var(--color-text-muted)] rounded-xl border border-dashed border-[var(--color-border)] p-3">No documents are tagged with {equipLabel(picked)} yet.</div>
               ) : pickedDocs.map((d) => {
                 const also = f.detail?.onSheet[d.id] ?? [];
-                return <DocRow key={d.id} d={d} on={pv?.id === d.id} compact={compact} onToggle={() => f.setPreview(pv?.id === d.id ? null : d.id)} line={<>
+                return <DocRow key={d.id} d={d} compact={compact} onOpen={() => setOpenId(d.id)} line={<>
                   <span className="block truncate">Has <mark className="bg-yellow-100 dark:bg-yellow-900/40 text-inherit rounded px-0.5">{equipLabel(picked)}</mark>{also.length ? `, plus ${also.slice(0, 6).join(", ")}${also.length > 6 ? ` and ${also.length - 6} more` : ""}` : ""}</span>
                   {d.hit && <span className="block text-[var(--color-text-muted)] line-clamp-2 whitespace-normal">Page {d.hit.page}: <Snippet text={d.hit.text} /></span>}
-                </>}>{preview(d, true)}</DocRow>;
+                </>} />;
               })}
               {(f.detail?.workOrders ?? []).map((w) => (
                 <Link key={w.id} href={`/projects/${w.projectId}`} data-find-wo={w.id}
@@ -210,8 +211,7 @@ export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpe
           {moreDocs.length > 0 && (
             <Section title={picked ? "Other documents" : "Documents"}>
               {moreDocs.slice(0, compact ? 6 : 15).map((d) => (
-                <DocRow key={d.id} d={d} on={pv?.id === d.id} compact={compact} onToggle={() => f.setPreview(pv?.id === d.id ? null : d.id)}
-                  line={why(d)}>{preview(d, true)}</DocRow>
+                <DocRow key={d.id} d={d} compact={compact} onOpen={() => setOpenId(d.id)} line={why(d)} />
               ))}
             </Section>
           )}
@@ -237,22 +237,18 @@ export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpe
           )}
         </div>
 
-        {/* ── The map, then the preview ─────────────────────────── */}
+        {/* ── The map ────────────────────────────────────────────── */}
+        {!hideMap && (
         <div className="min-w-0 space-y-3 @2xl:sticky @2xl:top-0 self-start">
-          {!hideMap && (
+          {(
             <FindMap orgId={orgId} unit={picked?.unitCode ?? unit} assetId={picked?.id ?? null} docs={pickedDocs}
               candidates={!picked && f.exact.length > 1 ? f.exact.map((e) => e.id) : undefined}
               onPickAsset={(id, tag) => { if (quick?.equipment.some((e) => e.id === id)) f.pick(id); else onSearchAsset?.(id, tag); }}
               onUnit={onUnit}
-              onDoc={(d) => { if (f.docs[d.id]) f.setPreview(d.id); else onOpenHref?.(d.href); }}
               className={compact ? "h-64" : "h-[22rem]"} />
           )}
-          {pv && (
-            <div className="hidden @2xl:block rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-2.5">
-              {preview(pv, false)}
-            </div>
-          )}
         </div>
+        )}
       </div>
     </div>
   );

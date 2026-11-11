@@ -29,6 +29,13 @@ interface Props {
   enter?: { id: string; nonce: number } | null;
   /** Small boxes: no how-to line, short crumbs. */
   compact?: boolean;
+  /** A tree already built (the folder you are in: lib/folderMap), drawn as
+   *  it is in place of the estate's. The map stays inside its one root. */
+  tree?: TreeNode[];
+  /** Documents' file names by graph id, for their icons. */
+  fileNames?: Record<string, string>;
+  /** What is above the given tree's root (the folder above), and going there. */
+  rootUp?: { label: string; onUp: () => void } | null;
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
@@ -43,26 +50,47 @@ function typeOf(t: TreeNode): { kind: FileGraphNode["kind"]; type: FileTypeInfo 
     case "asset": return { kind: "folder", type: CONTAINER_TYPES.equipment };
     case "project": return { kind: "folder", type: CONTAINER_TYPES.project };
     case "library": return { kind: "folder", type: CONTAINER_TYPES.library };
+    case "folder": return { kind: "folder", type: CONTAINER_TYPES.folder };
     default: return { kind: "file", type: fileTypeOf(t.label) };
   }
 }
 
-export default function EstateMap({ nodes, edges, query, selectedId, highlightIds, flyTo, onSelect, onOpen, enter, compact }: Props) {
+export default function EstateMap({ nodes, edges, query, selectedId, highlightIds, flyTo, onSelect, onOpen, enter, compact, tree: given, fileNames, rootUp }: Props) {
   const ref = useRef<FileGraphHandle | null>(null);
-  const [focusId, setFocusId] = useState<string | null>(null);
+  const [focusRaw, setFocusId] = useState<string | null>(null);
+  const [pickedTree, setPickedTree] = useState<string | null>(null);
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
 
-  const { tree, treeById, children } = useMemo(() => {
-    const t = buildEstateTree(nodes, edges);
+  const { tree, treeById, children, graphIdOf, soleRoot } = useMemo(() => {
+    const t = given ?? buildEstateTree(nodes, edges);
     const children = new Map<string, TreeNode[]>();
     for (const n of t) if (n.parentId) children.set(n.parentId, [...(children.get(n.parentId) ?? []), n]);
     const tree: FileGraphNode[] = t.map((n) => {
       const { kind, type } = typeOf(n);
-      const leaf = !(children.get(n.id)?.length);
-      return { id: n.id, kind: leaf && n.kind === "asset" ? "file" : kind, label: n.label, parentId: n.parentId, childCount: children.get(n.id)?.length ?? 0, type };
+      const kids = children.get(n.id)?.length ?? 0;
+      // A file with equipment under it is gone into like a folder, and
+      // keeps its own icon; the count of its equipment rides on its shoulder.
+      const isDoc = n.kind === "document";
+      return {
+        id: n.id, kind: !kids && n.kind === "asset" ? "file" : isDoc && kids ? "folder" : kind, label: n.label, parentId: n.parentId, childCount: kids,
+        type: isDoc ? fileTypeOf(fileNames?.[n.graphId ?? n.id] ?? n.label) : type,
+        ...(given && isDoc && kids ? { equipment: kids } : {}),
+        // In a folder's map a click acts: say what it does.
+        ...(given ? { hint: isDoc ? (kids ? `Click to open · ${kids} piece${kids === 1 ? "" : "s"} of equipment on it` : "Click to open")
+          : n.kind === "asset" ? "Click for every document it is on"
+          : n.kind === "folder" ? (n.parentId ? "Click to open this folder" : "The folder you are in")
+          : n.kind === "group" && !kids ? "Open the folder for the rest"
+          : undefined } : {}),
+      };
     });
-    return { tree, treeById: new Map(tree.map((n) => [n.id, n])), children };
-  }, [nodes, edges]);
+    // A thing can sit in the tree under an id of its own (equipment under
+    // each sheet it is on): what it IS is its graph id.
+    const graphIdOf = new Map(t.map((n) => [n.id, n.graphId ?? n.id]));
+    return { tree, treeById: new Map(tree.map((n) => [n.id, n])), children, graphIdOf, soleRoot: given ? (t.find((n) => !n.parentId)?.id ?? null) : null };
+  }, [nodes, edges, given, fileNames]);
+  const graphOf = (treeId: string) => byId.get(graphIdOf.get(treeId) ?? treeId);
+  // Inside a given tree the map never leaves its root.
+  const focusId = focusRaw && treeById.has(focusRaw) ? focusRaw : soleRoot;
 
   const ancestors = (id: string): string[] => { const out: string[] = []; let p = treeById.get(id)?.parentId ?? null; const seen = new Set<string>(); while (p && !seen.has(p)) { seen.add(p); out.push(p); p = treeById.get(p)?.parentId ?? null; } return out; };
 
@@ -108,10 +136,13 @@ export default function EstateMap({ nodes, edges, query, selectedId, highlightId
     const collapsed = new Set<string>();
     for (const n of vis.values()) if (n.kind !== "file" && (children.get(n.id) ?? []).some((k) => !vis.has(k.id))) collapsed.add(n.id);
     const focusNode = focusId ? treeById.get(focusId) : null;
-    const upNode = focusNode ? (focusNode.parentId ? treeById.get(focusNode.parentId) ?? null : { id: "__all__", kind: "library" as const, label: "Whole estate", parentId: null, childCount: 0, type: CONTAINER_TYPES.estate }) : null;
+    const upNode = !focusNode ? null
+      : focusNode.parentId ? treeById.get(focusNode.parentId) ?? null
+      : soleRoot ? (rootUp ? { id: "__all__", kind: "folder" as const, label: rootUp.label, parentId: null, childCount: 0, type: CONTAINER_TYPES.folderOpen } : null)
+      : { id: "__all__", kind: "library" as const, label: "Whole estate", parentId: null, childCount: 0, type: CONTAINER_TYPES.estate };
     return { visible: [...vis.values()], collapsed, upNode };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tree, treeById, children, focusId, lit, compact]);
+  }, [tree, treeById, children, focusId, lit, compact, soleRoot, rootUp?.label]);
 
   // Other ties of the picked thing only: a document's second piece of
   // equipment, its project. Never a web over the whole view.
@@ -157,30 +188,40 @@ export default function EstateMap({ nodes, edges, query, selectedId, highlightId
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
-      if (e.key === "Escape" && focusId) setFocusId(treeById.get(focusId)?.parentId ?? null);
+      // Esc that closes a document or a dialog laid over the page is not for the map.
+      if (e.key === "Escape" && document.querySelector("[data-fullscreen-viewer], [data-doc-in-place], [role='dialog'][aria-modal='true']")) return;
+      if (e.key === "Escape" && focusId && focusId !== soleRoot) setFocusId(treeById.get(focusId)?.parentId ?? null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [focusId, treeById]);
+  }, [focusId, treeById, soleRoot]);
 
+  const up = () => {
+    if (!focusId) return;
+    if (focusId === soleRoot) { rootUp?.onUp(); return; }
+    setFocusId(treeById.get(focusId)?.parentId ?? null);
+  };
   const crumbs = focusId ? [...ancestors(focusId).reverse(), focusId].map((id) => treeById.get(id)).filter((x): x is FileGraphNode => !!x) : [];
 
   return (
     <div className="absolute inset-0">
       <div className="absolute inset-x-0 bottom-0 top-10">
       <FileGraph ref={ref} visible={visible} collapsed={collapsed} upNode={upNode} sameBytes={new Map()} lit={lit}
-        selectedId={selectedId} onSelect={(id) => onSelect(id ? byId.get(id) ?? null : null)}
-        onDrill={(id) => { if (byId.has(id)) onSelect(byId.get(id)!); if ((children.get(id) ?? []).length) setFocusId(id); }}
-        onUp={() => setFocusId(focusId ? treeById.get(focusId)?.parentId ?? null : null)}
-        onOpen={(id) => { const n = byId.get(id); if (n) onOpen(n); }} filedLinks={filedLinks} />
+        selectedId={pickedTree && treeById.has(pickedTree) && (graphIdOf.get(pickedTree) ?? pickedTree) === selectedId ? pickedTree : selectedId}
+        onSelect={(id) => { setPickedTree(id); onSelect(id ? graphOf(id) ?? null : null); }}
+        onDrill={(id) => { const n = graphOf(id); if (n) { setPickedTree(id); onSelect(n); } if ((children.get(id) ?? []).length) setFocusId(id); }}
+        onUp={up}
+        onOpen={(id) => { const n = graphOf(id); if (n) onOpen(n); }} filedLinks={filedLinks} />
       </div>
       <div className={compact
         ? "absolute top-2 left-2 right-2 flex items-center gap-1 text-[10.5px] pointer-events-auto overflow-x-auto no-scrollbar whitespace-nowrap"
         : "absolute top-2 left-1/2 -translate-x-1/2 flex items-center gap-1 text-[11px] pointer-events-auto max-w-[70%] flex-wrap justify-center"}>
-        <button onClick={() => setFocusId(null)} className={`shrink-0 rounded-md border px-2 py-1 font-semibold ${focusId ? "bg-[var(--color-surface)]/90 border-[var(--color-border)]" : "bg-violet-600 text-white border-transparent"}`}>Whole estate</button>
-        {crumbs.map((c) => (
+        {soleRoot
+          ? (rootUp ? <button onClick={rootUp.onUp} title="Up a folder" className="shrink-0 rounded-md border px-2 py-1 font-semibold bg-[var(--color-surface)]/90 border-[var(--color-border)]">↑ {rootUp.label}</button> : null)
+          : <button onClick={() => setFocusId(null)} className={`shrink-0 rounded-md border px-2 py-1 font-semibold ${focusId ? "bg-[var(--color-surface)]/90 border-[var(--color-border)]" : "bg-violet-600 text-white border-transparent"}`}>Whole estate</button>}
+        {crumbs.map((c, i) => (
           <React.Fragment key={c.id}>
-            <span className="text-[var(--color-text-faint)]">›</span>
+            {(!soleRoot || rootUp || i > 0) && <span className="text-[var(--color-text-faint)]">›</span>}
             <button onClick={() => setFocusId(c.id)} className={`shrink-0 rounded-md border px-2 py-1 font-semibold ${c.id === focusId ? "bg-violet-600 text-white border-transparent" : "bg-[var(--color-surface)]/90 border-[var(--color-border)]"}`}>{c.label}</button>
           </React.Fragment>
         ))}

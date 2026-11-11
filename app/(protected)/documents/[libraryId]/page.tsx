@@ -135,7 +135,9 @@ import WatchdogBanner from "@/components/documents/WatchdogBanner";
 import AlsoFiledHere from "@/components/documents/AlsoFiledHere";
 import { useFind } from "@/components/find/useFind";
 import FindPanel from "@/components/find/FindPanel";
-import FindMap from "@/components/find/FindMap";
+import FindMap, { type MapFolder } from "@/components/find/FindMap";
+import DocInPlace from "@/components/documents/DocInPlace";
+import { docRecordFromRow, DOC_LIST_COLUMNS, versionFromRow } from "@/lib/docRecord";
 import { folderUnit, folderForUnit } from "@/lib/findEverywhere";
 import type {
   AccessControl,
@@ -265,57 +267,6 @@ function escapeLikeLiteral(s: string): string {
   return s.replace(/[\\%_]/g, (m) => `\\${m}`);
 }
 
-// Map a raw `documents` row to a DocumentRecord. Module-level so both the
-// folder fetch and the deep-link loaders (which fetch docs by id, outside the
-// current folder) share one mapper.
-function docRecordFromRow(r: Record<string, unknown>): DocumentRecord {
-  return {
-    id: r.id as string, orgId: r.org_id as string, libraryId: r.library_id as string,
-    collectionId: r.collection_id as string | undefined, documentNumber: r.document_number as string,
-    title: r.title as string, name: r.name as string, status: r.status as DocumentRecord['status'],
-    rev: r.rev as string, currentVersionId: r.current_version_id as string | undefined,
-    checkedOutBy: r.checked_out_by as string | undefined, checkedOutByName: r.checked_out_by_name as string | undefined,
-    checkedOutAt: r.checked_out_at as unknown as DocumentRecord['checkedOutAt'], activeCollaborators: (r.active_collaborators as string[]) ?? [],
-    currentLockId: r.current_lock_id as string | undefined, setId: r.set_id as string | undefined,
-    sheetNumber: r.sheet_number as number | undefined, sheetTotal: r.sheet_total as number | undefined,
-    visibility: r.visibility as NodeVisibility | undefined, acl: r.acl as AccessControl | undefined,
-    aclIndex: r.acl_index as unknown as DocumentRecord['aclIndex'], metadata: r.metadata as unknown as DocumentRecord['metadata'],
-    updatedAt: r.updated_at as unknown as DocumentRecord['updatedAt'], createdAt: r.created_at as unknown as DocumentRecord['createdAt'],
-    createdBy: (r.created_by as string) ?? '',
-    reviewPolicy: (r.review_policy as DocumentRecord['reviewPolicy']) ?? null,
-    lastReviewedAt: (r.last_reviewed_at as string | null) ?? null,
-    lastReviewedBy: (r.last_reviewed_by as string | null) ?? null,
-    nextReviewDate: (r.next_review_date as string | null) ?? null,
-    ownerUserId: (r.owner_user_id as string | null) ?? null,
-    ownerName: (r.owner_name as string | null) ?? null,
-    ackPolicy: (r.ack_policy as DocumentRecord['ackPolicy']) ?? null,
-    reviewControl: (r.review_control as DocumentRecord['reviewControl']) ?? null,
-    effectiveDate: (r.effective_date as string | null) ?? null,
-    retentionPolicy: (r.retention_policy as DocumentRecord['retentionPolicy']) ?? null,
-    retentionUntil: (r.retention_until as string | null) ?? null,
-    dispositionState: (r.disposition_state as DocumentRecord['dispositionState']) ?? null,
-    legalHold: !!r.legal_hold,
-    legalHoldMatter: (r.legal_hold_matter as string | null) ?? null,
-    legalHoldReason: (r.legal_hold_reason as string | null) ?? null,
-    origin: (r.origin as DocumentRecord['origin']) ?? "internal",
-    externalSource: (r.external_source as string | null) ?? null,
-    externalReference: (r.external_reference as string | null) ?? null,
-    externalEdition: (r.external_edition as string | null) ?? null,
-    externalUrl: (r.external_url as string | null) ?? null,
-  };
-}
-
-// Exactly the columns the list view consumes (mirrors docRecordFromRow). Using
-// this instead of select("*") keeps the large `search_tsv` tsvector and the
-// deprecated `revision_history` JSONB off the wire on every folder open.
-const DOC_LIST_COLUMNS =
-  "id, org_id, library_id, collection_id, document_number, title, name, status, rev, " +
-  "current_version_id, checked_out_by, checked_out_by_name, checked_out_at, active_collaborators, " +
-  "current_lock_id, set_id, sheet_number, sheet_total, visibility, acl, acl_index, metadata, " +
-  "updated_at, created_at, created_by, review_policy, last_reviewed_at, last_reviewed_by, next_review_date, owner_user_id, owner_name, ack_policy, review_control, effective_date, " +
-  "retention_policy, retention_until, disposition_state, legal_hold, legal_hold_matter, legal_hold_reason, " +
-  "origin, external_source, external_reference, external_edition, external_url";
-
 export default function LibraryExplorerPage() {
   const params = useParams();
   const router = useRouter();
@@ -333,6 +284,11 @@ export default function LibraryExplorerPage() {
   // doesn't leave the page wedged on "Loading library...".
   const [loadingLibrary, setLoadingLibrary] = useState(false);
   const [loadingDocs, setLoadingDocs] = useState(false);
+  // The folder whose whole file list is on screen (library|folder|archived):
+  // a link to a document is only called dead once ITS folder has finished
+  // loading without it.
+  const [docsDoneKey, setDocsDoneKey] = useState<string | null>(null);
+  const [docLinkTick, setDocLinkTick] = useState(0);
   // Inline-edit state for the documentNumber cell. Click the cell to
   // begin editing; Enter saves, Esc cancels. Auto-suffix-driven
   // ugly numbers can be cleaned up without opening the metadata editor.
@@ -395,6 +351,8 @@ export default function LibraryExplorerPage() {
   // documents). It stays on this page. ?find= opens it from the top search
   // bar's "Show on map".
   const [find, setFind] = useState(() => searchParams.get("find") ?? "");
+  // A document opened over the page from somewhere it is not listed.
+  const [peekDocId, setPeekDocId] = useState<string | null>(null);
   const [mapOpen, setMapOpenRaw] = useState(true);
   useEffect(() => { try { if (window.localStorage.getItem("docs:mapOpen") === "0") setMapOpenRaw(false); } catch { /* default open */ } }, []);
   const setMapOpen = (fn: (v: boolean) => boolean) => setMapOpenRaw((v) => {
@@ -1443,7 +1401,8 @@ export default function LibraryExplorerPage() {
   // living inside a folder won't be in `documents` when we land at the
   // library root — in that case look it up directly and jump to its
   // folder first (once per docId), then the re-run selects it.
-  const handledDocLink = useRef<string | null>(null);
+  const handledDocLink = useRef<{ id: string; folder: string | null; found: boolean } | null>(null);
+  const lastDocLink = useRef<string | null>(null);
   const autoFullScreenedDoc = useRef<string | null>(null);
   // True while an incoming ?doc/?book link is still being resolved into state
   // (e.g. navigating to the doc's folder before its row is loaded). The URL
@@ -1453,7 +1412,10 @@ export default function LibraryExplorerPage() {
   const deepLinkPending = useRef(false);
   useEffect(() => {
     const docId = searchParams.get("doc");
-    if (!docId) return;
+    if (!docId) { lastDocLink.current = null; return; }
+    // A link to a document shows that document: a search still open would
+    // sit on top of it, with the folder changing unseen underneath.
+    if (lastDocLink.current !== docId) { lastDocLink.current = docId; setFind(""); }
     // ?fs=1 means "open the full-screen drawing", not just the inspector — this
     // is what a distributed/shared link should land on. We auto-full-screen at
     // most once per docId so closing it doesn't immediately reopen.
@@ -1468,15 +1430,27 @@ export default function LibraryExplorerPage() {
       }
       return;
     }
-    // Not in the (folder-scoped) list. Navigate to the doc's folder once; after
-    // that folder's docs load this effect re-runs and selects it.
-    if (handledDocLink.current === docId) {
-      // Already navigated and it STILL isn't here → it's gone or not permitted.
-      // Stop blocking the writer so the URL can resume syncing.
+    // Not in the (folder-scoped) list. Find the doc's folder and go there once;
+    // when that folder's files are on screen this effect re-runs and selects it.
+    const st = handledDocLink.current;
+    if (st && st.id === docId) {
+      // Still finding its folder, or its folder's list is still loading: wait.
+      // (Another folder's list landing in between used to end the wait early;
+      // the link was then stripped and the page fell back to the top of the
+      // library with nothing open.)
+      if (!st.found) return;
+      const keyOf = (f: string | null) => `${libraryId}|${f ?? "root"}|${showArchivedDocs}`;
+      if (docsDoneKey !== keyOf(st.folder)) {
+        // The person has gone to another folder since: the link is done with.
+        if ((currentFolderId ?? null) !== st.folder && docsDoneKey === keyOf(currentFolderId ?? null)) deepLinkPending.current = false;
+        return;
+      }
+      // Its folder is fully loaded and it isn't there → gone, or not this
+      // person's to see. Stop blocking the writer so the URL can resume syncing.
       deepLinkPending.current = false;
       return;
     }
-    handledDocLink.current = docId;
+    handledDocLink.current = { id: docId, folder: null, found: false };
     deepLinkPending.current = true;
     (async () => {
       const { data } = await supabase
@@ -1484,10 +1458,15 @@ export default function LibraryExplorerPage() {
         .select("id, collection_id")
         .eq("id", docId)
         .maybeSingle();
-      if (data) setCurrentFolderId((data.collection_id as string | null) ?? null);
-      else deepLinkPending.current = false;
+      if (handledDocLink.current?.id !== docId) return; // another link was followed meanwhile
+      if (data) {
+        const folder = (data.collection_id as string | null) ?? null;
+        handledDocLink.current = { id: docId, folder, found: true };
+        setCurrentFolderId(folder);
+        setDocLinkTick((n) => n + 1);
+      } else deepLinkPending.current = false;
     })();
-  }, [searchParams, documents]);
+  }, [searchParams, documents, docsDoneKey, docLinkTick, libraryId, showArchivedDocs, currentFolderId]);
 
   // Deep-link via ?book=<curatedCollectionId> — open that collection as a book.
   // The book's documents can live in any folder, so we resolve the collection's
@@ -1838,7 +1817,7 @@ export default function LibraryExplorerPage() {
         }
       } catch (e: unknown) { if (alive) setError((e as Error).message); }
       finally {
-        if (alive) { setLoadingDocs(false); setDocStreamProgress(null); }
+        if (alive) { setLoadingDocs(false); setDocStreamProgress(null); setDocsDoneKey(cacheKey); }
       }
     };
 
@@ -2053,6 +2032,25 @@ export default function LibraryExplorerPage() {
     });
   }, [documents, principal, deferredSearch, buildDocChain]);
 
+  // The map under the folders shows where the list is: this folder (or the
+  // top of the library), with the subfolders and files this person can see.
+  const mapFolder = useMemo<MapFolder>(() => {
+    const cur = currentFolderId ? folders.find((f) => f.id === currentFolderId) ?? null : null;
+    const parent = cur?.parentId ? folders.find((f) => f.id === cur.parentId) ?? null : null;
+    return {
+      id: currentFolderId ?? null,
+      name: cur?.name ?? library?.name ?? "Library",
+      subfolders: filteredFolders.map((f) => ({ id: f.id!, name: f.name })),
+      docs: filteredDocs.filter((d) => !!d.id).map((d) => ({
+        id: d.id!, number: d.documentNumber || null, title: d.title || null, name: d.name || null,
+        sheet: (() => { const v = (d.metadata as Record<string, unknown> | undefined)?.sheet ?? d.sheetNumber; return v == null || v === "" ? null : String(v); })(),
+        href: "",
+      })),
+      up: currentFolderId ? { id: parent?.id ?? null, name: parent?.name ?? library?.name ?? "Library" } : null,
+    };
+  }, [currentFolderId, folders, filteredFolders, filteredDocs, library?.name]);
+
+
   const sortedDocs = useMemo(() => {
     return [...filteredDocs].sort((a, b) => {
       // Size sorts numerically — "9 KB" must not beat "10 MB".
@@ -2156,40 +2154,6 @@ export default function LibraryExplorerPage() {
 
     let alive = true;
 
-    const fromVersionRow = (r: Record<string, unknown>): DocumentVersion => ({
-      id: r.id as string,
-      orgId: r.org_id as string,
-      recordId: r.record_id as string,
-      revisionLabel: r.revision_label as string,
-      issueType: r.issue_type as DocumentVersion['issueType'],
-      changeType: r.change_type as DocumentVersion['changeType'],
-      fileUrl: r.file_url as string,
-      fileType: r.file_type as string,
-      size: r.size as number,
-      isFlattened: r.is_flattened as boolean | undefined,
-      hasWatermark: r.has_watermark as boolean | undefined,
-      watermarkPolicyId: r.watermark_policy_id as string | undefined,
-      downloadPolicy: r.download_policy as DocumentVersion['downloadPolicy'],
-      changeLog: r.change_log as string | undefined,
-      relatedTicketId: r.related_ticket_id as string | undefined,
-      createdBy: r.created_by as string,
-      createdByName: r.created_by_name as string | undefined,
-      createdAt: r.created_at as unknown as DocumentVersion['createdAt'],
-      approvedBy: r.approved_by as string | undefined,
-      supersedesVersionId: r.supersedes_version_id as string | undefined,
-      drawnBy: r.drawn_by as string | undefined,
-      drawnByName: r.drawn_by_name as string | undefined,
-      checkedBy: r.checked_by as string | undefined,
-      checkedByName: r.checked_by_name as string | undefined,
-      approvedByName: r.approved_by_name as string | undefined,
-      approvedAt: r.approved_at as unknown as DocumentVersion['approvedAt'],
-      releasedAt: r.released_at as unknown as DocumentVersion['releasedAt'],
-      supersededAt: r.superseded_at as unknown as DocumentVersion['supersededAt'],
-      mocReference: r.moc_reference as string | undefined,
-      sourceFileName: r.source_file_name as string | undefined,
-      revertedFromVersionId: r.reverted_from_version_id as string | undefined,
-      fileHash: r.file_hash as string | undefined,
-    });
 
     const loadVersion = async () => {
       if (!selectedDoc.id) return;
@@ -2201,7 +2165,7 @@ export default function LibraryExplorerPage() {
             .eq("id", selectedDoc.currentVersionId)
             .single();
           if (alive && data) {
-            setSelectedVersion(fromVersionRow(data as Record<string, unknown>));
+            setSelectedVersion(versionFromRow(data as Record<string, unknown>));
             return;
           }
         }
@@ -2214,7 +2178,7 @@ export default function LibraryExplorerPage() {
           .order("created_at", { ascending: false })
           .limit(1);
         if (!alive) return;
-        setSelectedVersion(data && data.length > 0 ? fromVersionRow(data[0] as Record<string, unknown>) : null);
+        setSelectedVersion(data && data.length > 0 ? versionFromRow(data[0] as Record<string, unknown>) : null);
       } catch (e) {
         console.error(e);
         if (alive) setSelectedVersion(null);
@@ -3487,6 +3451,7 @@ export default function LibraryExplorerPage() {
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
+      {peekDocId && <DocInPlace docId={peekDocId} onClose={() => setPeekDocId(null)} />}
       {showFullScreen && selectedDoc && selectedVersion && (
         <FullScreenViewer
           isOpen={showFullScreen}
@@ -4182,16 +4147,20 @@ export default function LibraryExplorerPage() {
                     className="w-full px-5 pt-3 pb-2 flex items-center gap-1.5 text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider hover:text-[var(--color-text)]">
                     <ChevronDown className={`w-3 h-3 transition-transform ${mapOpen ? "" : "-rotate-90"}`} /> Map
                     <span className="normal-case tracking-normal font-medium text-[var(--color-text-muted)]">
-                      {folderUnitCode ? `· unit ${folderUnitCode} › type › equipment › its documents` : "· unit › type › equipment › its documents"}
+                      · {mapFolder.name} › its files › the equipment on each
                     </span>
                   </button>
                   {mapOpen && (
                     <div className="px-5 pb-4">
+                      {/* The map follows the list: this folder, its files, the
+                          equipment on each. A file opens right here, full
+                          size; closing it leaves the folder as it was. */}
                       <FindMap orgId={activeOrgId} unit={folderUnitCode} assetId={null} className="h-[340px]"
+                        folder={mapFolder} onFolder={(id) => setCurrentFolderId(id)}
                         onUnit={(code) => void openUnitFolder(code)} onPickAsset={searchAsset}
                         onDoc={(d) => {
                           const hit = documents.find((x) => x.id === d.id);
-                          if (hit) setSelectedDoc(hit); else router.push(d.href);
+                          if (hit) { setSelectedDoc(hit); setShowFullScreen(true); } else setPeekDocId(d.id);
                         }} />
                     </div>
                   )}

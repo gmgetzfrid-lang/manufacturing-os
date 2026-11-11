@@ -237,6 +237,40 @@ export async function equipDetail(orgId: string, e: FindEquip, tagIsUnique: bool
   return { onSheet, workOrders };
 }
 
+/** The equipment tagged on each of these documents: hand links and the
+ *  equipment sweep's applied links. For the map of a folder. */
+export async function equipOnDocs(orgId: string, docIds: string[]): Promise<Map<string, Array<{ id: string; tag: string; sub: string | null }>>> {
+  const out = new Map<string, Array<{ id: string; tag: string; sub: string | null }>>();
+  const ids = [...new Set(docIds)];
+  if (!ids.length) return out;
+  const on = new Map<string, Set<string>>();
+  const add = (d: string, a: string) => { const s = on.get(d) ?? new Set<string>(); s.add(a); on.set(d, s); };
+  for (let i = 0; i < ids.length; i += 100) {
+    const slice = ids.slice(i, i + 100);
+    const [hand, sweep] = await Promise.all([
+      fetchAllRows<{ document_id: string; asset_id: string }>((from, to) => supabase.from("document_assets").select("document_id, asset_id")
+        .in("document_id", slice).order("document_id").order("asset_id").range(from, to), 20_000),
+      fetchAllRows<{ a: string; b: string }>((from, to) => supabase.from("estate_edges").select("a, b").eq("org_id", orgId).eq("type", "tagged_to").eq("status", "applied")
+        .in("a", slice.map((id) => `doc:${id}`)).order("id").range(from, to), 20_000),
+    ]);
+    for (const r of hand.rows) add(r.document_id, r.asset_id);
+    for (const r of sweep.rows) if (r.b.startsWith("asset:")) add(r.a.slice(4), r.b.slice(6));
+  }
+  const assetIds = [...new Set([...on.values()].flatMap((s) => [...s]))];
+  const assets = new Map<string, { id: string; tag: string; sub: string | null }>();
+  for (let i = 0; i < assetIds.length; i += 200) {
+    const { data } = await supabase.from("assets").select("id, tag, code, description").in("id", assetIds.slice(i, i + 200)).eq("archived", false);
+    for (const a of (data ?? []) as Array<{ id: string; tag: string; code: string | null; description: string | null }>) {
+      assets.set(a.id, { id: a.id, tag: a.tag, sub: [a.code, a.description].filter(Boolean).join(" · ") || null });
+    }
+  }
+  for (const [d, set] of on) {
+    const list = [...set].map((id) => assets.get(id)).filter((a): a is { id: string; tag: string; sub: string | null } => !!a);
+    if (list.length) out.set(d, list);
+  }
+  return out;
+}
+
 /** Documents by id, with their folder names. */
 export async function docsByIds(ids: string[]): Promise<FindDoc[]> {
   const want = [...new Set(ids)].slice(0, 100);
@@ -397,5 +431,3 @@ export function mapWithDocs(base: MapBase, assetId: string | null, docs: FindDoc
   }
   return { nodes, edges };
 }
-
-export const docHref = (d: Pick<FindDoc, "id" | "libraryId">, full = false) => `/documents/${d.libraryId}?doc=${d.id}${full ? "&fs=1" : ""}`;

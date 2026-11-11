@@ -1122,7 +1122,7 @@ export default function FullScreenViewer({
   ));
 
   return (
-    <div className="fixed inset-0 z-[100] bg-slate-900 flex flex-col" onPointerUp={onCanvasMouseUp} onPointerCancel={onCanvasMouseUp} onMouseLeave={onCanvasMouseUp}>
+    <div data-fullscreen-viewer className="fixed inset-0 z-[100] bg-slate-900 flex flex-col" onPointerUp={onCanvasMouseUp} onPointerCancel={onCanvasMouseUp} onMouseLeave={onCanvasMouseUp}>
       {committing && (
         <div className="absolute inset-0 z-[200] bg-slate-950/85 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
           <Loader2 className="w-9 h-9 animate-spin text-emerald-400" />
@@ -1274,7 +1274,7 @@ export default function FullScreenViewer({
           </div>
         )}
 
-        <button onClick={() => void handleClose()} disabled={committing} className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-full disabled:opacity-50">
+        <button onClick={() => void handleClose()} disabled={committing} title="Close" aria-label="Close" className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-full disabled:opacity-50">
           <X className="w-5 h-5" />
         </button>
       </div>

@@ -30,9 +30,9 @@ import {
 
 interface Lib { id: string; name: string; color?: string | null; icon?: string | null; type?: string | null; cover_image_url?: string | null; cover_tint?: "none" | "brand" | "mono" | null; count?: number }
 interface FolderRow { id: string; name: string; parent_id: string | null; deleted_at?: string | null; visibility?: string | null; color?: string | null; icon?: string | null }
-interface DocRow { id: string; document_number: string | null; title: string | null; name: string | null; rev: string | null; status: string | null; updated_at: string | null; collection_id: string | null; library_id?: string }
+interface DocRow { id: string; document_number: string | null; title: string | null; name: string | null; rev: string | null; status: string | null; updated_at: string | null; collection_id: string | null; library_id?: string; sheet_meta?: string | null }
 
-const DOC_COLS = "id, document_number, title, name, rev, status, updated_at, collection_id, library_id";
+const DOC_COLS = "id, document_number, title, name, rev, status, updated_at, collection_id, library_id, sheet_meta:metadata->>sheet";
 
 const STATUS_CLS: Record<string, string> = {
   Issued: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800",
@@ -43,7 +43,8 @@ const STATUS_CLS: Record<string, string> = {
 };
 
 function DocLine({ d, folderName }: { d: DocRow; folderName?: string | null }) {
-  const href = `/documents/${d.library_id ?? ""}?doc=${d.id}`;
+  // Its folder opens with it picked, not the top of the library.
+  const href = `/documents/${d.library_id ?? ""}?${d.collection_id ? `folderId=${d.collection_id}&` : ""}doc=${d.id}`;
   return (
     <Link href={href} className="group flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
       <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
@@ -147,7 +148,22 @@ export default function DocBrowserBody() {
         else { setQ(tag); finder.pickWhenFound(id); }
       }}
       onUnit={(code) => void openUnitFolder(code)}
-      onDoc={(d) => { if (searching && finder.docs[d.id]) finder.setPreview(d.id); else router.push(d.href); }}
+      // Browsing a library: the map is the folder the list is in.
+      folder={!searching && libId && here && here.at === `${libId}|${folderId ?? ""}` ? {
+        id: folderId,
+        name: path.length ? path[path.length - 1].name : (lib?.name ?? "Library"),
+        subfolders: here.folders.map((f) => ({ id: f.id, name: f.name })),
+        docs: here.docs.map((d) => ({ id: d.id, number: d.document_number, title: d.title, name: d.name, sheet: d.sheet_meta ?? null, href: "" })),
+        more: Math.max(0, here.docCount - here.docs.length),
+        up: path.length ? { id: path.length > 1 ? path[path.length - 2].id : null, name: path.length > 1 ? path[path.length - 2].name : (lib?.name ?? "Library") } : null,
+      } : null}
+      onFolder={(id) => {
+        if (id === null) { setPath([]); return; }
+        const at = path.findIndex((f) => f.id === id);
+        if (at >= 0) { setPath(path.slice(0, at + 1)); return; }
+        const f = here?.folders.find((x) => x.id === id);
+        if (f) setPath([...path, f]);
+      }}
       className="h-full" />
   ) : null;
 
