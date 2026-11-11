@@ -43,7 +43,7 @@ describe("legacyParseFilename (what the old reader produced)", () => {
   });
 });
 
-import { planNameFix } from "@/lib/documentNames";
+import { planNameFix, sheetSuffixFix } from "@/lib/documentNames";
 
 describe("planNameFix", () => {
   const doc = (file: string, over: Partial<{ document_number: string; title: string; rev: string }> = {}) => {
@@ -66,6 +66,30 @@ describe("planNameFix", () => {
   it("leaves names the old reader got right", () => {
     expect(planNameFix(doc("100-PID-001_R7.pdf"))).toBeNull();
     expect(planNameFix(doc("200-ISO-014_RevA.pdf"))).toBeNull();
+  });
+});
+
+describe("a suffix the upload added to a sheet's number", () => {
+  // The library names a document by its number and its sheet. Uploads still
+  // added -2, -3... in upload order: sheet 11 of the LRU set became "-10".
+  const lru = (number: string, sheet: string | null, sheetInKey = true) =>
+    ({ id: "d", name: "5602-D 1000_SHT11_R5_03-09-20.pdf", document_number: number, title: "5602-D 1000", rev: "5", sheet, sheetInKey });
+  it("comes off: the number is the drawing's, the sheet says which sheet", () => {
+    const fix = planNameFix(lru("5602-D 1000-10", "11"));
+    expect(fix?.to.documentNumber).toBe("5602-D 1000");
+    expect(fix?.sheet).toBe("11");
+  });
+  it("is found by itself when the old reader's number was something else", () => {
+    expect(sheetSuffixFix({ id: "d", name: "x", document_number: "5602-D 1000-10", title: "", rev: "5", sheet: "11", sheetInKey: true }, "5602-D 1000")).toBe("5602-D 1000");
+  });
+  it("stays when nothing says which sheet it is, or the library goes by number alone", () => {
+    expect(sheetSuffixFix({ id: "d", name: "x", document_number: "5602-D 1000-10", title: "", rev: "5", sheet: null, sheetInKey: true }, "5602-D 1000")).toBeNull();
+    expect(sheetSuffixFix({ id: "d", name: "x", document_number: "5602-D 1000-10", title: "", rev: "5", sheet: "11", sheetInKey: false }, "5602-D 1000")).toBeNull();
+  });
+  it("is not taken off a number that only looks alike", () => {
+    expect(sheetSuffixFix({ id: "d", name: "x", document_number: "5602-D 1000-A", title: "", rev: "5", sheet: "11", sheetInKey: true }, "5602-D 1000")).toBeNull();
+    expect(sheetSuffixFix({ id: "d", name: "x", document_number: "5602-D 10005", title: "", rev: "5", sheet: "11", sheetInKey: true }, "5602-D 1000")).toBeNull();
+    expect(sheetSuffixFix({ id: "d", name: "x", document_number: "5602-D 1000", title: "", rev: "5", sheet: "11", sheetInKey: true }, "5602-D 1000")).toBeNull();
   });
 });
 

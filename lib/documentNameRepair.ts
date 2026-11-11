@@ -17,7 +17,20 @@ import { planNameFix, type NameFix } from "@/lib/documentNames";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { inSlices } from "@/lib/inSlices";
 
-const COLS = "id, library_id, name, title, document_number, rev, original_name:metadata->>original_name";
+const COLS = "id, library_id, name, title, document_number, rev, original_name:metadata->>original_name, sheet:metadata->>sheet";
+
+/** Each library's own rule for what makes a document one document. */
+async function libraryKeys(libraryIds: string[]): Promise<Map<string, string[] | null>> {
+  const out = new Map<string, string[] | null>();
+  if (!libraryIds.length) return out;
+  const { data } = await supabaseAdmin.from("libraries").select("id, uniqueness_keys").in("id", libraryIds);
+  for (const l of (data ?? []) as Array<{ id: string; uniqueness_keys: unknown }>) out.set(l.id, Array.isArray(l.uniqueness_keys) ? (l.uniqueness_keys as string[]) : null);
+  return out;
+}
+const sheetIn = (keys: string[] | null | undefined) => (keys ?? []).some((k) => k === "sheet");
+/** What a document counts as under its library's rule: its number, with its sheet when the rule says so. */
+const identity = (libraryId: string, number: string, sheet: string | null | undefined, keys: string[] | null | undefined) =>
+  `${libraryId}|${number.trim().toLowerCase()}${sheetIn(keys) ? `|${String(sheet ?? "").trim().toLowerCase()}` : ""}`;
 
 /** Every faulty name among `docIds`, each marked with any clash its
  *  corrected number would cause (another document already has it, or
@@ -32,17 +45,20 @@ export async function findNameFixes(docIds: string[]): Promise<{ fixes: NameFix[
     return (data ?? []) as unknown as Array<Parameters<typeof planNameFix>[0] & { library_id: string }>;
   });
   if (readError) return { fixes, error: readError };
-  for (const row of pages.flat()) {
-    const fix = planNameFix(row);
+  const rows = pages.flat();
+  const keys = await libraryKeys(Array.from(new Set(rows.map((r) => r.library_id))));
+  for (const row of rows) {
+    const fix = planNameFix({ ...row, sheetInKey: sheetIn(keys.get(row.library_id)) });
     if (fix) { fixes.push(fix); libraryOf.set(fix.id, row.library_id); }
   }
-  // Two files correcting to one number: usually two revisions of one document.
-  const firstByNumber = new Map<string, NameFix>();
+  const idOf = (f: NameFix) => identity(libraryOf.get(f.id)!, f.to.documentNumber, f.sheet, keys.get(libraryOf.get(f.id)!));
+  // Two files correcting to one document (by the library's own rule:
+  // usually its number, or its number and sheet): two revisions of one.
+  const first = new Map<string, NameFix>();
   for (const f of fixes) {
-    const k = `${libraryOf.get(f.id)}|${f.to.documentNumber.toLowerCase()}`;
-    const first = firstByNumber.get(k);
-    if (first) f.clash = `same number as ${first.fileName}`;
-    else firstByNumber.set(k, f);
+    const had = first.get(idOf(f));
+    if (had) f.clash = `same ${sheetIn(keys.get(libraryOf.get(f.id)!)) ? "number and sheet" : "number"} as ${had.fileName}`;
+    else first.set(idOf(f), f);
   }
   // Already used by a document that isn't being corrected.
   const fixing = new Set(fixes.map((f) => f.id));
@@ -52,16 +68,16 @@ export async function findNameFixes(docIds: string[]): Promise<{ fixes: NameFix[
   // A failed lookup just means fewer clashes flagged ahead of time — the
   // update itself still refuses a real clash.
   const takenPages = await inSlices(wanted, 100, 6, async (slice) => {
-    const { data } = await supabaseAdmin.from("documents").select("id, library_id, document_number, name")
+    const { data } = await supabaseAdmin.from("documents").select("id, library_id, document_number, name, sheet:metadata->>sheet")
       .in("library_id", libs).in("document_number", slice)
       .not("status", "in", "(Archived,Superseded)");
-    return (data ?? []) as Array<{ id: string; library_id: string; document_number: string; name: string | null }>;
+    return (data ?? []) as unknown as Array<{ id: string; library_id: string; document_number: string; name: string | null; sheet: string | null }>;
   });
   for (const r of takenPages.flat()) {
-    if (!fixing.has(r.id)) taken.set(`${r.library_id}|${r.document_number.toLowerCase()}`, `${r.document_number}${r.name ? ` (${r.name})` : ""}`);
+    if (!fixing.has(r.id)) taken.set(identity(r.library_id, r.document_number, r.sheet, keys.get(r.library_id)), `${r.document_number}${r.name ? ` (${r.name})` : ""}`);
   }
   for (const f of fixes) {
-    const t = taken.get(`${libraryOf.get(f.id)}|${f.to.documentNumber.toLowerCase()}`);
+    const t = taken.get(idOf(f));
     if (!f.clash && t) f.clash = `already used by ${t}`;
   }
   return { fixes, error: null };
@@ -98,13 +114,13 @@ export async function repairDocumentNames(orgId: string, docIds: string[], uid: 
   }
 
   const fixOne = async (row: Record<string, unknown>) => {
-    const fix = planNameFix(row as unknown as Parameters<typeof planNameFix>[0]);
-    if (!fix) { out.skipped++; return; }
     const libraryId = row.library_id as string;
     if (!keysByLibrary.has(libraryId)) {
       const { data } = await supabaseAdmin.from("libraries").select("uniqueness_keys").eq("id", libraryId).maybeSingle();
       keysByLibrary.set(libraryId, Array.isArray(data?.uniqueness_keys) ? (data!.uniqueness_keys as string[]) : null);
     }
+    const fix = planNameFix({ ...(row as unknown as Parameters<typeof planNameFix>[0]), sheetInKey: sheetIn(keysByLibrary.get(libraryId)) });
+    if (!fix) { out.skipped++; return; }
     const uniquenessKey = computeUniquenessKey({
       documentNumber: fix.to.documentNumber, title: fix.to.title, rev: fix.to.rev,
       status: row.status as string, customFields: (row.metadata as Record<string, unknown>) ?? null,

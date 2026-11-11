@@ -442,12 +442,16 @@ export default function MetadataStagingModal({
   // collisions with -2, -3, … so each row gets a unique key.
   const autoSuffixDuplicates = () => {
     setItems((prev) => {
+      // Only rows that are the same document by the library's own rule
+      // (its number, or its number and sheet): sheets of one drawing keep
+      // the drawing's number.
       const counts = new Map<string, number>();
       return prev.map((it) => {
-        const base = it.documentNumber.trim().toLowerCase();
-        if (!base) return it;
-        const n = (counts.get(base) ?? 0) + 1;
-        counts.set(base, n);
+        if (!it.documentNumber.trim()) return it;
+        const key = computeUniquenessKey({ documentNumber: it.documentNumber || undefined, title: it.title || undefined, rev: it.rev || undefined, status: it.status || undefined, customFields: it.customFields }, uniquenessKeys);
+        if (!key) return it;
+        const n = (counts.get(key) ?? 0) + 1;
+        counts.set(key, n);
         if (n === 1) return it; // first occurrence keeps its number
         return { ...it, documentNumber: `${it.documentNumber}-${n}` };
       });

@@ -31,6 +31,7 @@ import {
   loadCodebook, upsertEntry, deleteEntry, saveConfig, applyImport, diffImport, parseDrawingNumber,
   type Codebook, type CodebookEntry, type CodebookKind, type DrawingSegment, type ProposedEntry, type ImportDiff,
 } from "@/lib/codebook";
+import CodebookLearn from "@/components/admin/CodebookLearn";
 
 const WRITER_ROLES = new Set(["Admin", "DocCtrl"]);
 
@@ -83,6 +84,9 @@ export default function CodebookPage() {
           Read-only - only Admins and Document Controllers edit the codebook.
         </div>
       )}
+
+      {/* What the site's own numbers already show, for a person to accept. */}
+      <CodebookLearn orgId={activeOrgId!} uid={uid!} book={book} canWrite={canWrite} onChanged={refresh} onError={setError} />
 
       {/* Getting started — the whole path in one place, with live progress.
           This page is step 1-4; step 5 happens on the P&ID library. */}

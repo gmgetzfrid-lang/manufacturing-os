@@ -2748,10 +2748,21 @@ export default function LibraryExplorerPage() {
       // A lookup that fails is retried once and then gives way to the
       // database's own uniqueness rule — it never stops the upload.
       const usedNumbers = new Set<string>();
-      const live = () => supabase.from("documents").select("document_number")
+      // What makes a document one document is the library's own rule. With
+      // "number and sheet", sixteen sheets share one drawing number and none
+      // of them is a duplicate: a number is only taken when the whole key is.
+      // (Suffixing by number alone turned sheet 11 into "5602-D 1000-10".)
+      const keyRule = library.uniquenessKeys;
+      const byKey = !!keyRule?.length && !(keyRule.length === 1 && keyRule[0] === "documentNumber");
+      const usedKeys = new Set<string>();
+      const live = () => supabase.from("documents").select("document_number, uniqueness_key")
         .eq("library_id", libraryId).not("status", "in", "(Archived,Superseded)");
       const addRows = (rows: unknown[] | null) => {
-        for (const r of rows ?? []) usedNumbers.add(String((r as { document_number: string }).document_number || ""));
+        for (const r of rows ?? []) {
+          const row = r as { document_number: string; uniqueness_key?: string | null };
+          usedNumbers.add(String(row.document_number || ""));
+          if (row.uniqueness_key) usedKeys.add(row.uniqueness_key);
+        }
       };
       for (let i = 0; i < distinctBases.length; i += 100) {
         const slice = distinctBases.slice(i, i + 100);
@@ -2767,15 +2778,20 @@ export default function LibraryExplorerPage() {
         for (const res of results) addRows(res.data);
       }
 
+      const keyOf = (item: StagedItem, documentNumber: string) => computeUniquenessKey({
+        documentNumber, title: item.title.trim() || baseName(item.file.name), rev: item.rev.trim() || "0", status: item.status || "Issued", customFields: item.customFields,
+      }, keyRule);
       const resolved: Array<{ item: StagedItem; docNumber: string; original: string }> = items.map((item, i) => {
         const original = originals[i];
         let candidate = original;
         let n = 1;
-        while (usedNumbers.has(candidate)) {
+        const taken = (c: string) => { if (!byKey) return usedNumbers.has(c); const k = keyOf(item, c); return !!k && usedKeys.has(k); };
+        while (taken(candidate)) {
           n += 1;
           candidate = `${original}-${n}`;
         }
         usedNumbers.add(candidate);
+        if (byKey) { const k = keyOf(item, candidate); if (k) usedKeys.add(k); }
         if (candidate !== original) autoRenamed.push({ original, final: candidate });
         return { item, docNumber: candidate, original };
       });
