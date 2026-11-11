@@ -13,6 +13,8 @@ export interface PhaseCtx {
   phase: string | null;
   /** Every step on the project, every phase. */
   all: Milestone[];
+  /** Pick a phase (null: all), where the screen can. */
+  pick?: (id: string | null) => void;
 }
 
 const Ctx = createContext<PhaseCtx>({ phases: [], phase: null, all: [] });

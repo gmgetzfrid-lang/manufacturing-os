@@ -19,8 +19,11 @@ import type { Milestone } from "@/types/schema";
 import { computeExecutionReport } from "@/lib/executionReport";
 import type { ShiftTimes } from "@/lib/shiftReport";
 import { computeCriticalPathLite, type CriticalPathResult } from "@/lib/criticalPath";
+import PhaseLines, { usePhaseStandings } from "@/components/projects/PhaseLines";
+import { lateWords, standingOf, verdictParts } from "@/lib/phaseStanding";
+import { useCriticalMode } from "@/lib/criticalModeStore";
 
-export default function ExecutionReportView({ milestones, shiftTimes, critical: given, criticalSource }: {
+export default function ExecutionReportView({ milestones, shiftTimes, critical: given, criticalSource, projectId }: {
   milestones: Milestone[]; shiftTimes?: ShiftTimes;
   /** The project (its reports are in Reports). */
   projectId?: string; projectName?: string;
@@ -35,6 +38,13 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(t); }, []);
   const r = useMemo(() => computeExecutionReport(milestones, { tz, shiftTimes, now: new Date(now) }), [milestones, tz, shiftTimes, now]);
   const critical = useMemo(() => given ?? computeCriticalPathLite(milestones), [given, milestones]);
+  // All phases: each on its own plan (PhaseLines), never one pace for all.
+  const byPhase = usePhaseStandings(projectId, now);
+  // Finished: when, and how late (the same figure as the Plan tab's card).
+  const criticalMode = useCriticalMode(projectId);
+  const st = useMemo(() => standingOf(milestones, { now, tz, shiftTimes, criticalMode }), [milestones, now, tz, shiftTimes, criticalMode]);
+  const finLate = st.state === "finished" ? lateWords(st.lateHours) : null;
+  const parts = st.state === "running" ? verdictParts(st) : null;
   const criticalNames = useMemo(
     () => milestones.filter((m) => m.id && critical.ids.has(m.id)).map((m) => m.name),
     [milestones, critical],
@@ -72,7 +82,8 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
       )}
       {/* Headline */}
       <div className={`grid gap-3 ${print ? "grid-cols-4" : "grid-cols-2 lg:grid-cols-4"}`}>
-        <Card>
+        {byPhase && <div className={print ? "col-span-3" : "col-span-2 lg:col-span-3"}><Card><PhaseLines rows={byPhase} print={print} /></Card></div>}
+        {!byPhase && <Card>
           <Label>Complete</Label>
           <div className="flex items-baseline gap-1">
             <span className={`text-3xl font-black tracking-tighter ${r.pctComplete === 100 ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>{r.pctComplete}</span>
@@ -80,8 +91,15 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
           </div>
           <Bar pct={r.pctComplete} done={r.pctComplete === 100} />
           <div className="text-[11px] text-[var(--color-text-muted)] font-mono mt-1">{r.done} / {r.totalLeaves} tasks</div>
-        </Card>
+        </Card>}
 
+        {byPhase ? null : st.state === "finished" ? (
+        <Card>
+          <Label>Finished</Label>
+          <div className={`text-2xl font-black tracking-tight ${(st.lateHours ?? 0) >= 0.5 ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"}`}>{finLate ?? "done"}</div>
+          <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{st.finishedAt ? `last step done ${fmtDateTime(st.finishedAt, tz)}` : "every step done"}</div>
+        </Card>
+        ) : (
         <Card>
           <Label>Pace</Label>
           <div className={`flex items-center gap-1.5 text-2xl font-black tracking-tight ${standing === "behind" ? "text-rose-600 dark:text-rose-400" : standing === "ahead" ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>
@@ -89,7 +107,9 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
             {ahead ? "+" : ""}{r.paceDelta}<span className="text-base text-[var(--color-text-faint)] font-bold">pts</span>
           </div>
           <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{standing === "on track" ? "on track" : standing === "ahead" ? "ahead of schedule" : "behind schedule"} · expected {r.expectedPct}% by now</div>
+          {parts && <div className="text-[11px] text-[var(--color-text-muted)]">{parts}</div>}
         </Card>
+        )}
 
         <Card>
           <Label>Work hours</Label>
@@ -101,13 +121,18 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
           <div className="text-[11px] text-[var(--color-text-muted)] font-mono mt-1">{Math.round(r.earnedHours)} / {Math.round(r.plannedHours)} h</div>
         </Card>
 
-        <Card>
+        {!byPhase && st.state !== "finished" && <Card>
           <Label>Forecast finish</Label>
           <div className={`text-lg font-black tracking-tight ${r.forecastFinish && r.finish && Date.parse(r.forecastFinish) > Date.parse(r.finish) + 30 * 60_000 ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"}`}>{r.forecastFinish ? fmtDate(r.forecastFinish, tz) : "No work yet to forecast from"}</div>
           <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
             planned {fmtDate(r.finish, tz)} · day {r.elapsedDays} of {r.totalDays}
           </div>
-        </Card>
+        </Card>}
+        {!byPhase && st.state === "finished" && <Card>
+          <Label>Planned finish</Label>
+          <div className="text-lg font-black tracking-tight text-[var(--color-text)]">{fmtDateTime(st.plannedFinish, tz)}</div>
+          <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{st.done} of {st.steps} steps done</div>
+        </Card>}
       </div>
 
       {/* Critical path — what's driving the finish */}
@@ -310,6 +335,10 @@ function Health({ icon, tone, label, value }: { icon: React.ReactNode; tone: "em
   );
 }
 
+function fmtDateTime(iso: string | null | undefined, tz: string): string {
+  if (!iso) return "-";
+  return fmtInTz(iso, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }) || "-";
+}
 function fmtDate(iso: string | null | undefined, tz: string): string {
   if (!iso) return "-";
   return fmtInTz(iso, tz, { month: "short", day: "numeric", year: "numeric" }) || "-";

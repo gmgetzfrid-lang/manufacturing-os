@@ -52,6 +52,8 @@ import { buildProgressIndex, leafPercent } from "@/lib/scheduleProgress";
 import { computeExecutionReport } from "@/lib/executionReport";
 import { assignGroupColors, type GroupColor } from "@/lib/scheduleColors";
 import ScheduleProgress from "@/components/projects/ScheduleProgress";
+import { usePhaseStandings } from "@/components/projects/PhaseLines";
+import { lateWords, standingOf, standingShort } from "@/lib/phaseStanding";
 import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
 import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
 import ShiftReportView from "@/components/projects/ShiftReportView";
@@ -1289,7 +1291,7 @@ export default function ExecutionView({
 
       {/* On a phone the summary folds to one line so the board is on screen. */}
       {mode !== "work" ? null : compact && !showCards ? (
-        <CompactSummary items={items} now={nowDate} shiftTimes={shiftTimes} onOpen={() => setShowCards(true)} />
+        <CompactSummary items={items} now={nowDate} shiftTimes={shiftTimes} projectId={projectId} onOpen={() => setShowCards(true)} />
       ) : (
         <>
           {/* The job at a glance, once: done, verdict, forecast, and what needs you. */}
@@ -1666,16 +1668,32 @@ function statusWord(s: MilestoneStatus): string {
 // ─── Summary strip ─────────────────────────────────────────────
 
 /** The summary in one line, for a phone: tap for the full cards. */
-function CompactSummary({ items, now, shiftTimes, onOpen }: { items: Milestone[]; now: Date; shiftTimes: ShiftTimes; onOpen: () => void }) {
+function CompactSummary({ items, now, shiftTimes, projectId, onOpen }: { items: Milestone[]; now: Date; shiftTimes: ShiftTimes; projectId?: string; onOpen: () => void }) {
   const tz = useScheduleTz();
   const r = useMemo(() => computeExecutionReport(items, { tz, now, shiftTimes }), [items, tz, now, shiftTimes]);
   const standing = r.standing;
+  // All phases: each phase in a few words, never one blended percent.
+  const byPhase = usePhaseStandings(projectId, now.getTime());
+  // Finished work says so; a net verdict with late steps under it says that too.
+  const fin = r.allDone ? standingOf(items, { now: now.getTime(), tz, shiftTimes }) : null;
+  const finLate = fin ? lateWords(fin.lateHours) : null;
   return (
     <button onClick={onOpen} className="w-full flex items-center gap-2 flex-wrap rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[12px] text-left">
+      {byPhase ? byPhase.map((s) => (
+        <span key={s.id} className={s.state === "finished" && (s.lateHours ?? 0) >= 0.5 || s.standing === "behind" ? "font-bold text-rose-700 dark:text-rose-300" : "font-bold text-[var(--color-text)]"}>{standingShort(s)}</span>
+      )) : fin ? (
+        <>
+          <b className="text-[var(--color-text)]">Finished</b>
+          {finLate && <span className={(fin.lateHours ?? 0) >= 0.5 ? "font-bold text-rose-700 dark:text-rose-300" : "text-[var(--color-text-muted)]"}>{finLate}</span>}
+        </>
+      ) : (
+        <>
       <b className="text-[var(--color-text)]">{r.pctComplete}%</b>
       <span className={standing === "behind" ? "font-bold text-rose-700 dark:text-rose-300" : standing === "ahead" ? "font-bold text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text-muted)]"}>
         {standing === "on track" ? "on track" : standing} · plan {r.expectedPct}%
       </span>
+        </>
+      )}
       {r.overdue > 0 && <span className="font-bold text-rose-700 dark:text-rose-300">{r.overdue} overdue</span>}
       {r.blocked + r.onHold > 0 && <span className="font-bold text-amber-700 dark:text-amber-300">{r.blocked + r.onHold} stuck</span>}
       <span className="ml-auto text-[11px] text-[var(--color-text-faint)]">Details</span>

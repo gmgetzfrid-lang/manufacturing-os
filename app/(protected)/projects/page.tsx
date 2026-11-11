@@ -23,6 +23,8 @@ import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { listProjects } from "@/lib/projects";
+import { projectDue, projectDueWords } from "@/lib/projectPhases";
+import { dayKey } from "@/lib/scheduleTz";
 import ProjectWizard from "@/components/projects/ProjectWizard";
 import { exportAllProjectsToCsv } from "@/lib/projectExport";
 import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
@@ -299,6 +301,10 @@ export default function ProjectsPage() {
 }
 
 function ProjectCard({ project }: { project: Project }) {
+  // Today, read once when the card is first drawn.
+  const [nowMs] = useState(() => Date.now());
+  // In phases: the phase running now and its end, never the typed target.
+  const due = project.phases?.length ? projectDue(project.phases, null, dayKey(nowMs, project.timezone || "America/Los_Angeles")) : null;
   const statusColors: Record<ProjectStatus, string> = {
     active:    "bg-emerald-100 text-emerald-700 border-emerald-200",
     paused:    "bg-amber-100 text-amber-700 border-amber-200",
@@ -343,7 +349,7 @@ function ProjectCard({ project }: { project: Project }) {
         {project.ownerUserName && (
           <span className="inline-flex items-center gap-1"><UserIcon className="w-3 h-3" /> {project.ownerUserName}</span>
         )}
-        {project.targetCompletionDate && (
+        {project.phases?.length ? (due && <span className="inline-flex items-center gap-1"><Calendar className="w-3 h-3" /> {projectDueWords(due)}</span>) : project.targetCompletionDate && (
           <span className="inline-flex items-center gap-1">
             <Calendar className="w-3 h-3" /> Due {formatDate(project.targetCompletionDate)}
           </span>

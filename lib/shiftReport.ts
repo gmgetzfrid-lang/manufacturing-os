@@ -751,6 +751,11 @@ export interface BuildShiftReportInput {
   plan?: ShiftPlan;
   /** The plan the shift under review was given: checked against what it did. */
   reviewPlan?: ShiftPlan;
+  /** The steps "where the job stands" is measured over: the shift's own
+   *  phase on a project split in phases (lib/phaseStanding), so two phases
+   *  on separate weeks are never blended into one percent or one verdict.
+   *  The shift's lists still cover every step. Absent: every step. */
+  standingIds?: ReadonlySet<string>;
 }
 
 /** A shift's work, picked by hand at the turnover: the steps, and the %
@@ -914,7 +919,8 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   // it (discovery, added scope) never moves the planned finish; what it
   // does to the finish is the forecast's.
   let baseStart = Infinity, baseFinish = -Infinity;
-  for (const m of leaves) {
+  const standLeaves = input.standingIds ? leaves.filter((m) => !!m.id && input.standingIds!.has(m.id)) : leaves;
+  for (const m of standLeaves) {
     const s = startMsOf(m), f = finishMsOf(m);
     plannedStart = Math.min(plannedStart, s); plannedFinish = Math.max(plannedFinish, f);
     const w = workHours(m, tz);
@@ -948,7 +954,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   const actualPct = wsum > 0 ? roundPct((wactual / wsum) * 100) : 0;
   const variancePct = actualPct - plannedPct;
   const standing: ShiftReport["overall"]["standing"] = standingByHours(behindSum - aheadSum, wsum);
-  const unscheduled = milestones.filter((m) => isLeaf(m) && !leaves.includes(m)).length;
+  const unscheduled = milestones.filter((m) => isLeaf(m) && !leaves.includes(m) && (!input.standingIds || (!!m.id && input.standingIds.has(m.id)))).length;
   if (baselined > 0 && Number.isFinite(baseStart) && Number.isFinite(baseFinish)) { plannedStart = baseStart; plannedFinish = baseFinish; }
   const hasSpan = Number.isFinite(plannedStart) && Number.isFinite(plannedFinish);
   const daysTotal = hasSpan ? Math.max(1, dayDiff(plannedStart, plannedFinish, tz) + 1) : 0;
@@ -1167,7 +1173,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   return {
     tz, now, shift, next,
     overall: {
-      actualPct, plannedPct, variancePct, standing, stepsDone, stepsTotal: leaves.length, unscheduled,
+      actualPct, plannedPct, variancePct, standing, stepsDone, stepsTotal: standLeaves.length, unscheduled,
       drivers: {
         ahead: aheadOf.sort((a, b) => b.hours - a.hours), behind: behindOf.sort((a, b) => b.hours - a.hours),
         aheadHours: Math.round(aheadSum * 10) / 10,

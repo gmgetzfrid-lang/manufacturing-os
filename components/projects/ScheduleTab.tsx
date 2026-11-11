@@ -99,9 +99,11 @@ interface ScheduleTabProps {
    *  view shows that phase's schedule; null is the whole project. */
   phases?: ProjectPhase[];
   phase?: string | null;
+  /** Pick a phase from inside the schedule (a phase's line in All phases). */
+  onPickPhase?: (id: string | null) => void;
 }
 
-export default function ScheduleTab({ orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole, isProjectOwner, canEditSchedule, timezone, canManage, onProjectChanged, mode, onMode, phases = NO_PHASES, phase = null }: ScheduleTabProps) {
+export default function ScheduleTab({ orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole, isProjectOwner, canEditSchedule, timezone, canManage, onProjectChanged, mode, onMode, phases = NO_PHASES, phase = null, onPickPhase }: ScheduleTabProps) {
   const view = mode === "plan" ? "planning" : "execution";
   const tz = useScheduleTz();
   // The owner, a co-owner or editor on the project, or an org role that works
@@ -126,8 +128,8 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const milestones = useMemo(() => applyNightStaffing(active, shiftTimes.nightJobs), [active, shiftTimes.nightJobs]);
   // Every phase, for the phase report (the same work the views see: not
   // cancelled, nights as staffed).
-  const phaseCtx = useMemo(() => ({ phases, phase, all: phases.length ? applyNightStaffing(splitCancelled(allMilestones).active, shiftTimes.nightJobs) : milestones }),
-    [phases, phase, allMilestones, shiftTimes.nightJobs, milestones]);
+  const phaseCtx = useMemo(() => ({ phases, phase, all: phases.length ? applyNightStaffing(splitCancelled(allMilestones).active, shiftTimes.nightJobs) : milestones, pick: onPickPhase }),
+    [phases, phase, allMilestones, shiftTimes.nightJobs, milestones, onPickPhase]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showGhost, setShowGhost] = useState(true);

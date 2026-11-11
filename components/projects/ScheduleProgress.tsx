@@ -17,6 +17,11 @@
 // and the forecast is the schedule's own, from its links (lib/cpm), to the
 // hour: the same verdict and forecast the shift report gives.
 //
+// A project split in phases with all of them picked has no one percent or
+// verdict: each phase is on its own plan, in its own week (PhaseLines).
+// Finished work says when it finished and how late, not a forecast. A net
+// "ahead" or "behind" shows its two parts, so early work can't hide late.
+//
 // Pure render — no fetches. Drives off the metrics already computed
 // by lib/milestones.ts:computeScheduleMetrics().
 
@@ -29,6 +34,8 @@ import { useShiftTimes } from "@/lib/shiftTimesStore";
 import { useCriticalMode } from "@/lib/criticalModeStore";
 import { resolveCriticalPath } from "@/lib/criticalPath";
 import { clockLabel } from "@/lib/scheduleTz";
+import { lateWords, verdictParts } from "@/lib/phaseStanding";
+import PhaseLines, { usePhaseStandings } from "@/components/projects/PhaseLines";
 import {
   TrendingUp, TrendingDown, Flag, AlertTriangle, CalendarClock,
   CheckCircle2, Circle, PauseCircle, MinusCircle, XCircle,
@@ -95,6 +102,15 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
     : 0;
   const late = linked ? slipH >= 0.5 : verdict === "behind" || slipDays > 0;
   // Held work, and the overdue among it, said once: "8 overdue, 1 on hold".
+  // Every phase on its own line when the project is split and all are picked.
+  const byPhase = usePhaseStandings(projectId, nowMs);
+  // The work is finished: when, and how late against the plan. Never a
+  // forecast, and never "on plan" beside a late finish.
+  const finished = r.allDone;
+  const finLate = finished ? (linked ? slipH : r.finishedAt && plannedEndAt ? (Date.parse(r.finishedAt) - Date.parse(plannedEndAt)) / 3_600_000 : null) : null;
+  const finWords = lateWords(finLate == null ? null : Math.round(finLate * 10) / 10);
+  const finIsLate = (finLate ?? 0) >= 0.5;
+  const parts = finished ? null : verdictParts(r);
   const held = r.onHold + r.blocked;
   const heldWord = [r.onHold ? `${r.onHold} on hold` : null, r.blocked ? `${r.blocked} blocked` : null].filter(Boolean).join(", ");
 
@@ -102,14 +118,17 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
       {/* Completion + SPI */}
       <div className="lg:col-span-2 bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-4">
+        {byPhase ? <div className="mb-3"><PhaseLines rows={byPhase} /></div> : (
         <div className="flex items-baseline justify-between mb-3">
           <div>
             <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Completion</div>
             <div className="text-3xl font-black text-[var(--color-text)] leading-none mt-1">
               {earnedPct}<span className="text-base text-[var(--color-text-muted)] font-bold">%</span>
             </div>
-            <div className="text-[11px] text-[var(--color-text-muted)] mt-1">Work done · plan by now {planPct}%</div>
+            <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{finished ? `Work done · ${r.done} of ${r.totalLeaves} steps` : `Work done · plan by now ${planPct}%`}</div>
           </div>
+          {/* Finished: when and how late is on the card beside this, once. */}
+          {finished ? null : (
           <div className="text-right">
             <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">SPI</div>
             <div className={`text-3xl font-black leading-none mt-1 ${verdict === "behind" ? "text-rose-600 dark:text-rose-400" : verdict === "ahead" ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>
@@ -119,14 +138,17 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
               {verdict === "behind" ? <TrendingDown className="w-3 h-3 text-rose-600 dark:text-rose-400" /> : <TrendingUp className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />}
               {verdict === "behind" ? `${fmtH(gapH)} behind plan` : verdict === "ahead" ? `${fmtH(gapH)} ahead of plan` : "on plan"}
             </div>
+            {parts && <div className="text-[11px] text-[var(--color-text-muted)]" data-verdict-parts>{parts}</div>}
           </div>
+          )}
         </div>
+        )}
 
         {/* Stacked progress bar — leaves-only counts, matching the metrics. */}
         <StackedBar counts={metrics.byStatus} />
 
         {/* Status legend */}
-        <div className="mt-3 grid grid-cols-5 gap-1.5 text-[11px]">
+        <div className="mt-3 grid grid-cols-3 sm:grid-cols-6 gap-1.5 text-[11px]">
           {(Object.keys(STATUS_META) as MilestoneStatus[]).map((s) => {
             const meta = STATUS_META[s];
             const Icon = meta.Icon;
@@ -145,14 +167,31 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
 
       {/* Right column: forecast + upcoming */}
       <div className="space-y-3">
-        {/* Forecast / slip card */}
+        {/* Forecast / slip card. All phases: each phase's line has its own. */}
         <div className={`rounded-2xl p-4 border ${
-          late
+          byPhase ? "bg-[var(--color-surface)] border-[var(--color-border)]"
+          : (finished ? finIsLate : late)
             ? "bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800"
-            : forecastEndAt
+            : forecastEndAt || finished
               ? "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800"
               : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
         }`}>
+          {byPhase ? (
+            <>
+              <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Needs you</div>
+              {overdue.length === 0 && held === 0 && <div className="text-[13px] font-bold text-[var(--color-text)] mt-1">Nothing overdue or held</div>}
+            </>
+          ) : finished ? (
+            <>
+              <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Finished</div>
+              <div className="text-lg font-black text-[var(--color-text)] mt-1">{r.finishedAt ? humanDateTime(r.finishedAt, tz) : "-"}</div>
+              <div className={`text-[11px] mt-1 inline-flex items-center gap-1 ${finIsLate ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}`}>
+                {finIsLate ? <AlertTriangle className="w-3 h-3" /> : <CheckCircle2 className="w-3 h-3" />}
+                {[finWords, plannedEndAt ? `planned ${humanDateTime(plannedEndAt, tz)}` : null].filter(Boolean).join(" · ")}
+              </div>
+            </>
+          ) : (
+            <>
           <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Forecast end</div>
           <div className="text-lg font-black text-[var(--color-text)] mt-1">
             {forecastEndAt ? (linked ? humanDateTime(forecastEndAt, tz) : humanDate(forecastEndAt, tz)) : plannedEndAt ? humanDate(plannedEndAt, tz) : "-"}
@@ -165,6 +204,8 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
                 : plannedEndAt ? <><CheckCircle2 className="w-3 h-3" /> On plan</> : "Plan not yet set"
             }
           </div>
+            </>
+          )}
           {(overdue.length > 0 || held > 0) && (
             <div className="mt-2 flex flex-wrap items-center gap-x-1 text-[11.5px] font-bold">
               <AlertTriangle className="w-3 h-3 text-rose-700 dark:text-rose-300" />

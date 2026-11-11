@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import type { Milestone } from "@/types/schema";
 import {
   phasesOfRow, rowsForPhase, normalizePhases, fitShares, evenShares, moveDivider, setShare, phaseAmount, shareOfAmount, startPhases,
-  phaseIndex, inPhase, phaseOnDay, phaseRef, phaseDates, phaseProblems, PHASE_ATTR, type ProjectPhase,
+  phaseIndex, inPhase, phaseOnDay, phaseRef, phaseDates, phaseProblems, projectDue, projectDueWords, PHASE_ATTR, type ProjectPhase,
 } from "@/lib/projectPhases";
 
 const P: ProjectPhase[] = [
@@ -119,5 +119,30 @@ describe("where the phases are saved", () => {
   it("else the phases column", () => {
     expect(phasesOfRow({ shift_times: { dayStart: "05:30" }, phases: ph })).toHaveLength(2);
     expect(phasesOfRow({})).toEqual([]);
+  });
+});
+
+describe("projectDue", () => {
+  const two: ProjectPhase[] = [
+    { id: "a", name: "Phase 1", start: "2026-10-24", end: "2026-10-31", share: 50 },
+    { id: "b", name: "Phase 2", start: "2026-11-07", end: "2026-11-15", share: 50 },
+  ];
+  it("in phases: the phase running today and its end, never the typed target", () => {
+    // The target typed on the project was phase 1's end; today is in phase 2.
+    const d = projectDue(two, "2026-10-30", "2026-11-10");
+    expect(d).toEqual({ phase: "Phase 2", kind: "ends", day: "2026-11-15", days: 5 });
+    expect(projectDueWords(d!)).toBe("Phase 2 ends in 5d");
+  });
+  it("between phases: the next one's start", () => {
+    expect(projectDueWords(projectDue(two, "2026-10-30", "2026-11-03")!)).toBe("Phase 2 starts in 4d");
+  });
+  it("after the last phase: when it ended, not 'late'", () => {
+    expect(projectDueWords(projectDue(two, "2026-10-30", "2026-11-18")!)).toBe("Phase 2 ended 3d ago");
+  });
+  it("no phases: the typed target, and past it says so", () => {
+    expect(projectDueWords(projectDue([], "2026-11-15T00:00:00Z", "2026-11-10")!)).toBe("due in 5d");
+    expect(projectDueWords(projectDue([], "2026-10-30", "2026-11-10")!)).toBe("11d past target");
+    expect(projectDueWords(projectDue([], "2026-11-10", "2026-11-10")!)).toBe("due today");
+    expect(projectDue([], null, "2026-11-10")).toBeNull();
   });
 });

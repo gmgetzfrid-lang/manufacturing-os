@@ -68,6 +68,7 @@ import { loadProgressLog, scheduleAt, type ProgressLogRow } from "@/lib/progress
 import { workSummary, workSteps, vsPlanWords, type WorkSummary } from "@/lib/closeoutStatus";
 import { usePhases } from "@/components/projects/PhaseContext";
 import { inPhase } from "@/lib/projectPhases";
+import { phaseOfDay } from "@/lib/phaseStanding";
 import { noScheduleWords } from "@/lib/phaseReport";
 import { resolveCriticalPath, floatsOf, pathMarks, CRITICAL_MODES, type PathMarks } from "@/lib/criticalPath";
 import { useCriticalMode, saveCriticalMode } from "@/lib/criticalModeStore";
@@ -267,6 +268,15 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const asThen = !closing && history?.complete ? history : null;
   const milestones = asThen ? asThen.milestones : live;
   const progress = useMemo(() => (asThen ? buildProgressIndex(asThen.milestones, tz) : liveProgress), [asThen, liveProgress, tz]);
+  // A project split in phases with all of them picked: where the job
+  // stands, its critical path and its forecast are those of the phase this
+  // shift is in (lib/phaseStanding). Phases run in separate weeks and are
+  // never blended into one percent or one verdict. The shift's lists still
+  // cover every step. The close-out is the whole project's, phase by phase.
+  const phx = usePhases();
+  const standPhase = useMemo(() => (!phx.phase && !closing ? phaseOfDay(shift.dayKey, phx.phases, phx.all, tz) : null), [phx, closing, shift.dayKey, tz]);
+  const standingIds = useMemo(() => (standPhase ? new Set(inPhase(milestones, phx.phases, standPhase.id).map((m) => m.id).filter((x): x is string => !!x)) : undefined), [standPhase, milestones, phx.phases]);
+  const standMs = useMemo(() => (standingIds ? milestones.filter((m) => !!m.id && standingIds.has(m.id)) : milestones), [standingIds, milestones]);
   // The schedule as it stood when the shift began — only when the record
   // reaches back. Each step's % then; and the critical path then.
   const atStart = useMemo(() => {
@@ -287,8 +297,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   // The shift on now (or just ended) reads the path as of now — on the
   // schedule's one clock; an earlier shift, as it stood then.
   const pathAt = pastShift ? asOf : pathNow ?? now;
-  const crit = useMemo(() => resolveCriticalPath(milestones, criticalMode, { now: pathAt, tz }), [milestones, criticalMode, pathAt, tz]);
-  const critThen = useMemo(() => (atStart ? resolveCriticalPath(atStart, criticalMode, { now: shift.start, tz }) : null), [atStart, criticalMode, shift.start, tz]);
+  const crit = useMemo(() => resolveCriticalPath(standMs, criticalMode, { now: pathAt, tz }), [standMs, criticalMode, pathAt, tz]);
+  const critThen = useMemo(() => (atStart ? resolveCriticalPath(standingIds ? atStart.filter((m) => !!m.id && standingIds.has(m.id)) : atStart, criticalMode, { now: shift.start, tz }) : null), [atStart, standingIds, criticalMode, shift.start, tz]);
   const criticalIds = crit.ids;
   const path = useMemo<PathInfo>(() => ({
     criticalThen: critThen?.ids, near: crit.near,
@@ -303,7 +313,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const [pathMsg, setPathMsg] = useState<string | null>(null);
   const pathSource = useMemo(() => {
     if (!crit.cpm || crit.mode === "links") return undefined;
-    const links = resolveCriticalPath(milestones, "links", { now: pathAt, tz }).ids;
+    const links = resolveCriticalPath(standMs, "links", { now: pathAt, tz }).ids;
     if (links.size === crit.ids.size && [...links].every((id) => crit.ids.has(id))) return undefined;
     const calculated = links.size;
     return {
@@ -311,7 +321,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       onUse: canEdit ? () => { setPathMsg(null); saveCriticalMode(projectId, "links").catch((e: Error) => setPathMsg(e.message)); } : undefined,
       msg: pathMsg,
     };
-  }, [crit, milestones, pathAt, tz, canEdit, projectId, pathMsg]);
+  }, [crit, standMs, pathAt, tz, canEdit, projectId, pathMsg]);
   const historyNote = !pastShift || closing ? null
     : history?.complete ? `progress as recorded by ${clockLabel(recordedBy, tz)} ${fmtInTz(recordedBy, tz, { month: "short", day: "numeric" })}`
       : `progress as entered by now - the record doesn't reach back to this shift`;
@@ -340,8 +350,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   // shift was given: the list, and what the report reads it against.
   const nextPlan = records.get(nextKey)?.plan, thisPlan = records.get(thisKey)?.plan;
   const report = useMemo(
-    () => buildShiftReport({ milestones, progress, criticalIds, path, tz, times, shift, now: asOf, pullIds: pullKey ? pullKey.split(",") : undefined, startPct, plan: nextPlan, reviewPlan: thisPlan }),
-    [milestones, progress, criticalIds, path, tz, times, shift, asOf, pullKey, startPct, nextPlan, thisPlan],
+    () => buildShiftReport({ milestones, progress, criticalIds, path, tz, times, shift, now: asOf, pullIds: pullKey ? pullKey.split(",") : undefined, startPct, plan: nextPlan, reviewPlan: thisPlan, standingIds }),
+    [milestones, progress, criticalIds, path, tz, times, shift, asOf, pullKey, startPct, nextPlan, thisPlan, standingIds],
   );
   // The shift after that (the other crew's next): its own plan, set the
   // same way, and its list read the same way (the schedule's, with what
@@ -385,7 +395,6 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   // When the last step really finished, against the plan (the close-out's standing).
   const workDone = useMemo(() => (meeting === "closeout" ? workSummary(milestones) : undefined), [meeting, milestones]);
   // The whole project in phases: a phase with no schedule yet means it isn't done.
-  const phx = usePhases();
   const unscheduled = useMemo(() => (meeting === "closeout" && !phx.phase && phx.phases.length
     ? phx.phases.filter((p) => workSteps(inPhase(phx.all, phx.phases, p.id)).length === 0) : []), [meeting, phx]);
   const unscheduledWords = useMemo(() => unscheduled.map((p) => noScheduleWords(p, now, tz)), [unscheduled, now, tz]);
@@ -698,7 +707,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     ? kickoffSections(kickoff, ctx, findingsCtx)
     : meeting === "closeout"
       ? closeoutSections(closeout, report, ctx, cancelled, discoveryList, lookBack, findingsCtx, workDone, unscheduledWords)
-      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet, hourlyExport, onEdit: canEdit && onUpdateStep && !locked ? setEditing : undefined, forecast, pathSource, discovery: discoveryList, why, taskSteps: (id) => stepTally.get(id),
+      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety, sheet, hourlyExport, onEdit: canEdit && onUpdateStep && !locked ? setEditing : undefined, forecast, standPhase: standPhase?.name, pathSource, discovery: discoveryList, why, taskSteps: (id) => stepTally.get(id),
         onDiscovery: onDiscovery && !locked ? () => { const first = view.goals.all[0]?.parentId ?? view.review.done[0]?.parentId; const t = (first ? live.find((m) => m.id === first) : undefined) ?? live.find((m) => live.some((k) => k.parentId === m.id)); if (t) onDiscovery(t); } : undefined,
         // Only while the next shift is still ahead (or on).
         onPlanNext: onPlanNext && report.next.end > now && !locked ? () => onPlanNext(report.next) : undefined,
@@ -707,7 +716,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         // This shift's own plan: the work after its meeting, set (or fixed) here.
         thisPlan: { plan: thisPlan, open: canShip || thisPlan ? () => setPlanFor("this") : undefined } }),
   // eslint-disable-next-line react-hooks/exhaustive-deps -- setPlanOpen / setPlanFor are state setters
-  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, hourlyExport, locked, findingsCtx, nextPlan, canShip, workDone, unscheduledWords, afterReport, afterPlan, afterWin, thisPlan]);
+  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, standPhase, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, hourlyExport, locked, findingsCtx, nextPlan, canShip, workDone, unscheduledWords, afterReport, afterPlan, afterWin, thisPlan]);
   // Sections left off the report, on screen and in print — the viewer's own
   // choice for each meeting, remembered like the email's. Each comes back
   // with a tap (listed at the bottom); the email keeps its own choice.
@@ -819,7 +828,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           : closeout.done >= closeout.steps ? { label: "COMPLETE", tone: "emerald" } : { label: `${closeout.steps - closeout.done} OPEN`, tone: "amber" })
         : { label: overall.standing === "ahead" ? "AHEAD" : overall.standing === "behind" ? "BEHIND" : "ON TRACK",
           tone: overall.standing === "ahead" ? "emerald" : overall.standing === "behind" ? "rose" : "slate",
-          detail: `${overall.actualPct}% vs ${overall.plannedPct}% plan` };
+          detail: `${standPhase ? `${standPhase.name}: ` : ""}${overall.actualPct}% vs ${overall.plannedPct}% plan` };
     // The plant's required format (lib/shiftForm): the shift's own record
     // and what the report has planned and done, by crew.
     const formOf = (): ExportDoc["form"] => {
@@ -919,6 +928,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           })() : [],
           order: sheet.order,
           forecast,
+          standPhase: standPhase?.name,
           discovery: discoveryList,
           why,
         })
@@ -1761,6 +1771,8 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   onEdit?: (id: string) => void;
   /** Where the work lands the finish (lib/cpm). */
   forecast?: { finish: number; slipH: number };
+  /** The phase the standing is of, on a project split in phases with all picked. */
+  standPhase?: string;
   /** The critical path's source, when it isn't the links and they'd say
    *  otherwise — with the switch. */
   pathSource?: { label: string; theirs: number; calculated: number; onUse?: () => void; msg?: string | null };
@@ -2020,7 +2032,8 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     ...agendaItems,
     {
       id: "stand", title: "Where we stand", short: "Status",
-      sub: [overall.plannedFinish ? `Day ${overall.daysElapsed} of ${overall.daysTotal} · planned finish ${c.DT(overall.plannedFinish)}` : null,
+      sub: [o.standPhase ? `${o.standPhase} only` : null,
+        overall.plannedFinish ? `Day ${overall.daysElapsed} of ${overall.daysTotal} · planned finish ${c.DT(overall.plannedFinish)}` : null,
         o.forecast ? forecastText(o.forecast, { D: c.D, T: c.T, hrs: c.hrs }) : null,
         overall.planBasis === "baseline" ? `vs baseline${overall.baselineSetAt ? ` of ${c.D(Date.parse(overall.baselineSetAt))}` : ""}` : "vs live dates (no baseline)",
         overall.unscheduled > 0 ? `${overall.unscheduled} step${overall.unscheduled === 1 ? "" : "s"} without dates not counted` : null].filter(Boolean).join(" · "),

@@ -83,6 +83,8 @@ export interface UpdateLookups {
   /** Where the work as it stands lands the finish (lib/cpm), when the
    *  schedule is linked. */
   forecast?: { finish: number; slipH: number };
+  /** The phase the standing is of (a project split in phases, all picked). */
+  standPhase?: string;
   /** Discovery work on the schedule (lib/discovery). */
   discovery?: Discovery[];
   /** Why it's behind (lib/behindWhy). */
@@ -207,7 +209,8 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   const standTone = overall.standing === "behind" ? "rose" as const : overall.standing === "ahead" ? "emerald" as const : "slate" as const;
   out.push({
     id: "stand", title: "Where we stand",
-    sub: overall.plannedFinish ? `Day ${overall.daysElapsed} of ${overall.daysTotal} · planned finish ${f.D(overall.plannedFinish)}${finishPassed ? " - passed" : ""}${look.forecast ? ` · ${forecastText(look.forecast, f)}` : ""}` : undefined,
+    sub: [look.standPhase ? `${look.standPhase} only` : null,
+      overall.plannedFinish ? `Day ${overall.daysElapsed} of ${overall.daysTotal} · planned finish ${f.D(overall.plannedFinish)}${finishPassed ? " - passed" : ""}${look.forecast ? ` · ${forecastText(look.forecast, f)}` : ""}` : null].filter(Boolean).join(" · ") || undefined,
     flag: overall.standing === "behind" ? "rose" : null,
     blocks: [
       {

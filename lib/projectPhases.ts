@@ -183,6 +183,41 @@ export function phaseOnDay(day: string, phases: ProjectPhase[]): ProjectPhase | 
   return hit;
 }
 
+/** What a list of projects says about a project's dates. Split in phases:
+ *  the phase running today and when it ends; between phases, the next one
+ *  and when it starts; after the last, when it ended. A project with no
+ *  phases: the target date typed on it. The typed target is never held
+ *  against a project in phases (Transmix's "Oct 30" was phase 1's end; the
+ *  job runs through phase 2). `days` is whole plant days from today, never
+ *  negative. Whether the work is late is the schedule's to say, not this. */
+export interface ProjectDue { phase: string | null; kind: "ends" | "starts" | "ended" | "target" | "past target"; day: string; days: number }
+export function projectDue(phases: ProjectPhase[], target: string | null | undefined, today: string): ProjectDue | null {
+  const gap = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
+  const dated = phases.filter((p) => p.start || p.end);
+  if (dated.length) {
+    const running = phaseOnDay(today, phases);
+    if (running) return running.end ? { phase: running.name, kind: "ends", day: running.end, days: gap(today, running.end) } : null;
+    const next = dated.filter((p) => p.start && p.start > today).sort((a, b) => (a.start! < b.start! ? -1 : 1))[0];
+    if (next) return { phase: next.name, kind: "starts", day: next.start!, days: gap(today, next.start!) };
+    const last = dated.filter((p) => p.end && p.end < today).sort((a, b) => (a.end! < b.end! ? 1 : -1))[0];
+    return last ? { phase: last.name, kind: "ended", day: last.end!, days: gap(last.end!, today) } : null;
+  }
+  const t = typeof target === "string" && DAY.test(target.slice(0, 10)) ? target.slice(0, 10) : null;
+  if (!t) return null;
+  return t >= today ? { phase: null, kind: "target", day: t, days: gap(today, t) } : { phase: null, kind: "past target", day: t, days: gap(t, today) };
+}
+
+/** "Phase 2 ends in 5d", "Phase 2 starts in 3d", "Phase 2 ended 2d ago",
+ *  "due in 5d", "11d past target". */
+export function projectDueWords(d: ProjectDue): string {
+  const n = d.days === 0 ? "today" : `${d.days}d`;
+  if (d.kind === "ends") return `${d.phase} ends ${d.days === 0 ? "today" : `in ${n}`}`;
+  if (d.kind === "starts") return `${d.phase} starts ${d.days === 0 ? "today" : `in ${n}`}`;
+  if (d.kind === "ended") return `${d.phase} ended ${d.days === 0 ? "today" : `${n} ago`}`;
+  if (d.kind === "target") return d.days === 0 ? "due today" : `due in ${n}`;
+  return `${n} past target`;
+}
+
 /** The import key for a phase's rows, so two phases' schedule files (both
  *  numbering their tasks from 1) never match each other's rows. */
 export const phaseRef = (phaseId: string, ref: string | null | undefined) => (ref ? `${phaseId}:${ref}` : ref ?? undefined);

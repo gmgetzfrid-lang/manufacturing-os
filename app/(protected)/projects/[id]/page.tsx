@@ -663,6 +663,7 @@ export default function ProjectDetailPage() {
               onMode={setTab}
               phases={phases}
               phase={phase}
+              onPickPhase={setPhase}
             />
           </ScheduleTzProvider>
         )}

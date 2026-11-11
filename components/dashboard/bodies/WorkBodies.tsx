@@ -9,6 +9,8 @@ import {
   Plus, ChevronRight, Tag, FileText, Briefcase, MailPlus, Users, Shield, User, BookOpen,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { phasesOfRow, projectDue, projectDueWords } from "@/lib/projectPhases";
+import { dayKey } from "@/lib/scheduleTz";
 import { useRole } from "@/components/providers/RoleContext";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
@@ -172,6 +174,7 @@ export function DraftingRequestsBody() {
 interface ProjRow {
   id: string; name: string | null; status: string | null; last_activity_at: string | null;
   owner_user_id: string | null; owner_user_name: string | null; target_completion_date: string | null; moc_reference: string | null;
+  timezone?: string | null; phases?: unknown; st_phases?: unknown;
 }
 type ProjScope = "active" | "mine" | "quiet" | "due";
 
@@ -183,7 +186,8 @@ export function ProjectsBody() {
   const { data, loading } = useWidgetData(async (orgId, me) => {
     const [res, activityDates, memberOf] = await Promise.all([
       supabase.from("projects")
-        .select("id, name, status, last_activity_at, owner_user_id, owner_user_name, target_completion_date, moc_reference")
+        // The phases as saved in the project's settings, without the rest of them (a letterhead is large).
+        .select("id, name, status, last_activity_at, owner_user_id, owner_user_name, target_completion_date, moc_reference, timezone, phases, st_phases:shift_times->phases")
         .eq("org_id", orgId).eq("status", "active")
         .order("last_activity_at", { ascending: false, nullsFirst: false }).limit(300),
       fetchRecentDates("project_activity", orgId, 14),
@@ -193,7 +197,9 @@ export function ProjectsBody() {
     const rows = ((res.data ?? []) as ProjRow[]).map((p) => ({
       ...p,
       quietDays: p.last_activity_at ? Math.floor((now - new Date(p.last_activity_at).getTime()) / 86_400_000) : null,
-      dueInDays: p.target_completion_date ? Math.ceil((new Date(p.target_completion_date).getTime() - now) / 86_400_000) : null,
+      // Its dates: the phase running today on a project in phases, else the
+      // typed target. A target date is never held against a project in phases.
+      due: projectDue(phasesOfRow({ phases: p.phases, shift_times: p.st_phases != null ? { phases: p.st_phases } : null }), p.target_completion_date, dayKey(now, p.timezone || "America/Los_Angeles")),
     }));
     const mine = new Set(((memberOf.data ?? []) as Array<{ project_id: string }>).map((r) => r.project_id));
     return { rows, activityDates, mine };
@@ -205,7 +211,7 @@ export function ProjectsBody() {
     active: () => true,
     mine: isMine,
     quiet: (p) => (p.quietDays ?? 99) > 14,
-    due: (p) => p.dueInDays !== null && p.dueInDays <= 14,
+    due: (p) => !!p.due && (p.due.kind === "ends" || p.due.kind === "target" || p.due.kind === "past target") && (p.due.kind === "past target" || p.due.days <= 14),
   };
   const shown = rows.filter(filters[scope]).filter((p) => !dq || `${p.name ?? ""} ${p.moc_reference ?? ""} ${p.owner_user_name ?? ""}`.toLowerCase().includes(dq));
   const buckets = dayBuckets(data?.activityDates ?? [], 14);
@@ -242,10 +248,10 @@ export function ProjectsBody() {
                   {p.last_activity_at ? ` · active ${timeAgo(p.last_activity_at)} ago` : ""}
                 </span>
               </span>
-              {p.dueInDays !== null && (
-                <span className={`shrink-0 text-[10px] font-black px-1.5 py-0.5 rounded ${
-                  p.dueInDays < 0 ? "bg-rose-600 text-white" : p.dueInDays <= 7 ? "bg-amber-100 text-amber-800" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
-                  {p.dueInDays < 0 ? `${-p.dueInDays}d late` : p.dueInDays === 0 ? "due today" : `due ${p.dueInDays}d`}
+              {p.due && (
+                <span data-project-due className={`shrink-0 text-[10px] font-black px-1.5 py-0.5 rounded ${
+                  p.due.kind === "past target" ? "bg-rose-600 text-white" : (p.due.kind === "ends" || p.due.kind === "target") && p.due.days <= 7 ? "bg-amber-100 text-amber-800" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
+                  {projectDueWords(p.due)}
                 </span>
               )}
               <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] opacity-60 sm:opacity-0 group-hover:opacity-100 shrink-0" />

@@ -79,6 +79,17 @@ export interface ExecutionReport {
   paceDelta: number;
   /** Planned work-hours not done by now (negative: done early). */
   gapHours: number;
+  /** The two parts of that net, so "ahead" can't hide late work: hours of
+   *  work done before the plan called for it, hours the plan called for that
+   *  aren't done, and the steps on each side. gapHours = behind - ahead. */
+  aheadHours: number;
+  behindHours: number;
+  aheadSteps: number;
+  behindSteps: number;
+  /** Every step is done (or at 100%): the work is finished. */
+  allDone: boolean;
+  /** When the last step was finished (ISO), when all are done. */
+  finishedAt: string | null;
   /** The job's verdict from those hours (lib/shiftReport standingByHours),
    *  the same rule as the shift report's. */
   standing: "ahead" | "on track" | "behind";
@@ -212,7 +223,23 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
   // shift report shows as "plan by now". (Days elapsed over days in the job
   // said nothing about what work was due, and ran through nights for day work.)
   let wexp = 0;
-  for (const m of leaves) wexp += effectiveWeight(m, tz) * expectedFraction(m, now, tz, opts?.shiftTimes ?? DEFAULT_SHIFT_TIMES);
+  // Each step is either ahead of its own plan or behind it; the verdict is
+  // the net, and both sides are kept so the net can be shown with its parts.
+  let aheadW = 0, behindW = 0, aheadSteps = 0, behindSteps = 0, lastActual = -Infinity;
+  for (const m of leaves) {
+    const w = effectiveWeight(m, tz);
+    const exp = expectedFraction(m, now, tz, opts?.shiftTimes ?? DEFAULT_SHIFT_TIMES);
+    wexp += w * exp;
+    const share = w * (leafPercent(m) / 100 - exp);
+    if (share > 0) { aheadW += share; if (share >= 0.05) aheadSteps++; }
+    else if (share < 0) { behindW -= share; if (share <= -0.05) behindSteps++; }
+    const a = Date.parse(String(m.actualAt ?? ""));
+    if (Number.isFinite(a)) lastActual = Math.max(lastActual, a);
+  }
+  // Finished means the work, by weight: a step with no hours of its own
+  // left open (a marker) does not keep a finished job "in progress".
+  const allDone = totalLeaves > 0 && leaves.every((m) => isDone(m) || effectiveWeight(m, tz) === 0);
+  const finishedAt = allDone && Number.isFinite(lastActual) ? new Date(lastActual).toISOString() : null;
   const expectedPct = wsum > 0 ? Math.min(100, roundPct((wexp / wsum) * 100)) : 0;
   const paceDelta = pctComplete - expectedPct;
   const gapHours = Math.round(((wexp - wpct / 100) * 10)) / 10;
@@ -341,6 +368,7 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
     onHold: tally.onHold, blocked: tally.blocked, missed: tally.missed, overdue: tally.overdue,
     pctComplete, plannedHours, earnedHours, pctHours,
     start, finish, elapsedDays, totalDays, expectedPct, paceDelta, gapHours, standing, forecastFinish,
+    aheadHours: Math.round(aheadW * 10) / 10, behindHours: Math.round(behindW * 10) / 10, aheadSteps, behindSteps, allDone, finishedAt,
     groups, blockers,
     performers: { byActualKind, deviations },
     baseline,

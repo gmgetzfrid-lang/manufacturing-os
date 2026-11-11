@@ -87,7 +87,11 @@ export async function saveProjectShiftTimes(projectId: string, t: ShiftTimes): P
   // letterhead, phases, close-out, manpower, the suggested schedule's changes,
   // staffing plans, and anything added later. Only the times' own keys are
   // replaced.
-  const { data: kept } = await supabase.from("projects").select("shift_times").eq("id", projectId).maybeSingle();
+  const { data: kept, error: readErr } = await supabase.from("projects").select("shift_times").eq("id", projectId).maybeSingle();
+  // The settings couldn't be read: saving now would write the times alone and
+  // drop everything beside them. Stop, and say so. (A missing column is the
+  // one read failure that has nothing beside the times to lose.)
+  if (readErr && !/shift_times/.test(readErr.message)) throw new Error(`Not saved: the project's settings couldn't be read (${readErr.message}). Try again.`);
   const existing = ((kept as { shift_times?: Record<string, unknown> | null } | null)?.shift_times) ?? {};
   const pt = cleanProjectType(existing.projectType) ?? cleanProjectType(t.projectType);
   if (pt) clean.projectType = pt;
