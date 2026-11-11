@@ -224,7 +224,7 @@ export default function KnowledgeIndexIndicator() {
           {state.finished} document{state.finished === 1 ? "" : "s"} indexed.
           {state.heldBack > 0 && (
             <span className="block text-amber-700 dark:text-amber-300">
-              {state.heldBack} couldn&apos;t finish and will be tried again in 30 minutes. The library&apos;s Health panel shows why.
+              {state.heldBack} couldn&apos;t finish and will be tried again in 30 minutes. Library health, at the top of that library&apos;s page, shows why.
             </span>
           )}
         </div>

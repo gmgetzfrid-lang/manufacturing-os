@@ -165,6 +165,12 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
   const meaningPct = report.meaning ? pct(report.meaning.embedded, report.meaning.chunks) : null;
   const N = report.names;
   const nameFixable = N ? N.wrong - N.clashes : 0;
+  // How many of each fault, when every one found is in hand (the list is
+  // capped; with more than it holds, the split isn't known and isn't said).
+  const nameKinds = N && N.wrong > 0 && N.samples.length >= N.wrong ? (() => {
+    const tails = N.samples.filter((f) => f.kind === "sheet-suffix");
+    return { suffix: tails.length, reader: N.samples.length - tails.length, example: tails[0]?.from.documentNumber ?? null };
+  })() : null;
 
   return (
     <div className={`mb-4 rounded-2xl border ${healthy && !report.incomplete ? "border-emerald-200 dark:border-emerald-900" : "border-amber-300 dark:border-amber-800"} bg-[var(--color-surface)] overflow-hidden`}>
@@ -173,6 +179,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
           ? <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
           : <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />}
         <div className="min-w-0 flex-1">
+          <div className="text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Library health</div>
           <div className="text-sm font-black text-[var(--color-text)]">
             {L
               ? <>{L.counts.indexed.toLocaleString()} of {L.indexable.toLocaleString()} readable documents indexed
@@ -256,8 +263,15 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
           <div className="px-3 py-2 flex items-start gap-2 text-[11px] text-amber-900 dark:text-amber-200">
             <Tag className="w-4 h-4 shrink-0 mt-px" />
             <div className="flex-1 min-w-0">
-              <b>{N.wrong.toLocaleString()} document {N.wrong === 1 ? "number or revision was" : "numbers or revisions were"} read wrong from {N.wrong === 1 ? "its file name" : "their file names"}</b>
-              {" "}(e.g. &ldquo;EP 5-3-10&rdquo; cut to &ldquo;EP&rdquo;). The files, titles and index are fine.
+              {/* Two different faults, each said as what it is. */}
+              {nameKinds && nameKinds.reader === 0 ? (
+                <><b>{N.wrong.toLocaleString()} drawing {N.wrong === 1 ? "number carries" : "numbers carry"} a count an upload added</b>
+                  {" "}(like &ldquo;{nameKinds.example ?? "5602-D 1000-7"}&rdquo;). It is not the sheet: each one&apos;s sheet is in its own field and stays. Correct takes the count off. The files and index are fine.</>
+              ) : (
+                <><b>{N.wrong.toLocaleString()} document {N.wrong === 1 ? "number or revision was" : "numbers or revisions were"} read wrong from {N.wrong === 1 ? "its file name" : "their file names"}</b>
+                  {" "}(e.g. &ldquo;EP 5-3-10&rdquo; cut to &ldquo;EP&rdquo;). The files, titles and index are fine.
+                  {nameKinds && nameKinds.suffix > 0 && ` ${nameKinds.suffix.toLocaleString()} of them carry a count an upload added after the number (not the sheet); Correct takes it off.`}</>
+              )}
               {nameFixable > 0 && " Correcting them only touches values nobody has edited since upload; each change is recorded in the document's history."}
               {N.clashes > 0 && <span className="block mt-0.5">{N.clashes.toLocaleString()} can&apos;t be corrected automatically - their correct number is already used (often two files that are revisions of one document). They&apos;re listed for you to decide.</span>}
               <button onClick={() => setNamesOpen((v) => !v)} className="mt-1 inline-flex items-center gap-0.5 font-bold underline-offset-2 hover:underline">
@@ -280,6 +294,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
                     <span className="truncate text-[var(--color-text)]" title={f.fileName}>{f.fileName}</span>
                     <span className="font-mono text-[var(--color-text-muted)] truncate">
                       <s>{f.from.documentNumber || "-"}{f.from.rev !== f.to.rev ? ` rev ${f.from.rev}` : ""}</s> → <b className="text-[var(--color-text)]">{f.to.documentNumber}{f.from.rev !== f.to.rev ? ` rev ${f.to.rev}` : ""}</b>
+                      {f.kind === "sheet-suffix" && f.sheet ? ` · sheet ${String(f.sheet).replace(/^0+(?=\d)/, "")}` : ""}
                     </span>
                     {f.clash && <span className="sm:col-span-2 text-amber-800 dark:text-amber-300">Needs you: {f.clash}</span>}
                   </li>

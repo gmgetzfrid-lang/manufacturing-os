@@ -103,7 +103,7 @@ export default function CodebookLearn({ orgId, uid, book, canWrite, onChanged, o
               </ul>
               {best.learned.uploadTails > 0 && (
                 <p className="mt-1 text-[12px] text-[var(--color-text-muted)]">
-                  {best.learned.uploadTails} of these also end in a dash and digits (like <span className="font-mono">-7</span>). An upload added those to keep a repeated number apart. They are a count, not the sheet, and not part of your numbering. Name check in the library&rsquo;s Health panel takes them off; each sheet keeps its sheet number.
+                  {best.learned.uploadTails} of these also end in a dash and digits (like <span className="font-mono">-7</span>). An upload added those to keep a repeated number apart. They are a count, not the sheet, and not part of your numbering. To take them off: Intelligence, Knowledge, open the library that reads these drawings, and press Correct in the Library health card at the top. Each sheet keeps its sheet number.
                 </p>
               )}
               <ul className="mt-2 space-y-0.5">

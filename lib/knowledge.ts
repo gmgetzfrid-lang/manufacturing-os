@@ -547,7 +547,7 @@ async function ingestLoop(
       transientFailures = 0;
     } catch (e) {
       if ((e as { transient?: boolean }).transient && transientFailures >= 4) {
-        await markStalled(documentId, "The server timed out 5 times in a row reading this file (usually heavy load). Repair in the Health panel retries it.");
+        await markStalled(documentId, "The server timed out 5 times in a row reading this file (usually heavy load). Repair in Library health, at the top of the library's page, retries it.");
       }
       if (!(e as { transient?: boolean }).transient || ++transientFailures > 4) throw e;
       // Back off and pick up where the last committed batch stopped — and
@@ -575,7 +575,7 @@ async function ingestLoop(
       // the Health panel says why.
       await markStalled(documentId,
         `No page could be read in the time one server request allows (stuck at page ${out.pagesIndexed + 1}` +
-        `${out.pageCount ? ` of ${out.pageCount}` : ""}). Repair in the Health panel retries it.`);
+        `${out.pageCount ? ` of ${out.pageCount}` : ""}). Repair in Library health, at the top of the library's page, retries it.`);
       throw new Error(
         `Indexing stalled at page ${out.pagesIndexed}${out.pageCount ? ` of ${out.pageCount}` : ""} - ` +
         "that page is taking longer than one server run allows. Turn off \"Index every page with " +

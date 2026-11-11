@@ -664,7 +664,7 @@ export default function KnowledgeLibraryPage() {
                         <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400 font-black"><CheckCircle2 className="w-3 h-3" /> All {doc.pageCount} pages indexed</span>
                       )}
                       {doc.status === "ready" && !((doc.pageCount ?? 0) > 0 && doc.pagesIndexed >= (doc.pageCount ?? 0)) && (
-                        <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-400 font-black" title="Reading stopped before the last page. Repair in the Health panel resumes it - pages already read aren't paid for again.">
+                        <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-400 font-black" title="Reading stopped before the last page. Repair in Library health, at the top of this page, resumes it - pages already read aren't paid for again.">
                           <AlertTriangle className="w-3 h-3" /> {doc.pagesIndexed} of {doc.pageCount ?? "?"} pages indexed - partly read
                         </span>
                       )}
