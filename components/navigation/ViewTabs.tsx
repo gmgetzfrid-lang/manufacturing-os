@@ -88,11 +88,12 @@ export default function ViewTabs({
 
 // ─── Tab presets for each consolidated tool ──────────────────────
 
-import { Table, Lock, AlertOctagon, Map as MapIcon, List, Activity as ActivityIcon, ScrollText, Inbox as InboxIcon, Network, Send, Package, ClipboardList, Gauge, Bot, BookOpen, Waypoints, GitPullRequest, Settings2, Puzzle } from "lucide-react";
+import { Table, Lock, AlertOctagon, Map as MapIcon, List, Activity as ActivityIcon, ScrollText, Inbox as InboxIcon, Network, Send, Package, ClipboardList, Gauge, Bot, BookOpen, Waypoints, GitPullRequest, Settings2, Puzzle, Unplug } from "lucide-react";
 
 export const DOCUMENT_VIEWS: ViewTab[] = [
-  { label: "Table", href: "/documents", icon: Table, exclude: ["/documents/graph"] },
+  { label: "Table", href: "/documents", icon: Table, exclude: ["/documents/graph", "/documents/connectors"] },
   { label: "Graph", href: "/documents/graph", icon: Waypoints },
+  { label: "Connector checks", href: "/documents/connectors", icon: Unplug },
   { label: "Register", href: "/register", icon: ClipboardList },
   { label: "Checkouts", href: "/checkouts", icon: Lock },
   { label: "Packages", href: "/packages", icon: Package },
