@@ -1218,7 +1218,7 @@ function EntityPanel({ orgId, sat, data, entryById, nodeById, serverFind: liveFi
 
 const EDGE_WORDS: Record<string, string> = {
   belongs_to_unit: "belongs to unit", in_project: "is in project", project_scope: "project covers", about_asset: "is the folder for",
-  tagged_to: "is about", filed_under: "is also filed under", alias_of: "is a nickname for", related: "is related to",
+  tagged_to: "is about", filed_under: "is also filed under", alias_of: "is a nickname for", related: "is related to", applies_to: "applies to",
 };
 
 function LinksPanel({ orgId, edges, units, estateMissing, onReveal, onConnect, connecting, readinessKey }: {

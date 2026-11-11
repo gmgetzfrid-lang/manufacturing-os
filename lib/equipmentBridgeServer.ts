@@ -22,6 +22,7 @@
 //     which drawing.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { originRank } from "@/lib/estate/ids";
 import { loadCodebookAdmin } from "@/lib/codebookServer";
 import { parseDrawingNumber } from "@/lib/codebook";
 import { sweepRows, autoReady, decodeId, looksLikeId, drawingNumberTags, withIds, type SweepRow, type RegistryAsset, type RowChoice } from "@/lib/equipmentSweep";
@@ -192,9 +193,10 @@ export async function folderUnitOf(admin: SupabaseClient, orgId: string, folderI
   }
   const { data: edges } = await admin.from("estate_edges").select("a, b, origin").eq("org_id", orgId).eq("type", "belongs_to_unit").eq("status", "applied").in("a", chain.map((id) => `folder:${id}`));
   const list = (edges ?? []) as Array<{ a: string; b: string; origin: string }>;
-  const rank = (o: string) => (o === "person" ? 0 : o === "codebook" ? 1 : 2);
+  // A person's link first (drawn here or marked on the folder), then what
+  // the site's numbers prove, then what was worked out.
   for (const id of chain) {
-    const mine = list.filter((e) => e.a === `folder:${id}` && e.b.startsWith("cbunit:")).sort((x, y) => rank(x.origin) - rank(y.origin));
+    const mine = list.filter((e) => e.a === `folder:${id}` && e.b.startsWith("cbunit:")).sort((x, y) => originRank(x.origin) - originRank(y.origin));
     if (mine.length) return mine[0].b.slice("cbunit:".length);
   }
   return null;

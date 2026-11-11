@@ -125,19 +125,25 @@ export function defaultPick(q: string, list: FindEquip[], contextUnit: string | 
   return byCode.length === 1 ? byCode[0].id : null;
 }
 
-/** A folder's unit from its name: "55 - Transmix" is unit 55 when the
- *  codebook has a unit 55; "LRU" matches "LPG Recovery Unit (LRU)". */
+/** A folder's unit from its name: "55 - Transmix" is unit 55 because the
+ *  codebook's unit 55 is Transmix; "LRU" matches "LPG Recovery Unit (LRU)".
+ *  A leading number the name does not back up is a section number, not a
+ *  unit ("10 - Material Requirements" is not unit 10, Engineering). */
 export function unitFromFolderName(name: string, units: FindUnit[]): string | null {
   const n = name.trim();
-  const m = n.match(/^(\d{2,3})(?=\s|-|_|\.|$)/);
-  if (m && units.some((u) => u.code === m[1])) return m[1];
   const word = n.replace(/^\d+\s*[-_.]?\s*/, "").trim().toLowerCase();
-  if (word.length < 3) return null;
-  const hit = units.filter((u) => {
+  const says = (u: FindUnit) => {
     const l = u.label.toLowerCase();
     const abbr = l.match(/\(([^)]+)\)/)?.[1]?.trim();
     return l === word || abbr === word || l.startsWith(`${word} `);
-  });
+  };
+  const m = n.match(/^(\d{2,3})(?=\s|-|_|\.|$)/);
+  if (m) {
+    const led = units.find((u) => u.code === m[1]);
+    return led && word.length >= 3 && says(led) ? led.code : null;
+  }
+  if (word.length < 3) return null;
+  const hit = units.filter(says);
   return hit.length === 1 ? hit[0].code : null;
 }
 

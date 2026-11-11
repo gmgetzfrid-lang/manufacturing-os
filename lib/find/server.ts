@@ -32,6 +32,7 @@ import { readableControlledDocIds, type KnowledgePrincipal } from "@/lib/knowled
 import { nid } from "@/lib/estate/ids";
 import { foldLayers, hideOtherTypes, groupResults, snippetAround, REL_WEIGHT, TEXT_HIT, type LayerAdd } from "./merge";
 import type { FindRequest, FindResponse, FindEntity, FindActivity, FindCoverage, FindLayer } from "./types";
+import { sheetQuarter } from "./types";
 
 type Role = KnowledgePrincipal["role"];
 
@@ -148,7 +149,7 @@ export async function findEstate(admin: SupabaseClient, principal: KnowledgePrin
       assetIds.length ? admin.from("document_assets").select("document_id, asset_id, tag_text, source").eq("org_id", orgId).in("asset_id", assetIds).limit(2000) : Promise.resolve({ data: [] as unknown[] }),
       assetIds.length ? admin.from("estate_edges").select("a, b, type, summary").eq("org_id", orgId).eq("status", "applied").in("b", assetNodes).limit(2000) : Promise.resolve({ data: [] as unknown[] }),
       assetIds.length ? admin.from("entity_mentions").select("asset_id, document_id, knowledge_document_id, page, context_snippet").eq("org_id", orgId).in("asset_id", assetIds).limit(2000) : Promise.resolve({ data: [] as unknown[] }),
-      admin.from("knowledge_page_entities").select("document_id, page, tag, x, y").eq("org_id", orgId).in("kind", ["equipment", "instrument"]).in("tag", [...tagForms].slice(0, 40)).limit(2000),
+      admin.from("knowledge_page_entities").select("document_id, page, tag, nx, ny").eq("org_id", orgId).in("kind", ["equipment", "instrument"]).in("tag", [...tagForms].slice(0, 40)).limit(2000),
     ]);
     const label = (assetId: string) => assetHits.get(assetId)?.asset.tag ?? "it";
     for (const r of (da.data as Array<{ document_id: string; asset_id: string; tag_text: string | null; source: string | null }> | null) ?? []) {
@@ -191,9 +192,12 @@ export async function findEstate(admin: SupabaseClient, principal: KnowledgePrin
         pages: m.context_snippet && m.knowledge_document_id ? [{ page: m.page, snippet: m.context_snippet, knowledgeDocId: m.knowledge_document_id }] : [],
       });
     }
-    // Drawn on: tag read off the sheet, with where it sits.
+    // Drawn on: tag read off the sheet, with where it sits when that is
+    // known. Only the measured place on the page (0 to 1, from its top
+    // left) says a quarter of the sheet; the raw PDF numbers do not, and a
+    // tag with no measured place gets no place said.
     const drawnPerDoc = new Map<string, number>();
-    for (const r of (ents.data as Array<{ document_id: string; page: number; tag: string; x: number | null; y: number | null }> | null) ?? []) {
+    for (const r of (ents.data as Array<{ document_id: string; page: number; tag: string; nx: number | null; ny: number | null }> | null) ?? []) {
       const docId = mirrorToDoc.get(r.document_id);
       if (!docId) continue;
       const hit = [...assetHits.values()].find(({ asset }) => canonicalForm(asset.tag) === canonicalForm(r.tag)) ?? null;
@@ -203,10 +207,10 @@ export async function findEstate(admin: SupabaseClient, principal: KnowledgePrin
       if (!assetId) drawnUnregistered.set(r.tag, (drawnUnregistered.get(r.tag) ?? 0) + 1);
       const n = (drawnPerDoc.get(docId) ?? 0) + 1;
       drawnPerDoc.set(docId, n);
-      const where = r.x != null && r.y != null ? `${r.y < 0.5 ? "upper" : "lower"} ${r.x < 0.5 ? "left" : "right"}` : "";
+      const where = sheetQuarter(r.nx, r.ny);
       add(docId, {
         evidence: n === 1 ? [{ kind: "identifier", label: `${r.tag} is drawn on sheet ${r.page}${where ? `, ${where}` : ""}`, delta: REL_WEIGHT.drawn_on, layer: "L1", tier: "exact" }] : [],
-        relations: [{ rel: "drawn_on", node: assetId ? nid.asset(assetId) : `tag:${r.tag}`, label: r.tag, detail: `sheet ${r.page}${where ? `, ${where}` : ""}`, page: r.page, x: r.x ?? undefined, y: r.y ?? undefined, knowledgeDocId: r.document_id }],
+        relations: [{ rel: "drawn_on", node: assetId ? nid.asset(assetId) : `tag:${r.tag}`, label: r.tag, detail: `sheet ${r.page}${where ? `, ${where}` : ""}`, page: r.page, x: r.nx ?? undefined, y: r.ny ?? undefined, knowledgeDocId: r.document_id }],
         pages: [],
       });
     }

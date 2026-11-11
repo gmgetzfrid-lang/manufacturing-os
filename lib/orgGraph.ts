@@ -18,6 +18,7 @@
 // capped and the truncation is reported, never silent.
 
 import { supabase } from "@/lib/supabase";
+import { folderUnitsFrom } from "@/lib/estate/settle";
 import { loadCodebook } from "@/lib/codebook";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 
@@ -297,23 +298,27 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
   // A pre-20261020 org contributes nothing.
   try {
     const [edgesRes, foldersRes, docFoldersRes] = await Promise.all([
-      supabase.from("estate_edges").select("a, b, type, summary").eq("org_id", orgId).eq("status", "applied")
-        .in("type", ["project_scope", "in_project", "belongs_to_unit", "about_asset", "tagged_to"]).limit(8000),
+      supabase.from("estate_edges").select("a, b, type, summary, origin").eq("org_id", orgId).eq("status", "applied")
+        .in("type", ["project_scope", "in_project", "belongs_to_unit", "about_asset", "tagged_to", "applies_to"]).limit(8000),
       asResult(fetchAllRows<{ id: string; parent_id: string | null }>((from, to) => supabase.from("collections")
         .select("id, parent_id").eq("org_id", orgId).order("id").range(from, to), 20_000)),
       asResult(fetchAllRows<{ id: string; collection_id: string }>((from, to) => supabase.from("documents")
         .select("id, collection_id").eq("org_id", orgId).not("collection_id", "is", null).order("id").range(from, to), 50_000)),
     ]);
-    const estate = ((edgesRes.data as Array<{ a: string; b: string; type: string; summary?: string | null }> | null) ?? []);
+    const estate = ((edgesRes.data as Array<{ a: string; b: string; type: string; summary?: string | null; origin?: string | null }> | null) ?? []);
     const parentOf = new Map<string, string | null>();
     for (const c of (foldersRes.data as Array<{ id: string; parent_id: string | null }> | null) ?? []) parentOf.set(c.id, c.parent_id);
-    const folderUnit = new Map<string, string>();
+    // A folder's unit: a person's link first, never whichever row came last.
+    const folderUnit = new Map<string, string>([...folderUnitsFrom(estate).units].map(([fid, code]) => [fid, `cbunit:${code}`]));
     const folderProject = new Map<string, string>();
     const folderAsset = new Map<string, string>();
+    // Standards and references a person said apply to a unit or equipment:
+    // they are filed elsewhere, so the link reads "applies to", not "is in".
+    const folderApplies = new Map<string, string[]>();
     for (const e of estate) {
       if (e.a.startsWith("folder:")) {
         const fid = e.a.slice(7);
-        if (e.type === "belongs_to_unit" && e.b.startsWith("cbunit:")) folderUnit.set(fid, e.b);
+        if (e.type === "applies_to") folderApplies.set(fid, [...(folderApplies.get(fid) ?? []), e.b]);
         if (e.type === "in_project" && e.b.startsWith("proj:")) folderProject.set(fid, e.b);
         if (e.type === "about_asset" && e.b.startsWith("asset:")) folderAsset.set(fid, e.b);
         continue;
@@ -323,8 +328,9 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
       if (e.type === "project_scope" || e.type === "in_project") addEdge(e.a.startsWith("proj:") ? e.a : e.b, e.a.startsWith("proj:") ? e.b : e.a, "project", why);
       else if (e.type === "belongs_to_unit") addEdge(e.a, e.b, "unit", why);
       else if (e.type === "tagged_to") addEdge(e.a, e.b, "tag", why);
+      else if (e.type === "applies_to") addEdge(e.a, e.b, "related", why ?? `${L(e.a)} applies to ${L(e.b)}`);
     }
-    if (folderUnit.size || folderProject.size || folderAsset.size) {
+    if (folderUnit.size || folderProject.size || folderAsset.size || folderApplies.size) {
       const nearest = (fid: string | null, map: Map<string, string>): string | null => {
         const seen = new Set<string>();
         let cur = fid;
@@ -337,6 +343,12 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
         const u = nearest(d.collection_id, folderUnit); if (u && nodes.has(u)) addEdge(id, u, "unit", `${L(id)} is filed under a folder linked to ${L(u)}`);
         const p = nearest(d.collection_id, folderProject); if (p && nodes.has(p)) addEdge(p, id, "project", `${L(id)} is filed under a folder linked to project ${L(p)}`);
         const a = nearest(d.collection_id, folderAsset); if (a && nodes.has(a)) addEdge(id, a, "tag", `${L(id)} is filed in ${L(a)}'s folder`);
+        // Every folder above it that applies to something passes that down.
+        const seen = new Set<string>();
+        for (let cur = d.collection_id; cur && !seen.has(cur); cur = parentOf.get(cur) ?? null) {
+          seen.add(cur);
+          for (const t of folderApplies.get(cur) ?? []) if (nodes.has(t)) addEdge(id, t, "related", `${L(id)} applies to ${L(t)}: its folder was marked as applying to it`);
+        }
       }
     }
   } catch { /* estate edges are optional */ }

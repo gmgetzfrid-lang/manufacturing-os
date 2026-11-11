@@ -389,6 +389,8 @@ export function sheetEntityRows(base: { org_id: string; library_id: string; docu
 
 /** Read one page of a knowledge document's drawing and store the result. */
 export async function censusPage(input: { orgId: string; userId: string; knowledgeDocId: string; page: number; deadlineMs: number; run: RunCtx;
+  /** The caller may add equipment to the registry (admins only). */
+  mayCreate?: boolean;
   /** Correct the document after this page. Default: on its last page. A
    *  catch-up read of only the missing pages finishes on whichever is last. */
   finalize?: boolean }): Promise<CensusPageResult> {
@@ -432,7 +434,7 @@ export async function censusPage(input: { orgId: string; userId: string; knowled
   const done = input.finalize ?? input.page >= pageCount;
   const res: CensusPageResult = { page: input.page, pageCount, done, sheet, journaled };
   if (done && k.source_document_id) {
-    const c = await correctDocument(input.orgId, k.id, k.source_document_id, input.userId, input.run, k.name);
+    const c = await correctDocument(input.orgId, k.id, k.source_document_id, input.userId, input.run, k.name, { mayCreate: input.mayCreate });
     res.correction = c.correction; journaled = journaled && c.journaled; res.journaled = journaled;
   }
   return res;
@@ -440,7 +442,13 @@ export async function censusPage(input: { orgId: string; userId: string; knowled
 
 /** After a sheet is read right: take back what the old reading put on the
  *  document and is not on the sheet, apply what is. */
-export async function correctDocument(orgId: string, knowledgeDocId: string, documentId: string, userId: string, run: RunCtx, sheetName: string): Promise<{ correction: NonNullable<CensusPageResult["correction"]>; journaled: boolean }> {
+export async function correctDocument(orgId: string, knowledgeDocId: string, documentId: string, userId: string, run: RunCtx, sheetName: string,
+  opts: {
+    /** The caller may add equipment to the registry (admins only). */
+    mayCreate?: boolean;
+    /** Tags a person just added by hand: theirs, applied as reviewed. */
+    byHand?: string[];
+  } = {}): Promise<{ correction: NonNullable<CensusPageResult["correction"]>; journaled: boolean }> {
   const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "");
   const before = await snapshotDoc(supabaseAdmin, orgId, documentId);
   const { data: ents } = await supabaseAdmin.from("knowledge_page_entities").select("tag").eq("document_id", knowledgeDocId).eq("kind", "equipment").limit(2000);
@@ -480,14 +488,26 @@ export async function correctDocument(orgId: string, knowledgeDocId: string, doc
   }
 
   // 3. Apply what the sheet carries: suggestions recomputed from the new
-  //    reading, applied as reviewed (a callout read by the person's model),
-  //    then the links redrawn.
-  let added: string[] = [];
+  //    reading, then the links redrawn. A reading is not a review: what the
+  //    reader read is applied the way every automatic path applies it
+  //    (linked by its printed ID; added to the registry only when the ID is
+  //    printed plainly, and only for an admin). Everything else stays a
+  //    suggestion in the equipment review for a person. What a person just
+  //    added by hand is theirs, and is applied as reviewed.
+  const added: string[] = [];
   let createdAssets = 0;
   const comp = await computeForKnowledgeDoc(supabaseAdmin, knowledgeDocId, { autoApply: false }).catch(() => null);
   if (comp?.suggestions.length) {
-    const r = await applyForDocument(supabaseAdmin, { orgId, documentId, userId, byPerson: true }).catch(() => null);
-    if (r) { added = r.appliedTags.filter((t) => !kept.some((k) => norm(k) === norm(t))); createdAssets = r.createdAssets; }
+    const take = (r: { appliedTags: string[]; createdAssets: number } | null) => {
+      if (!r) return;
+      for (const t of r.appliedTags) if (!kept.some((k) => norm(k) === norm(t)) && !added.some((k) => norm(k) === norm(t))) added.push(t);
+      createdAssets += r.createdAssets;
+    };
+    const mayCreate = opts.mayCreate === true;
+    const hand = new Set((opts.byHand ?? []).map(norm));
+    const theirs = comp.suggestions.map((s) => s.tag).filter((t) => hand.has(norm(t)));
+    if (theirs.length) take(await applyForDocument(supabaseAdmin, { orgId, documentId, userId, tags: theirs, byPerson: true, mayCreate }).catch(() => null));
+    take(await applyForDocument(supabaseAdmin, { orgId, documentId, userId, mayCreate }).catch(() => null));
   }
   await resolveEstate(supabaseAdmin, { orgId, documentIds: [documentId] }).catch(() => undefined);
 
@@ -527,7 +547,7 @@ export async function correctDocument(orgId: string, knowledgeDocId: string, doc
 /** A person adds equipment the reader missed. It is stored with the page's
  *  reading (marked as theirs, kept through later reads), put on the drawing
  *  and into the registry, and journaled so it can be undone. */
-export async function addEquipmentByHand(input: { orgId: string; userId: string; userName: string | null; knowledgeDocId: string; page: number; tag: string; name?: string | null; run: RunCtx }): Promise<{ tag: string; correction: NonNullable<CensusPageResult["correction"]> | null; journaled: boolean }> {
+export async function addEquipmentByHand(input: { orgId: string; userId: string; userName: string | null; knowledgeDocId: string; page: number; tag: string; name?: string | null; run: RunCtx; mayCreate?: boolean }): Promise<{ tag: string; correction: NonNullable<CensusPageResult["correction"]> | null; journaled: boolean }> {
   const tag = normTag(input.tag);
   if (!tag) throw new DrawingReadError(`"${input.tag}" is not shaped like an equipment tag (letters, a dash, a number - like H-2 or P-101A).`);
   const { data: kdoc } = await supabaseAdmin.from("knowledge_documents").select("id, library_id, name, page_count, source_document_id").eq("id", input.knowledgeDocId).eq("org_id", input.orgId).maybeSingle();
@@ -548,7 +568,7 @@ export async function addEquipmentByHand(input: { orgId: string; userId: string;
   const { error } = await supabaseAdmin.from("knowledge_page_entities").insert(rows);
   if (error) throw new Error(`Could not store it: ${error.message}`);
   if (!k.source_document_id) return { tag, correction: null, journaled };
-  const c = await correctDocument(input.orgId, k.id, k.source_document_id, input.userId, input.run, k.name);
+  const c = await correctDocument(input.orgId, k.id, k.source_document_id, input.userId, input.run, k.name, { mayCreate: input.mayCreate, byHand: [tag] });
   journaled = journaled && c.journaled;
   return { tag, correction: c.correction, journaled };
 }

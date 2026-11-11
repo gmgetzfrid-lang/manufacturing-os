@@ -11,6 +11,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadResolveContext } from "./resolverServer";
+import { originRank } from "./ids";
 import { unitFromName } from "./resolver";
 import { canonicalForm } from "@/lib/fileFinder/tagForms";
 import { equipmentFromFolderName, eqtypeId, planStructure, type FolderMarkState, type LevelMeaning, type MarkKind, type PlanRow } from "./folderMarks";
@@ -29,10 +30,11 @@ type Folder = { id: string; libraryId: string; parentId: string | null; name: st
 async function markEdges(admin: SupabaseClient, orgId: string, folderIds: string[]): Promise<Map<string, FolderMarkState>> {
   const out = new Map<string, FolderMarkState>();
   if (!folderIds.length) return out;
-  const { data } = await admin.from("estate_edges").select("a, b, type").eq("org_id", orgId).eq("status", "applied")
+  const { data } = await admin.from("estate_edges").select("a, b, type, origin").eq("org_id", orgId).eq("status", "applied")
     .in("a", folderIds.map((f) => `folder:${f}`)).in("type", Object.values(EDGE_OF));
   const assetIds = new Set<string>();
-  const rows = (data as Array<{ a: string; b: string; type: string }> | null) ?? [];
+  // Weakest first, so a person's link is the one left standing on each folder.
+  const rows = ((data as Array<{ a: string; b: string; type: string; origin: string | null }> | null) ?? []).sort((x, y) => originRank(y.origin) - originRank(x.origin));
   for (const r of rows) if (r.type === "about_asset") assetIds.add(r.b.slice(6));
   const tags = new Map<string, string>();
   if (assetIds.size) {
@@ -84,7 +86,11 @@ export async function folderMarkInfo(admin: SupabaseClient, orgId: string, folde
 }
 
 async function upsertMark(admin: SupabaseClient, orgId: string, folderId: string, kind: MarkKind, b: string, summary: string, actor: Actor) {
-  await admin.from("estate_edges").delete().eq("org_id", orgId).eq("a", `folder:${folderId}`).eq("type", EDGE_OF[kind]).neq("b", b);
+  // Anything else said about this folder steps aside and is remembered as
+  // turned down, so the resolver never draws it again over the person's mark.
+  // (Taken away, it came straight back the next time the links were worked out.)
+  await admin.from("estate_edges").update({ status: "dismissed", decided_by: actor.userId, decided_by_name: actor.name, decided_at: new Date().toISOString() })
+    .eq("org_id", orgId).eq("a", `folder:${folderId}`).eq("type", EDGE_OF[kind]).neq("b", b);
   const { error } = await admin.from("estate_edges").upsert({
     org_id: orgId, a: `folder:${folderId}`, b, type: EDGE_OF[kind], origin: "human", tier: "provable", confidence: 1, status: "applied",
     summary, evidence: { markedBy: actor.name }, created_by: actor.userId, created_by_name: actor.name, decided_by: actor.userId, decided_by_name: actor.name, decided_at: new Date().toISOString(),

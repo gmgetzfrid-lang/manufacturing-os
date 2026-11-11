@@ -8,6 +8,10 @@
 //   strong / inferred → status 'pending' (Review decides)
 // Insert-only on conflict: a row that exists (applied, dismissed, or a human's)
 // is left exactly as it was. Re-running is free and idempotent.
+//
+// One exception, and only for links the machine applied by itself: each run
+// checks them again (lib/estate/settle). One the rules no longer prove steps
+// down to pending or is taken away. A person's link is never touched.
 
 import { readCallout, decodeId } from "@/lib/equipmentSweep";
 import { idKey } from "@/lib/equipmentPick";
@@ -17,6 +21,8 @@ import { canonicalForm } from "@/lib/fileFinder/tagForms";
 import type { FinderAlias } from "@/lib/fileFinder/aliasTypes";
 import { resolveTarget, type ResolveContext, type ResolveTarget, type ProposedEdge } from "./resolver";
 import { nid } from "./ids";
+import { fetchAllRows } from "@/lib/fetchAllRows";
+import { folderUnitsFrom, settleStored, type StoredEdge } from "./settle";
 
 export interface ResolveRunInput {
   orgId: string;
@@ -40,6 +46,12 @@ export interface ResolveRunResult {
   applied: number;
   pending: number;
   unchanged: number;
+  /** What the machine recorded earlier, checked again (lib/estate/settle):
+   *  applied links stepped down to pending (demoted); links and questions
+   *  with nothing behind them any more, or on folders and files that no
+   *  longer exist, taken away (removed). */
+  demoted: number;
+  removed: number;
   notes: string[];
 }
 
@@ -52,14 +64,16 @@ function aliasFromRow(r: Record<string, unknown>): FinderAlias {
   };
 }
 
-export async function loadResolveContext(admin: SupabaseClient, orgId: string): Promise<ResolveContext & { folders: Map<string, { id: string; libraryId: string; parentId: string | null; name: string }> }> {
+export async function loadResolveContext(admin: SupabaseClient, orgId: string): Promise<ResolveContext & { folders: Map<string, { id: string; libraryId: string; parentId: string | null; name: string }>; folderUnitByPerson: Set<string> }> {
   const [book, aliasesRes, projectsRes, assetsRes, foldersRes, edgesRes] = await Promise.all([
     loadCodebook(orgId, admin),
     admin.from("finder_aliases").select("*").eq("org_id", orgId),
     admin.from("projects").select("id, name").eq("org_id", orgId).limit(2000),
     admin.from("assets").select("id, tag, code, unit_code").eq("org_id", orgId).limit(20000),
     admin.from("collections").select("*").eq("org_id", orgId),
-    admin.from("estate_edges").select("a, b, type").eq("org_id", orgId).eq("status", "applied").in("type", ["belongs_to_unit", "in_project", "about_asset"]).like("a", "folder:%"),
+    // Every applied folder link, paged: a single read stops at 1,000 rows without saying so.
+    fetchAllRows<{ a: string; b: string; type: string; origin: string | null }>((from, to) => admin.from("estate_edges").select("a, b, type, origin").eq("org_id", orgId).eq("status", "applied")
+      .in("type", ["belongs_to_unit", "in_project", "about_asset"]).like("a", "folder:%").order("id").range(from, to)),
   ]);
   const aliases = ((aliasesRes.data as Record<string, unknown>[] | null) ?? []).map(aliasFromRow);
   const projects = ((projectsRes.data as Array<{ id: string; name: string }> | null) ?? []);
@@ -77,18 +91,19 @@ export async function loadResolveContext(admin: SupabaseClient, orgId: string): 
     if (c.deleted_at) continue;
     folders.set(String(c.id), { id: String(c.id), libraryId: String(c.library_id), parentId: (c.parent_id as string | null) ?? null, name: String(c.name ?? "Folder") });
   }
-  const folderUnits = new Map<string, string>();
+  const edgeRows = edgesRes.rows;
+  // A folder's unit: a person's link first, never whichever row came last.
+  const { units: folderUnits, byPerson: folderUnitByPerson } = folderUnitsFrom(edgeRows);
   const folderProjects = new Map<string, string>();
   const folderAssets = new Map<string, string>();
-  for (const e of (edgesRes.data as Array<{ a: string; b: string; type: string }> | null) ?? []) {
+  for (const e of edgeRows) {
     const fid = e.a.slice("folder:".length);
-    if (e.type === "belongs_to_unit" && e.b.startsWith("cbunit:")) folderUnits.set(fid, e.b.slice("cbunit:".length));
     if (e.type === "in_project" && e.b.startsWith("proj:")) folderProjects.set(fid, e.b.slice("proj:".length));
     if (e.type === "about_asset" && e.b.startsWith("asset:")) folderAssets.set(fid, e.b.slice("asset:".length));
   }
   return {
     units: book.units.map((u) => ({ code: u.code, label: u.label })),
-    aliases, projects, assets, assetsByCode, assetsByName, book, folderUnits, folderProjects, folderAssets, folders,
+    aliases, projects, assets, assetsByCode, assetsByName, book, folderUnits, folderProjects, folderAssets, folders, folderUnitByPerson,
     unitFromDrawingNumber: (raw) => {
       const p = parseDrawingNumber(raw, book);
       return p?.unitCode ?? null;
@@ -111,38 +126,40 @@ function chainOf(folderId: string | null, folders: Map<string, { id: string; par
 }
 
 export async function resolveEstate(admin: SupabaseClient, input: ResolveRunInput): Promise<ResolveRunResult> {
-  const res: ResolveRunResult = { folders: 0, documents: 0, applied: 0, pending: 0, unchanged: 0, notes: [] };
+  const res: ResolveRunResult = { folders: 0, documents: 0, applied: 0, pending: 0, unchanged: 0, demoted: 0, removed: 0, notes: [] };
   const ctx = await loadResolveContext(admin, input.orgId);
   if (!ctx.units.length) res.notes.push("No units in the Site Codebook - unit links need one.");
 
   const proposals: ProposedEdge[] = [];
 
   // ── Folders, parents before children ───────────────────────────────────
-  let folderList = [...ctx.folders.values()];
-  if (input.folderIds?.length) {
-    const want = new Set(input.folderIds);
-    folderList = folderList.filter((f) => want.has(f.id));
-  } else if (input.libraryIds?.length) {
-    const libs = new Set(input.libraryIds);
-    folderList = folderList.filter((f) => libs.has(f.libraryId));
-  } else if (!input.all && !input.documentIds?.length) {
-    folderList = [];
-  }
+  // Every folder is worked through, so what passes down to a child is what
+  // stands today: a person's link, or one the rules prove now. Only the
+  // folders asked for are recorded.
+  let inRun: Set<string> | null = null; // null: every folder
+  if (input.folderIds?.length) inRun = new Set(input.folderIds);
+  else if (input.libraryIds?.length) { const libs = new Set(input.libraryIds); inRun = new Set([...ctx.folders.values()].filter((f) => libs.has(f.libraryId)).map((f) => f.id)); }
+  else if (!input.all) inRun = new Set();
+  const resolved = new Set<string>();
+  const folderList = [...ctx.folders.values()];
   const depth = (f: { id: string }) => chainOf(f.id, ctx.folders).ids.length;
   folderList.sort((a, b) => depth(a) - depth(b));
   for (const f of folderList) {
     const chain = chainOf(f.parentId, ctx.folders);
     const t: ResolveTarget = { kind: "folder", id: f.id, name: f.name, path: chain.names, pathIds: chain.ids };
     const edges = resolveTarget(t, ctx);
-    for (const e of edges) {
-      proposals.push(e);
-      // Children in this same run inherit what their parent just got.
-      if (e.tier === "provable" && e.a === nid.folder(f.id)) {
-        if (e.type === "belongs_to_unit") ctx.folderUnits!.set(f.id, e.b.slice("cbunit:".length));
-        if (e.type === "in_project") ctx.folderProjects!.set(f.id, e.b.slice("proj:".length));
-      }
+    const record = !inRun || inRun.has(f.id);
+    const self = nid.folder(f.id);
+    if (record) { proposals.push(...edges); resolved.add(self); res.folders++; }
+    // What this folder passes down: a person's link stands; otherwise only
+    // what is proven now (a link worked out earlier and no longer proven
+    // passes nothing down).
+    if (!ctx.folderUnitByPerson.has(f.id)) {
+      const proven = edges.find((e) => e.a === self && e.type === "belongs_to_unit" && e.tier === "provable");
+      if (proven) ctx.folderUnits!.set(f.id, proven.b.slice("cbunit:".length)); else ctx.folderUnits!.delete(f.id);
     }
-    res.folders++;
+    const proj = edges.find((e) => e.a === self && e.type === "in_project" && e.tier === "provable");
+    if (proj && record) ctx.folderProjects!.set(f.id, proj.b.slice("proj:".length));
   }
 
   // ── Documents ───────────────────────────────────────────────────────────
@@ -198,7 +215,67 @@ export async function resolveEstate(admin: SupabaseClient, input: ResolveRunInpu
       pageCodes: pageCodes.get(d.id), pageUnit: [...(pageUnits.get(d.id)?.entries() ?? [])].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null,
     };
     proposals.push(...resolveTarget(t, ctx));
+    resolved.add(nid.doc(d.id));
     res.documents++;
+  }
+
+  // ── What the machine recorded earlier, checked again ────────────────────
+  // Before recording: one that steps down must not block today's proposal.
+  type Row = { id: string; a: string; b: string; type: string; origin: string | null; status: string; decided_by: string | null; evidence: Record<string, unknown> | null };
+  const toStored = (r: Row): StoredEdge => ({ id: r.id, a: r.a, b: r.b, type: r.type, origin: r.origin ?? "resolver", status: r.status, decidedBy: r.decided_by, evidence: r.evidence });
+  const stored: StoredEdge[] = [];
+  const gone = new Set<string>();
+  let readOk = true;
+  const cols = "id, a, b, type, origin, status, decided_by, evidence";
+  if (input.all) {
+    // The whole organization: every recorded link, so the ones on folders
+    // and files that no longer exist are found too.
+    const all = await fetchAllRows<Row>((from, to) => admin.from("estate_edges").select(cols).eq("org_id", input.orgId).in("status", ["applied", "pending"]).order("id").range(from, to));
+    if (all.error) { res.notes.push(`estate_edges: ${all.error}`); readOk = false; }
+    else stored.push(...all.rows.map(toStored));
+    if (readOk) {
+      const docIds = new Set<string>();
+      for (const e of stored) for (const n of [e.a, e.b, typeof e.evidence?.folder === "string" ? e.evidence.folder : ""]) {
+        if (n.startsWith("folder:") && !ctx.folders.has(n.slice(7))) gone.add(n);
+        if (n.startsWith("doc:") && !resolved.has(n)) docIds.add(n.slice(4));
+      }
+      // A file this run did not load (older than `since`, past the cap) is
+      // asked for by id: only one the database no longer has is gone.
+      const ids = [...docIds], found = new Set<string>();
+      for (let i = 0; i < ids.length && readOk; i += 150) {
+        const { data, error } = await admin.from("documents").select("id").eq("org_id", input.orgId).in("id", ids.slice(i, i + 150));
+        if (error) { res.notes.push(`documents: ${error.message}`); readOk = false; break; }
+        for (const d of (data as Array<{ id: string }> | null) ?? []) found.add(d.id);
+      }
+      if (readOk) for (const id of ids) if (!found.has(id)) gone.add(`doc:${id}`); else gone.delete(`doc:${id}`);
+      else gone.clear();
+    }
+  } else {
+    const targets = [...resolved];
+    for (let i = 0; i < targets.length; i += 80) {
+      const { data, error } = await admin.from("estate_edges").select(cols).eq("org_id", input.orgId)
+        .eq("type", "belongs_to_unit").in("status", ["applied", "pending"]).in("a", targets.slice(i, i + 80));
+      if (error) { res.notes.push(`estate_edges: ${error.message}`); readOk = false; break; }
+      stored.push(...((data as Row[] | null) ?? []).map(toStored));
+    }
+  }
+  // Nothing is stepped down or taken away on a partial read.
+  const settle = readOk ? settleStored(stored, proposals, resolved, gone) : { demote: [], promote: [], remove: [], gone: [] };
+  for (const d of settle.demote) {
+    const { error } = await admin.from("estate_edges").update({ status: "pending", tier: d.tier, confidence: d.confidence, summary: d.summary, origin: d.origin, evidence: d.evidence }).eq("id", d.id).eq("org_id", input.orgId);
+    if (error) { res.notes.push(`estate_edges: ${error.message}`); break; }
+    res.demoted++;
+  }
+  for (const d of settle.promote) {
+    const { error } = await admin.from("estate_edges").update({ status: "applied", tier: "provable", confidence: 1, summary: d.summary, origin: d.origin, evidence: d.evidence }).eq("id", d.id).eq("org_id", input.orgId);
+    if (error) { res.notes.push(`estate_edges: ${error.message}`); break; }
+    res.applied++;
+  }
+  const drop = [...settle.remove, ...settle.gone];
+  for (let i = 0; i < drop.length; i += 80) {
+    const { error } = await admin.from("estate_edges").delete().eq("org_id", input.orgId).in("id", drop.slice(i, i + 80));
+    if (error) { res.notes.push(`estate_edges: ${error.message}`); break; }
+    res.removed += drop.slice(i, i + 80).length;
   }
 
   // ── Record, never overwrite ─────────────────────────────────────────────

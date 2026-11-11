@@ -6,6 +6,7 @@
 // this returns, so a search is a function call, not a round trip.
 
 import { supabase } from "@/lib/supabase";
+import { folderUnitsFrom } from "@/lib/estate/settle";
 import { loadCodebook } from "@/lib/codebook";
 import type { Role } from "@/types/schema";
 import { entryFromDocument, type DocLike, type FolderLike, type IndexEntry, type LibraryLike, type VersionMeta, type LinkMeta } from "./fileIndex";
@@ -63,7 +64,7 @@ export async function loadFinderData(orgId: string, role: Role, controller: bool
     withTimeout(client.from("libraries").select("id, name, read_access, visible_to").eq("org_id", orgId), 25_000, "Loading libraries"),
     withTimeout(client.from("collections").select("*").eq("org_id", orgId), 25_000, "Loading folders"),
     withTimeout(loadCodebook(orgId, client), 15_000, "Loading the codebook").catch(() => ({ units: [] as Array<{ code: string; label: string }> })),
-    optional<Array<{ a: string; b: string; type: string; summary: string }>>(client.from("estate_edges").select("a, b, type, summary").eq("org_id", orgId).eq("status", "applied").limit(20000), 15_000, "Loading estate links"),
+    optional<Array<{ a: string; b: string; type: string; summary: string }>>(client.from("estate_edges").select("a, b, type, summary, origin").eq("org_id", orgId).eq("status", "applied").limit(20000), 15_000, "Loading estate links"),
     optional<Array<{ id: string; source_document_id: string | null; file_hash: string | null; status: string; pages_indexed: number; file_key?: string | null }>>(client.from("knowledge_documents").select("id, source_document_id, file_hash, status, pages_indexed, file_key").eq("org_id", orgId).limit(20000), 15_000, "Loading read copies"),
     optional<Array<{ id: string; tag: string; description: string | null; unit_code: string | null; cover_photo_id: string | null }>>(client.from("assets").select("id, tag, description, unit_code, cover_photo_id").eq("org_id", orgId).eq("archived", false).limit(20000), 15_000, "Loading equipment"),
   ]);
@@ -71,12 +72,12 @@ export async function loadFinderData(orgId: string, role: Role, controller: bool
     .map((a) => ({ id: a.id, tag: a.tag, description: a.description, unitCode: a.unit_code, coverPhotoId: a.cover_photo_id }));
   const estateMissing = !!edgesRes.error;
   const edges = estateMissing ? [] : (((edgesRes.data as Array<{ a: string; b: string; type: string; summary: string }> | null) ?? []));
-  const folderUnit = new Map<string, string>();
+  // A folder's unit: a person's link first, never whichever row came last.
+  const folderUnit = folderUnitsFrom(edges as Array<{ a: string; b: string; type: string; origin?: string | null }>).units;
   const docUnits = new Map<string, string[]>();
   const docAssets = new Map<string, string[]>();
   const docProjects = new Map<string, string[]>();
   for (const e of edges) {
-    if (e.type === "belongs_to_unit" && e.a.startsWith("folder:") && e.b.startsWith("cbunit:")) folderUnit.set(e.a.slice(7), e.b.slice(7));
     if (e.type === "belongs_to_unit" && e.a.startsWith("doc:") && e.b.startsWith("cbunit:")) docUnits.set(e.a.slice(4), [...(docUnits.get(e.a.slice(4)) ?? []), e.b.slice(7)]);
     if (e.type === "tagged_to" && e.a.startsWith("doc:") && e.b.startsWith("asset:")) docAssets.set(e.a.slice(4), [...(docAssets.get(e.a.slice(4)) ?? []), e.b.slice(6)]);
     if (e.type === "in_project" && e.a.startsWith("doc:") && e.b.startsWith("proj:")) docProjects.set(e.a.slice(4), [...(docProjects.get(e.a.slice(4)) ?? []), e.b.slice(5)]);

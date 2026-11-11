@@ -91,6 +91,12 @@ describe("folder unit", () => {
     expect(unitFromFolderName("99 - Nowhere", units)).toBeNull();
     expect(unitFromFolderName("P&ID's", units)).toBeNull();
   });
+  it("a leading number the name does not back up is not a unit", () => {
+    const more = [...units, { code: "10", label: "Engineering" }, { code: "71", label: "Transfer" }];
+    expect(unitFromFolderName("10 - Material Requirements", more)).toBeNull();
+    expect(unitFromFolderName("30 - KHT", more)).toBe("30");
+    expect(unitFromFolderName("55", more)).toBeNull();
+  });
   it("a mark on the folder wins, deepest first", () => {
     const chain = [{ id: "p", name: "P&ID's" }, { id: "t", name: "55 - Transmix" }];
     expect(unitOfChain(chain, new Map(), units)).toBe("55");

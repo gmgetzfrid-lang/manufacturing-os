@@ -12,6 +12,7 @@
 // documents) built from the registry, with the picked equipment's documents.
 
 import { supabase } from "@/lib/supabase";
+import { folderUnitsFrom } from "@/lib/estate/settle";
 import { searchDocuments } from "@/lib/search";
 import { findEstate } from "@/lib/find/client";
 import { fetchAllRows } from "@/lib/fetchAllRows";
@@ -286,9 +287,10 @@ export async function folderUnit(orgId: string, chain: Array<{ id: string; name:
   const units = await findUnits(orgId);
   const marks = new Map<string, string>();
   try {
-    const { data } = await supabase.from("estate_edges").select("a, b").eq("org_id", orgId).eq("type", "belongs_to_unit").eq("status", "applied")
+    const { data } = await supabase.from("estate_edges").select("a, b, type, origin").eq("org_id", orgId).eq("type", "belongs_to_unit").eq("status", "applied")
       .in("a", chain.map((f) => `folder:${f.id}`));
-    for (const r of (data ?? []) as Array<{ a: string; b: string }>) if (r.b.startsWith("cbunit:")) marks.set(r.a.slice(7), r.b.slice(7));
+    // A person's link on a folder wins over one worked out from its name.
+    for (const [fid, code] of folderUnitsFrom((data ?? []) as Array<{ a: string; b: string; type: string; origin: string | null }>).units) marks.set(fid, code);
   } catch { /* names still work */ }
   return unitOfChain(chain, marks, units);
 }

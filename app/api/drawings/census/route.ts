@@ -93,10 +93,10 @@ export async function POST(req: NextRequest) {
   try {
     const run = { runId: String(body.runId || crypto.randomUUID()).slice(0, 80), label: String(body.runLabel || "Read with AI").slice(0, 120), actor: { userId: auth.caller!.userId, name: auth.caller!.email } };
     if (body.action === "addEquipment") {
-      const r = await addEquipmentByHand({ orgId, userId: auth.caller!.userId, userName: auth.caller!.email, knowledgeDocId: kdocId, page: Math.max(1, Number(body.page ?? 1) || 1), tag: String(body.tag ?? ""), name: body.name ? String(body.name).slice(0, 120) : null, run: { ...run, label: String(body.runLabel || "Equipment added by hand").slice(0, 120) } });
+      const r = await addEquipmentByHand({ orgId, userId: auth.caller!.userId, userName: auth.caller!.email, knowledgeDocId: kdocId, page: Math.max(1, Number(body.page ?? 1) || 1), tag: String(body.tag ?? ""), name: body.name ? String(body.name).slice(0, 120) : null, run: { ...run, label: String(body.runLabel || "Equipment added by hand").slice(0, 120) }, mayCreate: auth.caller!.role === "Admin" });
       return NextResponse.json({ knowledgeDocumentId: kdocId, ...r });
     }
-    const r = await censusPage({ orgId, userId: auth.caller!.userId, knowledgeDocId: kdocId, page: Math.max(1, Number(body.page ?? 1) || 1), deadlineMs: t0 + 57_000, run,
+    const r = await censusPage({ orgId, userId: auth.caller!.userId, knowledgeDocId: kdocId, page: Math.max(1, Number(body.page ?? 1) || 1), deadlineMs: t0 + 57_000, run, mayCreate: auth.caller!.role === "Admin",
       finalize: typeof body.finalize === "boolean" ? body.finalize : undefined });
     return NextResponse.json({ knowledgeDocumentId: kdocId, ...r });
   } catch (e) {

@@ -9,7 +9,7 @@
 
 import { words } from "@/lib/fileFinder/tokens";
 import { docTypesIn, docTypeByKey } from "@/lib/fileFinder/docTypes";
-import { unitFromName, type ResolveContext } from "./resolver";
+import { unitHintFromName, type ResolveContext } from "./resolver";
 
 export interface HomeFolder {
   id: string;
@@ -53,10 +53,11 @@ function folderDocTypes(f: HomeFolder): Set<string> {
 
 /** What is it, and where do things like it live? */
 export function suggestHome(t: HomeTarget, folders: HomeFolder[], ctx: ResolveContext): HomeSuggestion | null {
-  const own = unitFromName(t.name, ctx);
+  // A suggestion ("looks like"), so the looser read of the name will do.
+  const own = unitHintFromName(t.name, ctx);
   const dn = t.documentNumber ?? (t.kind === "document" ? t.name : null);
   const fromDrawing = dn && ctx.unitFromDrawingNumber ? ctx.unitFromDrawingNumber(dn) : null;
-  const unitCode = fromDrawing ?? own?.code ?? null;
+  const unitCode = fromDrawing ?? own ?? null;
   const types = docTypesIn(words(t.name));
   const docType = types[0] ?? null;
   if (!unitCode && !docType) return null; // nothing to go on; silence beats a guess
@@ -70,7 +71,7 @@ export function suggestHome(t: HomeTarget, folders: HomeFolder[], ctx: ResolveCo
     if (f.chainIds.includes(t.id)) continue; // never suggest a folder inside the thing itself
     const why: string[] = [];
     let score = 0;
-    const fUnit = f.unitCode ?? unitFromName(f.chain[f.chain.length - 1], ctx)?.code;
+    const fUnit = f.unitCode ?? unitHintFromName(f.chain[f.chain.length - 1], ctx);
     if (unitCode) {
       if (fUnit === unitCode) { score += 10; why.push(`it is the ${unitLabel} folder`); }
       else if (fUnit && fUnit !== unitCode) continue; // a different unit's folder is never the home
@@ -91,7 +92,7 @@ export function suggestHome(t: HomeTarget, folders: HomeFolder[], ctx: ResolveCo
   const current = folders.find((f) => f.id === t.pathIds[t.pathIds.length - 1]);
   let alreadyHome = false;
   if (current) {
-    const cUnit = current.unitCode ?? unitFromName(current.chain[current.chain.length - 1], ctx)?.code;
+    const cUnit = current.unitCode ?? unitHintFromName(current.chain[current.chain.length - 1], ctx);
     const cTypes = folderDocTypes(current);
     alreadyHome = (!unitCode || cUnit === unitCode) && (!docType || cTypes.has(docType) || cTypes.size === 0);
   }

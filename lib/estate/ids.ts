@@ -35,10 +35,30 @@ export type EdgeType =
   | "of_type"          // folder → eqtype:LABEL (equipment under it is this type)
   | "tagged_to"        // doc → asset (a filing decision)
   | "filed_under"      // doc → folder, ALSO filed (the symbolic link)
+  | "applies_to"       // folder/doc → cbunit/asset: a standard or reference that covers it, filed elsewhere
   | "alias_of"
   | "related";
 
-export type EdgeOrigin = "human" | "codebook" | "resolver" | "bridge" | "proposer" | "vision" | "scanner";
+export type EdgeOrigin = "human" | "person" | "codebook" | "resolver" | "bridge" | "proposer" | "vision" | "scanner";
+
+/** Who drew a link, most to be trusted first: a person; then what the
+ *  site's own numbers prove; then what was read off a page; then what was
+ *  worked out from names and folders. */
+export function originRank(origin: string | null | undefined): number {
+  if (origin === "human" || origin === "person") return 0;
+  if (origin === "codebook") return 1;
+  if (origin === "vision" || origin === "bridge" || origin === "scanner") return 2;
+  return 3;
+}
+/** A person drew it (a mark, a confirmed link): it wins over anything worked out. */
+export const byPerson = (origin: string | null | undefined) => originRank(origin) === 0;
+
+/** Of several links from one thing, the one to go by (a person's first). */
+export function strongestEdge<T extends { origin?: string | null }>(rows: T[]): T | null {
+  let best: T | null = null;
+  for (const r of rows) if (!best || originRank(r.origin) < originRank(best.origin)) best = r;
+  return best;
+}
 export type EdgeTier = "provable" | "strong" | "inferred";
 export type EdgeStatus = "applied" | "pending" | "dismissed" | "stale";
 

@@ -23,6 +23,7 @@ export interface FindRelation {
   label: string;        // "X-35", "AFE200155", "Crude Unit"
   detail: string;       // "sheet 7, upper left" / the sentence / "Equipment/Crude/X-35"
   page?: number;
+  /** Where it sits on the page, 0 to 1 from the top left, when measured. */
   x?: number; y?: number;
   snippet?: string;
   /** The knowledge document id, for opening at the page. */
@@ -114,4 +115,11 @@ export interface FindRequest {
   activity?: boolean;
   /** Skip the meaning layer (an embedding call) — e.g. for a palette. */
   semantic?: boolean;
+}
+
+/** "upper left", "lower right": the quarter of the sheet a measured place
+ *  (0 to 1 from the top left) falls in. Nothing when it was not measured. */
+export function sheetQuarter(nx: number | null | undefined, ny: number | null | undefined): string {
+  if (nx == null || ny == null || !Number.isFinite(nx) || !Number.isFinite(ny) || nx < 0 || nx > 1 || ny < 0 || ny > 1) return "";
+  return `${ny < 0.5 ? "upper" : "lower"} ${nx < 0.5 ? "left" : "right"}`;
 }
