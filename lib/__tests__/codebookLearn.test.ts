@@ -84,14 +84,18 @@ describe("folderAsTypeName", () => {
   });
 });
 
-describe("a sheet saved on the end of a number", () => {
-  const sheets = [
-    ...Array.from({ length: 6 }, (_, i) => ({ number: `3002-D 1086-${i + 8}`, topFolder: "P&ID's" })),
-    { number: "5503-D 1000", topFolder: "PFD's" },
+describe("digits an upload added after a number", () => {
+  // As on file: the LRU's sheet 8 was saved as "5602-D 1000-7".
+  const lru = [
+    { number: "5602-D 1000-7", topFolder: "P&ID's" }, { number: "5602-D 1000-6", topFolder: "P&ID's" }, { number: "5602-D 1000", topFolder: "P&ID's" },
+    { number: "5602-D 1000-19", topFolder: "P&ID's" }, { number: "3002-D 1086-13", topFolder: "P&ID's" }, { number: "5503-D 1000", topFolder: "PFD's" },
   ];
-  it("is said as the sheet, not left unexplained", () => {
-    const r = learnDrawingNumbers(sheets, book)!;
-    expect(r.examples.find((x) => x.number === "3002-D 1086-8")).toMatchObject({ serial: "1086", sheet: "8" });
-    expect(r.examples.find((x) => x.number === "5503-D 1000")).toMatchObject({ serial: "1000", sheet: null });
+  it("are counted, never read as the sheet, and the plain number is the example", () => {
+    const r = learnDrawingNumbers(lru, book)!;
+    expect(r.uploadTails).toBe(4);
+    expect(r.examples.find((x) => x.unit === "56")).toMatchObject({ number: "5602-D 1000", serial: "1000", added: null });
+    // No plain one on file for the KHT here: the example says what was added.
+    expect(r.examples.find((x) => x.unit === "30")).toMatchObject({ number: "3002-D 1086-13", serial: "1086", added: "13" });
+    expect(Object.keys(r.examples[0])).not.toContain("sheet");
   });
 });

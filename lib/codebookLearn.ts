@@ -24,9 +24,12 @@ export interface LearnedNumbering {
   segments: DrawingSegment[];
   /** Numbers that read as the pattern, of the numbers looked at. */
   fit: number; total: number;
-  /** `sheet`: the sheet number saved on the end of the number
-   *  ("3002-D 1086-13" is drawing 1086, sheet 13), when there is one. */
-  examples: Array<{ number: string; unit: string; unitLabel: string; type: string; size: string; serial: string; sheet: string | null }>;
+  /** `added`: digits an upload put after the number to keep a repeated
+   *  number apart ("5602-D 1000-7"). A counter, not the sheet and not part
+   *  of the site's numbering. */
+  examples: Array<{ number: string; unit: string; unitLabel: string; type: string; size: string; serial: string; added: string | null }>;
+  /** How many of the numbers that fit carry such added digits. */
+  uploadTails: number;
   types: LearnedType[];
   misses: string[];
 }
@@ -70,15 +73,19 @@ export function learnDrawingNumbers(samples: NumberSample[], book: Codebook): Le
     const named = folder && inFolder / count >= 0.9 ? folderAsTypeName(folder) : null;
     return { code, count, folder: folder || null, inFolder, label: named, known: book.drawingTypes.find((d) => d.code === code)?.label ?? null };
   }).sort((a, b) => b.count - a.count);
+  // What an upload added after the number, when it did.
+  const tailOf = (s: NumberSample, m: RegExpMatchArray) => s.number.trim().slice(m[0].length).match(/^-(\d{1,3})$/)?.[1] ?? null;
+  const uploadTails = hits.filter(({ s, m }) => tailOf(s, m)).length;
   const seen = new Set<string>();
-  const examples = hits.filter(({ m }) => { const k = `${m[1]}${m[2]}`; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 4)
+  // The number as the site writes it is the example, where one is on file.
+  const examples = [...hits].sort((a, b) => Number(!!tailOf(a.s, a.m)) - Number(!!tailOf(b.s, b.m))).filter(({ m }) => { const k = `${m[1]}${m[2]}`; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 4)
     .map(({ s, m }) => ({
       number: s.number.trim(), unit: m[1], unitLabel: unit.get(m[1]) ?? m[1], type: m[2], size: m[3].toUpperCase(), serial: m[4],
-      sheet: s.number.trim().slice(m[0].length).match(/^[-_. ]+0*(\d{1,3})$/)?.[1] ?? null,
+      added: tailOf(s, m),
     }));
   return {
     segments: [{ kind: "unit", digits: U }, { kind: "drawing_type", digits: 2 }, { kind: "size", letters: 1 }, { kind: "iterable" }],
-    fit: hits.length, total: withNumber.length, examples, types, misses: misses.slice(0, 8),
+    fit: hits.length, total: withNumber.length, examples, uploadTails, types, misses: misses.slice(0, 8),
   };
 }
 

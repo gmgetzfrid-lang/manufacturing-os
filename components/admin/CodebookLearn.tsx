@@ -98,11 +98,13 @@ export default function CodebookLearn({ orgId, uid, book, canWrite, onChanged, o
               </p>
               <ul className="mt-2 space-y-0.5">
                 {best.learned.examples.map((x) => (
-                  <li key={x.number} className="break-words"><b className="font-mono">{x.number}</b>: {x.unitLabel} ({x.unit}), type {x.type}, size {x.size}, number {x.serial}{x.sheet ? <>, <b>sheet {x.sheet}</b></> : null}</li>
+                  <li key={x.number} className="break-words"><b className="font-mono">{x.number}</b>: {x.unitLabel} ({x.unit}), type {x.type}, size {x.size}, number {x.serial}{x.added ? <>. The <b className="font-mono">-{x.added}</b> was added by an upload</> : null}</li>
                 ))}
               </ul>
-              {best.learned.examples.some((x) => x.sheet) && (
-                <p className="mt-1 text-[12px] text-[var(--color-text-muted)]">The digits after the last dash are the sheet, saved on the end of the number. Name check in a library&rsquo;s Health panel moves them into the sheet field.</p>
+              {best.learned.uploadTails > 0 && (
+                <p className="mt-1 text-[12px] text-[var(--color-text-muted)]">
+                  {best.learned.uploadTails} of these also end in a dash and digits (like <span className="font-mono">-7</span>). An upload added those to keep a repeated number apart. They are a count, not the sheet, and not part of your numbering. Name check in the library&rsquo;s Health panel takes them off; each sheet keeps its sheet number.
+                </p>
               )}
               <ul className="mt-2 space-y-0.5">
                 {best.learned.types.map((t) => (
