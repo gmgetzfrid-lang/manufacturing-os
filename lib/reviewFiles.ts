@@ -41,8 +41,8 @@ export function summaryLines(r: Review, o: ReviewFileOpts): string[] {
   if (m.stuckShifts + m.readyShifts) {
     out.push(`Stuck work: on ${m.shiftsWithStuck} of the ${m.shifts} shifts, ${m.leastAtOnce === m.mostAtOnce ? m.mostAtOnce : `${m.leastAtOnce} to ${m.mostAtOnce}`} jobs sat at the same time. ${plural(m.stuckJobs, "started job")} sat still (${plural(m.stuckShifts, "shift")} in all) and ${plural(m.readyJobs, "ready job")} waited to start (${plural(m.readyShifts, "shift")} in all). Each is listed in the appendix.`);
   } else out.push("No started job sat a full shift, and no ready job waited a full shift to start.");
-  const gaps = toClose(r);
-  if (gaps.length) out.push(`${plural(gaps.length, "category needs", "categories need")} closure: ${gaps.map((f) => categoryOf(f.category).name.toLowerCase()).filter((v, i, a) => a.indexOf(v) === i).join(", ")}.`);
+  const cats = toClose(r).map((f) => categoryOf(f.category).name.toLowerCase()).filter((v, i, a) => a.indexOf(v) === i);
+  if (cats.length) out.push(`${plural(cats.length, "category needs", "categories need")} closure: ${cats.join(", ")}.`);
   return out;
 }
 
