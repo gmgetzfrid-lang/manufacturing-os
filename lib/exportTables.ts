@@ -131,6 +131,7 @@ export const ORG_SCOPED_TABLES = [
   // Findings: what each job taught (kept at its close-out review), and a
   // later project's answer to each one (planned for / not relevant).
   "project_findings",
+  "project_materials",
   "finding_acks",
 
   // Equipment + operational scope

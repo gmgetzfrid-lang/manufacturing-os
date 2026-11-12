@@ -201,7 +201,8 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
         <Chip>Sat in progress: <b>{t.waitedSteps}</b> activities, <b>{t.waitedShifts}</b> shifts</Chip>
         <Chip>Ready but not started: <b>{t.readySteps}</b> activities, <b>{t.readyShifts}</b> shifts</Chip>
       </div>
-      <Legend items={[[{ background: "#334155" }, "Progress logged that shift"], [ORDER_WAIT, "Work order open, nothing logged that shift"], [WAIT, "Activity in progress, nothing logged"], [READY, "Ready, not started: its crew was elsewhere"], [{ background: "#cbd5e1", height: 4 }, "Plan"], [{ borderLeft: "2px solid #dc2626", width: 2 }, "Planned finish"]]} />
+      <Legend items={[[{ background: "#334155" }, "Progress logged that shift"], [ORDER_WAIT, "Work order open, nothing logged that shift"], [WAIT, "Activity in progress, nothing logged"], [READY, "Ready, not started"], [{ background: "#cbd5e1", height: 4 }, "Plan"], [{ borderLeft: "2px solid #dc2626", width: 2 }, "Planned finish"]]} />
+      <div className="text-[11.5px] text-[var(--color-text-muted)]">Night shifts count as waiting only for work that ran on nights (its crew worked that work order on two or more nights). Day work sitting overnight is not waiting.</div>
       <div className="overflow-auto max-h-[75vh] rounded-xl border border-[var(--color-border)]">
         <table className="border-separate border-spacing-0 w-max text-[12px]">
           <thead className="sticky top-0 z-[4] bg-[var(--color-surface-2)]">
@@ -259,7 +260,7 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
                           <Grid shifts={work.shifts} />
                           {s.planStart != null && s.planFinish != null && <i className="absolute top-1.5 h-1 rounded bg-slate-300" style={{ left: x(s.planStart), width: Math.max(2, x(s.planFinish) - x(s.planStart)) }} />}
                           {w.worked.map((k) => idx.has(k) && <i key={k} title={`${w.moved[k] ? `${r1(w.moved[k])}% moved` : "started"}`} className="absolute top-3.5 h-4 rounded-sm" style={{ left: idx.get(k)! * PX + 2, width: PX - 4, background: p.colorOf(w.crew) }} />)}
-                          {w.waits.flatMap((r) => keys.slice(idx.get(r.from)!, idx.get(r.to)! + 1)).map((k) => <i key={`w${k}`} className="absolute top-3.5 h-4 rounded-sm" style={{ left: idx.get(k)! * PX + 2, width: PX - 4, ...WAIT }} />)}
+                          {w.waits.flatMap((r) => r.keys).map((k) => <i key={`w${k}`} className="absolute top-3.5 h-4 rounded-sm" style={{ left: idx.get(k)! * PX + 2, width: PX - 4, ...WAIT }} />)}
                           {w.ready?.shifts.map((k) => idx.has(k) && <i key={`r${k}`} className="absolute top-3.5 h-4 rounded-sm" style={{ left: idx.get(k)! * PX + 2, width: PX - 4, ...READY }} />)}
                           {line}
                         </div></td>

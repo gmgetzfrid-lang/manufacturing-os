@@ -26,7 +26,7 @@ export type FindingKind = "problem" | "lesson" | "material" | "missed_scope";
 export type AppliesTo = "equipment" | "unit" | "project" | "all";
 export const TOPICS = ["Materials", "Planning", "Contractors", "Permits", "Staffing", "Safety", "Scheduling", "Other"] as const;
 export type Topic = (typeof TOPICS)[number];
-export type FindingSource = "manual" | "discovery" | "note" | "hold" | "lesson" | "lessons_learned" | "record";
+export type FindingSource = "manual" | "discovery" | "note" | "hold" | "lesson" | "lessons_learned" | "record" | "review";
 export type FindingStatus = "open" | "kept" | "dropped";
 
 export const KINDS: FindingKind[] = ["problem", "lesson", "material", "missed_scope"];
@@ -35,7 +35,7 @@ export const APPLIES: AppliesTo[] = ["equipment", "unit", "project", "all"];
 export const APPLIES_WORD: Record<AppliesTo, string> = { equipment: "Equipment", unit: "Unit", project: "This project", all: "All jobs" };
 /** Where a suggestion came from, as the review says it. */
 export const SOURCE_WORD: Record<FindingSource, string> = {
-  manual: "+ Finding", discovery: "Added to the schedule", note: "Comment", hold: "On hold", lesson: "Close-out lesson", lessons_learned: "Lessons learned", record: "Project records",
+  manual: "+ Finding", discovery: "Added to the schedule", note: "Comment", hold: "On hold", lesson: "Close-out lesson", lessons_learned: "Lessons learned", record: "Project records", review: "Post-event review",
 };
 
 /** What the project's records say (cost, change orders, late work,

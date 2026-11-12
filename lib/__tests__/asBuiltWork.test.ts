@@ -44,28 +44,46 @@ describe("as-built work, shift by shift", () => {
     expect(work.steps.get("psv")!.worked).toEqual(["2026-10-26:day", "2026-10-27:day", "2026-10-28:day", "2026-10-30:day", "2026-10-30:night"]);
   });
   it("in-progress waits, with the comments up to the end of each wait (not the ones that only repeat a number)", () => {
+    // Day work: the nights between its days are not waits. Only the day
+    // shift it sat through counts.
     const w = work.steps.get("psv")!.waits;
-    expect(w.map((r) => [r.from, r.shifts])).toEqual([["2026-10-26:night", 1], ["2026-10-27:night", 1], ["2026-10-28:night", 3]]);
-    expect(w[2].why).toEqual(["PSV pulled. Discovered plugging in line.", "New PSV installed ready for E/I to run tubing for pilot"]);
-    expect(w[0].why).toEqual([]);
+    expect(w.map((r) => [r.from, r.shifts, r.keys])).toEqual([["2026-10-29:day", 1, ["2026-10-29:day"]]]);
+    expect(w[0].why).toEqual(["PSV pulled. Discovered plugging in line.", "New PSV installed ready for E/I to run tubing for pilot"]);
+  });
+  it("night work waits through a night: its crew worked that work order on two or more nights", () => {
+    const tower: Milestone = { id: "tw", name: "V-7", status: "completed", plannedAt: at(30, 18), isSummary: true } as unknown as Milestone;
+    const trays = ms({ id: "trays", parentId: "tw", name: "Clean trays", plannedStartAt: at(26, 19), plannedAt: at(29, 6), actualStartAt: at(26, 19), actualAt: at(29, 3), responsibleParty: "Schultz" });
+    const b = buildAsBuilt({ milestones: [tower, trays], childrenByParent: new Map([["tw", [trays]]]), tz });
+    const lg = [row("trays", at(26, 19), 0, 20, "in_progress", "planned"), row("trays", at(27, 20), 20, 50, "in_progress"), row("trays", at(29, 3), 50, 100, "completed")];
+    const w = buildAsBuiltWork({ built: b, milestones: [tower, trays], log: lg, notes: [], records: new Map(), companyOf: (c) => c, tz, times, now: Date.parse(at(31, 12)) });
+    // Worked the nights of 10/26, 10/27 and 10/28: the days between count
+    // (the site works days), and so would a night it sat through.
+    expect(w.steps.get("trays")!.waits.flatMap((r) => r.keys)).toEqual(["2026-10-27:day", "2026-10-28:day"]);
+    const lg2 = [row("trays", at(26, 19), 0, 20, "in_progress", "planned"), row("trays", at(27, 20), 20, 50, "in_progress"), row("trays", at(29, 20), 50, 100, "completed")];
+    const trays2 = { ...trays, actualAt: at(29, 20) } as Milestone;
+    const b2 = buildAsBuilt({ milestones: [tower, trays2], childrenByParent: new Map([["tw", [trays2]]]), tz });
+    const w2 = buildAsBuiltWork({ built: b2, milestones: [tower, trays2], log: lg2, notes: [], records: new Map(), companyOf: (c) => c, tz, times, now: Date.parse(at(31, 12)) });
+    expect(w2.steps.get("trays")!.waits.flatMap((r) => r.keys)).toEqual(["2026-10-27:day", "2026-10-28:day", "2026-10-28:night", "2026-10-29:day"]);
   });
   it("ready but not started: the shifts, and what its crew moved instead", () => {
     const r = work.steps.get("blast")!.ready!;
-    expect(r.shifts).toEqual(["2026-10-26:night", "2026-10-27:day", "2026-10-27:night", "2026-10-28:day"]);
+    expect(r.shifts).toEqual(["2026-10-27:day", "2026-10-28:day"]);
     expect(r.busyOn).toEqual(["E-12"]);
     expect(r.crewLogged).toBe(true);
   });
   it("a work order is worked where any step moved, waiting where one waited", () => {
     const o = work.orders.get([...work.orders.keys()].find((k) => built.orders.find((x) => x.key === k)?.name === "PSVs")!)!;
     expect(o.cells[0]).toBe("work");
-    expect(o.cells[1]).toBe("wait");
+    // The night after: day work, not waiting.
+    expect(o.cells[1]).toBe(null);
+    expect(o.cells[6]).toBe("wait");
   });
   it("crews: steps moved, plan hours of progress, counts, and a pace only from enough counts", () => {
     const ancon = work.crews.find((c) => c.crew === "Ancon")!;
     expect(ancon.byShift["2026-10-27:day"]).toMatchObject({ moved: 1, earned: 2, counted: { total: 10 } });
     expect(ancon.byShift["2026-10-28:day"].counted).toEqual({ total: 10, direct: 8, indirect: 2 });
     expect(ancon.pace?.from).toBe("counted");
-    expect(work.totals).toMatchObject({ waitedSteps: 1, waitedShifts: 5, readySteps: 1, readyShifts: 4, countedShifts: 2 });
+    expect(work.totals).toMatchObject({ waitedSteps: 1, waitedShifts: 1, readySteps: 1, readyShifts: 2, countedShifts: 2 });
   });
   it("tool hours: the shift less breaks and the first hour", () => {
     expect(toolHoursOf(times)).toEqual({ day: 10.5, night: 11 });

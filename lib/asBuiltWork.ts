@@ -11,6 +11,9 @@
 //   - Waiting to start: everything before a step was done (and its planned
 //     start had come), but it didn't start: whole shifts until it did, and
 //     what its crew was moving instead.
+//   - Nights count only for work that ran on nights: a night shift is a
+//     wait for a step only when its crew worked its work order on two or
+//     more nights of the job. Day work sitting overnight is not waiting.
 //   - A work order is worked in a shift when any of its steps moved; it
 //     waits when one of its steps waited and none moved.
 //   - Hands: counted at the meeting where counted, a contractor's staffing
@@ -29,7 +32,14 @@ import type { StaffingPlans } from "@/lib/staffingPlan";
 const toMs = (v: unknown): number | null => { const t = v == null || v === "" ? NaN : typeof v === "number" ? v : Date.parse(String(v)); return Number.isFinite(t) ? t : null; };
 export const shiftKey = (w: Pick<ShiftWindow, "dayKey" | "kind">) => `${w.dayKey}:${w.kind}`;
 
-export interface WaitRun { from: string; to: string; shifts: number; why: string[] }
+export interface WaitRun {
+  from: string; to: string;
+  /** Shifts that count (nights only for work that ran on nights). */
+  shifts: number;
+  /** Those shifts, in order. */
+  keys: string[];
+  why: string[];
+}
 export interface StepWork {
   id: string;
   crew: string;
@@ -157,6 +167,19 @@ export function buildAsBuiltWork(input: {
   }
   for (const v of notesBy.values()) v.sort((a, b) => a.at - b.at);
 
+  // Work that ran on nights: a crew that moved a work order's steps on two
+  // or more nights. Only that work can wait through a night shift.
+  const nightsOf = new Map<string, Set<string>>();
+  for (const { s, order } of steps) {
+    for (const k of touched.get(s.id) ?? []) {
+      if (!k.endsWith(":night")) continue;
+      const pk = `${order.key}|${crewOf(s.id)}`;
+      if (!nightsOf.has(pk)) nightsOf.set(pk, new Set());
+      nightsOf.get(pk)!.add(k);
+    }
+  }
+  const counts = (stepId: string, k: string) => !k.endsWith(":night") || (nightsOf.get(`${orderOf.get(stepId)?.key}|${crewOf(stepId)}`)?.size ?? 0) >= 2;
+
   const work = new Map<string, StepWork>();
   for (const { s } of steps) {
     const t = [...(touched.get(s.id) ?? [])].filter((k) => idx.has(k)).sort((a, b) => idx.get(a)! - idx.get(b)!);
@@ -167,12 +190,13 @@ export function buildAsBuiltWork(input: {
     if (t.length > 1) {
       let run: string[] = [];
       const close = () => {
+        run = run.filter((k) => counts(s.id, k));
         if (!run.length) return;
         const end = shifts[idx.get(run[run.length - 1])!].end;
         const said = (notesBy.get(s.id) ?? []).filter((x) => x.at <= end).map((x) => x.body);
         const last2: string[] = [];
         for (const b of said.reverse()) { if (!last2.includes(b)) last2.push(b); if (last2.length === 2) break; }
-        waits.push({ from: run[0], to: run[run.length - 1], shifts: run.length, why: last2.reverse() });
+        waits.push({ from: run[0], to: run[run.length - 1], shifts: run.length, keys: run, why: last2.reverse() });
         run = [];
       };
       for (let i = idx.get(t[0])!; i <= idx.get(t[t.length - 1])!; i++) {
@@ -207,7 +231,8 @@ export function buildAsBuiltWork(input: {
     if (s.inPlan && s.planStart != null) readyAt = Math.max(readyAt, s.planStart);
     const i0 = idx.get(keyAt(readyAt)), i1 = idx.get(first);
     if (i0 == null || i1 == null || i1 - i0 < 2) continue;
-    const gap = keys.slice(i0 + 1, i1);
+    const gap = keys.slice(i0 + 1, i1).filter((k) => counts(s.id, k));
+    if (!gap.length) continue;
     const on = new Map<string, number>();
     let logged = false;
     for (const k of gap) {
@@ -224,7 +249,7 @@ export function buildAsBuiltWork(input: {
   for (const o of built.orders) {
     const ws = o.steps.map((s) => work.get(s.id)!).filter(Boolean);
     const cells = keys.map((k) => ws.some((w) => w.worked.includes(k)) ? "work" as const
-      : ws.some((w) => w.waits.some((r) => idx.get(r.from)! <= idx.get(k)! && idx.get(k)! <= idx.get(r.to)!) || w.ready?.shifts.includes(k)) ? "wait" as const : null);
+      : ws.some((w) => w.waits.some((r) => r.keys.includes(k)) || w.ready?.shifts.includes(k)) ? "wait" as const : null);
     orders.set(o.key, { cells, worked: cells.filter((c) => c === "work").length, waited: cells.filter((c) => c === "wait").length });
   }
 
