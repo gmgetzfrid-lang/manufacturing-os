@@ -20,7 +20,7 @@
 
 import { noEmDash } from "@/lib/noEmDash";
 
-export type FormRowId = "attend" | "safety" | "plan" | "done" | "followup" | "notes" | "headcount";
+export type FormRowId = "attend" | "safety" | "plan" | "done" | "waiting" | "followup" | "notes" | "headcount";
 
 export type FormLine =
   /** A crew's name over its items ("Schultz"). */
@@ -55,6 +55,7 @@ export const FORM_ROWS: Array<{ id: FormRowId; word: string }> = [
   { id: "safety", word: "Safety" },
   { id: "plan", word: "Work to be completed" },
   { id: "done", word: "Work completed" },
+  { id: "waiting", word: "Waiting and ready" },
   { id: "followup", word: "Follow-up items" },
   { id: "notes", word: "Shift notes" },
   { id: "headcount", word: "Headcount" },
@@ -77,6 +78,10 @@ export interface FormInput {
   planned: FormWork[];
   completed: FormWork[];
   followUps: string[];
+  /** The shift's waiting and ready lists (lib/waitingReady): started jobs
+   *  with nothing logged this shift, and ready jobs that did not start.
+   *  Absent: not known (the row is left out). */
+  waiting?: { started: string[]; ready: string[] };
   /** The hours: "7:00" and what happened. */
   notes: Array<{ clock: string; text: string }>;
   headcount: Array<{ crew: string; n: number }>;
@@ -133,6 +138,10 @@ export function shiftForm(i: FormInput): ShiftForm {
     ] },
     { id: "plan", label: `Work to be Completed After ${i.meeting} Meeting`, lines: i.planned.length ? byCrew(i.planned) : none("No work planned for the shift") },
     { id: "done", label: `Work Completed Between ${i.meeting} and ${i.end}`, lines: i.completed.length ? byCrew(i.completed) : none("Nothing entered as done") },
+    ...(i.waiting ? [{ id: "waiting" as const, label: "Waiting and Ready", lines: i.waiting.started.length + i.waiting.ready.length ? [
+      ...(i.waiting.started.length ? [{ k: "group" as const, text: "Started, nothing logged this shift" }, ...i.waiting.started.map((t) => ({ k: "item" as const, text: clean(t) }))] : []),
+      ...(i.waiting.ready.length ? [{ k: "group" as const, text: "Ready, not started" }, ...i.waiting.ready.map((t) => ({ k: "item" as const, text: clean(t) }))] : []),
+    ] : none("Nothing sat this shift") }] : []),
     { id: "followup", label: "Follow-Up Items", lines: i.followUps.map(clean).filter(Boolean).length ? i.followUps.map(clean).filter(Boolean).map((t) => ({ k: "item" as const, text: t })) : none("None") },
     { id: "notes", label: "Shift Notes", lines: oneATime(i.notes).length
       ? oneATime(i.notes).map((n) => ({ k: "text" as const, lead: `${n.clock} –`, text: ` ${n.text}` }))

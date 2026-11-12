@@ -48,7 +48,7 @@ import {
 import { buildKickoff, buildCloseout, defaultMeeting, type MeetingKind, type PlanRow } from "@/lib/meetingPlan";
 import { clockLabel, fmtInTz, tzAbbrev, toDateTimeInput } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
-import { type ExportBlock, type ExportCell, type ExportDoc, type ExportStepRow } from "@/lib/reportExport";
+import { type ExportBlock, type ExportCell, type ExportDoc, type ExportSection, type ExportStepRow } from "@/lib/reportExport";
 import { turnoverUpdate, withoutEmpty, noteLine, hazardJobsOf, forecastText, discoverySub, discoveryBlock } from "@/lib/managementUpdate";
 import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
 import { isDefaultType, typeWord } from "@/lib/projectType";
@@ -65,6 +65,8 @@ import CalendarQuickView, { type StepUpdate } from "@/components/projects/Calend
 import { discoveries, discoveryOf, discoverySummary, discoveryStepLine, impactLine, impactNowLine, hoursNow, ADDED, kindOf, addedTitle, type Discovery } from "@/lib/discovery";
 import { buildTimeLog, downloadTimeLog } from "@/lib/timeLog";
 import { loadProgressLog, scheduleAt, type ProgressLogRow } from "@/lib/progressHistory";
+import { waitingAndReady, type WaitingReady } from "@/lib/waitingReady";
+import { CAUSE_WORD, jobWord, orderWord } from "@/lib/postEventReview";
 import { workSummary, workSteps, vsPlanWords, type WorkSummary } from "@/lib/closeoutStatus";
 import { usePhases } from "@/components/projects/PhaseContext";
 import { inPhase } from "@/lib/projectPhases";
@@ -703,7 +705,9 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       team: (teamLessons ?? []).filter((l) => !reviewed.has(l.id)).map((l) => ({ text: l.text, by: l.by ?? null })),
     };
   }, [orgId, projectId, ptype.word, canEdit, userId, findingRows, pastJobs, live, teamLessons]);
-  const allSections = useMemo(() => meeting === "kickoff"
+  // The shift's waiting and ready lists (lib/waitingReady), once the log is in.
+  const waitList = useMemo(() => (meeting === "turnover" && log ? waitingAndReady({ milestones: live, log, notes: allNotes, tz, times, shift: view.shift }) : null), [meeting, log, live, allNotes, tz, times, view.shift]);
+  const baseSections = useMemo(() => meeting === "kickoff"
     ? kickoffSections(kickoff, ctx, findingsCtx)
     : meeting === "closeout"
       ? closeoutSections(closeout, report, ctx, cancelled, discoveryList, lookBack, findingsCtx, workDone, unscheduledWords)
@@ -717,6 +721,13 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         thisPlan: { plan: thisPlan, open: canShip || thisPlan ? () => setPlanFor("this") : undefined } }),
   // eslint-disable-next-line react-hooks/exhaustive-deps -- setPlanOpen / setPlanFor are state setters
   [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety, sheet, canEdit, onUpdateStep, forecast, standPhase, pathSource, discoveryList, why, stepTally, onDiscovery, live, onPlanNext, now, lookBack, hourlyExport, locked, findingsCtx, nextPlan, canShip, workDone, unscheduledWords, afterReport, afterPlan, afterWin, thisPlan]);
+  // Waiting and ready sits right after what the shift got done.
+  const allSections = useMemo(() => {
+    if (meeting !== "turnover" || !waitList) return baseSections;
+    const sec = waitingSection(waitList, view.shift, ctx);
+    const at = baseSections.findIndex((x) => x.id === "done");
+    return at < 0 ? [...baseSections, sec] : [...baseSections.slice(0, at + 1), sec, ...baseSections.slice(at + 1)];
+  }, [baseSections, meeting, waitList, view.shift, ctx]);
   // Sections left off the report, on screen and in print — the viewer's own
   // choice for each meeting, remembered like the email's. Each comes back
   // with a tap (listed at the bottom); the email keeps its own choice.
@@ -878,6 +889,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           ...startedHere.map((r) => ({ crew: crewOf(r), ...item(r, "(started)") })),
         ],
         followUps: sheet.notes.filter((n) => n.followUp && !n.cleared).map((n) => n.text),
+        // The waiting and ready lists, once the log is in (lib/waitingReady).
+        ...(waitList ? { waiting: {
+          started: waitList.waiting.map((j) => `${jobWord(j)} – ${waitWhy(j)}${j.said ? `: "${j.said}"` : ""} (${j.crew}, ${shiftsWord(j.shifts)})`),
+          ready: waitList.ready.map((j) => `${jobWord(j)} – ready since ${ctx.DT(j.readyAt)}; ${readyWhy(j).charAt(0).toLowerCase()}${readyWhy(j).slice(1)} (${j.crew}, ${shiftsWord(j.shifts)})`),
+        } } : {}),
         // The hours, short, the way a shift writes them (lib/shiftHourly briefNotes).
         notes: sheet.hourly
           ? briefNotes(hourlyRows(sheet.hourly.notes, sheet.hourly.slots, sheet.hourly.upTo, sheet.hourly.entries, tz, { ...sheet.hourly.meet, closes: sheet.hourly.closes }), sheet.hourly.entries, sheet.hourly.slots, tz)
@@ -897,7 +913,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       // The update management reads, not the meeting's agenda: short
       // tables, one line per main task, and nothing that's empty.
       sections: meeting === "turnover"
-        ? turnoverUpdate(view, { D: ctx.D, DTs: ctx.DTs, T: ctx.T, win: ctx.win, hrs: ctx.hrs, word: ctx.word }, {
+        ? withWaiting(turnoverUpdate(view, { D: ctx.D, DTs: ctx.DTs, T: ctx.T, win: ctx.win, hrs: ctx.hrs, word: ctx.word }, {
           pctOf: (id) => progress?.get(id)?.percent,
           finishOf: (id) => taskSpans.get(id)?.finish,
           planOf: (id) => planByTask.get(id),
@@ -931,7 +947,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           standPhase: standPhase?.name,
           discovery: discoveryList,
           why,
-        })
+        }), waitList ? waitingExport(waitList, view.shift, ctx) : null)
         : withoutEmpty(allSections.filter((x) => x.data).map((x) => ({ id: x.id, title: x.title, sub: x.sub, flag: x.flag ?? null, blocks: x.data!() }))),
     };
   };
@@ -1752,6 +1768,52 @@ interface SheetCtx {
   /** The tables' order as dragged; null puts a table back the usual way. */
   order?: TableOrder;
   setOrder: (table: keyof TableOrder, ids: string[] | null) => void;
+}
+
+// ── Waiting and ready: what the control meeting works from ──
+const shiftsWord = (n: number) => `${n} shift${n === 1 ? "" : "s"}`;
+const waitWhy = (j: WaitingReady["waiting"][number]) => `${CAUSE_WORD[j.cause]}${j.cause === "crew_elsewhere" && j.crewOn.length ? ` (crew on ${[...new Set(j.crewOn.map(orderWord))].slice(0, 3).join(", ")})` : ""}`;
+const readyWhy = (j: WaitingReady["ready"][number]) => (j.crewOn.length ? `Crew was on ${[...new Set(j.crewOn.map(orderWord))].slice(0, 3).join(", ")}` : "No work logged by this crew this shift");
+const WAIT_NONE = "Nothing sat this shift: every started job moved, and no ready job was left unstarted.";
+const waitingTitle = (shift: ShiftWindow, c: Ctx) => `Waiting and ready - ${shiftName(shift)} ${c.D(shift.start)}`;
+const WAIT_SUB = "started jobs with nothing logged this shift, and ready jobs that did not start";
+
+/** The lists as the update's blocks (email, copy, Word). */
+function waitingBlocks(w: WaitingReady, c: Ctx): ExportBlock[] {
+  if (!w.waiting.length && !w.ready.length) return [{ k: "empty", text: WAIT_NONE }];
+  const out: ExportBlock[] = [];
+  if (w.waiting.length) out.push({ k: "lines", title: `Started, nothing logged this shift (${w.waiting.length})`, tone: "amber", items: w.waiting.map((j) => ({ lead: jobWord(j), text: waitWhy(j), aside: `${j.crew} · ${shiftsWord(j.shifts)}`, ...(j.said ? { note: `"${j.said}"` } : {}) })) });
+  if (w.ready.length) out.push({ k: "lines", title: `Ready, not started (${w.ready.length})`, items: w.ready.map((j) => ({ lead: jobWord(j), text: `Ready since ${c.DT(j.readyAt)}`, aside: `${j.crew} · ${shiftsWord(j.shifts)}`, note: readyWhy(j) })) });
+  return out;
+}
+function waitingExport(w: WaitingReady, shift: ShiftWindow, c: Ctx): ExportSection & { id: string } {
+  return { id: "waiting", title: waitingTitle(shift, c), sub: WAIT_SUB, flag: w.waiting.length ? "amber" : null, blocks: waitingBlocks(w, c) };
+}
+/** The update with the waiting and ready lists after what the shift got done. */
+function withWaiting<T extends ExportSection & { id: string }>(sections: T[], sec: (ExportSection & { id: string }) | null): Array<ExportSection & { id: string }> {
+  if (!sec) return sections;
+  const at = sections.findIndex((x) => x.id === "done");
+  return at < 0 ? [...sections, sec] : [...sections.slice(0, at + 1), sec, ...sections.slice(at + 1)];
+}
+function waitingSection(w: WaitingReady, shift: ShiftWindow, c: Ctx): Sec {
+  const n = w.waiting.length + w.ready.length;
+  const row = (key: string, lead: string, text: string, aside: string, note?: string | null) => (
+    <li key={key} className="py-1.5 border-b last:border-b-0 border-[var(--color-border)]">
+      <div className="flex items-baseline gap-x-2 flex-wrap"><b className="text-[var(--color-text)]">{lead}</b><span className="text-[var(--color-text)]">{text}</span><span className="ml-auto text-[12px] text-[var(--color-text-muted)] whitespace-nowrap">{aside}</span></div>
+      {note && <div className="text-[12px] text-[var(--color-text-muted)]">{note}</div>}
+    </li>
+  );
+  return {
+    id: "waiting", title: waitingTitle(shift, c), short: "Waiting", sub: WAIT_SUB, count: n || undefined, flag: w.waiting.length ? "amber" : null,
+    body: () => (!n ? <div className="text-[13px] text-[var(--color-text-muted)]">{WAIT_NONE}</div> : (
+      <div className="space-y-3 text-[13px]" data-waiting-ready>
+        {w.waiting.length > 0 && <div><div className="text-[11px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-400">Started, nothing logged this shift ({w.waiting.length})</div><ul>{w.waiting.map((j) => row(j.id, jobWord(j), waitWhy(j), `${j.crew} · ${shiftsWord(j.shifts)}`, j.said ? `"${j.said}"` : null))}</ul></div>}
+        {w.ready.length > 0 && <div><div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Ready, not started ({w.ready.length})</div><ul>{w.ready.map((j) => row(j.id, jobWord(j), `Ready since ${c.DT(j.readyAt)}`, `${j.crew} · ${shiftsWord(j.shifts)}`, readyWhy(j)))}</ul></div>}
+        <div className="text-[11.5px] text-[var(--color-text-muted)]">A night shift counts only for work that ran on nights. The post-event review counts these the same way.</div>
+      </div>
+    )),
+    data: () => waitingBlocks(w, c),
+  };
 }
 
 function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void; jumpTarget: ShiftWindow | null; noteOf?: (id: string) => { body: string; at?: string | null } | undefined; times: ShiftTimes;

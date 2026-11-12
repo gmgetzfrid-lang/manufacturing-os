@@ -66,6 +66,9 @@ export function cleanSaved(v: unknown): ReviewSaved {
       if (ans.cause || ans.note) out.answers[k] = ans;
     }
   }
+  if (r.targets && typeof r.targets === "object") {
+    for (const [k, x] of Object.entries(r.targets as Record<string, unknown>)) { const t = str(x, 200)?.trim(); if (t) out.targets[k] = t; }
+  }
   return out;
 }
 

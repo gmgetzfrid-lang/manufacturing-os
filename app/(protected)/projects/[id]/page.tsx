@@ -35,6 +35,7 @@ import { TransferOwnershipModal } from "@/components/projects/TransferOwnership"
 import CostsTab from "@/components/projects/CostsTab";
 import QualityTab from "@/components/projects/QualityTab";
 import MaterialsRegister from "@/components/projects/MaterialsRegister";
+import EventOrganization from "@/components/projects/EventOrganization";
 import ProjectCoach from "@/components/projects/ProjectCoach";
 import { openProjectReport } from "@/lib/projectReport";
 import { FindingsReviewModal, FindingsGate } from "@/components/projects/Findings";
@@ -527,7 +528,7 @@ export default function ProjectDetailPage() {
                 <b className="block mt-1">Materials</b> - the materials register: every material and off-site repair, with its spec, owner, status and need-by date. Open it at scope freeze.
                 <b className="block mt-1">Documents</b> - every checkout attached to this project (active + released).
                 <b className="block mt-1">Activity</b> - the project&rsquo;s full timeline: comments, doc events, holds, milestone hits.
-                <b className="block mt-1">Members</b> - who&rsquo;s on this project. Owner can add/remove.
+                <b className="block mt-1">Members</b> - who&rsquo;s on this project, and the event organization: the roles it requires and who fills each.
               </HelpTooltip>
             </div>
           </div>
@@ -674,6 +675,11 @@ export default function ProjectDetailPage() {
               onPickPhase={setPhase}
             />
           </ScheduleTzProvider>
+        )}
+        {tab === "members" && project.id && (
+          <div className="mb-6">
+            <EventOrganization projectId={project.id} canManage={!!canManage || access.canEdit} actor={{ email: userEmail ?? null }} people={[...new Set(members.map((m) => (m.userName || m.userEmail || "").trim()).filter(Boolean))]} />
+          </div>
         )}
         {tab === "members" && (
           <MembersTab

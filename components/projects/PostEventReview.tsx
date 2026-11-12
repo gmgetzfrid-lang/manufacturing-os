@@ -28,9 +28,10 @@ import { loadNextPlanSettings } from "@/lib/nextPlanStore";
 import type { StaffingPlans } from "@/lib/staffingPlan";
 import { fmtInTz } from "@/lib/scheduleTz";
 import { listMaterials, summarize } from "@/lib/materials";
+import { loadOrg, orgStanding } from "@/lib/eventOrganization";
 import {
   CATEGORIES, CAUSE_CHOICES, CAUSE_WORD, RATING_MEANS, RATING_WORD, basisOf, buildReview, categoryOf, emptySaved, jobWord, orderWord, shiftWord, shiftsWord,
-  type Answer, type CategoryId, type CauseId, type Finding, type FindingEdit, type Rating, type ReviewSaved,
+  type Answer, type CategoryId, type CauseId, type Finding, type FindingEdit, type OrgStanding, type Rating, type ReviewSaved,
 } from "@/lib/postEventReview";
 import { changeReview, loadReview, reviewScope, syncLesson } from "@/lib/reviewStore";
 import { fileStem, reviewDocx, reviewPptx, saveFile, type ReviewFileOpts } from "@/lib/reviewFiles";
@@ -66,6 +67,8 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
   const [plans, setPlans] = useState<StaffingPlans | null>(null);
   const [saved, setSaved] = useState<ReviewSaved | null>(null);
   const [register, setRegister] = useState<{ lines: number; specIncomplete: number; openQuestions: number; late: number } | null>(null);
+  const [organization, setOrganization] = useState<OrgStanding | null>(null);
+  const [targets, setTargets] = useState<Record<string, string> | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -82,13 +85,14 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
     setSaved(null);
     void (async () => {
       try {
-        const [s, np, mats] = await Promise.all([
+        const [s, np, mats, org] = await Promise.all([
           loadReview(projectId, scope),
           loadNextPlanSettings(projectId).catch(() => null),
           listMaterials(projectId).catch(() => ({ rows: [], missing: true })),
+          loadOrg(projectId).catch(() => null),
         ]);
         if (!live) return;
-        setSaved(s); setPlans(np?.staffing ?? null);
+        setSaved(s); setPlans(np?.staffing ?? null); setOrganization(orgStanding(org)); setTargets(null);
         const mine = mats.rows.filter((r) => !phases.length || !r.phaseId || r.phaseId === phaseId);
         const sum = summarize(mine, Date.now());
         setRegister(mats.missing || !sum.lines ? null : { lines: sum.lines, specIncomplete: sum.specIncomplete, openQuestions: sum.openQuestions, late: sum.late });
@@ -110,8 +114,8 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
     const work = buildAsBuiltWork({ built, milestones: mine, log: (log ?? []).filter((r) => ids.has(r.milestone_id)), notes: myNotes, records, plans, companyOf: (c) => companyOf(c, mp), tz, times, now });
     const ds = discoveries(active);
     const look = buildLookBack({ milestones: active, notes: myNotes, discoveries: ds, now, tz });
-    return buildReview({ built, work, notes: myNotes, look, discoveries: ds, tz, saved, materials: register });
-  }, [saved, milestones, phases, phaseId, notes, log, records, plans, mp, tz, times, register]);
+    return buildReview({ built, work, notes: myNotes, look, discoveries: ds, tz, saved, materials: register, organization });
+  }, [saved, milestones, phases, phaseId, notes, log, records, plans, mp, tz, times, register, organization]);
 
   const who = actor.email;
   const act = async (key: string, change: (s: ReviewSaved) => void, after?: (next: ReviewSaved) => Promise<void> | void) => {
@@ -162,6 +166,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
   };
   const filled = Object.entries(answers).filter(([, a]) => a.cause || a.note?.trim());
   const saveAnswers = () => void act("answers", (s) => { for (const [k, a] of filled) s.answers[k] = { ...(a.cause ? { cause: a.cause } : {}), ...(a.note?.trim() ? { note: a.note.trim() } : {}), at: Date.now(), by: who }; }, () => { setAnswers({}); onReload(); setTick((t) => t + 1); });
+  const saveTargets = () => { const t = targets; if (!t) return; void act("targets", (s) => { s.targets = Object.fromEntries(Object.entries(t).map(([k, v]) => [k, v.trim()]).filter(([, v]) => v)); }, () => setTargets(null)); };
   const reanalyze = () => { setMsg(null); setErr(null); onReload(); setTick((t) => t + 1); };
 
   const fileOpts = (): ReviewFileOpts => ({ project: projectName, phase: phase?.name ?? null, tz, preparedBy: null, date: fmtInTz(Date.now(), tz, { month: "long", day: "numeric", year: "numeric" }) });
@@ -292,6 +297,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
                       </div>
                     )}
                     {f.key === "materials" && f.status !== "discarded" && <button type="button" onClick={() => onTab("materials")} className="mt-2 text-[12.5px] font-bold text-[var(--color-accent)] hover:underline">Open the materials register</button>}
+                    {f.key === "organization" && f.status !== "discarded" && <button type="button" onClick={() => onTab("members")} className="mt-2 text-[12.5px] font-bold text-[var(--color-accent)] hover:underline">{organization?.recorded ? "Open the event organization (Members)" : "Record the roles and who fills each (Members)"}</button>}
                     {canManage && infoFor !== f.key && (
                       <div className="mt-3 flex gap-1.5 flex-wrap">
                         {f.status === "discarded" ? <button type="button" disabled={!!busy} onClick={() => restore(f)} className={btn}><RotateCcw className="w-4 h-4" /> Restore</button> : <>
@@ -345,6 +351,23 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
             </div>
           </aside>
         </div>
+
+        <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4" data-review-measures>
+          <h3 className="text-[14px] font-black text-[var(--color-text)]">Measures and targets</h3>
+          <p className="text-[12.5px] text-[var(--color-text-muted)]">This event&rsquo;s result on each measure. A target is whatever you agree and enter here; none is assumed, and nothing is judged against a target that isn&rsquo;t set.</p>
+          <div className="mt-2 rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+            {review.measures.map((x) => (
+              <div key={x.key} className="grid gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)] items-center px-3 py-2 text-[13px]">
+                <span className="text-[var(--color-text)]">{x.measure}</span>
+                <b className="text-[var(--color-text)]">{x.result}</b>
+                {canManage
+                  ? <input aria-label={`Target: ${x.measure}`} value={(targets ?? saved?.targets ?? {})[x.key] ?? ""} onChange={(e) => setTargets({ ...(targets ?? saved?.targets ?? {}), [x.key]: e.target.value })} placeholder="Target: not set" className={field} />
+                  : <span className={x.set ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}>{x.set ? `Target: ${x.target}` : "Target: not set"}</span>}
+              </div>
+            ))}
+          </div>
+          {canManage && targets && <div className="mt-2 flex gap-1.5"><button type="button" disabled={!!busy} onClick={saveTargets} className={pri}>{busy === "targets" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save targets</button><button type="button" onClick={() => setTargets(null)} className={btn}>Cancel</button></div>}
+        </section>
 
         <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]" open>
           <summary className="cursor-pointer px-4 py-3 text-[14px] font-black text-[var(--color-text)]">The records behind it: every stuck job, by name</summary>

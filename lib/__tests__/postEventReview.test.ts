@@ -162,6 +162,25 @@ describe("what a person said, laid over the draft", () => {
     expect(decisionsOf(r2.findings).length).toBeGreaterThan(2);
     expect(measuresOf(r2.metrics).find((x) => x.measure.startsWith("Stuck shifts"))!.result).toBe("1 of 4");
   });
+  it("targets are whatever a person set: none is assumed", () => {
+    expect(r.measures.every((x) => x.target === "Not set" && !x.set)).toBe(true);
+    const saved = emptySaved(); saved.targets.stuck = "Under 3";
+    const m = read(saved).measures.find((x) => x.key === "stuck")!;
+    expect([m.result, m.target, m.set]).toEqual(["4", "Under 3", true]);
+  });
+  it("reads the event organization recorded on the project", () => {
+    const base = { built, work, notes, look, discoveries: discoveries(all), tz };
+    // None recorded: it says so, and points at what the other categories show.
+    expect(r.findings.find((f) => f.key === "organization")!.observation).toContain("No event organization is recorded");
+    expect(r.organization).toBe(null);
+    const roles = [{ role: "Turnaround manager", person: "Sam", does: "", required: true }, { role: "Logistics coordinator", person: "", does: "", required: true }];
+    const part = buildReview({ ...base, organization: { recorded: true, required: 2, filled: 1, missing: ["Logistics coordinator"], roles } }).findings.find((f) => f.key === "organization")!;
+    expect([part.rating, part.title]).toEqual(["opportunity", "Required roles without a named person"]);
+    expect(part.observation).toContain("1 of 2 required roles are named on the project. Not named: Logistics coordinator.");
+    const full = buildReview({ ...base, organization: { recorded: true, required: 2, filled: 2, missing: [], roles: roles.map((x) => ({ ...x, person: x.person || "Lee" })) } }).findings.find((f) => f.key === "organization")!;
+    expect([full.rating, full.title]).toEqual(["strength", "Every required role has a named person"]);
+    expect(full.evidence).toEqual(["Turnaround manager: Sam", "Logistics coordinator: Lee"]);
+  });
   it("names a job by its tag, without the bracketed detail", () => {
     expect(jobWord({ name: "PSV-021 - E-13 Overhead (Swap Existing with the New Model)", order: "PSVs" })).toBe("PSV-021 - E-13 Overhead");
     expect(jobWord({ name: "Install Bundle", order: "E-12 - Feed Exchanger" })).toBe("E-12 Install Bundle");

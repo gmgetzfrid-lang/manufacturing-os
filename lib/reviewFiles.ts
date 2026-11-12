@@ -9,7 +9,7 @@
 import JSZip from "jszip";
 import { noEmDash } from "@/lib/noEmDash";
 import {
-  CATEGORIES, CAUSE_WORD, GATES, ORGANIZATION, RATING_MEANS, RATING_WORD, ROADMAP, categoryOf, decisionsOf, jobWord, measuresOf, orderWord, shiftWord, shiftsWord, whenWord,
+  CATEGORIES, CAUSE_WORD, GATES, ORGANIZATION, RATING_MEANS, RATING_WORD, ROADMAP, categoryOf, decisionsOf, jobWord, orderWord, shiftWord, shiftsWord, whenWord,
   type Finding, type Review,
 } from "@/lib/postEventReview";
 
@@ -72,7 +72,7 @@ type Block =
   | { k: "num"; text: string; n: number; lead?: string }
   | { k: "table"; head: string[]; rows: string[][]; widths: number[] };
 
-export const REPORT_SECTIONS = ["Summary", "Event metrics", "What performed well", "Assessment by category", "Proposed event organization", "Closure plan", "Measures and targets", "Decisions requested", "Appendices: stuck jobs, ready jobs, by shift, found work, anticipated questions, how each number is counted"];
+export const REPORT_SECTIONS = ["Summary", "Event metrics", "What performed well", "Assessment by category", "Event organization", "Closure plan", "Measures and targets", "Decisions requested", "Appendices: stuck jobs, ready jobs, by shift, found work, anticipated questions, how each number is counted"];
 
 /** The report, top to bottom. */
 export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
@@ -109,8 +109,16 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
     }
   }
 
-  b.push({ k: "h1", text: "5. Proposed event organization" });
-  b.push({ k: "table", head: ["Role", "Who", "Responsible for"], rows: ORGANIZATION.map((x) => [x.tier, x.who, x.does]), widths: [2.0, 1.9, 3.0] });
+  if (r.organization) {
+    const o2 = r.organization;
+    b.push({ k: "h1", text: "5. Event organization" });
+    b.push({ k: "p", text: `${o2.filled} of ${o2.required} required roles have a named person${o2.missing.length ? `. Not named: ${o2.missing.join(", ")}` : ""}.` });
+    b.push({ k: "table", head: ["Role", "Named", "Responsible for", "Required"], rows: o2.roles.map((x) => [x.role, x.person || "Not named", x.does, x.required ? "Yes" : "No"]), widths: [2.0, 1.6, 2.7, 0.6] });
+  } else {
+    b.push({ k: "h1", text: "5. Proposed event organization" });
+    b.push({ k: "table", head: ["Role", "Who", "Responsible for"], rows: ORGANIZATION.map((x) => [x.tier, x.who, x.does]), widths: [2.0, 1.9, 3.0] });
+    b.push({ k: "muted", text: "No organization is recorded on the project yet. Roles and who fills each are kept on the Members tab." });
+  }
   b.push({ k: "muted", text: "How it is set up: define the roles the event needs, match people to them, close shortfalls with training or contract supervision, write each role's responsibilities, and brief them face to face." });
 
   b.push({ k: "h1", text: "6. Closure plan" });
@@ -120,7 +128,8 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
   for (const x of ROADMAP) b.push({ k: "bullet", lead: `${x.when}, ${x.theme}: `, text: x.what });
 
   b.push({ k: "h1", text: "7. Measures and targets" });
-  b.push({ k: "table", head: ["Measure", "This event", "Target"], rows: measuresOf(m).map((x) => [x.measure, x.result, x.target]), widths: [3.4, 1.9, 1.6] });
+  b.push({ k: "table", head: ["Measure", "This event", "Target"], rows: r.measures.map((x) => [x.measure, x.result, x.target]), widths: [3.4, 1.9, 1.6] });
+  if (r.measures.some((x) => !x.set)) b.push({ k: "muted", text: "A target reads \"Not set\" until one is agreed and entered in the review. None is assumed." });
 
   b.push({ k: "h1", text: "8. Decisions requested" });
   const ds = decisionsOf(r.findings);
@@ -221,10 +230,11 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
   s.push({ kicker: "2 · Assessment", title: "Eight categories across the life of the event", notes: `${RATING_MEANS} ${close.length ? `${plural(close.length, "finding needs", "findings need")} closure.` : ""}`,
     body: { k: "table", head: ["Category", "Stage", "Rating", "Basis"], widths: [3.0, 1.6, 1.6, 6.1], foot: RATING_MEANS, rows: CATEGORIES.map((c) => { const fs = live(r).filter((f) => f.category === c.id); return [c.name, c.stage, fs[0] ? RATING_WORD[fs[0].rating] : "Not assessed", fs.map((x) => x.title).join("; ")]; }) } });
   for (const f of close) s.push(findingSlide(f));
-  s.push({ kicker: "3 · Organization", title: "Proposed event organization", notes: "The organization is designed for the event rather than formed from who is available. One person owns the event; coordinators own preparation, planning and logistics; an area coordinator runs each unit day to day.", body: { k: "table", head: ["Role", "Who", "Responsible for"], widths: [3.3, 3.2, 5.8], rows: ORGANIZATION.map((x) => [x.tier, x.who, x.does]) } });
+  if (r.organization) s.push({ kicker: "3 · Organization", title: `Event organization: ${r.organization.filled} of ${r.organization.required} required roles named`, notes: r.organization.missing.length ? `Not named yet: ${r.organization.missing.join(", ")}.` : "Every required role has a named person.", body: { k: "table", head: ["Role", "Named", "Responsible for", "Required"], widths: [3.4, 2.6, 5.2, 1.1], rows: r.organization.roles.map((x) => [x.role, x.person || "Not named", x.does, x.required ? "Yes" : "No"]) } });
+  else s.push({ kicker: "3 · Organization", title: "Proposed event organization", notes: "The organization is designed for the event rather than formed from who is available. One person owns the event; coordinators own preparation, planning and logistics; an area coordinator runs each unit day to day.", body: { k: "table", head: ["Role", "Who", "Responsible for"], widths: [3.3, 3.2, 5.8], rows: ORGANIZATION.map((x) => [x.tier, x.who, x.does]) } });
   s.push({ kicker: "4 · Closure plan", title: "Next event: what is in place, by when", notes: "Each gate has an owner. The readiness review two weeks before the start is the last check that nothing is carried into the event open.", body: { k: "table", head: ["When", "Action", "Owner"], widths: [2.3, 7.3, 2.7], rows: GATES.map((g) => [g.when, g.what, g.owner]) } });
   s.push({ kicker: "4 · Closure plan", title: "Within 12 months", notes: "These take longer than one event: written standards first, then the systems, the people, and a yearly self-assessment.", body: { k: "table", head: ["When", "Theme", "What"], widths: [1.8, 1.9, 8.6], rows: ROADMAP.map((x) => [x.when, x.theme, x.what]) } });
-  s.push({ kicker: "5 · Measures", title: "How the next event will be measured", notes: "This event's results are the baseline. Targets are for this group to agree.", body: { k: "table", head: ["Measure", "This event", "Target"], widths: [6.3, 3.4, 2.6], rows: measuresOf(m).map((x) => [x.measure, x.result, x.target]) } });
+  s.push({ kicker: "5 · Measures", title: "How the next event will be measured", notes: "This event's results are the baseline. Targets are for this group to agree.", body: { k: "table", head: ["Measure", "This event", "Target"], widths: [6.3, 3.4, 2.6], rows: r.measures.map((x) => [x.measure, x.result, x.target]), foot: r.measures.some((x) => !x.set) ? "A target reads \"Not set\" until one is agreed and entered in the review. None is assumed." : undefined } });
   const ds = decisionsOf(r.findings);
   s.push({ kicker: "6 · Decisions", title: "Decisions requested", notes: "These are the decisions that let the closure plan start.", body: { k: "list", numbered: true, items: ds.length ? ds : ["None from this review."] } });
   chunk(stuckRows(r), 7).forEach((rows, i, a) => s.push({ kicker: `Appendix A${a.length > 1 ? ` (${i + 1} of ${a.length})` : ""}`, title: `Started jobs that sat still: ${plural(m.stuckJobs, "job")}, ${plural(m.stuckShifts, "shift")} in all`, notes: "Every job that had started and went a whole shift with nothing logged, with the reason on record for each shift.", body: { k: "table", head: ["Job", "Crew", "Shifts", "When", "Why, from the record"], widths: [3.3, 1.7, 0.9, 2.0, 4.4], rows, foot: "Night shifts count only for work that ran on nights. Where to see it: Reports, As-built schedule, gray hatched cells." } }));
