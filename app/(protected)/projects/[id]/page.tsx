@@ -22,7 +22,7 @@ import {
   Briefcase, ArrowLeft, Lock, Globe, Loader2, AlertTriangle, Pause, Play,
   CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Calendar, Send,
   User as UserIcon, MessageSquare, Users, FileText, Activity as ActivityIcon,
-  ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck, Pencil, CircleDollarSign,
+  ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck, Pencil, CircleDollarSign, Package,
   UploadCloud, ClipboardList, Sun, FileBarChart, RotateCcw, ListChecks,
 } from "lucide-react";
 import { canReopen } from "@/lib/projectStatus";
@@ -34,6 +34,7 @@ import { ScheduleTzProvider } from "@/components/projects/ScheduleTzContext";
 import { TransferOwnershipModal } from "@/components/projects/TransferOwnership";
 import CostsTab from "@/components/projects/CostsTab";
 import QualityTab from "@/components/projects/QualityTab";
+import MaterialsRegister from "@/components/projects/MaterialsRegister";
 import ProjectCoach from "@/components/projects/ProjectCoach";
 import { openProjectReport } from "@/lib/projectReport";
 import { FindingsReviewModal, FindingsGate } from "@/components/projects/Findings";
@@ -74,11 +75,11 @@ import type {
   Project, ProjectMember, ProjectMemberRole, ProjectActivity, CheckoutSession, ProjectStatus, Timestamp,
 } from "@/types/schema";
 
-type Tab = "plan" | "today" | "work" | "reports" | "closeout" | "documents" | "intake" | "costs" | "quality" | "activity" | "members";
+type Tab = "plan" | "today" | "work" | "reports" | "closeout" | "materials" | "documents" | "intake" | "costs" | "quality" | "activity" | "members";
 const SCHEDULE_TABS = ["plan", "today", "work", "reports"] as const;
 type ScheduleTabId = (typeof SCHEDULE_TABS)[number];
 const isScheduleTab = (t: Tab | null): t is ScheduleTabId => !!t && (SCHEDULE_TABS as readonly string[]).includes(t);
-const TABS: readonly Tab[] = ["plan", "today", "work", "reports", "closeout", "documents", "intake", "costs", "quality", "activity", "members"];
+const TABS: readonly Tab[] = ["plan", "today", "work", "reports", "closeout", "materials", "documents", "intake", "costs", "quality", "activity", "members"];
 /** The tab a link asks for (older links' "schedule" opened the board: Work).
  *  None: decided by the project. */
 const tabOf = (t: string | null | undefined): Tab | null => (t === "schedule" ? "work" : t && (TABS as readonly string[]).includes(t) ? t as Tab : null);
@@ -495,6 +496,9 @@ export default function ProjectDetailPage() {
               {workDone && <span className="w-2 h-2 rounded-full bg-emerald-500" aria-label="work done" />}
             </TabButton>
             <span className="shrink-0 self-center w-px h-5 mx-1 bg-[var(--color-border)]" aria-hidden />
+            <TabButton active={tab === "materials"} onClick={() => setTab("materials")}>
+              <Package className="w-3.5 h-3.5" /> Materials
+            </TabButton>
             <TabButton active={tab === "documents"} onClick={() => setTab("documents")}>
               <FileText className="w-3.5 h-3.5" /> Documents <span className="text-[10px] text-[var(--color-text-faint)]">{checkouts.length}</span>
             </TabButton>
@@ -520,6 +524,7 @@ export default function ProjectDetailPage() {
                 <b className="block mt-1">Work</b> - the timeline, calendar and work orders.
                 <b className="block mt-1">Reports</b> - every report, and the field forms.
                 <b className="block mt-1">Close-out</b> - what&rsquo;s left to close the job, and how it did. A finished job opens here.
+                <b className="block mt-1">Materials</b> - the materials register: every material and off-site repair, with its spec, owner, status and need-by date. Open it at scope freeze.
                 <b className="block mt-1">Documents</b> - every checkout attached to this project (active + released).
                 <b className="block mt-1">Activity</b> - the project&rsquo;s full timeline: comments, doc events, holds, milestone hits.
                 <b className="block mt-1">Members</b> - who&rsquo;s on this project. Owner can add/remove.
@@ -535,7 +540,7 @@ export default function ProjectDetailPage() {
       <div className={`${isScheduleTab(tab) || !tab ? "max-w-[1800px] mx-auto px-3 sm:px-4" : "max-w-6xl mx-auto px-6"} py-6`}>
         {/* Health + "what do I feed you" — the wizard for the rest of the
             project's life, visible from every tab. */}
-        {project.id && project.orgId && tab && tab !== "closeout" && (!isScheduleTab(tab) || tab === "plan") && (
+        {project.id && project.orgId && tab && tab !== "closeout" && tab !== "materials" && (!isScheduleTab(tab) || tab === "plan") && (
           <ProjectCoach orgId={project.orgId} projectId={project.id} refreshKey={coachKey} />
         )}
         {(isScheduleTab(tab) || tab === "costs") && (
@@ -603,6 +608,9 @@ export default function ProjectDetailPage() {
           />
         )}
         {tab === "closeout" && !uid && <div className="py-10 flex justify-center"><Spinner /></div>}
+        {tab === "materials" && project.id && project.orgId && uid && (
+          <MaterialsRegister orgId={project.orgId} projectId={project.id} phases={phases} canManage={!!canManage || access.canEdit} actor={{ uid, email: userEmail }} />
+        )}
         {tab === "quality" && project.id && project.orgId && uid && (
           <QualityTab
             orgId={project.orgId}

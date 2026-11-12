@@ -42,7 +42,6 @@ import { useManpowerSettings } from "@/components/projects/ManpowerSetup";
 import { loadShiftRecords, type ShiftRecord } from "@/lib/shiftRecord";
 import { companyOf, handsAt, manpowerSummary, shiftCounts, type ManpowerSettings, type ShiftCount } from "@/lib/manpower";
 import PostEventReview from "@/components/projects/PostEventReview";
-import MaterialsRegister from "@/components/projects/MaterialsRegister";
 
 const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 
@@ -79,9 +78,8 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   const [uploading, setUploading] = useState<string | null>(null);
   const [newDoc, setNewDoc] = useState("");
   const [phasePick, setPhasePick] = useState<string | null>(null);
-  // The close-out's pages: the steps to close, the post-event review, the
-  // materials register.
-  const [view, setView] = useState<"steps" | "review" | "materials">("steps");
+  // The close-out's pages: the steps to close, and the post-event review.
+  const [view, setView] = useState<"steps" | "review">("steps");
   // Where attached files are saved: the project's library, else one picked here.
   const [home, setHome] = useState<ProjectFileHome | null>(null);
   // The shift meetings' head counts, and each company's bid (lib/manpower).
@@ -189,7 +187,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
 
   const nav = (
     <div className="flex gap-1.5 flex-wrap" role="tablist" aria-label="Close-out">
-      {([["steps", "Steps to close"], ["review", "Post-event review"], ["materials", "Materials register"]] as const).map(([id, name]) => (
+      {([["steps", "Steps to close"], ["review", "Post-event review"]] as const).map(([id, name]) => (
         <button key={id} type="button" role="tab" aria-selected={view === id} onClick={() => setView(id)} data-closeout-view={id}
           className={`h-9 px-3.5 rounded-full border text-[13px] font-extrabold whitespace-nowrap ${view === id ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>{name}</button>
       ))}
@@ -201,12 +199,6 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
         canManage={canManage} actor={actor} onReload={reload} onTab={onTab} />
     </div>
   );
-  if (view === "materials") {
-    const parents = new Set(ms.filter((m) => !m.isSummary && m.parentId && !(m as { cancelledAt?: unknown }).cancelledAt).map((m) => m.parentId!));
-    const workOrders = [...new Set(ms.filter((m) => m.id && parents.has(m.id)).map((m) => m.name.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-    return <div className="space-y-4">{nav}<MaterialsRegister orgId={orgId} projectId={projectId} phases={phases} workOrders={workOrders} canManage={canManage} actor={actor} /></div>;
-  }
-
   return (
     <div className="space-y-4">
       {nav}

@@ -291,6 +291,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
                         <button type="button" onClick={() => { setInfoFor(null); setInfoText(""); }} className={btn}>Cancel</button>
                       </div>
                     )}
+                    {f.key === "materials" && f.status !== "discarded" && <button type="button" onClick={() => onTab("materials")} className="mt-2 text-[12.5px] font-bold text-[var(--color-accent)] hover:underline">Open the materials register</button>}
                     {canManage && infoFor !== f.key && (
                       <div className="mt-3 flex gap-1.5 flex-wrap">
                         {f.status === "discarded" ? <button type="button" disabled={!!busy} onClick={() => restore(f)} className={btn}><RotateCcw className="w-4 h-4" /> Restore</button> : <>

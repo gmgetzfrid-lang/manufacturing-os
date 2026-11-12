@@ -9,6 +9,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import type { ProjectPhase } from "@/lib/projectPhases";
+import { supabase } from "@/lib/supabase";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui/Modal";
 import {
   MATERIALS_SQL, QUESTION_LIMIT_H, STATUSES, STATUS_WORD, ageWord, arrived, attention, blankMaterial, deleteMaterial, late, listMaterials, questionAgeH, questionOpen,
@@ -30,12 +32,22 @@ const dateWord = (d: string | null) => { if (!d) return ""; const [, m, day] = d
 
 type Filter = "all" | "attention" | "offsite" | "received";
 
-export default function MaterialsRegister({ orgId, projectId, phases, workOrders, canManage, actor }: {
+export default function MaterialsRegister({ orgId, projectId, phases, canManage, actor }: {
   orgId: string; projectId: string; phases: ProjectPhase[];
-  /** Work order names to pick from. */
-  workOrders: string[];
   canManage: boolean; actor: { uid: string; email: string | null };
 }) {
+  // Work order names to pick from: the tasks the schedule's steps sit under.
+  const [workOrders, setWorkOrders] = useState<string[]>([]);
+  useEffect(() => {
+    let live = true;
+    void fetchAllRows<{ id: string; name: string; parent_id: string | null; is_summary: boolean | null; cancelled_at?: string | null }>((from, to) => supabase.from("milestones").select("id, name, parent_id, is_summary, cancelled_at").eq("project_id", projectId).order("id").range(from, to) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>)
+      .then(({ rows }) => {
+        if (!live) return;
+        const parents = new Set(rows.filter((m) => !m.is_summary && m.parent_id && !m.cancelled_at).map((m) => m.parent_id!));
+        setWorkOrders([...new Set(rows.filter((m) => parents.has(m.id)).map((m) => (m.name ?? "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })));
+      }).catch(() => {});
+    return () => { live = false; };
+  }, [projectId]);
   const [rows, setRows] = useState<Material[] | null>(null);
   const [missing, setMissing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -104,7 +116,7 @@ export default function MaterialsRegister({ orgId, projectId, phases, workOrders
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="min-w-0 flex-1 basis-72">
           <h2 className="text-[19px] font-black text-[var(--color-text)]">Materials register</h2>
-          <p className="text-[13px] text-[var(--color-text-muted)]">Every material and off-site repair for the event: specification, owner, status, need-by date. Open it at scope freeze and check it at every gate.</p>
+          <p className="text-[13px] text-[var(--color-text-muted)]">Every material and off-site repair for the event: specification, owner, status, need-by date. Open it at scope freeze, check it at every gate, and keep it current through the event.</p>
         </div>
         {canManage && <button type="button" onClick={() => setOpen({ row: null, fields: blankMaterial(phaseId) })} className={dark}><Plus className="w-4 h-4" /> Add item</button>}
       </div>
