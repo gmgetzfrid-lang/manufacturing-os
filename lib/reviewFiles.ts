@@ -8,6 +8,7 @@
 
 import JSZip from "jszip";
 import { noEmDash } from "@/lib/noEmDash";
+import { fmtInTz } from "@/lib/scheduleTz";
 import {
   CATEGORIES, CAUSE_WORD, GATES, ORGANIZATION, RATING_MEANS, RATING_WORD, ROADMAP, categoryOf, decisionsOf, jobWord, orderWord, shiftWord, shiftsWord, whenWord,
   type Finding, type Review,
@@ -26,7 +27,20 @@ export interface ReviewFileOpts {
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const live = (r: Review) => r.findings.filter((f) => f.status !== "discarded");
 const toClose = (r: Review) => live(r).filter((f) => f.rating === "gap" || f.rating === "opportunity");
-const eventName = (o: ReviewFileOpts) => (o.phase ? `${o.project}, ${o.phase}` : o.project);
+/** What the review is of: the phase when the project has phases (the
+ *  project's own name can carry both phases and reads as the wrong dates). */
+const eventName = (o: ReviewFileOpts) => o.phase ?? o.project;
+/** "October 24 to November 2, 2026": the work's own dates, from the records. */
+export function eventDates(r: Review, tz: string): string {
+  const { start, actualFinish: end } = r.metrics;
+  if (start == null) return "";
+  const day = (t: number, year: boolean) => fmtInTz(t, tz, { month: "long", day: "numeric", ...(year ? { year: "numeric" } : {}) });
+  if (end == null) return `${day(start, true)}, not finished yet`;
+  const sameYear = fmtInTz(start, tz, { year: "numeric" }) === fmtInTz(end, tz, { year: "numeric" });
+  return `${day(start, !sameYear)} to ${day(end, true)}`;
+}
+/** Which project it belongs to, and that it covers one phase only. */
+const projectLine = (o: ReviewFileOpts) => (o.phase ? `Project: ${o.project}. This review covers ${o.phase} only.` : "");
 
 // ─── The words both files share ────────────────────────────────────
 
@@ -78,8 +92,10 @@ export const REPORT_SECTIONS = ["Summary", "Event metrics", "What performed well
 export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
   const b: Block[] = [];
   const m = r.metrics;
-  b.push({ k: "muted", text: "POST-EVENT REVIEW" }, { k: "title", text: eventName(o) });
-  b.push({ k: "muted", text: [m.baselineFinish != null && r.metrics.actualFinish != null ? `Finished ${whenWord(m.actualFinish!, o.tz)}` : null, o.preparedBy ? `Prepared by: ${o.preparedBy}` : null, o.date].filter(Boolean).join("  ·  ") });
+  const dates = eventDates(r, o.tz);
+  b.push({ k: "muted", text: "POST-EVENT REVIEW" }, { k: "title", text: dates ? `${eventName(o)}: ${dates}` : eventName(o) });
+  if (projectLine(o)) b.push({ k: "muted", text: projectLine(o) });
+  b.push({ k: "muted", text: [o.preparedBy ? `Prepared by: ${o.preparedBy}` : null, `Written ${o.date}`].filter(Boolean).join("  ·  ") });
   b.push({ k: "h2", text: "Contents" });
   REPORT_SECTIONS.forEach((s, i) => b.push({ k: "num", n: i + 1, text: s }));
 
@@ -245,8 +261,9 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
   const m = r.metrics, s: SlideSpec[] = [];
   const close = toClose(r);
   const atOnce = m.leastAtOnce === m.mostAtOnce ? `${m.mostAtOnce}` : `${m.leastAtOnce} to ${m.mostAtOnce}`;
-  s.push({ kicker: "Post-event review", title: eventName(o), notes: "What the event showed, the gaps against leading practice, and the plan to close them.",
-    body: { k: "cover", sub: "What the event showed, the gaps, and the plan to close them", meta: [o.preparedBy, o.date].filter(Boolean).join("  ·  "), agenda: ["Results, with the data behind each number", "What we found and how it closes", "Event organization", "Closure plan", "Targets and decisions", "Backup: questions and definitions"] } });
+  const dates = eventDates(r, o.tz);
+  s.push({ kicker: "Post-event review", title: dates ? `${eventName(o)}: ${dates}` : eventName(o), notes: "What the event showed, the gaps against leading practice, and the plan to close them.",
+    body: { k: "cover", sub: projectLine(o) || "What the event showed, the gaps, and the plan to close them", meta: [o.preparedBy, `Written ${o.date}`].filter(Boolean).join("  ·  "), agenda: ["Results, with the data behind each number", "What we found and how it closes", "Event organization", "Closure plan", "Targets and decisions", "Backup: questions and definitions"] } });
 
   // Results: the four numbers, what is behind them, what went well.
   const behind: string[] = [];
@@ -371,4 +388,4 @@ export function saveFile(data: Uint8Array | Blob, name: string, mime: string): v
   a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
-export const fileStem = (o: ReviewFileOpts) => `${eventName(o)} post-event review`.replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
+export const fileStem = (o: ReviewFileOpts) => `${o.phase ? `${o.phase} post-event review, ${o.project}` : `${o.project} post-event review`}`.replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();

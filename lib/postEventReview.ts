@@ -122,6 +122,8 @@ export interface FoundWork {
 export interface HoldFact { id: string; name: string; order: string; reason: string; hours: number; cause: CauseId | null }
 
 export interface ReviewMetrics {
+  /** The first activity's start (recorded, else planned). */
+  start: number | null;
   baselineFinish: number | null; actualFinish: number | null; varianceH: number | null; done: boolean;
   steps: number; stepsDone: number; baselineSteps: number; baselineDone: number; addedSteps: number; addedDone: number;
   findings: number;
@@ -428,7 +430,7 @@ export function buildReview(input: ReviewInput): Review {
 
   const atOnce = byShift.map((c) => c.stuck + c.ready);
   const metrics: ReviewMetrics = {
-    baselineFinish: built.planFinish, actualFinish: built.finish,
+    start: built.start ?? built.planStart, baselineFinish: built.planFinish, actualFinish: built.finish,
     varianceH: built.finish != null && built.planFinish != null ? r1((built.finish - built.planFinish) / 3_600_000) : null,
     done: built.steps > 0 && built.done === built.steps,
     steps: all.length, stepsDone: all.filter((s) => s.status === "done").length,
