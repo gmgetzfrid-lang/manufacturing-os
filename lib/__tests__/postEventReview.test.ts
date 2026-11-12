@@ -110,14 +110,15 @@ describe("the review, from the records", () => {
   it("names the found work on the critical path, and asks for what was never written", () => {
     const scope = r.findings.find((f) => f.key === "scope")!;
     expect(scope.rating).toBe("gap");
-    expect(scope.observation).toContain("On the critical path: Unplanned clean downcomers (V-7, about 18 h)");
+    // One fact a line, each a whole sentence.
+    expect(scope.observation.split("\n")).toEqual(["1 activity was added from 1 finding: 18 h of work on a 52 h plan (35% more), by the schedule's estimates.", "Critical path, V-7: Unplanned clean downcomers. About 18 h."]);
     expect(r.questions.map((q) => q.kind).sort()).toEqual(["approver", "stuck"]);
     expect(r.questions.find((q) => q.kind === "stuck")!.ask).toContain("E-13 Pull Blinds / Torque Flanges had started and sat the 10/28 day shift");
   });
   it("every category has a finding with the practice and how it closes; safety reads the stand-down", () => {
     expect(r.findings.map((f) => f.category).sort()).toEqual(["contractors", "execution", "materials", "organization", "planning", "records", "safety", "scope"]);
     const mat = r.findings.find((f) => f.key === "materials")!;
-    expect(mat.observation).toContain("TV-006 on the Fuel Gas Line to H-1 (2 shifts) sat waiting on off-site repair or calibration");
+    expect(mat.observation.split("\n")).toEqual(["TV-006 on the Fuel Gas Line to H-1: sat 2 shifts (10/27 day, 10/28 day) waiting on off-site repair or calibration.", "No materials register was kept for this event."]);
     expect(mat.next).toContain("Materials register");
     expect(r.findings.find((f) => f.key === "safety")!.rating).toBe("strength");
     expect(r.findings.find((f) => f.key === "planning")!.observation).toContain("held");
@@ -167,6 +168,8 @@ describe("what a person said, laid over the draft", () => {
     const saved = emptySaved(); saved.targets.stuck = "Under 3";
     const m = read(saved).measures.find((x) => x.key === "stuck")!;
     expect([m.result, m.target, m.set]).toEqual(["4", "Under 3", true]);
+    // Suggestions come off this event's own result; none is applied by itself.
+    expect(m.picks).toEqual(["0", "2 (half of this event)", "4 (no worse than this event)"]);
   });
   it("reads the event organization recorded on the project", () => {
     const base = { built, work, notes, look, discoveries: discoveries(all), tz };
@@ -176,10 +179,23 @@ describe("what a person said, laid over the draft", () => {
     const roles = [{ role: "Turnaround manager", person: "Sam", does: "", required: true }, { role: "Logistics coordinator", person: "", does: "", required: true }];
     const part = buildReview({ ...base, organization: { recorded: true, required: 2, filled: 1, missing: ["Logistics coordinator"], roles } }).findings.find((f) => f.key === "organization")!;
     expect([part.rating, part.title]).toEqual(["opportunity", "Required roles without a named person"]);
-    expect(part.observation).toContain("1 of 2 required roles are named on the project. Not named: Logistics coordinator.");
+    expect(part.observation.split("\n").slice(0, 2)).toEqual(["1 of 2 required roles are named on the project.", "Not named: Logistics coordinator."]);
     const full = buildReview({ ...base, organization: { recorded: true, required: 2, filled: 2, missing: [], roles: roles.map((x) => ({ ...x, person: x.person || "Lee" })) } }).findings.find((f) => f.key === "organization")!;
     expect([full.rating, full.title]).toEqual(["strength", "Every required role has a named person"]);
     expect(full.evidence).toEqual(["Turnaround manager: Sam", "Logistics coordinator: Lee"]);
+  });
+  it("never cuts a sentence short", () => {
+    const long = "Existing blind flange on first deck was swapped out because it was modified and didn't meet refinery standards.";
+    const rec2: DiscoveryRecord = { ...rec, id: "d2", what: long, impact: { ...rec.impact, hours: 2 } };
+    const flange = ms({ id: "bf", parentId: "wt", name: "Unbolt flange on first deck and inspect and swap", plannedStartAt: at(29, 7), plannedAt: at(29, 9), actualStartAt: at(29, 7), actualAt: at(29, 9), responsibleParty: "Schultz", durationHours: 2, attributes: { discovery: discoveryAttr(rec2) } });
+    const all2 = [...all, flange];
+    const kids2 = new Map(kids); kids2.set("wt", [...(kids.get("wt") ?? []), flange]);
+    const b2 = buildAsBuilt({ milestones: all2, childrenByParent: kids2, tz });
+    const w2 = buildAsBuiltWork({ built: b2, milestones: all2, log: [...log, row("bf", at(29, 9), 0, 100, "completed", "planned")], notes, records: new Map(), companyOf: (c) => c, tz, times, now: Date.parse(at(31, 12)) });
+    const r2 = buildReview({ built: b2, work: w2, notes, look, discoveries: discoveries(all2), tz });
+    const text = r2.findings.map((f) => `${f.observation}\n${f.evidence.join("\n")}`).join("\n") + r2.questions.map((q) => q.ask).join("\n");
+    expect(text).toContain("Critical path, V-7: Existing blind flange on first deck was swapped out because it was modified and didn't meet refinery standards. About 2 h.");
+    expect(text).not.toMatch(/\.\.\.|and \d+ more/);
   });
   it("names a job by its tag, without the bracketed detail", () => {
     expect(jobWord({ name: "PSV-021 - E-13 Overhead (Swap Existing with the New Model)", order: "PSVs" })).toBe("PSV-021 - E-13 Overhead");

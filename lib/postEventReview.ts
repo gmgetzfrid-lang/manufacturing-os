@@ -189,14 +189,21 @@ export interface Review {
   /** How each number is counted, and where to see it. */
   definitions: Array<{ measure: string; means: string; where: string }>;
 }
-export interface Measure { key: string; measure: string; result: string; target: string; set: boolean }
+export interface Measure {
+  key: string; measure: string; result: string; target: string; set: boolean;
+  /** What a target for it means, in a line. */
+  hint: string;
+  /** Targets to pick from, read off this event's result. */
+  picks: string[];
+}
 export const TARGET_NOT_SET = "Not set";
 
 // ─── Words ─────────────────────────────────────────────────────────
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-const list = (xs: string[], max = 4) => (xs.length <= max ? xs.join(", ") : `${xs.slice(0, max).join(", ")} and ${xs.length - max} more`);
+/** Every item, in full: a list is never cut to "and 3 more". */
+const list = (xs: string[]) => xs.join(", ");
 const tagOf = (order: string) => order.split(" - ")[0].trim() || order;
 /** "10/27 day": a shift, as the tables say it. */
 export function shiftWord(key: string): string {
@@ -208,11 +215,12 @@ export function shiftWord(key: string): string {
 export const shiftsWord = (keys: string[]) => keys.map(shiftWord).join(", ");
 export const whenWord = (t: number, tz: string) => `${fmtInTz(t, tz, { weekday: "short", month: "numeric", day: "numeric" })} ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`;
 const TAG = /^[A-Z]{1,4}-?\d{1,5}[A-Z]{0,2}\b/;
-const short = (s: string, max = 64) => { const t = s.replace(/\s+/g, " ").trim().replace(/[.;,]+$/, ""); return t.length > max ? `${t.slice(0, max - 3).trimEnd()}...` : t; };
+/** Tidied, never shortened: a sentence someone wrote is kept whole. */
+const short = (s: string) => s.replace(/\s+/g, " ").trim().replace(/[.;,]+$/, "");
 /** A work order as a few words: its equipment tag, else its name cut short. */
 export function orderWord(order: string): string {
   const tag = tagOf(order);
-  return TAG.test(tag) ? tag.match(TAG)![0] : short(order.replace(/\s*\([^)]*\)/g, ""), 30);
+  return TAG.test(tag) ? tag.match(TAG)![0] : short(order.replace(/\s*\([^)]*\)/g, ""));
 }
 /** A job as the tables name it: its equipment tag and what is done, without
  *  the bracketed detail ("E-12 Install Bundle", "PSV-021 - E-13 Overhead"). */
@@ -220,7 +228,7 @@ export function jobWord(j: { name: string; order: string }): string {
   const name = short(j.name.replace(/\s*\([^)]*\)/g, ""));
   const tag = tagOf(j.order);
   if (TAG.test(name) || name.toLowerCase().startsWith(tag.toLowerCase())) return name;
-  return TAG.test(tag) ? `${tag} ${name}` : `${name}, ${short(j.order, 40)}`;
+  return TAG.test(tag) ? `${tag} ${name}` : `${name}, ${short(j.order)}`;
 }
 const hash = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return String(h); };
 
@@ -441,7 +449,7 @@ export function buildReview(input: ReviewInput): Review {
     for (const s of j.shifts) {
       if (s.answered) { answeredCount++; continue; }
       if (!unexplained(s.cause)) continue;
-      const where = s.crewOn.length ? ` Its crew (${j.crew}) was on ${list(s.crewOn.map(orderWord), 3)}.` : ` ${j.crew} logged no work that shift.`;
+      const where = s.crewOn.length ? ` Its crew (${j.crew}) was on ${list(s.crewOn.map(orderWord))}.` : ` ${j.crew} logged no work that shift.`;
       questions.push({ key: `stuck:${j.id}:${s.key}`, kind: "stuck", answer: "cause", findingKey: "execution", ask: `${jobWord(j)} had started and sat the ${shiftWord(s.key)} shift with no reason logged.${where} Why did it sit?` });
     }
   }
@@ -452,7 +460,7 @@ export function buildReview(input: ReviewInput): Review {
   }
   for (const f of found) {
     if (f.approvedBy) { if (saved.answers[`approver:${f.id}`]?.note) answeredCount++; continue; }
-    questions.push({ key: `approver:${f.id}`, kind: "approver", answer: "text", findingKey: "scope", ask: `"${short(f.what, 80)}" (${tagOf(f.on)}) has no approver recorded. Who approved it?` });
+    questions.push({ key: `approver:${f.id}`, kind: "approver", answer: "text", findingKey: "scope", ask: `"${short(f.what)}" (${tagOf(f.on)}) has no approver recorded. Who approved it?` });
   }
 
   // ── The findings ──
@@ -570,29 +578,30 @@ export const PRACTICE: Record<CategoryId, { practice: string; gap: string; next:
 function draftFindings(x: { metrics: ReviewMetrics; stuck: StuckJob[]; ready: ReadyJob[]; found: FoundWork[]; holds: HoldFact[]; built: AsBuilt; work: AsBuiltWork; tz: string; materials: ReviewInput["materials"]; organization: OrgStanding | null }): Draft[] {
   const { metrics: m, stuck, ready, found, holds } = x;
   const P = PRACTICE;
-  const make = (key: CategoryId, rating: Rating, title: string, observation: string, evidence: string[], over: Partial<Draft> = {}): Draft => ({
-    key, category: key, rating, title, observation, evidence, ...P[key], ...(rating === "strength" || rating === "none" ? { gap: "" } : {}), ...over,
+  // The observation is a list of facts, one a line, each a whole sentence.
+  const make = (key: CategoryId, rating: Rating, title: string, lines: string[], evidence: string[], over: Partial<Draft> = {}): Draft => ({
+    key, category: key, rating, title, observation: lines.map((l) => l.trim()).filter(Boolean).join("\n"), evidence, ...P[key], ...(rating === "strength" || rating === "none" ? { gap: "" } : {}), ...over,
   });
   const shiftsOf = (c: CauseId) => stuck.flatMap((j) => j.shifts.filter((s) => s.cause === c).map((s) => ({ j, s })));
-  const jobLines = (c: CauseId) => {
+  /** Each job that sat for this reason, with its shifts and what was written. */
+  const byJob = (c: CauseId) => {
     const by = new Map<string, { j: StuckJob; ks: string[]; said: string | null }>();
     for (const { j, s } of shiftsOf(c)) { const e = by.get(j.id) ?? { j, ks: [], said: null }; e.ks.push(s.key); e.said = e.said ?? s.said; by.set(j.id, e); }
-    return [...by.values()].map((e) => `${jobWord(e.j)} (${e.j.crew}): sat ${plural(e.ks.length, "shift")} (${shiftsWord(e.ks)})${e.said ? `. Recorded: "${e.said}"` : ""}`);
+    return [...by.values()];
   };
+  const jobLines = (c: CauseId) => byJob(c).map((e) => `${jobWord(e.j)} (${e.j.crew}): sat ${plural(e.ks.length, "shift")} (${shiftsWord(e.ks)})${e.said ? `. Recorded: "${e.said}"` : ""}`);
+  const sat = (c: CauseId, why: string) => byJob(c).map((e) => `${jobWord(e.j)}: sat ${plural(e.ks.length, "shift")} (${shiftsWord(e.ks)}) ${why}.`);
   const out: Draft[] = [];
 
   // Scope definition.
   {
-    const crit = found.filter((f) => f.critical), rest = found.filter((f) => !f.critical);
     const ev = found.map((f) => `${f.what} (${tagOf(f.on)}): ${plural(f.steps, "activity", "activities")}, about ${f.hours} h of work when approved${f.critical ? ", on the critical path" : ""}${f.approvedBy ? `, approved by ${f.approvedBy}` : ", no approver recorded"}`);
-    if (!found.length) out.push(make("scope", m.steps ? "strength" : "none", "Scope held through the event", m.steps ? `All ${m.baselineSteps} planned activities; no work was added during the event.` : "No schedule to read.", []));
+    if (!found.length) out.push(make("scope", m.steps ? "strength" : "none", "Scope held through the event", [m.steps ? `All ${m.baselineSteps} planned activities; no work was added during the event.` : "No schedule to read."], []));
     else {
-      const growth = m.addedPct != null ? ` That is ${m.addedH} h of work on top of a ${m.baselineH} h plan (${m.addedPct}% more), by the schedule's own estimates.` : "";
-      const critWords = crit.length ? ` On the critical path: ${list(crit.map((f) => `${short(f.what, 60)} (${tagOf(f.on)}, about ${f.hours} h)`), 3)}.` : "";
-      const restWords = rest.length ? ` ${crit.length ? "Off the critical path" : "Largest"}: ${list(rest.slice(0, 3).map((f) => `${short(f.what, 60)} (${tagOf(f.on)}, about ${f.hours} h)`), 3)}.` : "";
-      const rating: Rating = crit.length || (m.addedPct ?? 0) >= 10 ? "gap" : "opportunity";
-      out.push(make("scope", rating, "Scope did not fully reflect equipment condition",
-        `${plural(m.addedSteps, "activity was", "activities were")} added from ${plural(found.length, "finding")}.${growth}${critWords}${restWords}`, ev));
+      const crit = found.filter((f) => f.critical);
+      const lines = [`${plural(m.addedSteps, "activity was", "activities were")} added from ${plural(found.length, "finding")}${m.addedPct != null ? `: ${m.addedH} h of work on a ${m.baselineH} h plan (${m.addedPct}% more), by the schedule's estimates` : ""}.`];
+      for (const f of found) lines.push(`${f.critical ? "Critical path, " : ""}${tagOf(f.on)}: ${short(f.what)}. About ${f.hours} h.`);
+      out.push(make("scope", crit.length || (m.addedPct ?? 0) >= 10 ? "gap" : "opportunity", "Scope did not fully reflect equipment condition", lines, ev));
     }
   }
 
@@ -601,73 +610,61 @@ function draftFindings(x: { metrics: ReviewMetrics; stuck: StuckJob[]; ready: Re
     const gas = holds.filter((h) => h.cause === "permit");
     const gasH = r1(gas.reduce((n, h) => n + h.hours, 0));
     const clean = shiftsOf("cleaning"), test = shiftsOf("test");
-    const parts: string[] = [], ev: string[] = [];
-    if (gas.length) {
-      const where = [...new Set(gas.map((h) => tagOf(h.order)))];
-      parts.push(`Work on ${list(where, 3)} was held ${gasH} h in all for gas testing and decontamination.`);
-      for (const h of gas) ev.push(`${jobWord(h)}: held ${h.hours} h. Recorded: "${h.reason}"`);
-    }
-    if (clean.length) { parts.push(`${list([...new Set(clean.map((c) => jobWord(c.j)))], 3)} sat ${plural(clean.length, "shift")} until a line was cleaned.`); ev.push(...jobLines("cleaning")); }
-    if (test.length) { parts.push(`${list([...new Set(test.map((c) => jobWord(c.j)))], 3)} stopped ${plural(test.length, "shift")} on a leak or a failed test.`); ev.push(...jobLines("test")); }
-    if (parts.length) out.push(make("planning", gasH >= 24 || clean.length + test.length >= 4 ? "gap" : "opportunity", "Decontamination and contingency time was not in the plan", parts.join(" "), ev));
-    else out.push(make("planning", "none", "No planning finding in the records", "No holds for gas testing or decontamination, and no job sat waiting on cleaning or a failed test.", []));
+    const lines: string[] = [], ev: string[] = [];
+    for (const h of gas) { lines.push(`${jobWord(h)}: held ${h.hours} h for gas testing or decontamination.`); ev.push(`${jobWord(h)}: held ${h.hours} h. Recorded: "${h.reason}"`); }
+    lines.push(...sat("cleaning", "until a line was cleaned")); ev.push(...jobLines("cleaning"));
+    lines.push(...sat("test", "on a leak or a failed test")); ev.push(...jobLines("test"));
+    if (lines.length) out.push(make("planning", gasH >= 24 || clean.length + test.length >= 4 ? "gap" : "opportunity", "Decontamination and contingency time was not in the plan", lines, ev));
+    else out.push(make("planning", "none", "No planning finding in the records", ["No holds for gas testing or decontamination, and no job sat waiting on cleaning or a failed test."], []));
   }
 
   // Materials and logistics.
   {
     const off = shiftsOf("offsite"), mat = shiftsOf("material");
-    const parts: string[] = [], ev: string[] = [];
-    if (off.length) {
-      const jobs = new Map<string, number>(); for (const { j } of off) jobs.set(jobWord(j), (jobs.get(jobWord(j)) ?? 0) + 1);
-      parts.push(`${list([...jobs.entries()].map(([n, c]) => `${n} (${plural(c, "shift")})`), 4)} sat waiting on off-site repair or calibration.`);
-      ev.push(...jobLines("offsite"));
-    }
-    if (mat.length) { parts.push(`${list([...new Set(mat.map((c) => jobWord(c.j)))], 3)} sat ${plural(mat.length, "shift")} waiting on materials.`); ev.push(...jobLines("material")); }
+    const lines = [...sat("offsite", "waiting on off-site repair or calibration"), ...sat("material", "waiting on materials")];
+    const ev = [...jobLines("offsite"), ...jobLines("material")];
     const r = x.materials;
     if (r && r.lines > 0) {
-      parts.push(`Materials register: ${plural(r.lines, "line")}, ${r.specIncomplete} with an incomplete specification, ${r.late} short or late, ${plural(r.openQuestions, "question")} open more than 24 h.`);
-      const over: Partial<Draft> = { gap: "Items on the register reached the event incomplete, late or with open questions.", next: "Every register line specified, owned and dated at scope freeze. Open questions answered within 24 hours. Kit check two weeks before the start. One coordinator for everything sent off site." };
-      const bad = r.specIncomplete + r.late + r.openQuestions;
-      out.push(make("materials", off.length + mat.length >= 2 || bad >= 3 ? "gap" : off.length + mat.length + bad > 0 ? "opportunity" : "strength", bad + off.length + mat.length ? "Material readiness was not complete at the start" : "Materials were ready when the work needed them", parts.join(" "), ev, bad + off.length + mat.length ? over : {}));
-    } else if (parts.length) {
-      parts.push("No materials register was kept for this event.");
-      out.push(make("materials", off.length + mat.length >= 2 ? "gap" : "opportunity", "Material readiness was not tracked to an owner and a date", parts.join(" "), ev));
-    } else out.push(make("materials", "none", "No materials finding in the records", "No job is recorded as waiting on materials or an off-site repair. No materials register was kept for this event, so material readiness can't be measured.", []));
+      lines.push(`Materials register: ${plural(r.lines, "line")}; ${r.specIncomplete} with an incomplete specification; ${r.late} short or late; ${plural(r.openQuestions, "question")} open more than 24 h.`);
+      const bad = r.specIncomplete + r.late + r.openQuestions, n = bad + off.length + mat.length;
+      out.push(make("materials", off.length + mat.length >= 2 || bad >= 3 ? "gap" : n > 0 ? "opportunity" : "strength", n ? "Material readiness was not complete at the start" : "Materials were ready when the work needed them", lines, ev,
+        n ? { gap: "Items on the register reached the event incomplete, late or with open questions.", next: "Every register line specified, owned and dated at scope freeze. Open questions answered within 24 hours. Kit check two weeks before the start. One coordinator for everything sent off site." } : {}));
+    } else if (lines.length) {
+      lines.push("No materials register was kept for this event.");
+      out.push(make("materials", off.length + mat.length >= 2 ? "gap" : "opportunity", "Material readiness was not tracked to an owner and a date", lines, ev));
+    } else out.push(make("materials", "none", "No materials finding in the records", ["No job is recorded as waiting on materials or an off-site repair.", "No materials register was kept for this event, so material readiness can't be measured."], []));
   }
 
   // Contractors and resourcing.
   {
     const other = shiftsOf("other_crew");
-    const byCrew = new Map<string, { shifts: number; jobs: string[]; on: Set<string>; silent: boolean }>();
+    const lines: string[] = [], ev: string[] = [];
     for (const j of ready) {
-      const e = byCrew.get(j.crew) ?? { shifts: 0, jobs: [], on: new Set<string>(), silent: false };
-      e.shifts += j.shifts.length; e.jobs.push(`${jobWord(j)} (${plural(j.shifts.length, "shift")})`); for (const b of j.busyOn) e.on.add(orderWord(b)); if (!j.crewLogged) e.silent = true;
-      byCrew.set(j.crew, e);
+      const on = [...new Set(j.busyOn.map(orderWord))];
+      lines.push(`${jobWord(j)}: ready and not started for ${plural(j.shifts.length, "shift")} (${shiftsWord(j.shifts)}). ${on.length ? `${j.crew} was on ${list(on)}` : j.crewLogged ? `${j.crew} was on other work` : `${j.crew} logged no work then`}.`);
+      ev.push(`${jobWord(j)} (${j.crew}): ready ${whenWord(x.work.steps.get(j.id)!.ready!.at, x.tz)}, not started for ${plural(j.shifts.length, "shift")} (${shiftsWord(j.shifts)})${j.said ? `. Answer: "${j.said}"` : ""}`);
     }
-    const parts: string[] = [], ev: string[] = [];
-    const crews = [...byCrew.entries()].sort((a, b) => b[1].shifts - a[1].shifts);
-    for (const [crew, e] of crews) {
-      parts.push(`Ready work waited for ${crew}: ${list(e.jobs, 3)}${e.on.size ? `, while the crew was on ${list([...e.on], 3)}` : e.silent ? ", with no work logged by that crew" : ""}.`);
-    }
-    for (const j of ready) ev.push(`${jobWord(j)} (${j.crew}): ready ${whenWord(x.work.steps.get(j.id)!.ready!.at, x.tz)}, not started for ${plural(j.shifts.length, "shift")} (${shiftsWord(j.shifts)})${j.busyOn.length ? `. Crew was on ${list(j.busyOn.map(orderWord), 3)}` : j.crewLogged ? "" : ". Crew logged no work then"}${j.said ? `. Answer: "${j.said}"` : ""}`);
-    if (other.length) { parts.push(`${list([...new Set(other.map((c) => jobWord(c.j)))], 3)} sat ${plural(other.length, "shift")} waiting on another crew.`); ev.push(...jobLines("other_crew")); }
+    lines.push(...sat("other_crew", "waiting on another crew")); ev.push(...jobLines("other_crew"));
     const n = m.readyShifts + other.length;
-    if (n) out.push(make("contractors", n >= 8 ? "gap" : "opportunity", "Crew capacity did not match the work running at the same time", parts.join(" "), ev));
-    else out.push(make("contractors", m.steps ? "strength" : "none", "Crews picked up ready work without delay", "No job sat a full shift ready and not started, and none waited on another crew.", []));
+    if (n) out.push(make("contractors", n >= 8 ? "gap" : "opportunity", "Crew capacity did not match the work running at the same time", lines, ev));
+    else out.push(make("contractors", m.steps ? "strength" : "none", "Crews picked up ready work without delay", ["No job sat a full shift ready and not started, and none waited on another crew."], []));
   }
 
   // Execution control.
   {
-    const ev = [...stuck.map((j) => `${jobWord(j)} (${j.crew}): ${j.shifts.map((s) => `${shiftWord(s.key)}, ${CAUSE_WORD[s.cause].toLowerCase()}`).join("; ")}`)];
-    if (m.stuckShifts + m.readyShifts === 0) out.push(make("execution", m.steps ? "strength" : "none", "Started work kept moving", "No started job sat a full shift, and no ready job waited a full shift to start.", []));
+    const ev = stuck.map((j) => `${jobWord(j)} (${j.crew}): ${j.shifts.map((s) => `${shiftWord(s.key)}, ${CAUSE_WORD[s.cause].toLowerCase()}`).join("; ")}`);
+    if (m.stuckShifts + m.readyShifts === 0) out.push(make("execution", m.steps ? "strength" : "none", "Started work kept moving", ["No started job sat a full shift, and no ready job waited a full shift to start."], []));
     else {
-      const causes = m.byCause.map((c) => `${CAUSE_WORD[c.cause].toLowerCase()} ${c.shifts}`).join(", ");
-      const stuckWords = m.stuckJobs ? `${plural(m.stuckJobs, "started job")} sat still for ${plural(m.stuckShifts, "shift")} in all (${causes}).` : "";
-      const none = m.noReasonShifts ? ` ${m.noReasonShifts} of those ${m.stuckShifts} had no reason written down.` : m.stuckShifts ? " Every one has a recorded reason." : "";
-      const readyWords = m.readyJobs ? ` ${plural(m.readyJobs, "ready job")} waited ${plural(m.readyShifts, "shift")} in all to start.` : "";
-      const at = ` It happened on ${m.shiftsWithStuck} of the ${m.shifts} shifts, ${m.leastAtOnce === m.mostAtOnce ? `${m.mostAtOnce}` : `${m.leastAtOnce} to ${m.mostAtOnce}`} jobs at a time.`;
+      const lines: string[] = [];
+      if (m.stuckJobs) {
+        lines.push(`${plural(m.stuckJobs, "started job")} sat still, ${plural(m.stuckShifts, "shift")} in all.`);
+        lines.push(`By reason: ${m.byCause.map((c) => `${CAUSE_WORD[c.cause].toLowerCase()} ${c.shifts}`).join("; ")}.`);
+        lines.push(m.noReasonShifts ? `${m.noReasonShifts} of those ${plural(m.stuckShifts, "shift")} ${m.noReasonShifts === 1 ? "has" : "have"} no reason written down.` : "Every one has a recorded reason.");
+      }
+      if (m.readyJobs) lines.push(`${plural(m.readyJobs, "ready job")} waited ${plural(m.readyShifts, "shift")} in all to start.`);
+      lines.push(`It happened on ${m.shiftsWithStuck} of the ${m.shifts} shifts, ${m.leastAtOnce === m.mostAtOnce ? `${m.mostAtOnce}` : `${m.leastAtOnce} to ${m.mostAtOnce}`} jobs at a time.`);
       const n = m.stuckShifts + m.readyShifts;
-      out.push(make("execution", n >= 20 || (m.stuckShifts >= 6 && m.noReasonShifts / m.stuckShifts >= 0.5) ? "gap" : "opportunity", "Waiting time was recorded but not managed to closure", `${stuckWords}${none}${readyWords}${at}`.trim(), ev));
+      out.push(make("execution", n >= 20 || (m.stuckShifts >= 6 && m.noReasonShifts / m.stuckShifts >= 0.5) ? "gap" : "opportunity", "Waiting time was recorded but not managed to closure", lines, ev));
     }
   }
 
@@ -676,31 +673,30 @@ function draftFindings(x: { metrics: ReviewMetrics; stuck: StuckJob[]; ready: Re
   {
     const mat = out.find((d) => d.key === "materials")!, con = out.find((d) => d.key === "contractors")!;
     const crews = x.work.crews.map((c) => c.crew).filter((c) => c !== "Not set");
-    const who = crews.length ? `Work ran across ${plural(crews.length, "crew")}: ${list(crews, 6)}.` : "";
+    const who = crews.length ? `Work ran across ${plural(crews.length, "crew")}: ${list(crews)}.` : "";
     const org = x.organization?.recorded ? x.organization : null;
     if (org && org.required > 0) {
       const named = org.roles.filter((r) => r.required && r.person).map((r) => `${r.role}: ${r.person}`);
-      if (!org.missing.length) out.push(make("organization", "strength", "Every required role has a named person", `${org.filled} of ${org.required} required roles are named on the project. ${who}`.trim(), named));
-      else out.push(make("organization", "opportunity", "Required roles without a named person", `${org.filled} of ${org.required} required roles are named on the project. Not named: ${list(org.missing, 6)}. ${who}`.trim(), named,
+      const head = `${org.filled} of ${org.required} required roles are named on the project.`;
+      if (!org.missing.length) out.push(make("organization", "strength", "Every required role has a named person", [head, who], named));
+      else out.push(make("organization", "opportunity", "Required roles without a named person", [head, `Not named: ${list(org.missing)}.`, who], named,
         { gap: "Some required roles had no named person.", next: "Every required role named six months before the event, with written responsibilities, and recorded on the project." }));
     } else {
       const lacks: string[] = [];
       if (mat.rating === "gap" || mat.rating === "opportunity") lacks.push("materials and off-site repairs");
       if (con.rating === "gap" || con.rating === "opportunity") lacks.push("day-to-day balancing of crews");
       const none = "No event organization is recorded on the project (Members tab).";
-      if (lacks.length) out.push(make("organization", "opportunity", "Key coordination roles were not assigned", `${who} The records show no single owner for ${lacks.join(" or ")}. ${none}`.trim(), [],
+      if (lacks.length) out.push(make("organization", "opportunity", "Key coordination roles were not assigned", [who, `The records show no single owner for ${lacks.join(" or ")}.`, none], [],
         lacks.length === 1 && lacks[0].startsWith("day") ? { gap: "The organization formed around available people. No role balanced crews across areas each day.", next: "Name the turnaround manager and an area coordinator per unit six months before the event, with written roles and responsibilities." } : {}));
-      else out.push(make("organization", "none", "No organization finding in the records", `${who} ${none}`.trim(), []));
+      else out.push(make("organization", "none", "No organization finding in the records", [who, none], []));
     }
   }
 
   // Safety.
   {
     const gas = holds.filter((h) => h.cause === "permit");
-    if (gas.length) {
-      const where = [...new Set(gas.map((h) => tagOf(h.order)))];
-      out.push(make("safety", "strength", "Crews stood down when conditions were not safe", `Work on ${list(where, 3)} was stopped ${plural(gas.length, "time")} (${r1(gas.reduce((n, h) => n + h.hours, 0))} h in all) until gas tests cleared.`, gas.map((h) => `${jobWord(h)}: ${h.hours} h. Recorded: "${h.reason}"`)));
-    } else out.push(make("safety", "none", "No safety finding in the schedule records", "No stand-down for gas testing or permits is recorded on the schedule. Incidents and observations are kept in the shift meetings; add any that belong here.", []));
+    if (gas.length) out.push(make("safety", "strength", "Crews stood down when conditions were not safe", gas.map((h) => `${jobWord(h)}: work stopped ${h.hours} h until gas tests cleared.`), gas.map((h) => `${jobWord(h)}: ${h.hours} h. Recorded: "${h.reason}"`)));
+    else out.push(make("safety", "none", "No safety finding in the schedule records", ["No stand-down for gas testing or permits is recorded on the schedule.", "Incidents and observations are kept in the shift meetings; add any that belong here."], []));
   }
 
   // Records and close-out.
@@ -708,14 +704,14 @@ function draftFindings(x: { metrics: ReviewMetrics; stuck: StuckJob[]; ready: Re
     const noApprover = found.filter((f) => !f.approvedBy).length;
     const hc = m.headCounts;
     const lacks: string[] = [], has: string[] = [];
-    if (hc.of) (hc.counted / hc.of >= 0.8 ? has : lacks).push(`head counts for ${hc.counted} of the ${hc.of} crew-shifts that moved work`);
-    if (found.length) (noApprover ? lacks : has).push(noApprover ? `${noApprover} of ${plural(found.length, "finding")} with no approver recorded` : `an approver on all ${plural(found.length, "finding")}`);
-    if (m.stuckShifts) (m.noReasonShifts ? lacks : has).push(m.noReasonShifts ? `no reason written for ${m.noReasonShifts} of ${plural(m.stuckShifts, "stuck shift")}` : "a reason on every stuck shift");
+    if (hc.of) (hc.counted / hc.of >= 0.8 ? has : lacks).push(`Head counts for ${hc.counted} of the ${hc.of} crew-shifts that moved work`);
+    if (found.length) (noApprover ? lacks : has).push(noApprover ? `${noApprover} of ${plural(found.length, "finding")} with no approver recorded` : `An approver on all ${plural(found.length, "finding")}`);
+    if (m.stuckShifts) (m.noReasonShifts ? lacks : has).push(m.noReasonShifts ? `No reason written for ${m.noReasonShifts} of ${plural(m.stuckShifts, "stuck shift")}` : "A reason on every stuck shift");
     if (x.built.startsNotRecorded) lacks.push(`${plural(x.built.startsNotRecorded, "activity", "activities")} with no start time recorded`);
-    const obs = `${has.length ? `Recorded: ${has.join("; ")}.` : ""}${lacks.length ? ` Missing: ${lacks.join("; ")}.` : ""}${hc.of && hc.counted / hc.of < 0.8 ? " Without head counts, labor hours can't be estimated." : ""}`.trim();
-    if (!m.steps) out.push(make("records", "none", "No records to read", "No schedule to read.", []));
-    else if (lacks.length) out.push(make("records", "opportunity", "Some records were not kept during the event", obs, []));
-    else out.push(make("records", "strength", "Event records support a fact-based review", obs || "Progress, delays and added work were recorded as the event ran.", []));
+    const lines = [...has.map((t) => `Recorded: ${t}.`), ...lacks.map((t) => `Missing: ${t}.`), ...(hc.of && hc.counted / hc.of < 0.8 ? ["Without head counts, labor hours can't be estimated."] : [])];
+    if (!m.steps) out.push(make("records", "none", "No records to read", ["No schedule to read."], []));
+    else if (lacks.length) out.push(make("records", "opportunity", "Some records were not kept during the event", lines, []));
+    else out.push(make("records", "strength", "Event records support a fact-based review", lines.length ? lines : ["Progress, delays and added work were recorded as the event ran."], []));
   }
   return out;
 }
@@ -738,12 +734,12 @@ function qaOf(m: ReviewMetrics, found: FoundWork[], stuck: StuckJob[], tz: strin
   if (m.steps) out.push({ q: `Were all ${m.steps} activities planned?`, a: `${m.baselineSteps} were on the baseline schedule${m.addedSteps ? `; ${m.addedSteps} were added during the event from ${plural(found.length, "finding")}` : "; none were added"}. ${m.stepsDone} of ${m.steps} are done.` });
   if (m.varianceH != null && m.baselineFinish != null && m.actualFinish != null) {
     const crit = found.filter((f) => f.critical);
-    out.push({ q: `What drove the ${Math.abs(m.varianceH)} h ${m.varianceH >= 0 ? "past" : "ahead of"} the baseline finish?`, a: `${crit.length ? `Added work on the critical path: ${list(crit.map((f) => `${short(f.what, 60)} (about ${f.hours} h)`), 3)}. ` : ""}Baseline finish ${whenWord(m.baselineFinish, tz)}; actual ${whenWord(m.actualFinish, tz)}. The full trace is in Reports, As-built schedule.` });
+    out.push({ q: `What drove the ${Math.abs(m.varianceH)} h ${m.varianceH >= 0 ? "past" : "ahead of"} the baseline finish?`, a: `${crit.length ? `Added work on the critical path: ${list(crit.map((f) => `${short(f.what)} (about ${f.hours} h)`))}. ` : ""}Baseline finish ${whenWord(m.baselineFinish, tz)}; actual ${whenWord(m.actualFinish, tz)}. The full trace is in Reports, As-built schedule.` });
   }
   if (found.length) out.push({ q: "Is found work unusual?", a: "No. The practice is to reduce it with condition data before scope freeze and to carry an allowance for what remains." });
   if (m.addedPct != null && m.addedSteps) out.push({ q: `How firm is the ${m.addedPct}% scope growth?`, a: `It compares planned hours on the schedule: ${m.addedH} h estimated for the added activities against ${m.baselineH} h on the baseline. ${m.labor ? `Head counts put ${m.labor.pct}% of labor hours on added work.` : "Actual labor hours can't be confirmed: head counts were not recorded on most shifts."}` });
   if (m.stuckShifts + m.readyShifts) out.push({ q: "How is a stuck job counted?", a: "A job that had started and went a whole shift with nothing logged, or was ready and did not start for a whole shift. Night shifts count only for work that ran on nights. Several jobs can sit in the same shift, so the counts are not hours of delay to the finish." });
-  if (stuck.length) out.push({ q: "Where can I see each stuck job?", a: "Reports, As-built schedule: gray hatched cells are started jobs with nothing logged; light blue cells are ready jobs not started. The appendix lists each one with its shift and reason." });
+  if (stuck.length) out.push({ q: "Where can I see each stuck job?", a: "Reports, As-built schedule: gray hatched cells are started jobs with nothing logged; light blue cells are ready jobs not started. This review lists each one with its shift and reason." });
   out.push({ q: "What will the changes cost?", a: "Most are changes to how the event is prepared and controlled, carried by existing staff. Items that need funding (a condition survey, a surge crew option) come back with quotes before approval." });
   out.push({ q: "Who owns the actions?", a: "Each closure names a role. Names are assigned when the event organization is set, six months ahead." });
   out.push({ q: "How reliable is the data?", a: "It is the event's own record: the baseline schedule, progress logged by shift, comments and hold reasons, added-work approvals and shift head counts. Anything estimated is labelled." });
@@ -794,17 +790,22 @@ export const ROADMAP: Array<{ when: string; theme: string; what: string }> = [
 /** The measures the next event is held to, with this event's results. A
  *  target is whatever a person set for it: none is assumed. */
 export function measuresOf(m: ReviewMetrics, targets: Record<string, string> = {}): Measure[] {
-  const rows: Array<[string, string, string]> = [
-    ["variance", "Schedule variance at the last activity", m.varianceH == null ? "Not finished" : `${m.varianceH > 0 ? "+" : ""}${m.varianceH} h`],
-    ["added", "Added activities, share of baseline", m.baselineSteps ? `${Math.round((m.addedSteps / m.baselineSteps) * 100)}% (${m.addedSteps} on ${m.baselineSteps})` : "None"],
-    ["growth", "Scope growth in planned hours", m.addedPct == null ? "Not known" : `${m.addedPct}% (${m.addedH} h on ${m.baselineH} h)`],
-    ["stuck", "Shifts started jobs sat still (all jobs)", String(m.stuckShifts)],
-    ["ready", "Shifts ready jobs waited to start (all jobs)", String(m.readyShifts)],
-    ["no_reason", "Stuck shifts with no reason recorded", m.stuckShifts ? `${m.noReasonShifts} of ${m.stuckShifts}` : "None"],
-    ["head_counts", "Crew-shifts with a head count", m.headCounts.of ? `${m.headCounts.counted} of ${m.headCounts.of}` : "None"],
-    ["materials", "Materials not ordered 8 weeks before", "Not tracked"],
+  const half = (n: number) => Math.max(1, Math.floor(n / 2));
+  const count = (n: number) => (n > 1 ? ["0", `${half(n)} (half of this event)`, `${n} (no worse than this event)`] : n === 1 ? ["0", "1 (no worse than this event)"] : ["0"]);
+  const pct = (p: number | null) => (p == null ? ["5%", "10%"] : [...new Set(["5%", "10%", `${p}% (no worse than this event)`])]);
+  const v = m.varianceH;
+  const added = m.baselineSteps ? Math.round((m.addedSteps / m.baselineSteps) * 100) : null;
+  const rows: Array<[string, string, string, string, string[]]> = [
+    ["variance", "Schedule variance at the last activity", v == null ? "Not finished" : `${v > 0 ? "+" : ""}${v} h`, "How many hours past the baseline finish is acceptable.", ["0 h (on the baseline finish)", "12 h (one shift)", ...(v != null && v > 12 ? [`${v} h (no worse than this event)`] : [])]],
+    ["added", "Added activities, share of baseline", m.baselineSteps ? `${added}% (${m.addedSteps} on ${m.baselineSteps})` : "None", "How much added work the plan should expect: the found-work allowance, as a share of planned activities.", pct(added)],
+    ["growth", "Scope growth in planned hours", m.addedPct == null ? "Not known" : `${m.addedPct}% (${m.addedH} h on ${m.baselineH} h)`, "The same allowance in hours of work: what the schedule and budget carry for found work.", pct(m.addedPct)],
+    ["stuck", "Shifts started jobs sat still (all jobs)", String(m.stuckShifts), "Started jobs that go a whole shift with nothing logged. Fewer is better; zero is the aim.", count(m.stuckShifts)],
+    ["ready", "Shifts ready jobs waited to start (all jobs)", String(m.readyShifts), "Ready jobs nobody started for a whole shift. Fewer is better; zero is the aim.", count(m.readyShifts)],
+    ["no_reason", "Stuck shifts with no reason recorded", m.stuckShifts ? `${m.noReasonShifts} of ${m.stuckShifts}` : "None", "Every job that sits should have its reason written the same shift.", ["0"]],
+    ["head_counts", "Crew-shifts with a head count", m.headCounts.of ? `${m.headCounts.counted} of ${m.headCounts.of}` : "None", "Head counts at the shift meeting are what labor hours are worked out from.", ["Every crew, every shift"]],
+    ["materials", "Materials not ordered 8 weeks before", "Not tracked", "Counted from the materials register once it is in use.", ["0"]],
   ];
-  return rows.map(([key, measure, result]) => { const t = (targets[key] ?? "").trim(); return { key, measure, result, target: t || TARGET_NOT_SET, set: !!t }; });
+  return rows.map(([key, measure, result, hint, picks]) => { const t = (targets[key] ?? "").trim(); return { key, measure, result, target: t || TARGET_NOT_SET, set: !!t, hint, picks }; });
 }
 
 /** What management is asked to decide, from the findings that stand. */

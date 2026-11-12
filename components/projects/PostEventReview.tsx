@@ -265,7 +265,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
                     <dl className="mt-2 grid gap-x-3 gap-y-1.5 sm:grid-cols-[136px_minmax(0,1fr)] text-[13px] text-[var(--color-text)]">
                       <dt className={`${label} pt-0.5`}>Event observation</dt>
                       <dd>
-                        {f.observation || <span className="text-[var(--color-text-muted)]">Nothing written.</span>}
+                        {f.observation.trim() ? (() => { const ls = f.observation.split("\n").map((l) => l.trim()).filter(Boolean); return ls.length > 1 ? <ul className="list-disc pl-4 space-y-0.5">{ls.map((l, i) => <li key={i}>{l}</li>)}</ul> : <>{ls[0]}</>; })() : <span className="text-[var(--color-text-muted)]">Nothing written.</span>}
                         {f.info.map((line, i) => (
                           <div key={i} className="mt-1 flex items-start gap-1.5 text-[12.5px]"><span className="font-bold text-[var(--color-text-muted)] whitespace-nowrap">Added:</span><span className="min-w-0 flex-1">{line}</span>{canManage && <button type="button" aria-label="Remove this line" onClick={() => dropInfo(f, i)} className="text-[var(--color-text-muted)] hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>}</div>
                         ))}
@@ -285,7 +285,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
                     </dl>
                     {f.stale && (
                       <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[12.5px] text-amber-900 dark:text-amber-200">
-                        <b>The records have changed since this was {f.edited ? "changed" : "kept"}.</b> They now say: &ldquo;{f.drafted.observation}&rdquo;
+                        <b>The records have changed since this was {f.edited ? "changed" : "kept"}.</b> They now say:<ul className="list-disc pl-4 mt-1">{f.drafted.observation.split("\n").filter(Boolean).map((l, i) => <li key={i}>{l}</li>)}</ul>
                         {canManage && <div className="mt-1.5 flex gap-1.5 flex-wrap"><button type="button" disabled={!!busy} onClick={() => takeDraft(f)} className={btn}>Use the new draft</button><button type="button" disabled={!!busy} onClick={() => keep(f)} className={btn}>Keep mine as it is</button></div>}
                       </div>
                     )}
@@ -353,20 +353,28 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
         </div>
 
         <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4" data-review-measures>
-          <h3 className="text-[14px] font-black text-[var(--color-text)]">Measures and targets</h3>
-          <p className="text-[12.5px] text-[var(--color-text-muted)]">This event&rsquo;s result on each measure. A target is whatever you agree and enter here; none is assumed, and nothing is judged against a target that isn&rsquo;t set.</p>
-          <div className="mt-2 rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
-            {review.measures.map((x) => (
-              <div key={x.key} className="grid gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)] items-center px-3 py-2 text-[13px]">
-                <span className="text-[var(--color-text)]">{x.measure}</span>
-                <b className="text-[var(--color-text)]">{x.result}</b>
-                {canManage
-                  ? <input aria-label={`Target: ${x.measure}`} value={(targets ?? saved?.targets ?? {})[x.key] ?? ""} onChange={(e) => setTargets({ ...(targets ?? saved?.targets ?? {}), [x.key]: e.target.value })} placeholder="Target: not set" className={field} />
-                  : <span className={x.set ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}>{x.set ? `Target: ${x.target}` : "Target: not set"}</span>}
-              </div>
-            ))}
+          <h3 className="text-[14px] font-black text-[var(--color-text)]">Targets for the next event</h3>
+          <p className="text-[12.5px] text-[var(--color-text-muted)]">Set the tolerance for each measure here. Tap a suggestion or type your own, then Save. Nothing is judged against a target until you set it.</p>
+          <div className="mt-2 space-y-2">
+            {review.measures.map((x) => {
+              const cur = (targets ?? saved?.targets ?? {})[x.key] ?? "";
+              const put = (v: string) => setTargets({ ...(targets ?? saved?.targets ?? {}), [x.key]: v });
+              return (
+                <div key={x.key} className="rounded-xl border border-[var(--color-border)] px-3 py-2.5 text-[13px]">
+                  <div className="flex items-baseline gap-x-3 flex-wrap"><b className="text-[var(--color-text)]">{x.measure}</b><span className="ml-auto text-[var(--color-text)]">This event: <b>{x.result}</b></span></div>
+                  <div className="text-[12px] text-[var(--color-text-muted)]">{x.hint}</div>
+                  {canManage ? (
+                    <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                      <span className={label}>Target</span>
+                      {x.picks.map((pk) => <button key={pk} type="button" onClick={() => put(pk)} aria-pressed={cur === pk} className={`h-8 px-2.5 rounded-full border text-[12px] font-bold ${cur === pk ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border-strong)]"}`}>{pk}</button>)}
+                      <input aria-label={`Target: ${x.measure}`} value={cur} onChange={(e) => put(e.target.value)} placeholder="or type your own" className={`${field} !w-44 h-8 !py-0`} />
+                    </div>
+                  ) : <div className="mt-1 text-[12.5px]">{x.set ? <>Target: <b>{x.target}</b></> : <span className="text-[var(--color-text-muted)]">Target: not set</span>}</div>}
+                </div>
+              );
+            })}
           </div>
-          {canManage && targets && <div className="mt-2 flex gap-1.5"><button type="button" disabled={!!busy} onClick={saveTargets} className={pri}>{busy === "targets" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save targets</button><button type="button" onClick={() => setTargets(null)} className={btn}>Cancel</button></div>}
+          {canManage && targets && <div className="mt-2.5 flex gap-1.5"><button type="button" disabled={!!busy} onClick={saveTargets} className={pri}>{busy === "targets" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save targets</button><button type="button" onClick={() => setTargets(null)} className={btn}>Cancel</button></div>}
         </section>
 
         <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]" open>
@@ -442,7 +450,7 @@ function FindingForm({ title, init, pickCategory, busy, onSave, onCancel }: {
         <label className="block"><span className={label}>Rating</span><select value={e.rating} onChange={(ev) => setE((x) => ({ ...x, rating: ev.target.value as Rating }))} className={`${field} mt-0.5`}>{(["gap", "opportunity", "strength"] as Rating[]).map((r) => <option key={r} value={r}>{RATING_WORD[r]}</option>)}</select></label>
       </div>
       <label className="block"><span className={label}>Finding, in one line</span><input value={e.title ?? ""} onChange={(ev) => set("title", ev.target.value)} placeholder="Flange not ordered: the length was not on the drawing" className={`${field} mt-0.5`} /></label>
-      {Area({ k: "observation", name: "Event observation", hint: "What happened, with the facts: which job, when, what it cost", rows: 3 })}
+      {Area({ k: "observation", name: "Event observation (one fact a line)", hint: "What happened, with the facts: which job, when, what it cost", rows: 5 })}
       {init && init.source === "records" && Area({ k: "practice", name: "Leading practice", hint: "How it is done well" })}
       {Area({ k: "gap", name: "Gap", hint: "What was missing or didn't work" })}
       {Area({ k: "next", name: "Closure, next event", hint: "What will be in place before the next event" })}
