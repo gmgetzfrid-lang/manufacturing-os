@@ -10,7 +10,7 @@ import JSZip from "jszip";
 import { noEmDash } from "@/lib/noEmDash";
 import { fmtInTz } from "@/lib/scheduleTz";
 import { CAUSE_WORD, categoryOf, jobWord, orderWord, pointOf, shiftsWord, whenWord, type Finding, type Review } from "@/lib/postEventReview";
-import { overloaded, type CrewFlow } from "@/lib/crewFlow";
+import { MIN_WAIT_H, overloaded, type CrewFlow } from "@/lib/crewFlow";
 
 export interface ReviewFileOpts {
   project: string;
@@ -52,11 +52,13 @@ const planWord = (h: number | null) => (h == null ? "" : Math.abs(h) < 1 ? "On p
 const plainStep = (n: string) => n.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim();
 const crewRows = (f: CrewFlow, tz: string): string[][] => f.jobs.map((j) => [jobWord(j), `${plainStep(j.after)} done${j.afterOrder !== j.order ? ` (${orderWord(j.afterOrder)})` : ""}${j.basis === "guessed" ? ", by the planned sequence" : j.basis === "corrected" ? ", as corrected" : ""}`, whenWord(j.openedAt, tz), whenWord(j.startedAt, tz), j.waitH >= 1 ? `${j.waitH} h` : "None", planWord(j.lateStartH)]);
 const crewHead = (f: CrewFlow) => ["Job", "Ready when", "Ready from", `${f.crew} started`, "Waited", "Start against plan"];
-/** The same queue with one crew and with two, as a line. */
-const queueLine = (f: CrewFlow) => `A what-if, not what happened: the same ${plural(f.jobs.length, "job")} in the order they were ready, each open as long as it was, crews working without a break. One crew: ${f.queue.one} h of waiting in all. Two crews: ${f.queue.two} h.`;
-/** Each crew that was handed work by another: its jobs, plan, actual, waiting. */
-const crewsRows = (r: Review): string[][] => r.flows.filter((f) => f.jobs.length >= 2).map((f) => [f.crew, String(f.jobs.length), `${f.plannedH} h`, `${f.tookH} h`, `${f.waitH} h`, `${f.peak.open}${f.plannedPeak ? ` (plan ${f.plannedPeak})` : ""}`]);
-const CREWS_HEAD = ["Crew", "Jobs handed to it", "Work planned", "Open, start to finish", "Waited for it", "Most open at once"];
+/** Each crew that was handed work by another: how many jobs, how many of them
+ *  waited for it, the longest one, and the most it had open at once. No hours
+ *  are added across jobs: a sum of job waits reads as the crew sitting idle. */
+export const crewsRows = (r: Review): string[][] => r.flows.filter((f) => f.jobs.length >= 2).map((f) => [f.crew, String(f.jobs.length), f.waited.length ? `${f.waited.length} of ${f.jobs.length}` : "None", f.waited.length ? `${f.waited[0].waitH} h (${orderWord(f.waited[0].order)})${f.waited[0].basis === "guessed" ? ", by the planned sequence" : ""}` : "None", `${f.peak.open}${f.plannedPeak ? ` (plan ${f.plannedPeak})` : ""}`]);
+export const CREWS_HEAD = ["Crew", "Jobs handed to it", `Jobs that waited ${MIN_WAIT_H} h or more for it`, "Longest a job waited", "Most open at once"];
+export const CREWS_TITLE = "Jobs that waited for each crew";
+export const CREWS_NOTE = "These are jobs waiting for the crew to get to them. They are not hours the crew sat idle.";
 /** Every work order that finished late: by how much, and where the record shows the hours going. */
 const lateRows = (r: Review): string[][] => r.late.filter((o) => !o.told).map((o) => [orderWord(o.order), `${o.lateH} h${o.added ? " (added work)" : ""}`, o.parts.slice(0, 3).map((p) => (p.kind === "over" ? `${p.step.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim()}: open ${p.tookH} h, progress logged on ${plural(p.workedShifts, "shift")}, planned as ${p.plannedH} h of work (${p.crew})` : p.kind === "wait" ? `${p.step.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim()} sat ${p.hours} h before ${p.crew} started it` : `Started ${p.hours} h after its planned start`)).join("; ") || "Not shown by the record"]);
 const LATE_HEAD = ["Work order", "Finished after its plan by", "Where the time went"];
@@ -149,7 +151,6 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
   for (const f of r.flows.filter(overloaded)) {
     b.push({ k: "h1", text: `Appendix ${letter()}. What waited for ${f.crew}` });
     b.push({ k: "table", head: crewHead(f), rows: crewRows(f, o.tz), widths: [1.6, 1.7, 1.0, 1.0, 0.7, 0.9] });
-    b.push({ k: "muted", text: queueLine(f) });
   }
   if (lateRows(r).length) {
     b.push({ k: "h1", text: `Appendix ${letter()}. Other work orders that finished after their plan` });
@@ -157,9 +158,9 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
     b.push({ k: "muted", text: "Work orders that finished 8 h or more after their plan and are not told in a finding above. Open hours are not hours worked." });
   }
   if (crewsRows(r).length) {
-    b.push({ k: "h1", text: `Appendix ${letter()}. Crews: planned against actual` });
-    b.push({ k: "table", head: CREWS_HEAD, rows: crewsRows(r), widths: [1.6, 1.0, 0.9, 0.9, 1.2, 1.3] });
-    b.push({ k: "muted", text: "Jobs handed to a crew by another crew (opened by one, cleaned or inspected by the next). Open hours run from a job's start to its finish; they are not hours worked." });
+    b.push({ k: "h1", text: `Appendix ${letter()}. ${CREWS_TITLE}` });
+    b.push({ k: "table", head: CREWS_HEAD, rows: crewsRows(r), widths: [1.5, 1.0, 1.4, 1.9, 1.1] });
+    b.push({ k: "muted", text: `Jobs handed to a crew by another crew (opened by one, cleaned or inspected by the next). ${CREWS_NOTE}` });
   }
   b.push({ k: "h1", text: `Appendix ${letter()}. Found work (${plural(r.found.length, "finding")}, ${plural(m.addedSteps, "activity", "activities")})` });
   if (r.found.length) b.push({ k: "table", head: ["Finding", "Where", "Activities", "Work when approved", "Critical path", "Approved by"], rows: foundRows(r), widths: [2.8, 0.9, 0.7, 1.0, 0.7, 0.8] }); else b.push({ k: "p", text: "None." });

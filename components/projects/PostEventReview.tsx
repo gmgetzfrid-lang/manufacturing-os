@@ -37,7 +37,7 @@ import {
   type Answer, type CategoryId, type CauseId, type Finding, type Known, type FindingEdit, type OrgStanding, type Rating, type ReviewSaved,
 } from "@/lib/postEventReview";
 import { changeReview, loadReview, reviewScope, syncLesson } from "@/lib/reviewStore";
-import { deckSlides, fileStem, reviewDocx, reviewPptx, saveFile, type ReviewFileOpts } from "@/lib/reviewFiles";
+import { CREWS_HEAD, CREWS_NOTE, CREWS_TITLE, crewsRows, deckSlides, fileStem, reviewDocx, reviewPptx, saveFile, type ReviewFileOpts } from "@/lib/reviewFiles";
 import { overloaded } from "@/lib/crewFlow";
 import ReviewSlides from "@/components/projects/ReviewSlides";
 
@@ -467,8 +467,8 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
             ))}
             <Table title="Other work orders that finished after their plan" head={["Work order", "Finished after its plan by", "Where the time went"]} empty="None beyond what the findings tell."
               rows={review.late.filter((o) => !o.told).map((o) => [orderWord(o.order), `${o.lateH} h${o.added ? " (added work)" : ""}`, o.parts.slice(0, 3).map((p) => (p.kind === "over" ? `${p.step.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim()}: open ${p.tookH} h, progress logged on ${p.workedShifts} shift${p.workedShifts === 1 ? "" : "s"}, planned as ${p.plannedH} h of work (${p.crew})` : p.kind === "wait" ? `${p.step.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim()} sat ${p.hours} h before ${p.crew} started it` : `Started ${p.hours} h after its planned start`)).join("; ") || "Not shown by the record"])} />
-            <Table title="Crews: planned against actual" head={["Crew", "Jobs handed to it", "Work planned", "Open, start to finish", "Waited for it", "Most open at once"]} empty="No work passed between crews."
-              rows={review.flows.filter((f) => f.jobs.length >= 2).map((f) => [f.crew, String(f.jobs.length), `${f.plannedH} h`, `${f.tookH} h`, `${f.waitH} h`, `${f.peak.open}${f.plannedPeak ? ` (plan ${f.plannedPeak})` : ""}`])} />
+            <Table title={CREWS_TITLE} head={CREWS_HEAD} empty="No work passed between crews." rows={crewsRows(review)} />
+            <p className="-mt-2 text-[12px] text-[var(--color-text-muted)]">{CREWS_NOTE}</p>
             <Table title={`Started jobs that sat still: ${m.stuckJobs} job${m.stuckJobs === 1 ? "" : "s"}, ${m.stuckShifts} shift${m.stuckShifts === 1 ? "" : "s"} in all`} head={["Job", "Crew", "Shifts", "When", "Why, from the record"]} empty="No started job sat a full shift."
               rows={review.stuck.map((j) => [jobWord(j), j.crew, String(j.shifts.length), shiftsWord(j.shifts.map((s) => s.key)), [...new Set(j.shifts.map((s) => `${CAUSE_WORD[s.cause]}${s.said ? `: "${s.said}"` : s.crewOn.length ? ` (crew on ${[...new Set(s.crewOn.map(orderWord))].slice(0, 3).join(", ")})` : ""}`))].join(" Then: ")])} />
             <Table title={`Ready jobs not started: ${m.readyJobs} job${m.readyJobs === 1 ? "" : "s"}, ${m.readyShifts} shift${m.readyShifts === 1 ? "" : "s"} in all`} head={["Ready job", "Crew", "Shifts", "When", "Crew was on"]} empty="No ready job waited a full shift to start."

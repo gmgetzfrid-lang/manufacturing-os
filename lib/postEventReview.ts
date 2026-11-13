@@ -902,7 +902,6 @@ function draftFindings(x: { metrics: ReviewMetrics; stuck: StuckJob[]; ready: Re
         ...heldFor,
         ...f.together.map((g) => `${f.crew} had ${names(g)} open at the same time: ${g.map((j) => `${j.tookH} h`).join(" and ")} from start to finish, against ${g.map((j) => `${j.plannedH} h`).join(" and ")} of work planned.`),
         early.length ? `${names(early)} ${early.length === 1 ? "was" : "were"} opened ${early.map((j) => j.openedEarlyH).join(" and ")} h ahead of plan and sat until ${f.crew} was free.` : "",
-        `A what-if, not what happened: the same ${plural(f.jobs.length, "job")} taken in the order they were ready, each open as long as it was, by crews working without a break. One crew: ${f.queue.one} h of waiting in all. Two crews: ${f.queue.two} h.`,
         back.length ? `Once ${f.crew} was done, ${back.map((j) => `${jobWord(j)} waited ${j.waitH} h`).join("; ")} for ${f.feeder} to start.` : "",
         f.feederOutput.length >= 3 ? `${f.feeder} finished ${f.feederOutput.map((o) => `${o.earned} (${shiftWord(o.key).replace(" day", "")})`).join(", ")} planned hours of work on those day shifts.` : "",
       ];
@@ -1067,7 +1066,7 @@ function qaOf(m: ReviewMetrics, found: FoundWork[], stuck: StuckJob[], tz: strin
   const out: QA[] = [];
   for (const f of jams) {
     out.push({ q: `What was open and waiting for ${f.crew}?`, a: `${f.waited.map((j) => `${jobWord(j)}, ${j.waitH} h (ready ${whenWord(j.openedAt, tz)}, started ${whenWord(j.startedAt, tz)})`).join("; ")}.` });
-    out.push({ q: `Would another ${f.crew} crew have changed the finish?`, a: `${fin?.last[0] ? `Not by itself this event: ${orderWord(fin.last[0].order)} set the finish. ` : ""}It cuts the time equipment sits open. As a what-if (the same ${plural(f.jobs.length, "job")} in the order they were ready, each open as long as it was, crews working without a break): one crew leaves ${f.queue.one} h of waiting in all, two crews ${f.queue.two} h.` });
+    out.push({ q: `Would another ${f.crew} crew have changed the finish?`, a: `${fin?.last[0] ? `Not by itself this event: ${orderWord(fin.last[0].order)} set the finish. ` : ""}It cuts the time equipment sits open waiting: ${plural(f.peak.open, "job")} ${f.peak.open === 1 ? "was" : "were"} open for ${f.crew} at once${f.plannedPeak ? ` against ${f.plannedPeak} planned` : ""}.` });
   }
   if (m.steps) out.push({ q: `Were all ${m.steps} activities planned?`, a: `${m.baselineSteps} were on the baseline schedule${m.addedSteps ? `; ${m.addedSteps} were added during the event from ${plural(found.length, "finding")}` : "; none were added"}. ${m.stepsDone} of ${m.steps} are done.` });
   if (found.length) out.push({ q: "Is found work unusual?", a: "No. The practice is to reduce it with condition data before scope freeze and to carry time for what remains." });

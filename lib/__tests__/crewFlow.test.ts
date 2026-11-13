@@ -7,6 +7,7 @@ import { crewFlows, overloaded } from "@/lib/crewFlow";
 import { buildLookBack } from "@/lib/lookBack";
 import { discoveries } from "@/lib/discovery";
 import { buildReview, emptySaved, pointOf } from "@/lib/postEventReview";
+import { CREWS_HEAD, crewsRows } from "@/lib/reviewFiles";
 
 const tz = "America/Los_Angeles";
 const times = { dayStart: "06:00", nightStart: "18:00", breaks: [] };
@@ -89,10 +90,12 @@ describe("the review's conclusion from it", () => {
     expect(f.title).toBe("Not enough Clean for the equipment that was open: 4 jobs at once against 1 planned");
     expect(f.because).toBe("4 jobs were open for Clean at once against 1 planned. Longest waits: E-4 23 h, E-3 20 h, E-2 6 h.");
     expect(f.ask).toBe("Bring a second Clean crew for the days equipment opens.");
-    // No stacked total of job-hours in the headline; the what-if is said to be one.
-    expect(`${f.title} ${f.because} ${f.why}`).not.toMatch(/52 h/);
-    expect(f.observation).toContain("A what-if, not what happened");
-    expect(f.observation).toContain("One crew: 18 h of waiting in all. Two crews: 4 h.");
+    // No hours added across jobs anywhere it is shown: a sum of job waits reads as the crew sitting idle.
+    expect(`${f.title} ${f.because} ${f.why} ${f.effect} ${f.observation}`).not.toMatch(/52 h|waiting in all|what-if/i);
+    expect(f.effect).toBe("3 of the 4 jobs handed to Clean sat 4 h or more before it started them, the longest 23 h.");
+    expect(r.qa.map((x) => x.a).join(" ")).not.toMatch(/waiting in all|what-if/i);
+    expect(crewsRows(r).find((row) => row[0] === "Clean")).toEqual(["Clean", "4", "3 of 4", "23 h (E-4), by the planned sequence", "4 (plan 1)"]);
+    expect(CREWS_HEAD).toEqual(["Crew", "Jobs handed to it", "Jobs that waited 4 h or more for it", "Longest a job waited", "Most open at once"]);
     // Each wait says what the job is taken to have followed, and that it is from the planned sequence.
     expect(f.observation).toContain("E-4 Hydroblast Bundle 23 h (ready when Pull Bundle was done, by the planned sequence)");
     expect(f.practice).toContain("sized to the most work the schedule hands it at once");
