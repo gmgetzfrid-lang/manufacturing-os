@@ -8,7 +8,7 @@ import type { Milestone, MilestoneNote } from "@/types/schema";
 import { discoveryAttr, type DiscoveryRecord } from "@/lib/discovery";
 import {
   suggestFindings, reviewState, equipmentOf, leadTag, tagsIn, tagKey, registryTagKey, guessTopic, guessKind,
-  pastJobsFor, fieldsProblem, findingLine, draftKey, EQUIP_ID, EQUIP_TAG, EQUIP_NONE, type Finding,
+  pastJobsFor, fieldsProblem, findingLine, draftKey, EQUIP_ID, EQUIP_TAG, EQUIP_NONE, categoriesOf, topicOf, guessCategories, type Finding,
 } from "@/lib/findings";
 import { matchWorkOrders, proposeTag, setupOrders, undecided, withEquipment, type RegistryAsset } from "@/lib/projectEquipment";
 import { questionTags } from "@/lib/findingsAsk";
@@ -134,7 +134,7 @@ describe("the review", () => {
     assetId: null, assetTag: null, unitCode: null, projectType: "Turnaround", milestoneId: null, workOrderRef: null, hours: null,
     source: "manual", sourceRef: null, status: "open", foundAt: T0, createdBy: null, createdByName: null, reviewedByName: null, reviewedAt: null, ...p,
   });
-  it("a suggestion kept or dropped doesn't come back; + Finding entries wait to be reviewed", () => {
+  it("a suggestion kept or dropped doesn't come back; a + Finding counts at once, with nothing to review", () => {
     const first = drafts[0];
     const st = reviewState(drafts, [
       row({ id: "k", source: first.source, sourceRef: first.sourceRef, status: "kept" }),
@@ -143,11 +143,22 @@ describe("the review", () => {
     ]);
     expect(st.toReview.some((x) => x.draft.key === first.key)).toBe(false);
     expect(st.toReview.some((x) => x.draft.key === drafts[1].key)).toBe(false);
-    expect(st.toReview.some((x) => x.row?.id === "m")).toBe(true);
-    expect(st.toReview).toHaveLength(drafts.length - 2 + 1);
-    expect(st.kept.map((f) => f.id)).toEqual(["k"]);
+    expect(st.toReview.some((x) => x.row?.id === "m")).toBe(false);
+    expect(st.toReview).toHaveLength(drafts.length - 2);
+    expect(st.kept.map((f) => f.id).sort()).toEqual(["k", "m"]);
     expect(st.dropped.map((f) => f.id)).toEqual(["d"]);
     expect(draftKey(first.source, first.sourceRef)).toBe(first.key);
+  });
+  it("a finding can be about several categories; older topics read as categories", () => {
+    expect(categoriesOf("Safety, Planning")).toEqual(["Safety", "Planning"]);
+    expect(categoriesOf("Planning, Safety, safety")).toEqual(["Safety", "Planning"]);
+    expect(categoriesOf("Materials")).toEqual(["Logistics"]);
+    expect(categoriesOf("Scheduling")).toEqual(["Planning"]);
+    expect(categoriesOf("Other")).toEqual([]);
+    expect(topicOf(["Planning", "Safety"])).toBe("Safety, Planning");
+    expect(topicOf([])).toBe("Other");
+    expect(guessCategories("LEL levels were high because the fan was not planned until the afternoon")).toEqual(["Safety", "Planning"]);
+    expect(fieldsProblem({ ...drafts[0], topic: "Other" })).toMatch(/Pick what it is about/);
   });
   it("can't keep one with nothing said, or equipment unnamed", () => {
     expect(fieldsProblem({ ...drafts[0], body: " " })).toBe("Say what happened.");
@@ -213,14 +224,18 @@ describe("from past jobs", () => {
     f({ id: "all", appliesTo: "all", unitCode: null, body: "Orientation ate the first hour" }),
     f({ id: "cap", appliesTo: "all", unitCode: null, projectType: "Capital project", body: "Capital lesson" }),
     f({ id: "own", projectId: "new", assetTag: "E-12", body: "This project's own" }),
-    f({ id: "open", status: "open", assetTag: "E-12", body: "Not reviewed" }),
+    // A suggestion from the record nobody kept: not a lesson.
+    f({ id: "open", status: "open", source: "note", assetTag: "E-12", body: "Not reviewed" }),
+    // A person's + Finding: counts as soon as it is written.
+    f({ id: "mine", status: "open", assetTag: "E-12", body: "Written on the job" }),
+    f({ id: "gone", status: "dropped", assetTag: "E-12", body: "Thrown out" }),
   ];
   it("a finding about one project only never reaches the next one, even on the same equipment", () => {
     expect(pastJobsFor([f({ id: "p1", appliesTo: "project", assetTag: "E-12" })], { projectId: "new", unitCode: "55", equipment: [{ assetId: null, tag: "E-12" }], projectType: "Turnaround" })).toEqual([]);
   });
   it("this project's equipment and unit, and every-job lessons of its kind; never its own or unreviewed", () => {
     const got = pastJobsFor(all, { projectId: "new", unitCode: "55", equipment: [{ assetId: null, tag: "E-12" }], projectType: "Turnaround" }).map((x) => x.id);
-    expect(got.sort()).toEqual(["all", "seal", "unit"]);
+    expect(got.sort()).toEqual(["all", "mine", "seal", "unit"]);
   });
   it("by id wherever it's filed", () => {
     const got = pastJobsFor([f({ id: "byid", assetId: "a-e12", unitCode: "20" })], { projectId: "new", unitCode: "55", equipment: [{ assetId: "a-e12", tag: "E-12" }], projectType: "Turnaround" });

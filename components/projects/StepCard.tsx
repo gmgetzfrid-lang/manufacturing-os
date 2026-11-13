@@ -20,7 +20,8 @@ import PctSlider from "@/components/projects/PctSlider";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { ampmSlip } from "@/lib/ampm";
 import { askRemoveStep } from "@/components/projects/RemoveStep";
-import { newFinding } from "@/components/projects/Findings";
+import { JobFindings, newFinding } from "@/components/projects/Findings";
+import { tagsIn } from "@/lib/findings";
 import { updateMilestoneNote, setProgressTime, setNoteTime, updateDiscoveryRecord, deleteDiscovery, deleteMilestoneNote, undoLastProgress, resetStepProgress, setProgressPercent, removeProgressEntry, AHEAD_MAX_MS } from "@/lib/milestones";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import type { ProgressLogRow } from "@/lib/progressHistory";
@@ -709,6 +710,9 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
           {canEdit && m.id && !found && <button type="button" onClick={() => askRemoveStep(m.id!)} title="Delete it (put in by mistake) or cancel it (not done on this job)" className="font-semibold text-rose-700 dark:text-rose-400 hover:underline">Remove</button>}
         </div>
       )}
+
+      {/* What was found on this job and its equipment, here and on past jobs. */}
+      {!action && m.id && <JobFindings orgId={m.orgId} projectId={m.projectId} milestoneIds={[m.id, m.parentId]} tag={tagsIn([m.name, wo].filter(Boolean).join(" "))[0] ?? null} tz={tz} />}
 
       {action && (
         <div className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-2.5 space-y-2">

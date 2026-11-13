@@ -24,17 +24,17 @@ import { buildAsBuilt } from "@/lib/asBuiltSchedule";
 import { buildAsBuiltWork } from "@/lib/asBuiltWork";
 import { buildLookBack } from "@/lib/lookBack";
 import { discoveries } from "@/lib/discovery";
-import { inPhase, type ProjectPhase } from "@/lib/projectPhases";
+import { inPhase, phaseOnDay, type ProjectPhase } from "@/lib/projectPhases";
 import { companyOf } from "@/lib/manpower";
 import { useManpowerSettings } from "@/components/projects/ManpowerSetup";
 import { loadNextPlanSettings } from "@/lib/nextPlanStore";
 import type { StaffingPlans } from "@/lib/staffingPlan";
-import { fmtInTz } from "@/lib/scheduleTz";
+import { dayKey, fmtInTz } from "@/lib/scheduleTz";
 import { listMaterials, summarize } from "@/lib/materials";
 import { loadOrg, orgStanding } from "@/lib/eventOrganization";
 import {
   AREAS, CAUSE_CHOICES, CAUSE_WORD, KNOWN_WORD, RATING_MEANS, RATING_WORD, areaOf, basisOf, buildReview, emptySaved, jobWord, orderWord, pointOf, shiftWord, shiftsWord,
-  type Answer, type CategoryId, type CauseId, type Finding, type Known, type FindingEdit, type OrgStanding, type Rating, type ReviewSaved,
+  type Answer, type CategoryId, type CauseId, type Finding, type Known, type FindingEdit, type JobFinding, type OrgStanding, type Rating, type ReviewSaved,
 } from "@/lib/postEventReview";
 import { changeReview, loadReview, reviewScope, syncLesson } from "@/lib/reviewStore";
 import { CREWS_HEAD, CREWS_NOTE, CREWS_TITLE, appliesWord, crewsRows, deckSlides, fileStem, reviewDocx, reviewPptx, saveFile, type ReviewFileOpts } from "@/lib/reviewFiles";
@@ -43,7 +43,8 @@ import { phaseStats, type CostEntry, type CostLine } from "@/lib/phaseReport";
 import type { AreaId, ScoreEntry } from "@/lib/postEventReview";
 import { overloaded } from "@/lib/crewFlow";
 import ReviewSlides from "@/components/projects/ReviewSlides";
-import { useProjectUnit } from "@/components/projects/Findings";
+import { useProjectFindings, useProjectUnit } from "@/components/projects/Findings";
+import { categoriesOf, guessCategories, isLive, leadTag, type Category } from "@/lib/findings";
 import { useProjectType } from "@/lib/shiftTimesStore";
 import { isDefaultType, typeWord } from "@/lib/projectType";
 import { closeNeeds, type NeedGo } from "@/lib/closeNeeds";
@@ -126,6 +127,8 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
     return () => { live = false; };
   }, [projectId, scope, phaseId, phases.length, tick]);
 
+  // The findings written on the job: what the review is built from.
+  const { rows: projectFindings } = useProjectFindings(projectId);
   const buildFor = useCallback((pid: string | null, saved: ReviewSaved) => {
     const mine = phases.length && pid ? inPhase(milestones, phases, pid) : milestones;
     const kids = new Map<string, Milestone[]>();
@@ -139,8 +142,18 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
     const ds = discoveries(active);
     const look = buildLookBack({ milestones: active, notes: myNotes, discoveries: ds, now, tz, log: (log ?? []).filter((r) => ids.has(r.milestone_id)) });
     const dependsOn = new Map(mine.filter((x) => x.id).map((x) => [x.id!, x.dependsOn ?? []]));
-    return { review: buildReview({ built, work, notes: myNotes, look, discoveries: ds, tz, saved, materials: register, organization, dependsOn, log: (log ?? []).filter((r) => ids.has(r.milestone_id)) }), work };
-  }, [milestones, phases, notes, log, records, plans, mp, tz, times, register, organization]);
+    // This phase's: on its work, else written on its days.
+    const byId = new Map(milestones.filter((x) => x.id).map((x) => [x.id!, x]));
+    const jobFindings: JobFinding[] = projectFindings
+      .filter((f) => isLive(f) && f.source !== "review" && (f.milestoneId ? ids.has(f.milestoneId) : !phases.length || !pid || phaseOnDay(dayKey(f.foundAt, tz), phases)?.id === pid))
+      .map((f) => {
+        const on = f.milestoneId ? byId.get(f.milestoneId) : undefined;
+        const named = categoriesOf(f.topic);
+        const cats: Category[] = named.length ? named : guessCategories(f.body).length ? guessCategories(f.body) : [f.kind === "material" ? "Logistics" : f.kind === "missed_scope" ? "Planning" : "Execution"];
+        return { id: f.id, areas: cats.map((c) => c.toLowerCase() as AreaId), kind: f.kind, body: f.body, nextTime: f.nextTime, tag: f.assetTag ?? leadTag(on?.name), on: on?.name ?? null, every: f.appliesTo === "all", by: f.createdByName, at: f.foundAt };
+      });
+    return { review: buildReview({ built, work, notes: myNotes, look, discoveries: ds, tz, saved, materials: register, organization, dependsOn, log: (log ?? []).filter((r) => ids.has(r.milestone_id)), jobFindings }), work };
+  }, [milestones, phases, notes, log, records, plans, mp, tz, times, register, organization, projectFindings]);
   const made = useMemo(() => (saved ? buildFor(phases.length ? phaseId : null, saved) : null), [saved, phases.length, phaseId, buildFor]);
   const review = made?.review ?? null;
   // The score's inputs, from the same shift records, manpower settings and cost lines the rest of the app reads.
@@ -165,18 +178,30 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   const ptype = useProjectType(projectId, projectName);
   const typeIn = typeWord(ptype);
   const unit = useProjectUnit(orgId, projectId);
-  // Everything on the slide, findings on it by default included, is in the
-  // lessons register with who it is for; each version is written once.
+  // What the review puts on the slide that changes something is in the
+  // lessons register, with who it is for; each version is written once. A
+  // finding written on the job is in it already. One saved before that has
+  // nothing to change ("No job waited on materials") or was taken off since
+  // comes out.
   useEffect(() => {
     if (!review || !canManage || !orgId) return;
+    const inRegister = new Set(projectFindings.filter((r) => r.source === "review" && r.status === "kept").map((r) => r.sourceRef));
     for (const f of review.findings) {
-      if (f.status !== "kept") continue;
+      if (f.source === "job") continue;
+      if (!(f.status === "kept" && (f.rating === "gap" || f.rating === "opportunity"))) {
+        const out = `out:${projectId}:${scope}:${f.key}`;
+        if (inRegister.has(`${scope}:${f.key}`) && !SYNCED.has(out)) {
+          SYNCED.add(out);
+          void syncLesson({ orgId, projectId, projectType: ptype.word, unitCode: unit?.code ?? null, scope, finding: f, kept: false, actor: { id: actor.uid, name: who } }).catch(() => undefined);
+        }
+        continue;
+      }
       const sig = `${projectId}:${scope}:${f.key}:${f.applies}:${ptype.word}:${unit?.code ?? ""}:${f.title}:${f.next}:${f.ask}`;
       if (SYNCED.has(sig)) continue;
       SYNCED.add(sig);
       void syncLesson({ orgId, projectId, projectType: ptype.word, unitCode: unit?.code ?? null, scope, finding: f, kept: true, actor: { id: actor.uid, name: who } }).catch(() => undefined);
     }
-  }, [review, canManage, orgId, projectId, scope, ptype.word, unit?.code, actor.uid, who]);
+  }, [review, canManage, orgId, projectId, scope, ptype.word, unit?.code, actor.uid, who, projectFindings]);
   const act = async (key: string, change: (s: ReviewSaved) => void, after?: (next: ReviewSaved) => Promise<void> | void) => {
     setBusy(key); setErr(null); setMsg(null);
     try { const next = await changeReview(projectId, scope, change); setSaved(next); await after?.(next); }
@@ -187,6 +212,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   // (Setup › Project type: "Turnaround"), so later projects of that type, or
   // the next event on this unit, see it; un-kept or thrown out, it leaves.
   const lesson = async (f: Finding, kept: boolean) => {
+    if (f.source === "job") return;
     const ok = await syncLesson({ orgId, projectId, projectType: ptype.word, unitCode: unit?.code ?? null, scope, finding: f, kept, actor: { id: actor.uid, name: who } }).catch((e) => { setErr((e as Error).message); return true; });
     if (!ok && kept) setMsg("Kept here. The lessons register (From past jobs) isn't set up in the database yet, so it wasn't added there.");
   };
@@ -202,7 +228,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
 
   const keep = (f: Finding) => void act(`keep:${f.key}`, (s) => { s.items[f.key] = { ...s.items[f.key], status: "kept", basis: basisOf(f), at: Date.now(), by: who }; }, () => lesson(f, true));
   // Off the slide: a finding on it by default is kept off by saying so ("draft"); one a person accepted goes back to waiting.
-  const unkeep = (f: Finding) => void act(`keep:${f.key}`, (s) => { const it = { ...s.items[f.key] }; if (f.auto) it.status = "draft"; else delete it.status; s.items[f.key] = it; }, () => lesson(f, false));
+  const unkeep = (f: Finding) => void act(`keep:${f.key}`, (s) => { const it = { ...s.items[f.key] }; if (f.source === "job") it.status = "discarded"; else if (f.auto) it.status = "draft"; else delete it.status; s.items[f.key] = it; }, () => lesson(f, false));
   const discard = (f: Finding) => void act(`drop:${f.key}`, (s) => { s.items[f.key] = { ...s.items[f.key], status: "discarded", at: Date.now(), by: who }; }, () => (f.status === "kept" || f.source === "person" ? lesson(f, false) : undefined));
   const restore = (f: Finding) => void act(`drop:${f.key}`, (s) => { const it = { ...s.items[f.key] }; delete it.status; s.items[f.key] = it; }, () => (f.source === "person" ? lesson(f, true) : undefined));
   const takeDraft = (f: Finding) => void act(`draft:${f.key}`, (s) => { const it = { ...s.items[f.key] }; const e = { ...(it.edits ?? {}) }; delete e.title; delete e.observation; delete e.rating; it.edits = e; it.basis = basisOf(f); s.items[f.key] = it; },
@@ -315,7 +341,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="min-w-0 flex-1 basis-72">
           <h2 className="text-[19px] font-black text-[var(--color-text)]">Post-event review{phase ? ` · ${phase.name}` : ""}</h2>
-          <p className="text-[13px] text-[var(--color-text-muted)]">Drafted from the schedule, the as-built record, holds and comments. Keep, change or discard each finding; answer the questions to fill in what the records don&rsquo;t say.{!m.done && m.steps ? ` ${m.steps - m.stepsDone} of ${m.steps} activities are not done yet, so these numbers are to date.` : ""}</p>
+          <p className="text-[13px] text-[var(--color-text-muted)]">Built from the findings written on the job. The records give the numbers and suggest findings; a suggestion goes on the slides only when you accept it.{!m.done && m.steps ? ` ${m.steps - m.stepsDone} of ${m.steps} activities are not done yet, so these numbers are to date.` : ""}</p>
         </div>
         <div className="flex gap-1.5 flex-wrap">
           <button type="button" onClick={reanalyze} disabled={!!busy} className={btn}><RefreshCw className="w-4 h-4" /> Re-analyze</button>
@@ -442,6 +468,8 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
                       <span className={label}>{c.name}</span>
                       <span className={`text-[10.5px] font-black px-1.5 py-0.5 rounded ${RATE_CLS[f.rating]}`}>{f.rating === "none" && f.moved === 0 ? "No effect on the finish" : RATING_WORD[f.rating]}</span>
                       {f.source === "person" && <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">Added by {f.by ?? "a person"}</span>}
+                      {f.source === "job" && <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-sky-50 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300" data-job-finding>Written on the job{f.by ? ` by ${f.by}` : ""}</span>}
+                      {(f.areas?.length ?? 0) > 1 && <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">{f.areas!.map((a) => AREAS.find((x) => x.id === a)?.name).join(" · ")}</span>}
                       <span className={`ml-auto text-[11px] font-black px-2 py-0.5 rounded-full ${f.status === "kept" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
                         {f.status === "kept" ? `Kept${f.at ? ` ${day(f.at)}` : ""}${f.edited ? " · changed" : ""}` : f.status === "discarded" ? "Discarded" : `Draft${f.edited ? " · changed" : ""}${asks ? ` · ${asks} question${asks === 1 ? "" : "s"} open` : ""}`}
                       </span>

@@ -7,7 +7,7 @@ import { discoveries, discoveryAttr, type DiscoveryRecord } from "@/lib/discover
 import type { ProgressLogRow } from "@/lib/progressHistory";
 import { appliesWord, deckSlides, reportBlocks } from "@/lib/reviewFiles";
 import { GUIDES, bookOf, scoreOf } from "@/lib/reviewBook";
-import { buildReview, causeOfText, emptySaved, basisOf, measuresOf, lessonOf, jobWord, pointOf, shiftWord, type ReviewSaved } from "@/lib/postEventReview";
+import { buildReview, causeOfText, emptySaved, basisOf, measuresOf, lessonOf, jobWord, pointOf, shiftWord, type ReviewSaved, type JobFinding } from "@/lib/postEventReview";
 
 const tz = "America/Los_Angeles";
 const times = { dayStart: "06:00", nightStart: "18:00", breaks: [] };
@@ -308,21 +308,31 @@ describe("the files open on the point of the meeting", () => {
   const accepted = emptySaved();
   for (const f of r.findings) if (f.rating === "gap" || f.rating === "opportunity") accepted.items[f.key] = { status: "kept" };
   const rk = read(accepted);
-  it("what the records show cost the late finish is on the slide without a click; the rest waits for a person", () => {
+  it("the slides are the findings written on the job; what the records suggest waits for a person", () => {
     const deck = deckSlides(r, o);
     expect(deck.map((x) => x.kicker.split(" · ")[0])).toEqual(["Post-event review", "1", "2", "3"]);
-    const bk = bookOf(r, "Phase 1", tz);
-    // On by default: causes (materials, planning, scope, a crew) that cost hours of the late finish.
-    const on = r.findings.filter((f) => f.auto).map((f) => f.key);
-    expect(on.length).toBeGreaterThan(0);
-    expect(r.findings.filter((f) => f.auto).every((f) => (f.moved ?? 0) >= 2 && ["materials", "planning", "scope", "contractors"].includes(f.category))).toBe(true);
-    expect(bk.actions.map((a) => a.key).sort()).toEqual([...on].sort());
-    // Records, execution and the rest wait for a person.
-    expect(r.findings.find((f) => f.key === "execution")!.status).toBe("draft");
+    // Nothing the records drafted is on the slide without a click.
+    expect(r.findings.every((f) => f.status !== "kept" && !f.auto)).toBe(true);
+    expect(bookOf(r, "Phase 1", tz).actions).toEqual([]);
     expect(pointOf(r, "Phase 1", tz).pending.length).toBeGreaterThan(2);
-    // Taken off by a person, it stays off.
-    const off = emptySaved(); off.items[on[0]] = { status: "draft" };
-    expect(bookOf(read(off), "Phase 1", tz).actions.map((a) => a.key)).not.toContain(on[0]);
+    // A finding written on V-7 about two areas: on the slide as written, under both.
+    const lel: JobFinding = {
+      id: "f1", areas: ["safety", "planning"], kind: "problem", tag: "V-7", on: "V-7 Open Internal Manways", every: false, by: "eng@kern.test", at: Date.parse("2026-10-28T15:00:00Z"),
+      body: "o\tLEL levels were high in the tower. The fan was not put on until the afternoon.", nextTime: "Put the tower fan on as soon as the manways are open. Make it a step in the plan.",
+    };
+    const withJob = buildReview({ built, work, notes, look, discoveries: discoveries(all), tz, jobFindings: [lel] });
+    const jf = withJob.findings.find((f) => f.key === "job:f1")!;
+    expect(jf).toMatchObject({ source: "job", status: "kept", category: "safety", areas: ["safety", "planning"], title: "V-7: LEL levels were high in the tower.", ask: "Put the tower fan on as soon as the manways are open.", applies: "unit" });
+    // The headline is the first sentence; what happened says the rest, once.
+    expect(jf.observation).toBe("The fan was not put on until the afternoon.");
+    const bk = bookOf(withJob, "Phase 1", tz);
+    expect(bk.actions.map((a) => [a.key, a.areaName])).toEqual([["job:f1", "Safety, Planning"]]);
+    expect(bk.areas.find((a) => a.id === "safety")!.items.map((x) => x.key)).toEqual(["job:f1"]);
+    expect(bk.areas.find((a) => a.id === "planning")!.items.map((x) => x.key)).toEqual(["job:f1"]);
+    expect(bk.categories.find((c) => c.key === "planning")!.where).toMatch(/Action 1/);
+    // Taken off in the review, it stays off.
+    const off = emptySaved(); off.items["job:f1"] = { status: "discarded" };
+    expect(bookOf(buildReview({ built, work, notes, look, discoveries: discoveries(all), tz, saved: off, jobFindings: [lel] }), "Phase 1", tz).actions).toEqual([]);
   });
   it("the start-up running long is Execution's share of the late finish", () => {
     const longer = { order: "Start-up", hours: 2.5, kind: "longer" as const, line: "Start-up ran 2.5 h long." };

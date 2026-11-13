@@ -26,6 +26,32 @@ export type FindingKind = "problem" | "lesson" | "material" | "missed_scope";
 export type AppliesTo = "equipment" | "unit" | "project" | "all";
 export const TOPICS = ["Materials", "Planning", "Contractors", "Permits", "Staffing", "Safety", "Scheduling", "Other"] as const;
 export type Topic = (typeof TOPICS)[number];
+
+/** What a finding is about: one or more of the post-event review's areas
+ *  ("LEL high [Safety] because the fan went on late [Planning]"). Kept in
+ *  the topic column as "Safety, Planning". */
+export const CATEGORIES = ["Safety", "Organization", "Planning", "Contractors", "Costs", "Logistics", "Execution"] as const;
+export type Category = (typeof CATEGORIES)[number];
+/** The topics findings were filed under before categories. */
+const FROM_TOPIC: Record<string, Category | null> = {
+  materials: "Logistics", scheduling: "Planning", staffing: "Organization", permits: "Safety", planning: "Planning", contractors: "Contractors", safety: "Safety", other: null,
+  cost: "Costs", costs: "Costs", logistics: "Logistics", execution: "Execution", organization: "Organization",
+};
+/** The categories a saved topic names, in the review's order, once each. */
+export function categoriesOf(topic: string | null | undefined): Category[] {
+  const set = new Set<Category>();
+  for (const part of (topic ?? "").split(/\s*[,;/]\s*/)) {
+    const k = part.trim().toLowerCase();
+    const c = (CATEGORIES as readonly string[]).find((x) => x.toLowerCase() === k) as Category | undefined ?? FROM_TOPIC[k] ?? null;
+    if (c) set.add(c);
+  }
+  return CATEGORIES.filter((c) => set.has(c));
+}
+/** The topic column for a set of categories. */
+export const topicOf = (cats: readonly Category[]) => (cats.length ? CATEGORIES.filter((c) => cats.includes(c)).join(", ") : "Other");
+/** A finding a person wrote counts as soon as it is saved: on the job, on
+ *  the equipment and in the review, with no review step to pass. */
+export const isLive = (f: Pick<Finding, "status" | "source">) => f.status === "kept" || (f.status === "open" && f.source === "manual");
 export type FindingSource = "manual" | "discovery" | "note" | "hold" | "lesson" | "lessons_learned" | "record" | "review";
 export type FindingStatus = "open" | "kept" | "dropped";
 
@@ -45,7 +71,8 @@ export interface RecordLesson { ref: string; kind: FindingKind; topic: Topic; te
 export interface FindingFields {
   kind: FindingKind;
   appliesTo: AppliesTo;
-  topic: Topic;
+  /** The categories, "Safety, Planning" (categoriesOf / topicOf); older rows hold one topic. */
+  topic: string;
   /** What happened. */
   body: string;
   /** What to do next time. */
@@ -167,6 +194,11 @@ const RX: Array<[Topic, RegExp]> = [
 
 export function guessTopic(text: string): Topic {
   return RX.find(([, re]) => re.test(text))?.[0] ?? "Other";
+}
+
+/** The categories the words point to (every one that matches). */
+export function guessCategories(text: string): Category[] {
+  return categoriesOf(RX.filter(([, re]) => re.test(text)).map(([t]) => t).join(", "));
 }
 
 const MATERIAL = /\b(order(?:ed)?|seal rings?|gaskets?|spares?|parts|materials?|shortage|not enough|short of|backorder\w*|re-?used|improvi[sz]\w*)\b/i;
@@ -357,11 +389,11 @@ export function reviewState(drafts: FindingDraft[], rows: Finding[]): ReviewStat
   const seen = new Set(rows.filter((r) => r.sourceRef).map((r) => draftKey(r.source, r.sourceRef)));
   const toReview: ReviewState["toReview"] = [
     ...drafts.filter((d) => !seen.has(d.key)).map((draft) => ({ draft, row: null })),
-    ...rows.filter((r) => r.status === "open").map((row) => ({ draft: draftOf(row), row })),
+    ...rows.filter((r) => r.status === "open" && !isLive(r)).map((row) => ({ draft: draftOf(row), row })),
   ].sort((a, b) => a.draft.foundAt - b.draft.foundAt);
   return {
     toReview,
-    kept: rows.filter((r) => r.status === "kept").sort((a, b) => a.foundAt - b.foundAt),
+    kept: rows.filter(isLive).sort((a, b) => a.foundAt - b.foundAt),
     dropped: rows.filter((r) => r.status === "dropped").sort((a, b) => a.foundAt - b.foundAt),
   };
 }
@@ -380,6 +412,7 @@ export function draftOf(r: Finding): FindingDraft {
 /** Is it ready to keep: something said, and the equipment named when
  *  it's about equipment. */
 export function fieldsProblem(f: FindingFields): string | null {
+  if (!categoriesOf(f.topic).length) return "Pick what it is about: one or more categories.";
   if (!f.body.trim()) return "Say what happened.";
   if (f.appliesTo === "equipment" && !f.assetTag?.trim()) return "Pick the equipment.";
   if (f.appliesTo === "unit" && !f.unitCode) return "Pick the project's unit in Setup first, or choose another Applies to.";
@@ -406,7 +439,7 @@ export function pastJobsFor(findings: Finding[], ctx: PastJobsContext): Finding[
   const tags = new Set(ctx.equipment.map((e) => tagKey(e.tag)));
   return findings.filter((f) => {
     // "This project": about that project only.
-    if (f.status !== "kept" || f.projectId === ctx.projectId || f.appliesTo === "project") return false;
+    if (!isLive(f) || f.projectId === ctx.projectId || f.appliesTo === "project") return false;
     if (f.assetId && ids.has(f.assetId)) return true;
     // By tag alone only within the unit: V-7 on another unit is another V-7.
     if (f.assetTag && tags.has(tagKey(f.assetTag)) && (!f.unitCode || !ctx.unitCode || f.unitCode === ctx.unitCode)) return true;
@@ -442,7 +475,7 @@ interface Row {
 }
 
 export function findingFromRow(r: Row): Finding {
-  const topic = (TOPICS as readonly string[]).includes(r.topic) ? (r.topic as Topic) : "Other";
+  const topic = r.topic || "Other";
   return {
     id: r.id, orgId: r.org_id, projectId: r.project_id, kind: KINDS.includes(r.kind) ? r.kind : "problem",
     appliesTo: APPLIES.includes(r.applies_to) ? r.applies_to : "project", topic,
@@ -476,9 +509,9 @@ export function listKeptFindings(orgId: string): Promise<{ rows: Finding[]; miss
   return p;
 }
 async function readKeptFindings(orgId: string): Promise<{ rows: Finding[]; missing: boolean }> {
-  const { rows, error } = await fetchAllRows<Row>((from, to) => supabase.from("project_findings").select("*").eq("org_id", orgId).eq("status", "kept").order("found_at", { ascending: false }).order("id").range(from, to) as unknown as Page);
+  const { rows, error } = await fetchAllRows<Row>((from, to) => supabase.from("project_findings").select("*").eq("org_id", orgId).in("status", ["kept", "open"]).order("found_at", { ascending: false }).order("id").range(from, to) as unknown as Page);
   if (error) { if (missingMsg(error)) return { rows: [], missing: true }; throw new Error(error); }
-  return { rows: rows.map(findingFromRow), missing: false };
+  return { rows: rows.map(findingFromRow).filter(isLive), missing: false };
 }
 
 export interface SaveFinding extends FindingFields {
@@ -503,10 +536,11 @@ export async function saveFinding(f: SaveFinding): Promise<Finding> {
   const row: Record<string, unknown> = {
     org_id: f.orgId, project_id: f.projectId, kind: f.kind, applies_to: f.appliesTo, topic: f.topic,
     body: noEmDash(f.body.trim()), next_time: noEmDash(f.nextTime.trim()) || null,
-    asset_id: f.appliesTo === "equipment" ? f.assetId : null,
-    // The equipment only when it's about the equipment: "This project" or
-    // "All jobs" isn't carried to that equipment's next job.
-    asset_tag: f.appliesTo === "equipment" ? f.assetTag?.trim() || null : null,
+    // The equipment when it's about the equipment, or an every-job lesson
+    // also kept on the equipment it came from; "This project" isn't carried
+    // to that equipment's next job.
+    asset_id: f.appliesTo === "equipment" || f.appliesTo === "all" ? f.assetId : null,
+    asset_tag: f.appliesTo === "equipment" || f.appliesTo === "all" ? f.assetTag?.trim() || null : null,
     unit_code: f.unitCode, project_type: f.projectType,
     milestone_id: f.milestoneId ?? null, work_order_ref: f.workOrderRef ?? null, hours: f.hours ?? null,
     source: f.source, source_ref: f.sourceRef || null, status: f.status,

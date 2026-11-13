@@ -333,7 +333,9 @@ export function bookOf(r: Review, name: string, tz: string, x: ScoreInputs = {})
   const areaName = (id: AreaId) => AREAS.find((a) => a.id === id)!.name;
   const actions: Action[] = pt.conclusions.map((c: Conclusion, i) => {
     const area = AREA_OF[c.categoryId];
-    return { n: i + 1, key: c.key, area, areaName: areaName(area), applies: c.applies, what: c.ask, how: howOf(c.change, c.ask), benefit: c.because, who: c.owner, by: c.due, cost: c.cost, done: c.done };
+    // A finding about several areas says each.
+    const all = [...new Set([area, ...(c.areas ?? [])])];
+    return { n: i + 1, key: c.key, area, areaName: all.map(areaName).join(", "), applies: c.applies, what: c.ask, how: howOf(c.change, c.ask), benefit: c.because, who: c.owner, by: c.due, cost: c.cost, done: c.done };
   });
   // Each piece of the late finish goes to the area of the accepted finding
   // that explains it: the one that names its work order in its headline (else
@@ -366,7 +368,7 @@ export function bookOf(r: Review, name: string, tz: string, x: ScoreInputs = {})
   const late = r.service.filter((j) => j.stillOut);
   if (late.length && !late.every((j) => told.includes(orderWord(j.order)))) add("logistics", `${plural(late.length, "repair")} sent off site came back after the time quoted: ${late.map((j) => orderWord(j.order)).join(", ")}.${held(late.map((j) => j.order)) ? "" : ` ${late.length === 1 ? "It" : "None"} held up the finish.`.replace("It held", "It did not hold")}`);
   const areas: AreaRow[] = AREAS.map((a) => {
-    const mine = pt.conclusions.map((c, i) => ({ c, n: i + 1 })).filter(({ c }) => AREA_OF[c.categoryId] === a.id);
+    const mine = pt.conclusions.map((c, i) => ({ c, n: i + 1 })).filter(({ c }) => AREA_OF[c.categoryId] === a.id || !!c.areas?.includes(a.id));
     const parts = owner.get(a.id) ?? [], hours = Math.round(parts.reduce((n, p2) => n + p2.hours, 0) * 10) / 10;
     const pending = pt.pending.filter((c) => AREA_OF[c.categoryId] === a.id).length;
     const well = r.wins.filter((w) => AREA_OF[w.category] === a.id).map((w) => w.text);
@@ -381,7 +383,7 @@ export function bookOf(r: Review, name: string, tz: string, x: ScoreInputs = {})
   const score = scoreOf(r, tz, x);
   const categories = REVIEW_CATEGORIES.map((c) => {
     const rows = score.rows.filter((row) => SCORE_CATEGORY[row.key] === c.key).map((row) => row.measure);
-    const acts = actions.filter((a) => a.area === c.key).map((a) => a.n);
+    const acts = actions.filter((a) => a.area === c.key || !!pt.conclusions.find((x) => x.key === a.key)?.areas?.includes(c.key as AreaId)).map((a) => a.n);
     const where = [rows.length ? `Score (${rows.join(", ")})` : "", c.key !== "event" ? "Areas" : "", acts.length ? `${acts.length === 1 ? "Action" : "Actions"} ${acts.join(", ")}` : ""].filter(Boolean).join("; ");
     return { ...c, where };
   });

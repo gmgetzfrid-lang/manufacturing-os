@@ -7,8 +7,8 @@
 // ("From past jobs"); thrown out or un-kept, it leaves it.
 
 import { supabase } from "@/lib/supabase";
-import { saveFinding, FindingsMissing, type FindingKind, type Topic } from "@/lib/findings";
-import { CATEGORIES, emptySaved, lessonOf, type AddedFinding, type Answer, type CategoryId, type Finding, type ReviewSaved, type SavedItem } from "@/lib/postEventReview";
+import { saveFinding, FindingsMissing, topicOf, type Category, type FindingKind } from "@/lib/findings";
+import { AREAS, AREA_OF, CATEGORIES, emptySaved, lessonOf, type AddedFinding, type Answer, type CategoryId, type Finding, type ReviewSaved, type SavedItem } from "@/lib/postEventReview";
 import { noEmDash } from "@/lib/noEmDash";
 
 /** The whole project, or one phase. */
@@ -110,12 +110,13 @@ export async function changeReview(projectId: string, scope: string, change: (s:
   return all[scope] as ReviewSaved;
 }
 
-const TOPIC: Record<CategoryId, Topic> = { organization: "Staffing", scope: "Planning", planning: "Scheduling", materials: "Materials", contractors: "Contractors", execution: "Scheduling", safety: "Safety", records: "Other", costs: "Other" };
+/** The finding's categories, as the lessons register files them: the review's areas. */
+const topicFor = (f: Finding) => topicOf([...new Set([AREA_OF[f.category], ...(f.areas ?? [])])].map((a) => AREAS.find((x) => x.id === a)!.name as Category));
 const KIND: Record<CategoryId, FindingKind> = { organization: "lesson", scope: "missed_scope", planning: "lesson", materials: "material", contractors: "lesson", execution: "lesson", safety: "lesson", records: "lesson", costs: "lesson" };
 
 /** Put a finding in the lessons register (kept) or take it out (not kept).
- *  `false`: the register isn't set up in the database yet. */
-/** `projectType` is the project's type word ("Turnaround", lib/projectType):
+ *  `false`: the register isn't set up in the database yet.
+ *  `projectType` is the project's type word ("Turnaround", lib/projectType):
  *  an every-event lesson shows on later projects of that type. A lesson for
  *  the next event on this unit needs the project's unit; without one it stays
  *  with this project. */
@@ -128,7 +129,7 @@ export async function syncLesson(input: { orgId: string; projectId: string; proj
   try {
     await saveFinding({
       orgId: input.orgId, projectId: input.projectId, projectType: input.projectType,
-      kind: KIND[f.category], appliesTo, topic: TOPIC[f.category], body: l.body, nextTime: l.nextTime,
+      kind: KIND[f.category], appliesTo, topic: topicFor(f), body: l.body, nextTime: l.nextTime,
       assetId: null, assetTag: null, unitCode,
       source: "review", sourceRef: `${input.scope}:${f.key}`, status: input.kept ? "kept" : "dropped", actor: input.actor,
     });

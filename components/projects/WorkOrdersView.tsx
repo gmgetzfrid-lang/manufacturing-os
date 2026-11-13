@@ -16,7 +16,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Search, ChevronDown, ChevronUp, Printer, Ban, Plus, Lightbulb } from "lucide-react";
 import { notesFor } from "@/lib/milestones";
 import { loadProgressLog, type ProgressLogRow } from "@/lib/progressHistory";
-import { newFinding } from "@/components/projects/Findings";
+import { JobFindings, newFinding } from "@/components/projects/Findings";
+import { equipmentOf } from "@/lib/findings";
 import type { Milestone, MilestoneNote } from "@/types/schema";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import type { ShiftTimes } from "@/lib/shiftReport";
@@ -85,6 +86,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
   const [picking, setPicking] = useState(false);
 
   const orders = useMemo(() => groupWorkOrders(milestones, childrenByParent, progress, tz, times, now), [milestones, childrenByParent, progress, tz, times, now]);
+  const byIdAll = useMemo(() => new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m])), [milestones]);
 
   const is = (k: Show) => (o: WorkOrder) => showsOrder(o, k, marks);
   // Each step's own crew, as named on it: a blank one is "no crew named",
@@ -388,6 +390,10 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                             <Lightbulb className="w-3.5 h-3.5" /> + Finding
                           </button>
                         )}
+                    </div>
+                    {/* What was found on it, and on its equipment in past jobs. */}
+                    <div className="px-3 pt-2.5">
+                      <JobFindings orgId={o.owner.orgId} projectId={o.owner.projectId ?? projectId} milestoneIds={[o.owner.id, ...o.steps.map((x) => x.id)]} tag={equipmentOf(o.owner, byIdAll)?.tag ?? null} tz={tz} />
                     </div>
                     {/* Its steps: inside the work order, indented, each a row that opens to its card. */}
                     <div className="px-2 sm:px-3 pt-2.5 pb-1">

@@ -9,7 +9,7 @@
 // typed. A meeting that wasn't held comes off the log (and can be put
 // back). Work logged during the end meeting gets its own row after it.
 
-import { withCounts, countOf } from "@/lib/manpower";
+import { withCounts, withTotal, countOf } from "@/lib/manpower";
 import { newFinding } from "@/components/projects/Findings";
 import React, { useId, useRef, useState } from "react";
 import { AlertTriangle, Check, Pencil, Plus, Trash2, X as XIcon } from "lucide-react";
@@ -498,13 +498,14 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
       ) : null}
       <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]">
         <div className={`${grid} px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]`}>
-          <span className="max-sm:hidden">Resource</span><span>Meeting attendees</span><span className="w-[6.5rem] text-right" title="Direct: on the tools. Indirect: supervision, safety, hole and fire watch, QC, tool room.">On site: direct · indirect</span>
+          <span className="max-sm:hidden">Resource</span><span>Meeting attendees</span><span className="w-[6.5rem] text-right" title="Everyone on site from the resource. Split gives direct (on the tools) and indirect (supervision, safety, hole and fire watch, QC, tool room).">On site</span>
         </div>
         {list.length === 0 && <div className="px-2 py-1 text-[12px] italic text-[var(--color-text-muted)]">No crews on the plan{edit ? " - add a company below" : ""}</div>}
         {list.map((crew) => (
           <CrewRow key={crew} grid={grid} crew={crew} value={crews[crew]} known={m.known?.[crew]} edit={edit}
             onNames={(f) => setCrew(crew, (c) => setNames(c, f))}
             onCount={(d, i) => void setCrew(crew, (c) => withCounts(c, d, i)).catch(() => undefined)}
+            onTotal={(t) => void setCrew(crew, (c) => withTotal(c, t)).catch(() => undefined)}
             onPlant={(on) => void setCrew(crew, (c) => ({ ...(c ?? {}), plant: on || undefined, ...(on ? { headcount: null } : {}) })).catch(() => undefined)}
             onRemove={m.crews.includes(crew) ? undefined : () => void setCrew(crew, () => null).catch(() => undefined)} />
         ))}
@@ -526,10 +527,12 @@ let opSeq = 0;
 
 /** One crew at the meeting: its name, a pill for each person there (edit,
  *  remove; + adds the next one beside them), and its head count on site. */
-function CrewRow({ grid, crew, value, known, edit, onNames, onCount, onPlant, onRemove }: {
+function CrewRow({ grid, crew, value, known, edit, onNames, onCount, onTotal, onPlant, onRemove }: {
   grid: string; crew: string; value?: CrewCount; known?: string[]; edit: boolean;
   onNames: (change: (names: string[]) => string[]) => Promise<void>;
   onCount: (direct: number | null, indirect: number | null) => void;
+  /** Everyone on site in one number (no split). */
+  onTotal: (total: number | null) => void;
   /** Plant staff (not on the job, not counted), or counted again. */
   onPlant: (on: boolean) => void;
   /** A company added at the meeting (not on the plan): off the list. */
@@ -575,7 +578,7 @@ function CrewRow({ grid, crew, value, known, edit, onNames, onCount, onPlant, on
         {edit && <datalist id={listId}>{pick.map((x) => <option key={x} value={x} />)}</datalist>}
       </div>
       <div className="max-sm:col-start-2 max-sm:row-start-1 max-sm:row-span-2">
-        <HeadCount crew={crew} value={value} plant={!!value?.plant} edit={edit} onSave={onCount} onPlant={onPlant} />
+        <HeadCount crew={crew} value={value} plant={!!value?.plant} edit={edit} onSave={onCount} onTotal={onTotal} onPlant={onPlant} />
       </div>
     </div>
   );
@@ -630,17 +633,24 @@ function NameInput({ init, listId, label, keepOpen, onDone, onClose }: {
   );
 }
 
-/** A crew's hands on site: direct (on the tools) and indirect
- *  (supervision, safety, hole and fire watch, QC, tool room), each saved
- *  when you leave its box; the total under them. An older count with only
- *  a total shows it until it's split. */
-function HeadCount({ crew, value, plant, edit, onSave, onPlant }: { crew: string; value?: CrewCount; plant: boolean; edit: boolean; onSave: (direct: number | null, indirect: number | null) => void; onPlant: (on: boolean) => void }) {
+/** A crew's hands on site: one box for the total. "Split" shows direct (on
+ *  the tools) and indirect (supervision, safety, hole and fire watch, QC,
+ *  tool room) when they're known; "Plant staff" marks people at the meeting
+ *  who aren't on the job (not counted). Each box saves when you leave it. */
+function HeadCount({ crew, value, plant, edit, onSave, onTotal, onPlant }: {
+  crew: string; value?: CrewCount; plant: boolean; edit: boolean;
+  onSave: (direct: number | null, indirect: number | null) => void;
+  /** One total, no split. */
+  onTotal: (total: number | null) => void;
+  onPlant: (on: boolean) => void;
+}) {
   const n = countOf(value);
-  const [typed, setTyped] = useState<{ d: string | null; i: string | null }>({ d: null, i: null });
+  const [typed, setTyped] = useState<{ d: string | null; i: string | null; t: string | null }>({ d: null, i: null, t: null });
+  const [splitOpen, setSplitOpen] = useState(false);
   if (!edit) {
     return (
       <span className={`block text-right text-[12.5px] tabular-nums whitespace-nowrap ${plant ? "text-[var(--color-text-muted)]" : "w-[6.5rem] text-[var(--color-text)]"}`}>
-        {plant ? "Plant staff" : n.total == null ? "-" : n.split ? <><b>{n.total}</b> <span className="text-[11px] text-[var(--color-text-muted)]">({n.direct} + {n.indirect})</span></> : <><b>{n.total}</b> <span className="text-[11px] text-[var(--color-text-muted)]">not split</span></>}
+        {plant ? "Plant staff" : n.total == null ? "-" : n.split ? <><b>{n.total}</b> <span className="text-[11px] text-[var(--color-text-muted)]">({n.direct} + {n.indirect})</span></> : <b>{n.total}</b>}
       </span>
     );
   }
@@ -655,29 +665,41 @@ function HeadCount({ crew, value, plant, edit, onSave, onPlant }: { crew: string
   }
   // What was entered in each box (blank: not entered, never shown as 0).
   const own = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
-  const was = { d: own(value?.direct), i: own(value?.indirect) };
+  const was = { d: own(value?.direct), i: own(value?.indirect), t: n.total };
   const parse = (x: string | null, w: number | null) => (x == null ? w : x.trim() === "" ? null : Math.max(0, Math.round(Number(x))));
+  const split = splitOpen || n.split;
   const commit = () => {
     if (typed.d == null && typed.i == null) return;
     const d = parse(typed.d, was.d), i = parse(typed.i, was.i);
-    setTyped({ d: null, i: null });
+    setTyped({ d: null, i: null, t: null });
     if (d === was.d && i === was.i) return;
     onSave(d, i);
   };
-  const box = (k: "d" | "i", v: number | null, label: string) => (
-    <input value={typed[k] ?? (v != null ? String(v) : "")} inputMode="numeric" aria-label={`${crew} ${label}`} placeholder={k === "d" ? "Dir" : "Ind"} title={label}
+  const commitTotal = () => {
+    if (typed.t == null) return;
+    const t = parse(typed.t, was.t);
+    setTyped({ d: null, i: null, t: null });
+    if (t === was.t) return;
+    onTotal(t);
+  };
+  const box = (k: "d" | "i" | "t", v: number | null, label: string, wide = false) => (
+    <input value={typed[k] ?? (v != null ? String(v) : "")} inputMode="numeric" aria-label={`${crew} ${label}`} placeholder={k === "d" ? "Dir" : k === "i" ? "Ind" : "0"} title={label}
       onFocus={(e) => e.target.select()}
-      onChange={(e) => { const x = e.target.value.replace(/[^0-9]/g, "").slice(0, 4); setTyped((t) => ({ ...t, [k]: x })); }} onBlur={commit}
+      onChange={(e) => { const x = e.target.value.replace(/[^0-9]/g, "").slice(0, 4); setTyped((t) => ({ ...t, [k]: x })); }} onBlur={k === "t" ? commitTotal : commit}
       onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-      className={`${inputCls} block w-12 h-7 text-right font-mono`} />
+      className={`${inputCls} block ${wide ? "w-16" : "w-12"} h-8 text-right font-mono text-[13px]`} />
   );
+  const link = "text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:underline";
   return (
-    <span className="flex flex-col items-end gap-0.5">
-      <span className="flex items-center gap-1">{box("d", was.d, "direct hands")}{box("i", was.i, "indirect hands")}</span>
+    <span className="flex flex-col items-end gap-0.5" data-head-count={crew}>
+      {split ? (
+        <span className="flex items-center gap-1">{box("d", was.d, "direct hands")}{box("i", was.i, "indirect hands")}</span>
+      ) : box("t", was.t, "on site", true)}
       <span className="text-[10px] text-[var(--color-text-muted)] whitespace-nowrap">
-        {n.total == null ? "" : n.split ? <>= <b className="text-[var(--color-text)]">{n.total}</b> on site</> : <><b className="text-[var(--color-text)]">{n.total}</b> on site, not split</>}
-        {" "}<button type="button" onClick={() => onPlant(true)} title="At the meeting, not on the job (plant staff): not counted"
-          className="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:underline">Plant staff?</button>
+        {split
+          ? <>{n.total != null && <>= <b className="text-[var(--color-text)]">{n.total}</b> on site · </>}<button type="button" onClick={() => { setSplitOpen(false); if (n.split) onTotal(n.total); }} title="One number for everyone on site" className={link}>One total</button></>
+          : <button type="button" onClick={() => setSplitOpen(true)} title="Direct (on the tools) and indirect (supervision, safety, watch, QC, tool room)" className={link}>Split</button>}
+        {" · "}<button type="button" onClick={() => onPlant(true)} title="At the meeting, not on the job (plant staff): not counted" className={link}>Plant staff?</button>
       </span>
     </span>
   );

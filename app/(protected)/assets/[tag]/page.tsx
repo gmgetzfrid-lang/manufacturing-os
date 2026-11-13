@@ -225,7 +225,7 @@ export default function AssetHubPage() {
 
         {/* Every job done on it, across projects, and what was learned. */}
         {asset?.id && activeOrgId && (
-          <WorkHistoryPanel orgId={activeOrgId} assetId={asset.id} code={(asset as { code?: string | null }).code ?? null} />
+          <WorkHistoryPanel orgId={activeOrgId} assetId={asset.id} code={asset.code ?? null} tag={asset.tag} unitCode={asset.unit_code ?? null} />
         )}
 
         {/* Everything the estate knows about it, through the one find service:

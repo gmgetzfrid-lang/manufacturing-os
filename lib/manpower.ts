@@ -59,6 +59,12 @@ export function countOf(c: CrewCount | undefined): { direct: number | null; indi
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : null);
 
 /** A crew's record with its direct and indirect set (its total kept with them). */
+/** A crew's count as one total (no direct / indirect split). */
+export function withTotal(c: CrewCount | undefined, total: number | null): CrewCount {
+  const t = num(total);
+  return { ...(c ?? {}), direct: null, indirect: null, headcount: t };
+}
+
 export function withCounts(c: CrewCount | undefined, direct: number | null, indirect: number | null): CrewCount {
   const base = { ...(c ?? {}) };
   const d = num(direct), i = num(indirect);

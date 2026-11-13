@@ -20,14 +20,17 @@ import { useProjectType } from "@/lib/shiftTimesStore";
 import { listEdgesFor } from "@/lib/estate/client";
 import { nid } from "@/lib/estate/ids";
 import { setupOrders } from "@/lib/projectEquipment";
+import { plainText } from "@/lib/plainText";
 import {
-  APPLIES, APPLIES_WORD, KINDS, KIND_WORD, TOPICS, FINDINGS_SQL, ACK_WORD,
-  suggestFindings, reviewState, fieldsProblem, equipmentOf, guessKind, guessTopic, tagKey, findingLine, pastJobsFor,
+  APPLIES_WORD, KIND_WORD, CATEGORIES, FINDINGS_SQL, ACK_WORD,
+  suggestFindings, reviewState, fieldsProblem, equipmentOf, guessKind, guessCategories, categoriesOf, topicOf, isLive, tagKey, findingLine, pastJobsFor,
   listFindings, listKeptFindings, saveFinding, listAcks, setAck, FindingsMissing,
-  type AckStatus, type Equipment, type Finding, type FindingDraft, type FindingFields, type RecordLesson, type ReviewState,
+  type AckStatus, type Category, type Equipment, type Finding, type FindingDraft, type FindingFields, type RecordLesson, type ReviewState,
 } from "@/lib/findings";
 
 export const NEW_FINDING_EVENT = "finding:new";
+/** "Turnaround" in a sentence: "turnaround". */
+const typeWordOf = (t: string | null | undefined) => (t && /^[A-Z][a-z]/.test(t) ? t[0].toLowerCase() + t.slice(1) : t || "turnaround");
 /** Open "+ Finding" from anywhere on the project's tabs. */
 export const newFinding = (detail: { milestoneId?: string | null; at?: number } = {}) =>
   window.dispatchEvent(new CustomEvent(NEW_FINDING_EVENT, { detail }));
@@ -58,6 +61,19 @@ const errText = (e: unknown) => (e instanceof FindingsMissing ? missingMsg : /pe
 
 // ─── Data ──────────────────────────────────────────────────────────
 
+// One read of a project's findings shared by every list on the page (a step
+// card, a work order, the review), read again after a save.
+const projectReads = new Map<string, { at: number; p: Promise<{ rows: Finding[]; missing: boolean }> }>();
+function readProjectFindings(projectId: string) {
+  const had = projectReads.get(projectId);
+  if (had && Date.now() - had.at < 10_000) return had.p;
+  const p = listFindings(projectId);
+  projectReads.set(projectId, { at: Date.now(), p });
+  p.catch(() => projectReads.delete(projectId));
+  return p;
+}
+if (typeof window !== "undefined") window.addEventListener("findings:changed", (e) => { const id = (e as CustomEvent).detail?.projectId; if (id) projectReads.delete(id); });
+
 /** This project's findings, fresh after any save. */
 export function useProjectFindings(projectId: string | null | undefined) {
   const [rows, setRows] = useState<Finding[]>([]);
@@ -68,7 +84,7 @@ export function useProjectFindings(projectId: string | null | undefined) {
   useEffect(() => {
     if (!projectId) return;
     let alive = true;
-    listFindings(projectId).then((r) => { if (alive) { setRows(r.rows); setMissing(r.missing); setLoaded(true); } }).catch(() => { if (alive) setLoaded(true); });
+    readProjectFindings(projectId).then((r) => { if (alive) { setRows(r.rows); setMissing(r.missing); setLoaded(true); } }).catch(() => { if (alive) setLoaded(true); });
     return () => { alive = false; };
   }, [projectId, tick]);
   useEffect(() => {
@@ -181,62 +197,99 @@ function Chips<T extends string>({ value, options, word, onPick, name }: { value
 }
 
 /** Type · Applies to (the equipment) · Topic · What happened · Next time. */
-export function FindingEditor({ value, onChange, equipment, unitLabel, autoGuess }: {
+/** What it is about (one or more categories) · What happened · Next time ·
+ *  where it is kept: the job it was written on, its equipment, every event
+ *  of this kind. */
+export function FindingEditor({ value, onChange, equipment, unitLabel, autoGuess, jobName, defaultTag, typeWord = "turnaround" }: {
   value: FindingFields; onChange: (v: FindingFields) => void; equipment: Equipment[]; unitLabel: string | null;
-  /** Type and topic follow the words until picked. */
+  /** The categories follow the words until picked. */
   autoGuess?: boolean;
+  /** The step or work order it is written on (always kept there). */
+  jobName?: string | null;
+  /** The job's equipment, put back when "Equipment" is ticked again. */
+  defaultTag?: string | null;
+  /** The project type in a sentence ("turnaround"). */
+  typeWord?: string;
 }) {
-  const [picked, setPicked] = useState({ kind: !autoGuess, topic: !autoGuess });
+  const [picked, setPicked] = useState({ kind: !autoGuess, cats: !autoGuess });
+  const [onEq, setOnEq] = useState(() => value.appliesTo === "equipment" || !!value.assetTag);
   const [other, setOther] = useState(() => !!value.assetTag && !equipment.some((e) => tagKey(e.tag) === tagKey(value.assetTag)));
   const set = (patch: Partial<FindingFields>) => onChange({ ...value, ...patch });
+  const cats = categoriesOf(value.topic);
+  const every = value.appliesTo === "all";
+  const where = (eq: boolean, all: boolean): FindingFields["appliesTo"] => (all ? "all" : eq ? "equipment" : value.appliesTo === "unit" ? "unit" : "project");
   const pickTag = (tag: string) => {
     const e = equipment.find((x) => tagKey(x.tag) === tagKey(tag));
     set({ assetTag: tag || null, assetId: e?.assetId ?? null });
   };
+  const toggleCat = (c: Category) => { setPicked((p) => ({ ...p, cats: true })); set({ topic: topicOf(cats.includes(c) ? cats.filter((x) => x !== c) : [...cats, c]) }); };
+  const toggleEq = () => {
+    const eq = !onEq; setOnEq(eq);
+    const e = defaultTag ? equipment.find((x) => tagKey(x.tag) === tagKey(defaultTag)) : undefined;
+    set({ appliesTo: where(eq, every), ...(eq ? { assetTag: value.assetTag ?? defaultTag ?? null, assetId: value.assetId ?? e?.assetId ?? null } : { assetTag: null, assetId: null }) });
+  };
+  const box = (on: boolean) => `mt-0.5 w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${on ? "bg-[var(--color-accent)] border-[var(--color-accent)] text-[var(--color-accent-fg)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)]"}`;
   return (
     <div className="space-y-3">
       <div>
-        <span className={label}>Type</span>
-        <Chips name="Type" value={value.kind} options={KINDS} word={(k) => KIND_WORD[k]} onPick={(k) => { setPicked((p) => ({ ...p, kind: true })); set({ kind: k }); }} />
-      </div>
-      <div>
-        <span className={label}>Applies to</span>
-        <Chips name="Applies to" value={value.appliesTo} options={APPLIES} word={(a) => (a === "unit" && unitLabel ? `Unit (${unitLabel})` : APPLIES_WORD[a])} onPick={(a) => set({ appliesTo: a })} />
-        {value.appliesTo === "equipment" && (
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            {!other && equipment.length > 0 ? (
-              <select aria-label="Equipment" value={value.assetTag ?? ""} onChange={(e) => { if (e.target.value === "__other__") { setOther(true); set({ assetTag: null, assetId: null }); } else pickTag(e.target.value); }}
-                className={`${field} h-9 w-auto min-w-[10rem]`}>
-                <option value="">Pick the equipment…</option>
-                {equipment.map((e) => <option key={e.tag} value={e.tag}>{e.tag}</option>)}
-                <option value="__other__">Another tag…</option>
-              </select>
-            ) : (
-              <input aria-label="Equipment tag" value={value.assetTag ?? ""} onChange={(e) => pickTag(e.target.value)} placeholder="Tag, e.g. E-12" className={`${field} h-9 w-40`} />
-            )}
-            {other && equipment.length > 0 && <button type="button" onClick={() => { setOther(false); set({ assetTag: null, assetId: null }); }} className="text-[12px] text-[var(--color-text-muted)] underline">Pick from the work orders</button>}
-          </div>
-        )}
-        {value.appliesTo === "unit" && !unitLabel && <div className="mt-1 text-[11.5px] text-amber-700 dark:text-amber-300">Pick the project&apos;s unit in Setup › Unit &amp; equipment first.</div>}
-      </div>
-      <div>
-        <label className={label} htmlFor="finding-topic">Topic</label>
-        <select id="finding-topic" value={value.topic} onChange={(e) => { setPicked((p) => ({ ...p, topic: true })); set({ topic: e.target.value as FindingFields["topic"] }); }} className={`${field} h-9 w-auto min-w-[10rem]`}>
-          {TOPICS.map((t) => <option key={t} value={t}>{t}</option>)}
-        </select>
+        <span className={label}>What is it about? Pick one or more</span>
+        <div role="group" aria-label="Categories" className="flex flex-wrap gap-1.5" data-finding-categories>
+          {CATEGORIES.map((c) => {
+            const on = cats.includes(c);
+            return (
+              <button key={c} type="button" aria-pressed={on} onClick={() => toggleCat(c)}
+                className={`min-h-[36px] rounded-lg border px-3 text-[13px] font-semibold inline-flex items-center gap-1 ${on
+                  ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-text)]"
+                  : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
+                {on && <Check className="w-3.5 h-3.5" />}{c}
+              </button>
+            );
+          })}
+        </div>
       </div>
       <div>
         <label className={label} htmlFor="finding-body">What happened</label>
-        <textarea id="finding-body" rows={2} value={value.body} placeholder="e.g. Only 20 of the 24 seal rings were ordered"
+        <textarea id="finding-body" rows={3} value={value.body} placeholder="e.g. LEL readings were high in the tower until the fan went on in the afternoon"
           onChange={(e) => {
             const body = e.target.value;
-            set({ body, ...(!picked.kind ? { kind: guessKind(body, "manual") } : {}), ...(!picked.topic ? { topic: guessTopic(body) } : {}) });
+            const guess = !picked.cats ? guessCategories(body) : null;
+            set({ body, ...(!picked.kind ? { kind: guessKind(body, "manual") } : {}), ...(guess && guess.length ? { topic: topicOf(guess) } : {}) });
           }}
           className={`${field} resize-y`} />
       </div>
       <div>
         <label className={label} htmlFor="finding-next">Next time</label>
-        <textarea id="finding-next" rows={2} value={value.nextTime} placeholder="e.g. Order 24 seal rings plus spares" onChange={(e) => set({ nextTime: e.target.value })} className={`${field} resize-y`} />
+        <textarea id="finding-next" rows={2} value={value.nextTime} placeholder="e.g. Put the tower fan on as soon as the manways are open" onChange={(e) => set({ nextTime: e.target.value })} className={`${field} resize-y`} />
+      </div>
+      <div>
+        <span className={label}>Kept on, for good</span>
+        <ul className="space-y-1.5 text-[13px] text-[var(--color-text)]">
+          {jobName && (
+            <li className="flex items-start gap-2"><span className={box(true)} aria-hidden><Check className="w-3.5 h-3.5" /></span><span>This job: <b>{jobName}</b></span></li>
+          )}
+          <li className="flex items-start gap-2 flex-wrap">
+            <button type="button" role="checkbox" aria-checked={onEq} onClick={toggleEq} className="flex items-start gap-2 text-left"><span className={box(onEq)}>{onEq && <Check className="w-3.5 h-3.5" />}</span><span>The equipment: every job on it from now on</span></button>
+            {onEq && (
+              <span className="basis-full pl-7 flex flex-wrap items-center gap-2">
+                {!other && equipment.length > 0 ? (
+                  <select aria-label="Equipment" value={value.assetTag ?? ""} onChange={(e) => { if (e.target.value === "__other__") { setOther(true); set({ assetTag: null, assetId: null }); } else pickTag(e.target.value); }}
+                    className={`${field} h-9 w-auto min-w-[10rem]`}>
+                    <option value="">Pick the equipment…</option>
+                    {equipment.map((e) => <option key={e.tag} value={e.tag}>{e.tag}</option>)}
+                    <option value="__other__">Another tag…</option>
+                  </select>
+                ) : (
+                  <input aria-label="Equipment tag" value={value.assetTag ?? ""} onChange={(e) => pickTag(e.target.value)} placeholder="Tag, e.g. E-12" className={`${field} h-9 w-40`} />
+                )}
+                {other && equipment.length > 0 && <button type="button" onClick={() => { setOther(false); set({ assetTag: null, assetId: null }); }} className="text-[12px] text-[var(--color-text-muted)] underline">Pick from the work orders</button>}
+              </span>
+            )}
+          </li>
+          <li>
+            <button type="button" role="checkbox" aria-checked={every} onClick={() => set({ appliesTo: where(onEq, !every) })} className="flex items-start gap-2 text-left"><span className={box(every)}>{every && <Check className="w-3.5 h-3.5" />}</span><span>Every {typeWord}: a rule for all of them</span></button>
+          </li>
+          {value.appliesTo === "unit" && <li className="pl-7 text-[12px] text-[var(--color-text-muted)]">Also kept on the unit{unitLabel ? ` (${unitLabel})` : ""}.</li>}
+        </ul>
       </div>
     </div>
   );
@@ -286,7 +339,8 @@ function FindingDialog({ orgId, projectId, projectType, milestones, canEdit, mil
       await saveFinding({
         ...v, unitCode: unit?.code ?? null, orgId, projectId, projectType,
         milestoneId: m?.id ?? null, workOrderRef: m?.workOrderRef?.trim() || null,
-        source: "manual", status: "open", foundAt: at, actor: { id: uid ?? null, name: userEmail ?? null },
+        // A person wrote it: it counts now, with no review step to pass.
+        source: "manual", status: "kept", foundAt: at, actor: { id: uid ?? null, name: userEmail ?? null },
       });
       setSaved(true);
       setTimeout(onClose, 900);
@@ -302,8 +356,8 @@ function FindingDialog({ orgId, projectId, projectType, milestones, canEdit, mil
       <ModalBody>
         {!canEdit ? <div className="text-[12.5px] text-[var(--color-text-muted)]">Only the project&apos;s owner, co-owners and editors can add findings.</div> : (
           <>
-            <FindingEditor value={v} onChange={setV} equipment={equipment} unitLabel={unit?.label ?? null} autoGuess />
-            <p className="mt-3 text-[11.5px] text-[var(--color-text-faint)]">Who and when are saved with it. It&apos;s reviewed with the rest at the close-out.</p>
+            <FindingEditor value={v} onChange={setV} equipment={equipment} unitLabel={unit?.label ?? null} autoGuess jobName={m?.name ?? null} defaultTag={eq?.tag ?? null} typeWord={typeWordOf(projectType)} />
+            <p className="mt-3 text-[11.5px] text-[var(--color-text-faint)]">Saved with who and when. It goes into the post-event review as written.</p>
           </>
         )}
         {err && <div className="mt-2 text-[12px] text-rose-700 dark:text-rose-300">{err}</div>}
@@ -313,13 +367,71 @@ function FindingDialog({ orgId, projectId, projectType, milestones, canEdit, mil
         <div className="flex w-full items-center justify-end gap-2">
           <button type="button" onClick={onClose} className={quiet}>Cancel</button>
           {canEdit && (
-            <button type="button" onClick={save} disabled={busy || saved || !v.body.trim()} className={btn}>
+            <button type="button" onClick={save} disabled={busy || saved || !v.body.trim() || !categoriesOf(v.topic).length} className={btn}>
               {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : saved ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />} {saved ? "Saved" : "Add finding"}
             </button>
           )}
         </div>
       </ModalFooter>
     </Modal>
+  );
+}
+
+/** The findings on a job, where the job is: written on it (this project),
+ *  on its equipment in this project, and on its equipment in past jobs. */
+export function JobFindings({ orgId, projectId, milestoneIds, tag, tz }: {
+  orgId: string | null | undefined; projectId: string | null | undefined;
+  /** The step, its work order, the work order's steps: anything it was written on. */
+  milestoneIds: Array<string | null | undefined>;
+  /** The job's equipment. */
+  tag: string | null | undefined;
+  tz: string;
+}) {
+  const { rows } = useProjectFindings(projectId);
+  const unit = useProjectUnit(orgId, projectId ?? "");
+  const [past, setPast] = useState<{ rows: Finding[]; names: Map<string, string> }>({ rows: [], names: new Map() });
+  useEffect(() => {
+    if (!orgId || !tag) return;
+    let alive = true;
+    void (async () => {
+      const { rows: all } = await listKeptFindings(orgId);
+      // V-7 on another unit is another V-7.
+      const mine = all.filter((f) => f.projectId !== projectId && f.assetTag && tagKey(f.assetTag) === tagKey(tag) && (!f.unitCode || !unit?.code || f.unitCode === unit.code));
+      const ids = [...new Set(mine.map((f) => f.projectId))];
+      const names = new Map<string, string>();
+      if (ids.length) { const { data } = await supabase.from("projects").select("id, name").in("id", ids); for (const p of (data ?? []) as Array<{ id: string; name: string }>) names.set(p.id, p.name); }
+      if (alive) setPast({ rows: mine, names });
+    })().catch(() => undefined);
+    return () => { alive = false; };
+  }, [orgId, projectId, tag, unit?.code]);
+  const ids = new Set(milestoneIds.filter(Boolean) as string[]);
+  const here = rows.filter((f) => isLive(f) && f.source !== "review" && ((f.milestoneId && ids.has(f.milestoneId)) || (!!tag && !!f.assetTag && tagKey(f.assetTag) === tagKey(tag))));
+  if (!here.length && !past.rows.length) return null;
+  const line = (f: Finding, from: string | null) => {
+    const cats = categoriesOf(f.topic);
+    return (
+      <li key={f.id} className="py-1.5" data-job-finding-row>
+        <div className="flex flex-wrap items-center gap-1">
+          {(cats.length ? cats : [f.topic]).map((c) => <span key={c} className="rounded bg-[var(--color-surface-2)] px-1.5 py-px text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">{c}</span>)}
+          {f.assetTag && <span className="text-[11px] font-bold text-[var(--color-text)]">{f.assetTag}</span>}
+          <span className="text-[11px] text-[var(--color-text-faint)]">{from ? `${from} · ` : ""}{day(f.foundAt, tz)}{f.createdByName ? ` · ${f.createdByName}` : ""}</span>
+        </div>
+        <div className="text-[12.5px] text-[var(--color-text)] whitespace-pre-line">{plainText(f.body)}</div>
+        {f.nextTime.trim() && <div className="text-[12.5px] text-[var(--color-text)] whitespace-pre-line"><b>Next time:</b> {plainText(f.nextTime)}</div>}
+      </li>
+    );
+  };
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2" data-job-findings>
+      {here.length > 0 && <>
+        <div className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]"><Lightbulb className="w-3.5 h-3.5" /> Findings on this job{tag ? ` and ${tag}` : ""} ({here.length})</div>
+        <ul className="divide-y divide-[var(--color-border)]">{here.map((f) => line(f, null))}</ul>
+      </>}
+      {past.rows.length > 0 && <>
+        <div className={`flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] ${here.length ? "mt-2" : ""}`}><History className="w-3.5 h-3.5" /> From past jobs on {tag} ({past.rows.length})</div>
+        <ul className="divide-y divide-[var(--color-border)]">{past.rows.map((f) => line(f, past.names.get(f.projectId) ?? "Another project"))}</ul>
+      </>}
+    </div>
   );
 }
 

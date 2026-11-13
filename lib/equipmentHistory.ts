@@ -6,7 +6,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
-import { EQUIP_ID } from "@/lib/findings";
+import { EQUIP_ID, registryTagKey, tagKey } from "@/lib/findings";
 import { woOf } from "@/lib/workOrderCrew";
 import type { Milestone } from "@/types/schema";
 
@@ -77,29 +77,36 @@ export function shapeHistory(tasks: Row[], steps: Row[], projects: Map<string, {
 
 /** The work and findings on one piece of equipment. `code`: its site code
  *  ("5630.06"), matched to the schedule's Equipment column. */
-export async function loadEquipmentHistory(orgId: string, asset: { id: string; code?: string | null }): Promise<EquipmentHistory> {
+export async function loadEquipmentHistory(orgId: string, asset: { id: string; code?: string | null; tag?: string | null; unitCode?: string | null }): Promise<EquipmentHistory> {
   const byId = supabase.from("milestones").select(COLS).eq("org_id", orgId).eq(`attributes->>${EQUIP_ID}`, asset.id).limit(500);
   const byCode = asset.code ? supabase.from("milestones").select(COLS).eq("org_id", orgId).eq("attributes->>Equipment", asset.code).limit(500) : null;
   const [a, b] = await Promise.all([byId, byCode ?? Promise.resolve({ data: [] as Row[], error: null })]);
   if (a.error) throw new Error(a.error.message);
   const tasks = [...((a.data ?? []) as Row[]), ...(((b?.data ?? []) as Row[]))];
-  if (!tasks.length) return { jobs: [], findings: await findingsOn(asset.id) };
+  if (!tasks.length) return { jobs: [], findings: await findingsOn(orgId, asset) };
   const ids = [...new Set(tasks.map((t) => t.id))];
   const pids = [...new Set(tasks.map((t) => t.project_id))];
   const [st, pr, findings] = await Promise.all([
     fetchAllRows<Row>((from, to) => supabase.from("milestones").select(COLS).in("parent_id", ids.slice(0, 200)).order("id").range(from, to) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>),
     supabase.from("projects").select("id, name, status, timezone").in("id", pids),
-    findingsOn(asset.id),
+    findingsOn(orgId, asset),
   ]);
   const projects = new Map(((pr.data ?? []) as Array<{ id: string; name: string; status: string | null; timezone: string | null }>).map((p) => [p.id, { name: p.name, status: p.status, tz: p.timezone }]));
   return { jobs: shapeHistory(tasks, st.rows, projects), findings };
 }
 
-/** Findings kept on it at the close-out of past jobs (none when the
- *  findings table isn't there yet). */
-async function findingsOn(assetId: string): Promise<HistoryFinding[]> {
-  const { data, error } = await supabase.from("project_findings").select("id, project_id, kind, topic, body, next_time, found_at").eq("asset_id", assetId).order("found_at", { ascending: false }).limit(100);
+/** Every finding on it: tied to it by id, or written on its tag ("V-7")
+ *  on a job (a person's finding counts as soon as it is saved; one only
+ *  suggested, or thrown out, does not). None when the findings table isn't
+ *  there yet. */
+async function findingsOn(orgId: string, asset: { id: string; tag?: string | null; unitCode?: string | null }): Promise<HistoryFinding[]> {
+  const key = registryTagKey(asset.tag ?? "");
+  const { data, error } = await supabase.from("project_findings").select("id, project_id, kind, topic, body, next_time, found_at, asset_id, asset_tag, unit_code, status, source")
+    .eq("org_id", orgId).in("status", ["kept", "open"]).or(key ? `asset_id.eq.${asset.id},asset_tag.not.is.null` : `asset_id.eq.${asset.id}`)
+    .order("found_at", { ascending: false }).limit(1000);
   if (error) return [];
-  return ((data ?? []) as Array<{ id: string; project_id: string; kind: string; topic: string | null; body: string | null; next_time: string | null; found_at: string | null }>)
+  return ((data ?? []) as Array<{ id: string; project_id: string; kind: string; topic: string | null; body: string | null; next_time: string | null; found_at: string | null; asset_id: string | null; asset_tag: string | null; unit_code: string | null; status: string; source: string }>)
+    // By tag only within its unit: V-7 on another unit is another V-7.
+    .filter((r) => (r.status === "kept" || r.source === "manual") && (r.asset_id === asset.id || (!!key && tagKey(r.asset_tag) === key && (!r.unit_code || !asset.unitCode || r.unit_code === asset.unitCode))))
     .map((r) => ({ id: r.id, projectId: r.project_id, kind: r.kind, topic: r.topic ?? "", body: r.body ?? "", nextTime: r.next_time ?? "", at: ms(r.found_at) }));
 }

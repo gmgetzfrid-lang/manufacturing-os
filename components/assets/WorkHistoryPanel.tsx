@@ -17,16 +17,16 @@ const STATUS: Record<string, { word: string; cls: string }> = {
   blocked: { word: "Blocked", cls: "bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300" },
 };
 
-export default function WorkHistoryPanel({ orgId, assetId, code }: { orgId: string; assetId: string; code?: string | null }) {
-  const key = `${orgId}:${assetId}:${code ?? ""}`;
+export default function WorkHistoryPanel({ orgId, assetId, code, tag, unitCode }: { orgId: string; assetId: string; code?: string | null; tag?: string | null; unitCode?: string | null }) {
+  const key = `${orgId}:${assetId}:${code ?? ""}:${tag ?? ""}`;
   const [state, setState] = useState<{ key: string; data: EquipmentHistory | null; error: string | null }>({ key: "", data: null, error: null });
   useEffect(() => {
     let live = true;
-    loadEquipmentHistory(orgId, { id: assetId, code })
+    loadEquipmentHistory(orgId, { id: assetId, code, tag, unitCode })
       .then((data) => { if (live) setState({ key, data, error: null }); })
       .catch((e) => { if (live) setState({ key, data: null, error: (e as Error).message }); });
     return () => { live = false; };
-  }, [orgId, assetId, code, key]);
+  }, [orgId, assetId, code, tag, unitCode, key]);
   const ready = state.key === key;
   const data = ready ? state.data : null;
   const jobs = data?.jobs ?? [];
@@ -85,7 +85,7 @@ export default function WorkHistoryPanel({ orgId, assetId, code }: { orgId: stri
       )}
       {ready && (data?.findings.length ?? 0) > 0 && (
         <div className="px-4 py-3 border-t border-[var(--color-border)] space-y-1.5">
-          <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Lightbulb className="w-3.5 h-3.5" /> Findings kept on it</div>
+          <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Lightbulb className="w-3.5 h-3.5" /> Findings on it, from every job</div>
           <ul className="space-y-1.5">
             {data!.findings.map((f) => (
               <li key={f.id} className="text-[12.5px]">
