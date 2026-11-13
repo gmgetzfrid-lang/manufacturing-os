@@ -263,12 +263,32 @@ export function scoreOf(r: Pick<Review, "metrics"> & Partial<Pick<Review, "faile
 
 export interface Action {
   n: number; key: string; area: AreaId; areaName: string;
+  /** A rule for every event of this kind, or for this unit's next one. */
+  applies: "all" | "unit";
   /** What we will do, how it will be done, and the benefit (from this event). */
   what: string; how: string; benefit: string;
   /** Who will do it, by what date, what it will cost. Blank until a person sets it. */
   who: string; by: string; cost: string;
   done: boolean;
 }
+// ─── What a review measures ────────────────────────────────────────
+
+/** The categories an event is reviewed by: the event itself, then the seven areas. */
+export type CategoryKey = "event" | AreaId;
+export const REVIEW_CATEGORIES: Array<{ key: CategoryKey; name: string; measures: string }> = [
+  { key: "event", name: "The event", measures: "Finish against the baseline, planned work done, and where the late hours went." },
+  { key: "safety", name: "Safety", measures: "Incidents against the target, and work stood down for gas, alarms or plant upsets." },
+  { key: "organization", name: "Organization", measures: "Who ran the event, and whether each role had a named person." },
+  { key: "planning", name: "Planning", measures: "Scope against the plan (added scope and discovery), schedule logic, and steps missing from the plan." },
+  { key: "contractors", name: "Contractors", measures: "Each crew against the work handed to it: jobs open at once, waits, man-hours against the bid." },
+  { key: "costs", name: "Costs", measures: "Spend against the budget, and labor cost from head counts and rates." },
+  { key: "logistics", name: "Logistics", measures: "Materials and parts against what each job needed, and repairs sent off site." },
+  { key: "execution", name: "Execution", measures: "Control of the work: start-up, jobs that sat, ready work not started, quality of the work, and progress written as it happened." },
+];
+export const categoryName = (k: CategoryKey) => REVIEW_CATEGORIES.find((c) => c.key === k)!.name;
+/** The category each line of the score answers to. */
+export const SCORE_CATEGORY: Record<ScoreRow["key"], CategoryKey> = { duration: "event", planned: "event", added: "planning", manhours: "contractors", cost: "costs", safety: "safety", quality: "execution" };
+
 export type AreaState = "finish" | "time" | "improve" | "pending" | "well" | "none";
 export const AREA_STATE_WORD: Record<AreaState, string> = { finish: "Set the finish", time: "Cost time", improve: "To improve", pending: "Needs your call", well: "Went well", none: "Nothing recorded" };
 export interface AreaRow {
@@ -277,6 +297,8 @@ export interface AreaRow {
   hours: number; parts: Array<{ order: string; hours: number }>;
   /** The word on its tag: "24 h of the finish", else its state. */
   tag: string;
+  /** What the records measure for it that no finding says (start-up overrun, jobs that sat, repairs back late). */
+  measured: string[];
   well: string[];
   /** What did not go well, its root cause, and the action it leads to: one per accepted finding. */
   items: Array<{ key: string; didNot: string; rootCause: string; action: number }>;
@@ -287,6 +309,8 @@ export interface AreaRow {
 }
 export interface Book {
   headline: string; span: string;
+  /** Each category, what it measures, and where this review addresses it. */
+  categories: Array<{ key: CategoryKey; name: string; measures: string; where: string }>;
   /** Where the late hours went, in a line, and each piece in a sentence. */
   delay: string; delayLines: string[];
   score: Score; areas: AreaRow[]; actions: Action[]; pending: number;
@@ -309,7 +333,7 @@ export function bookOf(r: Review, name: string, tz: string, x: ScoreInputs = {})
   const areaName = (id: AreaId) => AREAS.find((a) => a.id === id)!.name;
   const actions: Action[] = pt.conclusions.map((c: Conclusion, i) => {
     const area = AREA_OF[c.categoryId];
-    return { n: i + 1, key: c.key, area, areaName: areaName(area), what: c.ask, how: howOf(c.change, c.ask), benefit: c.because, who: c.owner, by: c.due, cost: c.cost, done: c.done };
+    return { n: i + 1, key: c.key, area, areaName: areaName(area), applies: c.applies, what: c.ask, how: howOf(c.change, c.ask), benefit: c.because, who: c.owner, by: c.due, cost: c.cost, done: c.done };
   });
   // Each piece of the late finish goes to the area of the accepted finding
   // that explains it: the one that names its work order in its headline (else
@@ -317,7 +341,8 @@ export function bookOf(r: Review, name: string, tz: string, x: ScoreInputs = {})
   const byKey = new Map(r.findings.map((f) => [f.key, f]));
   const owner = new Map<AreaId, Array<{ order: string; hours: number }>>();
   for (const d of r.finish?.delay ?? []) {
-    if (d.kind !== "work") continue;
+    // The start-up running long, or starting after the work was done: how the event was run.
+    if (d.kind !== "work") { if (d.hours > 0) owner.set("execution", [...(owner.get("execution") ?? []), { order: d.order, hours: d.hours }]); continue; }
     const tag = orderWord(d.order);
     const hits = pt.conclusions.map((c) => ({ c, head: names(`${c.title} ${c.because} ${c.why}`, tag), any: names(byKey.get(c.key)?.observation, tag) }))
       .filter((h) => h.head || h.any).sort((x2, y2) => Number(y2.head) - Number(x2.head) || (y2.c.moved ?? 0) - (x2.c.moved ?? 0));
@@ -326,19 +351,41 @@ export function bookOf(r: Review, name: string, tz: string, x: ScoreInputs = {})
     owner.set(area, [...(owner.get(area) ?? []), { order: d.order, hours: d.hours }]);
   }
   const top = r.finish?.delay.find((d) => d.kind === "work")?.order ?? null;
+  // Measured from the records for each area, said once: what no finding on the slide already says.
+  const delayed = new Set((r.finish?.delay ?? []).filter((d) => d.kind === "work").map((d) => d.order));
+  const held = (orders: string[]) => orders.some((o) => delayed.has(o));
+  const told = pt.conclusions.map((c) => `${c.title} ${c.because}`).join(" ");
+  const measured: Partial<Record<AreaId, string[]>> = {};
+  const add = (a: AreaId, line: string) => { measured[a] = [...(measured[a] ?? []), line]; };
+  const m = r.metrics, cl = r.finish?.closing;
+  if (cl?.longerH != null && cl.longerH >= 0.5) add("execution", `Start-up ran ${cl.longerH} h longer than planned.`);
+  if (m.stuckJobs || m.readyJobs) {
+    const orders = [...r.stuck.map((j) => j.order), ...r.ready.map((j) => j.order)];
+    add("execution", `${[m.stuckJobs ? `${plural(m.stuckJobs, "started job")} sat a shift${m.noReasonShifts ? ` (${m.noReasonShifts} with no reason written)` : ""}` : "", m.readyJobs ? `${plural(m.readyJobs, "ready job")} waited ${plural(m.readyShifts, "shift")} to start` : ""].filter(Boolean).join("; ")}.${held(orders) ? "" : " None of them held up the finish."}`);
+  }
+  const late = r.service.filter((j) => j.stillOut);
+  if (late.length && !late.every((j) => told.includes(orderWord(j.order)))) add("logistics", `${plural(late.length, "repair")} sent off site came back after the time quoted: ${late.map((j) => orderWord(j.order)).join(", ")}.${held(late.map((j) => j.order)) ? "" : ` ${late.length === 1 ? "It" : "None"} held up the finish.`.replace("It held", "It did not hold")}`);
   const areas: AreaRow[] = AREAS.map((a) => {
     const mine = pt.conclusions.map((c, i) => ({ c, n: i + 1 })).filter(({ c }) => AREA_OF[c.categoryId] === a.id);
     const parts = owner.get(a.id) ?? [], hours = Math.round(parts.reduce((n, p2) => n + p2.hours, 0) * 10) / 10;
     const pending = pt.pending.filter((c) => AREA_OF[c.categoryId] === a.id).length;
     const well = r.wins.filter((w) => AREA_OF[w.category] === a.id).map((w) => w.text);
-    const state: AreaState = parts.some((p2) => p2.order === top) || mine.some(({ c }) => c.first) ? "finish" : hours > 0 || mine.some(({ c }) => (c.moved ?? 0) >= 2) ? "time" : mine.length ? "improve" : pending ? "pending" : well.length ? "well" : "none";
+    const facts = measured[a.id] ?? [];
+    const state: AreaState = parts.some((p2) => p2.order === top) || mine.some(({ c }) => c.first) ? "finish" : hours > 0 || mine.some(({ c }) => (c.moved ?? 0) >= 2) ? "time" : mine.length || facts.length ? "improve" : pending ? "pending" : well.length ? "well" : "none";
     return {
-      id: a.id, name: a.name, state, well, pending, hours, parts, tag: hours > 0 ? `${hours} h of the finish` : AREA_STATE_WORD[state],
+      id: a.id, name: a.name, state, well, pending, hours, parts, measured: facts, tag: hours > 0 ? `${hours} h of the finish` : AREA_STATE_WORD[state],
       items: mine.map(({ c, n }) => ({ key: c.key, didNot: c.because, rootCause: c.gap, action: n })),
       guide: state === "none" ? AREA_GUIDE[a.id] : undefined,
     };
   });
-  return { headline: pt.headline, span: pt.span, delay: pt.delay, delayLines: (r.finish?.delay ?? []).map((d) => d.line), score: scoreOf(r, tz, x), areas, actions, pending: pt.pending.length };
+  const score = scoreOf(r, tz, x);
+  const categories = REVIEW_CATEGORIES.map((c) => {
+    const rows = score.rows.filter((row) => SCORE_CATEGORY[row.key] === c.key).map((row) => row.measure);
+    const acts = actions.filter((a) => a.area === c.key).map((a) => a.n);
+    const where = [rows.length ? `Score (${rows.join(", ")})` : "", c.key !== "event" ? "Areas" : "", acts.length ? `${acts.length === 1 ? "Action" : "Actions"} ${acts.join(", ")}` : ""].filter(Boolean).join("; ");
+    return { ...c, where };
+  });
+  return { headline: pt.headline, span: pt.span, categories, delay: pt.delay, delayLines: (r.finish?.delay ?? []).map((d) => d.line), score, areas, actions, pending: pt.pending.length };
 }
 
 /** The guides a book points to, each once, in the order they come up. */

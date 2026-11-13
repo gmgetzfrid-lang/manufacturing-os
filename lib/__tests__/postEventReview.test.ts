@@ -5,7 +5,7 @@ import { buildAsBuiltWork } from "@/lib/asBuiltWork";
 import { buildLookBack } from "@/lib/lookBack";
 import { discoveries, discoveryAttr, type DiscoveryRecord } from "@/lib/discovery";
 import type { ProgressLogRow } from "@/lib/progressHistory";
-import { deckSlides, reportBlocks } from "@/lib/reviewFiles";
+import { appliesWord, deckSlides, reportBlocks } from "@/lib/reviewFiles";
 import { GUIDES, bookOf, scoreOf } from "@/lib/reviewBook";
 import { buildReview, causeOfText, emptySaved, basisOf, measuresOf, lessonOf, jobWord, pointOf, shiftWord, type ReviewSaved } from "@/lib/postEventReview";
 
@@ -324,6 +324,19 @@ describe("the files open on the point of the meeting", () => {
     const off = emptySaved(); off.items[on[0]] = { status: "draft" };
     expect(bookOf(read(off), "Phase 1", tz).actions.map((a) => a.key)).not.toContain(on[0]);
   });
+  it("the start-up running long is Execution's share of the late finish", () => {
+    const longer = { order: "Start-up", hours: 2.5, kind: "longer" as const, line: "Start-up ran 2.5 h long." };
+    const bk = bookOf({ ...rk, finish: { ...rk.finish!, delay: [...rk.finish!.delay, longer] } }, "Phase 1", tz);
+    const ex = bk.areas.find((a) => a.id === "execution")!;
+    expect(ex.parts).toContainEqual({ order: "Start-up", hours: 2.5 });
+    expect(ex.tag).toMatch(/ h of the finish$/);
+  });
+  it("each action says who it is for in the project's own word", () => {
+    expect(appliesWord("all", "turnaround")).toBe("Every turnaround");
+    expect(appliesWord("all", "LRU")).toBe("Every LRU");
+    expect(appliesWord("unit", "turnaround")).toBe("Next event on this unit");
+    expect(appliesWord("all", null)).toBe("Every event");
+  });
   it("the deck runs in the review's order: the score, the seven areas, the action plan. Nothing else", () => {
     const deck = deckSlides(rk, o);
     expect(deck.map((x) => x.kicker)).toEqual(["Post-event review", "1 · The score: plan against actual", "2 · What went well, what did not, and why", "3 · What we do about it"]);
@@ -331,7 +344,15 @@ describe("the files open on the point of the meeting", () => {
     // The score: each target with its plan, its actual and a verdict; the tally on top.
     expect(score.k === "table" && score.head).toEqual(["Measure", "Target", "Actual", "Result"]);
     expect(score.k === "table" && score.lead).toMatch(/^Where the 46 h went: PSVs 22 h/);
-    expect(score.k === "table" && score.rows.map((row) => row[0])).toEqual(["Duration", "Planned work", "Added work", "Man-hours", "Cost", "Safety", "Quality"]);
+    // Each line says the category it answers to, under its name.
+    expect(score.k === "table" && score.rows.map((row) => row[0])).toEqual(["Duration\nThe event", "Planned work\nThe event", "Added work\nPlanning", "Man-hours\nContractors", "Cost", "Safety", "Quality\nExecution"]);
+    // The cover says what the review measures, by category, and where each is addressed.
+    const cover = deck[0].body;
+    expect(cover.k === "cover" && cover.table!.rows.map((row) => row[0])).toEqual(["The event", "Safety", "Organization", "Planning", "Contractors", "Costs", "Logistics", "Execution"]);
+    expect(cover.k === "cover" && cover.table!.rows.find((row) => row[0] === "Safety")![2]).toBe("Score (Safety); Areas");
+    expect(JSON.stringify(deck)).not.toMatch(/Lenahan|the book/i);
+    // Each action says its category and who it is for.
+    expect(plan.k === "table" && plan.rows[0][0]).toMatch(/^1\. .+\n(Planning|Contractors|Logistics|Execution|Safety|Costs|Organization) · (Every event|Next event on this unit)$/);
     expect(score.k === "table" && score.tags![0]).toEqual({ text: "Missed", tone: "bad" });
     expect(score.k === "table" && score.rows[0][3]).toBe("46 h late");
     expect(score.k === "table" && score.tally!.map((t) => t.label)).toContain("not measured");
@@ -343,7 +364,7 @@ describe("the files open on the point of the meeting", () => {
     expect(plan.k === "table" && plan.rows[0].slice(3)).toEqual(["Not set", "Not set", "Not set"]);
     const first = bookOf(rk, "Phase 1", tz).actions[0];
     expect([first.n, first.what, first.benefit]).toEqual([1, "Name each day's hand-offs between crews at the shift meeting.", "PSV-021 - E-13 Overhead waited a shift on another crew."]);
-    expect(plan.k === "table" && plan.rows.every((row) => row[0].length <= 125 && row[2].length <= 175)).toBe(true);
+    expect(plan.k === "table" && plan.rows.every((row) => row[0].split("\n")[0].length <= 125 && row[2].length <= 175)).toBe(true);
     const titles = deck.map((x) => `${x.kicker} ${x.title}`).join(" | ");
     expect(titles).not.toMatch(/backup|definition|closure plan|roadmap|proposed organization|decisions|did not move/i);
     // The records stay in the report. Service is a planned step there, not stuck work.

@@ -37,12 +37,15 @@ import {
   type Answer, type CategoryId, type CauseId, type Finding, type Known, type FindingEdit, type OrgStanding, type Rating, type ReviewSaved,
 } from "@/lib/postEventReview";
 import { changeReview, loadReview, reviewScope, syncLesson } from "@/lib/reviewStore";
-import { CREWS_HEAD, CREWS_NOTE, CREWS_TITLE, crewsRows, deckSlides, fileStem, reviewDocx, reviewPptx, saveFile, type ReviewFileOpts } from "@/lib/reviewFiles";
+import { CREWS_HEAD, CREWS_NOTE, CREWS_TITLE, appliesWord, crewsRows, deckSlides, fileStem, reviewDocx, reviewPptx, saveFile, type ReviewFileOpts } from "@/lib/reviewFiles";
 import { GUIDES, VERDICT_WORD, bookOf, scoreInputsFrom, type Action, type ScoreInputs, type ScoreRow, type Verdict } from "@/lib/reviewBook";
 import { phaseStats, type CostEntry, type CostLine } from "@/lib/phaseReport";
 import type { AreaId, ScoreEntry } from "@/lib/postEventReview";
 import { overloaded } from "@/lib/crewFlow";
 import ReviewSlides from "@/components/projects/ReviewSlides";
+import { useProjectUnit } from "@/components/projects/Findings";
+import { useProjectType } from "@/lib/shiftTimesStore";
+import { typeWord } from "@/lib/projectType";
 
 const btn = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
 const dark = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[12.5px] font-black whitespace-nowrap disabled:opacity-50";
@@ -58,8 +61,11 @@ const RATE_CLS: Record<Rating, string> = {
 
 type Filter = "all" | "gap" | "opportunity" | "strength" | "kept" | "discarded";
 
-export default function PostEventReview({ orgId, projectId, projectName, jobKind, tz, times, phases, milestones, log, notes, records, money, canManage, actor, onReload, onTab }: {
-  orgId: string; projectId: string; projectName: string; jobKind: string | null; tz: string; times: ShiftTimes;
+/** Lesson versions already written this session (see the effect in the review). */
+const SYNCED = new Set<string>();
+
+export default function PostEventReview({ orgId, projectId, projectName, tz, times, phases, milestones, log, notes, records, money, canManage, actor, onReload, onTab }: {
+  orgId: string; projectId: string; projectName: string; tz: string; times: ShiftTimes;
   phases: ProjectPhase[]; milestones: Milestone[]; log: ProgressLogRow[] | null; notes: MilestoneNote[]; records: Map<string, ShiftRecord>;
   /** The project's budget lines and spend (cost controls), for the score. */
   money?: { lines: CostLine[]; entries: CostEntry[]; afe: number | null } | null;
@@ -127,7 +133,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
     const ds = discoveries(active);
     const look = buildLookBack({ milestones: active, notes: myNotes, discoveries: ds, now, tz, log: (log ?? []).filter((r) => ids.has(r.milestone_id)) });
     const dependsOn = new Map(mine.filter((x) => x.id).map((x) => [x.id!, x.dependsOn ?? []]));
-    return { review: buildReview({ built, work, notes: myNotes, look, discoveries: ds, tz, saved, materials: register, organization, dependsOn }), work };
+    return { review: buildReview({ built, work, notes: myNotes, look, discoveries: ds, tz, saved, materials: register, organization, dependsOn, log: (log ?? []).filter((r) => ids.has(r.milestone_id)) }), work };
   }, [milestones, phases, notes, log, records, plans, mp, tz, times, register, organization]);
   const made = useMemo(() => (saved ? buildFor(phases.length ? phaseId : null, saved) : null), [saved, phases.length, phaseId, buildFor]);
   const review = made?.review ?? null;
@@ -150,15 +156,32 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
     .map((p) => ({ phase: p, actions: bookOf(buildFor(p.id, others[p.id]).review, p.name, tz).actions.filter((a) => !a.done) })).filter((x) => x.actions.length > 0), [phases, phaseId, others, buildFor, tz]);
 
   const who = actor.email;
+  const ptype = useProjectType(projectId, projectName);
+  const typeIn = typeWord(ptype);
+  const unit = useProjectUnit(orgId, projectId);
+  // Everything on the slide, findings on it by default included, is in the
+  // lessons register with who it is for; each version is written once.
+  useEffect(() => {
+    if (!review || !canManage || !orgId) return;
+    for (const f of review.findings) {
+      if (f.status !== "kept") continue;
+      const sig = `${projectId}:${scope}:${f.key}:${f.applies}:${ptype.word}:${unit?.code ?? ""}:${f.title}:${f.next}:${f.ask}`;
+      if (SYNCED.has(sig)) continue;
+      SYNCED.add(sig);
+      void syncLesson({ orgId, projectId, projectType: ptype.word, unitCode: unit?.code ?? null, scope, finding: f, kept: true, actor: { id: actor.uid, name: who } }).catch(() => undefined);
+    }
+  }, [review, canManage, orgId, projectId, scope, ptype.word, unit?.code, actor.uid, who]);
   const act = async (key: string, change: (s: ReviewSaved) => void, after?: (next: ReviewSaved) => Promise<void> | void) => {
     setBusy(key); setErr(null); setMsg(null);
     try { const next = await changeReview(projectId, scope, change); setSaved(next); await after?.(next); }
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(null); }
   };
-  // A kept finding goes to the lessons register; un-kept or thrown out, it leaves.
+  // A kept finding goes to the lessons register under the project's type
+  // (Setup › Project type: "Turnaround"), so later projects of that type, or
+  // the next event on this unit, see it; un-kept or thrown out, it leaves.
   const lesson = async (f: Finding, kept: boolean) => {
-    const ok = await syncLesson({ orgId, projectId, projectType: jobKind, scope, finding: f, kept, actor: { id: actor.uid, name: who } }).catch((e) => { setErr((e as Error).message); return true; });
+    const ok = await syncLesson({ orgId, projectId, projectType: ptype.word, unitCode: unit?.code ?? null, scope, finding: f, kept, actor: { id: actor.uid, name: who } }).catch((e) => { setErr((e as Error).message); return true; });
     if (!ok && kept) setMsg("Kept here. The lessons register (From past jobs) isn't set up in the database yet, so it wasn't added there.");
   };
   const refind = (next: ReviewSaved, key: string): Finding | undefined => {
@@ -173,7 +196,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
 
   const keep = (f: Finding) => void act(`keep:${f.key}`, (s) => { s.items[f.key] = { ...s.items[f.key], status: "kept", basis: basisOf(f), at: Date.now(), by: who }; }, () => lesson(f, true));
   // Off the slide: a finding on it by default is kept off by saying so ("draft"); one a person accepted goes back to waiting.
-  const unkeep = (f: Finding) => void act(`keep:${f.key}`, (s) => { const it = { ...s.items[f.key] }; if (f.auto) it.status = "draft"; else delete it.status; s.items[f.key] = it; }, () => (f.auto ? undefined : lesson(f, false)));
+  const unkeep = (f: Finding) => void act(`keep:${f.key}`, (s) => { const it = { ...s.items[f.key] }; if (f.auto) it.status = "draft"; else delete it.status; s.items[f.key] = it; }, () => lesson(f, false));
   const discard = (f: Finding) => void act(`drop:${f.key}`, (s) => { s.items[f.key] = { ...s.items[f.key], status: "discarded", at: Date.now(), by: who }; }, () => (f.status === "kept" || f.source === "person" ? lesson(f, false) : undefined));
   const restore = (f: Finding) => void act(`drop:${f.key}`, (s) => { const it = { ...s.items[f.key] }; delete it.status; s.items[f.key] = it; }, () => (f.source === "person" ? lesson(f, true) : undefined));
   const takeDraft = (f: Finding) => void act(`draft:${f.key}`, (s) => { const it = { ...s.items[f.key] }; const e = { ...(it.edits ?? {}) }; delete e.title; delete e.observation; delete e.rating; it.edits = e; it.basis = basisOf(f); s.items[f.key] = it; },
@@ -212,7 +235,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
     void act("add", (s) => { s.added.push({ ...e, id, category, at: Date.now(), by: who }); }, async () => {
       setAdding(false);
       const c = areaOf(category);
-      await lesson({ key: `added:${id}`, category, source: "person", rating: e.rating ?? "opportunity", title: e.title ?? "Finding", observation: e.observation ?? "", evidence: [], practice: "", gap: e.gap ?? "", next: e.next ?? "", year: e.year ?? "", owner: e.owner ?? "", due: e.due ?? "", cost: e.cost ?? "", done: false, auto: false, effect: e.effect ?? "", moved: null, proof: "", why: e.effect ?? "", hours: null, ask: e.ask ?? e.next ?? "", because: e.because ?? e.effect ?? "", info: [], status: "kept", edited: false, stale: false, drafted: { title: e.title ?? c.name, observation: e.observation ?? "", rating: e.rating ?? "opportunity" }, by: who, at: Date.now() }, true);
+      await lesson({ key: `added:${id}`, category, source: "person", rating: e.rating ?? "opportunity", title: e.title ?? "Finding", observation: e.observation ?? "", evidence: [], practice: "", gap: e.gap ?? "", next: e.next ?? "", year: e.year ?? "", owner: e.owner ?? "", due: e.due ?? "", cost: e.cost ?? "", done: false, auto: false, applies: "all", effect: e.effect ?? "", moved: null, proof: "", why: e.effect ?? "", hours: null, ask: e.ask ?? e.next ?? "", because: e.because ?? e.effect ?? "", info: [], status: "kept", edited: false, stale: false, drafted: { title: e.title ?? c.name, observation: e.observation ?? "", rating: e.rating ?? "opportunity" }, by: who, at: Date.now() }, true);
     });
   };
   const filled = Object.entries(answers).filter(([, a]) => a.cause || a.known || a.note?.trim());
@@ -220,7 +243,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
   const saveTargets = () => { const t = targets; if (!t) return; void act("targets", (s) => { s.targets = Object.fromEntries(Object.entries(t).map(([k, v]) => [k, v.trim()]).filter(([, v]) => v)); }, () => setTargets(null)); };
   const reanalyze = () => { setMsg(null); setErr(null); onReload(); setTick((t) => t + 1); };
 
-  const fileOpts = (): ReviewFileOpts => ({ project: projectName, phase: phase?.name ?? null, tz, preparedBy: null, date: fmtInTz(Date.now(), tz, { month: "long", day: "numeric", year: "numeric" }), score: scoreIn });
+  const fileOpts = (): ReviewFileOpts => ({ project: projectName, phase: phase?.name ?? null, tz, preparedBy: null, date: fmtInTz(Date.now(), tz, { month: "long", day: "numeric", year: "numeric" }), score: scoreIn, kind: typeIn });
   const download = async (kind: "word" | "slides") => {
     if (!review) return;
     setBusy(kind); setErr(null); setHeld(null);
@@ -325,7 +348,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
             </div>
             {bk.actions.length > 0 && (
               <ol className="mt-2 space-y-3">
-                {bk.actions.map((a) => <ActionLine key={a.key} a={a} busy={busy === `plan:${a.key}` || busy === `done:${a.key}`} canManage={canManage} onPlan={(patch) => setPlan(a.key, patch)} onDone={(d) => setDone(a.key, d)} />)}
+                {bk.actions.map((a) => <ActionLine key={a.key} a={a} kind={typeIn} busy={busy === `plan:${a.key}` || busy === `done:${a.key}`} canManage={canManage} onPlan={(patch) => setPlan(a.key, patch)} onDone={(d) => setDone(a.key, d)} />)}
               </ol>
             )}
           </div>
@@ -670,7 +693,7 @@ function ScoreLine({ row, entry, busy, canManage, onSave }: { row: ScoreRow; ent
 }
 
 /** One action: what, how, the benefit, and who, by what date and at what cost. */
-function ActionLine({ a, busy, canManage, onPlan, onDone }: { a: Action; busy: boolean; canManage: boolean; onPlan: (p: { owner?: string; due?: string; cost?: string }) => void; onDone: (done: boolean) => void }) {
+function ActionLine({ a, kind, busy, canManage, onPlan, onDone }: { a: Action; kind: string | null; busy: boolean; canManage: boolean; onPlan: (p: { owner?: string; due?: string; cost?: string }) => void; onDone: (done: boolean) => void }) {
   const box = (k: "owner" | "due" | "cost", name: string, was: string, hint: string) => (
     <label className="block min-w-0"><span className={label}>{name}</span>
       {canManage
@@ -683,6 +706,7 @@ function ActionLine({ a, busy, canManage, onPlan, onDone }: { a: Action; busy: b
       <span className="shrink-0 w-7 h-7 rounded-full bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-black flex items-center justify-center">{a.n}</span>
       <div className="min-w-0 flex-1">
         <b className="block text-[15px] leading-snug">{a.what}</b>
+        <span className={`inline-block mt-0.5 rounded-full px-2 py-0.5 text-[11px] font-black ${a.applies === "all" ? "bg-sky-100 text-sky-800 dark:bg-sky-950/50 dark:text-sky-300" : "bg-[var(--color-border)]/60 text-[var(--color-text-muted)]"}`} data-applies={a.applies}>{appliesWord(a.applies, kind)}</span>
         {a.how && <p className="text-[13px]"><span className={label}>How </span>{a.how}</p>}
         <p className="text-[13px] text-[var(--color-text-muted)]"><span className={label}>Benefit </span>{a.benefit} <span className="whitespace-nowrap">({a.areaName})</span></p>
         <div className="mt-1.5 grid gap-2 grid-cols-3 sm:max-w-xl">

@@ -147,6 +147,18 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
 
 function Canvas({ spec, open }: { spec: SlideSpec; open?: Open }) {
   const b = spec.body;
+  if (b.k === "cover" && b.table) {
+    return (
+      <div style={{ position: "absolute", inset: 0, padding: "34px 58px 0", display: "flex", flexDirection: "column" }}>
+        <div style={{ fontSize: pt(12), fontWeight: 700, color: C.acc, letterSpacing: 3, textTransform: "uppercase" }}>{T(spec.kicker)}</div>
+        <div style={{ fontSize: pt(28), fontWeight: 700, lineHeight: 1.1, marginTop: 6 }}>{T(spec.title)}</div>
+        <div style={{ fontSize: pt(14), color: C.soft, marginTop: 6 }}>{T(b.sub)}</div>
+        <div style={{ fontSize: pt(11), fontWeight: 700, color: C.acc, letterSpacing: 2, textTransform: "uppercase", marginTop: 22, marginBottom: 6 }}>What this review measures</div>
+        <div style={{ flex: 1, minHeight: 0 }}><FitTable key={spec.title} body={{ k: "table", head: b.table.head, rows: b.table.rows, widths: b.table.widths }} /></div>
+        <div style={{ height: 44, paddingTop: 10, fontSize: pt(11), color: C.soft }}>{T(b.meta)}</div>
+      </div>
+    );
+  }
   if (b.k === "cover") {
     return (
       <div style={{ position: "absolute", inset: 0, padding: "144px 86px 0" }}>
@@ -272,7 +284,8 @@ function Page({ spec, open }: { spec: SlideSpec; open?: Open }) {
       <h2 className="mt-1 text-[21px] font-black leading-tight">{T(spec.title)}</h2>
       {b.k === "cover" && <>
         {b.sub && <p className="mt-2 text-[14px]" style={{ color: C.soft }}>{T(b.sub)}</p>}
-        <ol className="mt-5 space-y-1.5 text-[15px]">{b.agenda.map((t, i) => <li key={i}>{i + 1}. {T(t)}</li>)}</ol>
+        {b.table && <><div className="mt-5 text-[11px] font-black uppercase tracking-widest" style={{ color: C.acc }}>What this review measures</div><div className="mt-2"><Rows head={b.table.head} rows={b.table.rows} /></div></>}
+        {!b.table && <ol className="mt-5 space-y-1.5 text-[15px]">{b.agenda.map((t, i) => <li key={i}>{i + 1}. {T(t)}</li>)}</ol>}
         <p className="mt-6 text-[13px]" style={{ color: C.soft }}>{T(b.meta)}</p>
       </>}
       {b.k === "asks" && (

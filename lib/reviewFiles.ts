@@ -11,7 +11,7 @@ import { noEmDash } from "@/lib/noEmDash";
 import { fmtInTz } from "@/lib/scheduleTz";
 import { CAUSE_WORD, areaOf, jobWord, orderWord, pointOf, shiftsWord, whenWord, type Finding, type Review } from "@/lib/postEventReview";
 import { MIN_WAIT_H, overloaded, type CrewFlow } from "@/lib/crewFlow";
-import { AREA_STATE_WORD, GUIDES, VERDICT_WORD, bookOf, guidesOf, type AreaState, type Book, type Guide, type ScoreInputs, type Verdict } from "@/lib/reviewBook";
+import { AREA_STATE_WORD, GUIDES, SCORE_CATEGORY, VERDICT_WORD, bookOf, categoryName, guidesOf, type AreaState, type Book, type Guide, type ScoreInputs, type Verdict } from "@/lib/reviewBook";
 
 export interface ReviewFileOpts {
   project: string;
@@ -23,7 +23,12 @@ export interface ReviewFileOpts {
   date: string;
   /** Man-hours, incidents, cost and what a person entered, for the score. */
   score?: ScoreInputs;
+  /** What kind of project it is ("Turnaround"), to say who a change is for. */
+  kind?: string | null;
 }
+/** "Every turnaround" or "Next event on this unit". */
+/** Who an action is for. `kind` is the project type in a sentence ("turnaround"). */
+export const appliesWord = (a: "all" | "unit", kind?: string | null) => (a === "unit" ? "Next event on this unit" : `Every ${kind?.trim() || "event"}`);
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const live = (r: Review) => r.findings.filter((f) => f.status !== "discarded");
@@ -110,6 +115,9 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
   b.push({ k: "p", text: [pt.span, scopeLine(r)].filter(Boolean).join(" ") });
   if (bk.delayLines.length) { b.push({ k: "p", lead: `${bk.delay.split(":")[0]}: `, text: "" }); for (const l of bk.delayLines) b.push({ k: "bullet", text: l }); }
 
+  b.push({ k: "h2", text: "What this review measures" });
+  b.push({ k: "table", head: ["Category", "What is measured", "Where it is addressed"], rows: bk.categories.map((c) => [c.name, c.measures, c.where]), widths: [1.2, 3.6, 2.1] });
+
   b.push({ k: "h1", text: "2. The score: plan against actual" });
   if (bk.score.line) b.push({ k: "p", text: bk.score.line });
   b.push({ k: "table", head: ["Measure", "Target", "Actual", "Result", "Verdict"], rows: bk.score.rows.map((x) => [x.measure, x.plan, x.actual, x.result, VERDICT_WORD[x.verdict]]), widths: [1.1, 1.9, 2.4, 1.3, 1.0] });
@@ -118,6 +126,7 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
   for (const a of bk.areas) {
     b.push({ k: "h2", text: `${a.name}: ${a.tag.toLowerCase()}` });
     for (const w of a.well) b.push({ k: "bullet", lead: "Went well: ", text: w });
+    for (const t of a.measured) b.push({ k: "bullet", lead: "Measured: ", text: t });
     for (const it of a.items) {
       b.push({ k: "bullet", lead: "Did not: ", text: it.didNot });
       if (it.rootCause) b.push({ k: "bullet", lead: "Root cause: ", text: it.rootCause });
@@ -128,7 +137,7 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
   }
 
   b.push({ k: "h1", text: "4. The action plan" });
-  if (bk.actions.length) b.push({ k: "table", head: ["No.", "What we will do", "How it will be done", "Benefit", "Who", "By", "Cost"], rows: bk.actions.map((a) => [String(a.n), a.what, a.how, a.benefit, a.who || NOT_SET, a.by || NOT_SET, a.cost || NOT_SET]), widths: [0.35, 1.7, 1.9, 1.6, 0.8, 0.65, 0.65] });
+  if (bk.actions.length) b.push({ k: "table", head: ["No.", "What we will do", "For", "How it will be done", "Benefit", "Who", "By", "Cost"], rows: bk.actions.map((a) => [String(a.n), a.what, appliesWord(a.applies, o.kind), a.how, a.benefit, a.who || NOT_SET, a.by || NOT_SET, a.cost || NOT_SET]), widths: [0.35, 1.6, 0.8, 1.8, 1.5, 0.75, 0.6, 0.6] });
   else b.push({ k: "p", text: pt.pending.length ? "No action has been accepted in the review yet." : "Nothing in the records calls for a change." });
   if (pt.pending.length) { b.push({ k: "h2", text: "Waiting for a decision in the review" }); for (const c of pt.pending) b.push({ k: "bullet", text: `${c.title}.` }); }
 
@@ -274,7 +283,9 @@ type Pane = SlidePane;
 export interface SlideSpec {
   kicker: string; title: string; notes: string;
   body:
-    | { k: "cover"; sub: string; meta: string; agenda: string[] }
+    | { k: "cover"; sub: string; meta: string; agenda: string[];
+        /** What the review measures, by category, and where each is addressed. */
+        table?: { head: string[]; rows: string[][]; widths: number[] } }
     | { k: "asks"; items: Array<{ n: number; ask: string; because: string }>; foot?: string }
     | { k: "table"; head: string[]; rows: string[][]; widths: number[]; foot?: string;
         /** A colored word under each row's first cell ("Missed"). */
@@ -300,7 +311,8 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
   const dates = eventDates(r, o.tz);
   const byKey = new Map(r.findings.map((f) => [f.key, f]));
   s.push({ kicker: "Post-event review", title: dates ? `${eventName(o)}: ${dates}` : eventName(o), notes: "The score, then what went well and what did not by area, then what we do about it.",
-    body: { k: "cover", sub: projectLine(o), meta: [o.preparedBy, `Written ${o.date}`].filter(Boolean).join("  ·  "), agenda: ["The score: plan against actual", "What went well, what did not, and why", "What we do about it"] } });
+    body: { k: "cover", sub: projectLine(o), meta: [o.preparedBy, `Written ${o.date}`].filter(Boolean).join("  ·  "), agenda: ["The score: plan against actual", "What went well, what did not, and why", "What we do about it"],
+      table: { head: ["Category", "What is measured", "Where it is addressed"], rows: bk.categories.map((c) => [c.name, c.measures, c.where]), widths: [1.3, 4.2, 2.3] } } });
 
   // 1. The score.
   const sc = bk.score;
@@ -308,7 +320,7 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
     kicker: "1 · The score: plan against actual", title: pt.headline, notes: [pt.headline, sc.line].filter(Boolean).join(" "),
     body: {
       k: "table", head: ["Measure", "Target", "Actual", "Result"], widths: [1.4, 2.4, 3.4, 1.7], lead: bk.delay,
-      rows: sc.rows.map((x) => [x.measure, x.plan, x.actual, x.result]),
+      rows: sc.rows.map((x) => { const c = categoryName(SCORE_CATEGORY[x.key]); return [c.toLowerCase().startsWith(x.measure.toLowerCase()) ? x.measure : `${x.measure}\n${c}`, x.plan, x.actual, x.result]; }),
       tags: sc.rows.map((x) => ({ text: VERDICT_WORD[x.verdict], tone: VERDICT_TONE[x.verdict] })),
       more: sc.rows.map((x) => {
         const what = { title: "What it measures", lines: [x.means] };
@@ -333,7 +345,7 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
     body: {
       k: "table", head: ["Area", "What went well", "What did not", "Root cause", "Action"], widths: [1.45, 2.5, 3.0, 2.9, 0.75],
       rows: bk.areas.map((a) => [a.name, a.well.join("\n"),
-        a.items.length ? a.items.map((it) => it.didNot).join("\n") : a.pending ? `${a.pending === 1 ? "1 finding waits" : `${a.pending} findings wait`} for your call in the review.` : a.state === "none" ? "Nothing was recorded for this event." : "",
+        [...a.items.map((it) => it.didNot), ...a.measured].join("\n") || (a.pending ? `${a.pending === 1 ? "1 finding waits" : `${a.pending} findings wait`} for your call in the review.` : a.state === "none" ? "Nothing was recorded for this event." : ""),
         a.items.map((it) => it.rootCause).filter(Boolean).join("\n"), a.items.map((it) => `No. ${it.action}`).join("\n")]),
       tags: bk.areas.map((a) => ({ text: a.tag, tone: STATE_TONE[a.state] })),
       more: bk.areas.map((a) => {
@@ -357,7 +369,7 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
     kicker: `3 · What we do about it${part(i, groups.length)}`, title: `${bk.actions.length === 1 ? "1 action" : `${bk.actions.length} actions`} for the next event`, notes: g.map((a) => `${a.n}. ${a.what} Benefit: ${a.benefit}`).join(" "),
     body: {
       k: "table", head: ["What we will do", "How it will be done", "Benefit", "Who", "By", "Cost"], widths: [2.7, 3.0, 2.6, 1.2, 0.95, 0.95],
-      rows: g.map((a) => [`${a.n}. ${a.what}`, a.how, a.benefit, a.who || NOT_SET, a.by || NOT_SET, a.cost || NOT_SET]),
+      rows: g.map((a) => [`${a.n}. ${a.what}\n${a.areaName} · ${appliesWord(a.applies, o.kind)}`, a.how, a.benefit, a.who || NOT_SET, a.by || NOT_SET, a.cost || NOT_SET]),
       more: g.map((a) => { const f = byKey.get(a.key); return f ? { title: a.what, sections: [...(f.next ? [{ title: "How it will be done", lines: [f.next] }] : []), ...(f.gap ? [{ title: "Root cause", lines: [f.gap] }] : []), { title: "From the records", lines: facts(f) }] } : null; }),
       foot: g.some((a) => !a.who || !a.by || !a.cost) ? "Who, by what date and cost are set on each action in the review." : "",
     },
@@ -413,6 +425,16 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, out: "blob" | "no
       }
     };
     const foot = (t?: string) => { if (t) s.addText(T(t), { x: 0.6, y: 6.85, w: 12.1, h: 0.4, fontFace: face, fontSize: 10, color: "6B7280", valign: "top" }); };
+    if (b.k === "cover" && b.table) {
+      s.addText(T(spec.kicker.toUpperCase()), { x: 0.6, y: 0.4, w: 12.1, h: 0.3, fontFace: face, fontSize: 12, bold: true, color: ACC, charSpacing: 3 });
+      s.addText(T(spec.title), { x: 0.6, y: 0.72, w: 12.1, h: 0.6, fontFace: face, fontSize: 28, bold: true, color: INK });
+      s.addText(T(b.sub), { x: 0.6, y: 1.32, w: 12.1, h: 0.35, fontFace: face, fontSize: 14, color: SOFT });
+      s.addText("WHAT THIS REVIEW MEASURES", { x: 0.6, y: 1.8, w: 12.1, h: 0.3, fontFace: face, fontSize: 11, bold: true, color: ACC, charSpacing: 2 });
+      table(b.table.head, b.table.rows, b.table.widths, 0.6, 2.12, 12.1, 12);
+      s.addText(T(b.meta), { x: 0.6, y: 6.95, w: 12.1, h: 0.35, fontFace: face, fontSize: 11, color: SOFT });
+      s.addNotes(T(spec.notes));
+      continue;
+    }
     if (b.k === "cover") {
       s.addText(T(spec.kicker.toUpperCase()), { x: 0.9, y: 1.5, w: 11.5, h: 0.4, fontFace: face, fontSize: 14, bold: true, color: ACC, charSpacing: 3 });
       s.addText(T(spec.title), { x: 0.9, y: 1.95, w: 11.5, h: 1.1, fontFace: face, fontSize: 38, bold: true, color: INK });

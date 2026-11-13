@@ -12,8 +12,10 @@ import type { ProjectPhase } from "@/lib/projectPhases";
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui/Modal";
+import DatabaseStep from "@/components/ui/DatabaseStep";
+import { MATERIALS_TABLE_SQL } from "@/lib/setupSql";
 import {
-  MATERIALS_SQL, QUESTION_LIMIT_H, STATUSES, STATUS_WORD, ageWord, arrived, attention, blankMaterial, deleteMaterial, late, listMaterials, questionAgeH, questionOpen,
+  QUESTION_LIMIT_H, STATUSES, STATUS_WORD, ageWord, arrived, attention, blankMaterial, deleteMaterial, late, listMaterials, questionAgeH, questionOpen,
   saveMaterial, specIncomplete, statusAllowed, summarize, type Material, type MaterialFields, type MaterialStatus,
 } from "@/lib/materials";
 
@@ -86,9 +88,8 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
 
   if (!rows) return <div className="py-16 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
   if (missing) return (
-    <div className="rounded-2xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-4 py-4 text-[13px] text-amber-900 dark:text-amber-200" data-materials-missing>
-      <b className="block text-[14px]">One step before the materials register works</b>
-      It keeps its rows in a new table that isn&rsquo;t in the database yet. Run <b>{MATERIALS_SQL}</b> in Supabase (SQL Editor) once, then open this again.
+    <div data-materials-missing>
+      <DatabaseStep title="One step before the materials register works" why="It keeps its rows in a table that isn't in the database yet. The SQL makes it; it changes nothing else." sql={MATERIALS_TABLE_SQL} onCheck={load} />
     </div>
   );
 

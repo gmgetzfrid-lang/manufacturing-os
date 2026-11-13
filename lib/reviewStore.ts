@@ -115,15 +115,21 @@ const KIND: Record<CategoryId, FindingKind> = { organization: "lesson", scope: "
 
 /** Put a finding in the lessons register (kept) or take it out (not kept).
  *  `false`: the register isn't set up in the database yet. */
-export async function syncLesson(input: { orgId: string; projectId: string; projectType: string | null; scope: string; finding: Finding; kept: boolean; actor: { id: string | null; name: string | null } }): Promise<boolean> {
+/** `projectType` is the project's type word ("Turnaround", lib/projectType):
+ *  an every-event lesson shows on later projects of that type. A lesson for
+ *  the next event on this unit needs the project's unit; without one it stays
+ *  with this project. */
+export async function syncLesson(input: { orgId: string; projectId: string; projectType: string | null; unitCode?: string | null; scope: string; finding: Finding; kept: boolean; actor: { id: string | null; name: string | null } }): Promise<boolean> {
   const { finding: f } = input;
+  const unitCode = f.applies === "unit" ? input.unitCode ?? null : null;
+  const appliesTo = f.applies === "unit" ? (unitCode ? "unit" : "project") : "all";
   const l = lessonOf(f);
   if (!l.body.trim()) return true;
   try {
     await saveFinding({
       orgId: input.orgId, projectId: input.projectId, projectType: input.projectType,
-      kind: KIND[f.category], appliesTo: "all", topic: TOPIC[f.category], body: l.body, nextTime: l.nextTime,
-      assetId: null, assetTag: null, unitCode: null,
+      kind: KIND[f.category], appliesTo, topic: TOPIC[f.category], body: l.body, nextTime: l.nextTime,
+      assetId: null, assetTag: null, unitCode,
       source: "review", sourceRef: `${input.scope}:${f.key}`, status: input.kept ? "kept" : "dropped", actor: input.actor,
     });
     return true;

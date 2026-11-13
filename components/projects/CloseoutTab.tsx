@@ -195,7 +195,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   );
   if (view === "review") return (
     <div className="space-y-4">{nav}
-      <PostEventReview orgId={orgId} projectId={projectId} projectName={projectName} jobKind={jobKind} tz={tz} times={times} phases={phases} milestones={ms} log={log} notes={notes ?? []} records={records ?? new Map()} money={money0}
+      <PostEventReview orgId={orgId} projectId={projectId} projectName={projectName} tz={tz} times={times} phases={phases} milestones={ms} log={log} notes={notes ?? []} records={records ?? new Map()} money={money0}
         canManage={canManage} actor={actor} onReload={reload} onTab={onTab} />
     </div>
   );
