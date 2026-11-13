@@ -5,7 +5,8 @@ import { buildAsBuiltWork } from "@/lib/asBuiltWork";
 import { buildLookBack } from "@/lib/lookBack";
 import { discoveries, discoveryAttr, type DiscoveryRecord } from "@/lib/discovery";
 import type { ProgressLogRow } from "@/lib/progressHistory";
-import { buildReview, causeOfText, emptySaved, basisOf, decisionsOf, measuresOf, lessonOf, jobWord, shiftWord, type ReviewSaved } from "@/lib/postEventReview";
+import { deckSlides, reportBlocks } from "@/lib/reviewFiles";
+import { buildReview, causeOfText, emptySaved, basisOf, measuresOf, lessonOf, jobWord, pointOf, shiftWord, type ReviewSaved } from "@/lib/postEventReview";
 
 const tz = "America/Los_Angeles";
 const times = { dayStart: "06:00", nightStart: "18:00", breaks: [] };
@@ -81,8 +82,10 @@ describe("what a comment says a job waited on", () => {
 
 describe("the review, from the records", () => {
   it("lists each stuck job by its day shifts, with the reason for each shift", () => {
-    // Sent out: both day shifts it sat. Nights between day work don't count.
-    expect(shiftsOf("tv")).toEqual([["10/27 day", "offsite"], ["10/28 day", "offsite"]]);
+    // Sent out for service: a planned step, not stuck work. It is listed
+    // apart, by the day shifts it was away, and was back inside the 72 h quoted.
+    expect(shiftsOf("tv")).toBeUndefined();
+    expect(r.service.map((j) => [j.id, j.shifts.map(shiftWord), j.stillOut])).toEqual([["tv", ["10/27 day", "10/28 day"], null]]);
     // The plug was cleared on the 28th; by the 29th it waited on E/I. The
     // hold typed with the day's updates is read at the time they were about.
     expect(shiftsOf("psv")).toEqual([["10/29 day", "other_crew"]]);
@@ -98,30 +101,71 @@ describe("the review, from the records", () => {
   });
   it("counts in plain numbers: jobs, shifts, and how many at a time", () => {
     const m = r.metrics;
-    expect([m.stuckJobs, m.stuckShifts, m.readyJobs, m.readyShifts]).toEqual([3, 4, 1, 2]);
-    expect(m.byCause.map((c) => [c.cause, c.shifts])).toEqual([["offsite", 2], ["other_crew", 1], ["crew_elsewhere", 1]]);
+    expect([m.stuckJobs, m.stuckShifts, m.readyJobs, m.readyShifts]).toEqual([2, 2, 1, 2]);
+    expect(m.byCause.map((c) => [c.cause, c.shifts])).toEqual([["other_crew", 1], ["crew_elsewhere", 1]]);
     expect(m.noReasonShifts).toBe(1);
-    expect(r.byShift.map((c) => [shiftWord(c.key), c.stuck, c.ready])).toEqual([["10/27 day", 1, 1], ["10/28 day", 2, 1], ["10/29 day", 1, 0]]);
-    expect([m.shiftsWithStuck, m.leastAtOnce, m.mostAtOnce]).toEqual([3, 1, 3]);
+    expect(r.byShift.map((c) => [shiftWord(c.key), c.stuck, c.ready])).toEqual([["10/27 day", 0, 1], ["10/28 day", 1, 1], ["10/29 day", 1, 0]]);
+    expect([m.shiftsWithStuck, m.leastAtOnce, m.mostAtOnce]).toEqual([3, 1, 2]);
     // Labor hours are left out without head counts, never assumed.
     expect(m.labor).toBe(null);
     expect(m.addedSteps).toBe(1);
   });
+  it("says what set the finish: the last work done, the step and crew, and what was written on it", () => {
+    const f = r.finish!;
+    expect([f.lateH, f.last[0].order, f.last[1].order, f.aheadH, f.cause]).toEqual([46, "PSVs", "Control Valves", 22, "cleaning"]);
+    expect(f.steps.map((x) => [x.name, x.crew, x.plannedH, x.tookH])).toEqual([["PSV-021 - E-13 Overhead (Swap Existing with the New Model)", "Maintenance (KE)", 8, 99]]);
+    expect(f.because).toMatchObject({ crew: "Maintenance (KE)", said: "PSV pulled ready for swap. Discovered plugging in line." });
+    const pt = pointOf(r, "Phase 1", tz);
+    expect(pt.headline).toBe("Phase 1 finished 46 h late. PSVs set the finish.");
+    expect(pt.lines[0]).toBe("PSVs was the last work to finish: Fri, 10/30 1:00 PM, 91 h after its plan and 22 h after Control Valves, the work before it.");
+    expect(pt.lines[1]).toContain('(Maintenance (KE)): "PSV pulled ready for swap. Discovered plugging in line."');
+    // Service that came back as planned is said so, never as a delay.
+    expect(pt.quiet).toContain("TV-006 on the Fuel Gas Line to H-1: out for service, back as planned");
+    expect(r.qa[0].q).toBe("What caused the 46 h past the baseline finish?");
+  });
+  it("only the reason on record is named as setting the finish; the rest say what they cost", () => {
+    const by = (k: string) => r.findings.find((f) => f.key === k)!;
+    // The plugged line is what the last work's comments give: named, and first.
+    expect([r.findings[0].key, by("planning").rating, by("planning").moved]).toEqual(["planning", "gap", 3]);
+    expect(by("planning").title).toBe("PSVs set the finish: a line had to be cleaned first");
+    expect(by("planning").effect).toBe("Set the finish: PSVs was the last work done, 22 h after Control Valves.");
+    expect(by("planning").next).toContain("Check and clean the lines on PSVs before its job starts.");
+    // A hand-off on the same work is told as that, not as a crew short of people.
+    expect([by("contractors").rating, by("contractors").moved, by("contractors").title]).toEqual(["opportunity", 2, "PSV-021 - E-13 Overhead waited on another crew"]);
+    expect(by("contractors").effect).toBe("On PSVs, the last work to finish.");
+    expect(by("contractors").next).not.toMatch(/add a crew|more people/i);
+    // The count of jobs that sat leaves that job to the finding that tells
+    // it; what is left (the blinds, no reason written) was on E-13.
+    expect([by("execution").moved, by("execution").effect]).toEqual([1, "E-13 finished 19 h after its plan. PSVs finished later, so E-13 did not set the finish."]);
+    // Found work off the late work orders did not move the finish.
+    expect([by("scope").moved, by("scope").effect]).toEqual([0, "Did not move the finish."]);
+    // Nothing is said about an organization the project has not recorded.
+    expect([by("organization").rating, by("materials").rating]).toEqual(["none", "none"]);
+  });
   it("names the found work on the critical path, and asks for what was never written", () => {
     const scope = r.findings.find((f) => f.key === "scope")!;
-    expect(scope.rating).toBe("gap");
-    // One fact a line, each a whole sentence.
-    expect(scope.observation.split("\n")).toEqual(["1 activity was added from 1 finding: 18 h of work on a 52 h plan (35% more), by the schedule's estimates.", "Critical path, V-7: Unplanned clean downcomers. About 18 h."]);
+    // One fact a line, each a whole sentence; the critical-path work first.
+    expect(scope.observation.split("\n")).toEqual(["On the critical path, V-7: Unplanned clean downcomers. About 18 h.", "1 activity was added from 1 finding: 18 h of work on a 52 h plan (35% more), by the schedule's estimates."]);
+    expect(scope.proof).toBe("On the critical path, V-7: Unplanned clean downcomers. About 18 h.");
     expect(r.questions.map((q) => q.kind).sort()).toEqual(["approver", "stuck"]);
     expect(r.questions.find((q) => q.kind === "stuck")!.ask).toContain("E-13 Pull Blinds / Torque Flanges had started and sat the 10/28 day shift");
   });
-  it("every category has a finding with the practice and how it closes; safety reads the stand-down", () => {
+  it("every category has a finding; safety reads the stand-down", () => {
     expect(r.findings.map((f) => f.category).sort()).toEqual(["contractors", "execution", "materials", "organization", "planning", "records", "safety", "scope"]);
-    const mat = r.findings.find((f) => f.key === "materials")!;
-    expect(mat.observation.split("\n")).toEqual(["TV-006 on the Fuel Gas Line to H-1: sat 2 shifts (10/27 day, 10/28 day) waiting on off-site repair or calibration.", "No materials register was kept for this event."]);
-    expect(mat.next).toContain("Materials register");
+    expect(r.findings.find((f) => f.key === "materials")!.observation).toBe("No job is recorded as waiting on materials, and nothing sent out for service stayed out past its quoted time.");
     expect(r.findings.find((f) => f.key === "safety")!.rating).toBe("strength");
     expect(r.findings.find((f) => f.key === "planning")!.observation).toContain("held");
+  });
+  it("equipment still out past the time quoted is a finding; it is never counted as stuck", () => {
+    const late = [...notes, note("tv", at(29, 14, 30), "Still waiting for control valve to return. Expected 10/30/26 10:00AM", at(29, 14))];
+    const w2 = buildAsBuiltWork({ built, milestones: all, log, notes: late, records: new Map(), companyOf: (c) => c, tz, times, now: Date.parse(at(31, 12)) });
+    const r2 = buildReview({ built, work: w2, notes: late, look, discoveries: discoveries(all), tz });
+    expect(r2.service[0].stillOut?.said).toContain("Still waiting");
+    expect(r2.stuck.some((j) => j.id === "tv")).toBe(false);
+    const mat = r2.findings.find((f) => f.key === "materials")!;
+    expect([mat.rating, mat.title]).toEqual(["opportunity", "Equipment out for service came back later than quoted"]);
+    expect(mat.observation).toContain("went out for service as planned");
+    expect(mat.next).toBe("When equipment goes out for service, get the return date in writing and check on it the day before it is due.");
   });
 });
 
@@ -154,27 +198,28 @@ describe("what a person said, laid over the draft", () => {
   });
   it("a finding a person adds stands with the rest, and feeds the lessons register", () => {
     const saved = emptySaved();
-    saved.added.push({ id: "a1", category: "materials", title: "Flange not ordered", observation: "Weld neck length was not on the drawing; the warehouse question went unanswered. $700 expedite.", gap: "No owner for open material questions.", next: "Questions answered in 24 h.", at: 1, by: "me" });
+saved.added.push({ id: "a1", category: "materials", title: "Flange not ordered", observation: "Weld neck length was not on the drawing; the warehouse question went unanswered.", effect: "$700 to expedite", gap: "No owner for open material questions.", next: "Questions answered in 24 h.", at: 1, by: "me" });
     const r2 = read(saved);
     const f = r2.findings.find((x) => x.key === "added:a1")!;
     expect([f.source, f.status, f.category]).toEqual(["person", "kept", "materials"]);
+    // What it cost is the person's own words; the records claim nothing for it.
+    expect([f.effect, f.moved]).toEqual(["$700 to expedite", null]);
     expect(lessonOf(f).body).toContain("Flange not ordered. Weld neck length");
     expect(lessonOf(f).nextTime).toBe("Questions answered in 24 h.");
-    expect(decisionsOf(r2.findings).length).toBeGreaterThan(2);
-    expect(measuresOf(r2.metrics).find((x) => x.measure.startsWith("Stuck shifts"))!.result).toBe("1 of 4");
+    expect(measuresOf(r2.metrics).find((x) => x.measure.startsWith("Stuck shifts"))!.result).toBe("1 of 2");
   });
   it("targets are whatever a person set: none is assumed", () => {
     expect(r.measures.every((x) => x.target === "Not set" && !x.set)).toBe(true);
     const saved = emptySaved(); saved.targets.stuck = "Under 3";
     const m = read(saved).measures.find((x) => x.key === "stuck")!;
-    expect([m.result, m.target, m.set]).toEqual(["4", "Under 3", true]);
+    expect([m.result, m.target, m.set]).toEqual(["2", "Under 3", true]);
     // Suggestions come off this event's own result; none is applied by itself.
-    expect(m.picks).toEqual(["0", "2 (half of this event)", "4 (no worse than this event)"]);
+    expect(m.picks).toEqual(["0", "1 (half of this event)", "2 (no worse than this event)"]);
   });
   it("reads the event organization recorded on the project", () => {
     const base = { built, work, notes, look, discoveries: discoveries(all), tz };
-    // None recorded: it says so, and points at what the other categories show.
-    expect(r.findings.find((f) => f.key === "organization")!.observation).toContain("No event organization is recorded");
+    // None recorded: it says so and claims nothing about who owned what.
+    expect(r.findings.find((f) => f.key === "organization")!.title).toBe("No event organization is recorded on the project");
     expect(r.organization).toBe(null);
     const roles = [{ role: "Turnaround manager", person: "Sam", does: "", required: true }, { role: "Logistics coordinator", person: "", does: "", required: true }];
     const part = buildReview({ ...base, organization: { recorded: true, required: 2, filled: 1, missing: ["Logistics coordinator"], roles } }).findings.find((f) => f.key === "organization")!;
@@ -194,12 +239,35 @@ describe("what a person said, laid over the draft", () => {
     const w2 = buildAsBuiltWork({ built: b2, milestones: all2, log: [...log, row("bf", at(29, 9), 0, 100, "completed", "planned")], notes, records: new Map(), companyOf: (c) => c, tz, times, now: Date.parse(at(31, 12)) });
     const r2 = buildReview({ built: b2, work: w2, notes, look, discoveries: discoveries(all2), tz });
     const text = r2.findings.map((f) => `${f.observation}\n${f.evidence.join("\n")}`).join("\n") + r2.questions.map((q) => q.ask).join("\n");
-    expect(text).toContain("Critical path, V-7: Existing blind flange on first deck was swapped out because it was modified and didn't meet refinery standards. About 2 h.");
+    expect(text).toContain("On the critical path, V-7: Existing blind flange on first deck was swapped out because it was modified and didn't meet refinery standards. About 2 h.");
     expect(text).not.toMatch(/\.\.\.|and \d+ more/);
   });
   it("names a job by its tag, without the bracketed detail", () => {
     expect(jobWord({ name: "PSV-021 - E-13 Overhead (Swap Existing with the New Model)", order: "PSVs" })).toBe("PSV-021 - E-13 Overhead");
     expect(jobWord({ name: "Install Bundle", order: "E-12 - Feed Exchanger" })).toBe("E-12 Install Bundle");
     expect(jobWord({ name: "Hydroblast piping", order: "Clean fuel gas header" })).toBe("Hydroblast piping, Clean fuel gas header");
+  });
+});
+
+describe("the files open on the point", () => {
+  const o = { project: "Transmix Turnaround", phase: "Phase 1", tz, preparedBy: null, date: "November 13, 2026" };
+  it("the deck: what set the finish, then what changes; no slide of definitions or a generic plan", () => {
+    const deck = deckSlides(r, o);
+    expect(deck[1].title).toBe("Phase 1 finished 46 h late. PSVs set the finish.");
+    const b = deck[1].body;
+    expect(b.k === "split" && b.left.table?.rows).toEqual([["PSV-021 - E-13 Overhead (Swap Existing with the New Model)", "Maintenance (KE)", "8 h", "99 h"]]);
+    expect(deck[2].title).toBe("What we change next time");
+    // No owner is recorded on the project, so no owner column is made up.
+    expect(deck[2].body.k === "table" && deck[2].body.head).toEqual(["What happened", "What it cost", "What we do differently"]);
+    const titles = deck.map((x) => `${x.kicker} ${x.title}`).join(" | ");
+    expect(titles).not.toMatch(/definition|closure plan|roadmap|proposed organization|decisions/i);
+    // Service is a planned step in the backup table, not stuck work.
+    const waited = deck.find((x) => x.title === "Jobs that waited, and why")!.body;
+    expect(waited.k === "table" && waited.rows.find((row) => row[0].startsWith("TV-006"))![2]).toBe("Out for service (planned)");
+  });
+  it("the report: the same headline first", () => {
+    const blocks = reportBlocks(r, o);
+    expect(blocks.find((x) => x.k === "h1")).toMatchObject({ text: "1. Phase 1 finished 46 h late. PSVs set the finish." });
+    expect(blocks.some((x) => x.k !== "table" && /leading practice|12 months/i.test(x.text))).toBe(false);
   });
 });

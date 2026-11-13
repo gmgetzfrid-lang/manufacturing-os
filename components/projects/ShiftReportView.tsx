@@ -893,6 +893,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         ...(waitList ? { waiting: {
           started: waitList.waiting.map((j) => `${jobWord(j)} – ${waitWhy(j)}${j.said ? `: "${j.said}"` : ""} (${j.crew}, ${shiftsWord(j.shifts)})`),
           ready: waitList.ready.map((j) => `${jobWord(j)} – ready since ${ctx.DT(j.readyAt)}; ${readyWhy(j).charAt(0).toLowerCase()}${readyWhy(j).slice(1)} (${j.crew}, ${shiftsWord(j.shifts)})`),
+          service: waitList.service.map((j) => `${jobWord(j)}${j.said ? `: "${j.said}"` : ""} (${j.crew})`),
         } } : {}),
         // The hours, short, the way a shift writes them (lib/shiftHourly briefNotes).
         notes: sheet.hourly
@@ -1777,13 +1778,15 @@ const readyWhy = (j: WaitingReady["ready"][number]) => (j.crewOn.length ? `Crew 
 const WAIT_NONE = "Nothing sat this shift: every started job moved, and no ready job was left unstarted.";
 const waitingTitle = (shift: ShiftWindow, c: Ctx) => `Waiting and ready - ${shiftName(shift)} ${c.D(shift.start)}`;
 const WAIT_SUB = "started jobs with nothing logged this shift, and ready jobs that did not start";
+const SERVICE_TITLE = "Out for service (a planned step, not waiting)";
 
 /** The lists as the update's blocks (email, copy, Word). */
 function waitingBlocks(w: WaitingReady, c: Ctx): ExportBlock[] {
-  if (!w.waiting.length && !w.ready.length) return [{ k: "empty", text: WAIT_NONE }];
   const out: ExportBlock[] = [];
+  if (!w.waiting.length && !w.ready.length) out.push({ k: "empty", text: WAIT_NONE });
   if (w.waiting.length) out.push({ k: "lines", title: `Started, nothing logged this shift (${w.waiting.length})`, tone: "amber", items: w.waiting.map((j) => ({ lead: jobWord(j), text: waitWhy(j), aside: `${j.crew} · ${shiftsWord(j.shifts)}`, ...(j.said ? { note: `"${j.said}"` } : {}) })) });
   if (w.ready.length) out.push({ k: "lines", title: `Ready, not started (${w.ready.length})`, items: w.ready.map((j) => ({ lead: jobWord(j), text: `Ready since ${c.DT(j.readyAt)}`, aside: `${j.crew} · ${shiftsWord(j.shifts)}`, note: readyWhy(j) })) });
+  if (w.service.length) out.push({ k: "lines", title: `${SERVICE_TITLE} (${w.service.length})`, items: w.service.map((j) => ({ lead: jobWord(j), text: "", aside: j.crew, ...(j.said ? { note: `"${j.said}"` } : {}) })) });
   return out;
 }
 function waitingExport(w: WaitingReady, shift: ShiftWindow, c: Ctx): ExportSection & { id: string } {
@@ -1805,10 +1808,12 @@ function waitingSection(w: WaitingReady, shift: ShiftWindow, c: Ctx): Sec {
   );
   return {
     id: "waiting", title: waitingTitle(shift, c), short: "Waiting", sub: WAIT_SUB, count: n || undefined, flag: w.waiting.length ? "amber" : null,
-    body: () => (!n ? <div className="text-[13px] text-[var(--color-text-muted)]">{WAIT_NONE}</div> : (
+    body: () => (!n && !w.service.length ? <div className="text-[13px] text-[var(--color-text-muted)]">{WAIT_NONE}</div> : (
       <div className="space-y-3 text-[13px]" data-waiting-ready>
+        {!n && <div className="text-[var(--color-text-muted)]">{WAIT_NONE}</div>}
         {w.waiting.length > 0 && <div><div className="text-[11px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-400">Started, nothing logged this shift ({w.waiting.length})</div><ul>{w.waiting.map((j) => row(j.id, jobWord(j), waitWhy(j), `${j.crew} · ${shiftsWord(j.shifts)}`, j.said ? `"${j.said}"` : null))}</ul></div>}
         {w.ready.length > 0 && <div><div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Ready, not started ({w.ready.length})</div><ul>{w.ready.map((j) => row(j.id, jobWord(j), `Ready since ${c.DT(j.readyAt)}`, `${j.crew} · ${shiftsWord(j.shifts)}`, readyWhy(j)))}</ul></div>}
+        {w.service.length > 0 && <div><div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">{SERVICE_TITLE} ({w.service.length})</div><ul>{w.service.map((j) => row(j.id, jobWord(j), "", j.crew, j.said ? `"${j.said}"` : null))}</ul></div>}
         <div className="text-[11.5px] text-[var(--color-text-muted)]">A night shift counts only for work that ran on nights. The post-event review counts these the same way.</div>
       </div>
     )),

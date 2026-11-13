@@ -1,7 +1,8 @@
-// waitingReady - the two lists a shift's control meeting works from: jobs
+// waitingReady - the lists a shift's control meeting works from: jobs
 // that had started and went this whole shift with nothing logged (and why,
 // as their comments have it), and jobs that were ready before the shift
-// began and still didn't start.
+// began and still didn't start. Equipment out for repair or calibration is
+// a planned step: it is listed apart, not as waiting.
 //
 // The same rules as the post-event review (lib/postEventReview), read for
 // one shift as it stood at its end: a night shift counts only for work that
@@ -23,7 +24,11 @@ export interface WaitingJob {
   crewOn: string[];
 }
 export interface ReadyJob { id: string; name: string; order: string; crew: string; shifts: number; readyAt: number; crewOn: string[] }
-export interface WaitingReady { waiting: WaitingJob[]; ready: ReadyJob[] }
+export interface WaitingReady {
+  waiting: WaitingJob[]; ready: ReadyJob[];
+  /** Out for repair or calibration, as its comment has it: a planned step. */
+  service: WaitingJob[];
+}
 
 const toMs = (v: unknown): number | null => { const t = v == null || v === "" ? NaN : typeof v === "number" ? v : Date.parse(String(v)); return Number.isFinite(t) ? t : null; };
 const keyOf = (w: Pick<ShiftWindow, "dayKey" | "kind">) => `${w.dayKey}:${w.kind}`;
@@ -90,7 +95,7 @@ export function waitingAndReady(input: { milestones: Milestone[]; log: ProgressL
   };
 
   const said = commentsByStep(input.notes, (id) => leafIds.has(id));
-  const waiting: WaitingJob[] = [], ready: ReadyJob[] = [];
+  const waiting: WaitingJob[] = [], ready: ReadyJob[] = [], service: WaitingJob[] = [];
   for (const m of leaves) {
     const id = m.id!, started = startedAt.get(id), done = doneAt.get(id);
     if (!counts(m, shift.kind)) continue;
@@ -99,7 +104,7 @@ export function waitingAndReady(input: { milestones: Milestone[]; log: ProgressL
       if (started >= shift.start || (done != null && done <= shift.end) || touched.get(id)?.has(K)) continue;
       const by = reasonBy(said.get(id) ?? [], shift.end);
       const on = elsewhere(m);
-      waiting.push({ id, name: m.name, order: orderOf(m), crew: crewOf(m), shifts: run(m, (k) => !!touched.get(id)?.has(k)), cause: by?.cause ?? (on.length ? "crew_elsewhere" : "none"), said: by?.said ?? null, crewOn: on });
+      (by?.cause === "offsite" ? service : waiting).push({ id, name: m.name, order: orderOf(m), crew: crewOf(m), shifts: run(m, (k) => !!touched.get(id)?.has(k)), cause: by?.cause ?? (on.length ? "crew_elsewhere" : "none"), said: by?.said ?? null, crewOn: on });
       continue;
     }
     // Not started: everything before it done, and its planned start come, before this shift began.
@@ -114,5 +119,6 @@ export function waitingAndReady(input: { milestones: Milestone[]; log: ProgressL
   }
   waiting.sort((a, b) => b.shifts - a.shifts || a.order.localeCompare(b.order) || a.name.localeCompare(b.name));
   ready.sort((a, b) => b.shifts - a.shifts || a.order.localeCompare(b.order) || a.name.localeCompare(b.name));
-  return { waiting, ready };
+  service.sort((a, b) => a.order.localeCompare(b.order) || a.name.localeCompare(b.name));
+  return { waiting, ready, service };
 }

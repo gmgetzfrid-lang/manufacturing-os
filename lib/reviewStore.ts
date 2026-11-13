@@ -22,7 +22,7 @@ function cleanEdit(v: unknown): SavedItem["edits"] {
   if (!v || typeof v !== "object") return undefined;
   const e = v as Record<string, unknown>;
   const out: NonNullable<SavedItem["edits"]> = {};
-  for (const k of ["title", "observation", "practice", "gap", "next", "year", "owner"] as const) { const t = str(e[k]); if (t != null && t.trim()) out[k] = t; }
+  for (const k of ["title", "observation", "practice", "gap", "next", "year", "owner", "effect"] as const) { const t = str(e[k]); if (t != null && t.trim()) out[k] = t; }
   if (typeof e.rating === "string" && RATINGS.has(e.rating)) out.rating = e.rating as NonNullable<SavedItem["edits"]>["rating"];
   return Object.keys(out).length ? out : undefined;
 }

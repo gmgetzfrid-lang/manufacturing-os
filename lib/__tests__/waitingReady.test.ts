@@ -37,9 +37,11 @@ describe("a shift's waiting and ready lists", () => {
   it("started jobs with nothing logged this shift, with the reason on record and how long", () => {
     const r = on(28, 12);
     // The trays' crew was on another step of the same work order: nothing says why the trays sat.
-    expect(r.waiting.map((j) => [j.id, j.shifts, j.cause])).toEqual([["tv", 2, "offsite"], ["bl", 1, "crew_elsewhere"], ["tr", 1, "none"]]);
+    expect(r.waiting.map((j) => [j.id, j.shifts, j.cause])).toEqual([["bl", 1, "crew_elsewhere"], ["tr", 1, "none"]]);
     expect(r.waiting.find((j) => j.id === "bl")!.crewOn).toEqual(["V-7 - Fractionator"]);
-    expect(r.waiting[0].said).toContain("Caltrol");
+    // The valve is out for service: a planned step, listed apart from waiting.
+    expect(r.service.map((j) => [j.id, j.shifts])).toEqual([["tv", 2]]);
+    expect(r.service[0].said).toContain("Caltrol");
   });
   it("ready jobs that did not start: everything before them done before the shift began", () => {
     expect(on(26, 12).ready).toEqual([]);
@@ -55,7 +57,7 @@ describe("a shift's waiting and ready lists", () => {
   });
   it("reads the shift as it stood at its end: later progress doesn't clear it", () => {
     // TV-006 finished on the 29th; on the 27th it was still sitting.
-    expect(on(27, 12).waiting.map((j) => j.id)).toContain("tv");
-    expect(on(29, 12).waiting.map((j) => j.id)).not.toContain("tv");
+    expect(on(27, 12).service.map((j) => j.id)).toContain("tv");
+    expect(on(29, 12).service.map((j) => j.id)).not.toContain("tv");
   });
 });

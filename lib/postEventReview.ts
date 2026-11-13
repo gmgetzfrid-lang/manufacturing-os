@@ -1,5 +1,7 @@
 // postEventReview - the look back at a finished event, drafted from its own
-// records and read against how turnarounds are run well.
+// records. It leads with the point: what set the finish, which work order,
+// which step and crew, and what was written on it. Everything else is told
+// by whether it moved the finish.
 //
 // Everything here is counted from what was entered: the schedule and its
 // baseline, progress by shift, comments and hold reasons, added work and
@@ -8,16 +10,21 @@
 // was never written the review asks for it (the questions) instead of
 // guessing.
 //
+//   - What set the finish is the last work order done (before start-up),
+//     with its steps that ran long. A finding is named as the cause only
+//     when that work's own comments give it as the reason.
 //   - A job is "stuck" in a shift when it had started, wasn't finished, and
 //     nothing was logged on it for that whole shift. "Ready, not started":
 //     everything before it was done and it still didn't start that shift.
 //     Night shifts count only for work that ran on nights (lib/asBuiltWork).
-//   - Why it sat is read shift by shift: the latest comment or hold reason
+//   - Equipment out for repair or calibration is a planned step, not stuck
+//     work. It is a finding only when it stays out past the time quoted.
+//   - Why a job sat is read shift by shift: the latest comment or hold reason
 //     on the job by the end of that shift; failing that, what was written
 //     when it picked back up; failing that, where its crew was.
-//   - The eight categories are the ones a turnaround is assessed on. Each
-//     gives what the event showed, the leading practice, the gap, and how it
-//     closes: by the next event, and within 12 months.
+//   - Each of the eight categories gives what happened, what it cost, and
+//     what to do differently, said about this event. An owner is named only
+//     from the organization recorded on the project.
 //   - What a person kept, changed, added or threw out is laid over the
 //     draft and is never overwritten by a new read of the records.
 //
@@ -34,7 +41,7 @@ import { fmtInTz } from "@/lib/scheduleTz";
 
 export type Rating = "strength" | "opportunity" | "gap" | "none";
 export const RATING_WORD: Record<Rating, string> = { strength: "Strength", opportunity: "Opportunity", gap: "Gap", none: "No finding" };
-export const RATING_MEANS = "Strength: keep as is. Opportunity: improve within the existing process. Gap: a process is missing or not working.";
+export const RATING_MEANS = "Gap: it cost the event the most. Opportunity: do it differently next time. Strength: it worked; keep it.";
 
 export type CategoryId = "organization" | "scope" | "planning" | "materials" | "contractors" | "execution" | "safety" | "records";
 export const CATEGORIES: Array<{ id: CategoryId; name: string; stage: string }> = [
@@ -85,6 +92,8 @@ export function causeOfText(text: string | null | undefined): CauseId | null {
 
 export interface FindingEdit {
   title?: string; observation?: string; practice?: string; gap?: string; next?: string; year?: string; owner?: string; rating?: Rating;
+  /** What it cost, in a person's words ("$700 to expedite"). */
+  effect?: string;
 }
 export interface SavedItem {
   status?: "kept" | "discarded";
@@ -113,6 +122,35 @@ export const emptySaved = (): ReviewSaved => ({ items: {}, added: [], answers: {
 
 export interface StuckShift { key: string; cause: CauseId; said: string | null; crewOn: string[]; answered: boolean }
 export interface StuckJob { id: string; name: string; order: string; crew: string; added: boolean; shifts: StuckShift[] }
+/** Equipment sent out for repair or calibration: a planned step, not stuck
+ *  work. It is a finding only when it stays out past the time quoted. */
+export interface ServiceJob {
+  id: string; name: string; order: string; crew: string;
+  /** Shifts it was away. */
+  shifts: string[];
+  /** What was written when it went ("picked up, expected back in 72 hrs"). */
+  said: string; sentAt: number;
+  /** When it was due back, when the note gives hours. */
+  dueAt: number | null;
+  /** Still out after that, as written. */
+  stillOut: { at: number; said: string } | null;
+}
+/** What set the finish: the last work done, and why it ran long. */
+export interface FinishStory {
+  lateH: number;
+  /** The last work orders to finish (before the closing work), latest first. */
+  last: Array<{ order: string; finish: number; planFinish: number | null; lateH: number | null }>;
+  /** Hours the latest finished after the one before it. */
+  aheadH: number | null;
+  /** The work that closes the event (start-up), when it began late because the rest wasn't done. */
+  closing: { order: string; planStart: number; start: number; lateH: number; longerH: number | null } | null;
+  /** In the latest: the steps that ran longest against their plan, and what was written on them. */
+  steps: Array<{ name: string; crew: string; plannedH: number; tookH: number; said: string[] }>;
+  /** What its comments say it waited on, first. */
+  cause: CauseId | null;
+  /** That first comment: the step and crew it was written on. */
+  because: { step: string; crew: string; said: string; at: number } | null;
+}
 export interface ReadyJob { id: string; name: string; order: string; crew: string; added: boolean; shifts: string[]; busyOn: string[]; crewLogged: boolean; said: string | null }
 export interface FoundWork {
   id: string; what: string; kind: "discovery" | "added"; on: string; steps: number; done: number;
@@ -140,6 +178,7 @@ export interface ReviewMetrics {
   headCounts: { counted: number; of: number };
 }
 
+export type Moved = 0 | 1 | 2 | 3;
 export interface Finding {
   key: string;
   category: CategoryId;
@@ -150,6 +189,14 @@ export interface Finding {
   /** Each fact behind the observation, one per line, as the records have it. */
   evidence: string[];
   practice: string; gap: string; next: string; year: string; owner: string;
+  /** What it cost: whether it moved the finish. */
+  effect: string;
+  /** 3: the records name it as what set the finish. 2: it is on the last
+   *  work to finish. 1: it is on work that finished late, but not last.
+   *  0: it did not move the finish. null: the records can't say. */
+  moved: Moved | null;
+  /** The one fact that best shows it. */
+  proof: string;
   info: string[];
   status: "draft" | "kept" | "discarded";
   edited: boolean;
@@ -174,6 +221,10 @@ export interface ShiftCount { key: string; stuck: number; ready: number }
 
 export interface Review {
   metrics: ReviewMetrics;
+  /** What set the finish (when the event is finished and has a baseline). */
+  finish: FinishStory | null;
+  /** Equipment that went out for service: planned, listed apart from stuck work. */
+  service: ServiceJob[];
   stuck: StuckJob[];
   ready: ReadyJob[];
   byShift: ShiftCount[];
@@ -292,14 +343,14 @@ export function commentsByStep(notes: MilestoneNote[], has: (id: string) => bool
 }
 /** Why a job sat, as its comments have it by `end`: the latest one that
  *  gives a reason, unless it says the thing it waited on is over. */
-export function reasonBy(rows: Comment[], end: number): { cause: CauseId; said: string } | null {
+export function reasonBy(rows: Comment[], end: number): { cause: CauseId; said: string; at: number } | null {
   for (let i = rows.length - 1; i >= 0; i--) {
     const n = rows[i];
     if (n.at > end) continue;
     const c = causeOfText(n.body);
     if (!c) continue;
     if (c !== "other_crew" && RESOLVED.test(n.body)) return null;
-    return { cause: c, said: n.body };
+    return { cause: c, said: n.body, at: n.at };
   }
   return null;
 }
@@ -326,12 +377,14 @@ export function buildReview(input: ReviewInput): Review {
 
   const said = commentsByStep(input.notes, (id) => stepOf.has(id));
 
-  // ── Stuck: started, then a whole shift with nothing logged ──
-  const stuck: StuckJob[] = [];
+  // ── Stuck: started, then a whole shift with nothing logged. Equipment
+  // out for repair or calibration is a planned step and is listed apart. ──
+  const stuck: StuckJob[] = [], service: ServiceJob[] = [];
   for (const w of work.steps.values()) {
     const x = stepOf.get(w.id); if (!x || !w.waits.length) continue;
     const mine = said.get(w.id) ?? [];
     const out: StuckShift[] = [];
+    let away: ServiceJob | null = null;
     for (const run of w.waits) {
       const after = w.worked.find((k) => (idx.get(k) ?? -1) > (idx.get(run.to) ?? 1e9));
       const resumeEnd = after ? work.shifts[idx.get(after)!].end : null;
@@ -350,10 +403,21 @@ export function buildReview(input: ReviewInput): Review {
             if (c) { cause = c; quote = n.body; break; }
           }
         }
+        if (!ans?.cause && cause === "offsite" && by) {
+          if (!away) {
+            const hrs = /(\d+(?:\.\d+)?)\s*-?\s*(?:hrs?|hours?)\b/i.exec(by.said);
+            const dueAt = hrs ? by.at + Number(hrs[1]) * 3_600_000 : null;
+            const late = dueAt == null ? undefined : mine.find((n) => n.at > dueAt && causeOfText(n.body) === "offsite" && !RESOLVED.test(n.body));
+            away = { id: w.id, name: x.s.name, order: x.order.name, crew: w.crew, shifts: [], said: by.said, sentAt: by.at, dueAt, stillOut: late ? { at: late.at, said: late.body } : null };
+          }
+          away.shifts.push(k);
+          continue;
+        }
         if (ans?.cause) out.push({ key: k, cause: ans.cause, said: ans.note?.trim() || quote, crewOn: elsewhere, answered: true });
         else out.push({ key: k, cause: cause ?? (elsewhere.length ? "crew_elsewhere" : "none"), said: quote, crewOn: elsewhere, answered: false });
       }
     }
+    if (away) service.push(away);
     if (out.length) stuck.push({ id: w.id, name: x.s.name, order: x.order.name, crew: w.crew, added: w.found, shifts: out });
   }
   stuck.sort((a, b) => b.shifts.length - a.shifts.length || (idx.get(a.shifts[0].key)! - idx.get(b.shifts[0].key)!) || a.name.localeCompare(b.name));
@@ -466,27 +530,29 @@ export function buildReview(input: ReviewInput): Review {
   }
 
   // ── The findings ──
-  const drafts = draftFindings({ metrics, stuck, ready, found, holds, built, work, tz, materials: input.materials ?? null, organization: input.organization ?? null });
+  const finish = finishStory(built, said, (id) => work.steps.get(id)?.crew ?? "");
+  const drafts = draftFindings({ metrics, stuck, ready, found, holds, built, work, tz, finish, service, materials: input.materials ?? null, organization: input.organization ?? null });
   const findings: Finding[] = drafts.map((d) => overlay(d, saved.items[d.key]));
   for (const a of saved.added) {
     const it = saved.items[`added:${a.id}`];
     findings.push({
       key: `added:${a.id}`, category: a.category, source: "person", rating: a.rating ?? "opportunity",
       title: a.title?.trim() || "Finding", observation: a.observation?.trim() ?? "", evidence: [],
-      practice: a.practice?.trim() || PRACTICE[a.category].practice, gap: a.gap?.trim() ?? "", next: a.next?.trim() ?? "", year: a.year?.trim() ?? "", owner: a.owner?.trim() ?? "",
+      practice: a.practice?.trim() ?? "", gap: a.gap?.trim() ?? "", next: a.next?.trim() ?? "", year: a.year?.trim() ?? "", owner: a.owner?.trim() ?? "", effect: a.effect?.trim() ?? "", moved: null, proof: (a.observation ?? "").split("\n").map((l) => l.trim()).filter(Boolean)[0] ?? "",
       info: it?.info ?? [], status: it?.status === "discarded" ? "discarded" : "kept", edited: false, stale: false,
       drafted: { title: a.title?.trim() || "Finding", observation: a.observation?.trim() ?? "", rating: a.rating ?? "opportunity" }, by: a.by, at: a.at,
     });
   }
   const order = new Map(CATEGORIES.map((c, i) => [c.id, i]));
   const weight: Record<Rating, number> = { gap: 0, opportunity: 1, strength: 2, none: 3 };
-  findings.sort((a, b) => weight[a.rating] - weight[b.rating] || order.get(a.category)! - order.get(b.category)!);
+  const moved = (f: Finding) => 3 - (f.moved ?? 0);
+  findings.sort((a, b) => weight[a.rating] - weight[b.rating] || moved(a) - moved(b) || order.get(a.category)! - order.get(b.category)!);
 
   const live = findings.filter((f) => f.status !== "discarded");
   const strengths = strengthsOf(metrics, found, holds, live);
   return {
-    metrics, stuck, ready, byShift, found, holds, findings, questions, answeredCount, strengths,
-    qa: qaOf(metrics, found, stuck, tz),
+    metrics, finish, service, stuck, ready, byShift, found, holds, findings, questions, answeredCount, strengths,
+    qa: qaOf(metrics, found, stuck, tz, finish),
     measures: measuresOf(metrics, saved.targets),
     organization: input.organization?.recorded ? input.organization : null,
     definitions: DEFINITIONS,
@@ -502,7 +568,7 @@ function overlay(d: Draft, it: SavedItem | undefined): Finding {
   return {
     key: d.key, category: d.category, source: "records",
     rating: e.rating ?? d.rating, title: pick(e.title, d.title), observation: pick(e.observation, d.observation), evidence: d.evidence,
-    practice: pick(e.practice, d.practice), gap: pick(e.gap, d.gap), next: pick(e.next, d.next), year: pick(e.year, d.year), owner: pick(e.owner, d.owner),
+    practice: pick(e.practice, d.practice), gap: pick(e.gap, d.gap), next: pick(e.next, d.next), year: pick(e.year, d.year), owner: pick(e.owner, d.owner), effect: pick(e.effect, d.effect), moved: d.moved, proof: d.proof,
     info: it?.info ?? [], status: it?.status ?? "draft", edited,
     stale: !!it?.basis && it.basis !== basis && (edited || it.status === "kept"),
     drafted: { title: d.title, observation: d.observation, rating: d.rating }, by: it?.by ?? null, at: it?.at ?? null,
@@ -515,165 +581,229 @@ export const basisOf = (f: Pick<Finding, "drafted">) => hash(`${f.drafted.title}
 
 interface Draft {
   key: CategoryId; category: CategoryId; rating: Rating; title: string; observation: string; evidence: string[];
-  practice: string; gap: string; next: string; year: string; owner: string;
+  practice: string; gap: string; next: string; year: string; owner: string; effect: string; moved: Moved | null; proof: string;
 }
 
-export const PRACTICE: Record<CategoryId, { practice: string; gap: string; next: string; year: string; owner: string }> = {
-  organization: {
-    practice: "The organization is designed for the event: a turnaround manager, coordinators for preparation, planning and logistics, an area coordinator per unit and discipline supervisors, each with written responsibilities, briefed face to face.",
-    gap: "The organization formed around available people. No single role owned materials and off-site repairs.",
-    next: "Name the turnaround manager, the logistics coordinator and the area coordinators six months before the event, with written roles and responsibilities.",
-    year: "An organization design standard for every event, with training and succession for each key role.",
-    owner: "Steering group",
-  },
-  scope: {
-    practice: "Scope is built from inspection history, operating data and prior findings, then validated (check, challenge, analyse, clarify) and frozen on a set date. Work found later goes through one approval routine.",
-    gap: "No pre-event condition assessment (piping thickness, internals) fed the work list, and found work had no planned allowance in the schedule or the budget.",
-    next: "On-stream thickness survey and an internals review on the equipment in scope, before scope freeze. Carry a found-work allowance in schedule and budget, sized from this event.",
-    year: "A findings register and inspection data feed each unit's work list.",
-    owner: "Planning; Inspection",
-  },
-  planning: {
-    practice: "The shutdown network carries decontamination and gas-free testing at real durations. Each task is screened for known contingencies, with resources arranged in advance.",
-    gap: "Decontamination and known contingencies were assumed, not scheduled. Resources were arranged after the need appeared.",
-    next: "Steam-out, air stripping and gas test as scheduled activities with an owner. A contingency list per task (plugged lines, failed tests) with resources on call.",
-    year: "Standard task templates (vessel entry, exchanger, relief valve, control valve) with contingency steps built in.",
-    owner: "Planning; Operations",
-  },
-  materials: {
-    practice: "One materials register: every item fully specified, owned and dated. Items at risk go to one expediter. Off-site repairs run to agreed return dates under one coordinator.",
-    gap: "No consolidated materials register, no kit check against the task sheets, and vendor return dates managed by estimate, not commitment.",
-    next: "Materials register (specification, owner, status, need-by date) from scope freeze. Open questions answered within 24 hours. Kit check two weeks before the start. One coordinator for everything sent off site.",
-    year: "The register built into the turnaround system, with material readiness reported at every gate.",
-    owner: "Logistics coordinator",
-  },
-  contractors: {
-    practice: "Mobilization (orientation, badging, tool checks) completes before the event. Crew loading is leveled against the critical path, with surge capacity agreed in the contract.",
-    gap: "Crew capacity by craft was not matched to the work running at the same time.",
-    next: "Level the crew loading by craft before the event. Agree a surge crew or an extra shift as a contract option. Schedule support crafts (E/I, inspection) for each tie-in.",
-    year: "A contracting strategy per work package, with performance measures and surge terms.",
-    owner: "Turnaround manager; Contracts",
-  },
-  execution: {
-    practice: "A daily control meeting reviews every waiting and ready job against the critical path. Every delay gets a reason when it occurs.",
-    gap: "No standard delay reasons, and ready work was not re-sequenced each day against the critical path.",
-    next: "Waiting and ready lists as the first item of the daily control meeting. A reason required on every hold and every job that sits a shift.",
-    year: "Delay reasons trended across events, with waiting time reported as a standard measure.",
-    owner: "Area coordinators",
-  },
-  safety: {
-    practice: "A safe system of work: permits, isolation and gas testing control every entry, and anyone stops the job when conditions change.",
-    gap: "",
-    next: "Keep the stand-down practice. Record each stand-down with its duration so the plan can carry realistic entry times.",
-    year: "Safety observations and stand-downs trended across events.",
-    owner: "HSE lead",
-  },
-  records: {
-    practice: "The event is recorded as it runs (progress, delays with reasons, added work with approval, head counts) and closed with a post-event review that feeds the next plan.",
-    gap: "Some records were not kept during the event, which limits what the review can measure.",
-    next: "Head count at every shift meeting, an approver on every added job, a reason on every hold. Post-event review within two weeks of completion.",
-    year: "A lessons register that carries each kept finding into the next event's plan.",
-    owner: "Turnaround manager",
-  },
+/** Who owns each category's follow-up: the person named in that role on
+ *  the project's event organization. None recorded, none named. */
+const OWNER_ROLE: Record<CategoryId, RegExp> = {
+  organization: /steering|turnaround manager/i, scope: /planning|preparation/i, planning: /planning|preparation/i, materials: /logistic|material/i,
+  contractors: /area coordinator/i, execution: /area coordinator/i, safety: /hse|safety/i, records: /turnaround manager/i,
 };
+function ownerOf(key: CategoryId, org: OrgStanding | null): string {
+  const r = org?.recorded ? org.roles.find((x) => x.person.trim() && OWNER_ROLE[key].test(x.role)) : undefined;
+  return r ? `${r.person.trim()} (${r.role})` : "";
+}
 
-function draftFindings(x: { metrics: ReviewMetrics; stuck: StuckJob[]; ready: ReadyJob[]; found: FoundWork[]; holds: HoldFact[]; built: AsBuilt; work: AsBuiltWork; tz: string; materials: ReviewInput["materials"]; organization: OrgStanding | null }): Draft[] {
-  const { metrics: m, stuck, ready, found, holds } = x;
-  const P = PRACTICE;
+const HOUR = 3_600_000;
+const CHATTER = /^(progress\b|actual times corrected)/i;
+
+/** What set the finish: the last work done, how far behind its plan and the
+ *  rest it was, and the steps in it that ran long, with what was written. */
+function finishStory(built: AsBuilt, said: Map<string, Comment[]>, crewOf: (id: string) => string): FinishStory | null {
+  if (built.finish == null || built.planFinish == null || built.done < built.steps) return null;
+  const done = built.orders.filter((o) => o.finish != null && o.steps.length).sort((a, b) => b.finish! - a.finish!);
+  if (!done.length) return null;
+  let closing: FinishStory["closing"] = null, rest = done;
+  // The work that closes the event (start-up) began late because the rest wasn't done.
+  const L = done[0], lStart = L.start ?? L.barStart;
+  if (done.length > 1 && L.planStart != null && lStart != null && lStart - L.planStart >= HOUR && done[1].finish! > L.planStart) {
+    const planned = L.planFinish != null ? (L.planFinish - L.planStart) / HOUR : null;
+    closing = { order: L.name, planStart: L.planStart, start: lStart, lateH: r1((lStart - L.planStart) / HOUR), longerH: planned == null ? null : r1((L.finish! - lStart) / HOUR - planned) };
+    rest = done.slice(1);
+  }
+  const top = rest[0];
+  const steps = top.steps.filter((x) => x.elapsedH != null && x.elapsedH - x.plannedH >= 2).sort((a, b) => (b.elapsedH! - b.plannedH) - (a.elapsedH! - a.plannedH)).slice(0, 3)
+    .map((x) => ({ name: x.name, crew: crewOf(x.id), plannedH: r1(x.plannedH), tookH: r1(x.elapsedH!), said: (said.get(x.id) ?? []).filter((c) => !CHATTER.test(c.body) && causeOfText(c.body)).map((c) => c.body).slice(0, 2) }));
+  let cause: CauseId | null = null, because: FinishStory["because"] = null;
+  for (const st of top.steps) for (const c of said.get(st.id) ?? []) { const k = causeOfText(c.body); if (k && !CHATTER.test(c.body) && c.at < (because?.at ?? Infinity)) { cause = k; because = { step: st.name, crew: crewOf(st.id), said: c.body, at: c.at }; } }
+  return {
+    lateH: r1((built.finish - built.planFinish) / HOUR),
+    last: rest.slice(0, 3).map((o) => ({ order: o.name, finish: o.finish!, planFinish: o.planFinish, lateH: o.varianceH })),
+    aheadH: rest.length > 1 ? r1((rest[0].finish! - rest[1].finish!) / HOUR) : null, closing, steps, cause, because,
+  };
+}
+/** The last work to finish, and by how much. */
+export function lastLine(f: FinishStory, tz: string): string {
+  const [top, next] = f.last;
+  return `${orderWord(top.order)} was the last work to finish: ${whenWord(top.finish, tz)}${top.lateH != null ? `, ${top.lateH} h after its plan` : ""}${next && f.aheadH != null ? ` and ${f.aheadH} h after ${orderWord(next.order)}, the work before it` : ""}.`;
+}
+/** What was written on it first that gives a reason, with the step and crew. */
+export const becauseLine = (f: FinishStory): string => (f.because ? `Recorded on ${f.because.step}${f.because.crew ? ` (${f.because.crew})` : ""}: "${f.because.said}"` : "");
+/** The work that closes the event (start-up), when it began late. */
+export const closingLine = (f: FinishStory): string => { const c = f.closing; return c ? `${orderWord(c.order)} began ${c.lateH} h after its planned start${c.longerH != null && Math.abs(c.longerH) >= 1 ? ` and ran ${Math.abs(c.longerH)} h ${c.longerH > 0 ? "longer" : "shorter"} than planned` : ""}.` : ""; };
+/** The finish story as lines: what was last, what was written, and the steps that ran long. */
+export function finishLines(f: FinishStory, tz: string): string[] {
+  const out = [lastLine(f, tz), becauseLine(f)];
+  for (const st of f.steps) {
+    const more = st.said.filter((t) => t !== f.because?.said);
+    out.push(`${st.name}${st.crew ? ` (${st.crew})` : ""}: planned ${st.plannedH} h, took ${st.tookH} h.${more.length ? ` Recorded: ${more.map((t) => `"${t}"`).join(" Then: ")}` : ""}`);
+  }
+  return out.filter(Boolean);
+}
+/** What a set of work orders cost the finish. 3: the records name this as
+ *  what set it (`named`). 2: it is on the last work to finish. 1: it is on
+ *  work that finished late but not last. 0: nothing. */
+function effectOf(orders: string[], f: FinishStory | null, named = false): { level: Moved; text: string } {
+  if (!f || !f.last.length) return { level: 0, text: "" };
+  const [top, next] = f.last;
+  if (orders.includes(top.order)) {
+    const last = `${orderWord(top.order)} was the last work done${next && f.aheadH != null ? `, ${f.aheadH} h after ${orderWord(next.order)}` : ""}.`;
+    return named ? { level: 3, text: `Set the finish: ${last}` } : { level: 2, text: `On ${orderWord(top.order)}, the last work to finish.` };
+  }
+  const hit = f.last.slice(1).find((o) => orders.includes(o.order) && (o.lateH ?? 0) >= 1);
+  if (hit) return { level: 1, text: `${orderWord(hit.order)} finished ${hit.lateH} h after its plan. ${orderWord(top.order)} finished later, so ${orderWord(hit.order)} did not set the finish.` };
+  return { level: 0, text: "Did not move the finish." };
+}
+
+function draftFindings(x: { metrics: ReviewMetrics; stuck: StuckJob[]; ready: ReadyJob[]; found: FoundWork[]; holds: HoldFact[]; built: AsBuilt; work: AsBuiltWork; tz: string; finish: FinishStory | null; service: ServiceJob[]; materials: ReviewInput["materials"]; organization: OrgStanding | null }): Draft[] {
+  const { metrics: m, stuck, ready, found, holds, finish: fin, service } = x;
   // The observation is a list of facts, one a line, each a whole sentence.
+  // The gap and what to do next time are said about this event, not in general.
   const make = (key: CategoryId, rating: Rating, title: string, lines: string[], evidence: string[], over: Partial<Draft> = {}): Draft => ({
-    key, category: key, rating, title, observation: lines.map((l) => l.trim()).filter(Boolean).join("\n"), evidence, ...P[key], ...(rating === "strength" || rating === "none" ? { gap: "" } : {}), ...over,
+    key, category: key, rating, title, observation: lines.map((l) => l.trim()).filter(Boolean).join("\n"), evidence,
+    practice: "", owner: ownerOf(key, x.organization), gap: "", next: "", year: "", effect: "", moved: null, proof: lines.map((l) => l.trim()).filter(Boolean)[0] ?? "", ...over,
   });
+  const rated = (level: Moved, floor: Rating = "none"): Rating => (level === 3 ? "gap" : level ? "opportunity" : floor);
   const shiftsOf = (c: CauseId) => stuck.flatMap((j) => j.shifts.filter((s) => s.cause === c).map((s) => ({ j, s })));
-  /** Each job that sat for this reason, with its shifts and what was written. */
   const byJob = (c: CauseId) => {
     const by = new Map<string, { j: StuckJob; ks: string[]; said: string | null }>();
     for (const { j, s } of shiftsOf(c)) { const e = by.get(j.id) ?? { j, ks: [], said: null }; e.ks.push(s.key); e.said = e.said ?? s.said; by.set(j.id, e); }
     return [...by.values()];
   };
-  const jobLines = (c: CauseId) => byJob(c).map((e) => `${jobWord(e.j)} (${e.j.crew}): sat ${plural(e.ks.length, "shift")} (${shiftsWord(e.ks)})${e.said ? `. Recorded: "${e.said}"` : ""}`);
-  const sat = (c: CauseId, why: string) => byJob(c).map((e) => `${jobWord(e.j)}: sat ${plural(e.ks.length, "shift")} (${shiftsWord(e.ks)}) ${why}.`);
+  const sat = (c: CauseId, why: string) => byJob(c).map((e) => `${jobWord(e.j)} (${e.j.crew}): sat ${plural(e.ks.length, "shift")} (${shiftsWord(e.ks)}) ${why}.${e.said ? ` Recorded: "${e.said}"` : ""}`);
+  const ordersOf = (c: CauseId) => byJob(c).map((e) => e.j.order);
+  const tags = (orders: string[]) => list([...new Set(orders.map(orderWord))]);
+  const top = fin?.last[0] ?? null;
   const out: Draft[] = [];
 
-  // Scope definition.
+  // Materials and logistics: a shortfall that set the finish leads.
+  {
+    const lines: string[] = [], orders: string[] = [];
+    const overdue = service.filter((j) => j.stillOut);
+    const short = !!(fin && top && fin.cause === "material");
+    const lateBack = !!(fin && top && fin.cause === "offsite" && overdue.some((j) => j.order === top.order));
+    const drove = short || lateBack;
+    if (drove) { lines.push(...finishLines(fin!, x.tz)); orders.push(top!.order); }
+    lines.push(...sat("material", "waiting on materials")); orders.push(...ordersOf("material"));
+    for (const j of overdue) { lines.push(`${jobWord(j)}: went out for service as planned ("${j.said}"). It was still out past the time quoted: "${j.stillOut!.said}" (${whenWord(j.stillOut!.at, x.tz)}).${top && j.order !== top.order ? " This did not move the finish." : ""}`); if (!drove) orders.push(j.order); }
+    const r = x.materials;
+    if (r && r.lines > 0) lines.push(`Materials register: ${plural(r.lines, "line")}; ${r.specIncomplete} with an incomplete specification; ${r.late} short or late; ${plural(r.openQuestions, "question")} open more than 24 h.`);
+    const bad = r ? r.specIncomplete + r.late + r.openQuestions : 0;
+    const e = effectOf(orders, fin, drove);
+    if (!lines.length || (!orders.length && !bad)) out.push(make("materials", r && r.lines > 0 ? "strength" : "none", r && r.lines > 0 ? "Materials were ready when the work needed them" : "No materials finding in the records", lines.length ? lines : ["No job is recorded as waiting on materials, and nothing sent out for service stayed out past its quoted time."], []));
+    else {
+      if (!r || !r.lines) lines.push("No materials register was kept for this event.");
+      const onlyService = overdue.length > 0 && !short && !shiftsOf("material").length;
+      out.push(make("materials", rated(e.level, "opportunity"), short ? `A material shortfall on ${orderWord(top!.order)} set the finish` : lateBack ? `Equipment back late from service set the finish on ${orderWord(top!.order)}` : onlyService ? "Equipment out for service came back later than quoted" : "Material readiness was not complete at the start", lines, [], {
+        effect: e.text, moved: e.level, ...(drove && becauseLine(fin!) ? { proof: becauseLine(fin!) } : {}),
+        gap: short ? `What ${orderWord(top!.order)} needed was not counted against what was ordered before the event.` : onlyService || lateBack ? "The return date was the shop's estimate, not a committed date." : "Material was not all in hand when the job needed it.",
+        next: [short || shiftsOf("material").length ? "Before the unit comes down, count the parts each job needs against what was ordered, and close any shortfall." : "", overdue.length && !short ? "When equipment goes out for service, get the return date in writing and check on it the day before it is due." : ""].filter(Boolean).join(" "),
+      }));
+    }
+  }
+
+  // Planning and scheduling: time the plan did not carry.
+  {
+    const gas = holds.filter((h) => h.cause === "permit");
+    const gasH = r1(gas.reduce((n, h) => n + h.hours, 0));
+    const lines: string[] = [], orders: string[] = [];
+    for (const h of gas) { lines.push(`${jobWord(h)}: held ${h.hours} h. Recorded: "${h.reason}"`); orders.push(h.order); }
+    lines.push(...sat("cleaning", "until a line was cleaned"), ...sat("test", "on a leak or a failed test")); orders.push(...ordersOf("cleaning"), ...ordersOf("test"));
+    const drove = !!(fin && top && fin.cause && ["test", "cleaning", "permit"].includes(fin.cause));
+    if (drove) { lines.unshift(...finishLines(fin!, x.tz)); orders.push(top!.order); }
+    const e = effectOf(orders, fin, drove);
+    if (!lines.length) out.push(make("planning", "none", "No planning finding in the records", ["No holds for gas testing or decontamination, and no job sat waiting on cleaning or a failed test."], []));
+    else out.push(make("planning", rated(e.level, gasH >= 12 ? "opportunity" : "none"), drove ? `${orderWord(top!.order)} set the finish: ${fin!.cause === "permit" ? "gas-freeing" : fin!.cause === "test" ? "a leak or failed test" : "a line had to be cleaned first"}` : gas.length ? `Gas-freeing ${tags(gas.map((h) => h.order))} took ${gasH} h the plan did not carry` : "Jobs stopped for cleaning or a failed test", lines, [], {
+      effect: e.text, moved: e.level, ...(drove && becauseLine(fin!) ? { proof: becauseLine(fin!) } : {}),
+      gap: drove && fin!.cause === "cleaning" ? `The plugged line on ${orderWord(top!.order)} was found after its job had started.` : drove && fin!.cause === "test" ? `The plan for ${orderWord(top!.order)} had no time for a failed test and the rework after it.` : gas.length ? "The schedule had no time for gas testing and air stripping before entry." : "The plan carried no allowance for a plugged line or a failed test on these jobs.",
+      next: [
+        drove && fin!.cause === "cleaning" ? `Check and clean the lines on ${orderWord(top!.order)} before its job starts.` : "",
+        drove && fin!.cause === "test" ? `Put a re-test and its rework in the plan for ${orderWord(top!.order)}.` : "",
+        gas.length ? `Schedule gas-freeing as its own activity before entry, at the time it took here (${gasH} h on ${tags(gas.map((h) => h.order))}).` : "",
+        shiftsOf("cleaning").length ? `Clean the lines behind ${tags(ordersOf("cleaning"))} before the valves come out.` : "",
+      ].filter(Boolean).join(" "),
+    }));
+  }
+
+  // Scope definition: work found during the event.
   {
     const ev = found.map((f) => `${f.what} (${tagOf(f.on)}): ${plural(f.steps, "activity", "activities")}, about ${f.hours} h of work when approved${f.critical ? ", on the critical path" : ""}${f.approvedBy ? `, approved by ${f.approvedBy}` : ", no approver recorded"}`);
     if (!found.length) out.push(make("scope", m.steps ? "strength" : "none", "Scope held through the event", [m.steps ? `All ${m.baselineSteps} planned activities; no work was added during the event.` : "No schedule to read."], []));
     else {
       const crit = found.filter((f) => f.critical);
-      const lines = [`${plural(m.addedSteps, "activity was", "activities were")} added from ${plural(found.length, "finding")}${m.addedPct != null ? `: ${m.addedH} h of work on a ${m.baselineH} h plan (${m.addedPct}% more), by the schedule's estimates` : ""}.`];
-      for (const f of found) lines.push(`${f.critical ? "Critical path, " : ""}${tagOf(f.on)}: ${short(f.what)}. About ${f.hours} h.`);
-      out.push(make("scope", crit.length || (m.addedPct ?? 0) >= 10 ? "gap" : "opportunity", "Scope did not fully reflect equipment condition", lines, ev));
+      const total = `${plural(m.addedSteps, "activity was", "activities were")} added from ${plural(found.length, "finding")}${m.addedPct != null ? `: ${m.addedH} h of work on a ${m.baselineH} h plan (${m.addedPct}% more), by the schedule's estimates` : ""}.`;
+      const lines = [...crit.map((f) => `On the critical path, ${tagOf(f.on)}: ${short(f.what)}. About ${f.hours} h.`), total, ...found.filter((f) => !f.critical).map((f) => `${tagOf(f.on)}: ${short(f.what)}. About ${f.hours} h.`)];
+      const e = effectOf(crit.map((f) => f.on), fin);
+      out.push(make("scope", rated(e.level, (m.addedPct ?? 0) >= 10 ? "opportunity" : "none"), `Found work added ${plural(m.addedSteps, "activity", "activities")}, ${m.addedH} h${crit.length ? `; ${crit.length} on the critical path (${tags(crit.map((f) => f.on))})` : ""}`, lines, ev, {
+        effect: crit.length ? e.text : "Did not move the finish.", moved: crit.length ? e.level : 0,
+        gap: "These conditions were not known when the scope was set.",
+        next: `Before scope freeze, check the condition of the same equipment (${tags(found.map((f) => f.on))}): inspection history, thickness readings, and what operations sees fouling. Carry time for found work: this event added ${m.addedH} h.`,
+      }));
     }
   }
 
-  // Planning and scheduling.
+  // Contractors and resourcing: ready work that waited for a crew, and jobs
+  // that waited on another crew. Told apart: only the one on late work is
+  // named, and nothing is said about head count the records don't show.
   {
-    const gas = holds.filter((h) => h.cause === "permit");
-    const gasH = r1(gas.reduce((n, h) => n + h.hours, 0));
-    const clean = shiftsOf("cleaning"), test = shiftsOf("test");
-    const lines: string[] = [], ev: string[] = [];
-    for (const h of gas) { lines.push(`${jobWord(h)}: held ${h.hours} h for gas testing or decontamination.`); ev.push(`${jobWord(h)}: held ${h.hours} h. Recorded: "${h.reason}"`); }
-    lines.push(...sat("cleaning", "until a line was cleaned")); ev.push(...jobLines("cleaning"));
-    lines.push(...sat("test", "on a leak or a failed test")); ev.push(...jobLines("test"));
-    if (lines.length) out.push(make("planning", gasH >= 24 || clean.length + test.length >= 4 ? "gap" : "opportunity", "Decontamination and contingency time was not in the plan", lines, ev));
-    else out.push(make("planning", "none", "No planning finding in the records", ["No holds for gas testing or decontamination, and no job sat waiting on cleaning or a failed test."], []));
-  }
-
-  // Materials and logistics.
-  {
-    const off = shiftsOf("offsite"), mat = shiftsOf("material");
-    const lines = [...sat("offsite", "waiting on off-site repair or calibration"), ...sat("material", "waiting on materials")];
-    const ev = [...jobLines("offsite"), ...jobLines("material")];
-    const r = x.materials;
-    if (r && r.lines > 0) {
-      lines.push(`Materials register: ${plural(r.lines, "line")}; ${r.specIncomplete} with an incomplete specification; ${r.late} short or late; ${plural(r.openQuestions, "question")} open more than 24 h.`);
-      const bad = r.specIncomplete + r.late + r.openQuestions, n = bad + off.length + mat.length;
-      out.push(make("materials", off.length + mat.length >= 2 || bad >= 3 ? "gap" : n > 0 ? "opportunity" : "strength", n ? "Material readiness was not complete at the start" : "Materials were ready when the work needed them", lines, ev,
-        n ? { gap: "Items on the register reached the event incomplete, late or with open questions.", next: "Every register line specified, owned and dated at scope freeze. Open questions answered within 24 hours. Kit check two weeks before the start. One coordinator for everything sent off site." } : {}));
-    } else if (lines.length) {
-      lines.push("No materials register was kept for this event.");
-      out.push(make("materials", off.length + mat.length >= 2 ? "gap" : "opportunity", "Material readiness was not tracked to an owner and a date", lines, ev));
-    } else out.push(make("materials", "none", "No materials finding in the records", ["No job is recorded as waiting on materials or an off-site repair.", "No materials register was kept for this event, so material readiness can't be measured."], []));
-  }
-
-  // Contractors and resourcing.
-  {
-    const other = shiftsOf("other_crew");
     const lines: string[] = [], ev: string[] = [];
     for (const j of ready) {
       const on = [...new Set(j.busyOn.map(orderWord))];
       lines.push(`${jobWord(j)}: ready and not started for ${plural(j.shifts.length, "shift")} (${shiftsWord(j.shifts)}). ${on.length ? `${j.crew} was on ${list(on)}` : j.crewLogged ? `${j.crew} was on other work` : `${j.crew} logged no work then`}.`);
       ev.push(`${jobWord(j)} (${j.crew}): ready ${whenWord(x.work.steps.get(j.id)!.ready!.at, x.tz)}, not started for ${plural(j.shifts.length, "shift")} (${shiftsWord(j.shifts)})${j.said ? `. Answer: "${j.said}"` : ""}`);
     }
-    lines.push(...sat("other_crew", "waiting on another crew")); ev.push(...jobLines("other_crew"));
-    const n = m.readyShifts + other.length;
-    if (n) out.push(make("contractors", n >= 8 ? "gap" : "opportunity", "Crew capacity did not match the work running at the same time", lines, ev));
-    else out.push(make("contractors", m.steps ? "strength" : "none", "Crews picked up ready work without delay", ["No job sat a full shift ready and not started, and none waited on another crew."], []));
+    const hand = byJob("other_crew");
+    const handLines = sat("other_crew", "waiting on another crew");
+    const handNamed = !!(fin && top && fin.cause === "other_crew");
+    const eHand = effectOf(handNamed ? [top!.order, ...ordersOf("other_crew")] : ordersOf("other_crew"), fin, handNamed);
+    const eReady = effectOf(ready.map((j) => j.order), fin);
+    const late = (o: string) => !!fin && fin.last.some((l, i) => l.order === o && (i === 0 || (l.lateH ?? 0) >= 1));
+    if (eHand.level >= eReady.level && eHand.level > 0) lines.unshift(...handLines); else lines.push(...handLines);
+    if (!lines.length) out.push(make("contractors", m.steps ? "strength" : "none", "Crews picked up ready work without delay", ["No job sat a full shift ready and not started, and none waited on another crew."], []));
+    else if (eHand.level >= eReady.level && eHand.level > 0) {
+      const jobs = hand.filter((h) => late(h.j.order));
+      if (handNamed) lines.unshift(...finishLines(fin!, x.tz));
+      out.push(make("contractors", rated(eHand.level), handNamed ? `${orderWord(top!.order)} set the finish waiting on another crew` : `${list(jobs.map((h) => jobWord(h.j)))} waited on another crew`, lines, ev, {
+        effect: eHand.text, moved: eHand.level, proof: handNamed && becauseLine(fin!) ? becauseLine(fin!) : handLines.find((l) => jobs.some((h) => l.startsWith(jobWord(h.j)))) ?? lines[0],
+        gap: "The next crew was not lined up for when the job was ready for it.",
+        next: `At the shift meeting, name the jobs that will be ready for another crew that day and when (here: ${list((jobs.length ? jobs : hand).map((h) => jobWord(h.j)))}).`,
+      }));
+    } else if (eReady.level > 0) {
+      const jobs = ready.filter((j) => late(j.order));
+      const crews = list([...new Set(jobs.map((j) => j.crew))]);
+      out.push(make("contractors", rated(eReady.level), `Ready work on ${tags(jobs.map((j) => j.order))} waited for a crew`, lines, ev, {
+        effect: eReady.text, moved: eReady.level, proof: lines.find((l) => jobs.some((j) => l.startsWith(jobWord(j)))) ?? lines[0],
+        gap: `${list(jobs.map((j) => jobWord(j)))} was ready and ${crews} was on other work.`,
+        next: `Put ${crews}'s jobs in the order the finish needs, so work on ${tags(jobs.map((j) => j.order))} starts when it is ready.`,
+      }));
+    } else out.push(make("contractors", "none", ready.length ? "Ready work waited for a crew" : "A job waited on another crew", lines, ev, { effect: fin ? "Did not move the finish." : "", moved: fin ? 0 : null, next: fin ? "Nothing to change. The records do not show that more people were needed: the work that waited was done before the last work finished." : "" }));
   }
 
-  // Execution control.
+  // Execution control: started jobs that sat. A count, so it claims no more
+  // than which of them were on the last work to finish.
   {
     const ev = stuck.map((j) => `${jobWord(j)} (${j.crew}): ${j.shifts.map((s) => `${shiftWord(s.key)}, ${CAUSE_WORD[s.cause].toLowerCase()}`).join("; ")}`);
-    if (m.stuckShifts + m.readyShifts === 0) out.push(make("execution", m.steps ? "strength" : "none", "Started work kept moving", ["No started job sat a full shift, and no ready job waited a full shift to start."], []));
+    if (m.stuckShifts === 0) out.push(make("execution", m.steps ? "strength" : "none", "Started work kept moving", ["No started job sat a full shift with nothing logged."], []));
     else {
-      const lines: string[] = [];
-      if (m.stuckJobs) {
-        lines.push(`${plural(m.stuckJobs, "started job")} sat still, ${plural(m.stuckShifts, "shift")} in all.`);
-        lines.push(`By reason: ${m.byCause.map((c) => `${CAUSE_WORD[c.cause].toLowerCase()} ${c.shifts}`).join("; ")}.`);
-        lines.push(m.noReasonShifts ? `${m.noReasonShifts} of those ${plural(m.stuckShifts, "shift")} ${m.noReasonShifts === 1 ? "has" : "have"} no reason written down.` : "Every one has a recorded reason.");
-      }
-      if (m.readyJobs) lines.push(`${plural(m.readyJobs, "ready job")} waited ${plural(m.readyShifts, "shift")} in all to start.`);
-      lines.push(`It happened on ${m.shiftsWithStuck} of the ${m.shifts} shifts, ${m.leastAtOnce === m.mostAtOnce ? `${m.mostAtOnce}` : `${m.leastAtOnce} to ${m.mostAtOnce}`} jobs at a time.`);
-      const n = m.stuckShifts + m.readyShifts;
-      out.push(make("execution", n >= 20 || (m.stuckShifts >= 6 && m.noReasonShifts / m.stuckShifts >= 0.5) ? "gap" : "opportunity", "Waiting time was recorded but not managed to closure", lines, ev));
+      // Jobs whose reason another finding already tells are left to it.
+      const told = new Set<CauseId>(["material", "cleaning", "test", "other_crew"]);
+      const mine = stuck.filter((j) => j.shifts.some((sh) => !told.has(sh.cause)));
+      const e = effectOf(mine.map((j) => j.order), fin);
+      const onTop = top ? mine.filter((j) => j.order === top.order) : [];
+      const lines = [`${plural(m.stuckJobs, "started job")} sat a whole shift with nothing logged, ${plural(m.stuckShifts, "shift")} in all.`, `By reason: ${m.byCause.map((c) => `${CAUSE_WORD[c.cause].toLowerCase()} ${c.shifts}`).join("; ")}.`];
+      if (m.noReasonShifts) lines.push(`${m.noReasonShifts} of those ${plural(m.stuckShifts, "shift")} ${m.noReasonShifts === 1 ? "has" : "have"} no reason written down.`);
+      const act = e.level > 0 || m.noReasonShifts >= 3;
+      out.push(make("execution", rated(e.level, m.noReasonShifts >= 3 ? "opportunity" : "none"), `${plural(m.stuckJobs, "started job")} sat a shift`, lines, ev, {
+        effect: !fin ? "" : e.level === 2 ? `${list(onTop.map((j) => jobWord(j)))}: on ${orderWord(top!.order)}, the last work to finish.` : e.text, moved: fin ? e.level : null,
+        ...(act ? { gap: "Jobs sat without a reason being written the same shift.", next: "Go through the jobs that sat at each shift meeting and write the reason on each." } : { next: "Nothing to change beyond writing the reason on each job that sits." }),
+      }));
     }
   }
 
   // Organization and roles: what is recorded on the project, else what the
   // other categories point to.
   {
-    const mat = out.find((d) => d.key === "materials")!, con = out.find((d) => d.key === "contractors")!;
     const crews = x.work.crews.map((c) => c.crew).filter((c) => c !== "Not set");
     const who = crews.length ? `Work ran across ${plural(crews.length, "crew")}: ${list(crews)}.` : "";
     const org = x.organization?.recorded ? x.organization : null;
@@ -682,15 +812,9 @@ function draftFindings(x: { metrics: ReviewMetrics; stuck: StuckJob[]; ready: Re
       const head = `${org.filled} of ${org.required} required roles are named on the project.`;
       if (!org.missing.length) out.push(make("organization", "strength", "Every required role has a named person", [head, who], named));
       else out.push(make("organization", "opportunity", "Required roles without a named person", [head, `Not named: ${list(org.missing)}.`, who], named,
-        { gap: "Some required roles had no named person.", next: "Every required role named six months before the event, with written responsibilities, and recorded on the project." }));
+        { gap: "Some required roles had no named person.", next: `Name a person for: ${list(org.missing)}.` }));
     } else {
-      const lacks: string[] = [];
-      if (mat.rating === "gap" || mat.rating === "opportunity") lacks.push("materials and off-site repairs");
-      if (con.rating === "gap" || con.rating === "opportunity") lacks.push("day-to-day balancing of crews");
-      const none = "No event organization is recorded on the project (Members tab).";
-      if (lacks.length) out.push(make("organization", "opportunity", "Key coordination roles were not assigned", [who, `The records show no single owner for ${lacks.join(" or ")}.`, none], [],
-        lacks.length === 1 && lacks[0].startsWith("day") ? { gap: "The organization formed around available people. No role balanced crews across areas each day.", next: "Name the turnaround manager and an area coordinator per unit six months before the event, with written roles and responsibilities." } : {}));
-      else out.push(make("organization", "none", "No organization finding in the records", [who, none], []));
+      out.push(make("organization", "none", "No event organization is recorded on the project", [who, "Name the roles and who fills each in Members, Event organization, and the review will read it."], []));
     }
   }
 
@@ -703,16 +827,16 @@ function draftFindings(x: { metrics: ReviewMetrics; stuck: StuckJob[]; ready: Re
 
   // Records and close-out.
   {
-    const noApprover = found.filter((f) => !f.approvedBy).length;
+    const noApprover = found.filter((f) => !f.approvedBy);
     const hc = m.headCounts;
-    const lacks: string[] = [], has: string[] = [];
-    if (hc.of) (hc.counted / hc.of >= 0.8 ? has : lacks).push(`Head counts for ${hc.counted} of the ${hc.of} crew-shifts that moved work`);
-    if (found.length) (noApprover ? lacks : has).push(noApprover ? `${noApprover} of ${plural(found.length, "finding")} with no approver recorded` : `An approver on all ${plural(found.length, "finding")}`);
-    if (m.stuckShifts) (m.noReasonShifts ? lacks : has).push(m.noReasonShifts ? `No reason written for ${m.noReasonShifts} of ${plural(m.stuckShifts, "stuck shift")}` : "A reason on every stuck shift");
-    if (x.built.startsNotRecorded) lacks.push(`${plural(x.built.startsNotRecorded, "activity", "activities")} with no start time recorded`);
-    const lines = [...has.map((t) => `Recorded: ${t}.`), ...lacks.map((t) => `Missing: ${t}.`), ...(hc.of && hc.counted / hc.of < 0.8 ? ["Without head counts, labor hours can't be estimated."] : [])];
+    const lacks: string[] = [], has: string[] = [], todo: string[] = [];
+    if (hc.of) { if (hc.counted / hc.of >= 0.8) has.push(`Head counts for ${hc.counted} of the ${hc.of} crew-shifts that moved work`); else { lacks.push(`Head counts for only ${hc.counted} of the ${hc.of} crew-shifts that moved work, so labor hours can't be worked out`); todo.push("Take a head count at every shift meeting."); } }
+    if (found.length) { if (noApprover.length) { lacks.push(`No approver recorded for: ${list(noApprover.map((f) => short(f.what)))}`); todo.push("Write who approved each added job when it is added."); } else has.push(`An approver on all ${plural(found.length, "finding")}`); }
+    if (m.stuckShifts) { if (m.noReasonShifts) { lacks.push(`No reason written for ${m.noReasonShifts} of ${plural(m.stuckShifts, "shift")} a started job sat`); todo.push("Write the reason on each job that sits a shift."); } else has.push("A reason on every job that sat"); }
+    if (x.built.startsNotRecorded) { lacks.push(`${plural(x.built.startsNotRecorded, "activity", "activities")} with no start time recorded`); todo.push("Record the start time when a job starts."); }
+    const lines = [...lacks.map((t) => `Missing: ${t}.`), ...has.map((t) => `Recorded: ${t}.`)];
     if (!m.steps) out.push(make("records", "none", "No records to read", ["No schedule to read."], []));
-    else if (lacks.length) out.push(make("records", "opportunity", "Some records were not kept during the event", lines, []));
+    else if (lacks.length) out.push(make("records", "opportunity", "Some records were not kept during the event", lines, [], { effect: hc.of && hc.counted / hc.of < 0.8 ? "Labor hours can't be worked out for this event." : "", gap: "These were not written down as the event ran.", next: todo.join(" ") }));
     else out.push(make("records", "strength", "Event records support a fact-based review", lines.length ? lines : ["Progress, delays and added work were recorded as the event ran."], []));
   }
   return out;
@@ -731,21 +855,59 @@ function strengthsOf(m: ReviewMetrics, found: FoundWork[], holds: HoldFact[], li
 }
 
 /** The questions the numbers will draw, with their answers from the records. */
-function qaOf(m: ReviewMetrics, found: FoundWork[], stuck: StuckJob[], tz: string): QA[] {
+function qaOf(m: ReviewMetrics, found: FoundWork[], stuck: StuckJob[], tz: string, fin: FinishStory | null): QA[] {
   const out: QA[] = [];
+  if (fin && m.varianceH != null && Math.abs(m.varianceH) >= 1) out.push({ q: `What caused the ${Math.abs(m.varianceH)} h ${m.varianceH >= 0 ? "past" : "ahead of"} the baseline finish?`, a: [lastLine(fin, tz), becauseLine(fin), closingLine(fin)].filter(Boolean).join(" ") });
+  if (fin?.steps.length) out.push({ q: `Which steps on ${orderWord(fin.last[0].order)} ran long, and whose were they?`, a: fin.steps.map((st) => `${st.name}${st.crew ? ` (${st.crew})` : ""}: planned ${st.plannedH} h, took ${st.tookH} h.`).join(" ") });
   if (m.steps) out.push({ q: `Were all ${m.steps} activities planned?`, a: `${m.baselineSteps} were on the baseline schedule${m.addedSteps ? `; ${m.addedSteps} were added during the event from ${plural(found.length, "finding")}` : "; none were added"}. ${m.stepsDone} of ${m.steps} are done.` });
-  if (m.varianceH != null && m.baselineFinish != null && m.actualFinish != null) {
-    const crit = found.filter((f) => f.critical);
-    out.push({ q: `What drove the ${Math.abs(m.varianceH)} h ${m.varianceH >= 0 ? "past" : "ahead of"} the baseline finish?`, a: `${crit.length ? `Added work on the critical path: ${list(crit.map((f) => `${short(f.what)} (about ${f.hours} h)`))}. ` : ""}Baseline finish ${whenWord(m.baselineFinish, tz)}; actual ${whenWord(m.actualFinish, tz)}. The full trace is in Reports, As-built schedule.` });
-  }
-  if (found.length) out.push({ q: "Is found work unusual?", a: "No. The practice is to reduce it with condition data before scope freeze and to carry an allowance for what remains." });
+  if (found.length) out.push({ q: "Is found work unusual?", a: "No. The practice is to reduce it with condition data before scope freeze and to carry time for what remains." });
   if (m.addedPct != null && m.addedSteps) out.push({ q: `How firm is the ${m.addedPct}% scope growth?`, a: `It compares planned hours on the schedule: ${m.addedH} h estimated for the added activities against ${m.baselineH} h on the baseline. ${m.labor ? `Head counts put ${m.labor.pct}% of labor hours on added work.` : "Actual labor hours can't be confirmed: head counts were not recorded on most shifts."}` });
-  if (m.stuckShifts + m.readyShifts) out.push({ q: "How is a stuck job counted?", a: "A job that had started and went a whole shift with nothing logged, or was ready and did not start for a whole shift. Night shifts count only for work that ran on nights. Several jobs can sit in the same shift, so the counts are not hours of delay to the finish." });
-  if (stuck.length) out.push({ q: "Where can I see each stuck job?", a: "Reports, As-built schedule: gray hatched cells are started jobs with nothing logged; light blue cells are ready jobs not started. This review lists each one with its shift and reason." });
-  out.push({ q: "What will the changes cost?", a: "Most are changes to how the event is prepared and controlled, carried by existing staff. Items that need funding (a condition survey, a surge crew option) come back with quotes before approval." });
-  out.push({ q: "Who owns the actions?", a: "Each closure names a role. Names are assigned when the event organization is set, six months ahead." });
-  out.push({ q: "How reliable is the data?", a: "It is the event's own record: the baseline schedule, progress logged by shift, comments and hold reasons, added-work approvals and shift head counts. Anything estimated is labelled." });
+  if (stuck.length || m.readyShifts) out.push({ q: "Did the jobs that waited cost us time?", a: "Only where the finding says so. A job that waits and still finishes before the last work is done does not move the finish. Equipment out for repair or calibration is a planned step and is not counted as waiting." });
+  out.push({ q: "How reliable is the data?", a: "It is the event's own record: the baseline schedule, progress logged by shift, comments and hold reasons, and added-work approvals. Where a record was not kept, the review says so." });
   return out;
+}
+
+/** The point of the review, the same words on the screen and in both files:
+ *  what set the finish, then everything else by whether it moved it. */
+export interface Point {
+  headline: string;
+  /** What set the finish: the last work, what was written on it, the start-up. */
+  lines: string[];
+  /** The work order that set the finish, and its steps that ran long. */
+  order: string | null;
+  steps: FinishStory["steps"];
+  /** Baseline finish and actual finish. */
+  span: string;
+  /** What else was on late work (the last, or late but not last), with the findings behind it. */
+  also: Array<{ effect: string; titles: string[] }>;
+  /** What happened that did not move the finish. */
+  quiet: string[];
+}
+export function pointOf(r: Pick<Review, "metrics" | "finish" | "findings" | "service">, name: string, tz: string): Point {
+  const m = r.metrics, fin = r.finish;
+  const late = m.varianceH != null && m.varianceH >= 1;
+  const top = fin?.last[0] ?? null;
+  const headline = !m.steps ? `${name}: no schedule to review`
+    : m.varianceH == null ? `${name}: ${plural(m.steps - m.stepsDone, "activity", "activities")} of ${m.steps} still open`
+      : `${name} finished ${Math.abs(m.varianceH) < 1 ? "on the baseline finish" : `${Math.abs(m.varianceH)} h ${m.varianceH > 0 ? "late" : "early"}`}.${late && top ? ` ${orderWord(top.order)} set the finish.` : ""}`;
+  const lines = !m.steps ? [] : m.varianceH == null ? ["The numbers here are to date."] : late && fin ? [lastLine(fin, tz), becauseLine(fin), closingLine(fin)].filter(Boolean) : [];
+  const live = r.findings.filter((f) => f.status !== "discarded");
+  const also: Point["also"] = [];
+  for (const f of live) {
+    if ((f.moved !== 1 && f.moved !== 2) || !f.effect) continue;
+    const g = also.find((x) => x.effect === f.effect);
+    if (g) g.titles.push(f.title); else also.push({ effect: f.effect, titles: [f.title] });
+  }
+  const quiet = live.filter((f) => f.moved === 0 && f.source === "records" && f.rating !== "strength").map((f) => f.title);
+  const overdue = r.service.filter((j) => j.stillOut && j.order !== top?.order), fine = r.service.filter((j) => !j.stillOut);
+  const svc = (j: ServiceJob) => (TAG.test(tagOf(j.order)) ? orderWord(j.order) : jobWord(j));
+  if (overdue.length) quiet.push(`${list(overdue.map(svc))}: out for service as planned, back later than quoted`);
+  if (fine.length) quiet.push(`${list(fine.map(svc))}: out for service, back as planned`);
+  return {
+    headline, lines, order: late && top ? top.order : null, steps: late && fin ? fin.steps : [],
+    span: m.baselineFinish != null && m.actualFinish != null ? `Baseline finish ${whenWord(m.baselineFinish, tz)}; actual ${whenWord(m.actualFinish, tz)}.` : "",
+    also, quiet,
+  };
 }
 
 const DEFINITIONS: Review["definitions"] = [
@@ -759,35 +921,7 @@ const DEFINITIONS: Review["definitions"] = [
   { measure: "Reason", means: "The comment or hold reason on the job for that shift, or the answer given in this review", where: "The job's comments" },
 ];
 
-// ─── The plan every event closes with ──────────────────────────────
-
-export const ORGANIZATION: Array<{ tier: string; who: string; does: string }> = [
-  { tier: "Steering group", who: "Plant, Maintenance, Operations, Engineering", does: "Sets objectives, funding and scope policy; approves late scope." },
-  { tier: "Turnaround manager", who: "One person, full time from six months ahead", does: "Single point of responsibility for preparation, execution and close-out." },
-  { tier: "Preparation and planning coordinator", who: "Reports to the turnaround manager", does: "Scope validation and freeze, task packages, the schedule and the shutdown network." },
-  { tier: "Logistics and materials coordinator", who: "Reports to the turnaround manager", does: "Materials register, expediting, off-site repairs, laydown and deliveries." },
-  { tier: "Area coordinator, one per unit", who: "Reports to the turnaround manager", does: "Daily control against the critical path; balances crews across the area." },
-  { tier: "Support leads", who: "HSE; Inspection and QA/QC; Operations liaison", does: "Permits and gas testing; inspection and acceptance; decontamination and start-up." },
-  { tier: "Discipline supervisors", who: "Under each area coordinator", does: "Mechanical (exchangers, vessels, piping); cleaning; valves and instruments; bulk services (scaffold, insulation, cranes)." },
-];
-
-export const GATES: Array<{ when: string; what: string; owner: string }> = [
-  { when: "6 months before", what: "Organization named; steering group set; prior findings loaded to the work list", owner: "Steering group" },
-  { when: "4 months before", what: "Condition survey; operations input on fouling; scope validation", owner: "Planning; Inspection" },
-  { when: "3 months before", what: "Scope freeze; later additions need plant manager cost acceptance", owner: "Turnaround manager" },
-  { when: "8 weeks before", what: "Materials register complete; all items ordered; shop return dates agreed", owner: "Logistics coordinator" },
-  { when: "4 weeks before", what: "Items at risk to the expediter; decontamination and gas-free in the shutdown network", owner: "Logistics; Planning" },
-  { when: "2 weeks before", what: "Readiness review: kits checked; contractor mobilization complete", owner: "Turnaround manager" },
-  { when: "Every day of the event", what: "Control meeting: critical path, waiting and ready lists, added work", owner: "Area coordinators" },
-  { when: "2 weeks after", what: "Post-event review; kept findings to the lessons register; final report", owner: "Turnaround manager" },
-];
-
-export const ROADMAP: Array<{ when: string; theme: string; what: string }> = [
-  { when: "Quarter 1", theme: "Standards", what: "Written procedures: work request and material specification, scope freeze and change control, added work, materials and expediting, off-site repair control, delay reasons." },
-  { when: "Quarter 2", theme: "Systems", what: "Materials register, delay reasons and lessons register in the turnaround system; condition data and prior findings feed each unit's work list." },
-  { when: "Quarter 3", theme: "People", what: "Organization design standard; training for coordinators and planners; succession for key roles." },
-  { when: "Quarter 4", theme: "Assurance", what: "Self-assessment across all eight categories; an action plan on the weakest; targets reset." },
-];
+// ─── Targets and the lessons register ──────────────────────────────
 
 /** The measures the next event is held to, with this event's results. A
  *  target is whatever a person set for it: none is assumed. */
@@ -810,19 +944,8 @@ export function measuresOf(m: ReviewMetrics, targets: Record<string, string> = {
   return rows.map(([key, measure, result, hint, picks]) => { const t = (targets[key] ?? "").trim(); return { key, measure, result, target: t || TARGET_NOT_SET, set: !!t, hint, picks }; });
 }
 
-/** What management is asked to decide, from the findings that stand. */
-export function decisionsOf(findings: Finding[]): string[] {
-  const has = (c: CategoryId) => findings.some((f) => f.category === c && f.status !== "discarded" && (f.rating === "gap" || f.rating === "opportunity"));
-  const out: string[] = [];
-  if (has("scope")) out.push("Scope freeze with change control: additions after the freeze need plant manager cost acceptance.", "A found-work allowance in schedule and budget, sized from this event.", "A pre-event condition survey funded for the equipment in scope.");
-  if (has("organization") || has("materials")) out.push("The event organization named six months ahead, including a logistics and materials coordinator.");
-  if (has("materials") || has("execution")) out.push("The materials register and delay reasons adopted as standard for every event.");
-  if (has("contractors")) out.push("A surge crew or extra shift carried as a contract option for the busiest craft.");
-  return out;
-}
-
 /** The finding as one line for the lessons register (what happened; next time). */
 export function lessonOf(f: Finding): { body: string; nextTime: string } {
   const extra = f.info.length ? ` ${f.info.join(" ")}` : "";
-  return { body: `${f.title}. ${f.observation}${extra}${f.gap ? ` Gap: ${f.gap}` : ""}`.trim(), nextTime: [f.next, f.year ? `Within 12 months: ${f.year}` : ""].filter(Boolean).join(" ") };
+  return { body: `${f.title}. ${f.observation}${extra}${f.effect ? ` What it cost: ${f.effect}` : ""}${f.gap ? ` What was missing: ${f.gap}` : ""}`.trim(), nextTime: [f.next, f.year ? `Longer term: ${f.year}` : ""].filter(Boolean).join(" ") };
 }

@@ -1,18 +1,15 @@
 // reviewFiles - the post-event review as files: a Word report for the
 // project file, and the meeting slides as an editable PowerPoint. Both are
-// written from the review as it stands (lib/postEventReview): the records'
-// numbers, the findings that weren't thrown out with whatever a person
-// changed, and the plan that closes them.
+// written from the review as it stands (lib/postEventReview) and open on
+// the same point: what set the finish, then what changes next time. The
+// jobs and numbers behind it follow as backup.
 //
-// One contents list drives both, so the report and the deck never disagree.
+// One set of words drives both, so the report and the deck never disagree.
 
 import JSZip from "jszip";
 import { noEmDash } from "@/lib/noEmDash";
 import { fmtInTz } from "@/lib/scheduleTz";
-import {
-  CATEGORIES, CAUSE_WORD, GATES, ORGANIZATION, RATING_MEANS, RATING_WORD, ROADMAP, categoryOf, decisionsOf, jobWord, orderWord, shiftWord, shiftsWord, whenWord,
-  type Finding, type Review,
-} from "@/lib/postEventReview";
+import { CAUSE_WORD, jobWord, orderWord, pointOf, shiftsWord, type Finding, type Review } from "@/lib/postEventReview";
 
 export interface ReviewFileOpts {
   project: string;
@@ -44,40 +41,34 @@ const projectLine = (o: ReviewFileOpts) => (o.phase ? `Project: ${o.project}. Th
 
 // ─── The words both files share ────────────────────────────────────
 
-/** The summary: the event in a few lines, each number said in full. */
-export function summaryLines(r: Review, o: ReviewFileOpts): string[] {
-  const m = r.metrics, out: string[] = [];
-  if (!m.steps) return ["No schedule to review."];
-  out.push(`${m.baselineDone} of ${m.baselineSteps} planned activities were completed${m.addedSteps ? `, plus ${m.addedDone} of ${m.addedSteps} added during the event from ${plural(r.found.length, "finding")}` : ""}.`);
-  if (m.varianceH != null && m.baselineFinish != null && m.actualFinish != null) out.push(`The last activity finished ${Math.abs(m.varianceH)} h ${m.varianceH >= 0 ? "after" : "before"} the baseline finish (baseline ${whenWord(m.baselineFinish, o.tz)}; actual ${whenWord(m.actualFinish, o.tz)}).`);
-  else if (!m.done) out.push(`${m.steps - m.stepsDone} of ${m.steps} activities are not done yet; the numbers here are to date.`);
-  if (m.addedSteps && m.addedPct != null) out.push(`Scope grew ${m.addedPct}%: ${m.addedH} h of added work on a ${m.baselineH} h plan, by the schedule's estimates.`);
-  if (m.stuckShifts + m.readyShifts) {
-    out.push(`Stuck work: on ${m.shiftsWithStuck} of the ${m.shifts} shifts, ${m.leastAtOnce === m.mostAtOnce ? m.mostAtOnce : `${m.leastAtOnce} to ${m.mostAtOnce}`} jobs sat at the same time. ${plural(m.stuckJobs, "started job")} sat still (${plural(m.stuckShifts, "shift")} in all) and ${plural(m.readyJobs, "ready job")} waited to start (${plural(m.readyShifts, "shift")} in all). Each is listed in the appendix.`);
-  } else out.push("No started job sat a full shift, and no ready job waited a full shift to start.");
-  const cats = toClose(r).map((f) => categoryOf(f.category).name.toLowerCase()).filter((v, i, a) => a.indexOf(v) === i);
-  if (cats.length) out.push(`${plural(cats.length, "category needs", "categories need")} closure: ${cats.join(", ")}.`);
-  return out;
-}
+const facts = (f: Finding) => [...f.observation.split("\n").map((l) => l.trim()).filter(Boolean), ...f.info];
+const point = (r: Review, o: ReviewFileOpts) => pointOf(r, eventName(o), o.tz);
+const scopeLine = (r: Review) => { const m = r.metrics; return m.steps ? `${m.baselineDone} of ${m.baselineSteps} planned activities completed${m.addedSteps ? `, plus ${m.addedDone} of ${m.addedSteps} added from ${plural(r.found.length, "finding")}` : ""}.` : ""; };
+/** The steps on the work that set the finish, with what was written on each. */
+const stepRows = (r: Review, said: boolean): string[][] => (r.finish?.steps ?? []).map((st) => [st.name, st.crew || "Not set", `${st.plannedH} h`, `${st.tookH} h`, ...(said ? [st.said.map((t) => `"${t}"`).join(" Then: ")] : [])]);
+/** What it cost, for a table cell. */
+const costOf = (f: Finding) => f.effect || "Not recorded";
 
-const metricRows = (r: Review, o: ReviewFileOpts): string[][] => {
+const metricRows = (r: Review): string[][] => {
   const m = r.metrics;
   return [
-    ["Schedule variance", m.varianceH == null ? "Not finished" : `${m.varianceH > 0 ? "+" : ""}${m.varianceH} h`, "Last activity finished, minus the baseline finish"],
+    ["Finish against the baseline", m.varianceH == null ? "Not finished" : `${m.varianceH > 0 ? "+" : ""}${m.varianceH} h`, "Last activity finished, minus the baseline finish"],
     ["Planned activities completed", `${m.baselineDone} of ${m.baselineSteps}`, "Activities on the schedule when the plan was saved"],
     ["Added activities", m.addedSteps ? `${m.addedSteps} (from ${plural(r.found.length, "finding")})` : "None", "Added during the event from a finding"],
     ["Scope growth", m.addedPct == null ? "Not known" : `${m.addedPct}% (${m.addedH} h on ${m.baselineH} h)`, "Planned hours of added work over planned hours of the baseline"],
-    ["Started jobs that sat still", `${plural(m.stuckJobs, "job")}, ${plural(m.stuckShifts, "shift")} in all`, "Started, not finished, nothing logged for a whole shift"],
+    ["Started jobs that sat a shift", `${plural(m.stuckJobs, "job")}, ${plural(m.stuckShifts, "shift")} in all`, "Started, not finished, nothing logged for a whole shift; equipment out for service not counted"],
     ["Ready jobs not started", `${plural(m.readyJobs, "job")}, ${plural(m.readyShifts, "shift")} in all`, "Everything before it done; did not start that shift"],
     ["Labor hours on added work", m.labor ? `${m.labor.pct}% (${m.labor.addedMH} of ${m.labor.totalMH} h)` : "Not known", m.labor ? "Shift head counts times tool hours, shared across the work moved" : `Head counts were recorded for ${m.headCounts.counted} of ${m.headCounts.of} crew-shifts`],
-  ].map((row) => row.map((c) => (o ? c : c)));
+  ];
 };
-const stuckRows = (r: Review) => r.stuck.map((j) => [jobWord(j), j.crew, String(j.shifts.length), shiftsWord(j.shifts.map((s) => s.key)),
-  [...new Set(j.shifts.map((s) => `${CAUSE_WORD[s.cause]}${s.said ? `: "${s.said}"` : s.crewOn.length ? ` (crew on ${[...new Set(s.crewOn.map(orderWord))].slice(0, 3).join(", ")})` : ""}`))].join(" Then: ")]);
-const readyRows = (r: Review) => r.ready.map((j) => [jobWord(j), j.crew, String(j.shifts.length), shiftsWord(j.shifts), j.said ?? (j.busyOn.length ? [...new Set(j.busyOn.map(orderWord))].join(", ") : j.crewLogged ? "" : "No work logged by this crew")]);
-const shiftRows = (r: Review) => [...r.byShift.map((c) => [shiftWord(c.key), String(c.stuck), String(c.ready), String(c.stuck + c.ready)]), ["All", String(r.metrics.stuckShifts), String(r.metrics.readyShifts), String(r.metrics.stuckShifts + r.metrics.readyShifts)]];
-const foundRows = (r: Review) => r.found.map((f) => [`${f.what} (${orderWord(f.on)})`, String(f.steps), `${f.hours} h`, f.critical ? "Yes" : "No", f.approvedBy ?? "Not recorded"]);
-const SOURCES = "Sources: the baseline schedule; progress logged by shift (Reports, As-built schedule); comments and hold reasons on each job; added-work records with their approver; shift meeting head counts; answers given in the review.";
+/** Every job that waited, one row each: what happened, when, and why. */
+const waitedRows = (r: Review): string[][] => [
+  ...r.stuck.map((j) => [jobWord(j), j.crew, "Started, then sat", shiftsWord(j.shifts.map((s) => s.key)), [...new Set(j.shifts.map((s) => `${CAUSE_WORD[s.cause]}${s.said ? `: "${s.said}"` : s.crewOn.length ? ` (crew on ${[...new Set(s.crewOn.map(orderWord))].join(", ")})` : ""}`))].join(" Then: ")]),
+  ...r.ready.map((j) => [jobWord(j), j.crew, "Ready, not started", shiftsWord(j.shifts), j.said ?? (j.busyOn.length ? `Crew was on ${[...new Set(j.busyOn.map(orderWord))].join(", ")}` : j.crewLogged ? "Crew was on other work" : "No work logged by this crew")]),
+  ...r.service.map((j) => [jobWord(j), j.crew, "Out for service (planned)", shiftsWord(j.shifts), `"${j.said}"${j.stillOut ? ` Still out past the time quoted: "${j.stillOut.said}"` : " Back as planned."}`]),
+];
+const foundRows = (r: Review) => r.found.map((f) => [f.what, orderWord(f.on), String(f.steps), `${f.hours} h`, f.critical ? "Yes" : "No", f.approvedBy ?? "Not recorded"]);
+const SOURCES = "Sources: the baseline schedule; progress logged by shift; comments and hold reasons on each job; added-work records with their approver; shift meeting head counts; answers given in the review.";
 
 // ─── Word ──────────────────────────────────────────────────────────
 
@@ -86,86 +77,67 @@ type Block =
   | { k: "num"; text: string; n: number; lead?: string }
   | { k: "table"; head: string[]; rows: string[][]; widths: number[] };
 
-export const REPORT_SECTIONS = ["Summary", "Event metrics", "What performed well", "Assessment by category", "Event organization", "Closure plan", "Measures and targets", "Decisions requested", "Appendices: stuck jobs, ready jobs, by shift, found work, anticipated questions, how each number is counted"];
-
-/** The report, top to bottom. */
+/** The report, top to bottom: the point first, the proof after. */
 export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
   const b: Block[] = [];
-  const m = r.metrics;
+  const m = r.metrics, pt = point(r, o);
   const dates = eventDates(r, o.tz);
   b.push({ k: "muted", text: "POST-EVENT REVIEW" }, { k: "title", text: dates ? `${eventName(o)}: ${dates}` : eventName(o) });
   if (projectLine(o)) b.push({ k: "muted", text: projectLine(o) });
   b.push({ k: "muted", text: [o.preparedBy ? `Prepared by: ${o.preparedBy}` : null, `Written ${o.date}`].filter(Boolean).join("  ·  ") });
-  b.push({ k: "h2", text: "Contents" });
-  REPORT_SECTIONS.forEach((s, i) => b.push({ k: "num", n: i + 1, text: s }));
 
-  b.push({ k: "h1", text: "1. Summary" });
-  for (const s of summaryLines(r, o)) b.push({ k: "bullet", text: s });
+  b.push({ k: "h1", text: `1. ${pt.headline}` });
+  for (const l of [...pt.lines, pt.span, scopeLine(r)].filter(Boolean)) b.push({ k: "bullet", text: l });
+  if (pt.order && pt.steps.length) {
+    b.push({ k: "h2", text: `${orderWord(pt.order)}: the steps that ran long` });
+    b.push({ k: "table", head: ["Step", "Crew", "Planned", "Took", "Recorded on the step"], rows: stepRows(r, true), widths: [1.7, 0.9, 0.6, 0.6, 3.1] });
+  }
+  for (const g of pt.also) { b.push({ k: "p", lead: "Also late: ", text: g.effect }); for (const t of g.titles) b.push({ k: "bullet", text: `${t}.` }); }
+  if (pt.quiet.length) { b.push({ k: "p", lead: "Did not move the finish:", text: "" }); for (const t of pt.quiet) b.push({ k: "bullet", text: `${t}.` }); }
 
-  b.push({ k: "h1", text: "2. Event metrics" });
-  b.push({ k: "table", head: ["Measure", "Result", "How it is counted"], rows: metricRows(r, o), widths: [2.0, 2.0, 2.9] });
+  const close = toClose(r);
+  b.push({ k: "h1", text: "2. What we change next time" });
+  if (!close.length) b.push({ k: "p", text: "Nothing in the records calls for a change." });
+  for (const f of close) {
+    b.push({ k: "h2", text: f.title });
+    b.push({ k: "p", lead: "What it cost: ", text: costOf(f) });
+    b.push({ k: "p", lead: "What happened:", text: "" });
+    for (const l of facts(f)) b.push({ k: "bullet", text: l });
+    if (f.gap) b.push({ k: "p", lead: "What was missing: ", text: f.gap });
+    if (f.next) b.push({ k: "p", lead: "What we do differently: ", text: f.next });
+    if (f.year) b.push({ k: "p", lead: "Longer term: ", text: f.year });
+    if (f.owner) b.push({ k: "p", lead: "Owner: ", text: f.owner });
+  }
 
-  b.push({ k: "h1", text: "3. What performed well" });
+  const quiet = live(r).filter((f) => f.rating === "none" && f.source === "records" && f.moved === 0);
+  if (quiet.length) {
+    b.push({ k: "h1", text: "3. What happened that did not move the finish" });
+    for (const f of quiet) { b.push({ k: "h2", text: f.title }); for (const l of facts(f)) b.push({ k: "bullet", text: l }); if (f.next) b.push({ k: "p", text: f.next }); }
+  }
+
+  b.push({ k: "h1", text: `${quiet.length ? 4 : 3}. What performed well` });
   if (r.strengths.length) for (const s of r.strengths) b.push({ k: "bullet", text: s }); else b.push({ k: "p", text: "Nothing the records single out." });
 
-  b.push({ k: "h1", text: "4. Assessment by category" });
-  b.push({ k: "muted", text: RATING_MEANS });
-  b.push({ k: "table", head: ["Category", "Stage", "Rating", "Basis"], rows: CATEGORIES.map((c) => { const fs = live(r).filter((f) => f.category === c.id); const f = fs[0]; return [c.name, c.stage, f ? RATING_WORD[f.rating] : "Not assessed", fs.map((x) => x.title).join("; ")]; }), widths: [1.9, 1.0, 1.0, 3.0] });
-  for (const f of live(r)) {
-    const c = categoryOf(f.category);
-    b.push({ k: "h2", text: `${c.name} (${c.stage}) · ${RATING_WORD[f.rating]}: ${f.title}` });
-    const obs = f.observation.split("\n").map((l) => l.trim()).filter(Boolean);
-    if (obs.length === 1) b.push({ k: "p", lead: "Event observation: ", text: obs[0] });
-    else if (obs.length) { b.push({ k: "p", lead: "Event observation:", text: "" }); for (const l of obs) b.push({ k: "bullet", text: l }); }
-    for (const line of f.info) b.push({ k: "p", lead: "Added: ", text: line });
-    if (f.rating === "gap" || f.rating === "opportunity") {
-      if (f.practice) b.push({ k: "p", lead: "Leading practice: ", text: f.practice });
-      if (f.gap) b.push({ k: "p", lead: "Gap: ", text: f.gap });
-      if (f.next) b.push({ k: "p", lead: "Closure, next event: ", text: f.next });
-      if (f.year) b.push({ k: "p", lead: "Closure, within 12 months: ", text: f.year });
-      if (f.owner) b.push({ k: "p", lead: "Owner: ", text: f.owner });
-    }
-  }
+  b.push({ k: "h1", text: `${quiet.length ? 5 : 4}. The event in numbers` });
+  b.push({ k: "table", head: ["Measure", "Result", "How it is counted"], rows: metricRows(r), widths: [2.0, 2.0, 2.9] });
+  if (r.measures.some((x) => x.set)) b.push({ k: "table", head: ["Measure", "This event", "Target for the next event"], rows: r.measures.filter((x) => x.set).map((x) => [x.measure, x.result, x.target]), widths: [3.4, 1.7, 1.8] });
 
   if (r.organization) {
     const o2 = r.organization;
-    b.push({ k: "h1", text: "5. Event organization" });
+    b.push({ k: "h1", text: `${quiet.length ? 6 : 5}. Event organization` });
     b.push({ k: "p", text: `${o2.filled} of ${o2.required} required roles have a named person${o2.missing.length ? `. Not named: ${o2.missing.join(", ")}` : ""}.` });
     b.push({ k: "table", head: ["Role", "Named", "Responsible for", "Required"], rows: o2.roles.map((x) => [x.role, x.person || "Not named", x.does, x.required ? "Yes" : "No"]), widths: [2.0, 1.6, 2.7, 0.6] });
-  } else {
-    b.push({ k: "h1", text: "5. Proposed event organization" });
-    b.push({ k: "table", head: ["Role", "Who", "Responsible for"], rows: ORGANIZATION.map((x) => [x.tier, x.who, x.does]), widths: [2.0, 1.9, 3.0] });
-    b.push({ k: "muted", text: "No organization is recorded on the project yet. Roles and who fills each are kept on the Members tab." });
   }
-  b.push({ k: "muted", text: "How it is set up: define the roles the event needs, match people to them, close shortfalls with training or contract supervision, write each role's responsibilities, and brief them face to face." });
 
-  b.push({ k: "h1", text: "6. Closure plan" });
-  b.push({ k: "h2", text: "Next event" });
-  b.push({ k: "table", head: ["When", "Action", "Owner"], rows: GATES.map((g) => [g.when, g.what, g.owner]), widths: [1.4, 4.0, 1.5] });
-  b.push({ k: "h2", text: "Within 12 months" });
-  for (const x of ROADMAP) b.push({ k: "bullet", lead: `${x.when}, ${x.theme}: `, text: x.what });
-
-  b.push({ k: "h1", text: "7. Measures and targets" });
-  b.push({ k: "table", head: ["Measure", "This event", "Target"], rows: r.measures.map((x) => [x.measure, x.result, x.target]), widths: [3.4, 1.9, 1.6] });
-  if (r.measures.some((x) => !x.set)) b.push({ k: "muted", text: "A target reads \"Not set\" until one is agreed and entered in the review. None is assumed." });
-
-  b.push({ k: "h1", text: "8. Decisions requested" });
-  const ds = decisionsOf(r.findings);
-  if (ds.length) ds.forEach((d, i) => b.push({ k: "num", n: i + 1, text: d })); else b.push({ k: "p", text: "None from this review." });
-
-  b.push({ k: "h1", text: `Appendix A. Started jobs that sat still (${plural(m.stuckJobs, "job")}, ${plural(m.stuckShifts, "shift")} in all)` });
-  if (r.stuck.length) b.push({ k: "table", head: ["Job", "Crew", "Shifts", "When", "Why, from the record"], rows: stuckRows(r), widths: [1.7, 0.9, 0.5, 1.2, 2.6] }); else b.push({ k: "p", text: "None." });
-  b.push({ k: "h1", text: `Appendix B. Ready jobs not started (${plural(m.readyJobs, "job")}, ${plural(m.readyShifts, "shift")} in all)` });
-  if (r.ready.length) b.push({ k: "table", head: ["Ready job", "Crew", "Shifts", "When", "Crew was on"], rows: readyRows(r), widths: [2.1, 0.9, 0.5, 1.3, 2.1] }); else b.push({ k: "p", text: "None." });
-  b.push({ k: "h1", text: `Appendix C. Stuck jobs by shift (${m.shiftsWithStuck} of ${m.shifts} shifts)` });
-  if (r.byShift.length) b.push({ k: "table", head: ["Shift", "Started jobs sitting still", "Ready jobs not started", "Together"], rows: shiftRows(r), widths: [1.6, 2.0, 2.0, 1.3] }); else b.push({ k: "p", text: "None." });
-  b.push({ k: "muted", text: "A job that sits several shifts is counted in each. Night shifts count only for work that ran on nights." });
-  b.push({ k: "h1", text: `Appendix D. Found work (${plural(r.found.length, "finding")}, ${plural(m.addedSteps, "activity", "activities")})` });
-  if (r.found.length) b.push({ k: "table", head: ["Finding", "Activities", "Work when approved", "Critical path", "Approved by"], rows: foundRows(r), widths: [2.9, 0.8, 1.2, 0.9, 1.1] }); else b.push({ k: "p", text: "None." });
-  b.push({ k: "h1", text: "Appendix E. Anticipated questions" });
+  b.push({ k: "h1", text: `Appendix A. Found work (${plural(r.found.length, "finding")}, ${plural(m.addedSteps, "activity", "activities")})` });
+  if (r.found.length) b.push({ k: "table", head: ["Finding", "Where", "Activities", "Work when approved", "Critical path", "Approved by"], rows: foundRows(r), widths: [2.8, 0.9, 0.7, 1.0, 0.7, 0.8] }); else b.push({ k: "p", text: "None." });
+  b.push({ k: "h1", text: "Appendix B. Jobs that waited" });
+  if (waitedRows(r).length) b.push({ k: "table", head: ["Job", "Crew", "What happened", "When", "Why, from the record"], rows: waitedRows(r), widths: [1.7, 0.9, 1.1, 1.0, 2.2] }); else b.push({ k: "p", text: "None." });
+  b.push({ k: "muted", text: "Night shifts count only for work that ran on nights. Equipment out for repair or calibration is a planned step, not waiting." });
+  b.push({ k: "h1", text: "Appendix C. Anticipated questions" });
   for (const x of r.qa) b.push({ k: "p", lead: `${x.q} `, text: x.a });
-  b.push({ k: "h1", text: "Appendix F. How each number is counted" });
-  b.push({ k: "table", head: ["Measure", "What it means", "Where to see it"], rows: r.definitions.map((d) => [d.measure, d.means, d.where]), widths: [1.8, 3.2, 1.9] });
+  b.push({ k: "h1", text: "Appendix D. How each number is counted" });
+  b.push({ k: "table", head: ["Measure", "What it means"], rows: r.definitions.map((d) => [d.measure, d.means]), widths: [2.2, 4.7] });
   b.push({ k: "muted", text: SOURCES });
   return b;
 }
@@ -216,16 +188,16 @@ export async function reviewDocx(r: Review, o: ReviewFileOpts): Promise<Uint8Arr
 
 // ─── PowerPoint ────────────────────────────────────────────────────
 //
-// A short deck: each number sits with the data behind it (the found work,
-// every stuck job) on the next slide, not in an appendix; the findings are
-// one table, not a slide each.
+// A short deck that makes its point first: what set the finish, then what
+// we change next time. The jobs behind it are backup. Nothing is on a slide
+// that someone outside the system can't read cold.
 
-type Pane = { title: string; table?: { head: string[]; rows: string[][]; widths: number[] }; items?: string[]; numbered?: boolean };
+type Item = string | { text: string; sub?: boolean; bold?: boolean };
+type Pane = { title: string; items?: Item[]; table?: { head: string[]; rows: string[][]; widths: number[]; title?: string } };
 export interface SlideSpec {
   kicker: string; title: string; notes: string;
   body:
     | { k: "cover"; sub: string; meta: string; agenda: string[] }
-    | { k: "results"; tiles: Array<{ label: string; value: string; detail: string }>; left: Pane; right: Pane }
     | { k: "table"; head: string[]; rows: string[][]; widths: number[]; foot?: string }
     | { k: "split"; left: Pane; right: Pane; ratio?: number; foot?: string };
 }
@@ -243,75 +215,47 @@ function pages(rows: string[][], maxChars: number, maxRows: number): string[][][
 }
 const part = (i: number, n: number) => (n > 1 ? ` (${i + 1} of ${n})` : "");
 
-/** What a finding showed, as the deck says it: its facts, except where the
- *  data slides already list them one by one. */
-function deckObservation(f: Finding, r: Review): string {
-  const lines = [...f.observation.split("\n").map((l) => l.trim()).filter(Boolean), ...f.info];
-  if (f.source !== "records" || f.edited) return lines.join("\n");
-  if (f.category === "scope" && r.found.length) return [lines[0], "Each finding is on the found-work slide."].join("\n");
-  if (f.category === "contractors" && r.ready.length) {
-    const by = new Map<string, number>(); for (const j of r.ready) by.set(j.crew, (by.get(j.crew) ?? 0) + j.shifts.length);
-    return [`${plural(r.metrics.readyJobs, "ready job")} waited ${plural(r.metrics.readyShifts, "shift")} in all to start: ${[...by.entries()].map(([c, n]) => `${c} ${n}`).join(", ")}.`, ...lines.filter((l) => /waiting on another crew/.test(l)), "Each job is on the stuck-work slide."].join("\n");
-  }
-  return lines.join("\n");
-}
-
 /** The deck, slide by slide (what the PowerPoint is drawn from). */
 export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
-  const m = r.metrics, s: SlideSpec[] = [];
+  const m = r.metrics, s: SlideSpec[] = [], pt = point(r, o);
   const close = toClose(r);
-  const atOnce = m.leastAtOnce === m.mostAtOnce ? `${m.mostAtOnce}` : `${m.leastAtOnce} to ${m.mostAtOnce}`;
   const dates = eventDates(r, o.tz);
-  s.push({ kicker: "Post-event review", title: dates ? `${eventName(o)}: ${dates}` : eventName(o), notes: "What the event showed, the gaps against leading practice, and the plan to close them.",
-    body: { k: "cover", sub: projectLine(o) || "What the event showed, the gaps, and the plan to close them", meta: [o.preparedBy, `Written ${o.date}`].filter(Boolean).join("  ·  "), agenda: ["Results, with the data behind each number", "What we found and how it closes", "Event organization", "Closure plan", "Targets and decisions", "Backup: questions and definitions"] } });
+  s.push({ kicker: "Post-event review", title: dates ? `${eventName(o)}: ${dates}` : eventName(o), notes: "What set the finish, what we change next time, and the jobs behind it.",
+    body: { k: "cover", sub: projectLine(o), meta: [o.preparedBy, `Written ${o.date}`].filter(Boolean).join("  ·  "), agenda: ["What set the finish", "What we change next time", "Backup: the jobs behind it"] } });
 
-  // Results: the four numbers, what is behind them, what went well.
-  const behind: string[] = [];
-  if (m.baselineFinish != null && m.actualFinish != null) behind.push(`Finish: baseline ${whenWord(m.baselineFinish, o.tz)}; actual ${whenWord(m.actualFinish, o.tz)}.`);
-  for (const f of r.found.filter((x) => x.critical)) behind.push(`Added on the critical path (${orderWord(f.on)}): ${f.what.replace(/[.;,]+$/, "")}. About ${f.hours} h.`);
-  if (m.addedSteps) behind.push(`Scope: ${m.addedSteps} activities added from ${plural(r.found.length, "finding")}${m.addedPct != null ? `, ${m.addedH} h of work on a ${m.baselineH} h plan` : ""}. Listed on the next slide.`);
-  if (m.stuckShifts + m.readyShifts) behind.push(`Stuck work: ${plural(m.stuckJobs, "started job")} sat ${plural(m.stuckShifts, "shift")} in all; ${plural(m.readyJobs, "ready job")} waited ${plural(m.readyShifts, "shift")} in all. Each job is listed two slides on.`);
-  s.push({
-    kicker: "1 · Results", title: m.varianceH == null ? "The event to date" : m.varianceH > 0.5 ? `Scope delivered; finish ${m.varianceH} h past the baseline` : "Scope delivered on the baseline finish",
-    notes: summaryLines(r, o).join(" "),
-    body: { k: "results", tiles: [
-      { label: "Schedule variance", value: m.varianceH == null ? "Open" : `${m.varianceH > 0 ? "+" : ""}${m.varianceH} h`, detail: "against the baseline finish" },
-      { label: "Scope", value: `${m.baselineSteps} + ${m.addedSteps}`, detail: `planned activities + added. ${m.stepsDone} of ${m.steps} done` },
-      { label: "Scope growth", value: m.addedPct == null ? "n/a" : `${m.addedPct}%`, detail: "more planned work (schedule estimates)" },
-      { label: "Stuck work", value: `${m.shiftsWithStuck} of ${m.shifts}`, detail: m.shiftsWithStuck ? `shifts had jobs sitting, ${atOnce} at a time` : "shifts had a job sitting" },
-    ], left: { title: "Behind the numbers", items: behind }, right: { title: "What performed well", items: r.strengths.length ? r.strengths : ["Nothing the records single out."] } },
-  });
+  // The point: what set the finish, and beside it everything that did not.
+  const rest: Item[] = [];
+  for (const g of pt.also) { rest.push({ text: g.effect, bold: true }); for (const t of g.titles) rest.push({ text: t, sub: true }); }
+  if (pt.quiet.length) { rest.push({ text: "Did not move the finish", bold: true }); for (const t of pt.quiet) rest.push({ text: t, sub: true }); }
+  s.push({ kicker: "1 · The point", title: pt.headline, notes: [...pt.lines, pt.span, scopeLine(r)].filter(Boolean).join(" "),
+    body: { k: "split", ratio: 0.6,
+      left: { title: pt.order ? "What set the finish" : "The finish", items: pt.lines.length ? pt.lines : [pt.span || scopeLine(r)].filter(Boolean),
+        ...(pt.order && pt.steps.length ? { table: { title: `${orderWord(pt.order)}: the steps that ran long`, head: ["Step", "Crew", "Planned", "Took"], rows: stepRows(r, false), widths: [4.2, 1.6, 1.0, 1.0] } } : {}) },
+      right: { title: "Everything else", items: rest.length ? rest : ["Nothing else in the records moved the finish."] },
+      foot: [pt.span, scopeLine(r)].filter(Boolean).join(" ") } });
 
-  // The data behind scope, then behind stuck work.
-  if (r.found.length) pages(r.found.map((f) => [f.what, orderWord(f.on), String(f.steps), `${f.hours} h`, f.critical ? "Yes" : "No", f.approvedBy ?? "Not recorded"]), 1500, 8).forEach((rows, i, a) =>
-    s.push({ kicker: `1 · Results · found work${part(i, a.length)}`, title: `Scope: ${m.addedSteps} activities added from ${plural(r.found.length, "finding")}${m.addedPct != null ? ` (${m.addedPct}% more planned work)` : ""}`, notes: "Hours are the work estimated when each finding was approved. Most ran alongside other work, so they do not add up to the finish variance.",
-      body: { k: "table", head: ["Finding", "Where", "Activities", "Work when approved", "Critical path", "Approved by"], widths: [5.6, 1.3, 1.1, 1.6, 1.2, 1.5], rows, foot: "Hours are the estimate at approval; most ran alongside other work, so they do not add up to the finish variance." } }));
-  const stuckAll = [
-    ...r.stuck.map((j) => [jobWord(j), j.crew, "Started, sat still", String(j.shifts.length), shiftsWord(j.shifts.map((x) => x.key)), [...new Set(j.shifts.map((x) => `${CAUSE_WORD[x.cause]}${x.said ? `: "${x.said}"` : x.crewOn.length ? ` (crew on ${[...new Set(x.crewOn.map(orderWord))].join(", ")})` : ""}`))].join(" Then: ")]),
-    ...r.ready.map((j) => [jobWord(j), j.crew, "Ready, not started", String(j.shifts.length), shiftsWord(j.shifts), j.said ?? (j.busyOn.length ? `Crew was on ${[...new Set(j.busyOn.map(orderWord))].join(", ")}` : j.crewLogged ? "Crew was on other work" : "No work logged by this crew")]),
-  ];
-  if (stuckAll.length) pages(stuckAll, 2400, 11).forEach((rows, i, a) =>
-    s.push({ kicker: `1 · Results · stuck work${part(i, a.length)}`, title: `Stuck work: ${plural(m.stuckJobs, "started job")} sat ${plural(m.stuckShifts, "shift")}; ${plural(m.readyJobs, "ready job")} waited ${plural(m.readyShifts, "shift")}`, notes: `It happened on ${m.shiftsWithStuck} of the ${m.shifts} shifts, ${atOnce} jobs at a time. A job that sits several shifts is counted in each, so these are not hours of delay to the finish.`,
-      body: { k: "table", head: ["Job", "Crew", "What happened", "Shifts", "When", "Why, from the record"], widths: [3.3, 1.5, 1.6, 0.7, 1.7, 3.5], rows, foot: `On ${m.shiftsWithStuck} of the ${m.shifts} shifts, ${atOnce} jobs at a time. Night shifts count only for work that ran on nights. See it in Reports, As-built schedule.` } }));
+  // What we change.
+  // An owner column only when someone is named: the records don't make one up.
+  const owned = close.some((f) => f.owner);
+  const cRows = close.map((f) => [`${f.title}\n${f.proof}`, costOf(f), f.next, ...(owned ? [f.owner || "To name"] : [])]);
+  if (cRows.length) pages(cRows, 2600, 5).forEach((rows, i, a) =>
+    s.push({ kicker: `2 · Next time${part(i, a.length)}`, title: "What we change next time", notes: close.map((f) => `${f.title}: ${f.next}`).join(" "),
+      body: { k: "table", head: ["What happened", "What it cost", "What we do differently", ...(owned ? ["Owner"] : [])], widths: owned ? [4.4, 2.6, 3.9, 1.6] : [4.8, 3.0, 4.7], rows } }));
 
-  // The findings: one table, a few to a slide.
-  const fRows = close.map((f) => [`${categoryOf(f.category).name}\n${RATING_WORD[f.rating]}`, `${f.title}\n${deckObservation(f, r)}`, f.gap, f.next, f.owner]);
-  if (fRows.length) pages(fRows, 2900, 4).forEach((rows, i, a) =>
-    s.push({ kicker: `2 · Findings${part(i, a.length)}`, title: "What we found and how it closes", notes: `${RATING_MEANS} The 12-month items are on the closure plan slide.`,
-      body: { k: "table", head: ["Category", "What the event showed", "Gap", "Closure, next event", "Owner"], widths: [1.6, 4.4, 2.3, 3.0, 1.2], rows, foot: i === a.length - 1 ? RATING_MEANS : undefined } }));
+  if (r.organization) s.push({ kicker: "Backup · organization", title: `Event organization: ${r.organization.filled} of ${r.organization.required} required roles named`, notes: r.organization.missing.length ? `Not named yet: ${r.organization.missing.join(", ")}.` : "Every required role has a named person.", body: { k: "table", head: ["Role", "Named", "Responsible for"], widths: [3.6, 2.8, 5.9], rows: r.organization.roles.filter((x) => x.required || x.person).map((x) => [x.role, x.person || "Not named", x.does]) } });
+  if (r.measures.some((x) => x.set)) s.push({ kicker: "Backup · targets", title: "Targets for the next event", notes: "Targets agreed in the review, against this event's result.", body: { k: "table", head: ["Measure", "This event", "Target"], widths: [6.3, 3.0, 3.0], rows: r.measures.filter((x) => x.set).map((x) => [x.measure, x.result, x.target]) } });
 
-  if (r.organization) s.push({ kicker: "3 · Organization", title: `Event organization: ${r.organization.filled} of ${r.organization.required} required roles named`, notes: r.organization.missing.length ? `Not named yet: ${r.organization.missing.join(", ")}.` : "Every required role has a named person.", body: { k: "table", head: ["Role", "Named", "Responsible for", "Required"], widths: [3.4, 2.6, 5.2, 1.1], rows: r.organization.roles.map((x) => [x.role, x.person || "Not named", x.does, x.required ? "Yes" : "No"]) } });
-  else s.push({ kicker: "3 · Organization", title: "Proposed event organization", notes: "The organization is designed for the event rather than formed from who is available. One person owns the event; coordinators own preparation, planning and logistics; an area coordinator runs each unit day to day.", body: { k: "table", head: ["Role", "Who", "Responsible for"], widths: [3.3, 3.2, 5.8], rows: ORGANIZATION.map((x) => [x.tier, x.who, x.does]) } });
-
-  s.push({ kicker: "4 · Closure plan", title: "What is in place by the next event, and within 12 months", notes: "Each gate has an owner. The 12-month items take longer than one event: standards first, then systems, people, and a yearly self-assessment.",
-    body: { k: "split", ratio: 0.58, left: { title: "Next event", table: { head: ["When", "Action", "Owner"], widths: [1.5, 4.1, 1.6], rows: GATES.map((g) => [g.when, g.what, g.owner]) } }, right: { title: "Within 12 months", table: { head: ["When", "What"], widths: [1.1, 3.9], rows: ROADMAP.map((x) => [`${x.when}\n${x.theme}`, x.what]) } } } });
-
-  const ds = decisionsOf(r.findings);
-  s.push({ kicker: "5 · Targets and decisions", title: "How the next event is measured, and what we need decided", notes: "This event's results are the starting point. A target reads Not set until this group agrees one.",
-    body: { k: "split", ratio: 0.58, left: { title: "Measures", table: { head: ["Measure", "This event", "Target"], widths: [3.6, 1.9, 1.7], rows: r.measures.map((x) => [x.measure, x.result, x.target]) } }, right: { title: "Decisions requested", items: ds.length ? ds : ["None from this review."], numbered: true }, foot: r.measures.some((x) => !x.set) ? "A target reads \"Not set\" until one is agreed and entered in the review. None is assumed." : undefined } });
-
-  pages(r.qa.map((x) => [x.q, x.a]), 2600, 10).forEach((rows, i, a) => s.push({ kicker: `Backup · questions${part(i, a.length)}`, title: "Anticipated questions", notes: "Prepared answers, each from the records.", body: { k: "table", head: ["Question", "Answer"], widths: [3.6, 8.7], rows } }));
-  s.push({ kicker: "Backup · definitions", title: "How each number is counted, and where to see it", notes: SOURCES, body: { k: "table", head: ["Measure", "What it means", "Where to see it"], widths: [3.0, 6.0, 3.3], rows: r.definitions.map((d) => [d.measure, d.means, d.where]), foot: SOURCES } });
+  // Backup: the jobs behind it.
+  if (pt.order && pt.steps.some((st) => st.said.length)) s.push({ kicker: `Backup · ${orderWord(pt.order)}`, title: `${orderWord(pt.order)}: what was written on the steps that ran long`, notes: "The comments are the crew's own, as written on each step.",
+    body: { k: "table", head: ["Step", "Crew", "Planned", "Took", "Recorded on the step"], widths: [3.0, 1.4, 0.9, 0.9, 6.1], rows: stepRows(r, true) } });
+  if (r.found.length) pages(foundRows(r), 1500, 8).forEach((rows, i, a) =>
+    s.push({ kicker: `Backup · found work${part(i, a.length)}`, title: `${m.addedSteps} activities were added from ${plural(r.found.length, "finding")}${m.addedPct != null ? ` (${m.addedH} h on a ${m.baselineH} h plan)` : ""}`, notes: "Hours are the work estimated when each finding was approved.",
+      body: { k: "table", head: ["Finding", "Where", "Activities", "Work when approved", "Critical path", "Approved by"], widths: [5.6, 1.3, 1.1, 1.6, 1.2, 1.5], rows } }));
+  const waited = waitedRows(r);
+  if (waited.length) pages(waited, 2600, 12).forEach((rows, i, a) =>
+    s.push({ kicker: `Backup · jobs that waited${part(i, a.length)}`, title: "Jobs that waited, and why", notes: "A job that waits and still finishes before the last work is done does not move the finish. Equipment out for service is a planned step.",
+      body: { k: "table", head: ["Job", "Crew", "What happened", "When", "Why, from the record"], widths: [3.3, 1.5, 2.0, 1.7, 3.8], rows, foot: "A job that waits and still finishes before the last work is done does not move the finish." } }));
+  pages(r.qa.map((x) => [x.q, x.a]), 2600, 8).forEach((rows, i, a) => s.push({ kicker: `Backup · questions${part(i, a.length)}`, title: "Questions you may get", notes: "Prepared answers, each from the records.", body: { k: "table", head: ["Question", "Answer"], widths: [3.4, 8.9], rows } }));
   return s;
 }
 
@@ -328,20 +272,37 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, out: "blob" | "no
     const s = p.addSlide();
     s.background = { color: BG };
     const b = spec.body;
-    const bullets = (items: string[], x: number, y: number, w: number, h: number, size: number, numbered?: boolean) =>
-      s.addText(items.map((t, i) => ({ text: T(numbered ? `${i + 1}.  ${t}` : t), options: { bullet: numbered ? false : { indent: 14 }, breakLine: true, paraSpaceAfter: 6 } })), { x, y, w, h, fontFace: face, fontSize: size, color: INK, valign: "top" });
+    const bullets = (items: Item[], x: number, y: number, w: number, h: number, size: number) =>
+      s.addText(items.map((it) => { const o = typeof it === "string" ? { text: it } : it; return { text: T(o.text), options: { bullet: o.bold ? false : { indent: 14 }, bold: !!o.bold, indentLevel: o.sub ? 1 : 0, breakLine: true, paraSpaceBefore: o.bold ? 6 : 0, paraSpaceAfter: 5 } }; }), { x, y, w, h, fontFace: face, fontSize: size, color: INK, valign: "top" });
     const table = (head: string[], rows: string[][], widths: number[], x: number, y: number, w: number, size?: number) => {
       const total = widths.reduce((a, c) => a + c, 0);
       const chars = rows.reduce((n, row) => n + row.join("").length, 0);
       const fs = size ?? (chars > 1300 ? 10 : chars > 800 ? 11 : 12);
       s.addTable([head.map((h) => ({ text: T(h), options: { bold: true, color: "FFFFFF", fill: { color: INK }, fontFace: face, fontSize: fs } })),
-        ...rows.map((row, ri) => head.map((_, i) => ({ text: T(row[i] ?? ""), options: { color: INK, fill: { color: ri % 2 ? "ECE8DF" : BG }, fontFace: face, fontSize: fs, valign: "top" as const, bold: i === 0 } })))],
+        ...rows.map((row, ri) => head.map((_, i) => {
+          const options = { color: INK, fill: { color: ri % 2 ? "ECE8DF" : BG }, fontFace: face, fontSize: fs, valign: "top" as const };
+          // A first cell of two lines: what it is in bold, the fact under it plain.
+          const [lead, ...more] = (row[i] ?? "").split("\n");
+          if (i === 0 && more.length) return { text: [{ text: T(lead), options: { bold: true, breakLine: true } }, { text: T(more.join(" ")), options: { bold: false } }], options };
+          return { text: T(row[i] ?? ""), options: { ...options, bold: i === 0 } };
+        }))],
       { x, y, w, colW: widths.map((c) => (c / total) * w), border: { type: "none" }, margin: [3, 5, 3, 5] });
     };
     const pane = (pn: Pane, x: number, y: number, w: number, h: number) => {
       s.addText(T(pn.title.toUpperCase()), { x, y, w, h: 0.3, fontFace: face, fontSize: 11, bold: true, color: ACC, charSpacing: 1 });
-      if (pn.table) table(pn.table.head, pn.table.rows, pn.table.widths, x, y + 0.35, w, 10);
-      else if (pn.items) bullets(pn.items, x, y + 0.35, w, h - 0.35, pn.items.join("").length > 520 ? 12 : 13, pn.numbered);
+      const items = pn.items ?? [];
+      const chars = items.reduce((n, it) => n + (typeof it === "string" ? it : it.text).length, 0);
+      const size = chars > 620 ? 12 : 13;
+      // Room the lines take, so a table can sit right under them.
+      const perLine = Math.max(20, Math.floor((w * 72) / (size * 0.52)));
+      const lines = items.reduce((n, it) => n + Math.ceil((typeof it === "string" ? it : it.text).length / perLine), 0);
+      const used = pn.table ? Math.min(h - 1.7, lines * size * 1.32 / 72 + items.length * 0.09 + 0.1) : h - 0.35;
+      if (items.length) bullets(items, x, y + 0.35, w, used, size);
+      if (pn.table) {
+        const ty = y + 0.35 + (items.length ? used + 0.1 : 0);
+        if (pn.table.title) s.addText(T(pn.table.title.toUpperCase()), { x, y: ty, w, h: 0.3, fontFace: face, fontSize: 11, bold: true, color: ACC, charSpacing: 1 });
+        table(pn.table.head, pn.table.rows, pn.table.widths, x, ty + (pn.table.title ? 0.33 : 0), w, 11);
+      }
     };
     const foot = (t?: string) => { if (t) s.addText(T(t), { x: 0.6, y: 6.85, w: 12.1, h: 0.4, fontFace: face, fontSize: 10, color: "6B7280", valign: "top" }); };
     if (b.k === "cover") {
@@ -355,18 +316,7 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, out: "blob" | "no
     }
     s.addText(T(spec.kicker.toUpperCase()), { x: 0.6, y: 0.35, w: 12.1, h: 0.3, fontFace: face, fontSize: 11, bold: true, color: ACC, charSpacing: 2 });
     s.addText(T(spec.title), { x: 0.6, y: 0.65, w: 12.1, h: 0.8, fontFace: face, fontSize: spec.title.length > 70 ? 21 : 25, bold: true, color: INK, valign: "top" });
-    if (b.k === "results") {
-      const w = 2.9, gap = 0.17;
-      b.tiles.forEach((t, i) => {
-        const x = 0.6 + i * (w + gap);
-        s.addShape(p.ShapeType.roundRect, { x, y: 1.55, w, h: 1.55, fill: { color: CARD }, line: { color: LINE, width: 1 }, rectRadius: 0.06 });
-        s.addText(T(t.label.toUpperCase()), { x: x + 0.15, y: 1.6, w: w - 0.3, h: 0.28, fontFace: face, fontSize: 10, bold: true, color: SOFT, charSpacing: 1 });
-        s.addText(T(t.value), { x: x + 0.15, y: 1.86, w: w - 0.3, h: 0.65, fontFace: face, fontSize: 30, bold: true, color: i === 0 || i === 3 ? ACC : INK });
-        s.addText(T(t.detail), { x: x + 0.15, y: 2.5, w: w - 0.3, h: 0.55, fontFace: face, fontSize: 11, color: SOFT, valign: "top" });
-      });
-      pane(b.left, 0.6, 3.35, 7.3, 3.5);
-      pane(b.right, 8.2, 3.35, 4.5, 3.5);
-    } else if (b.k === "table") {
+    if (b.k === "table") {
       table(b.head, b.rows, b.widths, 0.6, 1.55, 12.1);
       foot(b.foot);
     } else if (b.k === "split") {
