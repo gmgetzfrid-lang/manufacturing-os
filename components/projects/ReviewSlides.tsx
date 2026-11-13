@@ -149,7 +149,8 @@ function PaneTitle({ text }: { text: string }) {
 }
 function PaneView({ pane }: { pane: SlidePane }) {
   const items = (pane.items ?? []).map(itemOf);
-  const size = items.reduce((n, it) => n + it.text.length, 0) > 620 ? 12 : 13;
+  const chars = items.reduce((n, it) => n + it.text.length, 0);
+  const size = chars > 620 ? 12 : chars > 420 ? 13 : 15;
   return (
     <div>
       <PaneTitle text={pane.title} />

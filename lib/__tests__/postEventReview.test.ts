@@ -270,25 +270,31 @@ saved.added.push({ id: "a1", category: "materials", title: "Flange not ordered",
   });
 });
 
-describe("the files open on the point", () => {
+describe("the files lead with what the event showed and what changes", () => {
   const o = { project: "Transmix Turnaround", phase: "Phase 1", tz, preparedBy: null, date: "November 13, 2026" };
-  it("the deck: what set the finish, then what changes; no slide of definitions or a generic plan", () => {
+  it("the deck: conclusions, then each change with what justifies it; the records are backup", () => {
     const deck = deckSlides(r, o);
     expect(deck[1].title).toBe("Phase 1 finished 46 h late. PSVs set the finish.");
     const b = deck[1].body;
-    expect(b.k === "split" && b.left.table?.rows).toEqual([["PSV-021 - E-13 Overhead (Swap Existing with the New Model)", "Maintenance (KE)", "8 h", "99 h"]]);
-    expect(deck[2].title).toBe("What we change next time");
+    // The conclusions, most costly first; no table of data on the slide that carries the message.
+    expect(b.k === "split" && b.left.items?.[0]).toEqual({ text: "1.  PSVs set the finish: a line had to be cleaned first", bold: true });
+    expect(b.k === "split" && b.left.table).toBeUndefined();
+    expect(deck[2].title).toBe("What we change, and what justifies it");
     // No owner is recorded on the project, so no owner column is made up.
-    expect(deck[2].body.k === "table" && deck[2].body.head).toEqual(["What happened", "What it cost", "What we do differently"]);
+    expect(deck[2].body.k === "table" && deck[2].body.head).toEqual(["What we change", "What justifies it", "Category"]);
+    expect(deck[2].body.k === "table" && deck[2].body.rows[0]).toEqual(["1.  Plan line cleaning into the job on PSVs: the line was found plugged this event.", r.findings[0].why, "Planning and scheduling"]);
+    expect(deck.slice(3).every((x) => x.kicker.startsWith("Backup"))).toBe(true);
     const titles = deck.map((x) => `${x.kicker} ${x.title}`).join(" | ");
     expect(titles).not.toMatch(/definition|closure plan|roadmap|proposed organization|decisions/i);
     // Service is a planned step in the backup table, not stuck work.
-    const waited = deck.find((x) => x.title === "Jobs that waited, and why")!.body;
+    const waited = deck.find((x) => x.title === "Jobs that sat a whole shift, and why")!.body;
     expect(waited.k === "table" && waited.rows.find((row) => row[0].startsWith("TV-006"))![2]).toBe("Out for service (planned)");
   });
-  it("the report: the same headline first", () => {
+  it("the report: the same headline and conclusions first, each finding with how it is done well", () => {
     const blocks = reportBlocks(r, o);
     expect(blocks.find((x) => x.k === "h1")).toMatchObject({ text: "1. Phase 1 finished 46 h late. PSVs set the finish." });
-    expect(blocks.some((x) => x.k !== "table" && /leading practice|12 months/i.test(x.text))).toBe(false);
+    expect(blocks.find((x) => x.k === "num")).toMatchObject({ n: 1, lead: "PSVs set the finish: a line had to be cleaned first. " });
+    expect(blocks.some((x) => x.k === "p" && x.lead === "How it is done well (Planning and scheduling): ")).toBe(true);
+    expect(blocks.some((x) => x.k !== "table" && /12 months|closure plan/i.test(x.text))).toBe(false);
   });
 });

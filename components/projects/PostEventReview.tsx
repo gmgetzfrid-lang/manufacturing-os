@@ -1,10 +1,11 @@
 "use client";
 
 // PostEventReview - the look back at a finished event (or one phase of it),
-// drafted from its records (lib/postEventReview). The point comes first:
-// what set the finish, which job and crew, then everything else by whether
-// it moved the finish. Under it, a finding per category with what it cost
-// and what to do differently, and the questions the records can't answer.
+// drafted from its records (lib/postEventReview). The conclusions come
+// first: what the event showed, most costly first, each with what justifies
+// a change and the change. Under them, each finding with how it is done
+// well, what happened and what to do differently, the questions the records
+// can't answer, and the records themselves for when someone asks.
 //
 // A person keeps, changes, adds to or throws out each finding, adds their
 // own, and answers the questions; Re-analyze reads the records again with
@@ -37,6 +38,7 @@ import {
 } from "@/lib/postEventReview";
 import { changeReview, loadReview, reviewScope, syncLesson } from "@/lib/reviewStore";
 import { deckSlides, fileStem, reviewDocx, reviewPptx, saveFile, type ReviewFileOpts } from "@/lib/reviewFiles";
+import { overloaded } from "@/lib/crewFlow";
 import ReviewSlides from "@/components/projects/ReviewSlides";
 
 const btn = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
@@ -120,7 +122,8 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
     const work = buildAsBuiltWork({ built, milestones: mine, log: (log ?? []).filter((r) => ids.has(r.milestone_id)), notes: myNotes, records, plans, companyOf: (c) => companyOf(c, mp), tz, times, now });
     const ds = discoveries(active);
     const look = buildLookBack({ milestones: active, notes: myNotes, discoveries: ds, now, tz });
-    return buildReview({ built, work, notes: myNotes, look, discoveries: ds, tz, saved, materials: register, organization });
+    const dependsOn = new Map(mine.filter((x) => x.id).map((x) => [x.id!, x.dependsOn ?? []]));
+    return buildReview({ built, work, notes: myNotes, look, discoveries: ds, tz, saved, materials: register, organization, dependsOn });
   }, [saved, milestones, phases, phaseId, notes, log, records, plans, mp, tz, times, register, organization]);
 
   const who = actor.email;
@@ -141,8 +144,8 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
     if (!f) return undefined;
     // The same finding with what was just saved laid over it.
     const it = next.items[key]; const e = it?.edits ?? {};
-    if (f.source === "person") { const a = next.added.find((x) => `added:${x.id}` === key); return a ? { ...f, title: a.title ?? f.title, observation: a.observation ?? "", gap: a.gap ?? "", next: a.next ?? "", year: a.year ?? "", owner: a.owner ?? "", effect: a.effect ?? "", rating: a.rating ?? f.rating, info: it?.info ?? [] } : f; }
-    return { ...f, title: e.title ?? f.drafted.title, observation: e.observation ?? f.drafted.observation, rating: e.rating ?? f.drafted.rating, practice: e.practice ?? f.practice, gap: e.gap ?? f.gap, next: e.next ?? f.next, year: e.year ?? f.year, owner: e.owner ?? f.owner, effect: e.effect ?? f.effect, info: it?.info ?? [] };
+    if (f.source === "person") { const a = next.added.find((x) => `added:${x.id}` === key); return a ? { ...f, title: a.title ?? f.title, observation: a.observation ?? "", gap: a.gap ?? "", next: a.next ?? "", year: a.year ?? "", owner: a.owner ?? "", effect: a.effect ?? "", why: a.why ?? a.effect ?? f.why, rating: a.rating ?? f.rating, info: it?.info ?? [] } : f; }
+    return { ...f, title: e.title ?? f.drafted.title, observation: e.observation ?? f.drafted.observation, rating: e.rating ?? f.drafted.rating, practice: e.practice ?? f.practice, gap: e.gap ?? f.gap, next: e.next ?? f.next, year: e.year ?? f.year, owner: e.owner ?? f.owner, effect: e.effect ?? f.effect, why: e.why ?? f.why, info: it?.info ?? [] };
   };
 
   const keep = (f: Finding) => void act(`keep:${f.key}`, (s) => { s.items[f.key] = { ...s.items[f.key], status: "kept", basis: basisOf(f), at: Date.now(), by: who }; }, () => lesson(f, true));
@@ -156,7 +159,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
     // Only what differs from the draft is kept as a change.
     const out: FindingEdit = { ...(s.items[f.key]?.edits ?? {}) };
     for (const k of ["title", "observation"] as const) { const v = (e[k] ?? "").trim(); if (v && v !== f.drafted[k]) out[k] = v; else delete out[k]; }
-    for (const k of ["practice", "gap", "next", "year", "owner", "effect"] as const) { const v = (e[k] ?? "").trim(); if (v !== f[k]) { if (v) out[k] = v; else delete out[k]; } }
+    for (const k of ["practice", "gap", "next", "year", "owner", "effect", "why"] as const) { const v = (e[k] ?? "").trim(); if (v !== f[k]) { if (v) out[k] = v; else delete out[k]; } }
     if (e.rating && e.rating !== f.drafted.rating) out.rating = e.rating; else delete out.rating;
     s.items[f.key] = { ...s.items[f.key], edits: out, basis: basisOf(f), at: Date.now(), by: who };
   }, (next) => { setEditing(null); const g = refind(next, f.key); return g && (f.status === "kept" || f.source === "person") ? lesson(g, true) : undefined; });
@@ -167,7 +170,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
     void act("add", (s) => { s.added.push({ ...e, id, category, at: Date.now(), by: who }); }, async () => {
       setAdding(false);
       const c = categoryOf(category);
-      await lesson({ key: `added:${id}`, category, source: "person", rating: e.rating ?? "opportunity", title: e.title ?? "Finding", observation: e.observation ?? "", evidence: [], practice: "", gap: e.gap ?? "", next: e.next ?? "", year: e.year ?? "", owner: e.owner ?? "", effect: e.effect ?? "", moved: null, proof: "", info: [], status: "kept", edited: false, stale: false, drafted: { title: e.title ?? c.name, observation: e.observation ?? "", rating: e.rating ?? "opportunity" }, by: who, at: Date.now() }, true);
+      await lesson({ key: `added:${id}`, category, source: "person", rating: e.rating ?? "opportunity", title: e.title ?? "Finding", observation: e.observation ?? "", evidence: [], practice: "", gap: e.gap ?? "", next: e.next ?? "", year: e.year ?? "", owner: e.owner ?? "", effect: e.effect ?? "", moved: null, proof: "", why: e.effect ?? "", hours: null, info: [], status: "kept", edited: false, stale: false, drafted: { title: e.title ?? c.name, observation: e.observation ?? "", rating: e.rating ?? "opportunity" }, by: who, at: Date.now() }, true);
     });
   };
   const filled = Object.entries(answers).filter(([, a]) => a.cause || a.note?.trim());
@@ -236,20 +239,22 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
       {!m.steps ? <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-8 text-center text-[13px] text-[var(--color-text-muted)]">No schedule{phase ? ` for ${phase.name}` : ""} yet, so there is nothing to review.</div> : <>
         <section className="rounded-2xl border-2 border-[var(--color-text)] bg-[var(--color-surface)] p-4" data-review-point>
           <h3 className="text-[18px] sm:text-[20px] font-black leading-snug text-[var(--color-text)]">{pt.headline}</h3>
-          <div className="mt-2 grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] items-start">
-            <div className="min-w-0">
-              {pt.lines.length > 0 && <ul className="list-disc pl-4 space-y-1 text-[13.5px] text-[var(--color-text)]">{pt.lines.map((l, i) => <li key={i}>{l}</li>)}</ul>}
-              {pt.order && pt.steps.length > 0 && <div className="mt-3"><Table title={`${orderWord(pt.order)}: the steps that ran long`} head={["Step", "Crew", "Planned", "Took"]} empty="" rows={pt.steps.map((st) => [st.name, st.crew || "Not set", `${st.plannedH} h`, `${st.tookH} h`])} /></div>}
-              {pt.span && <p className="mt-2 text-[12px] text-[var(--color-text-muted)]">{pt.span}</p>}
-            </div>
-            {(pt.also.length > 0 || pt.quiet.length > 0) && (
-              <div className="min-w-0 text-[13px] text-[var(--color-text)] space-y-2.5">
-                <div className={label}>Everything else</div>
-                {pt.also.map((g) => <div key={g.effect}><b>{g.effect}</b><ul className="list-disc pl-4 mt-0.5 space-y-0.5">{g.titles.map((t) => <li key={t}>{t}</li>)}</ul></div>)}
-                {pt.quiet.length > 0 && <div><b>Did not move the finish</b><ul className="list-disc pl-4 mt-0.5 space-y-0.5">{pt.quiet.map((t) => <li key={t}>{t}</li>)}</ul></div>}
-              </div>
-            )}
-          </div>
+          {pt.span && <p className="text-[12px] text-[var(--color-text-muted)]">{pt.span}</p>}
+          {pt.conclusions.length > 0 ? (
+            <ol className="mt-3 space-y-3">
+              {pt.conclusions.map((c, i) => (
+                <li key={c.key} className="grid gap-x-3 sm:grid-cols-[28px_minmax(0,1fr)] text-[13.5px] text-[var(--color-text)]" data-conclusion={c.key}>
+                  <span className="hidden sm:flex w-7 h-7 rounded-full bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-black items-center justify-center">{i + 1}</span>
+                  <div className="min-w-0">
+                    <b className="block text-[14.5px]"><span className="sm:hidden">{i + 1}. </span>{c.title}</b>
+                    <p className="text-[var(--color-text)]">{c.why}</p>
+                    {c.change && <p className="mt-0.5"><span className={label}>Change </span>{c.change}</p>}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          ) : <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">Nothing in the records calls for a change.</p>}
+          {pt.quiet.length > 0 && <p className="mt-3 text-[12.5px] text-[var(--color-text-muted)]"><b className="text-[var(--color-text)]">Did not move the finish: </b>{pt.quiet.join("; ")}.</p>}
         </section>
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
@@ -294,6 +299,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
                     </div>
                     <h3 className="mt-1 text-[15.5px] font-black text-[var(--color-text)]">{f.title}</h3>
                     {f.effect && <p className={`mt-0.5 text-[13px] font-bold ${f.moved === 3 ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text)]"}`} data-finding-effect>{f.effect}</p>}
+                    {closes && f.why && f.why !== f.effect && <p className="mt-0.5 text-[13px] text-[var(--color-text)]">{f.why}</p>}
                     <dl className="mt-2 grid gap-x-3 gap-y-1.5 sm:grid-cols-[136px_minmax(0,1fr)] text-[13px] text-[var(--color-text)]">
                       <dt className={`${label} pt-0.5`}>What happened</dt>
                       <dd>
@@ -309,6 +315,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
                         )}
                       </dd>
                       {closes && <>
+                        {f.practice && <><dt className={`${label} pt-0.5`}>Done well</dt><dd className="text-[var(--color-text-muted)]">{f.practice}</dd></>}
                         {f.gap && <><dt className={`${label} pt-0.5`}>What was missing</dt><dd>{f.gap}</dd></>}
                         <dt className={`${label} pt-0.5`}>Do differently</dt><dd>{f.next || <span className="text-[var(--color-text-muted)]">Not written.</span>}{f.owner && <span className="ml-1.5 text-[11px] font-extrabold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] whitespace-nowrap">Owner: {f.owner}</span>}</dd>
                         {f.year && <><dt className={`${label} pt-0.5`}>Longer term</dt><dd>{f.year}</dd></>}
@@ -412,6 +419,12 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
         <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]" open>
           <summary className="cursor-pointer px-4 py-3 text-[14px] font-black text-[var(--color-text)]">The records behind it: every job that waited, by name</summary>
           <div className="px-4 pb-4 space-y-4">
+            {review.flows.filter(overloaded).map((f) => (
+              <Table key={f.crew} title={`What waited for ${f.crew}: ${f.waitH} h across ${f.jobs.length} job${f.jobs.length === 1 ? "" : "s"}, ${f.peak.open} open at once`} head={["Job", "Open from", `${f.crew} started`, "Sat open", "Start against plan", `${f.crew} was on`]} empty="None."
+                rows={f.jobs.map((j) => [jobWord(j), when(j.openedAt), when(j.startedAt), j.waitH >= 1 ? `${j.waitH} h` : "None", j.lateStartH == null ? "" : Math.abs(j.lateStartH) < 1 ? "On plan" : `${Math.abs(j.lateStartH)} h ${j.lateStartH > 0 ? "late" : "early"}`, [...new Set(j.crewOn.map(orderWord))].join(", ")])} />
+            ))}
+            <Table title="Crews: planned against actual" head={["Crew", "Jobs handed to it", "Planned", "Took", "Sat waiting for it", "Most open at once"]} empty="No work passed between crews."
+              rows={review.flows.filter((f) => f.jobs.length >= 2).map((f) => [f.crew, String(f.jobs.length), `${f.plannedH} h`, `${f.tookH} h`, `${f.waitH} h`, `${f.peak.open}${f.plannedPeak ? ` (plan ${f.plannedPeak})` : ""}`])} />
             <Table title={`Started jobs that sat still: ${m.stuckJobs} job${m.stuckJobs === 1 ? "" : "s"}, ${m.stuckShifts} shift${m.stuckShifts === 1 ? "" : "s"} in all`} head={["Job", "Crew", "Shifts", "When", "Why, from the record"]} empty="No started job sat a full shift."
               rows={review.stuck.map((j) => [jobWord(j), j.crew, String(j.shifts.length), shiftsWord(j.shifts.map((s) => s.key)), [...new Set(j.shifts.map((s) => `${CAUSE_WORD[s.cause]}${s.said ? `: "${s.said}"` : s.crewOn.length ? ` (crew on ${[...new Set(s.crewOn.map(orderWord))].slice(0, 3).join(", ")})` : ""}`))].join(" Then: ")])} />
             <Table title={`Ready jobs not started: ${m.readyJobs} job${m.readyJobs === 1 ? "" : "s"}, ${m.readyShifts} shift${m.readyShifts === 1 ? "" : "s"} in all`} head={["Ready job", "Crew", "Shifts", "When", "Crew was on"]} empty="No ready job waited a full shift to start."
@@ -470,9 +483,9 @@ function FindingForm({ title, init, pickCategory, busy, onSave, onCancel }: {
   onSave: (e: FindingEdit, category?: CategoryId) => void; onCancel: () => void;
 }) {
   const [category, setCategory] = useState<CategoryId>(init?.category ?? "materials");
-  const [e, setE] = useState<FindingEdit>({ title: init?.title ?? "", observation: init?.observation ?? "", practice: init?.practice ?? "", gap: init?.gap ?? "", next: init?.next ?? "", year: init?.year ?? "", owner: init?.owner ?? "", effect: init?.effect ?? "", rating: init?.rating ?? "opportunity" });
+  const [e, setE] = useState<FindingEdit>({ title: init?.title ?? "", observation: init?.observation ?? "", practice: init?.practice ?? "", gap: init?.gap ?? "", next: init?.next ?? "", year: init?.year ?? "", owner: init?.owner ?? "", effect: init?.effect ?? "", why: init?.why ?? "", rating: init?.rating ?? "opportunity" });
   const set = (k: keyof FindingEdit, v: string) => setE((x) => ({ ...x, [k]: v }));
-  const Area = ({ k, name, hint, rows = 2 }: { k: "observation" | "gap" | "next" | "year"; name: string; hint: string; rows?: number }) => (
+  const Area = ({ k, name, hint, rows = 2 }: { k: "observation" | "gap" | "next" | "year" | "why"; name: string; hint: string; rows?: number }) => (
     <label className="block"><span className={label}>{name}</span><textarea rows={rows} value={e[k] ?? ""} onChange={(ev) => set(k, ev.target.value)} placeholder={hint} className={`${field} mt-0.5`} /></label>
   );
   const ok = !!(e.title ?? "").trim() && !!(e.observation ?? "").trim();
@@ -486,6 +499,7 @@ function FindingForm({ title, init, pickCategory, busy, onSave, onCancel }: {
       <label className="block"><span className={label}>Finding, in one line</span><input value={e.title ?? ""} onChange={(ev) => set("title", ev.target.value)} placeholder="Flange not ordered: the length was not on the drawing" className={`${field} mt-0.5`} /></label>
       {Area({ k: "observation", name: "What happened (one fact a line)", hint: "Which job, which crew, when", rows: 5 })}
       <label className="block"><span className={label}>What it cost</span><input value={e.effect ?? ""} onChange={(ev) => set("effect", ev.target.value)} placeholder="Hours on the finish, dollars, or rework" className={`${field} mt-0.5`} /></label>
+      {Area({ k: "why", name: "What justifies a change (with the numbers)", hint: "Hours waited, hours over plan, what one more crew or one check would have saved" })}
       {Area({ k: "gap", name: "What was missing", hint: "What was missing or didn't work" })}
       {Area({ k: "next", name: "What we do differently next time", hint: "What will be in place before the next event" })}
       {Area({ k: "year", name: "Longer term (optional)", hint: "What takes longer than one event" })}
