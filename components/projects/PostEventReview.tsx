@@ -438,7 +438,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
           {canManage && targets && <div className="mt-2.5 flex gap-1.5"><button type="button" disabled={!!busy} onClick={saveTargets} className={pri}>{busy === "targets" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save targets</button><button type="button" onClick={() => setTargets(null)} className={btn}>Cancel</button></div>}
         </section>
 
-        <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]" open>
+        <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]">
           <summary className="cursor-pointer px-4 py-3 text-[14px] font-black text-[var(--color-text)]">The records behind it: every job that waited, by name</summary>
           <div className="px-4 pb-4 space-y-4">
             {review.flows.filter(overloaded).map((f) => (
@@ -465,8 +465,8 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
                 </ul>
               </div>
             ))}
-            <Table title={`Work orders that finished late: ${review.late.length}, and where the hours went`} head={["Work order", "Finished after its plan by", "Where the time went"]} empty="No work order finished 8 h or more after its plan."
-              rows={review.late.map((o) => [orderWord(o.order), `${o.lateH} h${o.added ? " (added work)" : ""}`, o.parts.slice(0, 3).map((p) => (p.kind === "over" ? `${p.step.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim()}: open ${p.tookH} h, progress logged on ${p.workedShifts} shift${p.workedShifts === 1 ? "" : "s"}, planned as ${p.plannedH} h of work (${p.crew})` : p.kind === "wait" ? `${p.step.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim()} sat ${p.hours} h before ${p.crew} started it` : `Started ${p.hours} h after its planned start`)).join("; ") || "Not shown by the record"])} />
+            <Table title="Other work orders that finished after their plan" head={["Work order", "Finished after its plan by", "Where the time went"]} empty="None beyond what the findings tell."
+              rows={review.late.filter((o) => !o.told).map((o) => [orderWord(o.order), `${o.lateH} h${o.added ? " (added work)" : ""}`, o.parts.slice(0, 3).map((p) => (p.kind === "over" ? `${p.step.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim()}: open ${p.tookH} h, progress logged on ${p.workedShifts} shift${p.workedShifts === 1 ? "" : "s"}, planned as ${p.plannedH} h of work (${p.crew})` : p.kind === "wait" ? `${p.step.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim()} sat ${p.hours} h before ${p.crew} started it` : `Started ${p.hours} h after its planned start`)).join("; ") || "Not shown by the record"])} />
             <Table title="Crews: planned against actual" head={["Crew", "Jobs handed to it", "Work planned", "Open, start to finish", "Waited for it", "Most open at once"]} empty="No work passed between crews."
               rows={review.flows.filter((f) => f.jobs.length >= 2).map((f) => [f.crew, String(f.jobs.length), `${f.plannedH} h`, `${f.tookH} h`, `${f.waitH} h`, `${f.peak.open}${f.plannedPeak ? ` (plan ${f.plannedPeak})` : ""}`])} />
             <Table title={`Started jobs that sat still: ${m.stuckJobs} job${m.stuckJobs === 1 ? "" : "s"}, ${m.stuckShifts} shift${m.stuckShifts === 1 ? "" : "s"} in all`} head={["Job", "Crew", "Shifts", "When", "Why, from the record"]} empty="No started job sat a full shift."

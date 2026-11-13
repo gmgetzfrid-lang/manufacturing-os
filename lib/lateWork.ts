@@ -42,6 +42,8 @@ export interface LateOrder {
   added: boolean;
   /** Where the hours went, largest first. */
   parts: LatePart[];
+  /** A finding of the review already tells this work order: it is not listed again. */
+  told?: boolean;
 }
 
 /** Work orders that finished `minLateH` or more after their plan, latest against plan first. */

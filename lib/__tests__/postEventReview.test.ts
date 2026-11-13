@@ -121,7 +121,8 @@ describe("the review, from the records", () => {
     expect(pt.lines[1]).toContain('(Maintenance (KE)): "PSV pulled ready for swap. Discovered plugging in line."');
     // Service that came back as planned is said so, never as a delay.
     expect(pt.quiet).toContain("TV-006 on the Fuel Gas Line to H-1: out for service, back as planned");
-    expect(r.qa[0].q).toBe("What caused the 46 h past the baseline finish?");
+    // The finish is told once, by its finding: no question repeats it.
+    expect(r.qa.some((x) => /past the baseline finish|stayed open longest/.test(x.q))).toBe(false);
   });
   it("only the reason on record is named as setting the finish; the rest say what they cost", () => {
     const by = (k: string) => r.findings.find((f) => f.key === k)!;
@@ -138,7 +139,7 @@ describe("the review, from the records", () => {
     expect(hand.effect).toBe("On PSVs, the last work to finish.");
     expect(hand.next).not.toMatch(/add a crew|more people/i);
     // A job that sat with no reason written is told by name, with what its work order cost.
-    expect([by("execution").title, by("execution").moved, by("execution").effect]).toEqual(["E-13 Pull Blinds / Torque Flanges sat a shift with no reason written", 1, "E-13 finished 19 h after its plan. PSVs finished later, so E-13 did not set the finish."]);
+    expect([by("execution").title, by("execution").moved, by("execution").effect]).toEqual(["E-13 Pull Blinds / Torque Flanges sat a shift with no reason written", 1, "E-13 finished 19 h after its plan. It did not set the finish."]);
     // Found work off the late work orders did not move the finish.
     expect([by("scope").moved, by("scope").effect]).toEqual([0, "Did not move the finish."]);
     // Nothing is said about an organization the project has not recorded.
@@ -296,7 +297,7 @@ describe("the files open on the point of the meeting", () => {
     expect(pointOf(r, "Phase 1", tz).pending.length).toBeGreaterThan(2);
     expect(reportBlocks(r, o).some((x) => x.k === "p" && x.text === "No change has been accepted in the review yet.")).toBe(true);
   });
-  it("the deck: the accepted changes, each with its reason in a line; everything else is backup", () => {
+  it("the deck: the cover, the accepted changes each with its reason in a line, and what went well. Nothing else", () => {
     const deck = deckSlides(rk, o);
     const cs = pointOf(rk, "Phase 1", tz).conclusions;
     expect(deck[1].title).toBe(`${cs.length} changes for the next event`);
@@ -307,19 +308,20 @@ describe("the files open on the point of the meeting", () => {
     // A finding with no change written is accepted but has nothing to say on the slide.
     expect(cs.some((c) => c.key === "planning:cleaning")).toBe(false);
     expect(deck[2].title).toBe("What went well: keep doing it");
-    expect(deck.slice(3).every((x) => x.kicker.startsWith("Backup"))).toBe(true);
-    const full = deck.find((x) => x.title === "Each change, with what justifies it")!.body;
-    expect(full.k === "table" && full.head).toEqual(["What we change", "What justifies it", "Category"]);
+    expect(deck.map((x) => x.body.k)).toEqual(["cover", "asks", "split"]);
     const titles = deck.map((x) => `${x.kicker} ${x.title}`).join(" | ");
-    expect(titles).not.toMatch(/definition|closure plan|roadmap|proposed organization|decisions|did not move/i);
-    // Service is a planned step in the backup table, not stuck work.
-    const waited = deck.find((x) => x.title === "Jobs that sat a whole shift, and why")!.body;
-    expect(waited.k === "table" && waited.rows.find((row) => row[0].startsWith("TV-006"))![2]).toBe("Out for service (planned)");
+    expect(titles).not.toMatch(/backup|definition|closure plan|roadmap|proposed organization|decisions|did not move/i);
+    // The records stay in the report. Service is a planned step there, not stuck work.
+    const waited = reportBlocks(rk, o).find((x) => x.k === "table" && x.head[2] === "What happened");
+    expect(waited?.k === "table" && waited.rows.find((row) => row[0].startsWith("TV-006"))![2]).toBe("Out for service (planned)");
   });
   it("the report: the same headline and accepted conclusions first, each finding with how it is done well", () => {
     const blocks = reportBlocks(rk, o);
     expect(blocks.find((x) => x.k === "h1")).toMatchObject({ text: "1. Phase 1 finished 46 h late. PSVs set the finish." });
-    expect(blocks.find((x) => x.k === "num")).toMatchObject({ n: 1, lead: "PSV-021 - E-13 Overhead waited a shift on another crew. " });
+    // The changes are listed once, as on the slide: what we change, then why.
+    expect(blocks.find((x) => x.k === "num")).toMatchObject({ n: 1, lead: "Name each day's hand-offs between crews at the shift meeting. ", text: "PSV-021 - E-13 Overhead waited a shift on another crew." });
+    // The work that set the finish has one finding; nothing lists its steps again.
+    expect(blocks.some((x) => x.k === "h1" && /stayed open longest/.test(x.text))).toBe(false);
     expect(blocks.some((x) => x.k === "p" && x.lead === "How it is done well (Planning and scheduling): ")).toBe(true);
     expect(blocks.some((x) => x.k !== "table" && /12 months|closure plan/i.test(x.text))).toBe(false);
   });
