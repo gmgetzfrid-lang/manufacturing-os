@@ -58,6 +58,9 @@ const queueLine = (f: CrewFlow) => `The same ${plural(f.jobs.length, "job")}, ta
 /** Each crew that was handed work by another: its jobs, plan, actual, waiting. */
 const crewsRows = (r: Review): string[][] => r.flows.filter((f) => f.jobs.length >= 2).map((f) => [f.crew, String(f.jobs.length), `${f.plannedH} h`, `${f.tookH} h`, `${f.waitH} h`, `${f.peak.open}${f.plannedPeak ? ` (plan ${f.plannedPeak})` : ""}`]);
 const CREWS_HEAD = ["Crew", "Jobs handed to it", "Planned", "Took", "Sat waiting for it", "Most open at once"];
+/** Every work order that finished late: by how much, and where the record shows the hours going. */
+const lateRows = (r: Review): string[][] => r.late.map((o) => [orderWord(o.order), `${o.lateH} h${o.added ? " (added work)" : ""}`, o.parts.slice(0, 3).map((p) => (p.kind === "over" ? `${p.step.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim()} took ${p.tookH} h against ${p.plannedH} h (${p.crew})` : p.kind === "wait" ? `${p.step.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim()} sat ${p.hours} h before ${p.crew} started it` : `Started ${p.hours} h after its planned start`)).join("; ") || "Not shown by the record"]);
+const LATE_HEAD = ["Work order", "Finished late by", "Where the hours went"];
 
 const metricRows = (r: Review): string[][] => {
   const m = r.metrics;
@@ -154,6 +157,11 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
     b.push({ k: "h1", text: `Appendix ${letter()}. What waited for ${f.crew}` });
     b.push({ k: "table", head: crewHead(f), rows: crewRows(f, o.tz), widths: [1.9, 1.0, 1.0, 0.7, 0.9, 1.4] });
     b.push({ k: "muted", text: queueLine(f) });
+  }
+  if (r.late.length) {
+    b.push({ k: "h1", text: `Appendix ${letter()}. Work orders that finished late, and where the hours went` });
+    b.push({ k: "table", head: LATE_HEAD, rows: lateRows(r), widths: [1.8, 1.1, 4.0] });
+    b.push({ k: "muted", text: "Every work order that finished 8 h or more after its plan. The parts are where the record shows the time going; steps overlap, so they are not a sum." });
   }
   if (crewsRows(r).length) {
     b.push({ k: "h1", text: `Appendix ${letter()}. Crews: planned against actual` });
@@ -281,6 +289,9 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
   for (const f of r.flows.filter(overloaded)) pages(crewRows(f, o.tz), 2400, 12).forEach((rows, i, a) =>
     s.push({ kicker: `Backup · ${f.crew}${part(i, a.length)}`, title: `What waited for ${f.crew}: ${f.waitH} h across ${plural(f.jobs.length, "job")}, ${f.peak.open} open at once`, notes: queueLine(f),
       body: { k: "table", head: crewHead(f), widths: [3.4, 1.9, 1.9, 1.1, 1.5, 2.5], rows, foot: queueLine(f) } }));
+  if (r.late.length) pages(lateRows(r), 2400, 12).forEach((rows, i, a) =>
+    s.push({ kicker: `Backup · late work${part(i, a.length)}`, title: `${plural(r.late.length, "work order")} finished 8 h or more late: where the hours went`, notes: "The parts are where the record shows the time going; steps overlap, so they are not a sum.",
+      body: { k: "table", head: LATE_HEAD, widths: [2.6, 1.7, 8.0], rows, foot: "Every work order that finished 8 h or more after its plan, latest against plan first." } }));
   if (crewsRows(r).length) s.push({ kicker: "Backup · crews", title: "Crews: planned against actual", notes: "Jobs handed to a crew by another crew. Hours a job took are start to finish.",
     body: { k: "table", head: CREWS_HEAD, widths: [3.0, 1.8, 1.5, 1.5, 2.1, 2.4], rows: crewsRows(r), foot: "Jobs handed to a crew by another crew (opened by one, cleaned or inspected by the next). Hours a job took are start to finish." } });
   if (r.found.length) pages(foundRows(r), 1500, 8).forEach((rows, i, a) =>

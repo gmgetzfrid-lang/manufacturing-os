@@ -93,6 +93,22 @@ function peakOf<T>(items: T[], from: (x: T) => number, to: (x: T) => number): { 
   return best;
 }
 
+/** The step a started step followed in its work order (steps in planned
+ *  order). The schedule's own links inside the work order say so when it has
+ *  them; a link to another work order is only the order a crew was meant to
+ *  take its jobs in. Without one, it is the latest finish among the steps
+ *  planned before it that had started before it did. `null`: nothing before
+ *  it, or what it followed is not finished. */
+export function stepBefore(steps: BuiltStep[], i: number, dependsOn: Map<string, string[]>): BuiltStep | null {
+  const s = steps[i];
+  if (s.start == null) return null;
+  const linked = (dependsOn.get(s.id) ?? []).map((id) => steps.find((p) => p.id === id)).filter((p): p is BuiltStep => !!p);
+  let prev: BuiltStep | null = null;
+  if (linked.length) { if (linked.some((p) => p.finish == null)) return null; for (const p of linked) if (!prev || p.finish! > prev.finish!) prev = p; }
+  else for (const p of steps.slice(0, i)) if (p.finish != null && (p.start ?? p.finish) <= s.start && (!prev || p.finish > prev.finish!)) prev = p;
+  return prev;
+}
+
 /** `dependsOn`: each step's predecessors, from the schedule's own links. */
 export function crewFlows(built: AsBuilt, work: AsBuiltWork, dependsOn: Map<string, string[]> = new Map()): CrewFlow[] {
   const crewOf = (id: string) => work.steps.get(id)?.crew ?? "Not set";
@@ -112,15 +128,7 @@ export function crewFlows(built: AsBuilt, work: AsBuiltWork, dependsOn: Map<stri
         plannedBy.get(crew)!.push({ from: Math.min(before.planFinish, s.planStart ?? before.planFinish), to: s.planFinish });
       }
       if (s.start == null || s.finish == null) return;
-      // What it followed. The schedule's own links inside this work order say
-      // so when it has them (a link to another work order is only the order a
-      // crew was meant to take its jobs in). Without one, it is the latest
-      // finish among the steps planned before it that had started before it
-      // did. A step still going when this one started gives no wait.
-      const linked = (dependsOn.get(s.id) ?? []).map((id) => steps.find((p) => p.id === id)).filter((p): p is BuiltStep => !!p);
-      let prev: BuiltStep | null = null;
-      if (linked.length) { if (linked.some((p) => p.finish == null)) return; for (const p of linked) if (!prev || p.finish! > prev.finish!) prev = p; }
-      else for (const p of steps.slice(0, i)) if (p.finish != null && (p.start ?? p.finish) <= s.start && (!prev || p.finish > prev.finish!)) prev = p;
+      const prev = stepBefore(steps, i, dependsOn);
       if (!prev || crewOf(prev.id) === crew) return;
       const openedAt = Math.min(prev.finish!, s.start);
       if (!byCrew.has(crew)) byCrew.set(crew, []);

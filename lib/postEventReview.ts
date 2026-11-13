@@ -37,6 +37,7 @@ import type { Discovery } from "@/lib/discovery";
 import type { LookBack } from "@/lib/lookBack";
 import { fmtInTz } from "@/lib/scheduleTz";
 import { crewFlows, overloaded, type CrewFlow } from "@/lib/crewFlow";
+import { lateOrders, type LateOrder, type LatePart } from "@/lib/lateWork";
 
 // ─── What it's sorted by ───────────────────────────────────────────
 
@@ -240,6 +241,8 @@ export interface Review {
   findings: Finding[];
   /** Where work waited between crews (lib/crewFlow), most waiting first. */
   flows: CrewFlow[];
+  /** Every work order that finished late, and where its hours went (lib/lateWork). */
+  late: LateOrder[];
   questions: Question[];
   answeredCount: number;
   strengths: string[];
@@ -544,7 +547,10 @@ export function buildReview(input: ReviewInput): Review {
   // ── The findings ──
   const finish = finishStory(built, said, (id) => work.steps.get(id)?.crew ?? "");
   const flows = crewFlows(built, work, input.dependsOn);
-  const drafts = draftFindings({ metrics, stuck, ready, found, holds, built, work, tz, finish, service, flows, materials: input.materials ?? null, organization: input.organization ?? null });
+  // The work that closes the event began late because the rest wasn't done: it is the result, not a cause.
+  const late = lateOrders(built, work, input.dependsOn).filter((o) => o.order !== finish?.closing?.order);
+  const reasonOf = (id: string) => { for (const c of said.get(id) ?? []) { const k = causeOfText(c.body); if (k && !CHATTER.test(c.body)) return { cause: k, said: c.body }; } return null; };
+  const drafts = draftFindings({ metrics, stuck, ready, found, holds, built, work, tz, finish, service, flows, late, reasonOf, materials: input.materials ?? null, organization: input.organization ?? null });
   const findings: Finding[] = drafts.map((d) => overlay(d, saved.items[d.key]));
   for (const a of saved.added) {
     const it = saved.items[`added:${a.id}`];
@@ -564,8 +570,10 @@ export function buildReview(input: ReviewInput): Review {
 
   const live = findings.filter((f) => f.status !== "discarded");
   const strengths = strengthsOf(metrics, found, holds, live);
+  const ahead = built.orders.filter((o) => o.finish != null && (o.varianceH ?? 0) <= -8).sort((a, b) => a.varianceH! - b.varianceH!);
+  if (ahead.length) strengths.push(`${plural(ahead.length, "work order")} finished 8 h or more ahead of plan: ${ahead.slice(0, 3).map((o) => `${orderWord(o.name)} ${Math.abs(o.varianceH!)} h`).join(", ")}${ahead.length > 3 ? `, and ${ahead.length - 3} more` : ""}.`);
   return {
-    metrics, finish, service, stuck, ready, byShift, found, holds, findings, flows, questions, answeredCount, strengths,
+    metrics, finish, service, stuck, ready, byShift, found, holds, findings, flows, late, questions, answeredCount, strengths,
     qa: qaOf(metrics, found, stuck, tz, finish, flows.filter(overloaded)),
     measures: measuresOf(metrics, saved.targets),
     organization: input.organization?.recorded ? input.organization : null,
@@ -684,7 +692,7 @@ function effectOf(orders: string[], f: FinishStory | null, named = false): { lev
   return { level: 0, text: "Did not move the finish." };
 }
 
-function draftFindings(x: { metrics: ReviewMetrics; stuck: StuckJob[]; ready: ReadyJob[]; found: FoundWork[]; holds: HoldFact[]; built: AsBuilt; work: AsBuiltWork; tz: string; finish: FinishStory | null; service: ServiceJob[]; flows: CrewFlow[]; materials: ReviewInput["materials"]; organization: OrgStanding | null }): Draft[] {
+function draftFindings(x: { metrics: ReviewMetrics; stuck: StuckJob[]; ready: ReadyJob[]; found: FoundWork[]; holds: HoldFact[]; built: AsBuilt; work: AsBuiltWork; tz: string; finish: FinishStory | null; service: ServiceJob[]; flows: CrewFlow[]; late: LateOrder[]; reasonOf: (id: string) => { cause: CauseId; said: string } | null; materials: ReviewInput["materials"]; organization: OrgStanding | null }): Draft[] {
   const { metrics: m, stuck, ready, found, holds, finish: fin, service } = x;
   // The observation is a list of facts, one a line, each a whole sentence.
   // The gap and what to do next time are said about this event, not in general.
@@ -875,11 +883,51 @@ function draftFindings(x: { metrics: ReviewMetrics; stuck: StuckJob[]; ready: Re
     }
   }
 
+  const lateTold = new Set<string>();
+  // Any work order that finished a day or more late and that nothing above
+  // explains is told on its own, read the same way whatever it is: the
+  // steps that took longer than planned, the time it sat before a crew
+  // started the next step, how late it began, and what was written.
+  {
+    const toldText = out.filter((d) => d.rating === "gap" || d.rating === "opportunity").map((d) => `${d.title}\n${d.observation}`).join("\n");
+    const serviced = new Set(service.map((j) => j.order));
+    const untold = x.late.filter((o) => o.lateH >= 24 && !serviced.has(o.order) && !toldText.includes(orderWord(o.order))).slice(0, 3);
+    for (const o of untold) {
+      lateTold.add(o.order);
+      const tag = orderWord(o.order);
+      // A step by its name, without the bracketed detail.
+      const sw = (p: LatePart) => short(p.step.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, ""));
+      const sentence = (p: LatePart) => { const why = x.reasonOf(p.stepId); const tail = why ? ` Recorded: "${why.said}"` : ""; return p.kind === "over" ? `${sw(p)} (${p.crew}) took ${p.tookH} h against ${p.plannedH} h planned.${tail}` : p.kind === "wait" ? `${sw(p)} sat ${p.hours} h before ${p.crew} started it.${tail}` : `It started ${p.hours} h after its planned start (${p.crew}).${tail}`; };
+      const top = o.parts[0];
+      const why = top ? x.reasonOf(top.stepId) : null;
+      const cat: CategoryId = !top ? "execution" : top.kind === "start" ? "execution" : top.kind === "wait" ? "contractors" : why?.cause === "material" || why?.cause === "offsite" ? "materials" : why?.cause === "other_crew" ? "contractors" : "planning";
+      const e = effectOf([o.order], fin);
+      const lines = o.parts.length ? o.parts.slice(0, 3).map(sentence) : ["The record does not show where the hours went: no step ran over its plan and none sat waiting."];
+      const head = !top ? "" : top.kind === "over" ? `${sw(top)} took ${top.tookH} h against ${top.plannedH} h planned` : top.kind === "wait" ? `${sw(top)} sat ${top.hours} h before ${top.crew} started it` : `it started ${top.hours} h after its planned start`;
+      const next = !top ? `Find out where the ${o.lateH} h on ${tag} went, and write it on the work order.`
+        : top.kind === "start" ? `Start ${tag} on its planned day, or move it in the plan to when ${top.crew} can take it.`
+          : top.kind === "wait" ? `Put ${sw(top)} on ${top.crew}'s list for the day it opens.`
+            : why?.cause === "cleaning" ? `Plan line cleaning into the job on ${tag}: the line was found plugged this event.`
+              : why?.cause === "material" ? `Count the parts ${tag} needs against what was ordered before the unit comes down.`
+                : why?.cause === "other_crew" ? `At the shift meeting, name when ${sw(top)} will be ready for the next crew.`
+                  : why?.cause === "test" ? `Put a re-test and its rework in the plan for ${tag}.`
+                    : why ? `Plan ${sw(top)} at the ${top.tookH} h it took, with what was recorded as the reason dealt with first.`
+                      : `Find out why ${sw(top)} took ${top.tookH} h, and plan it at what it really takes.`;
+      out.push(make(`${cat}:late:${tag.toLowerCase().replace(/[^a-z0-9]+/g, "")}`, rated(e.level, "opportunity"), `${tag} finished ${o.lateH} h after its plan${head ? `: ${head}` : ""}`, lines, [], {
+        effect: e.text, moved: fin ? e.level : null, hours: o.lateH,
+        why: `${tag} finished ${o.lateH} h after its plan. ${lines[0]}`,
+        gap: !top ? "" : top.kind === "over" && !why ? "No reason was written on the step." : top.kind === "wait" ? `${top.crew} did not start it when it opened.` : top.kind === "start" ? "It began after its planned start." : "",
+        next,
+      }));
+    }
+  }
+
   // Execution control: started jobs that sat and are not told by their
   // reason in a finding of their own (no reason written, or another reason).
   {
     const told = new Set<CauseId>(["material", "cleaning", "test", "other_crew"]);
-    const mine = stuck.map((j) => ({ j, shifts: j.shifts.filter((sh) => !told.has(sh.cause)) })).filter((e) => e.shifts.length);
+    // A job on a late work order that has its own finding is left to that one.
+    const mine = stuck.filter((j) => !lateTold.has(j.order)).map((j) => ({ j, shifts: j.shifts.filter((sh) => !told.has(sh.cause)) })).filter((e) => e.shifts.length);
     if (m.stuckShifts === 0) out.push(make("execution", m.steps ? "strength" : "none", "Started work kept moving", ["No started job sat a full shift with nothing logged."], []));
     else if (!mine.length) out.push(make("execution", "none", "Every job that sat has its reason on record", [`${plural(m.stuckJobs, "started job")} sat a shift. Each has a reason on record and is told in its own finding.`], []));
     else {
