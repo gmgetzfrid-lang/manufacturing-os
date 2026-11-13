@@ -297,6 +297,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
         <section className="rounded-2xl border-2 border-[var(--color-text)] bg-[var(--color-surface)] p-4" data-review-point>
           <h3 className="text-[18px] sm:text-[20px] font-black leading-snug text-[var(--color-text)]">{pt.headline}</h3>
           <p className="text-[12.5px] text-[var(--color-text-muted)]">{pt.span}</p>
+          {pt.delay && <p className="mt-1 text-[14px] font-bold text-[var(--color-text)]" data-review-delay>{pt.delay}</p>}
 
           <div className="mt-3" data-review-score>
             <div className="flex items-baseline gap-x-3 gap-y-1 flex-wrap">
@@ -311,7 +312,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
           <div className="mt-4" data-review-areas>
             <b className="text-[14px] text-[var(--color-text)]">2. What went well, what did not, and why</b>
             <div className="mt-1.5 flex gap-1.5 flex-wrap">
-              {bk.areas.map((a) => <span key={a.id} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-bold ${AREA_CLS[a.state]}`}>{a.name}<span className="font-normal">{a.state === "pending" ? `${a.pending} to rule on` : AREA_WORD[a.state]}</span></span>)}
+              {bk.areas.map((a) => <span key={a.id} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-bold ${AREA_CLS[a.state]}`}>{a.name}<span className="font-normal">{a.hours > 0 ? a.tag.toLowerCase() : a.state === "pending" ? `${a.pending} to rule on` : AREA_WORD[a.state]}</span></span>)}
             </div>
             <p className="mt-1 text-[12px] text-[var(--color-text-muted)]">Each finding below falls under one of these seven areas. An area is judged only on what you accept.</p>
           </div>
@@ -534,7 +535,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
                             {j.candidates.map((c) => <option key={c.id} value={c.id}>{c.name.replace(/\s*\([^)]*\)/g, "")}{c.order !== j.order ? ` (${c.order})` : ""}</option>)}
                           </select>
                         ) : <b>{j.after}</b>}
-                        <span className="text-[var(--color-text-muted)]">was done{j.basis === "guessed" ? " (taken from the planned sequence)" : j.basis === "corrected" ? " (as corrected)" : ""}</span>
+                        <span className="text-[var(--color-text-muted)]">was done{j.basis === "guessed" ? " (the last step done before it started: the schedule has no link)" : j.basis === "corrected" ? " (as corrected)" : ""}</span>
                       </div>
                       <div className="text-[var(--color-text-muted)]">Ready {when(j.openedAt)} · {f.crew} started {when(j.startedAt)}{j.lateStartH != null && Math.abs(j.lateStartH) >= 1 ? ` · ${Math.abs(j.lateStartH)} h ${j.lateStartH > 0 ? "after" : "before"} its planned start` : ""}{j.crewOn.length ? ` · ${f.crew} was on ${[...new Set(j.crewOn.map(orderWord))].join(", ")}` : ""}</div>
                     </li>
@@ -612,40 +613,56 @@ const AREA_CLS = { finish: VERDICT_CLS.missed, time: VERDICT_CLS.untargeted, imp
 /** One line of the score: the target, plan against actual, the verdict. A line
  *  the records can't fill carries how to set it up, and takes what a person enters. */
 function ScoreLine({ row, entry, busy, canManage, onSave }: { row: ScoreRow; entry?: ScoreEntry; busy: boolean; canManage: boolean; onSave: (e: ScoreEntry) => void }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState<"target" | "result" | null>(null);
   const [e, setE] = useState<ScoreEntry>(entry ?? {});
   const g = row.guide ? GUIDES[row.guide] : null;
+  const setTarget = (plan: string) => onSave({ ...(entry ?? {}), plan });
+  const hasTarget = !!entry?.plan || !/not set|no allowance|no baseline/i.test(row.plan);
   return (
-    <li className="py-2" data-score={row.key}>
+    <li className="py-2.5" data-score={row.key}>
       <div className="grid gap-x-3 gap-y-0.5 sm:grid-cols-[8.5rem_1fr_1.2fr_auto] items-baseline text-[13px] text-[var(--color-text)]">
         <b className="text-[13.5px]">{row.measure}</b>
-        <span><span className={`${label} sm:hidden`}>Plan </span>{row.plan}</span>
+        <span><span className={`${label} sm:hidden`}>Target </span>{row.plan}</span>
         <span><span className={`${label} sm:hidden`}>Actual </span>{row.actual}</span>
         <span className="flex items-center gap-2 flex-wrap sm:justify-end">
           {row.result !== VERDICT_WORD[row.verdict] && <span className="text-[12.5px] text-[var(--color-text-muted)]">{row.result}</span>}
           <span className={`rounded-full px-2 py-0.5 text-[11.5px] font-black whitespace-nowrap ${VERDICT_CLS[row.verdict]}`}>{VERDICT_WORD[row.verdict]}</span>
         </span>
       </div>
-      {(g || (row.entered && canManage)) && (
-        <div className="mt-1 flex gap-x-4 gap-y-1 flex-wrap items-start">
-          {g && (
-            <details className="min-w-0 flex-1 text-[12.5px]" data-guide={g.id}>
-              <summary className="cursor-pointer font-bold text-[var(--color-accent)]">How to set it up: {g.title.toLowerCase()}</summary>
-              <p className="mt-1 text-[var(--color-text)]">{g.what}</p>
-              <ol className="mt-1 list-decimal pl-5 space-y-0.5 text-[var(--color-text)]">{g.steps.map((t, i) => <li key={i}>{t}</li>)}</ol>
-              <p className="mt-1 text-[var(--color-text-muted)]">In the app: {g.inApp}</p>
-            </details>
-          )}
-          {row.entered && canManage && !open && <button type="button" onClick={() => { setE(entry ?? {}); setOpen(true); }} className="text-[12.5px] font-bold text-[var(--color-accent)]">{entry ? "Change what was entered" : "Enter it"}</button>}
+      <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]" data-score-means>{row.means}</p>
+      {canManage && row.entered && (
+        <div className="mt-1.5 flex items-center gap-1.5 flex-wrap" data-score-target>
+          <span className={label}>{hasTarget ? "Change the target" : "Set the target"}</span>
+          {row.picks.map((t) => (
+            <button key={t} type="button" disabled={busy} onClick={() => setTarget(t)} aria-pressed={entry?.plan === t}
+              className={`h-8 px-2.5 rounded-full border text-[12.5px] font-bold ${entry?.plan === t ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-border)]/40"}`}>{t}</button>
+          ))}
+          <button type="button" onClick={() => { setE(entry ?? {}); setOpen(open === "target" ? null : "target"); }} className="h-8 px-2.5 rounded-full border border-dashed border-[var(--color-border)] text-[12.5px] font-bold text-[var(--color-accent)]">{row.picks.length ? "Other" : "Type it"}</button>
+          {!row.fromRecords && <button type="button" onClick={() => { setE(entry ?? {}); setOpen(open === "result" ? null : "result"); }} className="h-8 px-2.5 rounded-full text-[12.5px] font-bold text-[var(--color-accent)]">{entry?.actual ? "Change the result" : "Enter the result"}</button>}
         </div>
       )}
-      {open && (
-        <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_1fr_auto_auto] items-end">
-          <label className="block"><span className={label}>Plan or target</span><input value={e.plan ?? ""} onChange={(ev) => setE((x) => ({ ...x, plan: ev.target.value }))} placeholder={row.key === "safety" ? "0 recordables" : row.key === "quality" ? "0 failed pressure tests, 0 start-up leaks" : "The plan"} className={`${field} mt-0.5`} /></label>
-          <label className="block"><span className={label}>Actual</span><input value={e.actual ?? ""} onChange={(ev) => setE((x) => ({ ...x, actual: ev.target.value }))} placeholder="What happened" className={`${field} mt-0.5`} /></label>
-          <label className="block"><span className={label}>Verdict</span><select value={e.verdict ?? ""} onChange={(ev) => setE((x) => ({ ...x, verdict: (ev.target.value || undefined) as ScoreEntry["verdict"] }))} className={`${field} mt-0.5`}><option value="">Not judged</option><option value="met">Met</option><option value="missed">Missed</option></select></label>
-          <span className="flex gap-1.5"><button type="button" disabled={busy} onClick={() => { onSave(e); setOpen(false); }} className={pri}>Save</button><button type="button" onClick={() => setOpen(false)} className={btn}>Cancel</button></span>
+      {open === "target" && (
+        <div className="mt-2 flex gap-2 items-end flex-wrap">
+          <label className="block min-w-0 flex-1"><span className={label}>Target</span><input autoFocus value={e.plan ?? ""} onChange={(ev) => setE((x) => ({ ...x, plan: ev.target.value }))} placeholder={row.picks[0] ?? "The target"} className={`${field} mt-0.5`} /></label>
+          <button type="button" disabled={busy} onClick={() => { onSave({ ...(entry ?? {}), plan: e.plan ?? "" }); setOpen(null); }} className={pri}>Save</button>
+          <button type="button" onClick={() => setOpen(null)} className={btn}>Cancel</button>
         </div>
+      )}
+      {open === "result" && (
+        <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto_auto_auto] items-end">
+          <label className="block"><span className={label}>What happened</span><input autoFocus value={e.actual ?? ""} onChange={(ev) => setE((x) => ({ ...x, actual: ev.target.value }))} placeholder={row.key === "safety" ? "0 recordables, 1 first aid" : row.key === "cost" ? "$612,000 spent" : "The result"} className={`${field} mt-0.5`} /></label>
+          <label className="block"><span className={label}>Against the target</span><select value={e.verdict ?? ""} onChange={(ev) => setE((x) => ({ ...x, verdict: (ev.target.value || undefined) as ScoreEntry["verdict"] }))} className={`${field} mt-0.5`}><option value="">Not judged</option><option value="met">Met</option><option value="missed">Missed</option></select></label>
+          <button type="button" disabled={busy} onClick={() => { onSave({ ...(entry ?? {}), actual: e.actual ?? "", verdict: e.verdict }); setOpen(null); }} className={pri}>Save</button>
+          <button type="button" onClick={() => setOpen(null)} className={btn}>Cancel</button>
+        </div>
+      )}
+      {g && (
+        <details className="mt-1.5 text-[12.5px]" data-guide={g.id}>
+          <summary className="cursor-pointer font-bold text-[var(--color-accent)]">How to record it next time: {g.title.toLowerCase()}</summary>
+          <p className="mt-1 text-[var(--color-text)]">{g.what}</p>
+          <ol className="mt-1 list-decimal pl-5 space-y-0.5 text-[var(--color-text)]">{g.steps.map((t, i) => <li key={i}>{t}</li>)}</ol>
+          <p className="mt-1 text-[var(--color-text-muted)]">In the app: {g.inApp}</p>
+        </details>
       )}
     </li>
   );

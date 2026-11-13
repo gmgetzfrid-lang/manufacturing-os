@@ -54,12 +54,12 @@ const scopeLine = (r: Review) => { const m = r.metrics; return m.steps ? `${m.ba
 const planWord = (h: number | null) => (h == null ? "" : Math.abs(h) < 1 ? "On plan" : `${Math.abs(h)} h ${h > 0 ? "late" : "early"}`);
 /** Every job handed to a crew: when it was open, when the crew started it, how long it sat. */
 const plainStep = (n: string) => n.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim();
-const crewRows = (f: CrewFlow, tz: string): string[][] => f.jobs.map((j) => [jobWord(j), `${plainStep(j.after)} done${j.afterOrder !== j.order ? ` (${orderWord(j.afterOrder)})` : ""}${j.basis === "guessed" ? ", by the planned sequence" : j.basis === "corrected" ? ", as corrected" : ""}`, whenWord(j.openedAt, tz), whenWord(j.startedAt, tz), j.waitH >= 1 ? `${j.waitH} h` : "None", planWord(j.lateStartH)]);
+const crewRows = (f: CrewFlow, tz: string): string[][] => f.jobs.map((j) => [jobWord(j), `${plainStep(j.after)} done${j.afterOrder !== j.order ? ` (${orderWord(j.afterOrder)})` : ""}${j.basis === "guessed" ? ", no link in the schedule" : j.basis === "corrected" ? ", as corrected" : ""}`, whenWord(j.openedAt, tz), whenWord(j.startedAt, tz), j.waitH >= 1 ? `${j.waitH} h` : "None", planWord(j.lateStartH)]);
 const crewHead = (f: CrewFlow) => ["Job", "Ready when", "Ready from", `${f.crew} started`, "Waited", "Start against plan"];
 /** Each crew that was handed work by another: how many jobs, how many of them
  *  waited for it, the longest one, and the most it had open at once. No hours
  *  are added across jobs: a sum of job waits reads as the crew sitting idle. */
-export const crewsRows = (r: Review): string[][] => r.flows.filter((f) => f.jobs.length >= 2).map((f) => [f.crew, String(f.jobs.length), f.waited.length ? `${f.waited.length} of ${f.jobs.length}` : "None", f.waited.length ? `${f.waited[0].waitH} h (${orderWord(f.waited[0].order)})${f.waited[0].basis === "guessed" ? ", by the planned sequence" : ""}` : "None", `${f.peak.open}${f.plannedPeak ? ` (plan ${f.plannedPeak})` : ""}`]);
+export const crewsRows = (r: Review): string[][] => r.flows.filter((f) => f.jobs.length >= 2).map((f) => [f.crew, String(f.jobs.length), f.waited.length ? `${f.waited.length} of ${f.jobs.length}` : "None", f.waited.length ? `${f.waited[0].waitH} h (${orderWord(f.waited[0].order)})${f.waited[0].basis === "guessed" ? ", no link in the schedule" : ""}` : "None", `${f.peak.open}${f.plannedPeak ? ` (plan ${f.plannedPeak})` : ""}`]);
 export const CREWS_HEAD = ["Crew", "Jobs handed to it", `Jobs that waited ${MIN_WAIT_H} h or more for it`, "Longest a job waited", "Most open at once"];
 export const CREWS_TITLE = "Jobs that waited for each crew";
 export const CREWS_NOTE = "These are jobs waiting for the crew to get to them. They are not hours the crew sat idle.";
@@ -108,14 +108,15 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
   const bk = bookFor(r, o);
   b.push({ k: "h1", text: `1. ${pt.headline}` });
   b.push({ k: "p", text: [pt.span, scopeLine(r)].filter(Boolean).join(" ") });
+  if (bk.delayLines.length) { b.push({ k: "p", lead: `${bk.delay.split(":")[0]}: `, text: "" }); for (const l of bk.delayLines) b.push({ k: "bullet", text: l }); }
 
   b.push({ k: "h1", text: "2. The score: plan against actual" });
   if (bk.score.line) b.push({ k: "p", text: bk.score.line });
-  b.push({ k: "table", head: ["Target", "Plan", "Actual", "Result", "Verdict"], rows: bk.score.rows.map((x) => [x.measure, x.plan, x.actual, x.result, VERDICT_WORD[x.verdict]]), widths: [1.1, 2.0, 2.2, 1.4, 1.0] });
+  b.push({ k: "table", head: ["Measure", "Target", "Actual", "Result", "Verdict"], rows: bk.score.rows.map((x) => [x.measure, x.plan, x.actual, x.result, VERDICT_WORD[x.verdict]]), widths: [1.1, 1.9, 2.4, 1.3, 1.0] });
 
   b.push({ k: "h1", text: "3. What went well, what did not, and why" });
   for (const a of bk.areas) {
-    b.push({ k: "h2", text: `${a.name}: ${AREA_STATE_WORD[a.state].toLowerCase()}` });
+    b.push({ k: "h2", text: `${a.name}: ${a.tag.toLowerCase()}` });
     for (const w of a.well) b.push({ k: "bullet", lead: "Went well: ", text: w });
     for (const it of a.items) {
       b.push({ k: "bullet", lead: "Did not: ", text: it.didNot });
@@ -281,7 +282,9 @@ export interface SlideSpec {
         /** What opens when a row is tapped: the record or the how-to behind it. */
         more?: Array<SlideMore | null>;
         /** Counts above the table (the score). */
-        tally?: Array<{ n: number; label: string; tone: Tone }> }
+        tally?: Array<{ n: number; label: string; tone: Tone }>;
+        /** One line said above the table ("Where the 33.5 h went: ..."). */
+        lead?: string }
     | { k: "split"; left: Pane; right: Pane; ratio?: number; foot?: string };
 }
 
@@ -296,7 +299,6 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
   const s: SlideSpec[] = [], pt = point(r, o), bk = bookFor(r, o);
   const dates = eventDates(r, o.tz);
   const byKey = new Map(r.findings.map((f) => [f.key, f]));
-  const list = (xs: string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
   s.push({ kicker: "Post-event review", title: dates ? `${eventName(o)}: ${dates}` : eventName(o), notes: "The score, then what went well and what did not by area, then what we do about it.",
     body: { k: "cover", sub: projectLine(o), meta: [o.preparedBy, `Written ${o.date}`].filter(Boolean).join("  ·  "), agenda: ["The score: plan against actual", "What went well, what did not, and why", "What we do about it"] } });
 
@@ -305,19 +307,27 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
   s.push({
     kicker: "1 · The score: plan against actual", title: pt.headline, notes: [pt.headline, sc.line].filter(Boolean).join(" "),
     body: {
-      k: "table", head: ["Target", "Plan", "Actual", "Result"], widths: [1.5, 2.5, 3.0, 1.9],
+      k: "table", head: ["Measure", "Target", "Actual", "Result"], widths: [1.4, 2.4, 3.4, 1.7], lead: bk.delay,
       rows: sc.rows.map((x) => [x.measure, x.plan, x.actual, x.result]),
       tags: sc.rows.map((x) => ({ text: VERDICT_WORD[x.verdict], tone: VERDICT_TONE[x.verdict] })),
-      more: sc.rows.map((x) => (x.guide ? guideMore(GUIDES[x.guide]) : x.key === "duration" && pt.lines.length ? { title: "What set the finish", sections: [{ title: "From the records", lines: pt.lines }] } : x.key === "added" && r.found.length ? { title: "Added work", sections: [{ title: "From the records", lines: r.found.map((f) => `${orderWord(f.on)}: ${f.what}. About ${f.hours} h.`) }] } : null)),
+      more: sc.rows.map((x) => {
+        const what = { title: "What it measures", lines: [x.means] };
+        if (x.key === "duration" && pt.lines.length) return { title: "Where the late hours went", sections: [{ title: "From the records", lines: pt.lines }] };
+        if (x.key === "added" && r.found.length) return { title: "Added work", sections: [what, ...(["added", "discovery"] as const).map((k) => ({ title: k === "added" ? "Added scope: known work, not on the plan" : "Discovery: found when opened or inspected", lines: r.found.filter((f) => (f.kind === "added") === (k === "added")).map((f) => `${orderWord(f.on)}: ${f.what}. ${f.hours} h${f.critical ? ", on the critical path" : ""}.`) })).filter((g) => g.lines.length)] };
+        if (x.key === "quality" && r.failedTests.length) return { title: "Quality", sections: [what, { title: "From the records", lines: r.failedTests.map((f) => `${orderWord(f.order)} ${f.step}: "${f.said}"`) }, ...(x.guide ? guideMore(GUIDES[x.guide]).sections.slice(1) : [])] };
+        if (x.key === "safety" && r.standDowns.length) return { title: "Safety", sections: [what, { title: "Stand-downs, from the records", lines: r.standDowns.map((h) => `${orderWord(h.order)} ${h.name}: ${h.hours} h. "${h.reason}"`) }, ...(x.guide ? guideMore(GUIDES[x.guide]).sections.slice(1) : [])] };
+        return x.guide ? { ...guideMore(GUIDES[x.guide]), sections: [what, ...guideMore(GUIDES[x.guide]).sections.slice(1)] } : { title: x.measure, sections: [what] };
+      }),
       tally: [{ n: sc.met, label: "met", tone: "good" as Tone }, { n: sc.missed, label: "missed", tone: "bad" as Tone }, { n: sc.untargeted, label: "no target set", tone: "warn" as Tone }, { n: sc.unmeasured, label: "not measured", tone: "none" as Tone }].filter((x) => x.n > 0),
-      foot: sc.unmeasured ? "Not measured: the event did not record it. Open the line for how to set it up." : "",
+      foot: [sc.untargeted ? "No target set: set it on the line in the review." : "", sc.unmeasured ? "Not measured: the event did not record it. Open the line for how to set it up." : ""].filter(Boolean).join(" "),
     },
   });
 
   // 2. The seven areas.
-  const set = bk.areas.filter((a) => a.state === "finish").map((a) => a.name), cost = bk.areas.filter((a) => a.state === "time").map((a) => a.name);
-  const areasTitle = [set.length ? `${list(set)} set the finish.` : "", cost.length ? `${list(cost)} cost time.` : ""].filter(Boolean).join(" ")
-    || (bk.actions.length ? "Where the event can do better, by area" : bk.pending ? "No finding has been accepted yet" : "Nothing in the records calls for a change");
+  const costly = bk.areas.filter((a) => a.hours > 0).sort((a, b) => b.hours - a.hours);
+  const late = r.metrics.varianceH ?? 0;
+  const areasTitle = costly.length ? `${costly.map((a, i) => (i === 0 ? `${a.name} cost ${a.hours}${late ? ` of the ${late}` : ""} h` : `${a.name} ${a.hours} h`)).join(", ")}.`
+    : (bk.actions.length ? "Where the event can do better, by area" : bk.pending ? "No finding has been accepted yet" : "Nothing in the records calls for a change");
   s.push({
     kicker: "2 · What went well, what did not, and why", title: areasTitle, notes: bk.areas.map((a) => `${a.name}: ${AREA_STATE_WORD[a.state].toLowerCase()}.`).join(" "),
     body: {
@@ -325,9 +335,10 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
       rows: bk.areas.map((a) => [a.name, a.well.join("\n"),
         a.items.length ? a.items.map((it) => it.didNot).join("\n") : a.pending ? `${a.pending === 1 ? "1 finding waits" : `${a.pending} findings wait`} for your call in the review.` : a.state === "none" ? "Nothing was recorded for this event." : "",
         a.items.map((it) => it.rootCause).filter(Boolean).join("\n"), a.items.map((it) => `No. ${it.action}`).join("\n")]),
-      tags: bk.areas.map((a) => ({ text: AREA_STATE_WORD[a.state], tone: STATE_TONE[a.state] })),
+      tags: bk.areas.map((a) => ({ text: a.tag, tone: STATE_TONE[a.state] })),
       more: bk.areas.map((a) => {
         const sections = [
+          ...(a.parts.length ? [{ title: "Hours of the late finish", lines: a.parts.map((p2) => (r.finish?.delay.find((d) => d.kind === "work" && d.order === p2.order)?.line ?? `${orderWord(p2.order)}: ${p2.hours} h.`)) }] : []),
           ...(a.well.length ? [{ title: "Went well", lines: a.well }] : []),
           ...a.items.map((it) => { const f = byKey.get(it.key); return { title: f?.title ?? it.didNot, lines: f ? facts(f) : [] }; }).filter((x) => x.lines.length),
           ...(a.guide ? guideMore(GUIDES[a.guide]).sections.map((x) => ({ ...x, title: x.title === "What it is" ? GUIDES[a.guide!].title : x.title })) : []),
@@ -425,8 +436,10 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, out: "blob" | "no
       foot(b.foot);
     } else if (b.k === "table") {
       // The tally sits in a line above the table: "1 met · 1 missed · 4 not measured".
-      if (b.tally?.length) s.addText(b.tally.flatMap((t, i) => [{ text: `${i ? "     " : ""}${t.n} `, options: { bold: true, fontSize: 20, color: TONE_HEX[t.tone].fg } }, { text: T(t.label), options: { fontSize: 13, color: SOFT } }]), { x: 0.6, y: 1.5, w: 12.1, h: 0.45, fontFace: face, valign: "middle" });
-      table(b.head, b.rows, b.widths, 0.6, b.tally?.length ? 2.05 : 1.55, 12.1, undefined, b.tags);
+      let y = 1.5;
+      if (b.lead) { s.addText(T(b.lead), { x: 0.6, y, w: 12.1, h: 0.42, fontFace: face, fontSize: 16, bold: true, color: ACC, valign: "middle" }); y += 0.48; }
+      if (b.tally?.length) { s.addText(b.tally.flatMap((t, i) => [{ text: `${i ? "     " : ""}${t.n} `, options: { bold: true, fontSize: 20, color: TONE_HEX[t.tone].fg } }, { text: T(t.label), options: { fontSize: 13, color: SOFT } }]), { x: 0.6, y, w: 12.1, h: 0.45, fontFace: face, valign: "middle" }); y += 0.55; }
+      table(b.head, b.rows, b.widths, 0.6, y === 1.5 ? 1.55 : y, 12.1, undefined, b.tags);
       foot(b.foot);
     } else if (b.k === "split") {
       const lw = 12.1 * (b.ratio ?? 0.5) - 0.15;

@@ -163,9 +163,18 @@ export interface ServiceJob {
   /** Still out after that, as written. */
   stillOut: { at: number; said: string } | null;
 }
+/** One piece of the late finish: the work order, the hours it alone held the
+ *  finish (or the start-up), and that said in a sentence. The pieces add up to
+ *  the whole delay. */
+export interface DelayPart { order: string; hours: number; line: string; kind: "work" | "gap" | "longer" }
 /** What set the finish: the last work done, and why it ran long. */
 export interface FinishStory {
   lateH: number;
+  /** Where the late hours went, largest piece first in time order (the last
+   *  work first): each work order that finished after the start-up's planned
+   *  start (else the baseline finish), with the hours it alone added; then
+   *  the start-up's own overrun. */
+  delay: DelayPart[];
   /** The last work orders to finish (before the closing work), latest first. */
   last: Array<{ order: string; finish: number; planFinish: number | null; lateH: number | null }>;
   /** Hours the latest finished after the one before it. */
@@ -182,10 +191,15 @@ export interface FinishStory {
 export interface ReadyJob { id: string; name: string; order: string; crew: string; added: boolean; shifts: string[]; busyOn: string[]; crewLogged: boolean; said: string | null }
 export interface FoundWork {
   id: string; what: string; kind: "discovery" | "added"; on: string; steps: number; done: number;
-  /** Hours of work estimated when it was approved. */
+  /** Hours of work on the schedule for its steps. */
   hours: number; critical: boolean; foundAt: number; approvedBy: string | null;
 }
 export interface HoldFact { id: string; name: string; order: string; reason: string; hours: number; cause: CauseId | null }
+/** A test that failed and was done again, as written on the step. */
+export interface FailedTest { id: string; step: string; order: string; said: string }
+const TEST_STEP = /\b(hydro\w*|pressure test|leak test|pneumatic test|test)\b/i;
+const FAILED = /\b(re-?test\w*|leak(s|ing|ed)?|fail(ed|s|ure)?|did ?n[o']?t pass|could ?n[o']?t pass|would ?n[o']?t hold|not holding)\b/i;
+const STAND_DOWN = /\b(stand ?down|stood down|LEL|H2S|gas detect\w*|evacuat\w*|alarm|upset|acting up|incinerator)\b/i;
 
 export interface ReviewMetrics {
   /** The first activity's start (recorded, else planned). */
@@ -269,6 +283,10 @@ export interface Review {
   byShift: ShiftCount[];
   found: FoundWork[];
   holds: HoldFact[];
+  /** Tests that failed and were done again (quality, from the records). */
+  failedTests: FailedTest[];
+  /** Work stood down for gas, an alarm or a plant upset (safety, from the records). */
+  standDowns: HoldFact[];
   findings: Finding[];
   /** Where work waited between crews (lib/crewFlow), most waiting first. */
   flows: CrewFlow[];
@@ -495,7 +513,8 @@ export function buildReview(input: ReviewInput): Review {
     found.push({
       id: d.record.id, what: d.record.what.trim(), kind: d.record.kind === "added" ? "added" : "discovery", on,
       steps: mine.length, done: mine.filter((m) => stepOf.get(m.id!)?.s.status === "done").length,
-      hours: r1(Number(d.record.impact?.hours ?? 0)), critical: !!d.record.impact?.critical, foundAt: d.record.foundAt, approvedBy: approver,
+      // The schedule's hours for its steps (what every total adds up); the estimate made when it was approved only when the steps have none.
+      hours: r1(mine.reduce((n, m) => n + (stepOf.get(m.id!)?.s.plannedH ?? 0), 0) || Number(d.record.impact?.hours ?? 0)), critical: !!d.record.impact?.critical, foundAt: d.record.foundAt, approvedBy: approver,
     });
   }
   found.sort((a, b) => Number(b.critical) - Number(a.critical) || b.hours - a.hours);
@@ -507,6 +526,14 @@ export function buildReview(input: ReviewInput): Review {
     for (const h of s.holds) if (h.hours >= 0.5) holds.push({ id: s.id, name: x.s.name, order: x.order.name, reason: h.reason.trim(), hours: r1(h.hours), cause: causeOfText(h.reason) });
   }
   holds.sort((a, b) => b.hours - a.hours);
+  // Tests that failed and were done again, and work stood down for safety.
+  const failedTests: FailedTest[] = [];
+  for (const x of steps) {
+    if (!TEST_STEP.test(x.s.name)) continue;
+    const c = (said.get(x.s.id) ?? []).find((n) => FAILED.test(n.body) && !CHATTER.test(n.body));
+    if (c) failedTests.push({ id: x.s.id, step: x.s.name, order: x.order.name, said: c.body });
+  }
+  const standDowns = holds.filter((h) => STAND_DOWN.test(h.reason));
 
   // ── The numbers ──
   const all = steps.map((x) => x.s);
@@ -611,7 +638,9 @@ export function buildReview(input: ReviewInput): Review {
   const order = new Map(CATEGORIES.map((c, i) => [c.id, i]));
   const weight: Record<Rating, number> = { gap: 0, opportunity: 1, strength: 2, none: 3 };
   const moved = (f: Finding) => 3 - (f.moved ?? 0);
-  findings.sort((a, b) => weight[a.rating] - weight[b.rating] || moved(a) - moved(b) || (b.hours ?? 0) - (a.hours ?? 0) || order.get(a.category)! - order.get(b.category)!);
+  // Within a rating: what moved the finish most, then the most hours of the late finish it holds, then the most hours it is about.
+  const costH = (f: Finding) => Number(f.effect.match(/^(?:Set the finish\. )?Cost ([\d.]+) of/)?.[1] ?? 0);
+  findings.sort((a, b) => weight[a.rating] - weight[b.rating] || moved(a) - moved(b) || costH(b) - costH(a) || (b.hours ?? 0) - (a.hours ?? 0) || order.get(a.category)! - order.get(b.category)!);
 
   const live = findings.filter((f) => f.status !== "discarded");
   const toldText = live.filter((f) => f.rating === "gap" || f.rating === "opportunity").map((f) => `${f.title}\n${f.observation}`).join("\n");
@@ -621,7 +650,7 @@ export function buildReview(input: ReviewInput): Review {
   const ahead = built.orders.filter((o) => o.finish != null && (o.varianceH ?? 0) <= -8).sort((a, b) => a.varianceH! - b.varianceH!);
   if (ahead.length) strengths.push(`${plural(ahead.length, "work order")} finished 8 h or more ahead of plan: ${ahead.slice(0, 3).map((o) => `${orderWord(o.name)} ${Math.abs(o.varianceH!)} h`).join(", ")}${ahead.length > 3 ? `, and ${ahead.length - 3} more` : ""}.`);
   return {
-    metrics, finish, service, stuck, ready, byShift, found, holds, findings, flows, late, questions, answeredCount, strengths, wins,
+    metrics, finish, service, stuck, ready, byShift, found, holds, failedTests, standDowns, findings, flows, late, questions, answeredCount, strengths, wins,
     qa: qaOf(metrics, found, stuck, tz, finish, flows.filter(overloaded)),
     measures: measuresOf(metrics, saved.targets),
     organization: input.organization?.recorded ? input.organization : null,
@@ -706,8 +735,24 @@ function finishStory(built: AsBuilt, said: Map<string, Comment[]>, crewOf: (id: 
     .map((x) => ({ name: x.name, crew: crewOf(x.id), plannedH: r1(x.plannedH), tookH: r1(x.elapsedH!), shifts: shiftsOf(x.id), said: (said.get(x.id) ?? []).filter((c) => !CHATTER.test(c.body) && causeOfText(c.body)).map((c) => c.body).slice(0, 2) }));
   let cause: CauseId | null = null, because: FinishStory["because"] = null;
   for (const st of top.steps) for (const c of said.get(st.id) ?? []) { const k = causeOfText(c.body); if (k && !CHATTER.test(c.body) && c.at < (because?.at ?? Infinity)) { cause = k; because = { step: st.name, crew: crewOf(st.id), said: c.body, at: c.at }; } }
+  // Where the late hours went. From the start-up's planned start (else the
+  // baseline finish), each work order still going held it up until it was
+  // done; what a piece alone added is the time from the work before it.
+  const T0 = closing ? closing.planStart : built.planFinish;
+  const after = rest.filter((o) => o.finish! > T0);
+  const delay: DelayPart[] = [];
+  after.forEach((o, i) => {
+    const next = after[i + 1];
+    const upper = i === 0 && closing ? Math.min(closing.start, o.finish!) : o.finish!;
+    const h = r1((upper - Math.max(T0, next?.finish ?? T0)) / HOUR);
+    if (h < 0.5) return;
+    const since = next ? `${orderWord(next.name)}${i === 0 && closing ? "" : ", the work before it"}` : closing ? "the start-up's planned start" : "the baseline finish";
+    delay.push({ order: o.name, hours: h, kind: "work", line: i === 0 && closing ? `Start-up waited ${h} h on ${orderWord(o.name)} after ${next ? `${since} was done` : "its planned start"}.` : `${orderWord(o.name)} was done ${h} h after ${since}.` });
+  });
+  if (closing && after.length && closing.start - after[0].finish! >= HOUR) delay.push({ order: closing.order, hours: r1((closing.start - after[0].finish!) / HOUR), kind: "gap", line: `Start-up began ${r1((closing.start - after[0].finish!) / HOUR)} h after the last work was done.` });
+  if (closing?.longerH != null && closing.longerH >= 0.5) delay.push({ order: closing.order, hours: closing.longerH, kind: "longer", line: `Start-up ran ${closing.longerH} h longer than planned.` });
   return {
-    lateH: r1((built.finish - built.planFinish) / HOUR),
+    lateH: r1((built.finish - built.planFinish) / HOUR), delay,
     last: rest.slice(0, 3).map((o) => ({ order: o.name, finish: o.finish!, planFinish: o.planFinish, lateH: o.varianceH })),
     aheadH: rest.length > 1 ? r1((rest[0].finish! - rest[1].finish!) / HOUR) : null, closing, steps, cause, because,
   };
@@ -739,13 +784,15 @@ export function finishLines(f: FinishStory, tz: string): string[] {
  *  work that finished late but not last. 0: nothing. */
 function effectOf(orders: string[], f: FinishStory | null, named = false): { level: Moved; text: string } {
   if (!f || !f.last.length) return { level: 0, text: "" };
-  const [top, next] = f.last;
-  if (orders.includes(top.order)) {
-    const last = `${orderWord(top.order)} was the last work done${next && f.aheadH != null ? `, ${f.aheadH} h after ${orderWord(next.order)}` : ""}.`;
-    return named ? { level: 3, text: `Set the finish: ${last}` } : { level: 2, text: `On ${orderWord(top.order)}, the last work to finish.` };
+  const [top] = f.last;
+  const part = f.delay.filter((d) => orders.includes(d.order)).sort((x, y) => y.hours - x.hours)[0];
+  if (part) {
+    const text = `Cost ${part.hours} of the ${f.lateH} h. ${part.line}`;
+    return { level: part.order === top.order && named ? 3 : 2, text: part.order === top.order && named ? `Set the finish. ${text}` : text };
   }
+  if (orders.includes(top.order)) return named ? { level: 3, text: `Set the finish: ${orderWord(top.order)} was the last work done.` } : { level: 2, text: `On ${orderWord(top.order)}, the last work to finish.` };
   const hit = f.last.slice(1).find((o) => orders.includes(o.order) && (o.lateH ?? 0) >= 1);
-  if (hit) return { level: 1, text: `${orderWord(hit.order)} finished ${hit.lateH} h after its plan. It did not set the finish.` };
+  if (hit) return { level: 1, text: `${orderWord(hit.order)} finished ${hit.lateH} h after its plan. It did not hold up the finish.` };
   return { level: 0, text: "Did not move the finish." };
 }
 
@@ -760,6 +807,8 @@ function draftFindings(x: { metrics: ReviewMetrics; stuck: StuckJob[]; ready: Re
     key, category: key.split(":")[0] as CategoryId, rating, title, observation: lines.map((l) => l.trim()).filter(Boolean).join("\n"), evidence,
     practice: PRACTICE_OF[key.split(":")[0] as CategoryId], owner: ownerOf(key.split(":")[0] as CategoryId, x.organization), gap: "", next: "", year: "", effect: "", moved: null, proof: lines.map((l) => l.trim()).filter(Boolean)[0] ?? "", why: "", hours: null, ask: "", because: "", ...over,
   });
+  /** The hours a work order alone added to the late finish (lib: FinishStory.delay). */
+  const costOf = (order: string) => fin?.delay.filter((d) => d.kind === "work" && d.order === order).reduce((n, d) => n + d.hours, 0) || 0;
   /** "V-7 finished 8 h after its plan." for the first of these work orders that finished late. */
   const lateLine = (orders: string[]): string => { const hit = fin?.last.find((o) => orders.includes(o.order) && (o.lateH ?? 0) >= 1); return hit ? `${orderWord(hit.order)} finished ${hit.lateH} h after its plan.` : ""; };
   const day = (t: number) => fmtInTz(t, x.tz, { month: "numeric", day: "numeric" });
@@ -793,11 +842,11 @@ function draftFindings(x: { metrics: ReviewMetrics; stuck: StuckJob[]; ready: Re
       const lines = [...(short ? finishLines(fin!, x.tz) : []), ...sat("material", "waiting on materials"), reg || "No materials register was kept for this event."];
       out.push(make("materials", rated(e.level, "opportunity"), short ? `A material shortfall on ${orderWord(top!.order)} set the finish` : waited.length ? `${names(waited.map((w) => w.j))} waited on materials` : "The materials register has open items", lines, [], {
         effect: short || waited.length ? e.text : "", moved: short || waited.length ? e.level : null, ...(short && becauseLine(fin!) ? { proof: becauseLine(fin!) } : {}),
-        ...(short ? { hours: fin!.lateH, why: `${orderWord(top!.order)} set the finish, ${fin!.lateH} h past the baseline.${fin!.steps[0] ? ` ${fin!.steps[0].name} was ${openWord(fin!.steps[0])}.` : ""}` } : {}),
+        ...(short ? { hours: fin!.lateH, why: `${orderWord(top!.order)} set the finish${costOf(top!.order) ? `: ${costOf(top!.order)} of the ${fin!.lateH} h late were spent waiting on it` : `, ${fin!.lateH} h past the baseline`}.${fin!.steps[0] ? ` ${fin!.steps[0].name} was ${openWord(fin!.steps[0])}.` : ""}` } : {}),
         gap: short ? `What ${orderWord(top!.order)} needed was not counted against what was ordered before the event.` : waited.length ? "Material was not all in hand when the job needed it." : "",
         next: "List every part each job needs on the materials register, with who owns it and when it is due. Before the unit comes down, check each line against what was ordered and close any shortfall.",
         ask: "Count each job's parts against the order before the unit comes down.",
-        because: short ? `${orderWord(top!.order)} ran short of parts and set the finish, ${fin!.lateH} h late.` : waited.length ? `${names(waited.map((w) => w.j))} waited on materials.` : "The materials register has open items.",
+        because: short ? `${orderWord(top!.order)} ran short of parts and set the finish: ${costOf(top!.order) ? `${costOf(top!.order)} of the ${fin!.lateH} h late` : `${fin!.lateH} h late`}.` : waited.length ? `${names(waited.map((w) => w.j))} waited on materials.` : "The materials register has open items.",
       }));
     }
     if (overdue.length) {
@@ -855,43 +904,84 @@ function draftFindings(x: { metrics: ReviewMetrics; stuck: StuckJob[]; ready: Re
     if (out.length === before) out.push(make("planning", "none", "No planning finding in the records", ["No holds for gas testing or decontamination, and no job sat waiting on cleaning or a failed test."], []));
   }
 
-  // Scope definition: work found during the event. The records say what was
-  // found and what it cost. Whether it could have been known ahead, and how,
-  // is a person's call (the questions): the app writes no advice of its own.
+  // Work put in after the plan, by the kind it was entered as. Added scope
+  // is known work that wasn't on the plan: a planning miss. Discovery is
+  // what was found when the equipment was opened or inspected: time to carry,
+  // and kept off the critical path where it can be. Whether a discovery could
+  // have been known ahead, and how, is a person's call (the questions).
   {
-    const ev = found.map((f) => `${f.what} (${tagOf(f.on)}): ${plural(f.steps, "activity", "activities")}, about ${f.hours} h of work when approved${f.critical ? ", on the critical path" : ""}${f.approvedBy ? `, approved by ${f.approvedBy}` : ", no approver recorded"}`);
+    const ev = found.map((f) => `${f.what} (${tagOf(f.on)}): ${f.kind === "added" ? "added scope" : "discovery"}, ${plural(f.steps, "activity", "activities")}, ${f.hours} h${f.critical ? ", on the critical path" : ""}${f.approvedBy ? `, approved by ${f.approvedBy}` : ", no approver recorded"}`);
+    const said2 = (f: FoundWork) => { const k = x.knownOf(f.id); return k?.known ? ` ${KNOWN_WORD[k.known]}.${k.note ? ` ${k.note}` : ""}` : ""; };
+    const item = (f: FoundWork) => `${tagOf(f.on)}: ${short(f.what)}, ${f.hours} h${f.critical ? ", on the critical path" : ""}.${said2(f)}`;
+    const sum = (fs: FoundWork[]) => r1(fs.reduce((n, f) => n + f.hours, 0));
+    const pct = (h: number) => (m.baselineH > 0 ? Math.round((h / m.baselineH) * 100) : null);
     if (!found.length) out.push(make("scope", m.steps ? "strength" : "none", "Scope held through the event", [m.steps ? `All ${m.baselineSteps} planned activities; no work was added during the event.` : "No schedule to read."], []));
-    else {
-      const crit = found.filter((f) => f.critical);
-      const total = `${plural(m.addedSteps, "activity was", "activities were")} added from ${plural(found.length, "finding")}${m.addedPct != null ? `: ${m.addedH} h of work on a ${m.baselineH} h plan (${m.addedPct}% more), by the schedule's estimates` : ""}.`;
-      const said2 = (f: FoundWork) => { const k = x.knownOf(f.id); return k?.known ? ` ${KNOWN_WORD[k.known]}.${k.note ? ` ${k.note}` : ""}` : ""; };
-      const lines = [total, ...found.map((f) => `${f.critical ? "On the critical path, " : ""}${tagOf(f.on)}: ${short(f.what)}. About ${f.hours} h.${said2(f)}`)];
-      const e = effectOf(crit.map((f) => f.on), fin);
-      // Found only by opening it: time to carry. Could have been known: a finding each, in the person's words.
-      const blind = found.filter((f) => x.knownOf(f.id)?.known === "no");
-      const open = found.filter((f) => !x.knownOf(f.id)?.known);
-      const blindH = r1(blind.reduce((n, f) => n + f.hours, 0));
-      out.push(make("scope", rated(e.level, (m.addedPct ?? 0) >= 10 ? "opportunity" : "none"), `Found work added ${plural(m.addedSteps, "activity", "activities")}, ${m.addedH} h${m.addedPct != null ? ` (${m.addedPct}%)` : ""}`, lines, ev, {
-        effect: crit.length ? e.text : NONE, moved: crit.length ? e.level : 0, hours: blind.length ? blindH : m.addedH,
-        why: [`Found work added ${m.addedH} h to a ${m.baselineH} h plan${m.addedPct != null ? ` (${m.addedPct}%)` : ""}${crit.length ? `; ${r1(crit.reduce((n, f) => n + f.hours, 0))} h of it on the critical path of ${tags(crit.map((f) => f.on))}` : ""}.`, lateLine(crit.map((f) => f.on))].filter(Boolean).join(" "),
-        gap: open.length ? `Not yet said for ${plural(open.length, "item")}: whether it could have been known before the event.` : "",
-        next: blind.length ? `Carry time in the plan for what can only be found by opening the equipment: ${blindH} h this event (${list(blind.map((f) => short(f.what)))}).` : "",
-        ask: blind.length ? "Carry time for what can only be found by opening the equipment." : "",
-        because: blind.length ? `${blindH} h this event could only be found by opening it${found.length > blind.length ? `, of ${m.addedH} h of found work` : ""}.` : `Found work added ${m.addedH} h${m.addedPct != null ? ` (${m.addedPct}%)` : ""}.`,
+
+    // Added scope: known work, missing from the plan.
+    const known = found.filter((f) => f.kind === "added");
+    if (known.length) {
+      const h = sum(known), crit = known.filter((f) => f.critical), e = effectOf([...new Set(known.map((f) => f.on))], fin);
+      const big = [...known].sort((a2, b2) => Number(b2.critical) - Number(a2.critical) || b2.hours - a2.hours);
+      const named = big.map((f) => `${short(f.what).replace(/^unplanned\s+/i, "").replace(/^\w/, (c) => c.toLowerCase())} on ${tagOf(f.on)}, ${f.hours} h${f.critical ? " on the critical path" : ""}`);
+      const notes = known.map((f) => x.knownOf(f.id)?.note?.trim()).filter((t): t is string => !!t);
+      out.push(make("planning:added", rated(e.level, "opportunity"), `${h} h of known work was added during the event${crit.length ? `, ${sum(crit)} h of it on the critical path` : ""}`,
+        [`Entered as added scope (known work that was not on the plan): ${plural(known.length, "item")}, ${h} h${pct(h) != null ? ` (${pct(h)}% of the ${m.baselineH} h plan)` : ""}.`, ...big.map(item)], ev.filter((_, i) => found[i].kind === "added"), {
+        effect: e.text, moved: fin ? e.level : null, hours: h,
+        why: `Known work that was not on the plan was added during the event: ${named.join("; ")}.`,
+        gap: "Known work was not on the work list when the plan was made.",
+        next: [`Before scope freeze, walk the work list with operations and the drawings so known work is on the plan (this event: ${list(big.map((f) => short(f.what).replace(/^unplanned\s+/i, "").toLowerCase()))}).`, ...notes].join(" "),
+        ask: "Put known work on the plan before scope freeze.",
+        because: `Added during the event: ${named.join("; ")}.`,
       }));
-      for (const f of found) {
+    }
+
+    // Discovery: found when the equipment was opened or inspected.
+    const disc = found.filter((f) => f.kind !== "added");
+    if (disc.length) {
+      const h = sum(disc), crit = disc.filter((f) => f.critical), critH = sum(crit), e = effectOf([...new Set(crit.map((f) => f.on))], fin);
+      const blind = disc.filter((f) => x.knownOf(f.id)?.known === "no");
+      const lines = [`Found when the equipment was opened or inspected: ${plural(disc.length, "item")}, ${h} h${pct(h) != null ? ` (${pct(h)}% of the ${m.baselineH} h plan)` : ""}; ${critH ? `${critH} h of it on the critical path` : "none of it on the critical path"}.`, ...disc.map(item)];
+      out.push(make("scope", rated(crit.length ? e.level : 0, (pct(h) ?? 0) >= 10 ? "opportunity" : "none"), `Discovery added ${h} h${pct(h) != null ? ` (${pct(h)}%)` : ""}, ${critH ? `${critH} h` : "none"} of it on the critical path`, lines, ev.filter((_, i) => found[i].kind !== "added"), {
+        effect: crit.length ? `${critH} h of it was on the critical path of ${tags(crit.map((f) => f.on))}.${crit.some((f) => costOf(f.on)) ? ` ${tags(crit.filter((f) => costOf(f.on)).map((f) => f.on))} cost ${r1(crit.filter((f, i, all) => costOf(f.on) && all.findIndex((g) => g.on === f.on) === i).reduce((n, f) => n + costOf(f.on), 0))} of the ${fin!.lateH} h late.` : ""}` : NONE, moved: fin ? (crit.length ? Math.min(e.level, 1) as Moved : 0) : null, hours: h,
+        why: `Discovery added ${h} h to a ${m.baselineH} h plan${pct(h) != null ? ` (${pct(h)}%)` : ""}; ${critH ? `${critH} h of it on the critical path of ${tags(crit.map((f) => f.on))}` : "none of it on the critical path"}.`,
+        gap: "Found only once the equipment was opened or inspected.",
+        next: `Carry time in the plan for discovery: ${h} h this event${pct(h) != null ? `, ${pct(h)}% of the planned hours` : ""}.${blind.length ? ` Found only by opening the equipment: ${list(blind.map((f) => short(f.what)))}.` : ""}`,
+        ask: "Carry time in the plan for discovery.",
+        because: `Discovery this event: ${h} h${pct(h) != null ? ` (${pct(h)}% of the planned hours)` : ""}, ${critH ? `${critH} h` : "none"} on the critical path.`,
+      }));
+      for (const f of disc) {
         const k = x.knownOf(f.id);
         if (!k?.known || k.known === "no") continue;
         const how = k.known === "drawing" ? "the drawings" : k.known === "operations" ? "asking operations" : "inspection data";
         const e2 = effectOf(f.critical ? [f.on] : [], fin);
-        out.push(make(`scope:known:${f.id}`, "opportunity", `${short(f.what)} (${tagOf(f.on)}) could have been known from ${how}`, [`${tagOf(f.on)}: ${short(f.what)}. About ${f.hours} h, not in the plan${f.critical ? ", on the critical path" : ""}.`, k.note ? `Said in the review: ${k.note}` : ""], [], {
+        out.push(make(`scope:known:${f.id}`, "opportunity", `${short(f.what)} (${tagOf(f.on)}) could have been found before the event from ${how}`, [`${tagOf(f.on)}: ${short(f.what)}. ${f.hours} h, found during the event${f.critical ? ", on the critical path" : ""}.`, k.note ? `Said in the review: ${k.note}` : ""], [], {
           effect: f.critical ? e2.text : NONE, moved: fin ? (f.critical ? e2.level : 0) : null, hours: f.hours,
-          why: `${short(f.what)} was about ${f.hours} h of work that was not in the plan${f.critical ? `, on the critical path of ${tagOf(f.on)}` : ""}. It could have been known from ${how}.`,
+          why: `${short(f.what)} was ${f.hours} h of work found during the event${f.critical ? `, on the critical path of ${tagOf(f.on)}` : ""}. It could have been found before from ${how}.`,
           gap: `It was not picked up from ${how} before the event.`,
           next: k.note ?? "", ask: k.note ? firstSentence(k.note) : "",
-          because: `${short(f.what)} (${tagOf(f.on)}): about ${f.hours} h not in the plan. It could have been known from ${how}.`,
+          because: `${short(f.what)} (${tagOf(f.on)}): ${f.hours} h found during the event. It could have been found before from ${how}.`,
         }));
       }
+    }
+  }
+
+  // The schedule's own logic: hand-offs between crews it does not link. When
+  // the next crew's job has no link to the one it waits on, the daily plan
+  // can't show when it is ready, and the wait can only be worked out after.
+  {
+    const jobs = x.flows.flatMap((f) => f.jobs);
+    const unlinked = jobs.filter((j) => j.basis === "guessed");
+    if (jobs.length >= 4 && unlinked.length / jobs.length >= 0.25) {
+      const waited = unlinked.filter((j) => j.waitH >= MIN_WAIT_H).sort((a2, b2) => b2.waitH - a2.waitH);
+      out.push(make("planning:links", "opportunity", `${unlinked.length} of ${jobs.length} hand-offs between crews had no link in the schedule`,
+        [`Of the ${jobs.length} jobs one crew handed to another, ${unlinked.length} had no link to the step they waited on, so the plan could not show when each was ready.`, ...waited.slice(0, 6).map((j) => `${jobWord(j)} (${j.crew}): no link; it sat ${j.waitH} h after ${j.after.replace(/\s*\([^)]*\)/g, "")} (${j.from}) was done.`)], [], {
+        effect: "", moved: null, hours: null,
+        why: `${unlinked.length} of ${jobs.length} hand-offs between crews had no link in the schedule, so when work was ready for the next crew was not on the plan.`,
+        gap: "The schedule does not link each step to the other crew's step it waits on.",
+        next: "Link every hand-off between crews in the schedule (pull, clean, inspect, reinstall) so the shift report shows what is ready for each crew.",
+        ask: "Link every hand-off between crews in the schedule.",
+        because: `${unlinked.length} of ${jobs.length} hand-offs had no link, so the plan could not show when work was ready for the next crew.`,
+      }));
     }
   }
 
@@ -928,7 +1018,7 @@ function draftFindings(x: { metrics: ReviewMetrics; stuck: StuckJob[]; ready: Re
       const lines = [
         `At ${whenWord(f.peak.at, x.tz)}, ${plural(f.peak.open, "job")} ${f.peak.open === 1 ? "was" : "were"} open for ${f.crew} at once${f.plannedPeak ? `; the plan gave it ${f.plannedPeak} at most` : ""}. ${f.peak.working.length ? `It was working ${tags(f.peak.working.map((j) => j.order))}` : "It had started none of them"}${f.peak.waiting.length ? `; ${tags(f.peak.waiting.map((j) => j.order))} waited` : ""}.`,
         f.burst.jobs.length >= 3 ? `${f.burst.jobs.length} of them opened within ${f.burst.hours} h on ${day(f.burst.jobs[0].openedAt)}.` : "",
-        `Of the ${plural(f.jobs.length, "job")} handed to ${f.crew}, ${f.waited.length} sat ${MIN_WAIT_H} h or more before it started them: ${f.waited.map((j) => `${jobWord(j)} ${j.waitH} h (ready when ${stepName(j.after)} was done${j.basis === "guessed" ? ", by the planned sequence" : ""})`).join("; ")}.`,
+        `Of the ${plural(f.jobs.length, "job")} handed to ${f.crew}, ${f.waited.length} sat ${MIN_WAIT_H} h or more before it started them: ${f.waited.map((j) => `${jobWord(j)} ${j.waitH} h (ready when ${stepName(j.after)} was done${j.basis === "guessed" ? ", no link in the schedule" : ""})`).join("; ")}.`,
         ...heldFor,
         ...f.together.map((g) => `${f.crew} had ${names(g)} open at the same time: ${g.map((j) => `${j.tookH} h`).join(" and ")} from start to finish, against ${g.map((j) => `${j.plannedH} h`).join(" and ")} of work planned.`),
         early.length ? `${names(early)} ${early.length === 1 ? "was" : "were"} opened ${early.map((j) => j.openedEarlyH).join(" and ")} h ahead of plan and sat until ${f.crew} was free.` : "",
@@ -1031,7 +1121,7 @@ function draftFindings(x: { metrics: ReviewMetrics; stuck: StuckJob[]; ready: Re
       const ev = mine.map(({ j, shifts }) => `${jobWord(j)} (${j.crew}): ${shifts.map((sh) => `${shiftWord(sh.key)}, ${CAUSE_WORD[sh.cause].toLowerCase()}`).join("; ")}`);
       const act = e.level > 0 || m.noReasonShifts >= 3;
       out.push(make("execution", rated(e.level, m.noReasonShifts >= 3 ? "opportunity" : "none"), `${mine.length <= 2 ? names(mine.map((x2) => x2.j)) : plural(mine.length, "started job")} sat ${count === 1 ? "a shift" : `${count} shifts`}${blank ? " with no reason written" : ""}`, lines, ev, {
-        effect: !fin ? "" : e.level === 2 ? `On ${orderWord(top!.order)}, the last work to finish.` : e.text, moved: fin ? e.level : null,
+        effect: !fin ? "" : e.text, moved: fin ? e.level : null,
         ask: "Write the reason on every job that sits, the same shift.", because: `${mine.length <= 2 ? names(mine.map((x2) => x2.j)) : plural(mine.length, "started job")} sat ${count === 1 ? "a shift" : `${count} shifts`}${blank ? " with no reason written" : ""}.`,
         ...(act ? { gap: "No reason was written the shift the job sat.", next: "Go through the jobs that sat at each shift meeting and write the reason on each." } : { next: "Nothing to change beyond writing the reason on each job that sits." }),
       }));
@@ -1095,6 +1185,8 @@ function strengthsOf(m: ReviewMetrics, found: FoundWork[], holds: HoldFact[], li
   if (m.baselineSteps && m.baselineDone === m.baselineSteps) put("planning", `Baseline scope closed: all ${m.baselineSteps} planned activities completed${m.addedSteps && m.addedDone === m.addedSteps ? `, plus all ${m.addedSteps} added` : ""}.`);
   if (m.varianceH != null && m.varianceH <= 0.5) put("planning", "Finished on or ahead of the baseline finish.");
   const approved = found.filter((f) => f.approvedBy).length;
+  const disc = found.filter((f) => f.kind !== "added"), discH = Math.round(disc.reduce((n, f) => n + f.hours, 0) * 10) / 10, discCrit = Math.round(disc.filter((f) => f.critical).reduce((n, f) => n + f.hours, 0) * 10) / 10;
+  if (discH >= 8 && discCrit <= discH * 0.25) put("planning", `Discovery was kept off the critical path: ${Math.round((discH - discCrit) * 10) / 10} of ${discH} h ran in the time the plan had to spare.`);
   if (found.length && approved) put("execution", `Added work was approved before it ran: ${approved} of ${plural(found.length, "finding")} carry a recorded approver.`);
   if (holds.some((h) => h.cause === "permit")) put("safety", "Crews stood down on gas detection until the equipment was cleared.");
   for (const f of live) if (f.rating === "strength" && f.category !== "safety" && f.category !== "scope") put(f.category, `${f.title}.`);
@@ -1142,6 +1234,8 @@ export interface Point {
   headline: string;
   /** Baseline finish and actual finish. */
   span: string;
+  /** Where the late hours went, in a line ("E-12 24 h, V-7 4 h, ..."). */
+  delay: string;
   conclusions: Conclusion[];
   /** Findings a person has not ruled on yet: off the slide until they do. */
   pending: Conclusion[];
@@ -1159,7 +1253,8 @@ export function pointOf(r: Pick<Review, "metrics" | "finish" | "findings" | "ser
   const top = fin?.last[0] ?? null;
   const headline = !m.steps ? `${name}: no schedule to review`
     : m.varianceH == null ? `${name}: ${plural(m.steps - m.stepsDone, "activity", "activities")} of ${m.steps} still open`
-      : `${name} finished ${Math.abs(m.varianceH) < 1 ? "on the baseline finish" : `${Math.abs(m.varianceH)} h ${m.varianceH > 0 ? "late" : "early"}`}.${late && top ? ` ${orderWord(top.order)} set the finish.` : ""}`;
+      : `${name} finished ${Math.abs(m.varianceH) < 1 ? "on the baseline finish" : `${Math.abs(m.varianceH)} h ${m.varianceH > 0 ? "late" : "early"}`}.${late && fin?.delay.length && fin.delay[0].kind === "work" ? ` ${fin.delay[0].hours} h of it was ${orderWord(fin.delay[0].order)}.` : late && top ? ` ${orderWord(top.order)} set the finish.` : ""}`;
+  const delay = late && fin?.delay.length ? `Where the ${m.varianceH} h went: ${fin.delay.map((d) => (d.kind === "longer" ? `start-up ran ${d.hours} h long` : d.kind === "gap" ? `start-up began ${d.hours} h after the work was done` : `${orderWord(d.order)} ${d.hours} h`)).join(", ")}.` : "";
   const lines = !m.steps ? [] : m.varianceH == null ? ["The numbers here are to date."] : late && fin ? [lastLine(fin, tz), becauseLine(fin), closingLine(fin)].filter(Boolean) : [];
   const live = r.findings.filter((f) => f.status !== "discarded");
   const toC = (f: Finding): Conclusion => ({ key: f.key, category: categoryOf(f.category).name, practice: f.practice, title: f.title, why: f.why || f.effect || f.proof, change: f.next, ask: f.ask || f.next, because: f.because || f.why || f.effect, owner: f.owner, first: f.moved === 3, categoryId: f.category, gap: f.gap, due: f.due, cost: f.cost, done: f.done, moved: f.moved });
@@ -1172,7 +1267,7 @@ export function pointOf(r: Pick<Review, "metrics" | "finish" | "findings" | "ser
   const svc = (j: ServiceJob) => (TAG.test(tagOf(j.order)) ? orderWord(j.order) : jobWord(j));
   if (fine.length) quiet.push(`${list(fine.map(svc))}: out for service, back as planned`);
   return {
-    headline, lines, order: late && top ? top.order : null, steps: late && fin ? fin.steps : [],
+    headline, delay, lines: late && fin?.delay.length ? [...fin.delay.map((d) => d.line), ...lines.slice(1)] : lines, order: late && top ? top.order : null, steps: late && fin ? fin.steps : [],
     span: m.baselineFinish != null && m.actualFinish != null ? `Baseline finish ${whenWord(m.baselineFinish, tz)}; actual ${whenWord(m.actualFinish, tz)}.` : "",
     conclusions, pending, quiet,
   };

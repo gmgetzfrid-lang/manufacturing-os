@@ -229,6 +229,7 @@ function FitTable({ body: b, open }: { body: Extract<SlideSpec["body"], { k: "ta
   });
   return (
     <div ref={box} style={{ height: "100%", overflow: "hidden" }} data-slide-fit>
+      {b.lead && <div style={{ fontSize: pt(16), fontWeight: 700, color: C.acc, marginBottom: 10, lineHeight: 1.2 }} data-slide-lead>{T(b.lead)}</div>}
       {b.tally && b.tally.length > 0 && (
         <div style={{ display: "flex", gap: 34, alignItems: "baseline", marginBottom: 12 }} data-slide-tally>
           {b.tally.map((t) => <div key={t.label}><span style={{ fontSize: pt(24), fontWeight: 700, color: `#${TONE_HEX[t.tone].fg}` }}>{t.n}</span><span style={{ fontSize: pt(13), color: C.soft, marginLeft: 8 }}>{T(t.label)}</span></div>)}
@@ -285,6 +286,7 @@ function Page({ spec, open }: { spec: SlideSpec; open?: Open }) {
           ))}
         </ol>
       )}
+      {b.k === "table" && b.lead && <p className="mt-3 text-[15px] font-black leading-snug" style={{ color: C.acc }} data-slide-lead>{T(b.lead)}</p>}
       {b.k === "table" && b.tally && b.tally.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1" data-slide-tally>{b.tally.map((t) => <span key={t.label} className="whitespace-nowrap"><b className="text-[20px]" style={{ color: `#${TONE_HEX[t.tone].fg}` }}>{t.n}</b> <span className="text-[13px]" style={{ color: C.soft }}>{T(t.label)}</span></span>)}</div>
       )}

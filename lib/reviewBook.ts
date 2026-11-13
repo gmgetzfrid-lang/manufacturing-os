@@ -15,7 +15,7 @@
 import type { AsBuiltWork } from "@/lib/asBuiltWork";
 import { manpowerSummary, shiftCounts, type ManpowerSettings } from "@/lib/manpower";
 import type { ShiftRecord } from "@/lib/shiftRecord";
-import { AREAS, AREA_OF, pointOf, whenWord, type AreaId, type Conclusion, type Review, type ScoreEntry } from "@/lib/postEventReview";
+import { AREAS, AREA_OF, orderWord, pointOf, whenWord, type AreaId, type Conclusion, type Review, type ScoreEntry } from "@/lib/postEventReview";
 
 // ─── How to set up what was not measured ───────────────────────────
 
@@ -99,6 +99,12 @@ export const VERDICT_WORD: Record<Verdict, string> = { met: "Met", missed: "Miss
 export interface ScoreRow {
   key: "duration" | "planned" | "added" | "manhours" | "cost" | "safety" | "quality";
   measure: string; plan: string; actual: string; verdict: Verdict;
+  /** What it measures, in a line. */
+  means: string;
+  /** Targets to set with one tap (none where the plan itself is the target). */
+  picks: string[];
+  /** The result comes from the records; a person enters it only when it doesn't. */
+  fromRecords: boolean;
   /** The result in a few words ("33.5 h late"). */
   result: string;
   /** How to set it up, when it could not be measured or has no target. */
@@ -145,85 +151,106 @@ const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 const num = (t: string | undefined) => { const m = (t ?? "").match(/-?\d+(\.\d+)?/); return m ? Number(m[0]) : null; };
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-export function scoreOf(r: Pick<Review, "metrics">, tz: string, x: ScoreInputs = {}): Score {
+const MEANS: Record<ScoreRow["key"], string> = {
+  duration: "When the work and start-up finished, against the baseline finish.",
+  planned: "The activities on the saved plan, and how many got done.",
+  added: "Work put in after the plan: added scope (known work that was not planned) and discovery (found when the equipment was opened).",
+  manhours: "Heads on site times shift hours, from the head count at each shift meeting, against the contractors' bid.",
+  cost: "Spend posted in Cost controls against this phase's budget.",
+  safety: "Injuries written on the shift reports' incident line: recordables, first aids, near misses. The target is how many the event allows; most sites set zero recordables.",
+  quality: "Work that failed its check and was done again: failed pressure tests, leaks at start-up, rework. The target is how many the event allows.",
+};
+const PICKS: Record<ScoreRow["key"], string[]> = {
+  duration: [], planned: [],
+  added: ["10% of the planned hours", "15% of the planned hours"],
+  manhours: [], cost: [],
+  safety: ["0 recordables", "0 recordables, 0 first aids"],
+  quality: ["0 failed pressure tests", "0 failed tests, 0 start-up leaks"],
+};
+
+export function scoreOf(r: Pick<Review, "metrics"> & Partial<Pick<Review, "failedTests" | "standDowns" | "found">>, tz: string, x: ScoreInputs = {}): Score {
   const m = r.metrics, e = x.entries ?? {}, t = x.targets ?? {};
   const rows: ScoreRow[] = [];
   const v = m.varianceH;
+  const row = (key: ScoreRow["key"], measure: string, o: Pick<ScoreRow, "plan" | "actual" | "verdict" | "result"> & Partial<ScoreRow>): ScoreRow =>
+    ({ key, measure, means: MEANS[key], picks: PICKS[key], fromRecords: true, entered: false, ...o });
+  /** A target in words judged against a count: "0 recordables" allows 0. */
+  const allows = (target: string | undefined, count: number): Verdict => { const k = num(target); return k == null ? "untargeted" : count <= k ? "met" : "missed"; };
 
   // Duration: the baseline finish is the target unless a person set an allowance.
-  const allowH = num(t.variance);
-  rows.push({
-    key: "duration", measure: "Duration", entered: false,
+  const allowH = num(e.duration?.plan ?? t.variance);
+  rows.push(row("duration", "Duration", {
     plan: m.baselineFinish != null ? `Finish ${whenWord(m.baselineFinish, tz)}${allowH ? `, up to ${allowH} h past it` : ""}` : "No baseline",
     actual: m.actualFinish != null ? `Finish ${whenWord(m.actualFinish, tz)}` : "Not finished",
     verdict: v == null ? "open" : v <= Math.max(0.99, allowH ?? 0) ? "met" : "missed",
     result: v == null ? "Open" : Math.abs(v) < 1 ? "On the baseline finish" : `${Math.abs(v)} h ${v > 0 ? "late" : "early"}`,
-  });
+  }));
 
-  rows.push({
-    key: "planned", measure: "Planned work", entered: false,
+  rows.push(row("planned", "Planned work", {
     plan: `${plural(m.baselineSteps, "activity", "activities")}, ${m.baselineH} h`, actual: `${m.baselineDone} done`,
     verdict: !m.baselineSteps ? "unmeasured" : m.baselineDone === m.baselineSteps ? "met" : v == null ? "open" : "missed",
     result: m.baselineDone === m.baselineSteps ? "All done" : `${m.baselineSteps - m.baselineDone} not done`,
-  });
+  }));
 
-  // Added work: judged only against an allowance a person set.
-  const allowPct = num(t.growth);
-  rows.push({
-    key: "added", measure: "Added work", entered: false,
-    plan: allowPct != null ? `Allowance ${allowPct}% of planned hours` : "No allowance set",
-    actual: m.addedSteps ? `${plural(m.addedSteps, "activity", "activities")}, ${m.addedH} h` : "None",
+  // Added work, by the kind it was entered as; judged only against an allowance a person set.
+  const found = r.found ?? [];
+  const known = Math.round(found.filter((f) => f.kind === "added").reduce((n, f) => n + f.hours, 0) * 10) / 10;
+  const disc = Math.round(found.filter((f) => f.kind !== "added").reduce((n, f) => n + f.hours, 0) * 10) / 10;
+  const allowPct = num(e.added?.plan ?? t.growth);
+  rows.push(row("added", "Added work", {
+    plan: allowPct != null ? `Up to ${allowPct}% of the planned hours` : "Target not set",
+    actual: !m.addedSteps ? "None" : found.length ? `${m.addedH} h: ${[known ? `${known} h added scope` : "", disc ? `${disc} h discovery` : ""].filter(Boolean).join(", ")}` : `${plural(m.addedSteps, "activity", "activities")}, ${m.addedH} h`,
     verdict: !m.addedSteps ? "met" : allowPct == null || m.addedPct == null ? "untargeted" : m.addedPct <= allowPct ? "met" : "missed",
-    result: !m.addedSteps ? "None added" : m.addedPct != null ? `${m.addedPct}% more work` : `${m.addedH} h added`,
-  });
+    result: !m.addedSteps ? "None added" : m.addedPct != null ? `${m.addedPct}% more work` : `${m.addedH} h added`, entered: true,
+  }));
 
   // Man-hours: only when head counts cover the event.
   const hc = m.headCounts, covered = hc.shiftsWorked > 0 && hc.shiftsCounted / hc.shiftsWorked >= 0.8, mp = x.manpower ?? null;
   const em = e.manhours;
-  rows.push(em?.actual ? {
-    key: "manhours", measure: "Man-hours", entered: true, plan: em.plan || "Not set", actual: em.actual, verdict: em.verdict ?? "untargeted", result: em.verdict ? VERDICT_WORD[em.verdict] : "Entered by hand",
-  } : covered && mp ? {
-    key: "manhours", measure: "Man-hours", entered: true,
-    plan: mp.bidMH != null ? `${mp.bidMH.toLocaleString("en-US")} bid` : em?.plan || "No bid entered", actual: `${mp.totalMH.toLocaleString("en-US")} counted`,
-    verdict: mp.bidMH != null ? (mp.totalMH <= mp.bidMH ? "met" : "missed") : "untargeted",
-    result: mp.bidMH != null ? `${Math.abs(Math.round(mp.totalMH - mp.bidMH)).toLocaleString("en-US")} ${mp.totalMH <= mp.bidMH ? "under" : "over"} the bid` : "No bid to hold it to", guide: mp.bidMH == null ? "manhours" : undefined,
-  } : {
-    key: "manhours", measure: "Man-hours", entered: true, plan: mp?.bidMH != null ? `${mp.bidMH.toLocaleString("en-US")} bid` : em?.plan || "Not set",
-    actual: hc.shiftsWorked ? `Head count on ${hc.shiftsCounted} of ${plural(hc.shiftsWorked, "shift")}` : "No shifts worked", verdict: "unmeasured", result: "Not measured", guide: "manhours",
-  });
+  rows.push(em?.actual ? row("manhours", "Man-hours", { plan: em.plan || "Not set", actual: em.actual, verdict: em.verdict ?? "untargeted", result: em.verdict ? VERDICT_WORD[em.verdict] : "Entered by hand", fromRecords: false, entered: true })
+    : covered && mp ? row("manhours", "Man-hours", {
+      plan: mp.bidMH != null ? `${mp.bidMH.toLocaleString("en-US")} bid` : em?.plan || "No bid entered", actual: `${mp.totalMH.toLocaleString("en-US")} counted`,
+      verdict: mp.bidMH != null ? (mp.totalMH <= mp.bidMH ? "met" : "missed") : "untargeted",
+      result: mp.bidMH != null ? `${Math.abs(Math.round(mp.totalMH - mp.bidMH)).toLocaleString("en-US")} ${mp.totalMH <= mp.bidMH ? "under" : "over"} the bid` : "No bid to hold it to", guide: mp.bidMH == null ? "manhours" : undefined, entered: true,
+    }) : row("manhours", "Man-hours", {
+      plan: mp?.bidMH != null ? `${mp.bidMH.toLocaleString("en-US")} bid` : em?.plan || "Not set",
+      actual: hc.shiftsWorked ? `Head count on ${hc.shiftsCounted} of ${plural(hc.shiftsWorked, "shift")}` : "No shifts worked", verdict: "unmeasured", result: "Not measured", guide: "manhours", fromRecords: false, entered: true,
+    }));
 
   // Cost: spend posted against the phase's budget.
   const c = x.costs ?? null, ec = e.cost;
-  rows.push(ec?.actual ? {
-    key: "cost", measure: "Cost", entered: true, plan: ec.plan || (c?.budget ? `${money(c.budget)} budget` : "Not set"), actual: ec.actual, verdict: ec.verdict ?? "untargeted", result: ec.verdict ? VERDICT_WORD[ec.verdict] : "Entered by hand",
-  } : c && c.spent > 0 && c.budget ? {
-    key: "cost", measure: "Cost", entered: true, plan: `${money(c.budget)} budget`, actual: `${money(c.spent)} spent${c.committed ? `, ${money(c.committed)} committed` : ""}`,
-    verdict: c.spent <= c.budget ? "met" : "missed", result: `${money(Math.abs(c.budget - c.spent))} ${c.spent <= c.budget ? "under" : "over"}`,
-  } : {
-    key: "cost", measure: "Cost", entered: true, plan: c?.budget ? `${money(c.budget)} budget` : ec?.plan || "Not set",
-    actual: c?.committed ? `No spend posted. ${money(c.committed)} committed.` : "No spend posted", verdict: "unmeasured", result: "Not measured", guide: "cost",
-  });
+  rows.push(ec?.actual ? row("cost", "Cost", { plan: ec.plan || (c?.budget ? `${money(c.budget)} budget` : "Not set"), actual: ec.actual, verdict: ec.verdict ?? "untargeted", result: ec.verdict ? VERDICT_WORD[ec.verdict] : "Entered by hand", fromRecords: false, entered: true })
+    : c && c.spent > 0 && c.budget ? row("cost", "Cost", {
+      plan: `${money(c.budget)} budget`, actual: `${money(c.spent)} spent${c.committed ? `, ${money(c.committed)} committed` : ""}`,
+      verdict: c.spent <= c.budget ? "met" : "missed", result: `${money(Math.abs(c.budget - c.spent))} ${c.spent <= c.budget ? "under" : "over"}`, entered: true,
+    }) : row("cost", "Cost", {
+      plan: c?.budget ? `${money(c.budget)} budget` : ec?.plan || "Not set",
+      actual: c?.committed ? `No spend posted. ${money(c.committed)} committed.` : "No spend posted", verdict: "unmeasured", result: "Not measured", guide: "cost", fromRecords: false, entered: true,
+    }));
 
-  // Safety: what was written on the shift records, against a target a person set.
+  // Safety: the shift reports' incident line, and the stand-downs written on the work.
   const inc = x.incidents ?? null, es = e.safety, answeredAll = !!inc && hc.shiftsWorked > 0 && inc.answered / hc.shiftsWorked >= 0.8;
+  const sd = r.standDowns ?? [];
+  const sdLine = sd.length ? ` ${plural(sd.length, "stand-down")} on ${[...new Set(sd.map((h) => h.order.split(" - ")[0]))].join(", ")} (${Math.round(sd.reduce((n, h) => n + h.hours, 0) * 10) / 10} h).` : "";
   const counts = inc ? `${plural(inc.recordable, "recordable")}, ${plural(inc.firstAid, "first aid")}, ${plural(inc.nearMiss, "near miss", "near misses")}` : "";
-  const allowRec = num(es?.plan);
-  rows.push(es?.actual ? {
-    key: "safety", measure: "Safety", entered: true, plan: es.plan || "Target not set", actual: es.actual, verdict: es.verdict ?? "untargeted", result: es.verdict ? VERDICT_WORD[es.verdict] : "Entered by hand", guide: es.plan ? undefined : "safety",
-  } : answeredAll && inc ? {
-    key: "safety", measure: "Safety", entered: true, plan: es?.plan || "Target not set", actual: counts,
-    verdict: allowRec != null ? (inc.recordable <= allowRec ? "met" : "missed") : "untargeted", result: allowRec != null ? (inc.recordable <= allowRec ? "Within target" : "Over target") : "No target set", guide: allowRec == null ? "safety" : undefined,
-  } : {
-    key: "safety", measure: "Safety", entered: true, plan: es?.plan || "Target not set",
-    actual: inc && inc.answered ? `Incident line answered on ${inc.answered} of ${plural(hc.shiftsWorked, "shift")}: ${counts}` : "No incident record", verdict: "unmeasured", result: "Not measured", guide: "safety",
-  });
+  const target = es?.plan || "Target not set";
+  rows.push(es?.actual ? row("safety", "Safety", { plan: target, actual: es.actual, verdict: es.verdict ?? "untargeted", result: es.verdict ? VERDICT_WORD[es.verdict] : "Entered by hand", guide: es.plan ? undefined : "safety", fromRecords: false, entered: true })
+    : answeredAll && inc ? row("safety", "Safety", {
+      plan: target, actual: `${counts}.${sdLine}`, verdict: allows(es?.plan, inc.recordable),
+      result: es?.plan ? (allows(es.plan, inc.recordable) === "met" ? "Within target" : "Over target") : "No target set", guide: es?.plan ? undefined : "safety", entered: true,
+    }) : row("safety", "Safety", {
+      plan: target, actual: `${inc && inc.answered ? `Incident line answered on ${inc.answered} of ${plural(hc.shiftsWorked, "shift")}: ${counts}.` : "No incident line answered on the shift reports."}${sdLine}`,
+      verdict: "unmeasured", result: "Not measured", guide: "safety", fromRecords: false, entered: true,
+    }));
 
-  // Quality: nothing in the records counts it; a person enters it.
-  const eq = e.quality;
-  rows.push({
-    key: "quality", measure: "Quality", entered: true, plan: eq?.plan || "Target not set", actual: eq?.actual || "Not recorded",
-    verdict: eq?.actual ? eq.verdict ?? "untargeted" : "unmeasured", result: eq?.actual ? (eq.verdict ? VERDICT_WORD[eq.verdict] : "No target set") : "Not measured", guide: eq?.actual && eq.plan ? undefined : "quality",
-  });
+  // Quality: tests that failed and were done again, as written on the work.
+  const ft = r.failedTests ?? [], eq = e.quality;
+  const ftLine = ft.length ? `${plural(ft.length, "failed test")}, done again: ${ft.map((f) => `${f.order.split(" - ")[0]} ${f.step}`).join(", ")}` : "No failed test written on the work";
+  rows.push(eq?.actual ? row("quality", "Quality", { plan: eq.plan || "Target not set", actual: eq.actual, verdict: eq.verdict ?? "untargeted", result: eq.verdict ? VERDICT_WORD[eq.verdict] : "No target set", guide: eq.plan ? undefined : "quality", fromRecords: false, entered: true })
+    : row("quality", "Quality", {
+      plan: eq?.plan || "Target not set", actual: ftLine, verdict: allows(eq?.plan, ft.length),
+      result: eq?.plan ? (allows(eq.plan, ft.length) === "met" ? "Within target" : "Over target") : "No target set", guide: eq?.plan ? undefined : "quality", entered: true,
+    }));
 
   const n = (k: Verdict) => rows.filter((row) => row.verdict === k).length;
   const met = n("met"), missed = n("missed"), unmeasured = n("unmeasured"), untargeted = n("untargeted");
@@ -246,6 +273,10 @@ export type AreaState = "finish" | "time" | "improve" | "pending" | "well" | "no
 export const AREA_STATE_WORD: Record<AreaState, string> = { finish: "Set the finish", time: "Cost time", improve: "To improve", pending: "Needs your call", well: "Went well", none: "Nothing recorded" };
 export interface AreaRow {
   id: AreaId; name: string; state: AreaState;
+  /** Hours of the late finish this area's accepted findings explain, and on which work. */
+  hours: number; parts: Array<{ order: string; hours: number }>;
+  /** The word on its tag: "24 h of the finish", else its state. */
+  tag: string;
   well: string[];
   /** What did not go well, its root cause, and the action it leads to: one per accepted finding. */
   items: Array<{ key: string; didNot: string; rootCause: string; action: number }>;
@@ -254,7 +285,15 @@ export interface AreaRow {
   /** How to set this area up, when nothing was recorded for it. */
   guide?: GuideId;
 }
-export interface Book { headline: string; span: string; score: Score; areas: AreaRow[]; actions: Action[]; pending: number }
+export interface Book {
+  headline: string; span: string;
+  /** Where the late hours went, in a line, and each piece in a sentence. */
+  delay: string; delayLines: string[];
+  score: Score; areas: AreaRow[]; actions: Action[]; pending: number;
+}
+const esc = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** The text names the work order's tag as a word ("E-12", not "E-120"). */
+const names = (text: string | undefined, tag: string) => !!text && new RegExp(`(^|[^A-Za-z0-9-])${esc(tag)}(?![A-Za-z0-9])`).test(text);
 
 const AREA_GUIDE: Partial<Record<AreaId, GuideId>> = { safety: "safety", organization: "organization", costs: "cost", logistics: "materials" };
 const words = (t: string) => new Set(t.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w.length > 3));
@@ -272,18 +311,34 @@ export function bookOf(r: Review, name: string, tz: string, x: ScoreInputs = {})
     const area = AREA_OF[c.categoryId];
     return { n: i + 1, key: c.key, area, areaName: areaName(area), what: c.ask, how: howOf(c.change, c.ask), benefit: c.because, who: c.owner, by: c.due, cost: c.cost, done: c.done };
   });
+  // Each piece of the late finish goes to the area of the accepted finding
+  // that explains it: the one that names its work order in its headline (else
+  // in what happened), and that moved the finish most.
+  const byKey = new Map(r.findings.map((f) => [f.key, f]));
+  const owner = new Map<AreaId, Array<{ order: string; hours: number }>>();
+  for (const d of r.finish?.delay ?? []) {
+    if (d.kind !== "work") continue;
+    const tag = orderWord(d.order);
+    const hits = pt.conclusions.map((c) => ({ c, head: names(`${c.title} ${c.because} ${c.why}`, tag), any: names(byKey.get(c.key)?.observation, tag) }))
+      .filter((h) => h.head || h.any).sort((x2, y2) => Number(y2.head) - Number(x2.head) || (y2.c.moved ?? 0) - (x2.c.moved ?? 0));
+    if (!hits.length) continue;
+    const area = AREA_OF[hits[0].c.categoryId];
+    owner.set(area, [...(owner.get(area) ?? []), { order: d.order, hours: d.hours }]);
+  }
+  const top = r.finish?.delay.find((d) => d.kind === "work")?.order ?? null;
   const areas: AreaRow[] = AREAS.map((a) => {
     const mine = pt.conclusions.map((c, i) => ({ c, n: i + 1 })).filter(({ c }) => AREA_OF[c.categoryId] === a.id);
+    const parts = owner.get(a.id) ?? [], hours = Math.round(parts.reduce((n, p2) => n + p2.hours, 0) * 10) / 10;
     const pending = pt.pending.filter((c) => AREA_OF[c.categoryId] === a.id).length;
     const well = r.wins.filter((w) => AREA_OF[w.category] === a.id).map((w) => w.text);
-    const state: AreaState = mine.some(({ c }) => c.first) ? "finish" : mine.some(({ c }) => (c.moved ?? 0) >= 1) ? "time" : mine.length ? "improve" : pending ? "pending" : well.length ? "well" : "none";
+    const state: AreaState = parts.some((p2) => p2.order === top) || mine.some(({ c }) => c.first) ? "finish" : hours > 0 || mine.some(({ c }) => (c.moved ?? 0) >= 2) ? "time" : mine.length ? "improve" : pending ? "pending" : well.length ? "well" : "none";
     return {
-      id: a.id, name: a.name, state, well, pending,
+      id: a.id, name: a.name, state, well, pending, hours, parts, tag: hours > 0 ? `${hours} h of the finish` : AREA_STATE_WORD[state],
       items: mine.map(({ c, n }) => ({ key: c.key, didNot: c.because, rootCause: c.gap, action: n })),
       guide: state === "none" ? AREA_GUIDE[a.id] : undefined,
     };
   });
-  return { headline: pt.headline, span: pt.span, score: scoreOf(r, tz, x), areas, actions, pending: pt.pending.length };
+  return { headline: pt.headline, span: pt.span, delay: pt.delay, delayLines: (r.finish?.delay ?? []).map((d) => d.line), score: scoreOf(r, tz, x), areas, actions, pending: pt.pending.length };
 }
 
 /** The guides a book points to, each once, in the order they come up. */

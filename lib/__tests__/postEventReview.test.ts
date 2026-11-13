@@ -117,9 +117,12 @@ describe("the review, from the records", () => {
     expect(f.steps.map((x) => [x.name, x.crew, x.plannedH, x.tookH])).toEqual([["PSV-021 - E-13 Overhead (Swap Existing with the New Model)", "Maintenance (KE)", 8, 99]]);
     expect(f.because).toMatchObject({ crew: "Maintenance (KE)", said: "PSV pulled ready for swap. Discovered plugging in line." });
     const pt = pointOf(r, "Phase 1", tz);
-    expect(pt.headline).toBe("Phase 1 finished 46 h late. PSVs set the finish.");
-    expect(pt.lines[0]).toBe("PSVs was the last work to finish: Fri, 10/30 1:00 PM, 91 h after its plan and 22 h after Control Valves, the work before it.");
-    expect(pt.lines[1]).toContain('(Maintenance (KE)): "PSV pulled ready for swap. Discovered plugging in line."');
+    // The headline says how much of the delay was the work that set the finish; the line under it, where every hour went.
+    expect(pt.headline).toBe("Phase 1 finished 46 h late. 22 h of it was PSVs.");
+    expect(r.finish!.delay.reduce((n, d) => n + d.hours, 0)).toBe(46);
+    expect(pt.delay).toMatch(/^Where the 46 h went: PSVs 22 h, /);
+    expect(pt.lines[0]).toBe("PSVs was done 22 h after Control Valves, the work before it.");
+    expect(pt.lines.join(" ")).toContain('(Maintenance (KE)): "PSV pulled ready for swap. Discovered plugging in line."');
     // Service that came back as planned is said so, never as a delay.
     expect(pt.quiet).toContain("TV-006 on the Fuel Gas Line to H-1: out for service, back as planned");
     // The finish is told once, by its finding: no question repeats it.
@@ -131,18 +134,18 @@ describe("the review, from the records", () => {
     const plug = by("planning:cleaning");
     expect([r.findings[0].key, plug.rating, plug.moved]).toEqual(["planning:cleaning", "gap", 3]);
     expect(plug.title).toBe("PSVs set the finish: a line had to be cleaned first");
-    expect(plug.effect).toBe("Set the finish: PSVs was the last work done, 22 h after Control Valves.");
+    expect(plug.effect).toBe("Set the finish. Cost 22 of the 46 h. PSVs was done 22 h after Control Valves, the work before it.");
     // No advice is written for it: nobody can plan where a line will be plugged. A person says what, if anything, to change.
     expect([plug.next, plug.ask]).toEqual(["", ""]);
     // A hand-off on the same work is told as that, not as a crew short of people.
     const hand = by("contractors:handoff");
     expect([hand.rating, hand.moved, hand.title]).toEqual(["opportunity", 2, "PSV-021 - E-13 Overhead waited a shift on another crew"]);
-    expect(hand.effect).toBe("On PSVs, the last work to finish.");
+    expect(hand.effect).toBe("Cost 22 of the 46 h. PSVs was done 22 h after Control Valves, the work before it.");
     expect(hand.next).not.toMatch(/add a crew|more people/i);
     // A job that sat with no reason written is told by name, with what its work order cost.
-    expect([by("execution").title, by("execution").moved, by("execution").effect]).toEqual(["E-13 Pull Blinds / Torque Flanges sat a shift with no reason written", 1, "E-13 finished 19 h after its plan. It did not set the finish."]);
-    // Found work off the late work orders did not move the finish.
-    expect([by("scope").moved, by("scope").effect]).toEqual([0, "Did not move the finish."]);
+    expect([by("execution").title, by("execution").moved, by("execution").effect]).toEqual(["E-13 Pull Blinds / Torque Flanges sat a shift with no reason written", 2, "Cost 1 of the 46 h. E-13 was done 1 h after Clean fuel gas header, the work before it."]);
+    // Discovery on V-7's critical path: said in its own hours, with what V-7 cost, never claimed as the whole of it.
+    expect([by("scope").moved, by("scope").effect]).toEqual([1, "18 h of it was on the critical path of V-7. V-7 cost 2 of the 46 h late."]);
     // Nothing is said about an organization the project has not recorded.
     expect([by("organization").rating, by("materials").rating]).toEqual(["none", "none"]);
   });
@@ -150,7 +153,8 @@ describe("the review, from the records", () => {
     const by = (k: string) => r.findings.find((f) => f.key === k)!;
     // Gas-freeing on V-7 says nothing of the plugged line on the PSVs, and the other way round.
     const gas = by("planning");
-    expect([gas.title, gas.effect]).toEqual(["V-7 was held 6 h for gas-freeing that was not in the plan", "Did not move the finish."]);
+    // V-7 finished after the baseline finish: it holds its own share of the delay, said in hours.
+    expect([gas.title, gas.effect]).toEqual(["V-7 was held 6 h for gas-freeing that was not in the plan", "Cost 2 of the 46 h. V-7 was done 2 h after the baseline finish."]);
     expect(`${gas.observation} ${gas.gap} ${gas.next}`).not.toMatch(/PSV|plug|clean the line/i);
     expect(`${by("planning:cleaning").observation} ${by("planning:cleaning").next}`).not.toMatch(/V-7|gas/i);
     // Ready work and a hand-off between crews are two findings.
@@ -164,23 +168,36 @@ describe("the review, from the records", () => {
   });
   it("found work: the records say what was found; a person says whether it could have been known", () => {
     const scope = r.findings.find((f) => f.key === "scope")!;
-    expect(scope.observation.split("\n")).toEqual(["1 activity was added from 1 finding: 18 h of work on a 52 h plan (35% more), by the schedule's estimates.", "On the critical path, V-7: Unplanned clean downcomers. About 18 h."]);
-    // No advice of the app's own, and a question for the person.
-    expect([scope.next, scope.ask]).toEqual(["", ""]);
+    // Entered as discovery: found when the equipment was opened. Hours are the schedule's, the same hours every total adds up.
+    expect(scope.observation.split("\n")).toEqual(["Found when the equipment was opened or inspected: 1 item, 18 h (35% of the 52 h plan); 18 h of it on the critical path.", "V-7: Unplanned clean downcomers, 18 h, on the critical path."]);
+    // The only change it draws is to carry time for discovery, at the share it was here. Whether it could have been known is the person's question.
+    expect([scope.next, scope.ask]).toEqual(["Carry time in the plan for discovery: 18 h this event, 35% of the planned hours.", "Carry time in the plan for discovery."]);
     expect(r.questions.map((q) => q.kind).sort()).toEqual(["approver", "known", "stuck"]);
     expect(r.questions.find((q) => q.kind === "known")!.ask).toBe('"Unplanned clean downcomers" (V-7, 18 h): could this have been known before the event? If yes, what do we do next time?');
     expect(r.questions.find((q) => q.kind === "stuck")!.ask).toContain("E-13 Pull Blinds / Torque Flanges had started and sat the 10/28 day shift");
     // Said to be knowable from the drawings: a finding of its own, in the person's words.
     const yes = emptySaved(); yes.answers["known:d1"] = { known: "drawing", note: "Review the vessel drawings for welded internals and plan the hand cleaning. Ask operations what to expect." };
     const k = read(yes).findings.find((f) => f.key === "scope:known:d1")!;
-    expect([k.title, k.ask]).toEqual(["Unplanned clean downcomers (V-7) could have been known from the drawings", "Review the vessel drawings for welded internals and plan the hand cleaning."]);
-    expect(k.because).toBe("Unplanned clean downcomers (V-7): about 18 h not in the plan. It could have been known from the drawings.");
+    expect([k.title, k.ask]).toEqual(["Unplanned clean downcomers (V-7) could have been found before the event from the drawings", "Review the vessel drawings for welded internals and plan the hand cleaning."]);
+    expect(k.because).toBe("Unplanned clean downcomers (V-7): 18 h found during the event. It could have been found before from the drawings.");
     expect(read(yes).questions.some((q) => q.kind === "known")).toBe(false);
     // Said to be findable only by opening it: time to carry, nothing to have checked.
     const no = emptySaved(); no.answers["known:d1"] = { known: "no" };
     const s2 = read(no).findings.find((f) => f.key === "scope")!;
-    expect([s2.ask, s2.because]).toEqual(["Carry time for what can only be found by opening the equipment.", "18 h this event could only be found by opening it."]);
+    expect([s2.ask, s2.next]).toEqual(["Carry time in the plan for discovery.", "Carry time in the plan for discovery: 18 h this event, 35% of the planned hours. Found only by opening the equipment: Unplanned clean downcomers."]);
     expect(read(no).findings.some((f) => f.key.startsWith("scope:known:"))).toBe(false);
+  });
+  it("work entered as added scope is known work missing from the plan: a planning finding, not discovery", () => {
+    const addedRec: DiscoveryRecord = { ...rec, kind: "added" };
+    const all3 = all.map((m) => (m.id === "dc" ? { ...m, attributes: { discovery: discoveryAttr(addedRec) } } as Milestone : m));
+    const r3 = buildReview({ built, work, notes, look, discoveries: discoveries(all3), tz });
+    const p = r3.findings.find((f) => f.key === "planning:added")!;
+    expect(p.title).toBe("18 h of known work was added during the event, 18 h of it on the critical path");
+    expect([p.ask, p.gap]).toEqual(["Put known work on the plan before scope freeze.", "Known work was not on the work list when the plan was made."]);
+    expect(p.because).toBe("Added during the event: clean downcomers on V-7, 18 h on the critical path.");
+    // Nothing of it is counted as discovery.
+    expect(r3.findings.some((f) => f.key === "scope")).toBe(false);
+    expect(r3.found[0].kind).toBe("added");
   });
   it("every category has a finding; safety reads the stand-down", () => {
     expect([...new Set(r.findings.map((f) => f.category))].sort()).toEqual(["contractors", "execution", "materials", "organization", "planning", "records", "safety", "scope"]);
@@ -273,7 +290,7 @@ saved.added.push({ id: "a1", category: "materials", title: "Flange not ordered",
     const w2 = buildAsBuiltWork({ built: b2, milestones: all2, log: [...log, row("bf", at(29, 9), 0, 100, "completed", "planned")], notes, records: new Map(), companyOf: (c) => c, tz, times, now: Date.parse(at(31, 12)) });
     const r2 = buildReview({ built: b2, work: w2, notes, look, discoveries: discoveries(all2), tz });
     const text = r2.findings.map((f) => `${f.observation}\n${f.evidence.join("\n")}`).join("\n") + r2.questions.map((q) => q.ask).join("\n");
-    expect(text).toContain("On the critical path, V-7: Existing blind flange on first deck was swapped out because it was modified and didn't meet refinery standards. About 2 h.");
+    expect(text).toContain("V-7: Existing blind flange on first deck was swapped out because it was modified and didn't meet refinery standards, 2 h, on the critical path.");
     expect(text).not.toMatch(/\.\.\.|and \d+ more/);
   });
   it("names a job by its tag, without the bracketed detail", () => {
@@ -306,7 +323,8 @@ describe("the files open on the point of the meeting", () => {
     expect(deck.map((x) => x.kicker)).toEqual(["Post-event review", "1 · The score: plan against actual", "2 · What went well, what did not, and why", "3 · What we do about it"]);
     const [, score, areas, plan] = deck.map((x) => x.body);
     // The score: each target with its plan, its actual and a verdict; the tally on top.
-    expect(score.k === "table" && score.head).toEqual(["Target", "Plan", "Actual", "Result"]);
+    expect(score.k === "table" && score.head).toEqual(["Measure", "Target", "Actual", "Result"]);
+    expect(score.k === "table" && score.lead).toMatch(/^Where the 46 h went: PSVs 22 h/);
     expect(score.k === "table" && score.rows.map((row) => row[0])).toEqual(["Duration", "Planned work", "Added work", "Man-hours", "Cost", "Safety", "Quality"]);
     expect(score.k === "table" && score.tags![0]).toEqual({ text: "Missed", tone: "bad" });
     expect(score.k === "table" && score.rows[0][3]).toBe("46 h late");
@@ -328,8 +346,19 @@ describe("the files open on the point of the meeting", () => {
   });
   it("a line the records can't fill says so and carries how to set it up", () => {
     const sc = scoreOf(rk, tz);
+    // Quality is read from the work: a test written as failed and done again. None here, and no target yet.
     const q = sc.rows.find((x) => x.key === "quality")!;
-    expect([q.plan, q.actual, q.verdict, q.guide]).toEqual(["Target not set", "Not recorded", "unmeasured", "quality"]);
+    expect([q.plan, q.actual, q.verdict, q.guide]).toEqual(["Target not set", "No failed test written on the work", "untargeted", "quality"]);
+    expect(q.means).toMatch(/failed pressure tests/);
+    expect(q.picks).toContain("0 failed pressure tests");
+    // A target set with one tap is judged against what the records show.
+    const two = [{ id: "t1", step: "Tube Side Hydro", order: "E-12 - Exchanger", said: "Leaks on shell side preventing tube side." }, { id: "t2", step: "Shell Side Hydro", order: "E-12 - Exchanger", said: "Starting filling for re-test" }];
+    const qq = scoreOf({ ...rk, failedTests: two }, tz, { entries: { quality: { plan: "0 failed pressure tests" } } }).rows.find((x) => x.key === "quality")!;
+    expect([qq.actual, qq.verdict, qq.result]).toEqual(["2 failed tests, done again: E-12 Tube Side Hydro, E-12 Shell Side Hydro", "missed", "Over target"]);
+    // Safety: the shift reports' incident line, and stand-downs written on the work.
+    const sf = scoreOf(rk, tz, { entries: { safety: { plan: "0 recordables" } } }).rows.find((x) => x.key === "safety")!;
+    expect([sf.plan, sf.verdict]).toEqual(["0 recordables", "unmeasured"]);
+    expect(sf.picks).toEqual(["0 recordables", "0 recordables, 0 first aids"]);
     expect(GUIDES.quality.steps.length).toBeGreaterThan(4);
     expect(GUIDES.quality.steps.join(" ")).toMatch(/pressure tests/);
     // Head counts are said in shifts, the way a person counts them.
@@ -357,7 +386,7 @@ describe("the files open on the point of the meeting", () => {
   });
   it("the report: the headline, the score, the seven areas, the action plan, then each finding with its record", () => {
     const blocks = reportBlocks(rk, o);
-    expect(blocks.filter((x) => x.k === "h1").slice(0, 5).map((x) => (x.k === "table" ? "" : x.text))).toEqual(["1. Phase 1 finished 46 h late. PSVs set the finish.", "2. The score: plan against actual", "3. What went well, what did not, and why", "4. The action plan", "5. Each finding, with the record behind it"]);
+    expect(blocks.filter((x) => x.k === "h1").slice(0, 5).map((x) => (x.k === "table" ? "" : x.text))).toEqual(["1. Phase 1 finished 46 h late. 22 h of it was PSVs.", "2. The score: plan against actual", "3. What went well, what did not, and why", "4. The action plan", "5. Each finding, with the record behind it"]);
     const plan = blocks.find((x) => x.k === "table" && x.head[1] === "What we will do");
     expect(plan?.k === "table" && plan.rows[0].slice(0, 2)).toEqual(["1", "Name each day's hand-offs between crews at the shift meeting."]);
     expect(blocks.some((x) => x.k === "p" && x.lead === "How it is done well (Planning): ")).toBe(true);

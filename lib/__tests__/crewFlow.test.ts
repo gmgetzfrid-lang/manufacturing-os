@@ -94,10 +94,10 @@ describe("the review's conclusion from it", () => {
     expect(`${f.title} ${f.because} ${f.why} ${f.effect} ${f.observation}`).not.toMatch(/52 h|waiting in all|what-if/i);
     expect(f.effect).toBe("3 of the 4 jobs handed to Clean sat 4 h or more before it started them, the longest 23 h.");
     expect(r.qa.map((x) => x.a).join(" ")).not.toMatch(/waiting in all|what-if/i);
-    expect(crewsRows(r).find((row) => row[0] === "Clean")).toEqual(["Clean", "4", "3 of 4", "23 h (E-4), by the planned sequence", "4 (plan 1)"]);
+    expect(crewsRows(r).find((row) => row[0] === "Clean")).toEqual(["Clean", "4", "3 of 4", "23 h (E-4), no link in the schedule", "4 (plan 1)"]);
     expect(CREWS_HEAD).toEqual(["Crew", "Jobs handed to it", "Jobs that waited 4 h or more for it", "Longest a job waited", "Most open at once"]);
-    // Each wait says what the job is taken to have followed, and that it is from the planned sequence.
-    expect(f.observation).toContain("E-4 Hydroblast Bundle 23 h (ready when Pull Bundle was done, by the planned sequence)");
+    // Each wait says what the job is taken to have followed, and that the schedule had no link for it.
+    expect(f.observation).toContain("E-4 Hydroblast Bundle 23 h (ready when Pull Bundle was done, no link in the schedule)");
     expect(f.practice).toContain("sized to the most work the schedule hands it at once");
   });
   it("is the app's suggestion until a person accepts it: off the slide, in the list that needs their call", () => {

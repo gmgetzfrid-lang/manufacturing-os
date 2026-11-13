@@ -19,6 +19,8 @@ import type { AsBuiltWork } from "@/lib/asBuiltWork";
 
 const HOUR = 3_600_000;
 const r1 = (n: number) => Math.round(n * 10) / 10;
+/** A piece of equipment's tag (V-7, E-12, PSV-021), not a unit's name. */
+const EQUIPMENT_TAG = /^[A-Z]{1,4}-?\d{1,5}[A-Z]{0,2}$/;
 /** A wait shorter than this is a normal hand-off, not a queue. */
 export const MIN_WAIT_H = 4;
 
@@ -29,8 +31,8 @@ export interface HandedJob {
   /** The step it is taken to have followed: the job was ready when that was done. */
   afterId: string; after: string; afterOrder: string;
   /** How that step was arrived at: the schedule's own link inside the work
-   *  order, a person's correction, or (a guess) the step before it in the
-   *  work order's planned sequence. */
+   *  order, a person's correction, or (no link) the last step in the work
+   *  order done before it started, so the wait is the least it can have been. */
   basis: "linked" | "corrected" | "guessed";
   /** Steps a person may pick instead: finished before this one started, on the same equipment. */
   candidates: Array<{ id: string; name: string; order: string }>;
@@ -110,13 +112,18 @@ function peakOf<T>(items: T[], from: (x: T) => number, to: (x: T) => number): { 
  *  take its jobs in. Without one, it is the latest finish among the steps
  *  planned before it that had started before it did. `null`: nothing before
  *  it, or what it followed is not finished. */
-export function stepBefore(steps: BuiltStep[], i: number, dependsOn: Map<string, string[]>): BuiltStep | null {
+export function stepBefore(steps: BuiltStep[], i: number, dependsOn: Map<string, string[]>, pool: BuiltStep[] = steps): BuiltStep | null {
   const s = steps[i];
   if (s.start == null) return null;
   const linked = (dependsOn.get(s.id) ?? []).map((id) => steps.find((p) => p.id === id)).filter((p): p is BuiltStep => !!p);
   let prev: BuiltStep | null = null;
   if (linked.length) { if (linked.some((p) => p.finish == null)) return null; for (const p of linked) if (!prev || p.finish! > prev.finish!) prev = p; }
-  else for (const p of steps.slice(0, i)) if (p.finish != null && (p.start ?? p.finish) <= s.start && (!prev || p.finish > prev.finish!)) prev = p;
+  // No link: the last of the steps on the same equipment that had started
+  // before it (in any of its work orders) to be done. The plan's order can't
+  // be trusted here (V-7's piping was planned ahead of the tray removal it
+  // waited on), and this gives the shortest wait the record allows: never
+  // more than it really was.
+  else for (const p of pool) if (p.id !== s.id && p.finish != null && (p.start ?? p.finish) <= s.start && (!prev || p.finish > prev.finish!)) prev = p;
   return prev;
 }
 
@@ -132,6 +139,11 @@ export function crewFlows(built: AsBuilt, work: AsBuiltWork, dependsOn: Map<stri
   const byCrew = new Map<string, HandedJob[]>();
   const plannedBy = new Map<string, Array<{ from: number; to: number }>>();
 
+  // Every step on each piece of equipment, across its work orders.
+  const onTag = new Map<string, BuiltStep[]>();
+  for (const o of built.orders) onTag.set(tagOf(o.name), [...(onTag.get(tagOf(o.name)) ?? []), ...o.steps]);
+  const orderOfStep = new Map(built.orders.flatMap((o) => o.steps.map((p) => [p.id, o.name] as const)));
+
   for (const o of built.orders) {
     const steps = [...o.steps].sort((a, b) => (a.planStart ?? 0) - (b.planStart ?? 0));
     steps.forEach((s, i) => {
@@ -146,9 +158,10 @@ export function crewFlows(built: AsBuilt, work: AsBuiltWork, dependsOn: Map<stri
       // A person's correction wins; else the schedule's link in this work order; else the step planned before it.
       const picked = readyAfter[s.id] ? byStep.get(readyAfter[s.id]) : undefined;
       const linked = (dependsOn.get(s.id) ?? []).some((id) => steps.some((p) => p.id === id));
-      const prev = picked ? picked.p : stepBefore(steps, i, dependsOn);
+      // Across work orders only on one piece of equipment (V-7, E-12); a unit's work orders (start-up, shutdown) are not one job.
+      const prev = picked ? picked.p : stepBefore(steps, i, dependsOn, EQUIPMENT_TAG.test(tagOf(o.name)) ? onTag.get(tagOf(o.name)) ?? steps : steps);
       if (!prev || (!picked && crewOf(prev.id) === crew)) return;
-      const prevOrder = picked ? picked.order : o.name;
+      const prevOrder = picked ? picked.order : orderOfStep.get(prev.id) ?? o.name;
       const openedAt = Math.min(prev.finish!, s.start);
       const candidates = finished.filter((x) => x.p.id !== s.id && tagOf(x.order) === tagOf(o.name) && x.p.finish! <= s.start! && crewOf(x.p.id) !== crew).sort((a, b) => b.p.finish! - a.p.finish!).slice(0, 12).map((x) => ({ id: x.p.id, name: x.p.name, order: x.order }));
       if (!byCrew.has(crew)) byCrew.set(crew, []);
