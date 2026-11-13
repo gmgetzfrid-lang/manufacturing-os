@@ -787,13 +787,8 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
           <StatusChip status={effStatus} />
           <span className="text-[10px] font-black tabular-nums text-[var(--color-text-muted)]" title={isParent ? "Rolled up from sub-tasks" : "% complete"}>{effPct}%</span>
           {driftDays !== 0 && blFinish && (
-            <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${driftDays > 0 ? "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800" : "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"}`} title="Drift vs approved plan">
+            <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded border ${driftDays > 0 ? "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800" : "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"}`} title="Drift vs approved plan">
               {driftDays > 0 ? `+${driftDays}d` : `${driftDays}d`} vs plan
-            </span>
-          )}
-          {ghost && (
-            <span className="text-[9px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1 py-0.5 rounded" title={`Imported from ${m.source}`}>
-              {m.source}
             </span>
           )}
         </div>
@@ -829,7 +824,7 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
         <div className="shrink-0 flex items-center gap-1">
           {/* A phase rolls up — its status isn't set directly; only leaves are. */}
           {isParent ? (
-            <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--color-text-faint)] px-1.5" title="Status rolls up from sub-tasks">rolls up</span>
+            <span className="text-[11px] text-[var(--color-text-faint)] px-1.5" title="Status rolls up from sub-tasks">Rolls up</span>
           ) : (
             <>
               {effStatus !== "completed" && (
@@ -867,8 +862,8 @@ function StatusChip({ status }: { status: MilestoneStatus }) {
     status === "blocked"     ? "bg-amber-100 dark:bg-amber-900/40   text-amber-800 dark:text-amber-300   border-amber-200 dark:border-amber-800" :
                                "bg-[var(--color-surface-2)]   text-[var(--color-text)]   border-[var(--color-border)]";
   return (
-    <span className={`text-[9px] font-bold uppercase tracking-widest border px-1.5 py-0.5 rounded ${tone}`}>
-      {status.replace("_", " ")}
+    <span className={`text-[11px] font-semibold border px-1.5 py-0.5 rounded-full ${tone}`}>
+      {status === "in_progress" ? "In progress" : status === "on_hold" ? "On hold" : status[0].toUpperCase() + status.slice(1)}
     </span>
   );
 }

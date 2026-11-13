@@ -564,14 +564,14 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         <div className="px-3 py-2 border-b border-[var(--color-accent-ring)]/40 bg-[var(--color-accent-soft)]/70 flex items-center gap-2 flex-wrap">
           <span className="text-xs font-bold text-[var(--color-accent)]">{selected.size} selected</span>
           <div className="inline-flex items-center gap-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)]">Mark</span>
+            <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Mark</span>
             {([["completed", "Done", "bg-emerald-600"], ["in_progress", "Doing", "bg-blue-600"], ["on_hold", "Hold", "bg-amber-600"], ["blocked", "Block", "bg-rose-600"]] as const).map(([s, label, bg]) => (
               <button key={s} onClick={() => { onBulkStatus?.(Array.from(selected), s); clearSelection(); }} className={`px-2 py-1 rounded-md text-white text-[11px] font-bold ${bg} hover:brightness-110`}>{label}</button>
             ))}
           </div>
           <span className="w-px h-4 bg-[var(--color-accent-ring)]/30" />
           <div className="inline-flex items-center gap-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)]">Move</span>
+            <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Move</span>
             <button onClick={() => onBulkMove?.(Array.from(selected), -1)} className="px-1.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold">−1d</button>
             <button onClick={() => onBulkMove?.(Array.from(selected), 1)} className="px-1.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold">+1d</button>
           </div>
@@ -769,7 +769,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                   <div key={key} style={{ gridColumn: `${2 * i + 1} / span 2` }} className="flex items-center justify-center gap-1 px-1 border-r border-[var(--color-border)]">
                     <button type="button" onClick={() => { setAgendaFocus(null); setAgendaDay(key); }}
                       title="Open this day's list - every step, with progress entry"
-                      className={`min-w-0 truncate px-1 py-1.5 text-center text-[11px] font-black uppercase tracking-wider hover:text-[var(--color-accent)] ${isToday ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
+                      className={`min-w-0 truncate px-1 py-1.5 text-center text-[12px] font-semibold hover:text-[var(--color-accent)] ${isToday ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
                       {fmtInTz(day, tz, { weekday: "short" })} {wallClock(day.getTime(), tz).day}
                       {(() => { const n = uniqueOf(key).filter((p) => !p.idleToday).length; return n > 0 ? <span className="ml-1 font-semibold normal-case tracking-normal text-[var(--color-text-faint)]">· {n}</span> : null; })()}
                     </button>
@@ -777,7 +777,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                   </div>
                 );
               })}
-              <div style={{ gridColumn: "15 / span 1" }} className="px-1 py-1.5 text-center text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)]">
+              <div style={{ gridColumn: "15 / span 1" }} className="px-1 py-1.5 text-center text-[12px] font-semibold text-[var(--color-text-faint)]">
                 {fmtInTz(nextDay, tz, { weekday: "short" })} am
               </div>
             </div>
@@ -796,7 +796,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                       {isToday && overdueToday.length > 0 && (
                         <button type="button" onClick={() => openShift(key, "day")}
                           title={overdueToday.slice(0, 6).map((w) => `• ${w.leaf.name}`).join("\n") + (overdueToday.length > 6 ? `\n…and ${overdueToday.length - 6} more` : "")}
-                          className="shrink-0 w-full text-left rounded px-1.5 py-1 bg-rose-600 text-white text-[10px] font-black uppercase tracking-wide hover:bg-rose-700">
+                          className="shrink-0 w-full text-left rounded px-1.5 py-1 bg-rose-600 text-white text-[12px] font-semibold hover:bg-rose-700">
                           ⚠ {overdueToday.length} carried over - not done
                         </button>
                       )}
@@ -845,7 +845,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
       {/* Weekday header */}
       <div className="grid grid-cols-7 border-b border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)]">
         {WEEKDAYS.map((d) => (
-          <div key={d} className="px-2 py-1.5 text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] text-center">{d}</div>
+          <div key={d} className="px-2 py-1.5 text-[12px] font-semibold text-[var(--color-text-muted)] text-center">{d}</div>
         ))}
       </div>
 
@@ -911,7 +911,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                       type="button"
                       onClick={() => setAgendaDay(key)}
                       title={overdueToday.slice(0, 6).map((w) => `• ${w.leaf.name}`).join("\n") + (overdueToday.length > 6 ? `\n…and ${overdueToday.length - 6} more` : "") + "\nOpen the day view to work them"}
-                      className="shrink-0 w-full text-left rounded px-1.5 py-1 bg-rose-600 text-white text-[10px] font-black uppercase tracking-wide hover:bg-rose-700"
+                      className="shrink-0 w-full text-left rounded px-1.5 py-1 bg-rose-600 text-white text-[12px] font-semibold hover:bg-rose-700"
                     >
                       ⚠ {overdueToday.length} carried over - not done
                     </button>

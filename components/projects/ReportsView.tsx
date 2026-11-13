@@ -658,7 +658,7 @@ export default function ReportsView(p: Props) {
         {[{ head: "Reports", sub: "filled in from the project", items: REPORTS.filter((r) => !r.form && (r.id !== "phase" || ph.phases.length > 0)) }, { head: "Forms", sub: "blank, filled in by hand", items: REPORTS.filter((r) => r.form) }].map((g) => (
           <div key={g.head} className="mb-2">
             <div className="px-4 pt-1 pb-1">
-              <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{g.head}</div>
+              <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">{g.head}</div>
               <div className="text-[11.5px] text-[var(--color-text-faint)]">{g.sub}</div>
             </div>
             {g.items.map((r) => {

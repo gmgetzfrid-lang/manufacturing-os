@@ -219,7 +219,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       {view === "overview" && (<>
       {phaseMoney && (
         <div className="rounded-2xl border-2 border-[var(--color-accent)]/40 bg-[var(--color-surface)] px-4 py-3">
-          <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{phaseMoney.phase.name} · {phaseMoney.phase.share}% of the {basis?.authorized != null ? "AFE" : "budget"}</div>
+          <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">{phaseMoney.phase.name} · {phaseMoney.phase.share}% of the {basis?.authorized != null ? "AFE" : "budget"}</div>
           <div className="mt-1 grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[["Phase budget", phaseMoney.s.budget], ["Committed", phaseMoney.s.committed], ["Spent", phaseMoney.s.spent], [phaseMoney.s.budget - phaseMoney.s.spent >= 0 ? "Left" : "Over", Math.abs(phaseMoney.s.budget - phaseMoney.s.spent)]].map(([k, v]) => (
               <div key={String(k)}><div className="text-[11px] text-[var(--color-text-muted)]">{k}</div><div className={`text-lg font-black tabular-nums ${k === "Over" ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text)]"}`}>{fmtMoney(Number(v), cur)}</div></div>
@@ -502,7 +502,7 @@ function StatCard({ icon, label, value, sub, tone }: {
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 shadow-sm">
       <div className="flex items-center gap-2">
         <span className={`p-1.5 rounded-lg ${tones[tone]}`}>{icon}</span>
-        <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{label}</span>
+        <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">{label}</span>
       </div>
       <div className="mt-2 text-lg font-black tabular-nums text-[var(--color-text)] truncate">{value}</div>
       {sub && <div className="text-[10px] font-bold text-[var(--color-text-muted)] mt-0.5">{sub}</div>}

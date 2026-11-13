@@ -165,7 +165,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
         className={
           variant === "dot"
             ? `inline-flex items-center justify-center rounded-full border ${dotSize} ${meta.dot} opacity-90`
-            : `inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${meta.pill} opacity-90`
+            : `inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[12px] font-semibold ${meta.pill} opacity-90`
         }
       >
         {variant === "dot"
@@ -185,7 +185,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
         className={
           variant === "dot"
             ? `relative inline-flex items-center justify-center rounded-full border ${dotSize} ${meta.dot} after:absolute after:-inset-1.5 pointer-coarse:after:-inset-3 after:content-[''] ${disabled ? `opacity-70 ${onDisabledClick ? "cursor-pointer" : "cursor-default"}` : "cursor-pointer hover:scale-110 transition-transform"}`
-            : `inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${meta.pill} ${disabled ? `opacity-70 ${onDisabledClick ? "cursor-pointer" : "cursor-default"}` : "cursor-pointer hover:brightness-95"}`
+            : `inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[12px] font-semibold ${meta.pill} ${disabled ? `opacity-70 ${onDisabledClick ? "cursor-pointer" : "cursor-default"}` : "cursor-pointer hover:brightness-95"}`
         }
       >
         {busy
@@ -207,7 +207,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
             {pctStep ? (
               <div className="p-3">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-text-faint)]">How far along?</span>
+                  <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">How far along?</span>
                   <button onClick={() => setPctStep(false)} className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Back</button>
                 </div>
                 {onStartWithNote ? (
@@ -227,7 +227,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
               </div>
             ) : reasonFor ? (
               <div className="p-2.5 space-y-2 text-[11px]">
-                <div className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-text-faint)]">
+                <div className="text-[12px] font-semibold text-[var(--color-text-faint)]">
                   {STATUS_META[reasonFor].label}
                 </div>
                 <div>

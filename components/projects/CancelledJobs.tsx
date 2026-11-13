@@ -34,12 +34,12 @@ export function CancelJobForm({ id, name, steps, userId, userName, userEmail, on
         Take <b>{name}</b>{steps > 1 ? <> and its {steps} steps</> : null} off this schedule. It&apos;s listed on the close-out report so it isn&apos;t forgotten.
       </div>
       <label className="block">
-        <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Moved to</span>
+        <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Moved to</span>
         <input autoFocus value={movedTo} onChange={(e) => setMovedTo(e.target.value)} maxLength={200}
           placeholder="e.g. Nov 15 · spring 2027 outage · WO 123456" className={input} />
       </label>
       <label className="block">
-        <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Note</span>
+        <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Note</span>
         <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={2000}
           placeholder="Why, and anything to remember" className={`${input} resize-y`} />
       </label>
@@ -83,7 +83,7 @@ export function CancelledJobsList({ jobs, canEdit, userId, userEmail, onChanged 
               {j.steps > 1 && <span className="text-[11px] text-[var(--color-text-muted)]"> · {j.steps} steps</span>}
             </div>
             <div className="text-[var(--color-text)]">
-              <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-400">Moved to </span>
+              <span className="text-[12px] font-semibold text-amber-700 dark:text-amber-400">Moved to </span>
               {j.m.movedTo ? <b>{j.m.movedTo}</b> : <span className="text-[var(--color-text-faint)]">not said</span>}
             </div>
             {j.m.cancelNote && <div className="italic text-[var(--color-text-muted)] break-words">“{j.m.cancelNote}”</div>}

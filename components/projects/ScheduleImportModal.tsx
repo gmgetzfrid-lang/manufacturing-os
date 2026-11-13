@@ -469,12 +469,12 @@ export default function ScheduleImportModal({
               {/* Preview table */}
               {parseResult.rows.length > 0 && (
                 <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
-                  <div className="px-3 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">
+                  <div className="px-3 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] text-[12px] font-semibold text-[var(--color-text-muted)]">
                     Preview · first {previewRows.length} {moreCount > 0 ? `of ${parseResult.rows.length}` : "row" + (previewRows.length === 1 ? "" : "s")}
                   </div>
                   <div className="overflow-x-auto">
                   <table className="w-full min-w-[560px] text-xs">
-                    <thead className="bg-[var(--color-surface)] border-b border-[var(--color-border)] text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+                    <thead className="bg-[var(--color-surface)] border-b border-[var(--color-border)] text-[12px] font-semibold text-[var(--color-text-muted)]">
                       <tr>
                         <th className="text-left px-3 py-1.5">Task</th>
                         <th className="text-left px-3 py-1.5 w-32">Due</th>

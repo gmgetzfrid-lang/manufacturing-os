@@ -55,7 +55,7 @@ const btn = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-
 const dark = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[12.5px] font-black whitespace-nowrap disabled:opacity-50";
 const pri = "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-black whitespace-nowrap disabled:opacity-50";
 const field = "w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[13px] text-[var(--color-text)]";
-const label = "text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)]";
+const label = "text-[12px] font-semibold text-[var(--color-text-muted)]";
 const RATE_CLS: Record<Rating, string> = {
   gap: "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300",
   opportunity: "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
@@ -665,7 +665,7 @@ function Table({ title, head, rows, empty }: { title: string; head: string[]; ro
       {rows.length === 0 ? <div className="text-[12.5px] text-[var(--color-text-muted)]">{empty}</div> : <>
         <div className="hidden sm:block rounded-xl border border-[var(--color-border)] overflow-x-auto">
           <table className="w-full text-[12.5px] border-collapse">
-            <thead><tr>{head.map((h) => <th key={h} className="text-left px-2.5 py-2 bg-[var(--color-surface-2)] text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)] border-b border-[var(--color-border)]">{h}</th>)}</tr></thead>
+            <thead><tr>{head.map((h) => <th key={h} className="text-left px-2.5 py-2 bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text-muted)] border-b border-[var(--color-border)]">{h}</th>)}</tr></thead>
             <tbody>{rows.map((r, i) => <tr key={i} className="border-b last:border-b-0 border-[var(--color-border)] align-top">{r.map((c, n) => <td key={n} className={`px-2.5 py-2 text-[var(--color-text)] ${n === 0 ? "font-bold" : ""}`}>{c}</td>)}</tr>)}</tbody>
           </table>
         </div>

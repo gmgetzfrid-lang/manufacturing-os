@@ -1084,7 +1084,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
               <>
                 <div className="fixed inset-0 z-20" onClick={() => setShowSecs(false)} aria-hidden />
                 <div className="absolute right-0 top-full mt-1 z-30 w-64 max-w-[calc(100vw-1.5rem)] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-2.5 text-[12px]">
-                  <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Show on the report</div>
+                  <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Show on the report</div>
                   <div className="mt-1.5 space-y-1">
                     {reportAll.map((x) => (
                       <label key={x.id} className="flex items-center gap-2 cursor-pointer select-none py-0.5">
@@ -1359,7 +1359,7 @@ function RowEditor({ id, milestones, progress, planNow, tz, times, shift, canEdi
       <div role="dialog" aria-label={`Update ${step.name}`} onClick={(e) => e.stopPropagation()}
         className="absolute left-1/2 top-16 -translate-x-1/2 w-[440px] max-w-[94vw] max-h-[82dvh] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-xl max-sm:left-0 max-sm:right-0 max-sm:top-auto max-sm:bottom-0 max-sm:translate-x-0 max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none max-sm:max-h-[88dvh]">
         <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] pl-3 pr-1.5 py-1">
-          <span className="text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Update from the report</span>
+          <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Update from the report</span>
           <button type="button" onClick={onClose} aria-label="Close" className="w-7 h-7 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <CalendarQuickView key={id} task={parent ?? step} onDay={[step]} others={others} dayKey={shift.dayKey} band={shift.kind} dayLabel={label}
@@ -1479,7 +1479,7 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
           <ModalBody className="space-y-3">
             {d.form && (
               <div className="flex flex-wrap items-center gap-2 text-[12px]">
-                <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Format</span>
+                <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Format</span>
                 <span className="inline-flex rounded-lg border border-[var(--color-border-strong)] overflow-hidden" role="group" aria-label="Format">
                   {([["form", "Required (shift table)"], ["detail", "Detailed"]] as const).map(([k, l]) => (
                     <button key={k} type="button" aria-pressed={format === k} onClick={() => setFormat(k)}
@@ -1491,7 +1491,7 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
             {useForm && (
               <>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px]">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Header</span>
+                  <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Header</span>
                   {parts.map((p) => (
                     <label key={p.id} className="inline-flex items-center gap-1.5 cursor-pointer select-none">
                       <input type="checkbox" className="accent-[var(--color-accent)]" checked={!headerOff.has(p.id)} onChange={() => flip(setHeaderOff, HEADER_OFF_KEY, p.id)} />
@@ -1500,7 +1500,7 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
                   ))}
                 </div>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px]">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Table</span>
+                  <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Table</span>
                   {FORM_ROWS.map((r) => (
                     <label key={r.id} className="inline-flex items-center gap-1.5 cursor-pointer select-none">
                       <input type="checkbox" className="accent-[var(--color-accent)]" checked={!formOff.has(r.id)} onChange={() => flip(setFormOff, FORM_OFF_KEY, r.id)} />
@@ -1516,7 +1516,7 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
               </>
             )}
             {!useForm && <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px]">
-              <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Include</span>
+              <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Include</span>
               {d.sections.map((s) => (
                 <label key={idOf(s)} className="inline-flex items-center gap-1.5 cursor-pointer select-none">
                   <input type="checkbox" className="accent-[var(--color-accent)]" checked={!off.has(idOf(s))} onChange={() => toggle(idOf(s))} />
@@ -1811,9 +1811,9 @@ function waitingSection(w: WaitingReady, shift: ShiftWindow, c: Ctx): Sec {
     body: () => (!n && !w.service.length ? <div className="text-[13px] text-[var(--color-text-muted)]">{WAIT_NONE}</div> : (
       <div className="space-y-3 text-[13px]" data-waiting-ready>
         {!n && <div className="text-[var(--color-text-muted)]">{WAIT_NONE}</div>}
-        {w.waiting.length > 0 && <div><div className="text-[11px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-400">Started, nothing logged this shift ({w.waiting.length})</div><ul>{w.waiting.map((j) => row(j.id, jobWord(j), waitWhy(j), `${j.crew} · ${shiftsWord(j.shifts)}`, j.said ? `"${j.said}"` : null))}</ul></div>}
-        {w.ready.length > 0 && <div><div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Ready, not started ({w.ready.length})</div><ul>{w.ready.map((j) => row(j.id, jobWord(j), `Ready since ${c.DT(j.readyAt)}`, `${j.crew} · ${shiftsWord(j.shifts)}`, readyWhy(j)))}</ul></div>}
-        {w.service.length > 0 && <div><div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">{SERVICE_TITLE} ({w.service.length})</div><ul>{w.service.map((j) => row(j.id, jobWord(j), "", j.crew, j.said ? `"${j.said}"` : null))}</ul></div>}
+        {w.waiting.length > 0 && <div><div className="text-[12px] font-semibold text-amber-700 dark:text-amber-400">Started, nothing logged this shift ({w.waiting.length})</div><ul>{w.waiting.map((j) => row(j.id, jobWord(j), waitWhy(j), `${j.crew} · ${shiftsWord(j.shifts)}`, j.said ? `"${j.said}"` : null))}</ul></div>}
+        {w.ready.length > 0 && <div><div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Ready, not started ({w.ready.length})</div><ul>{w.ready.map((j) => row(j.id, jobWord(j), `Ready since ${c.DT(j.readyAt)}`, `${j.crew} · ${shiftsWord(j.shifts)}`, readyWhy(j)))}</ul></div>}
+        {w.service.length > 0 && <div><div className="text-[12px] font-semibold text-[var(--color-text-muted)]">{SERVICE_TITLE} ({w.service.length})</div><ul>{w.service.map((j) => row(j.id, jobWord(j), "", j.crew, j.said ? `"${j.said}"` : null))}</ul></div>}
         <div className="text-[11.5px] text-[var(--color-text-muted)]">A night shift counts only for work that ran on nights. The post-event review counts these the same way.</div>
       </div>
     )),
@@ -2413,7 +2413,7 @@ function DiscoveryList({ list, c, print, now = false }: { list: Discovery[]; c: 
               <tr key={d.record.id} className="border-b border-slate-100 dark:border-slate-800 align-top">
                 <td className={`${cell} font-mono text-[11px] whitespace-nowrap`}>{c.DTs(d.record.foundAt)}</td>
                 <td className={`${cell} font-semibold break-words`}>{d.task?.name}{d.task?.workOrderRef && <div className="font-mono font-normal text-[11px] text-[var(--color-text-muted)]">WO {d.task.workOrderRef}</div>}</td>
-                <td className={`${cell} break-words`}><div className="text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">{ADDED[kindOf(d.record)].word}</div>{d.record.what}{d.record.approvedBy && <div className="text-[11px] text-[var(--color-text-muted)]">Approved by {d.record.approvedBy}</div>}</td>
+                <td className={`${cell} break-words`}><div className="text-[12px] font-semibold text-[var(--color-text-muted)]">{ADDED[kindOf(d.record)].word}</div>{d.record.what}{d.record.approvedBy && <div className="text-[11px] text-[var(--color-text-muted)]">Approved by {d.record.approvedBy}</div>}</td>
                 <td className={`${cell} break-words`}>{d.steps.map((m) => <div key={m.id}>{discoveryStepLine(m, c.hrs)}</div>)}</td>
                 <td className={`${cell} break-words ${impactCls(d)}`}>{impactOf(d)}</td>
               </tr>
@@ -2588,7 +2588,7 @@ function findingsSection(f: FindingsCtx, c: Ctx): Sec {
       )}
       {f.team.length > 0 && (
         <div className="keep text-[8.5pt]">
-          <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">From the team - not reviewed yet</div>
+          <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">From the team - not reviewed yet</div>
           <ul className="list-disc pl-4">{f.team.map((l, i) => <li key={i}>{l.text}{l.by ? <span className="text-[var(--color-text-muted)]"> - {l.by}</span> : null}</li>)}</ul>
         </div>
       )}
@@ -2729,7 +2729,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
           </div>
           {lb.byCause.length > 0 && (
             <div className={`keep rounded-md border border-[var(--color-border)] px-2.5 py-2 space-y-1 ${txt(print)}`}>
-              <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Hours lost, by cause</div>
+              <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Hours lost, by cause</div>
               {lb.byCause.map((x) => (
                 <div key={x.cause} className="grid grid-cols-[minmax(0,15rem)_1fr_auto] items-center gap-2 max-sm:grid-cols-[1fr_auto]">
                   <span className="text-[var(--color-text)] break-words max-sm:col-span-2">{CAUSE_LABEL[x.cause]}</span>
@@ -2809,7 +2809,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
           {lb.keep.length > 0 && bullets(lb.keep, "emerald", print)}
           {lb.ahead.length > 0 && (
             <div className={`keep rounded-md border border-[var(--color-border)] divide-y divide-[var(--color-border)] ${txt(print)}`}>
-              <div className="px-2.5 py-1 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Finished ahead of plan</div>
+              <div className="px-2.5 py-1 text-[12px] font-semibold text-[var(--color-text-muted)]">Finished ahead of plan</div>
               {lb.ahead.slice(0, 8).map((s) => (
                 <div key={s.id} className="px-2.5 py-1 grid grid-cols-[1fr_auto] gap-x-3">
                   <span className="min-w-0 break-words"><b className="text-[var(--color-text)]">{s.name}</b><span className="text-[var(--color-text-muted)]"> · {[s.task, s.crew].filter(Boolean).join(" · ")}</span></span>
@@ -2821,7 +2821,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
           {lb.absorbed.length > 0 && <div className={`text-[var(--color-text)] ${txt(print)}`}>Discovery that fit in the float: {lb.absorbed.map((d) => `“${d.record.what}” (${c.hrs(d.record.impact.hours)})`).join("; ")}.</div>}
           {lb.crews.length > 0 && (
             <div className={`keep rounded-md border border-[var(--color-border)] ${txt(print)}`}>
-              <div className="px-2.5 py-1 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Crews - steps done on plan</div>
+              <div className="px-2.5 py-1 text-[12px] font-semibold text-[var(--color-text-muted)]">Crews - steps done on plan</div>
               {lb.crews.map((x) => (
                 <div key={x.crew} className="px-2.5 py-0.5 grid grid-cols-[1fr_auto_auto] gap-x-3 tabular-nums">
                   <span className="text-[var(--color-text)] truncate">{x.crew}</span>
@@ -2870,7 +2870,7 @@ function cancelledSection(jobs: CancelledJob[], c: Ctx): Sec {
               {j.steps > 1 && <span className="text-[11px] text-[var(--color-text-muted)]">{j.steps} steps</span>}
             </div>
             <div className="text-[var(--color-text)]">
-              <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-400">Moved to </span>
+              <span className="text-[12px] font-semibold text-amber-700 dark:text-amber-400">Moved to </span>
               {j.m.movedTo ? <b>{j.m.movedTo}</b> : <span className="text-[var(--color-text-faint)]">not said</span>}
             </div>
             {j.m.cancelNote && <div className="text-[var(--color-text-muted)] italic">“{j.m.cancelNote}”</div>}

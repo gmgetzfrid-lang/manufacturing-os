@@ -26,6 +26,7 @@ import {
   UploadCloud, ClipboardList, Sun, FileBarChart, RotateCcw, ListChecks,
 } from "lucide-react";
 import { requestSetup } from "@/lib/scheduleSetup";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { canReopen } from "@/lib/projectStatus";
 import IntakePanel from "@/components/projects/IntakePanel";
 import ProjectDocumentsCard from "@/components/projects/ProjectDocumentsCard";
@@ -82,6 +83,16 @@ const SCHEDULE_TABS = ["plan", "today", "work", "reports"] as const;
 type ScheduleTabId = (typeof SCHEDULE_TABS)[number];
 const isScheduleTab = (t: Tab | null): t is ScheduleTabId => !!t && (SCHEDULE_TABS as readonly string[]).includes(t);
 const TABS: readonly Tab[] = ["plan", "today", "work", "reports", "closeout", "materials", "documents", "intake", "costs", "quality", "activity", "members"];
+/** The tabs for running the job, and the project's records. */
+const MAIN_TABS: Array<{ id: Tab; label: string; icon: typeof Sun }> = [
+  { id: "plan", label: "Plan", icon: ClipboardList }, { id: "today", label: "Shift", icon: Sun }, { id: "work", label: "Work", icon: Flag },
+  { id: "reports", label: "Reports", icon: FileBarChart }, { id: "closeout", label: "Close-out", icon: ListChecks },
+];
+const RECORD_TABS: Array<{ id: Tab; label: string; icon: typeof Sun }> = [
+  { id: "materials", label: "Materials", icon: Package }, { id: "costs", label: "Costs", icon: CircleDollarSign }, { id: "quality", label: "Quality", icon: ShieldCheck },
+  { id: "documents", label: "Documents", icon: FileText }, { id: "members", label: "Members", icon: Users }, { id: "intake", label: "Intake", icon: UploadCloud },
+  { id: "activity", label: "Activity", icon: ActivityIcon },
+];
 /** The tab a link asks for (older links' "schedule" opened the board: Work).
  *  None: decided by the project. */
 const tabOf = (t: string | null | undefined): Tab | null => (t === "schedule" ? "work" : t && (TABS as readonly string[]).includes(t) ? t as Tab : null);
@@ -164,6 +175,10 @@ export default function ProjectDetailPage() {
 
   const [showEdit, setShowEdit] = useState(false);
   const [showPhases, setShowPhases] = useState(false);
+  // A phone keeps the header to the title, Setup and More.
+  const narrow = useIsMobile();
+  // The schedule's tabs use the full width; the rest a reading width. The header lines up with them.
+  const wideTab = isScheduleTab(tab) || !tab;
 
   // Status-transition state
   const [pendingStatus, setPendingStatus] = useState<ProjectStatus | null>(null);
@@ -369,13 +384,9 @@ export default function ProjectDetailPage() {
 
   return (
     <div className="pb-20">
-      {/* HEADER */}
+      {/* HEADER: the project in two lines, its tools, and the tabs. */}
       <div className="bg-[var(--color-surface)] border-b border-[var(--color-border)]">
-        <div className="max-w-6xl mx-auto px-6 py-5">
-          <button onClick={() => { if (window.history.length > 1) router.back(); else router.push("/projects"); }} className="inline-flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] mb-3">
-            <ArrowLeft className="w-3.5 h-3.5" /> Back to projects
-          </button>
-
+        <div className={`${wideTab ? "max-w-[1800px] px-3 sm:px-4" : "max-w-6xl px-4 sm:px-6"} mx-auto pt-3 sm:pt-4`}>
           {actionError && (
             <div className="mb-3 flex items-start gap-2 rounded-xl border border-rose-500/50 bg-rose-500/[0.08] px-3 py-2.5 text-xs font-bold text-rose-700 dark:text-rose-300 animate-in fade-in slide-in-from-top-1">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -386,58 +397,48 @@ export default function ProjectDetailPage() {
             </div>
           )}
 
-          <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div className="min-w-0 flex-1 basis-64">
-              <div className="flex items-center gap-2 mb-1.5">
+          <div className="flex items-start gap-2 sm:gap-3">
+            <button onClick={() => { if (window.history.length > 1) router.back(); else router.push("/projects"); }} aria-label="Back to projects" title="Back to projects"
+              className="mt-0.5 shrink-0 w-9 h-9 rounded-lg inline-flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-[19px] sm:text-[24px] leading-tight font-black text-[var(--color-text)] break-words">{project.name}</h1>
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-[var(--color-text-muted)]">
                 <StatusBadge status={project.status} />
-                {project.visibility === "private" ? (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)]">
-                    <Lock className="w-2.5 h-2.5" /> Private
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">
-                    <Globe className="w-2.5 h-2.5" /> Public
-                  </span>
+                {project.visibility === "private" && <span className="inline-flex items-center gap-1"><Lock className="w-3.5 h-3.5" /> Private</span>}
+                {project.ownerUserName && <span className="inline-flex items-center gap-1 max-sm:hidden"><UserIcon className="w-3.5 h-3.5" /> {project.ownerUserName}</span>}
+                {(project.startedAt || project.targetCompletionDate) && (
+                  <span className="inline-flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />{project.startedAt ? ` Started ${formatDate(project.startedAt)}` : ""}{project.startedAt && project.targetCompletionDate ? "," : ""}{project.targetCompletionDate ? ` target ${formatDate(project.targetCompletionDate)}` : ""}</span>
                 )}
-              </div>
-              <h1 className="text-2xl font-black text-[var(--color-text)] flex items-center gap-2">
-                <Briefcase className="w-6 h-6 text-[var(--color-accent)]" /> {project.name}
-              </h1>
-              {project.description && (
-                <p className="text-sm text-[var(--color-text-muted)] mt-2 max-w-3xl">{project.description}</p>
-              )}
-              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-[var(--color-text-muted)]">
-                <span className="inline-flex items-center gap-1"><UserIcon className="w-3 h-3" /> {project.ownerUserName || "-"}</span>
-                {project.startedAt && <span className="inline-flex items-center gap-1"><Calendar className="w-3 h-3" /> Started {formatDate(project.startedAt)}</span>}
-                {project.targetCompletionDate &&<span className="inline-flex items-center gap-1"><Calendar className="w-3 h-3" /> Target {formatDate(project.targetCompletionDate)}</span>}
-                {project.mocReference && <span className="inline-flex items-center gap-1 font-mono"><Layers className="w-3 h-3" /> {project.mocReference}</span>}
-                {project.cancelledReason && <span className="inline-flex items-center gap-1 text-red-600"><AlertTriangle className="w-3 h-3" /> Cancelled: {project.cancelledReason}</span>}
+                {project.mocReference && <span className="inline-flex items-center gap-1 font-mono"><Layers className="w-3.5 h-3.5" /> {project.mocReference}</span>}
+                {project.cancelledReason && <span className="inline-flex items-center gap-1 text-red-600"><AlertTriangle className="w-3.5 h-3.5" /> Cancelled: {project.cancelledReason}</span>}
                 {project.linkedTicketId && (
                   <Link href={`/requests/${project.linkedTicketId}`} className="inline-flex items-center gap-1 text-[var(--color-accent)] hover:underline">
-                    <Hash className="w-3 h-3" /> Linked ticket
+                    <Hash className="w-3.5 h-3.5" /> Linked ticket
                   </Link>
                 )}
               </div>
+              {project.description && <p className="mt-1 text-[13px] text-[var(--color-text-muted)] max-w-3xl truncate max-sm:hidden" title={project.description}>{project.description}</p>}
             </div>
 
-            {/* Edit and Phases in sight; the rest in one More menu. */}
-            <div className="flex items-center gap-1.5 flex-wrap">
+            {/* Setup and Phases in sight; the rest in More. On a phone: Setup and More. */}
+            <div className="shrink-0 flex items-center gap-1.5">
               {canManage && (
-                <ActionButton icon={<Pencil className="w-3.5 h-3.5" />} label="Edit" onClick={() => setShowEdit(true)} />
+                <ActionButton phoneIcon icon={<Settings2 className="w-4 h-4" />} label="Setup" onClick={() => { if (!isScheduleTab(tab)) goTab("plan"); requestSetup(); }} />
               )}
               {canManage && (
-                <ActionButton icon={<Settings2 className="w-3.5 h-3.5" />} label="Setup" onClick={() => { if (!isScheduleTab(tab)) goTab("plan"); requestSetup(); }} />
-              )}
-              {canManage && (
-                <ActionButton icon={<Layers className="w-3.5 h-3.5" />} label={phases.length ? "Phases" : "Split into phases"} onClick={() => setShowPhases(true)} />
+                <span className="max-md:hidden"><ActionButton icon={<Layers className="w-4 h-4" />} label={phases.length ? "Phases" : "Split into phases"} onClick={() => setShowPhases(true)} /></span>
               )}
               {project.id && project.orgId && uid && (
-                <>
+                <span className="max-md:hidden inline-flex items-center gap-1.5">
                   <WatchButton orgId={project.orgId} userId={uid} resourceType="project" resourceId={project.id} />
                   <PresenceIndicator resourceType="project" resourceId={project.id} userId={uid} userName={userEmail?.split("@")[0]} role={activeRole || undefined} />
-                </>
+                </span>
               )}
-              <MoreMenu items={[
+              <MoreMenu iconOnly={narrow} items={[
+                ...(canManage ? [{ icon: <Pencil className="w-4 h-4" />, label: "Edit name, dates and details", onClick: () => setShowEdit(true) }] : []),
+                ...(canManage && narrow ? [{ icon: <Layers className="w-4 h-4" />, label: phases.length ? "Phases" : "Split into phases", onClick: () => setShowPhases(true) }] : []),
                 { icon: <FileText className="w-4 h-4" />, label: "Report", onClick: async () => {
                   if (!project.id || !project.orgId) return;
                   try { await openProjectReport(project.orgId, project.id); }
@@ -482,47 +483,27 @@ export default function ProjectDetailPage() {
             </div>
           </div>
 
-          {/* TABS */}
-          <div className="mt-5 flex items-center gap-1 border-b border-[var(--color-border)] -mb-px overflow-x-auto [scrollbar-width:none]">
-            <TabButton active={tab === "plan"} onClick={() => setTab("plan")} main>
-              <ClipboardList className="w-3.5 h-3.5" /> Plan
-            </TabButton>
-            <TabButton active={tab === "today"} onClick={() => setTab("today")} main>
-              <Sun className="w-3.5 h-3.5" /> Shift
-            </TabButton>
-            <TabButton active={tab === "work"} onClick={() => setTab("work")} main>
-              <Flag className="w-3.5 h-3.5" /> Work
-            </TabButton>
-            <TabButton active={tab === "reports"} onClick={() => setTab("reports")} main>
-              <FileBarChart className="w-3.5 h-3.5" /> Reports
-            </TabButton>
-            <TabButton active={tab === "closeout"} onClick={() => setTab("closeout")} main>
-              <ListChecks className="w-3.5 h-3.5" /> Close-out
-              {workDone && <span className="w-2 h-2 rounded-full bg-emerald-500" aria-label="work done" />}
-            </TabButton>
-            <span className="shrink-0 self-center w-px h-5 mx-1 bg-[var(--color-border)]" aria-hidden />
-            <TabButton active={tab === "materials"} onClick={() => setTab("materials")}>
-              <Package className="w-3.5 h-3.5" /> Materials
-            </TabButton>
-            <TabButton active={tab === "documents"} onClick={() => setTab("documents")}>
-              <FileText className="w-3.5 h-3.5" /> Documents <span className="text-[10px] text-[var(--color-text-faint)]">{checkouts.length}</span>
-            </TabButton>
-            <TabButton active={tab === "costs"} onClick={() => setTab("costs")}>
-              <CircleDollarSign className="w-3.5 h-3.5" /> Costs
-            </TabButton>
-            <TabButton active={tab === "quality"} onClick={() => setTab("quality")}>
-              <ShieldCheck className="w-3.5 h-3.5" /> Quality
-            </TabButton>
-            <TabButton active={tab === "intake"} onClick={() => setTab("intake")}>
-              <UploadCloud className="w-3.5 h-3.5" /> Intake
-            </TabButton>
-            <TabButton active={tab === "activity"} onClick={() => setTab("activity")}>
-              <ActivityIcon className="w-3.5 h-3.5" /> Activity <span className="text-[10px] text-[var(--color-text-faint)]">{activity.length}</span>
-            </TabButton>
-            <TabButton active={tab === "members"} onClick={() => setTab("members")}>
-              <Users className="w-3.5 h-3.5" /> Members <span className="text-[10px] text-[var(--color-text-faint)]">{members.length}</span>
-            </TabButton>
-            <div className="ml-1 pb-2">
+          {/* TABS: the five for running the job, then the project's records.
+              A wide screen shows them all; a narrower one keeps the records
+              under More, with the one open in sight. */}
+          <nav aria-label="Project" className="mt-3 flex items-end gap-0.5 -mb-px overflow-x-auto [scrollbar-width:none]">
+            {MAIN_TABS.map((t) => (
+              <TabButton key={t.id} active={tab === t.id} onClick={() => setTab(t.id)} main>
+                <t.icon className="w-4 h-4 max-sm:hidden" /> {t.label}
+                {t.id === "closeout" && workDone && <span className="w-2 h-2 rounded-full bg-emerald-500" aria-label="work done" />}
+              </TabButton>
+            ))}
+            <span className="shrink-0 self-center w-px h-5 mx-2 bg-[var(--color-border)] max-lg:hidden" aria-hidden />
+            {RECORD_TABS.map((t) => (
+              <TabButton key={t.id} active={tab === t.id} onClick={() => setTab(t.id)} className={tab === t.id ? "" : "max-lg:hidden"}>
+                {t.label}{t.id === "documents" && checkouts.length > 0 && <span className="text-[11px] text-[var(--color-text-faint)]">{checkouts.length}</span>}
+              </TabButton>
+            ))}
+            <span className="lg:hidden shrink-0 self-center ml-1">
+              <MoreMenu label="More" iconOnly={narrow} triggerClass="inline-flex items-center justify-center gap-1 h-9 min-w-9 px-2 rounded-lg text-[14px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                items={RECORD_TABS.map((t) => ({ icon: <t.icon className="w-4 h-4" />, label: t.label, current: tab === t.id, onClick: () => setTab(t.id) }))} />
+            </span>
+            <div className="ml-auto pl-1 pb-2 shrink-0 max-sm:hidden">
               <HelpTooltip>
                 <b>Plan</b> - the schedule as a list: import it (P6, MS Project), set it up, add to it.
                 <b className="block mt-1">Shift</b> - the shift ending and the next one: meetings, hour by hour, overtime, the turnover, the night plan, Lock report. Any date.
@@ -535,21 +516,21 @@ export default function ProjectDetailPage() {
                 <b className="block mt-1">Members</b> - who&rsquo;s on this project, and the event organization: the roles it requires and who fills each.
               </HelpTooltip>
             </div>
-          </div>
+          </nav>
         </div>
       </div>
 
       {/* CONTENT — schedule tab needs full page width to render the
           execution canvas; everything else keeps the comfortable
           reading width. */}
-      <div className={`${isScheduleTab(tab) || !tab ? "max-w-[1800px] mx-auto px-3 sm:px-4" : "max-w-6xl mx-auto px-6"} py-6`}>
+      <div className={`${wideTab ? "max-w-[1800px] mx-auto px-3 sm:px-4" : "max-w-6xl mx-auto px-4 sm:px-6"} py-4 sm:py-6`}>
         {/* Health + "what do I feed you" — the wizard for the rest of the
             project's life, visible from every tab. */}
-        {project.id && project.orgId && tab && tab !== "closeout" && tab !== "materials" && (!isScheduleTab(tab) || tab === "plan") && (
+        {project.id && project.orgId && tab === "plan" && (
           <ProjectCoach orgId={project.orgId} projectId={project.id} refreshKey={coachKey} />
         )}
         {(isScheduleTab(tab) || tab === "costs") && (
-          <PhaseBar phases={phases} pick={phase} onPick={setPhase} onEdit={canManage ? () => setShowPhases(true) : undefined} />
+          <PhaseBar phases={phases} pick={phase} onPick={setPhase} />
         )}
         {tab === "documents" && (
           <div className="space-y-4">
@@ -756,7 +737,7 @@ export default function ProjectDetailPage() {
               const failed = gateLines.filter((g) => !g.ok).length;
               return (
                 <div className="px-6 pt-4">
-                  <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">Closeout gates</div>
+                  <div className="text-[12px] font-semibold text-[var(--color-text-muted)] mb-1.5">Closeout gates</div>
                   <ul className="space-y-1">
                     {gateLines.map((g, i) => (
                       <li key={i} className={`flex items-center gap-2 text-xs font-bold ${g.ok ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>
@@ -821,32 +802,34 @@ function StatusBadge({ status }: { status: ProjectStatus }) {
     archived: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
   };
   return (
-    <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded border ${cls[status]}`}>
-      {status.toUpperCase()}
+    <span className={`inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-0.5 rounded-full border ${cls[status]}`}>
+      {status[0].toUpperCase() + status.slice(1)}
     </span>
   );
 }
 
-function ActionButton({ icon, label, onClick, color }: { icon: React.ReactNode; label: string; onClick: () => void; color?: "red" | "emerald" }) {
+function ActionButton({ icon, label, onClick, color, phoneIcon }: { icon: React.ReactNode; label: string; onClick: () => void; color?: "red" | "emerald";
+  /** On a phone: the icon alone (the label read out). */
+  phoneIcon?: boolean }) {
   const cls = color === "red"
     ? "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
     : color === "emerald"
     ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
     : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]";
   return (
-    <button onClick={onClick} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition-colors ${cls}`}>
-      {icon}{label}
+    <button onClick={onClick} aria-label={phoneIcon ? label : undefined} title={phoneIcon ? label : undefined} className={`inline-flex items-center justify-center gap-1.5 h-9 ${phoneIcon ? "max-sm:w-9 max-sm:px-0" : ""} px-3 rounded-lg border text-[13px] font-semibold transition-colors ${cls}`}>
+      {icon}<span className={phoneIcon ? "max-sm:hidden" : ""}>{label}</span>
     </button>
   );
 }
 
-function TabButton({ active, onClick, children, main }: { active: boolean; onClick: () => void; children: React.ReactNode;
-  /** One of the four work tabs (Plan, Today, Work, Reports): darker when not picked. */
-  main?: boolean }) {
+function TabButton({ active, onClick, children, main, className = "" }: { active: boolean; onClick: () => void; children: React.ReactNode;
+  /** One of the five tabs for running the job: darker when not picked. */
+  main?: boolean; className?: string }) {
   // The picked tab in sight: the bar scrolls sideways on a phone.
   const ref = React.useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
-    const el = ref.current, bar = el?.parentElement;
+    const el = ref.current, bar = el?.closest("nav");
     if (!active || !el || !bar) return;
     const r = el.getBoundingClientRect(), b = bar.getBoundingClientRect();
     if (r.left < b.left || r.right > b.right) bar.scrollLeft += r.left - b.left - 16;
@@ -856,8 +839,8 @@ function TabButton({ active, onClick, children, main }: { active: boolean; onCli
       ref={ref}
       onClick={onClick}
       aria-current={active ? "page" : undefined}
-      className={`shrink-0 px-3 xl:px-3.5 py-2.5 text-xs font-bold inline-flex items-center gap-1.5 border-b-2 whitespace-nowrap transition-colors ${
-        active ? "border-[var(--color-accent)] text-[var(--color-accent)]" : main ? "border-transparent text-[var(--color-text)] hover:text-[var(--color-accent)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+      className={`shrink-0 px-2 sm:px-3 h-11 text-[14px] inline-flex items-center gap-1.5 border-b-2 whitespace-nowrap transition-colors ${className} ${
+        active ? "border-[var(--color-accent)] text-[var(--color-text)] font-bold" : main ? "border-transparent text-[var(--color-text)] font-semibold hover:border-[var(--color-border-strong)]" : "border-transparent text-[var(--color-text-muted)] font-medium hover:text-[var(--color-text)]"
       }`}
     >
       {children}

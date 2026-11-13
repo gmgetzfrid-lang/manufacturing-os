@@ -120,7 +120,7 @@ export default function RebaseScheduleModal({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">New start date</label>
+              <label className="text-[12px] font-semibold text-[var(--color-text-muted)]">New start date</label>
               <input
                 type="date"
                 value={target}
@@ -129,7 +129,7 @@ export default function RebaseScheduleModal({
               />
             </div>
             <div>
-              <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Start time ({tzAbbrev(tz)})</label>
+              <label className="text-[12px] font-semibold text-[var(--color-text-muted)]">Start time ({tzAbbrev(tz)})</label>
               <input
                 type="time"
                 value={targetTime}

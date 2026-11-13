@@ -31,7 +31,7 @@ function localDay(v: unknown): string {
 
 const inputCls = "mt-1 w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none";
 const areaCls = "mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-2 text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none";
-const labelCls = "text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]";
+const labelCls = "text-[12px] font-semibold text-[var(--color-text-muted)]";
 
 export default function EditProjectModal({ project, actorUserId, actorEmail, actorRole, onClose, onSaved }: {
   project: Project;
@@ -160,20 +160,20 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
         </div>
         <div className="p-5 space-y-3">
           <label className="block">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Name</span>
+            <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Name</span>
             <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
           </label>
           <label className="block">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Description</span>
+            <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Description</span>
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className="mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-2 text-sm resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
           </label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">MOC reference</span>
+              <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">MOC reference</span>
               <input value={moc} onChange={(e) => setMoc(e.target.value)} className="mt-1 w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm font-mono focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
             </label>
             <label className="block">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Target completion</span>
+              <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Target completion</span>
               <input type="date" value={target} onChange={(e) => setTarget(e.target.value)} className="mt-1 w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm [color-scheme:light] dark:[color-scheme:dark] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
             </label>
             <label className="block">
@@ -254,7 +254,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
             <div className="text-[10px] text-[var(--color-text-faint)]">Purpose, goals, success criteria, job size and the Summary of Work need the database update 20261013_project_controls_program.sql.</div>
           )}
           <div>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Plant timezone</span>
+            <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Plant timezone</span>
             <TimeZoneSelect value={timezone} onChange={setTimezone} className="mt-1" />
             <div className="mt-1 text-[10px] text-[var(--color-text-faint)]">
               Every schedule date, calendar day and shift is shown and entered in this zone, for everyone on the project.
@@ -271,7 +271,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
             )}
           </div>
           <div>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Visibility</span>
+            <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Visibility</span>
             <div className="mt-1 inline-flex items-center rounded-xl border border-[var(--color-border)] p-0.5 gap-0.5">
               {([
                 { v: "public" as const, label: "Public", Icon: Globe },

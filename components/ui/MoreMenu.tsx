@@ -6,10 +6,12 @@
 import React, { useEffect, useState } from "react";
 import { MoreHorizontal } from "lucide-react";
 
-export type MoreItem = { icon: React.ReactNode; label: string; onClick: () => void | Promise<void>; tone?: "good" | "bad"; line?: boolean };
+export type MoreItem = { icon: React.ReactNode; label: string; onClick: () => void | Promise<void>; tone?: "good" | "bad"; line?: boolean; current?: boolean };
 
-/** ⋯ More: the project's less-used actions in one menu. */
-export default function MoreMenu({ items }: { items: MoreItem[] }) {
+/** ⋯ More: the project's less-used actions in one menu. `label` and
+ *  `triggerClass` dress the button (a tab bar's "More"); `iconOnly` keeps
+ *  just the dots, with the label for screen readers. */
+export default function MoreMenu({ items, label = "More", triggerClass, iconOnly }: { items: MoreItem[]; label?: string; triggerClass?: string; iconOnly?: boolean }) {
   const [open, setOpen] = useState(false);
   // Opens toward the side with room (the button sits on the left on a phone).
   const [toLeft, setToLeft] = useState(true);
@@ -25,17 +27,17 @@ export default function MoreMenu({ items }: { items: MoreItem[] }) {
   }, [open]);
   return (
     <div ref={box} className="relative">
-      <button type="button" aria-haspopup="menu" aria-expanded={open} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setToLeft(r.right >= 232); setOpen((o) => !o); }}
-        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition-colors border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-        <MoreHorizontal className="w-3.5 h-3.5" /> More
+      <button type="button" aria-haspopup="menu" aria-expanded={open} aria-label={iconOnly ? label : undefined} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setToLeft(r.right >= 232); setOpen((o) => !o); }}
+        className={triggerClass ?? "inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg border text-[13px] font-semibold transition-colors border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}>
+        <MoreHorizontal className="w-4 h-4" />{!iconOnly && <span>{label}</span>}
       </button>
       {open && (
         <div role="menu" className={`absolute ${toLeft ? "right-0" : "left-0"} top-full mt-1 z-50 w-56 max-w-[calc(100vw-2rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl py-1`}>
           {items.map((it, i) => (
             <React.Fragment key={it.label}>
               {it.line && i > 0 && <div className="my-1 h-px bg-[var(--color-border)]" />}
-              <button type="button" role="menuitem" onClick={() => { setOpen(false); void it.onClick(); }}
-                className={`w-full flex items-center gap-2.5 px-3 min-h-10 text-left text-[13px] font-semibold hover:bg-[var(--color-surface-2)] ${it.tone === "bad" ? "text-rose-700 dark:text-rose-400" : it.tone === "good" ? "text-emerald-700 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>
+              <button type="button" role="menuitem" aria-current={it.current ? "page" : undefined} onClick={() => { setOpen(false); void it.onClick(); }}
+                className={`w-full flex items-center gap-2.5 px-3 min-h-11 text-left text-[14px] font-semibold hover:bg-[var(--color-surface-2)] ${it.current ? "bg-[var(--color-surface-2)]" : ""} ${it.tone === "bad" ? "text-rose-700 dark:text-rose-400" : it.tone === "good" ? "text-emerald-700 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>
                 {it.icon}{it.label}
               </button>
             </React.Fragment>

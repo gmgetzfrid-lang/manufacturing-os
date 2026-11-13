@@ -58,7 +58,7 @@ export default function AddWorkPicker({ day: when, tz, milestones, onPick, onNew
     if (!shown.length) return null;
     return (
       <div>
-        <div className="px-3 pt-2 pb-1 text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">{title}</div>
+        <div className="px-3 pt-2 pb-1 text-[12px] font-semibold text-[var(--color-text-faint)]">{title}</div>
         {shown.map((m) => (
           <button key={m.id} type="button" onClick={() => onPick(m)}
             className="w-full text-left px-3 py-2 hover:bg-[var(--color-surface-2)] border-t border-[var(--color-border)] first:border-t-0">

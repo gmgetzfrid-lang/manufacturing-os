@@ -133,17 +133,17 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
               {!isDone && m && pctOf(m) > 0 && <span className="ml-1.5 font-semibold">at {Math.round(pctOf(m))}%</span>}
             </div>
           </div>
-          <label className="min-w-0"><span className="sm:hidden block text-[10.5px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Start</span>
+          <label className="min-w-0"><span className="sm:hidden block text-[12px] font-semibold text-[var(--color-text-muted)]">Start</span>
             {started ? <span className="flex h-9 items-center justify-center rounded-lg bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text-muted)]">going</span>
               : <input type="time" aria-label={`${l.name}: start time`} value={e.start ?? ""} disabled={lock} onChange={(x) => set(l.id, { start: x.target.value })} className={field} />}
           </label>
-          <label className="min-w-0"><span className="sm:hidden block text-[10.5px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{at.lunchLabel}</span>
+          <label className="min-w-0"><span className="sm:hidden block text-[12px] font-semibold text-[var(--color-text-muted)]">{at.lunchLabel}</span>
             <input inputMode="numeric" placeholder="%" aria-label={`${l.name}: ${at.lunchLabel}`} value={e.lunchPct ?? ""} disabled={lock} onChange={(x) => set(l.id, { lunchPct: x.target.value.replace(/[^\d]/g, "").slice(0, 3) })} className={`${field} text-center`} />
           </label>
-          <label className="min-w-0"><span className="sm:hidden block text-[10.5px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">% end of shift</span>
+          <label className="min-w-0"><span className="sm:hidden block text-[12px] font-semibold text-[var(--color-text-muted)]">% end of shift</span>
             <input inputMode="numeric" placeholder="%" aria-label={`${l.name}: % at the end of the shift`} value={e.endPct ?? ""} disabled={lock} onChange={(x) => set(l.id, { endPct: x.target.value.replace(/[^\d]/g, "").slice(0, 3) })} className={`${field} text-center`} />
           </label>
-          <label className="min-w-0"><span className="sm:hidden block text-[10.5px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Done</span>
+          <label className="min-w-0"><span className="sm:hidden block text-[12px] font-semibold text-[var(--color-text-muted)]">Done</span>
             <input type="time" aria-label={`${l.name}: done time`} value={e.done ?? ""} disabled={lock} onChange={(x) => set(l.id, { done: x.target.value })} className={field} />
           </label>
           <label className="flex items-center gap-1.5 text-[12.5px] font-semibold cursor-pointer select-none">
@@ -175,7 +175,7 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto">
           {/* Column names, on a wide screen */}
-          <div className="hidden sm:grid sticky top-0 z-10 gap-2 px-3 py-1.5 grid-cols-[minmax(0,1.5fr)_118px_72px_72px_118px_64px_minmax(0,1fr)] bg-[var(--color-surface)] border-b border-[var(--color-border)] text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+          <div className="hidden sm:grid sticky top-0 z-10 gap-2 px-3 py-1.5 grid-cols-[minmax(0,1.5fr)_118px_72px_72px_118px_64px_minmax(0,1fr)] bg-[var(--color-surface)] border-b border-[var(--color-border)] text-[12px] font-semibold text-[var(--color-text-muted)]">
             <span>Step · crew</span><span>Start</span><span>{at.lunchLabel}</span><span>% end</span><span>Done</span><span>Hold</span><span>Note</span>
           </div>
           {groups.length === 0 && <div className="px-4 py-8 text-center text-[13px] text-[var(--color-text-muted)]">Nothing on this shift&apos;s sheet. Add what was worked below.</div>}
@@ -186,7 +186,7 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
                 <div className="flex items-baseline gap-2 px-3 pt-2.5 pb-1 bg-[var(--color-surface-2)]/60">
                   <span className="text-[17px] font-black text-[var(--color-text)]">{t.tag ?? (g.wo ? `WO ${g.wo}` : "No WO")}</span>
                   <span className="min-w-0 truncate text-[12px] text-[var(--color-text-muted)]">{t.tag && g.wo ? `WO ${g.wo} · ` : ""}{t.rest}</span>
-                  {g.key.startsWith("added:") && <span className="text-[10.5px] font-bold uppercase tracking-wider text-[var(--color-accent)]">added</span>}
+                  {g.key.startsWith("added:") && <span className="text-[12px] font-semibold text-[var(--color-accent)]">added</span>}
                 </div>
                 <div className="divide-y divide-[var(--color-border)]">{g.lines.map(lineRow)}</div>
               </div>

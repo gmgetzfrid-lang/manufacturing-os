@@ -270,7 +270,7 @@ export default function ManpowerLook({ shifts, records, settings, steps, tz, now
 function MiniTile({ k, v, s }: { k: string; v: string; s: string }) {
   return (
     <div className="rounded-xl border border-[var(--color-border)] px-3 py-2 min-w-0">
-      <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{k}</div>
+      <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">{k}</div>
       <div className="text-[16px] font-black truncate text-[var(--color-text)]">{v}</div>
       <div className="text-[11px] leading-snug text-[var(--color-text-muted)]">{s}</div>
     </div>

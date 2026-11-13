@@ -497,7 +497,7 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
         <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400"><Check className="w-3.5 h-3.5" aria-hidden /> Updated for this shift</div>
       ) : null}
       <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]">
-        <div className={`${grid} px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]`}>
+        <div className={`${grid} px-2 py-0.5 text-[12px] font-semibold text-[var(--color-text-muted)]`}>
           <span className="max-sm:hidden">Resource</span><span>Meeting attendees</span><span className="w-[6.5rem] text-right" title="Everyone on site from the resource. Split gives direct (on the tools) and indirect (supervision, safety, hole and fire watch, QC, tool room).">On site</span>
         </div>
         {list.length === 0 && <div className="px-2 py-1 text-[12px] italic text-[var(--color-text-muted)]">No crews on the plan{edit ? " - add a company below" : ""}</div>}
@@ -716,7 +716,7 @@ function SafetyTopic({ value, topics, edit, onSave }: { value?: string; topics?:
   const picks = (topics ?? []).filter((x) => x !== t);
   return (
     <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 px-2 py-1 rounded-md border border-dashed border-[var(--color-border)] text-[12px]">
-      <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-orange-800 dark:text-orange-300">Safety topic</span>
+      <span className="shrink-0 text-[12px] font-semibold text-orange-800 dark:text-orange-300">Safety topic</span>
       {editing ? (
         <span className="flex-1 min-w-[12rem] flex items-center gap-1.5">
           <input autoFocus value={v} onChange={(e) => setV(e.target.value)} aria-label="Safety topic" placeholder="What the meeting talked through"

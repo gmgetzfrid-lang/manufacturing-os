@@ -140,7 +140,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
         <div className="rounded-2xl border border-rose-200 dark:border-rose-800 bg-rose-50/40 shadow-sm px-4 py-3">
           <div className="flex items-center gap-2 flex-wrap">
             <Zap className="w-4 h-4 text-rose-600 dark:text-rose-400" />
-            <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Driving the finish</span>
+            <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Driving the finish</span>
             <span className="text-sm font-bold text-[var(--color-text)]">{critical.ids.size} task{critical.ids.size === 1 ? "" : "s"} on the critical path</span>
             {critical.remainingHours > 0 && <span className="text-[11px] text-[var(--color-text-muted)]">· {Math.round(critical.remainingHours)}h remaining on the chain</span>}
             <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">{criticalSource ? `${criticalSource} · change it on the Timeline` : "estimate - based on schedule shape, not dependency links"}</span>
@@ -158,7 +158,7 @@ export default function ExecutionReportView({ milestones, shiftTimes, critical: 
       {r.baseline && (
         <div className={`rounded-2xl border shadow-sm px-4 py-3 ${r.baseline.finishDriftDays > 0 ? "border-rose-200 dark:border-rose-800 bg-rose-50/40" : r.baseline.finishDriftDays < 0 ? "border-emerald-200 dark:border-emerald-800 bg-emerald-50/40" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
           <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Vs. approved plan</span>
+            <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Vs. approved plan</span>
             <span className={`text-lg font-black ${r.baseline.finishDriftDays > 0 ? "text-rose-600 dark:text-rose-400" : r.baseline.finishDriftDays < 0 ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>
               {r.baseline.finishDriftDays === 0 ? "On plan" : r.baseline.finishDriftDays > 0 ? `${r.baseline.finishDriftDays}d behind plan` : `${Math.abs(r.baseline.finishDriftDays)}d ahead of plan`}
             </span>

@@ -30,7 +30,7 @@ export default function CloseNeeds({ needs, onGo }: { needs: Need[]; onGo: (go: 
               <span className="min-w-0 flex-1 basis-56">
                 <b className="block text-[13.5px] leading-snug text-[var(--color-text)]">{n.title}</b>
                 <span className="block text-[12.5px] text-[var(--color-text-muted)]">{n.status}</span>
-                <span className="block text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-faint)]">{n.category}</span>
+                <span className="block text-[12px] font-semibold text-[var(--color-text-faint)]">{n.category}</span>
               </span>
               <button type="button" onClick={() => onGo(n.go)}
                 className={`inline-flex items-center gap-1 h-9 px-3 rounded-lg text-[12.5px] font-bold whitespace-nowrap ${n.done ? "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)]"}`}>

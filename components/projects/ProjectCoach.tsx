@@ -71,17 +71,17 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
       </button>
 
       {open && (
-        <div className="px-4 pb-4 pt-1 border-t border-[var(--color-border)] grid md:grid-cols-[auto_1fr] gap-x-6 gap-y-3">
+        <div className="px-4 pb-4 pt-1 border-t border-[var(--color-border)] grid grid-cols-1 md:grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-3">
           {/* Health: the dial + each part showing its work. */}
-          <div className="flex items-center gap-4 pt-2">
+          <div className="flex items-center gap-4 pt-2 min-w-0">
             <ScoreDial score={health.score} size={72} label={band} />
-            <div className="space-y-1 min-w-52">
+            <div className="space-y-1 min-w-0 flex-1">
               {health.parts.map((p) => (
                 <div key={p.label} className="flex items-center gap-2 text-[11px]">
-                  <span className="w-24 shrink-0 font-bold text-[var(--color-text-muted)]">{p.label}</span>
+                  <span className="w-24 max-sm:w-20 shrink-0 font-bold text-[var(--color-text-muted)]">{p.label}</span>
                   {p.score != null ? (
                     <>
-                      <span className="h-1.5 w-20 rounded-full bg-[var(--viz-track)] overflow-hidden shrink-0">
+                      <span className="h-1.5 w-20 max-sm:w-12 rounded-full bg-[var(--viz-track)] overflow-hidden shrink-0">
                         <span className="block h-full rounded-full" style={{ width: `${p.score}%`, background: scoreBandColor(p.score) }} />
                       </span>
                       <span className="text-[var(--color-text-muted)] truncate" title={p.detail}>{p.detail}</span>
@@ -95,7 +95,7 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
           </div>
 
           {/* The coach: what to feed the system next, payoff stated. */}
-          <div className="pt-2">
+          <div className="pt-2 min-w-0">
             {items.length === 0 ? (
               <div className="text-xs text-[var(--color-text-muted)] italic">
                 Nothing to ask for - the system has what it needs. New gaps will show up here as the job runs.

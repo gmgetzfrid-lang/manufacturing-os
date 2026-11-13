@@ -321,17 +321,12 @@ function ProjectCard({ project }: { project: Project }) {
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 mb-1">
-            <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded border ${statusColors[project.status]}`}>
-              {project.status.toUpperCase()}
+            <span className={`inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-0.5 rounded-full border ${statusColors[project.status]}`}>
+              {project.status[0].toUpperCase() + project.status.slice(1)}
             </span>
             {project.visibility === "private" && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded border border-[var(--color-border)]">
-                <Lock className="w-2.5 h-2.5" /> Private
-              </span>
-            )}
-            {project.visibility === "public" && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">
-                <Globe className="w-2.5 h-2.5" /> Public
+              <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--color-text-muted)]">
+                <Lock className="w-3.5 h-3.5" /> Private
               </span>
             )}
           </div>

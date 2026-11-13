@@ -801,7 +801,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
 
       <div className="border-t border-[var(--color-border)] pt-1.5">
         <div className="flex items-baseline justify-between gap-2 mb-0.5">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">History</span>
+          <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">History</span>
           {toSet > 0 && <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-400">{toSet === 1 ? "1 time" : `${toSet} times`} to set</span>}
           {canEdit && onUpdate && (started || history.length > 0) && (
             <button type="button" onClick={() => void startOver()} disabled={busy} className="ml-auto text-[11px] font-semibold text-rose-700 dark:text-rose-400 hover:underline disabled:opacity-50">Start over</button>
@@ -821,7 +821,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                 const tip = x.unsure === "unset" ? "When it happened wasn't saved - tap to set it" : x.unsure === "order" ? "This time is after what came next - check it" : undefined;
                 return (
                   <li key={x.key} className="text-[12px] break-words">
-                    {head && <div className={`mt-1.5 text-[10.5px] font-bold uppercase tracking-wide ${sh.night ? "text-violet-700 dark:text-violet-300" : "text-sky-700 dark:text-sky-300"}`}>{sh.label}</div>}
+                    {head && <div className={`mt-1.5 text-[12px] font-semibold ${sh.night ? "text-violet-700 dark:text-violet-300" : "text-sky-700 dark:text-sky-300"}`}>{sh.label}</div>}
                     <div className="py-0.5 pl-2 border-l-2 border-[var(--color-border)]">
                       {x.unsure && editable
                         ? <button type="button" onClick={() => openFix(x)} title={tip} className={`mr-1.5 whitespace-nowrap ${timeCls}`}>{time}</button>

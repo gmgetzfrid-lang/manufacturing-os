@@ -126,7 +126,7 @@ export function ProgressSlider({ percent, onPick, disabled, busy, commitSame, co
   return (
     <div className="w-full">
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Progress</span>
+        <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Progress</span>
         <span className="text-sm font-black text-[var(--color-text)] tabular-nums">{val}%</span>
       </div>
       <input

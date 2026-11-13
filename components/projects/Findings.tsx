@@ -41,7 +41,7 @@ export const openFindingsReview = () => window.dispatchEvent(new CustomEvent(OPE
 const btn = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[12.5px] font-bold px-3.5 py-2 shadow-sm disabled:opacity-50";
 const quiet = "inline-flex items-center justify-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[12px] font-semibold text-[var(--color-text)] px-2.5 py-1.5 disabled:opacity-50";
 const field = "w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1.5 text-[13px] text-[var(--color-text)]";
-const label = "block text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1";
+const label = "block text-[12px] font-semibold text-[var(--color-text-muted)] mb-1";
 
 const KIND_TONE: Record<FindingFields["kind"], string> = {
   problem: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900",
@@ -50,7 +50,7 @@ const KIND_TONE: Record<FindingFields["kind"], string> = {
   missed_scope: "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950/40 dark:text-violet-300 dark:border-violet-900",
 };
 export function KindChip({ kind }: { kind: FindingFields["kind"] }) {
-  return <span className={`inline-block shrink-0 rounded border px-1.5 py-px text-[10.5px] font-black uppercase tracking-wider ${KIND_TONE[kind]}`}>{KIND_WORD[kind]}</span>;
+  return <span className={`inline-block shrink-0 rounded border px-1.5 py-px text-[12px] font-semibold ${KIND_TONE[kind]}`}>{KIND_WORD[kind]}</span>;
 }
 
 const when = (ms: number, tz: string) => fmtInTz(ms, tz, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
@@ -412,7 +412,7 @@ export function JobFindings({ orgId, projectId, milestoneIds, tag, tz }: {
     return (
       <li key={f.id} className="py-1.5" data-job-finding-row>
         <div className="flex flex-wrap items-center gap-1">
-          {(cats.length ? cats : [f.topic]).map((c) => <span key={c} className="rounded bg-[var(--color-surface-2)] px-1.5 py-px text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">{c}</span>)}
+          {(cats.length ? cats : [f.topic]).map((c) => <span key={c} className="rounded bg-[var(--color-surface-2)] px-1.5 py-px text-[12px] font-semibold text-[var(--color-text-muted)]">{c}</span>)}
           {f.assetTag && <span className="text-[11px] font-bold text-[var(--color-text)]">{f.assetTag}</span>}
           <span className="text-[11px] text-[var(--color-text-faint)]">{from ? `${from} · ` : ""}{day(f.foundAt, tz)}{f.createdByName ? ` · ${f.createdByName}` : ""}</span>
         </div>
@@ -424,11 +424,11 @@ export function JobFindings({ orgId, projectId, milestoneIds, tag, tz }: {
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2" data-job-findings>
       {here.length > 0 && <>
-        <div className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]"><Lightbulb className="w-3.5 h-3.5" /> Findings on this job{tag ? ` and ${tag}` : ""} ({here.length})</div>
+        <div className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--color-text-muted)]"><Lightbulb className="w-3.5 h-3.5" /> Findings on this job{tag ? ` and ${tag}` : ""} ({here.length})</div>
         <ul className="divide-y divide-[var(--color-border)]">{here.map((f) => line(f, null))}</ul>
       </>}
       {past.rows.length > 0 && <>
-        <div className={`flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] ${here.length ? "mt-2" : ""}`}><History className="w-3.5 h-3.5" /> From past jobs on {tag} ({past.rows.length})</div>
+        <div className={`flex items-center gap-1.5 text-[12px] font-semibold text-[var(--color-text-muted)] ${here.length ? "mt-2" : ""}`}><History className="w-3.5 h-3.5" /> From past jobs on {tag} ({past.rows.length})</div>
         <ul className="divide-y divide-[var(--color-border)]">{past.rows.map((f) => line(f, past.names.get(f.projectId) ?? "Another project"))}</ul>
       </>}
     </div>
@@ -584,7 +584,7 @@ function ReviewRow({ draft, tz, canEdit, editing, busy, error, equipment, unitLa
             <KindChip kind={d.kind} />
             <span className="flex-1 min-w-0 break-words text-[var(--color-text)]">{d.body}{d.hours ? <span className="text-[var(--color-text-muted)]"> ({d.hours} h{d.source === "discovery" ? " of work added" : d.source === "hold" ? " on hold" : ""})</span> : null}</span>
           </div>
-          {d.nextTime.trim() && <div className="mt-1 text-[var(--color-text)]"><span className="text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Next time </span>{d.nextTime}</div>}
+          {d.nextTime.trim() && <div className="mt-1 text-[var(--color-text)]"><span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Next time </span>{d.nextTime}</div>}
           <div className="mt-1 text-[11.5px] text-[var(--color-text-muted)]">Applies to <b className="text-[var(--color-text)]">{applies}</b> · {d.topic}</div>
           {canEdit && (
             <div className="mt-2 flex flex-wrap gap-1.5">
@@ -672,7 +672,7 @@ export function FindingsGate({ orgId, projectId, onCount, onOpen }: { orgId: str
   useEffect(() => () => onCount(null), [onCount]);
   return (
     <div className="px-6 pt-4">
-      <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1.5">Lessons &amp; findings</div>
+      <div className="text-[12px] font-semibold text-[var(--color-text-muted)] mb-1.5">Lessons &amp; findings</div>
       {r.ready && r.missing ? (
         <div className="text-xs text-amber-800 dark:text-amber-300">{missingMsg} Nothing from this job reaches the next one until then.</div>
       ) : left == null ? (
@@ -780,7 +780,7 @@ export function PastJobsPanel({ orgId, projectId, projectType: given, milestones
         <KindChip kind={x.finding.kind} />
         <div className="flex-1 min-w-0">
           <div className="text-[var(--color-text)] break-words">{x.finding.assetTag ? <b>{x.finding.assetTag} · </b> : null}{x.finding.body}{x.finding.hours ? <span className="text-[var(--color-text-muted)]"> ({x.finding.hours} h{x.finding.source === "discovery" ? " of work added" : x.finding.source === "hold" ? " on hold" : ""})</span> : null}</div>
-          {x.finding.nextTime && <div className="text-[var(--color-text)]"><span className="text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Next time </span>{x.finding.nextTime}</div>}
+          {x.finding.nextTime && <div className="text-[var(--color-text)]"><span className="text-[12px] font-semibold text-[var(--color-text-muted)]">Next time </span>{x.finding.nextTime}</div>}
           <div className="text-[11px] text-[var(--color-text-faint)]">{x.project} · {day(x.at, tz)} · {x.finding.topic}</div>
         </div>
       </div>

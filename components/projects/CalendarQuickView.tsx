@@ -239,7 +239,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
             return (
               <React.Fragment key={m.id ?? m.name}>
                 {d !== prev && Number.isFinite(startMsOf(m)) && (
-                  <li className={`px-3 pt-2 pb-0.5 text-[10.5px] font-black uppercase tracking-wider ${d === dayKey ? "text-[var(--color-accent)]" : "text-[var(--color-text-muted)]"}`}>
+                  <li className={`px-3 pt-2 pb-0.5 text-[12px] font-semibold ${d === dayKey ? "text-[var(--color-accent)]" : "text-[var(--color-text-muted)]"}`}>
                     {fmtInTz(startMsOf(m), tz, { weekday: "short", month: "short", day: "numeric" })}{d === dayKey ? " · today" : ""}
                   </li>
                 )}

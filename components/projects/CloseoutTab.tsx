@@ -668,7 +668,7 @@ function Step({ n, ok, title, detail, action, children }: { n: number; ok: boole
 function Tile({ k, v, s, tone }: { k: string; v: string; s: string; tone?: "good" | "bad" | "warn" }) {
   return (
     <div className="rounded-xl border border-[var(--color-border)] px-3 py-2 min-w-0">
-      <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">{k}</div>
+      <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">{k}</div>
       <div className={`text-[16px] font-black truncate ${tone === "good" ? "text-emerald-700 dark:text-emerald-400" : tone === "bad" ? "text-rose-700 dark:text-rose-400" : tone === "warn" ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text)]"}`}>{v}</div>
       <div className="text-[11px] text-[var(--color-text-muted)] truncate">{s}</div>
     </div>

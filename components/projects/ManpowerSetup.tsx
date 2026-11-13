@@ -80,7 +80,7 @@ export function ManpowerStep({ projectId, milestones, canManage, userEmail }: { 
   return (
     <div className="space-y-4">
       <div className="space-y-1.5">
-        <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Each crew&apos;s company</div>
+        <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Each crew&apos;s company</div>
         <p className="text-[12px] text-[var(--color-text-muted)]">Read from the crew&apos;s name: Schultz - Tower and Schultz 1 are Schultz; (KE) crews are Kern Energy. Change any that&apos;s wrong.</p>
         {crews.length === 0 ? <div className="text-[12.5px] text-[var(--color-text-muted)]">No crews on the schedule yet.</div> : (
           <ul className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
@@ -97,7 +97,7 @@ export function ManpowerStep({ projectId, milestones, canManage, userEmail }: { 
       </div>
 
       <div className="space-y-1.5">
-        <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Bid manpower per shift, and rate</div>
+        <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Bid manpower per shift, and rate</div>
         <p className="text-[12px] text-[var(--color-text-muted)]">From the contractor&apos;s bid or the AFE. Direct: on the tools. Indirect: supervision, safety, hole and fire watch, QC, tool room. The rate is per man-hour, for time-and-material contracts; leave it blank otherwise.</p>
         <ul className="space-y-2">
           {companies.map((co) => {
@@ -176,7 +176,7 @@ function StaffingPlansPart({ projectId, canManage, userEmail }: { projectId: str
   const list = Object.entries(plans ?? {});
   return (
     <div className="space-y-1.5" data-staffing-plans>
-      <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Staffing plans</div>
+      <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Staffing plans</div>
       <p className="text-[12px] text-[var(--color-text-muted)]">The contractor&apos;s spreadsheet of planned hands by date, day and night. Each shift&apos;s head count is held to it.</p>
       {plans == null ? <div className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading…</div>
         : list.length === 0 ? <div className="text-[12.5px] text-[var(--color-text-muted)]">None read yet.</div>

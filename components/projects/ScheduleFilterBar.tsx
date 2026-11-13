@@ -113,7 +113,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
       {showMore && (
         <div className="pt-1 space-y-2 border-t border-[var(--color-border)]">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mr-1">Status</span>
+            <span className="text-[12px] font-semibold text-[var(--color-text-faint)] mr-1">Status</span>
             {STATUS_CHIPS.map(({ s, label, dot }) => {
               const on = filter.statuses.includes(s);
               return (
@@ -125,7 +125,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
           </div>
           {groups.length > 1 && (
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mr-1">Group</span>
+              <span className="text-[12px] font-semibold text-[var(--color-text-faint)] mr-1">Group</span>
               {groups.map((g) => {
                 const on = !!g.id && filter.groupIds.includes(g.id);
                 return (
@@ -137,7 +137,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
             </div>
           )}
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mr-1">Added work</span>
+            <span className="text-[12px] font-semibold text-[var(--color-text-faint)] mr-1">Added work</span>
             {(["discovery", "added"] as const).map((k) => {
               const on = !!filter.added?.includes(k);
               return (
@@ -149,7 +149,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
             })}
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mr-1">Shift</span>
+            <span className="text-[12px] font-semibold text-[var(--color-text-faint)] mr-1">Shift</span>
             {(["day", "night", "swing"] as const).map((sh) => {
               const on = filter.shifts.includes(sh);
               const has = filter.shifts.includes(sh);

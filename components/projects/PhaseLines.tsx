@@ -41,7 +41,7 @@ export default function PhaseLines({ rows, print }: { rows: PhaseStanding[]; pri
   return (
     <div data-phase-lines>
       <div className="flex items-baseline justify-between gap-2 mb-2">
-        <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">By phase</div>
+        <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">By phase</div>
         <div className="text-[11px] text-[var(--color-text-muted)]">Each phase against its own plan</div>
       </div>
       <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)]">

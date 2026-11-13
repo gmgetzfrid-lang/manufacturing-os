@@ -64,15 +64,14 @@ export function PhaseBar({ phases, pick, onPick, onEdit }: { phases: ProjectPhas
   if (!phases.length) return null;
   const seg = (on: boolean) => `shrink-0 inline-flex items-center gap-1.5 h-9 px-3 text-[13px] font-bold border-r last:border-r-0 border-[var(--color-border-strong)] ${on ? "bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
   return (
-    <div className="flex items-center gap-2 flex-wrap mb-4">
-      <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Phase</span>
-      <div className="inline-flex max-w-full overflow-x-auto rounded-lg border border-[var(--color-border-strong)]" role="group" aria-label="Phase">
+    <div className="flex items-center gap-2 mb-4 min-w-0">
+      <div className="inline-flex max-w-full overflow-x-auto [scrollbar-width:none] rounded-lg border border-[var(--color-border-strong)]" role="group" aria-label="Phase">
         <button type="button" aria-pressed={pick === null} onClick={() => onPick(null)} className={seg(pick === null)}>All phases</button>
         {phases.map((p, i) => (
           <button key={p.id} type="button" aria-pressed={pick === p.id} onClick={() => onPick(p.id)} className={seg(pick === p.id)} title={phaseDates(p)}>
             <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: phaseColor(i) }} />
             {p.name}
-            <span className={`font-semibold text-[11.5px] ${pick === p.id ? "opacity-80" : "text-[var(--color-text-muted)]"}`}>{phaseDates(p)}</span>
+            <span className={`font-medium text-[12px] max-sm:hidden ${pick === p.id ? "opacity-80" : "text-[var(--color-text-muted)]"}`}>{phaseDates(p)}</span>
           </button>
         ))}
       </div>
@@ -227,12 +226,12 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, uid,
       <ModalBody className="space-y-5">
 
         <label className="block">
-          <span className="block text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1">Project name</span>
+          <span className="block text-[12px] font-semibold text-[var(--color-text-muted)] mb-1">Project name</span>
           <input value={name} onChange={(e) => setName(e.target.value)} className={`${input} w-full max-w-lg`} />
         </label>
 
         <div>
-          <span className="block text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] mb-1">AFE{afe?.number ? ` ${afe.number}` : ""}</span>
+          <span className="block text-[12px] font-semibold text-[var(--color-text-muted)] mb-1">AFE{afe?.number ? ` ${afe.number}` : ""}</span>
           <div className="flex items-center gap-2 flex-wrap">
             <input value={afeDraft} onChange={(e) => setAfeDraft(e.target.value)} inputMode="decimal" placeholder={linesTotal ? money(linesTotal) : "$0"} aria-label="AFE amount" className={`${input} w-44`} />
             <span className="text-[12.5px] text-[var(--color-text-muted)]">
@@ -244,7 +243,7 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, uid,
         </div>
 
         <div>
-          <div className="grid grid-cols-[minmax(0,1.4fr)_repeat(2,minmax(0,1fr))_80px_110px_36px] gap-2 items-end text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)] pb-1 max-sm:hidden">
+          <div className="grid grid-cols-[minmax(0,1.4fr)_repeat(2,minmax(0,1fr))_80px_110px_36px] gap-2 items-end text-[12px] font-semibold text-[var(--color-text-muted)] pb-1 max-sm:hidden">
             <span>Phase</span><span>Starts</span><span>Finishes</span><span className="text-right">Share</span><span className="text-right">Budget</span><span />
           </div>
           <div className="space-y-2">

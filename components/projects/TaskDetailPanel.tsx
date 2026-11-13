@@ -341,7 +341,7 @@ export default function TaskDetailPanel({
               {isLeaf ? (
                 <div className="px-4 py-3 border-b border-[var(--color-border)] space-y-3">
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Status</span>
+                    <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Status</span>
                     <StatusControl
                       status={m.status}
                       busy={busyStatus}
@@ -360,7 +360,7 @@ export default function TaskDetailPanel({
                   {onSetProgressNote && m.id && canEdit ? (
                     <div className="space-y-1">
                       <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">% done</span>
+                        <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">% done</span>
                         <span className="text-sm font-black text-[var(--color-text)] tabular-nums">{effPct}%</span>
                       </div>
                       <ProgressNoteForm key={`${m.id}:${effPct}`} percent={effPct} autoFocus={false} busy={busyStatus}
@@ -373,7 +373,7 @@ export default function TaskDetailPanel({
               ) : (
                 <div className="px-4 py-3 border-b border-[var(--color-border)]">
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Phase status</span>
+                    <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Phase status</span>
                     <StatusControl status={effStatus} variant="pill" readOnly title="Rolls up from sub-tasks" onPick={() => {}} />
                     <span className="text-sm font-black tabular-nums text-[var(--color-text)]">{effPct}%</span>
                   </div>
@@ -391,7 +391,7 @@ export default function TaskDetailPanel({
               {/* Move — reschedule the whole task without dragging. */}
               {canEdit && onMoveDays && m.id && (
                 <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Move</span>
+                  <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Move</span>
                   <div className="inline-flex items-center rounded-lg border border-[var(--color-border)] overflow-hidden">
                     <button onClick={() => onMoveDays(m.id!, -7)} title="1 week earlier" className="px-2 py-1 text-[11px] font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">−1w</button>
                     <button onClick={() => onMoveDays(m.id!, -1)} title="1 day earlier" className="px-2 py-1 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] border-l border-[var(--color-border)]"><ChevronLeft className="w-3.5 h-3.5" /></button>
@@ -487,7 +487,7 @@ export default function TaskDetailPanel({
                 if (!d) return null;
                 return (
                   <div className="px-4 py-3 border-b border-[var(--color-border)] bg-violet-50/60 dark:bg-violet-950/20">
-                    <div className="text-[10px] font-black uppercase tracking-widest text-violet-700 dark:text-violet-300 mb-1">{ADDED[kindOf(d)].word}{d.of > 1 ? ` · step ${d.seq} of ${d.of}` : ""}</div>
+                    <div className="text-[12px] font-semibold text-violet-700 dark:text-violet-300 mb-1">{ADDED[kindOf(d)].word}{d.of > 1 ? ` · step ${d.seq} of ${d.of}` : ""}</div>
                     <div className="text-xs text-[var(--color-text)] break-words">{d.what}</div>
                     <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
                       {ADDED[kindOf(d)].found[0].toUpperCase() + ADDED[kindOf(d)].found.slice(1)} {fmtInTz(d.foundAt, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}{d.foundBy ? ` by ${d.foundBy}` : ""}{d.approvedBy ? ` · approved by ${d.approvedBy}` : ""}
@@ -508,7 +508,7 @@ export default function TaskDetailPanel({
                 return (
                   <div className="px-4 py-2.5 border-b border-[var(--color-border)] space-y-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Shift</span>
+                      <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Shift</span>
                       <div className="inline-flex rounded-lg border border-[var(--color-border-strong)] overflow-hidden" role="radiogroup" aria-label="Which shift does this step">
                         <button type="button" role="radio" aria-checked={k === "day"} disabled={shiftBusy || k === "day"} onClick={() => void putOnShift("day")} className={seg(k === "day", false)}><Sun className="w-3.5 h-3.5" aria-hidden /> Day</button>
                         <button type="button" role="radio" aria-checked={k === "night"} disabled={shiftBusy || k === "night"} onClick={() => void putOnShift("night")} className={seg(k === "night", true)}><Moon className="w-3.5 h-3.5" aria-hidden /> Night</button>
@@ -528,7 +528,7 @@ export default function TaskDetailPanel({
               {/* Where it came from: imported with the schedule, or added by hand. */}
               {!discoveryOf(m) && (
                 <div className="px-4 py-2.5 border-b border-[var(--color-border)]">
-                  <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-1">Where it came from</div>
+                  <div className="text-[12px] font-semibold text-[var(--color-text-faint)] mb-1">Where it came from</div>
                   {originOf(m, (t) => fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })).lines.map((l) => (
                     <div key={l} className="text-xs text-[var(--color-text)] break-words">{l}</div>
                   ))}
@@ -538,7 +538,7 @@ export default function TaskDetailPanel({
               {/* Source attributes (the labeled columns from the schedule) */}
               {m.attributes && Object.keys(m.attributes).some((k) => !HIDDEN_ATTRS.has(k)) && (
                 <div className="px-4 py-3 border-b border-[var(--color-border)]">
-                  <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-2">From the schedule</div>
+                  <div className="text-[12px] font-semibold text-[var(--color-text-faint)] mb-2">From the schedule</div>
                   <div className="grid grid-cols-1 gap-1">
                     {Object.entries(m.attributes).filter(([k]) => !HIDDEN_ATTRS.has(k)).map(([k, v]) => (
                       <div key={k} className="flex items-baseline gap-2 text-xs">
@@ -571,7 +571,7 @@ export default function TaskDetailPanel({
                 <div className="px-4 py-3 border-b border-[var(--color-border)]">
                   <div className="flex items-center gap-1.5 mb-1">
                     <Layers className="w-3.5 h-3.5 text-indigo-500" />
-                    <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Subtasks</span>
+                    <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Subtasks</span>
                     {leafProgress && <span className="text-[11px] font-mono text-indigo-600 dark:text-indigo-400 font-bold ml-auto">{leafProgress.done}/{leafProgress.total} · {leafProgress.pct}%</span>}
                   </div>
                   <div className="text-[10px] text-[var(--color-text-faint)] mb-2">
@@ -652,7 +652,7 @@ export default function TaskDetailPanel({
               <div className="px-4 py-3">
                 <div className="flex items-center gap-1.5 mb-2">
                   <History className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
-                  <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Activity</span>
+                  <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Activity</span>
                 </div>
                 {canEdit && (
                   <div className="flex items-start gap-2 mb-3">
@@ -893,13 +893,13 @@ function EditForm({
         </L>
         <L label="Work order #"><input value={workOrderRef} onChange={(e) => setWorkOrderRef(e.target.value)} className={inp} /></L>
       </div>
-      <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] pt-1">Responsible (planned)</div>
+      <div className="text-[12px] font-semibold text-[var(--color-text-faint)] pt-1">Responsible (planned)</div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <L label="Person / crew"><CrewPicker value={responsibleParty} onChange={setResponsibleParty} crews={crewList} className="w-full" label="Person / crew" /></L>
         <L label="Dept / company"><input value={responsibleOrg} onChange={(e) => setResponsibleOrg(e.target.value)} className={inp} /></L>
       </div>
       <L label="Type"><KindSelect value={responsibleKind} onChange={setResponsibleKind} /></L>
-      <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] pt-1">Actually performed by</div>
+      <div className="text-[12px] font-semibold text-[var(--color-text-faint)] pt-1">Actually performed by</div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <L label="Person / crew"><input value={actualParty} onChange={(e) => setActualParty(e.target.value)} className={inp} /></L>
         <L label="Dept / company"><input value={actualOrg} onChange={(e) => setActualOrg(e.target.value)} className={inp} /></L>
@@ -934,7 +934,7 @@ const inp = "w-full px-2.5 py-1.5 text-sm border border-[var(--color-border-stro
 function L({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">{label}</span>
+      <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">{label}</span>
       <div className="mt-1">{children}</div>
     </label>
   );
@@ -965,7 +965,7 @@ function Field({ icon, label, children }: { icon: React.ReactNode; label: string
     <div className="flex items-start gap-2">
       <span className="text-[var(--color-text-faint)] mt-0.5 shrink-0">{icon}</span>
       <div className="min-w-0">
-        <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)]">{label}</div>
+        <div className="text-[12px] font-semibold text-[var(--color-text-faint)]">{label}</div>
         <div className="text-[13px] text-[var(--color-text)] break-words">{children}</div>
       </div>
     </div>
@@ -986,7 +986,7 @@ function StatusPill({ status, dotOnly }: { status: MilestoneStatus; dotOnly?: bo
     status === "on_hold"     ? "text-amber-900 dark:text-amber-200 bg-amber-100 dark:bg-amber-900/40 border-amber-200 dark:border-amber-800" :
     status === "blocked"     ? "text-rose-800 dark:text-rose-300 bg-rose-100 dark:bg-rose-900/40 border-rose-200 dark:border-rose-800" :
     status === "missed"      ? "text-rose-900 dark:text-rose-200 bg-rose-100 dark:bg-rose-900/40 border-rose-200 dark:border-rose-800" : "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]";
-  return <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${text}`}><span className={`w-1.5 h-1.5 rounded-full ${tone}`} />{labelOf(status)}</span>;
+  return <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[12px] font-semibold border ${text}`}><span className={`w-1.5 h-1.5 rounded-full ${tone}`} />{labelOf(status)}</span>;
 }
 
 function labelOf(s: MilestoneStatus): string {
@@ -1085,7 +1085,7 @@ function DependencyEditor({
     <div className="px-4 py-3 border-b border-[var(--color-border)]">
       <div className="flex items-center gap-1.5 mb-1.5">
         <Link2 className="w-3.5 h-3.5 text-indigo-500" />
-        <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Depends on</span>
+        <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Depends on</span>
         <span className="text-[10px] text-[var(--color-text-faint)]">- and how it waits on each</span>
       </div>
       {deps.length === 0 ? (
@@ -1196,7 +1196,7 @@ function HoldsUpEditor({ milestone, allTasks, canEdit, userId, onChanged, onSele
     <div className="px-4 py-3 border-b border-[var(--color-border)]">
       <div className="flex items-center gap-1.5 mb-1.5">
         <ArrowRight className="w-3.5 h-3.5 text-amber-600" />
-        <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Holds up</span>
+        <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Holds up</span>
         <span className="text-[10px] text-[var(--color-text-faint)]">- can&apos;t start until this is done</span>
       </div>
       {waiting.length === 0 ? (
@@ -1269,7 +1269,7 @@ function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
     <div className="px-4 py-3 border-b border-[var(--color-border)]">
       <div className="flex items-center gap-1.5 mb-1.5">
         <Target className="w-3.5 h-3.5 text-indigo-500" />
-        <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Responsible</span>
+        <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Responsible</span>
         <span className="text-[10px] text-[var(--color-text-faint)]">- the member who owns this deliverable</span>
       </div>
       {canEdit ? (

@@ -145,7 +145,7 @@ export default function ProjectFilePlace({ orgId, projectId, uid, canManage, hom
       {open && (
         <div className="rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-3 space-y-3" data-file-place-picker>
           <div>
-            <div className="text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-faint)] mb-1.5">1 · Library</div>
+            <div className="text-[12px] font-semibold text-[var(--color-text-faint)] mb-1.5">1 · Library</div>
             <div className="flex flex-wrap gap-1.5">
               {home.libraries.map((l) => (
                 <button key={l.id} type="button" aria-pressed={lib === l.id} onClick={() => pickLib(l.id)}
@@ -159,7 +159,7 @@ export default function ProjectFilePlace({ orgId, projectId, uid, canManage, hom
 
           {lib && (
             <div>
-              <div className="text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-faint)] mb-1.5">2 · Folder</div>
+              <div className="text-[12px] font-semibold text-[var(--color-text-faint)] mb-1.5">2 · Folder</div>
               {busy === "folders" || !folders ? <div className="text-[12.5px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Reading the folders</div> : (
                 <ul ref={listRef} className="max-h-56 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]" role="listbox" aria-label="Folder">
                   <li>

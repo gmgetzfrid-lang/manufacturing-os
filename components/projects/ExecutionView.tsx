@@ -1289,8 +1289,8 @@ export default function ExecutionView({
         </div>
       )}
 
-      {/* On a phone the summary folds to one line so the board is on screen. */}
-      {mode !== "work" ? null : compact && !showCards ? (
+      {/* The full summary is on the Plan tab; here it is one line, so the work is on screen. */}
+      {mode !== "work" ? null : !showCards ? (
         <CompactSummary items={items} now={nowDate} shiftTimes={shiftTimes} projectId={projectId} onOpen={() => setShowCards(true)} />
       ) : (
         <>
@@ -1298,7 +1298,7 @@ export default function ExecutionView({
           <ScheduleProgress milestones={items} metrics={metrics} projectId={projectId}
             onShowOverdue={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, overdueOnly: true, query: f.query })); }}
             onShowBlocked={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, blockedOnly: true, query: f.query })); }} />
-          {compact && <button onClick={() => setShowCards(false)} className="text-[11px] font-bold text-[var(--color-text-muted)]">Fold the summary</button>}
+          <button onClick={() => setShowCards(false)} className="text-[12px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Fold the summary</button>
         </>
       )}
 
@@ -1369,7 +1369,7 @@ export default function ExecutionView({
           phases) so the key shows even for a one-root schedule. */}
       {(layout === "timeline" || layout === "calendar") && colors.groups.length > 1 && (
         <div className="flex items-center gap-x-3 gap-y-1 flex-wrap px-1 text-[11px]">
-          <span className="font-black uppercase tracking-widest text-[var(--color-text-faint)]">Phases</span>
+          <span className="font-semibold text-[var(--color-text-muted)]">Phases</span>
           {colors.groups.map((g) => {
             const c = colors.colorOf(g);
             return (
@@ -1468,7 +1468,7 @@ export default function ExecutionView({
                   onDoubleClick={() => { setUserLeftW(LEFT_W); try { localStorage.removeItem("timeline:leftW"); } catch { /* private mode */ } }}
                   className="absolute top-0 -right-1 z-30 h-full w-2 cursor-col-resize hover:bg-[var(--color-accent)]/30 active:bg-[var(--color-accent)]/50" />
               )}
-              <div className="sticky top-0 z-10 bg-slate-50/95 dark:bg-[var(--color-surface-2)]/95 backdrop-blur border-b border-[var(--color-border)] flex items-center px-3 text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]" style={{ height: AXIS_H }}>
+              <div className="sticky top-0 z-10 bg-slate-50/95 dark:bg-[var(--color-surface-2)]/95 backdrop-blur border-b border-[var(--color-border)] flex items-center px-3 text-[12px] font-semibold text-[var(--color-text-muted)]" style={{ height: AXIS_H }}>
                 <ListTree className="w-3.5 h-3.5 mr-1.5 text-[var(--color-accent)]" /> Work breakdown
               </div>
               {win.first > 0 && <div style={{ height: win.first * ROW_H }} aria-hidden />}
@@ -1726,7 +1726,7 @@ function Toolbar({
             <>
               {/* Bulk status */}
               <div className="inline-flex items-center gap-1">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)]">Mark</span>
+                <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Mark</span>
                 {([["completed", "Done", "bg-emerald-600"], ["in_progress", "Doing", "bg-blue-600"], ["on_hold", "Hold", "bg-amber-600"], ["blocked", "Block", "bg-rose-600"]] as const).map(([s, label, bg]) => (
                   <button key={s} onClick={() => onBulkStatus(s)} className={`px-2 py-1 rounded-md text-white text-[11px] font-bold ${bg} hover:brightness-110`}>
                     {label}
@@ -1736,7 +1736,7 @@ function Toolbar({
               <span className="w-px h-4 bg-slate-200" />
               {/* Bulk move */}
               <div className="inline-flex items-center gap-1">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)]">Move</span>
+                <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">Move</span>
                 <button onClick={() => onBulkMove(-1)} className="px-1.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold">−1d</button>
                 <button onClick={() => onBulkMove(1)} className="px-1.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold">+1d</button>
               </div>
@@ -2310,7 +2310,7 @@ function Legend() {
     <div className="px-3 py-2 border-t border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] space-y-1.5">
       {/* Status colours */}
       <div className="flex items-center gap-3 flex-wrap">
-        <span className="text-[9px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">Status</span>
+        <span className="text-[11px] font-semibold text-[var(--color-text-muted)]">Status</span>
         {entries.map(([s, label]) => (
           <span key={s} className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
             <span className={`w-2.5 h-2.5 rounded-sm ${statusTone(s).bar}`} /> {label}
@@ -2319,7 +2319,7 @@ function Legend() {
       </div>
       {/* Symbol key — what the shapes mean (MS-Project-style vocabulary). */}
       <div className="flex items-center gap-3.5 flex-wrap">
-        <span className="text-[9px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">Symbols</span>
+        <span className="text-[11px] font-semibold text-[var(--color-text-muted)]">Symbols</span>
         <span className="inline-flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]" title="A task; the lighter fill shows % complete">
           <span className="relative w-7 h-2.5 rounded bg-blue-500 overflow-hidden"><span className="absolute inset-y-0 left-0 bg-white/40" style={{ width: "55%" }} /></span> Task (fill = % done)
         </span>
@@ -2470,7 +2470,7 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
         </div>
         <div className="p-5 space-y-3">
           <div className="flex items-center justify-between">
-            <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">How long it runs</label>
+            <label className="text-[12px] font-semibold text-[var(--color-text-muted)]">How long it runs</label>
             <div className="inline-flex rounded-md bg-[var(--color-surface-2)] p-0.5 text-[11px] font-bold">
               {(["hours", "days"] as const).map((u) => (
                 <button key={u} onClick={() => { setUnit(u); setValue(u === "hours" ? Math.max(0.25, Math.round(((finishAt - startAt) / 3_600_000) * 4) / 4) : Math.max(1, dayDiff(new Date(startAt), finish, tz) + 1)); }}

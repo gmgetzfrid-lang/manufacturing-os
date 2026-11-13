@@ -189,7 +189,7 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
     <div className="space-y-4">
       {/* The units */}
       <div className="space-y-1.5">
-        <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Units this project is on</div>
+        <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Units this project is on</div>
         {data.units.length === 0 ? (
           <div className="text-[12.5px] text-[var(--color-text-muted)]">No units in the Site Codebook yet. Add them under Admin › Codebook.</div>
         ) : (
@@ -249,7 +249,7 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
       {/* The work orders */}
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Work orders: equipment, unit and type · {matches.length}</div>
+          <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Work orders: equipment, unit and type · {matches.length}</div>
           {todo.length > 0 && (
             <button type="button" onClick={confirmAll} disabled={!!busy || !pUnits.length} className={`${btn} ml-auto`} title={pUnits.length ? undefined : "Pick the project's unit first"}>
               {busy === "all" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Confirm all {todo.length}
@@ -336,7 +336,7 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
 }
 
 const chip = (t: string, tone: "emerald" | "amber" | "slate") => (
-  <span className={`inline-block rounded px-1.5 py-px text-[10.5px] font-black uppercase tracking-wider ${tone === "emerald" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300" : tone === "amber" ? "bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}>{t}</span>
+  <span className={`inline-block rounded px-1.5 py-px text-[12px] font-semibold ${tone === "emerald" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300" : tone === "amber" ? "bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}>{t}</span>
 );
 
 /** The registry lists the work order's equipment ID under another name

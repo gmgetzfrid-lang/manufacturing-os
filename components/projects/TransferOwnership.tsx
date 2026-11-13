@@ -68,7 +68,7 @@ export function TransferOwnershipModal({ project, members, preselect, actorUserI
       <ModalBody>
         <div className="space-y-4">
           <div>
-            <div className="text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">New owner</div>
+            <div className="text-[12px] font-semibold text-[var(--color-text-muted)] mb-1.5">New owner</div>
             <div className="space-y-1.5" role="radiogroup" aria-label="New owner">
               {candidates.map((m) => (
                 <button key={m.userId} type="button" role="radio" aria-checked={pick === m.userId} onClick={() => setPick(m.userId)} className={`${radio(pick === m.userId)} w-full`}>
@@ -86,7 +86,7 @@ export function TransferOwnershipModal({ project, members, preselect, actorUserI
             </div>
           </div>
           <div>
-            <div className="text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">{ownerName === "You" ? "You become" : `${ownerName} becomes`}</div>
+            <div className="text-[12px] font-semibold text-[var(--color-text-muted)] mb-1.5">{ownerName === "You" ? "You become" : `${ownerName} becomes`}</div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5" role="radiogroup" aria-label="The current owner becomes">
               {KEEP.map((k) => (
                 <button key={k.v} type="button" role="radio" aria-checked={keepAs === k.v} onClick={() => setKeepAs(k.v)} className={`${radio(keepAs === k.v)} flex-col`}>

@@ -156,7 +156,7 @@ export default function ExecutionGuide({ userId, worked }: {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-2">{title}</div>
+      <div className="text-[12px] font-semibold text-[var(--color-text-faint)] mb-2">{title}</div>
       <div className="space-y-2">{children}</div>
     </div>
   );

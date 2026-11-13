@@ -598,7 +598,7 @@ export default function DayAgendaPanel({
           )}
           {otherDays.length > 0 && (
             <section className="border-t border-[var(--color-border)]">
-              <div className="px-4 py-2 text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] bg-[var(--color-surface-2)]">On other days - click to go to its day</div>
+              <div className="px-4 py-2 text-[12px] font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface-2)]">On other days - click to go to its day</div>
               <ul className="divide-y divide-[var(--color-border)]">
                 {otherDays.map((m) => {
                   const d = dayKey(startMsOf(m), tz);

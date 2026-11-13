@@ -214,9 +214,9 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-[15px] font-black text-[var(--color-text)]">{item.label}</h3>
-                {item.checking ? <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">checking…</span> : item.done
-                  ? <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 dark:text-emerald-400">✓ set</span>
-                  : <span className={`text-[10px] font-black uppercase tracking-wider ${item.required ? "text-rose-600 dark:text-rose-400" : item.extra ? "text-[var(--color-text-faint)]" : "text-amber-600 dark:text-amber-400"}`}>{item.required ? "needed" : item.extra ? "optional" : "advised"}</span>}
+                {item.checking ? <span className="text-[12px] font-semibold text-[var(--color-text-faint)]">checking…</span> : item.done
+                  ? <span className="text-[12px] font-semibold text-emerald-700 dark:text-emerald-400">✓ set</span>
+                  : <span className={`text-[12px] font-semibold ${item.required ? "text-rose-600 dark:text-rose-400" : item.extra ? "text-[var(--color-text-faint)]" : "text-amber-600 dark:text-amber-400"}`}>{item.required ? "needed" : item.extra ? "optional" : "advised"}</span>}
               </div>
               <p className="text-[12.5px] text-[var(--color-text-muted)] mt-0.5">{item.why}</p>
             </div>
@@ -296,10 +296,10 @@ function TypeStep({ projectId, projectName, canManage, onSaved }: Props & { onSa
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
         {other && (
-          <label className="space-y-1"><span className="block text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Its word</span>
+          <label className="space-y-1"><span className="block text-[12px] font-semibold text-[var(--color-text-muted)]">Its word</span>
             <input value={t.word} onChange={(e) => setT({ word: e.target.value, short: t.short })} placeholder="e.g. Tie-in" maxLength={40} className={`${field} w-full`} /></label>
         )}
-        <label className="space-y-1"><span className="block text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Short form</span>
+        <label className="space-y-1"><span className="block text-[12px] font-semibold text-[var(--color-text-muted)]">Short form</span>
           <input value={t.short} onChange={(e) => setT({ word: t.word, short: e.target.value })} placeholder={t.word || "e.g. TA"} maxLength={16} className={`${field} w-full`} /></label>
       </div>
       <div className="rounded-lg border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-3 py-2 text-[12px] text-[var(--color-text-muted)]">
@@ -334,7 +334,7 @@ function TimeZoneStep({ projectId, timezone, canManage, userId, done, onSaved }:
   return (
     <div className="space-y-2.5">
       <label className="block space-y-1">
-        <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">The plant&apos;s time zone</span>
+        <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">The plant&apos;s time zone</span>
         <select value={tz} onChange={(e) => setTz(e.target.value)} className={`${field} w-full`}>
           <optgroup label="US">{US_ZONES.map((z) => <option key={z} value={z}>{tzLabel(z)}</option>)}</optgroup>
           <optgroup label="All">{all.filter((z) => !US_ZONES.includes(z)).map((z) => <option key={z} value={z}>{z}</option>)}</optgroup>
@@ -367,11 +367,11 @@ function ShiftsStep({ projectId, canManage, done, checking, onSaved }: Props & {
   return (
     <div className="space-y-2.5">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-        <label className="space-y-1"><span className="block text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Day shift starts</span>
+        <label className="space-y-1"><span className="block text-[12px] font-semibold text-[var(--color-text-muted)]">Day shift starts</span>
           <input type="time" disabled={!canManage} value={t.dayStart} onChange={(e) => setDraft({ ...t, dayStart: e.target.value })} className={`${field} w-full`} /></label>
-        <label className="space-y-1"><span className="block text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Night shift starts</span>
+        <label className="space-y-1"><span className="block text-[12px] font-semibold text-[var(--color-text-muted)]">Night shift starts</span>
           <input type="time" disabled={!canManage} value={t.nightStart} onChange={(e) => setDraft({ ...t, nightStart: e.target.value })} className={`${field} w-full`} /></label>
-        <label className="space-y-1"><span className="block text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Turnover meeting</span>
+        <label className="space-y-1"><span className="block text-[12px] font-semibold text-[var(--color-text-muted)]">Turnover meeting</span>
           <span className="flex items-center gap-1.5"><input type="number" min={0} max={180} step={5} disabled={!canManage} value={meetingLeadMin(t)} onChange={(e) => setDraft({ ...t, meetingBefore: Number(e.target.value) })} className={`${field} w-20`} />
             <span className="text-[12px] text-[var(--color-text-muted)]">min before</span></span></label>
       </div>
@@ -519,7 +519,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3">
         {/* Jobs */}
         <div className="space-y-2 min-w-0">
-          <div className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Jobs with night hours</div>
+          <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Jobs with night hours</div>
           <div className={`rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] ${fileMode ? "opacity-50 pointer-events-none" : ""}`}>
             {jobs.length === 0 && <div className="px-3 py-3 text-[13px] text-[var(--color-text-muted)]">{milestones.length ? "Nothing on the schedule is in night hours: it's all day work." : "No steps yet - import the schedule first."}</div>}
             {jobs.map((j) => {
@@ -574,7 +574,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
         {/* The shifts as they'll come out — kept in view while the jobs scroll. */}
         <div className="order-first xl:order-none space-y-2 min-w-0 xl:sticky xl:top-0 xl:self-start xl:max-h-[calc(100vh-220px)] xl:overflow-y-auto">
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">The shifts</span>
+            <span className="text-[12px] font-semibold text-[var(--color-text-muted)]">The shifts</span>
             <span className="ml-auto inline-flex items-center gap-1">
               <button type="button" onClick={() => setOffset((o) => o - 3)} className="w-7 h-7 inline-flex items-center justify-center rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]" aria-label="Earlier days"><ChevronLeft className="w-4 h-4" /></button>
               {offset !== 0 && <button type="button" onClick={() => setOffset(0)} className="px-2 h-7 rounded-md border border-[var(--color-border)] text-[11px] font-bold hover:bg-[var(--color-surface-2)]">Back</button>}

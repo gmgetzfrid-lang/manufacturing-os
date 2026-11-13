@@ -196,7 +196,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
     const toneOf = (k: string) => (k === "added" ? "text-teal-800 dark:text-teal-300" : k === "discovery" ? "text-violet-800 dark:text-violet-300" : undefined);
     return (
       <div className="ml-9 mt-2 space-y-1.5">
-        <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Where it came from</div>
+        <div className="text-[12px] font-semibold text-[var(--color-text-faint)]">Where it came from</div>
         {block("own", w.own.lines, toneOf(w.own.kind))}
         {w.added.map((a, i) => block(`a${i}`, [`${a.lines[0]} (${a.steps} step${a.steps === 1 ? "" : "s"})`, ...a.lines.slice(1)], toneOf(a.lines[0].startsWith(ADDED.added.word) ? "added" : "discovery")))}
         {w.byHand && block("hand", w.byHand.lines)}
@@ -398,7 +398,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                     {/* Its steps: inside the work order, indented, each a row that opens to its card. */}
                     <div className="px-2 sm:px-3 pt-2.5 pb-1">
                       <div className="ml-2 sm:ml-5 pl-2 sm:pl-3 border-l-2 border-[var(--color-accent)]/40">
-                        <div className="mb-1 text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+                        <div className="mb-1 text-[12px] font-semibold text-[var(--color-text-muted)]">
                           {single ? "The step" : `Steps · ${o.done} of ${o.steps.length} done`}
                         </div>
                         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">

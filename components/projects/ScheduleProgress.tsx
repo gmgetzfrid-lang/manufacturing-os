@@ -121,7 +121,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
         {byPhase ? <div className="mb-3"><PhaseLines rows={byPhase} /></div> : (
         <div className="flex items-baseline justify-between mb-3">
           <div>
-            <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Completion</div>
+            <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Completion</div>
             <div className="text-3xl font-black text-[var(--color-text)] leading-none mt-1">
               {earnedPct}<span className="text-base text-[var(--color-text-muted)] font-bold">%</span>
             </div>
@@ -130,7 +130,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
           {/* Finished: when and how late is on the card beside this, once. */}
           {finished ? null : (
           <div className="text-right">
-            <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">SPI</div>
+            <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">SPI</div>
             <div className={`text-3xl font-black leading-none mt-1 ${verdict === "behind" ? "text-rose-600 dark:text-rose-400" : verdict === "ahead" ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>
               {spi.toFixed(2)}
             </div>
@@ -158,7 +158,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
                 <div className={`inline-flex items-center gap-1 font-bold ${meta.tone}`}>
                   <Icon className="w-3 h-3" /> {n}
                 </div>
-                <div className="text-[9px] text-[var(--color-text-muted)] uppercase tracking-wider">{meta.label}</div>
+                <div className="text-[12px] text-[var(--color-text-muted)]">{meta.label}</div>
               </div>
             );
           })}
@@ -178,12 +178,12 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
         }`}>
           {byPhase ? (
             <>
-              <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Needs you</div>
+              <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Needs you</div>
               {overdue.length === 0 && held === 0 && <div className="text-[13px] font-bold text-[var(--color-text)] mt-1">Nothing overdue or held</div>}
             </>
           ) : finished ? (
             <>
-              <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Finished</div>
+              <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Finished</div>
               <div className="text-lg font-black text-[var(--color-text)] mt-1">{r.finishedAt ? humanDateTime(r.finishedAt, tz) : "-"}</div>
               <div className={`text-[11px] mt-1 inline-flex items-center gap-1 ${finIsLate ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}`}>
                 {finIsLate ? <AlertTriangle className="w-3 h-3" /> : <CheckCircle2 className="w-3 h-3" />}
@@ -192,7 +192,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
             </>
           ) : (
             <>
-          <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Forecast end</div>
+          <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Forecast end</div>
           <div className="text-lg font-black text-[var(--color-text)] mt-1">
             {forecastEndAt ? (linked ? humanDateTime(forecastEndAt, tz) : humanDate(forecastEndAt, tz)) : plannedEndAt ? humanDate(plannedEndAt, tz) : "-"}
           </div>
@@ -223,7 +223,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
         {/* Upcoming card */}
         <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
           <div className="flex items-baseline justify-between mb-2">
-            <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Next 14 days</div>
+            <div className="text-[12px] font-semibold text-[var(--color-text-muted)]">Next 14 days</div>
             <div className="text-[10px] text-[var(--color-text-faint)]">{upcoming.length}</div>
           </div>
           {upcoming.length === 0 ? (
