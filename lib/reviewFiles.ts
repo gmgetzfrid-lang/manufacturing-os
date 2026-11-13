@@ -30,6 +30,8 @@ export interface ReviewFileOpts {
 /** Who an action is for. `kind` is the project type in a sentence ("turnaround"). */
 export const appliesWord = (a: "all" | "unit", kind?: string | null) => (a === "unit" ? "Next event on this unit" : `Every ${kind?.trim() || "event"}`);
 
+/** A score line's measure with its category under it, unless they say the same thing (Safety, Cost). */
+const measureCell = (x: { key: keyof typeof SCORE_CATEGORY; measure: string }) => { const c = categoryName(SCORE_CATEGORY[x.key]); return c.toLowerCase().startsWith(x.measure.toLowerCase()) ? x.measure : `${x.measure}\n${c}`; };
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const live = (r: Review) => r.findings.filter((f) => f.status !== "discarded");
 const toClose = (r: Review) => live(r).filter((f) => f.rating === "gap" || f.rating === "opportunity");
@@ -120,7 +122,7 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
 
   b.push({ k: "h1", text: "2. The score: plan against actual" });
   if (bk.score.line) b.push({ k: "p", text: bk.score.line });
-  b.push({ k: "table", head: ["Measure", "Target", "Actual", "Result", "Verdict"], rows: bk.score.rows.map((x) => [x.measure, x.plan, x.actual, x.result, VERDICT_WORD[x.verdict]]), widths: [1.1, 1.9, 2.4, 1.3, 1.0] });
+  b.push({ k: "table", head: ["Measure", "Target", "Actual", "Result", "Verdict"], rows: bk.score.rows.map((x) => [measureCell(x), x.plan, x.actual, x.result, x.result.toLowerCase() === VERDICT_WORD[x.verdict].toLowerCase() ? "" : VERDICT_WORD[x.verdict]]), widths: [1.1, 1.9, 2.4, 1.3, 1.0] });
 
   b.push({ k: "h1", text: "3. What went well, what did not, and why" });
   for (const a of bk.areas) {
@@ -137,7 +139,7 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
   }
 
   b.push({ k: "h1", text: "4. The action plan" });
-  if (bk.actions.length) b.push({ k: "table", head: ["No.", "What we will do", "For", "How it will be done", "Benefit", "Who", "By", "Cost"], rows: bk.actions.map((a) => [String(a.n), a.what, appliesWord(a.applies, o.kind), a.how, a.benefit, a.who || NOT_SET, a.by || NOT_SET, a.cost || NOT_SET]), widths: [0.35, 1.6, 0.8, 1.8, 1.5, 0.75, 0.6, 0.6] });
+  if (bk.actions.length) b.push({ k: "table", head: ["No.", "What we will do", "Area, for", "How it will be done", "Benefit", "Who", "By", "Cost"], rows: bk.actions.map((a) => [String(a.n), a.what, `${a.areaName}\n${appliesWord(a.applies, o.kind)}`, a.how, a.benefit, a.who || NOT_SET, a.by || NOT_SET, a.cost || NOT_SET]), widths: [0.45, 1.3, 0.95, 1.55, 1.3, 0.7, 0.7, 0.7] });
   else b.push({ k: "p", text: pt.pending.length ? "No action has been accepted in the review yet." : "Nothing in the records calls for a change." });
   if (pt.pending.length) { b.push({ k: "h2", text: "Waiting for a decision in the review" }); for (const c of pt.pending) b.push({ k: "bullet", text: `${c.title}.` }); }
 
@@ -234,9 +236,11 @@ function blockXml(b: Block): string {
     case "bullet": return para(`${run("•\t")}${b.lead ? run(b.lead, { b: true }) : ""}${run(b.text)}`, { ind: 360, hang: 240, after: 3 });
     case "num": return para(`${run(`${b.n}.\t`)}${b.lead ? run(b.lead, { b: true }) : ""}${run(b.text)}`, { ind: 400, hang: 300, after: 2 });
     case "table": {
-      const tw = b.widths.map((w) => Math.round(w * 1440));
+      // Inches, held inside the page (6.9 in between the margins).
+      const scale = Math.min(1, 6.9 / b.widths.reduce((a, c) => a + c, 0));
+      const tw = b.widths.map((w) => Math.round(w * scale * 1440));
       const cell = (t: string, i: number, head: boolean, shade: boolean) =>
-        `<w:tc><w:tcPr><w:tcW w:w="${tw[i]}" w:type="dxa"/>${head ? `<w:shd w:val="clear" w:color="auto" w:fill="${DARK}"/>` : shade ? '<w:shd w:val="clear" w:color="auto" w:fill="F1F3F6"/>' : ""}</w:tcPr>${para(run(t, { sz: 9, b: head, color: head ? "FFFFFF" : undefined }), { after: 1, before: 1 })}</w:tc>`;
+        `<w:tc><w:tcPr><w:tcW w:w="${tw[i]}" w:type="dxa"/>${head ? `<w:shd w:val="clear" w:color="auto" w:fill="${DARK}"/>` : shade ? '<w:shd w:val="clear" w:color="auto" w:fill="F1F3F6"/>' : ""}</w:tcPr>${(t ?? "").split("\n").map((line, k) => para(run(line, { sz: 9, b: head || (k === 0 && i === 0 && t.includes("\n")), color: head ? "FFFFFF" : k > 0 ? MUTED : undefined }), { after: 1, before: 1 })).join("")}</w:tc>`;
       const border = (n: string) => `<w:${n} w:val="single" w:sz="4" w:space="0" w:color="D5D9E0"/>`;
       const rows = [`<w:tr><w:trPr><w:tblHeader/><w:cantSplit/></w:trPr>${b.head.map((h, i) => cell(h, i, true, false)).join("")}</w:tr>`,
         ...b.rows.map((r, ri) => `<w:tr><w:trPr><w:cantSplit/></w:trPr>${b.head.map((_, i) => cell(r[i] ?? "", i, false, ri % 2 === 1)).join("")}</w:tr>`)];
@@ -272,6 +276,26 @@ export interface SlideTag { text: string; tone: Tone }
 /** What is behind a line on a slide: the record, or how to set it up. */
 export interface SlideMore { title: string; sections: Array<{ title: string; lines: string[]; numbered?: boolean }> }
 /** The type size a slide table is set in, by how much there is to read: as large as fills the slide. */
+/** The largest type (9 to 15 pt) at which a slide table fits the room it
+ *  has: each cell's lines at that size and width, a first cell's tag under
+ *  it, and the cell margins. Inches throughout. */
+export function fitTablePt(head: string[], rows: string[][], widths: number[], w: number, h: number, tags?: Array<SlideTag | null>): number {
+  const total = widths.reduce((a, c) => a + c, 0);
+  const pad = 8 / 72;
+  const linesIn = (text: string, cellW: number, fs: number) => text.split("\n").reduce((n, para) => n + Math.max(1, Math.ceil((para.length * fs * 0.46) / 72 / cellW)), 0);
+  for (let fs = 15; fs > 9; fs--) {
+    const lineH = (fs * 1.18) / 72;
+    const cellW = widths.map((c) => Math.max(0.3, (c / total) * w - 12 / 72));
+    const headH = Math.max(...head.map((t, i) => linesIn(t, cellW[i], fs - 2))) * ((fs - 2) * 1.2) / 72 + pad;
+    const body = rows.reduce((n, row, ri) => n + pad + Math.max(...row.map((t, i) => {
+      const paras = (t ?? "").split("\n").length;
+      return linesIn(t ?? "", cellW[i], fs) * lineH + (paras - 1) * (4 / 72) + (i === 0 && tags?.[ri] ? ((fs - 2) * 1.2) / 72 : 0);
+    })), 0);
+    if (headH + body <= h) return fs;
+  }
+  return 9;
+}
+
 export const tablePt = (rows: string[][]) => { const c = rows.reduce((n, r) => n + r.join("").length, 0) + rows.length * 30; return c > 1900 ? 10 : c > 1550 ? 11 : c > 1250 ? 12 : c > 1000 ? 13 : c > 780 ? 14 : 15; };
 export const TONE_HEX: Record<Tone, { fg: string; bg: string }> = { bad: { fg: "A3200F", bg: "F8DFD9" }, warn: { fg: "7A4D00", bg: "F6E6C2" }, good: { fg: "1C6240", bg: "DCECDF" }, none: { fg: "5D6675", bg: "E2DED4" } };
 const VERDICT_TONE: Record<Verdict, Tone> = { met: "good", missed: "bad", unmeasured: "none", untargeted: "warn", open: "none" };
@@ -320,8 +344,9 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
     kicker: "1 · The score: plan against actual", title: pt.headline, notes: [pt.headline, sc.line].filter(Boolean).join(" "),
     body: {
       k: "table", head: ["Measure", "Target", "Actual", "Result"], widths: [1.4, 2.4, 3.4, 1.7], lead: bk.delay,
-      rows: sc.rows.map((x) => { const c = categoryName(SCORE_CATEGORY[x.key]); return [c.toLowerCase().startsWith(x.measure.toLowerCase()) ? x.measure : `${x.measure}\n${c}`, x.plan, x.actual, x.result]; }),
-      tags: sc.rows.map((x) => ({ text: VERDICT_WORD[x.verdict], tone: VERDICT_TONE[x.verdict] })),
+      rows: sc.rows.map((x) => [measureCell(x), x.plan, x.actual, x.result]),
+      // The verdict under the measure, unless the result already says it.
+      tags: sc.rows.map((x) => (x.result.toLowerCase() === VERDICT_WORD[x.verdict].toLowerCase() ? null : { text: VERDICT_WORD[x.verdict], tone: VERDICT_TONE[x.verdict] })),
       more: sc.rows.map((x) => {
         const what = { title: "What it measures", lines: [x.means] };
         if (x.key === "duration" && pt.lines.length) return { title: "Where the late hours went", sections: [{ title: "From the records", lines: pt.lines }] };
@@ -394,7 +419,8 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, out: "blob" | "no
       s.addText(items.map((it) => { const o = typeof it === "string" ? { text: it } : it; return { text: T(o.text), options: { bullet: o.bold ? false : { indent: 14 }, bold: !!o.bold, indentLevel: o.sub ? 1 : 0, breakLine: true, paraSpaceBefore: o.bold ? 6 : 0, paraSpaceAfter: 5 } }; }), { x, y, w, h, fontFace: face, fontSize: size, color: INK, valign: "top" });
     const table = (head: string[], rows: string[][], widths: number[], x: number, y: number, w: number, size?: number, tags?: Array<SlideTag | null>) => {
       const total = widths.reduce((a, c) => a + c, 0);
-      const fs = size ?? tablePt(rows);
+      // Sized to end above the footnote line (6.8 in).
+      const fs = size ?? fitTablePt(head, rows, widths, w, 6.8 - y, tags);
       s.addTable([head.map((h) => ({ text: T(h), options: { bold: true, color: "FFFFFF", fill: { color: INK }, fontFace: face, fontSize: Math.max(9, fs - 2) } })),
         ...rows.map((row, ri) => head.map((_, i) => {
           const options = { color: INK, fill: { color: ri % 2 ? "ECE8DF" : BG }, fontFace: face, fontSize: fs, valign: "top" as const };

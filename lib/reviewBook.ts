@@ -207,24 +207,24 @@ export function scoreOf(r: Pick<Review, "metrics"> & Partial<Pick<Review, "faile
   // Man-hours: only when head counts cover the event.
   const hc = m.headCounts, covered = hc.shiftsWorked > 0 && hc.shiftsCounted / hc.shiftsWorked >= 0.8, mp = x.manpower ?? null;
   const em = e.manhours;
-  rows.push(em?.actual ? row("manhours", "Man-hours", { plan: em.plan || "Not set", actual: em.actual, verdict: em.verdict ?? "untargeted", result: em.verdict ? VERDICT_WORD[em.verdict] : "Entered by hand", fromRecords: false, entered: true })
+  rows.push(em?.actual ? row("manhours", "Man-hours", { plan: em.plan || "No bid on file", actual: em.actual, verdict: em.verdict ?? "untargeted", result: em.verdict ? VERDICT_WORD[em.verdict] : "Entered by hand", fromRecords: false, entered: true })
     : covered && mp ? row("manhours", "Man-hours", {
       plan: mp.bidMH != null ? `${mp.bidMH.toLocaleString("en-US")} bid` : em?.plan || "No bid entered", actual: `${mp.totalMH.toLocaleString("en-US")} counted`,
       verdict: mp.bidMH != null ? (mp.totalMH <= mp.bidMH ? "met" : "missed") : "untargeted",
       result: mp.bidMH != null ? `${Math.abs(Math.round(mp.totalMH - mp.bidMH)).toLocaleString("en-US")} ${mp.totalMH <= mp.bidMH ? "under" : "over"} the bid` : "No bid to hold it to", guide: mp.bidMH == null ? "manhours" : undefined, entered: true,
     }) : row("manhours", "Man-hours", {
-      plan: mp?.bidMH != null ? `${mp.bidMH.toLocaleString("en-US")} bid` : em?.plan || "Not set",
+      plan: mp?.bidMH != null ? `${mp.bidMH.toLocaleString("en-US")} bid` : em?.plan || "No bid on file",
       actual: hc.shiftsWorked ? `Head count on ${hc.shiftsCounted} of ${plural(hc.shiftsWorked, "shift")}` : "No shifts worked", verdict: "unmeasured", result: "Not measured", guide: "manhours", fromRecords: false, entered: true,
     }));
 
   // Cost: spend posted against the phase's budget.
   const c = x.costs ?? null, ec = e.cost;
-  rows.push(ec?.actual ? row("cost", "Cost", { plan: ec.plan || (c?.budget ? `${money(c.budget)} budget` : "Not set"), actual: ec.actual, verdict: ec.verdict ?? "untargeted", result: ec.verdict ? VERDICT_WORD[ec.verdict] : "Entered by hand", fromRecords: false, entered: true })
+  rows.push(ec?.actual ? row("cost", "Cost", { plan: ec.plan || (c?.budget ? `${money(c.budget)} budget` : "No budget on file"), actual: ec.actual, verdict: ec.verdict ?? "untargeted", result: ec.verdict ? VERDICT_WORD[ec.verdict] : "Entered by hand", fromRecords: false, entered: true })
     : c && c.spent > 0 && c.budget ? row("cost", "Cost", {
       plan: `${money(c.budget)} budget`, actual: `${money(c.spent)} spent${c.committed ? `, ${money(c.committed)} committed` : ""}`,
       verdict: c.spent <= c.budget ? "met" : "missed", result: `${money(Math.abs(c.budget - c.spent))} ${c.spent <= c.budget ? "under" : "over"}`, entered: true,
     }) : row("cost", "Cost", {
-      plan: c?.budget ? `${money(c.budget)} budget` : ec?.plan || "Not set",
+      plan: c?.budget ? `${money(c.budget)} budget` : ec?.plan || "No budget on file",
       actual: c?.committed ? `No spend posted. ${money(c.committed)} committed.` : "No spend posted", verdict: "unmeasured", result: "Not measured", guide: "cost", fromRecords: false, entered: true,
     }));
 
