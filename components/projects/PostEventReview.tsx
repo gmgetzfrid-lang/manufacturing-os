@@ -10,10 +10,11 @@
 // own, and answers the questions; Re-analyze reads the records again with
 // those answers. What was kept or changed is never overwritten. Kept
 // findings go to the lessons register. The same review downloads as a Word
-// report and as the meeting slides.
+// report and as the meeting slides, and the slides open on screen (View
+// slides) on a computer or a phone.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, FileText, Loader2, Pencil, Plus, Presentation, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
+import { Check, Download, FileText, Loader2, Pencil, Plus, Presentation, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
 import type { Milestone, MilestoneNote } from "@/types/schema";
 import type { ProgressLogRow } from "@/lib/progressHistory";
 import type { ShiftRecord } from "@/lib/shiftRecord";
@@ -35,7 +36,8 @@ import {
   type Answer, type CategoryId, type CauseId, type Finding, type FindingEdit, type OrgStanding, type Rating, type ReviewSaved,
 } from "@/lib/postEventReview";
 import { changeReview, loadReview, reviewScope, syncLesson } from "@/lib/reviewStore";
-import { fileStem, reviewDocx, reviewPptx, saveFile, type ReviewFileOpts } from "@/lib/reviewFiles";
+import { deckSlides, fileStem, reviewDocx, reviewPptx, saveFile, type ReviewFileOpts } from "@/lib/reviewFiles";
+import ReviewSlides from "@/components/projects/ReviewSlides";
 
 const btn = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
 const dark = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[12.5px] font-black whitespace-nowrap disabled:opacity-50";
@@ -80,6 +82,9 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
   const [infoText, setInfoText] = useState("");
   const [answers, setAnswers] = useState<Record<string, Answer>>({});
   const [tick, setTick] = useState(0);
+  const [viewing, setViewing] = useState(false);
+  // A file that is made, where the browser wants a tap to hand it over.
+  const [held, setHeld] = useState<{ data: Uint8Array | Blob; name: string; mime: string } | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -173,14 +178,17 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
   const fileOpts = (): ReviewFileOpts => ({ project: projectName, phase: phase?.name ?? null, tz, preparedBy: null, date: fmtInTz(Date.now(), tz, { month: "long", day: "numeric", year: "numeric" }) });
   const download = async (kind: "word" | "slides") => {
     if (!review) return;
-    setBusy(kind); setErr(null);
+    setBusy(kind); setErr(null); setHeld(null);
     try {
       const o = fileOpts();
-      if (kind === "word") saveFile(await reviewDocx(review, o), `${fileStem(o)}.docx`, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-      else saveFile(await reviewPptx(review, o), `${fileStem(o)} slides.pptx`, "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+      const made = kind === "word"
+        ? { data: await reviewDocx(review, o), name: `${fileStem(o)}.docx`, mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }
+        : { data: await reviewPptx(review, o), name: `${fileStem(o)} slides.pptx`, mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
+      if (!(await saveFile(made.data, made.name, made.mime))) setHeld(made);
     } catch (e) { setErr(`The file couldn't be made: ${(e as Error).message}`); }
     finally { setBusy(null); }
   };
+  const saveHeld = async () => { if (held && (await saveFile(held.data, held.name, held.mime))) setHeld(null); };
 
   if (!review) return <div className="py-16 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
   const m = review.metrics;
@@ -214,13 +222,16 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
         </div>
         <div className="flex gap-1.5 flex-wrap">
           <button type="button" onClick={reanalyze} disabled={!!busy} className={btn}><RefreshCw className="w-4 h-4" /> Re-analyze</button>
-          <button type="button" onClick={() => void download("word")} disabled={!!busy || !m.steps} className={btn}>{busy === "word" ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />} Word report</button>
-          <button type="button" onClick={() => void download("slides")} disabled={!!busy || !m.steps} className={dark}>{busy === "slides" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Presentation className="w-4 h-4" />} Meeting slides</button>
+          <button type="button" onClick={() => setViewing(true)} disabled={!m.steps} className={dark}><Presentation className="w-4 h-4" /> View slides</button>
+          <button type="button" onClick={() => void download("slides")} disabled={!!busy || !m.steps} className={btn}>{busy === "slides" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} PowerPoint</button>
+          <button type="button" onClick={() => void download("word")} disabled={!!busy || !m.steps} className={btn}>{busy === "word" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Word report</button>
         </div>
       </div>
 
       {err && <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
       {msg && <div role="status" className="rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-[12.5px] font-semibold text-amber-900 dark:text-amber-200">{msg}</div>}
+      {held && !viewing && <div role="status" className="rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 flex items-center gap-2 flex-wrap text-[12.5px] font-semibold text-amber-900 dark:text-amber-200" data-file-ready><span className="min-w-0 flex-1 basis-40">The file is ready.</span><button type="button" onClick={() => void saveHeld()} className={pri}><Download className="w-4 h-4" /> Save file</button></div>}
+      {viewing && <ReviewSlides slides={deckSlides(review, fileOpts())} name={`${phase?.name ?? projectName} post-event review`} onClose={() => setViewing(false)} onDownload={() => void download("slides")} downloading={busy === "slides"} ready={held ? { name: held.name, onSave: () => void saveHeld() } : null} />}
 
       {!m.steps ? <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-8 text-center text-[13px] text-[var(--color-text-muted)]">No schedule{phase ? ` for ${phase.name}` : ""} yet, so there is nothing to review.</div> : <>
         <section className="rounded-2xl border-2 border-[var(--color-text)] bg-[var(--color-surface)] p-4" data-review-point>
