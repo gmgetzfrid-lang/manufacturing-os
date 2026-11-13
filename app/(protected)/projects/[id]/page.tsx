@@ -20,11 +20,12 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   Briefcase, ArrowLeft, Lock, Globe, Loader2, AlertTriangle, Pause, Play,
-  CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Calendar, Send,
+  CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Calendar, Send, Settings2,
   User as UserIcon, MessageSquare, Users, FileText, Activity as ActivityIcon,
   ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck, Pencil, CircleDollarSign, Package,
   UploadCloud, ClipboardList, Sun, FileBarChart, RotateCcw, ListChecks,
 } from "lucide-react";
+import { requestSetup } from "@/lib/scheduleSetup";
 import { canReopen } from "@/lib/projectStatus";
 import IntakePanel from "@/components/projects/IntakePanel";
 import ProjectDocumentsCard from "@/components/projects/ProjectDocumentsCard";
@@ -423,6 +424,9 @@ export default function ProjectDetailPage() {
             <div className="flex items-center gap-1.5 flex-wrap">
               {canManage && (
                 <ActionButton icon={<Pencil className="w-3.5 h-3.5" />} label="Edit" onClick={() => setShowEdit(true)} />
+              )}
+              {canManage && (
+                <ActionButton icon={<Settings2 className="w-3.5 h-3.5" />} label="Setup" onClick={() => { if (!isScheduleTab(tab)) goTab("plan"); requestSetup(); }} />
               )}
               {canManage && (
                 <ActionButton icon={<Layers className="w-3.5 h-3.5" />} label={phases.length ? "Phases" : "Split into phases"} onClick={() => setShowPhases(true)} />

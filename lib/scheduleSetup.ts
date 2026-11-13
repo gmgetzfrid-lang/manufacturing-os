@@ -15,8 +15,10 @@
 //   Unit & equipment  the unit, and the equipment each work order is on:
 //                 the project on the Intelligence graph, findings tied to
 //                 equipment for the next job
+//   Manpower      each crew's company, bids, rates and staffing plans
+//   Roles         who runs the event: each role and the person named to it
 
-export type SetupItemId = "type" | "equipment" | "timezone" | "shifts" | "night" | "critical" | "baseline" | "manpower" | "print";
+export type SetupItemId = "type" | "equipment" | "timezone" | "shifts" | "night" | "critical" | "baseline" | "manpower" | "roles" | "print";
 
 export interface SetupItem {
   id: SetupItemId;
@@ -48,6 +50,8 @@ export function setupChecklist(s: {
   equipmentSet?: boolean | null;
   /** Some company's bid manpower set. null = still loading. */
   manpowerSet?: boolean | null;
+  /** The event's roles saved, each required one with a person. null = still loading. */
+  rolesSet?: boolean | null;
 }): SetupItem[] {
   return [
     { id: "type", label: "Project type", required: false, extra: true, done: !!s.typeSet,
@@ -67,8 +71,10 @@ export function setupChecklist(s: {
       why: "Schedule files often mark nearly everything critical - choose where it comes from." },
     { id: "baseline", label: "Baseline", required: false, done: s.hasBaseline,
       why: "Without one, moving work later quietly erases the slip - progress is measured against today's plan." },
-    { id: "manpower", label: "Manpower & bids", required: false, extra: true, done: s.manpowerSet === true, checking: s.manpowerSet === null,
-      why: "Each crew's company, and each company's bid hands per shift (and rate): the meeting's head counts are held to them on the look-back." },
+    { id: "manpower", label: "Manpower & staffing", required: false, extra: true, done: s.manpowerSet === true, checking: s.manpowerSet === null,
+      why: "Each crew's company, each company's bid hands per shift and rate, and its staffing plan: the meeting's head counts are held to them, and labor cost runs from them." },
+    { id: "roles", label: "Roles & responsibilities", required: false, extra: true, done: s.rolesSet === true, checking: s.rolesSet === null,
+      why: "Who runs the event: each role, what it is responsible for, and the person named to it. The post-event review's Organization line reads it." },
     { id: "print", label: "Printed reports", required: false, extra: true, done: !!s.letterheadSet,
       why: "Optional - upload your company letterhead (Word or PDF) and printed reports come out on it." },
   ];
@@ -83,3 +89,18 @@ export const toDo = (items: SetupItem[]) => items.filter((i) => !i.done && !i.ch
 /** Opens Schedule setup at a step from anywhere on the page (the calendar's
  *  "Night shifts"): window.dispatchEvent(new CustomEvent(OPEN_SETUP_EVENT, { detail: "night" })). */
 export const OPEN_SETUP_EVENT = "schedule-setup:open";
+
+// A step asked for from a tab that doesn't show Setup (Close-out, the
+// header): it opens when the schedule tab mounts.
+let pendingSetup: SetupItemId | "first" | null = null;
+/** Open Setup at a step (none: the first one missing), from anywhere. */
+export function requestSetup(step?: SetupItemId): void {
+  pendingSetup = step ?? "first";
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(OPEN_SETUP_EVENT, { detail: step }));
+}
+/** The step asked for before Setup was on the page, once. */
+export function takePendingSetup(): SetupItemId | "first" | null {
+  const s = pendingSetup;
+  pendingSetup = null;
+  return s;
+}

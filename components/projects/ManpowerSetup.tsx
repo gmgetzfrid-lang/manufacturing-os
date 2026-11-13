@@ -1,14 +1,17 @@
 "use client";
 
-// Setup › Manpower & bids: each crew's company (Schultz - Tower is
-// Schultz), and each company's bid manpower per day and night shift
-// (direct, indirect) and its rate when it bills by the hour. The meeting's
-// counts are held to these on the look-back.
+// Setup › Manpower, bids & staffing plans: each crew's company (Schultz -
+// Tower is Schultz), each company's bid manpower per day and night shift
+// (direct, indirect), its rate when it bills by the hour, and its staffing
+// plan (planned hands by date). The meeting's counts are held to these on
+// the look-back.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Loader2 } from "lucide-react";
+import { Check, Loader2, Upload } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { companyOf, defaultCompany, loadManpowerSettings, saveManpowerSettings, cleanManpower, type CompanyBid, type ManpowerSettings } from "@/lib/manpower";
+import { loadNextPlanSettings, saveStaffingPlan } from "@/lib/nextPlanStore";
+import { parseStaffingGrid, type StaffingPlans } from "@/lib/staffingPlan";
 
 export const MANPOWER_CHANGED = "manpower:changed";
 const cache = new Map<string, ManpowerSettings>();
@@ -35,7 +38,7 @@ const field = "h-9 rounded-md border border-[var(--color-border-strong)] bg-[var
 const numField = `${field} w-16 text-right font-mono`;
 const btn = "inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[12.5px] font-bold px-3.5 py-2 shadow-sm disabled:opacity-50";
 
-export function ManpowerStep({ projectId, milestones, canManage }: { projectId: string; milestones: Milestone[]; canManage: boolean }) {
+export function ManpowerStep({ projectId, milestones, canManage, userEmail }: { projectId: string; milestones: Milestone[]; canManage: boolean; userEmail?: string }) {
   const saved = useManpowerSettings(projectId);
   const [draft, setDraft] = useState<ManpowerSettings | null>(null);
   const [busy, setBusy] = useState(false);
@@ -123,12 +126,78 @@ export function ManpowerStep({ projectId, milestones, canManage }: { projectId: 
         </ul>
       </div>
 
+      <StaffingPlansPart projectId={projectId} canManage={canManage} userEmail={userEmail} />
+
       {canManage ? (
         <div className="flex items-center gap-3">
           <button type="button" disabled={!draft || busy} onClick={() => void save()} className={btn}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save</button>
           {msg && <span className={`text-[12px] ${/^Saved/.test(msg) ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-300"}`}>{msg}</span>}
         </div>
       ) : <div className="text-[12px] text-[var(--color-text-muted)]">Only the project owner, a co-owner or an admin can change this.</div>}
+    </div>
+  );
+}
+
+/** Each contractor's staffing plan (planned hands by date, day and night),
+ *  read from its spreadsheet: crafts down the side, dates across the top. */
+function StaffingPlansPart({ projectId, canManage, userEmail }: { projectId: string; canManage: boolean; userEmail?: string }) {
+  const [plans, setPlans] = useState<StaffingPlans | null>(null);
+  const [company, setCompany] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let live = true;
+    loadNextPlanSettings(projectId).then((s) => { if (live) setPlans(s.staffing); }).catch(() => { if (live) setPlans({}); });
+    return () => { live = false; };
+  }, [projectId]);
+  const read = async (f: File) => {
+    const co = company.trim();
+    if (!co) { setMsg("Pick whose plan it is first."); return; }
+    setBusy(true); setMsg(null);
+    try {
+      const XLSX = await import("xlsx");
+      const wb = XLSX.read(await f.arrayBuffer(), { type: "array", cellDates: true });
+      const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: null });
+      const g = parseStaffingGrid(rows as unknown[][]);
+      if (!g) { setMsg("That doesn't look like a staffing plan: crafts down the side, dates across the top, a Day and a Night column under each date."); return; }
+      const plan = { file: f.name, at: new Date().toISOString(), by: userEmail ?? null, shifts: g.shifts, phases: g.phases };
+      await saveStaffingPlan(projectId, co, plan);
+      setPlans((p) => ({ ...(p ?? {}), [co]: plan }));
+      setMsg(`Read for ${co}: ${g.crafts.length} crafts, ${g.from} to ${g.to}.`);
+    } catch (e) { setMsg((e as Error).message); }
+    finally { setBusy(false); }
+  };
+  const remove = async (co: string) => {
+    setBusy(true); setMsg(null);
+    try { await saveStaffingPlan(projectId, co, null); setPlans((p) => { const n = { ...(p ?? {}) }; delete n[co]; return n; }); }
+    catch (e) { setMsg((e as Error).message); }
+    finally { setBusy(false); }
+  };
+  const list = Object.entries(plans ?? {});
+  return (
+    <div className="space-y-1.5" data-staffing-plans>
+      <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Staffing plans</div>
+      <p className="text-[12px] text-[var(--color-text-muted)]">The contractor&apos;s spreadsheet of planned hands by date, day and night. Each shift&apos;s head count is held to it.</p>
+      {plans == null ? <div className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading…</div>
+        : list.length === 0 ? <div className="text-[12.5px] text-[var(--color-text-muted)]">None read yet.</div>
+          : <ul className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+            {list.map(([co, sp]) => (
+              <li key={co} className="flex flex-wrap items-center gap-2 px-3 py-1.5 text-[12.5px]">
+                <span className="flex-1 min-w-[10rem]"><b>{co}</b> <span className="text-[var(--color-text-muted)]">{sp.file}</span></span>
+                {canManage && <button type="button" disabled={busy} onClick={() => void remove(co)} className="text-[12px] font-bold underline text-[var(--color-text-muted)] hover:text-rose-700">Remove</button>}
+              </li>
+            ))}
+          </ul>}
+      {canManage && (
+        <div className="flex flex-wrap items-center gap-2">
+          <input value={company} onChange={(e) => setCompany(e.target.value)} list="mp-companies" placeholder="Whose plan (company)" aria-label="Whose staffing plan" className={`${field} w-48 max-w-full`} />
+          <label className={`inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold px-3 py-2 cursor-pointer hover:bg-[var(--color-surface-2)] ${busy ? "opacity-50 pointer-events-none" : ""}`}>
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Read a staffing plan (Excel)
+            <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void read(f); }} />
+          </label>
+        </div>
+      )}
+      {msg && <div role="status" className="text-[12px] text-[var(--color-text)]">{msg}</div>}
     </div>
   );
 }

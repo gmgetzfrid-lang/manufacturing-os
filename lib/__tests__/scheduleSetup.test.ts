@@ -1,11 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { setupChecklist, missingRequired, toDo } from "@/lib/scheduleSetup";
+import { setupChecklist, missingRequired, toDo, requestSetup, takePendingSetup } from "@/lib/scheduleSetup";
 
 describe("schedule setup", () => {
   it("time zone and shift times are required; night crews are required; critical path and baseline are offered", () => {
     const items = setupChecklist({ timezoneSet: false, shiftTimesSaved: false, criticalChosen: false, hasBaseline: false });
     expect(missingRequired(items).map((i) => i.id)).toEqual(["timezone", "shifts", "night"]);
-    expect(items.filter((i) => !i.required).map((i) => i.id)).toEqual(["type", "critical", "baseline", "manpower", "print"]);
+    expect(items.filter((i) => !i.required).map((i) => i.id)).toEqual(["type", "critical", "baseline", "manpower", "roles", "print"]);
+    // Roles are optional too: the review reads them, the schedule does not need them.
+    expect(toDo(items).map((i) => i.id)).not.toContain("roles");
     // The letterhead is optional: never counted as something to do.
     expect(toDo(items).map((i) => i.id)).not.toContain("print");
     expect(toDo(items).map((i) => i.id)).not.toContain("manpower");
@@ -23,5 +25,12 @@ describe("schedule setup", () => {
     expect(items.find((i) => i.id === "night")).toMatchObject({ done: false, checking: true });
     // Read, and saved: set.
     expect(setupChecklist({ timezoneSet: true, shiftTimesSaved: true, criticalChosen: true, hasBaseline: true, nightDecided: true }).filter((i) => !i.extra).every((i) => i.done)).toBe(true);
+  });
+  it("Setup asked for from another tab opens at that step once the schedule is on the page", () => {
+    requestSetup("roles");
+    expect(takePendingSetup()).toBe("roles");
+    expect(takePendingSetup()).toBeNull();
+    requestSetup();
+    expect(takePendingSetup()).toBe("first");
   });
 });

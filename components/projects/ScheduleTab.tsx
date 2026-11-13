@@ -356,7 +356,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
 
   // Schedule setup: everything the reports hang on, in one wizard.
   const setupProps = {
-    projectId, projectName, timezone, milestones, hasBaseline, canManage: !!canManage, canEdit, userId,
+    projectId, projectName, timezone, milestones, hasBaseline, canManage: !!canManage, canEdit, userId, userEmail: userEmail ?? userName,
     onProjectChanged: () => onProjectChanged?.(),
     onSetBaseline: async () => {
       const res = await setBaseline({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole, ids: baselineIds });

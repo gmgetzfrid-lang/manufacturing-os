@@ -12,8 +12,6 @@ import type { ProjectPhase } from "@/lib/projectPhases";
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui/Modal";
-import DatabaseStep from "@/components/ui/DatabaseStep";
-import { MATERIALS_TABLE_SQL } from "@/lib/setupSql";
 import {
   QUESTION_LIMIT_H, STATUSES, STATUS_WORD, ageWord, arrived, attention, blankMaterial, deleteMaterial, late, listMaterials, questionAgeH, questionOpen,
   saveMaterial, specIncomplete, statusAllowed, summarize, type Material, type MaterialFields, type MaterialStatus,
@@ -51,7 +49,6 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
     return () => { live = false; };
   }, [projectId]);
   const [rows, setRows] = useState<Material[] | null>(null);
-  const [missing, setMissing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [phaseId, setPhaseId] = useState<string | null>(null);
@@ -62,7 +59,7 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
   const now = useMemo(() => Date.now(), [rows]);
 
   const load = useCallback(() => {
-    listMaterials(projectId).then((r) => { setRows(r.rows); setMissing(r.missing); }).catch((e) => { setErr((e as Error).message); setRows([]); });
+    listMaterials(projectId).then((r) => setRows(r.rows)).catch((e) => { setErr((e as Error).message); setRows([]); });
   }, [projectId]);
   useEffect(() => { load(); }, [load]);
 
@@ -81,17 +78,12 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
   const remove = async () => {
     if (!open?.row || !window.confirm(`Remove "${open.row.item}" from the register?`)) return;
     setBusy(true); setErr(null);
-    try { await deleteMaterial(open.row.id); setOpen(null); load(); }
+    try { await deleteMaterial(open.row.id, projectId); setOpen(null); load(); }
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); }
   };
 
   if (!rows) return <div className="py-16 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
-  if (missing) return (
-    <div data-materials-missing>
-      <DatabaseStep title="One step before the materials register works" why="It keeps its rows in a table that isn't in the database yet. The SQL makes it; it changes nothing else." sql={MATERIALS_TABLE_SQL} onCheck={load} />
-    </div>
-  );
 
   const Pill = ({ id, children }: { id: Filter; children: React.ReactNode }) => (
     <button type="button" onClick={() => setFilter(id)} aria-pressed={filter === id} className={`h-8 px-3 rounded-full border text-[12.5px] font-extrabold whitespace-nowrap ${filter === id ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border)]"}`}>{children}</button>

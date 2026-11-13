@@ -10,7 +10,6 @@ import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { noEmDash } from "@/lib/noEmDash";
 
-export const MATERIALS_SQL = "20261119_project_materials.sql";
 
 export type MaterialKind = "material" | "offsite";
 export type MaterialStatus = "to_specify" | "ready" | "ordered" | "at_vendor" | "received" | "checked" | "short" | "cancelled";
@@ -116,9 +115,6 @@ export function summarize(rows: MaterialFields[], now: number): RegisterSummary 
 
 const missingTable = (e: { code?: string; message?: string } | null | undefined) =>
   !!e && (e.code === "42P01" || e.code === "PGRST205" || /does not exist|schema cache|could not find the table/i.test(e.message ?? ""));
-export class MaterialsMissing extends Error {
-  constructor() { super(`The materials register needs the database update (${MATERIALS_SQL}) run first.`); }
-}
 
 interface Row {
   id: string; org_id: string; project_id: string; phase_id: string | null; kind: string; item: string; spec: string | null; spec_missing: string | null;
@@ -138,11 +134,36 @@ export function materialFromRow(r: Row): Material {
 }
 
 type Page = PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>;
-/** The project's register. `missing`: the table isn't there yet. */
-export async function listMaterials(projectId: string): Promise<{ rows: Material[]; missing: boolean }> {
-  const { rows, error } = await fetchAllRows<Row>((from, to) => supabase.from("project_materials").select("*").eq("project_id", projectId).order("created_at").order("id").range(from, to) as unknown as Page);
-  if (error) { if (missingTable({ message: error })) return { rows: [], missing: true }; throw new Error(error); }
-  return { rows: rows.map(materialFromRow), missing: false };
+
+// Until the project_materials table is in the database, the register lives
+// in the project's settings (projects.shift_times.materials), each line in
+// the table's own row shape with an id starting "s-". Those lines stay there;
+// once the table exists, new lines go to it and both are listed.
+const SETTINGS_KEY = "materials";
+export const inSettings = (id: string) => id.startsWith("s-");
+async function readSettings(projectId: string): Promise<{ st: Record<string, unknown>; rows: Row[] }> {
+  const { data, error } = await supabase.from("projects").select("shift_times").eq("id", projectId).maybeSingle();
+  if (error) throw new Error(error.message);
+  const st = { ...(((data as { shift_times?: Record<string, unknown> | null } | null)?.shift_times) ?? {}) };
+  const rows = Array.isArray(st[SETTINGS_KEY]) ? (st[SETTINGS_KEY] as Row[]).filter((r) => r && typeof r.id === "string" && typeof r.item === "string") : [];
+  return { st, rows };
+}
+async function writeSettings(projectId: string, st: Record<string, unknown>, rows: Row[]): Promise<void> {
+  const { data, error } = await supabase.from("projects").update({ shift_times: { ...st, [SETTINGS_KEY]: rows } }).eq("id", projectId).select("id");
+  if (error) throw new Error(error.message);
+  if (!data?.length) throw new Error("Not saved - only the project's owner, a co-owner, an editor or an admin can change this.");
+}
+const newId = () => `s-${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+
+/** The project's register: the table's lines (when the table is there) and the settings' lines. */
+export async function listMaterials(projectId: string): Promise<{ rows: Material[] }> {
+  const [{ rows, error }, kept] = await Promise.all([
+    fetchAllRows<Row>((from, to) => supabase.from("project_materials").select("*").eq("project_id", projectId).order("created_at").order("id").range(from, to) as unknown as Page),
+    readSettings(projectId),
+  ]);
+  if (error && !missingTable({ message: error })) throw new Error(error);
+  const all = [...(error ? [] : rows), ...kept.rows].map(materialFromRow);
+  return { rows: all.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)) };
 }
 
 const t = (s: string) => noEmDash(s.trim()) || null;
@@ -160,16 +181,38 @@ export async function saveMaterial(input: { id?: string; orgId: string; projectI
     ...(answered ? { answered_at: now } : !f.answer.trim() ? { answered_at: null } : {}),
   };
   if (!String(row.item)) throw new Error("Name the item.");
+  // A line kept in the project's settings is changed there.
+  if (input.id && inSettings(input.id)) return saveInSettings(input.projectId, input.id, row, input.actor);
   const q = input.id
     ? supabase.from("project_materials").update(row).eq("id", input.id).select("*").single()
     : supabase.from("project_materials").insert({ ...row, created_by: input.actor.id, created_by_name: input.actor.name }).select("*").single();
   const { data, error } = await q;
-  if (error) { if (missingTable(error)) throw new MaterialsMissing(); throw new Error(error.message); }
+  if (error) {
+    // No table yet: a new line goes to the project's settings.
+    if (missingTable(error) && !input.id) return saveInSettings(input.projectId, null, row, input.actor);
+    throw new Error(error.message);
+  }
   return materialFromRow(data as Row);
 }
 
-export async function deleteMaterial(id: string): Promise<void> {
+async function saveInSettings(projectId: string, id: string | null, row: Record<string, unknown>, actor: { id: string | null; name: string | null }): Promise<Material> {
+  const { st, rows } = await readSettings(projectId);
+  const at = rows.findIndex((r) => r.id === id);
+  if (id && at < 0) throw new Error("That line is no longer there. Reload the register.");
+  const base = at >= 0 ? rows[at] : ({ id: newId(), created_by: actor.id, created_by_name: actor.name, created_at: String(row.updated_at) } as unknown as Row);
+  const next = { ...base, ...row } as Row;
+  const out = at >= 0 ? rows.map((r, i) => (i === at ? next : r)) : [...rows, next];
+  await writeSettings(projectId, st, out);
+  return materialFromRow(next);
+}
+
+export async function deleteMaterial(id: string, projectId: string): Promise<void> {
+  if (inSettings(id)) {
+    const { st, rows } = await readSettings(projectId);
+    await writeSettings(projectId, st, rows.filter((r) => r.id !== id));
+    return;
+  }
   const { data, error } = await supabase.from("project_materials").delete().eq("id", id).select("id");
-  if (error) { if (missingTable(error)) throw new MaterialsMissing(); throw new Error(error.message); }
+  if (error) throw new Error(error.message);
   if (!data?.length) throw new Error("Not removed - only someone who can change the project can.");
 }

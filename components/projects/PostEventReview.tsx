@@ -45,7 +45,10 @@ import { overloaded } from "@/lib/crewFlow";
 import ReviewSlides from "@/components/projects/ReviewSlides";
 import { useProjectUnit } from "@/components/projects/Findings";
 import { useProjectType } from "@/lib/shiftTimesStore";
-import { typeWord } from "@/lib/projectType";
+import { isDefaultType, typeWord } from "@/lib/projectType";
+import { closeNeeds, type NeedGo } from "@/lib/closeNeeds";
+import { requestSetup } from "@/lib/scheduleSetup";
+import CloseNeeds from "@/components/projects/CloseNeeds";
 
 const btn = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
 const dark = "inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-[var(--color-text)] text-[var(--color-surface)] text-[12.5px] font-black whitespace-nowrap disabled:opacity-50";
@@ -64,7 +67,7 @@ type Filter = "all" | "gap" | "opportunity" | "strength" | "kept" | "discarded";
 /** Lesson versions already written this session (see the effect in the review). */
 const SYNCED = new Set<string>();
 
-export default function PostEventReview({ orgId, projectId, projectName, tz, times, phases, milestones, log, notes, records, money, canManage, actor, onReload, onTab }: {
+export default function PostEventReview({ orgId, projectId, projectName, tz, times, phases, milestones, log, notes, records, money, canManage, actor, onReload, onTab, stepsLeft = null, onSteps }: {
   orgId: string; projectId: string; projectName: string; tz: string; times: ShiftTimes;
   phases: ProjectPhase[]; milestones: Milestone[]; log: ProgressLogRow[] | null; notes: MilestoneNote[]; records: Map<string, ShiftRecord>;
   /** The project's budget lines and spend (cost controls), for the score. */
@@ -73,6 +76,9 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   /** Read the project's records again. */
   onReload: () => void;
   onTab: (tab: string) => void;
+  /** Close-out steps still open (PSSR, turnover documents, punch, change orders), and the way to them. */
+  stepsLeft?: number | null;
+  onSteps?: () => void;
 }) {
   // One phase at a time: the first finished one, else the first.
   const doneOf = useCallback((id: string) => { const leaves = inPhase(milestones, phases, id).filter((m) => !m.isSummary && !(m as { cancelledAt?: unknown }).cancelledAt); return leaves.length > 0 && leaves.every((m) => m.status === "completed"); }, [milestones, phases]);
@@ -107,14 +113,14 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
         const [s, np, mats, org] = await Promise.all([
           loadReview(projectId, scope),
           loadNextPlanSettings(projectId).catch(() => null),
-          listMaterials(projectId).catch(() => ({ rows: [], missing: true })),
+          listMaterials(projectId).catch(() => ({ rows: [] })),
           loadOrg(projectId).catch(() => null),
         ]);
         if (!live) return;
         setSaved(s); setPlans(np?.staffing ?? null); setOrganization(orgStanding(org)); setTargets(null);
         const mine = mats.rows.filter((r) => !phases.length || !r.phaseId || r.phaseId === phaseId);
         const sum = summarize(mine, Date.now());
-        setRegister(mats.missing || !sum.lines ? null : { lines: sum.lines, specIncomplete: sum.specIncomplete, openQuestions: sum.openQuestions, late: sum.late });
+        setRegister(!sum.lines ? null : { lines: sum.lines, specIncomplete: sum.specIncomplete, openQuestions: sum.openQuestions, late: sum.late });
       } catch (e) { if (live) { setErr((e as Error).message); setSaved(emptySaved()); } }
     })();
     return () => { live = false; };
@@ -262,6 +268,28 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   const m = review.metrics;
   const pt = pointOf(review, phase?.name ?? projectName, tz);
   const bk = bookOf(review, phase?.name ?? projectName, tz, scoreIn);
+  // What the review measures that a person has to put in, and where each goes.
+  const bidOf = Object.entries(mp?.bids ?? {});
+  const needs = closeNeeds({
+    typeKnown: !isDefaultType(ptype), typeWord: typeIn,
+    roles: organization ? { recorded: organization.recorded, required: organization.required, filled: organization.filled } : null,
+    companies: [...new Set(made!.work.crews.map((c) => c.company))].sort(),
+    bids: bidOf.filter(([, b]) => b.day?.direct != null || b.night?.direct != null).map(([co]) => co),
+    rates: bidOf.filter(([, b]) => b.rate != null).map(([co]) => co),
+    staffing: Object.keys(plans ?? {}),
+    headCounts: m.headCounts,
+    incidentsAnswered: scoreIn.incidents ? scoreIn.incidents.answered : null,
+    targets: bk.score.rows.filter((x) => x.key === "added" || x.key === "safety" || x.key === "quality").map((x) => ({ name: x.measure, set: !/not set/i.test(x.plan) })),
+    costs: scoreIn.costs ? { budget: scoreIn.costs.budget, spent: scoreIn.costs.spent } : null,
+    materials: register?.lines ?? null,
+    stepsLeft,
+  });
+  const goNeed = (go: NeedGo) => {
+    if (go.kind === "setup") { requestSetup(go.step); onTab("plan"); }
+    else if (go.kind === "tab") onTab(go.tab);
+    else if (go.kind === "score") document.querySelector("[data-review-score]")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    else onSteps?.();
+  };
   const liveF = review.findings.filter((f) => f.status !== "discarded");
   const count = (r: Rating) => liveF.filter((f) => f.rating === r).length;
   const shown = review.findings.filter((f) => filter === "discarded" ? f.status === "discarded" : f.status !== "discarded" && (filter === "all" || (filter === "kept" ? f.status === "kept" : f.rating === filter)));
@@ -316,6 +344,8 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
           </ul>
         </section>
       ))}
+
+      {m.steps > 0 && <CloseNeeds needs={needs} onGo={goNeed} />}
 
       {!m.steps ? <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-8 text-center text-[13px] text-[var(--color-text-muted)]">No schedule{phase ? ` for ${phase.name}` : ""} yet, so there is nothing to review.</div> : <>
         <section className="rounded-2xl border-2 border-[var(--color-text)] bg-[var(--color-surface)] p-4" data-review-point>

@@ -196,12 +196,21 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   if (view === "review") return (
     <div className="space-y-4">{nav}
       <PostEventReview orgId={orgId} projectId={projectId} projectName={projectName} tz={tz} times={times} phases={phases} milestones={ms} log={log} notes={notes ?? []} records={records ?? new Map()} money={money0}
-        canManage={canManage} actor={actor} onReload={reload} onTab={onTab} />
+        canManage={canManage} actor={actor} onReload={reload} onTab={onTab} stepsLeft={left} onSteps={() => setView("steps")} />
     </div>
   );
   return (
     <div className="space-y-4">
       {nav}
+      {/* The review's own list of what it needs: one tap to it. */}
+      <button type="button" onClick={() => setView("review")} data-closeout-needs-link
+        className="w-full text-left rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 flex items-center gap-3 hover:bg-[var(--color-surface-2)]">
+        <span className="min-w-0 flex-1">
+          <b className="block text-[14px] text-[var(--color-text)]">What you are measured on, and what it needs from you</b>
+          <span className="block text-[12.5px] text-[var(--color-text-muted)]">The post-event review lists each item (setup, roles, bids and staffing plans, head counts, targets, spend, materials) with where it stands and where to put it in.</span>
+        </span>
+        <ArrowRight className="w-5 h-5 text-[var(--color-text-muted)] shrink-0" />
+      </button>
       {/* Where the work stands: the whole job, or each phase. */}
       <div className={`rounded-2xl border px-4 py-3 flex items-start gap-3 flex-wrap ${allWorkDone ? "border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-800" : "border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800"}`}>
         <span className={`mt-0.5 w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${allWorkDone ? "bg-emerald-600 text-white" : "bg-amber-500 text-white"}`}>{allWorkDone ? <Check className="w-5 h-5" /> : <span className="text-[15px] font-black">!</span>}</span>
