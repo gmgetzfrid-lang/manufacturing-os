@@ -1,7 +1,10 @@
 // lateWork - every work order that finished late, and where its hours went.
 //
-// For each one: the steps that took longer than planned, the time it sat
-// between steps before a crew started the next one, and how late it began.
+// For each one: the steps that stayed open longer than the work planned for
+// them, the time it sat between steps before a crew started the next one,
+// and how late it began. A step's hours from start to finish are how long it
+// was open, not hours worked: the as-built record (lib/asBuiltWork) says on
+// which of those shifts progress was logged, and that is carried with it.
 // The largest come first. Nothing is left to a fixed list of causes: any
 // work order that ran late is read the same way, whatever it is.
 //
@@ -18,14 +21,17 @@ const HOUR = 3_600_000;
 const r1 = (n: number) => Math.round(n * 10) / 10;
 
 export interface LatePart {
-  /** "over": a step took longer than planned. "wait": it sat before a crew
-   *  started the next step. "start": the work order began late. */
+  /** "over": a step was open longer than the work planned for it. "wait": it
+   *  sat before a crew started the next step. "start": the work order began late. */
   kind: "over" | "wait" | "start";
   hours: number;
   stepId: string; step: string;
   /** The crew whose step it is (for "wait", the crew that was awaited). */
   crew: string;
+  /** Hours of work planned; hours it was open, start to finish. */
   plannedH: number; tookH: number;
+  /** Shifts on which progress was logged on it (the as-built record). */
+  workedShifts: number;
 }
 export interface LateOrder {
   order: string;
@@ -48,7 +54,7 @@ export function lateOrders(built: AsBuilt, work: AsBuiltWork, dependsOn: Map<str
     const parts: LatePart[] = [];
     steps.forEach((s, i) => {
       const took = s.elapsedH ?? (s.start != null && s.finish != null ? (s.finish - s.start) / HOUR : null);
-      const base = { stepId: s.id, step: s.name, crew: crewOf(s.id), plannedH: r1(s.plannedH), tookH: r1(took ?? 0) };
+      const base = { stepId: s.id, step: s.name, crew: crewOf(s.id), plannedH: r1(s.plannedH), tookH: r1(took ?? 0), workedShifts: work.steps.get(s.id)?.worked.length ?? 0 };
       if (took != null && took - s.plannedH >= 2) parts.push({ kind: "over", hours: r1(took - s.plannedH), ...base });
       if (s.start == null) return;
       const prev = stepBefore(steps, i, dependsOn);

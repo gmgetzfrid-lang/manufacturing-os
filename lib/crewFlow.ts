@@ -38,7 +38,10 @@ export interface HandedJob {
   openedAt: number; startedAt: number; finishedAt: number;
   /** Hours it sat open before this crew started it. */
   waitH: number;
+  /** Hours of work planned; hours it was open, start to finish (not hours worked). */
   plannedH: number; tookH: number;
+  /** Shifts on which progress was logged on it (the as-built record). */
+  workedShifts: number;
   /** Started after (+) or before (-) its planned start, hours. */
   lateStartH: number | null;
   /** Opened before (+) or after (-) the plan had it open, hours. */
@@ -152,7 +155,7 @@ export function crewFlows(built: AsBuilt, work: AsBuiltWork, dependsOn: Map<stri
       byCrew.get(crew)!.push({
         id: s.id, name: s.name, order: o.name, crew, from: crewOf(prev.id), afterId: prev.id, after: prev.name, afterOrder: prevOrder, basis: picked ? "corrected" : linked ? "linked" : "guessed", candidates,
         openedAt, startedAt: s.start, finishedAt: s.finish,
-        waitH: r1((s.start - openedAt) / HOUR), plannedH: r1(s.plannedH), tookH: r1(s.elapsedH ?? (s.finish - s.start) / HOUR),
+        waitH: r1((s.start - openedAt) / HOUR), plannedH: r1(s.plannedH), tookH: r1(s.elapsedH ?? (s.finish - s.start) / HOUR), workedShifts: work.steps.get(s.id)?.worked.length ?? 0,
         lateStartH: s.planStart != null ? r1((s.start - s.planStart) / HOUR) : null,
         openedEarlyH: prev.planFinish != null ? r1((prev.planFinish - prev.finish!) / HOUR) : null, crewOn: [],
       });

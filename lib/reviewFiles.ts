@@ -47,7 +47,7 @@ const facts = (f: Finding) => [...f.observation.split("\n").map((l) => l.trim())
 const point = (r: Review, o: ReviewFileOpts) => pointOf(r, eventName(o), o.tz);
 const scopeLine = (r: Review) => { const m = r.metrics; return m.steps ? `${m.baselineDone} of ${m.baselineSteps} planned activities completed${m.addedSteps ? `, plus ${m.addedDone} of ${m.addedSteps} added from ${plural(r.found.length, "finding")}` : ""}.` : ""; };
 /** The steps on the work that set the finish, with what was written on each. */
-const stepRows = (r: Review, said: boolean): string[][] => (r.finish?.steps ?? []).map((st) => [st.name, st.crew || "Not set", `${st.plannedH} h`, `${st.tookH} h`, ...(said ? [st.said.map((t) => `"${t}"`).join(" Then: ")] : [])]);
+const stepRows = (r: Review, said: boolean): string[][] => (r.finish?.steps ?? []).map((st) => [st.name, st.crew || "Not set", `${st.plannedH} h`, `${st.tookH} h`, plural(st.shifts, "shift"), ...(said ? [st.said.map((t) => `"${t}"`).join(" Then: ")] : [])]);
 /** Against its planned start: "22 h late", "2 h early", "on plan". */
 const planWord = (h: number | null) => (h == null ? "" : Math.abs(h) < 1 ? "On plan" : `${Math.abs(h)} h ${h > 0 ? "late" : "early"}`);
 /** Every job handed to a crew: when it was open, when the crew started it, how long it sat. */
@@ -55,13 +55,15 @@ const plainStep = (n: string) => n.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g,
 const crewRows = (f: CrewFlow, tz: string): string[][] => f.jobs.map((j) => [jobWord(j), `${plainStep(j.after)} done${j.afterOrder !== j.order ? ` (${orderWord(j.afterOrder)})` : ""}${j.basis === "guessed" ? ", by the planned sequence" : j.basis === "corrected" ? ", as corrected" : ""}`, whenWord(j.openedAt, tz), whenWord(j.startedAt, tz), j.waitH >= 1 ? `${j.waitH} h` : "None", planWord(j.lateStartH)]);
 const crewHead = (f: CrewFlow) => ["Job", "Ready when", "Ready from", `${f.crew} started`, "Waited", "Start against plan"];
 /** The same queue with one crew and with two, as a line. */
-const queueLine = (f: CrewFlow) => `A what-if, not what happened: the same ${plural(f.jobs.length, "job")} in the order they were ready, at the hours each took, crews working without a break. One crew: ${f.queue.one} h of waiting in all. Two crews: ${f.queue.two} h.`;
+const queueLine = (f: CrewFlow) => `A what-if, not what happened: the same ${plural(f.jobs.length, "job")} in the order they were ready, each open as long as it was, crews working without a break. One crew: ${f.queue.one} h of waiting in all. Two crews: ${f.queue.two} h.`;
 /** Each crew that was handed work by another: its jobs, plan, actual, waiting. */
 const crewsRows = (r: Review): string[][] => r.flows.filter((f) => f.jobs.length >= 2).map((f) => [f.crew, String(f.jobs.length), `${f.plannedH} h`, `${f.tookH} h`, `${f.waitH} h`, `${f.peak.open}${f.plannedPeak ? ` (plan ${f.plannedPeak})` : ""}`]);
-const CREWS_HEAD = ["Crew", "Jobs handed to it", "Planned", "Took", "Sat waiting for it", "Most open at once"];
+const CREWS_HEAD = ["Crew", "Jobs handed to it", "Work planned", "Open, start to finish", "Waited for it", "Most open at once"];
+const STEPS_HEAD = ["Step", "Crew", "Work planned", "Open, start to finish", "Progress logged on", "Recorded on the step"];
+const OPEN_NOTE = "Open hours run from a step's start to its finish. They are not hours worked: progress was logged only on the shifts shown.";
 /** Every work order that finished late: by how much, and where the record shows the hours going. */
-const lateRows = (r: Review): string[][] => r.late.map((o) => [orderWord(o.order), `${o.lateH} h${o.added ? " (added work)" : ""}`, o.parts.slice(0, 3).map((p) => (p.kind === "over" ? `${p.step.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim()} took ${p.tookH} h against ${p.plannedH} h (${p.crew})` : p.kind === "wait" ? `${p.step.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim()} sat ${p.hours} h before ${p.crew} started it` : `Started ${p.hours} h after its planned start`)).join("; ") || "Not shown by the record"]);
-const LATE_HEAD = ["Work order", "Finished late by", "Where the hours went"];
+const lateRows = (r: Review): string[][] => r.late.map((o) => [orderWord(o.order), `${o.lateH} h${o.added ? " (added work)" : ""}`, o.parts.slice(0, 3).map((p) => (p.kind === "over" ? `${p.step.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim()}: open ${p.tookH} h, progress logged on ${plural(p.workedShifts, "shift")}, planned as ${p.plannedH} h of work (${p.crew})` : p.kind === "wait" ? `${p.step.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim()} sat ${p.hours} h before ${p.crew} started it` : `Started ${p.hours} h after its planned start`)).join("; ") || "Not shown by the record"]);
+const LATE_HEAD = ["Work order", "Finished after its plan by", "Where the time went"];
 
 const metricRows = (r: Review): string[][] => {
   const m = r.metrics;
@@ -151,9 +153,10 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
 
   let ap = 0; const letter = () => String.fromCharCode(65 + ap++);
   if (pt.order && pt.steps.length) {
-    b.push({ k: "h1", text: `Appendix ${letter()}. ${orderWord(pt.order)}: the steps that ran long` });
+    b.push({ k: "h1", text: `Appendix ${letter()}. ${orderWord(pt.order)}: the steps that stayed open longest` });
     for (const l of pt.lines) b.push({ k: "bullet", text: l });
-    b.push({ k: "table", head: ["Step", "Crew", "Planned", "Took", "Recorded on the step"], rows: stepRows(r, true), widths: [1.7, 0.9, 0.6, 0.6, 3.1] });
+    b.push({ k: "table", head: STEPS_HEAD, rows: stepRows(r, true), widths: [1.6, 0.9, 0.6, 0.7, 0.7, 2.4] });
+    b.push({ k: "muted", text: OPEN_NOTE });
   }
   for (const f of r.flows.filter(overloaded)) {
     b.push({ k: "h1", text: `Appendix ${letter()}. What waited for ${f.crew}` });
@@ -168,7 +171,7 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
   if (crewsRows(r).length) {
     b.push({ k: "h1", text: `Appendix ${letter()}. Crews: planned against actual` });
     b.push({ k: "table", head: CREWS_HEAD, rows: crewsRows(r), widths: [1.6, 1.0, 0.9, 0.9, 1.2, 1.3] });
-    b.push({ k: "muted", text: "Jobs handed to a crew by another crew (opened by one, cleaned or inspected by the next). Hours a job took are start to finish." });
+    b.push({ k: "muted", text: "Jobs handed to a crew by another crew (opened by one, cleaned or inspected by the next). Open hours run from a job's start to its finish; they are not hours worked." });
   }
   b.push({ k: "h1", text: `Appendix ${letter()}. Found work (${plural(r.found.length, "finding")}, ${plural(m.addedSteps, "activity", "activities")})` });
   if (r.found.length) b.push({ k: "table", head: ["Finding", "Where", "Activities", "Work when approved", "Critical path", "Approved by"], rows: foundRows(r), widths: [2.8, 0.9, 0.7, 1.0, 0.7, 0.8] }); else b.push({ k: "p", text: "None." });
@@ -291,16 +294,16 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
   if (r.measures.some((x) => x.set)) s.push({ kicker: "Backup · targets", title: "Targets for the next event", notes: "Targets agreed in the review, against this event's result.", body: { k: "table", head: ["Measure", "This event", "Target"], widths: [6.3, 3.0, 3.0], rows: r.measures.filter((x) => x.set).map((x) => [x.measure, x.result, x.target]) } });
 
   // Backup: the records behind each, for when someone asks.
-  if (pt.order && pt.steps.some((st) => st.said.length)) s.push({ kicker: `Backup · ${orderWord(pt.order)}`, title: `${orderWord(pt.order)}: what was written on the steps that ran long`, notes: pt.lines.join(" "),
-    body: { k: "table", head: ["Step", "Crew", "Planned", "Took", "Recorded on the step"], widths: [3.0, 1.4, 0.9, 0.9, 6.1], rows: stepRows(r, true), foot: pt.lines[0] } });
+  if (pt.order && pt.steps.some((st) => st.said.length)) s.push({ kicker: `Backup · ${orderWord(pt.order)}`, title: `${orderWord(pt.order)}: what was written on the steps that stayed open longest`, notes: pt.lines.join(" "),
+    body: { k: "table", head: STEPS_HEAD, widths: [2.8, 1.4, 1.0, 1.2, 1.2, 4.7], rows: stepRows(r, true), foot: OPEN_NOTE } });
   for (const f of r.flows.filter(overloaded)) pages(crewRows(f, o.tz), 2400, 12).forEach((rows, i, a) =>
     s.push({ kicker: `Backup · ${f.crew}${part(i, a.length)}`, title: `What waited for ${f.crew}: ${plural(f.jobs.length, "job")}, ${f.peak.open} open at once${f.plannedPeak ? ` (plan ${f.plannedPeak})` : ""}`, notes: queueLine(f),
       body: { k: "table", head: crewHead(f), widths: [3.0, 3.2, 1.8, 1.8, 1.0, 1.5], rows, foot: queueLine(f) } }));
   if (r.late.length) pages(lateRows(r), 2400, 12).forEach((rows, i, a) =>
-    s.push({ kicker: `Backup · late work${part(i, a.length)}`, title: `${plural(r.late.length, "work order")} finished 8 h or more late: where the hours went`, notes: "The parts are where the record shows the time going; steps overlap, so they are not a sum.",
+    s.push({ kicker: `Backup · late work${part(i, a.length)}`, title: `${plural(r.late.length, "work order")} finished 8 h or more after plan: where the time went`, notes: "The parts are where the record shows the time going; steps overlap, so they are not a sum.",
       body: { k: "table", head: LATE_HEAD, widths: [2.6, 1.7, 8.0], rows, foot: "Every work order that finished 8 h or more after its plan, latest against plan first." } }));
-  if (crewsRows(r).length) s.push({ kicker: "Backup · crews", title: "Crews: planned against actual", notes: "Jobs handed to a crew by another crew. Hours a job took are start to finish.",
-    body: { k: "table", head: CREWS_HEAD, widths: [3.0, 1.8, 1.5, 1.5, 2.1, 2.4], rows: crewsRows(r), foot: "Jobs handed to a crew by another crew (opened by one, cleaned or inspected by the next). Hours a job took are start to finish." } });
+  if (crewsRows(r).length) s.push({ kicker: "Backup · crews", title: "Crews: planned against actual", notes: "Jobs handed to a crew by another crew. Open hours run from a job's start to its finish; they are not hours worked.",
+    body: { k: "table", head: CREWS_HEAD, widths: [3.0, 1.8, 1.5, 1.5, 2.1, 2.4], rows: crewsRows(r), foot: "Jobs handed to a crew by another crew (opened by one, cleaned or inspected by the next). Open hours run from a job's start to its finish; they are not hours worked." } });
   if (r.found.length) pages(foundRows(r), 1500, 8).forEach((rows, i, a) =>
     s.push({ kicker: `Backup · found work${part(i, a.length)}`, title: `${m.addedSteps} activities were added from ${plural(r.found.length, "finding")}${m.addedPct != null ? ` (${m.addedH} h on a ${m.baselineH} h plan)` : ""}`, notes: "Hours are the work estimated when each finding was approved.",
       body: { k: "table", head: ["Finding", "Where", "Activities", "Work when approved", "Critical path", "Approved by"], widths: [5.6, 1.3, 1.1, 1.6, 1.2, 1.5], rows } }));

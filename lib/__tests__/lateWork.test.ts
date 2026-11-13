@@ -52,7 +52,9 @@ describe("every late work order, and where its hours went", () => {
   const r = buildReview({ built, work, notes: [], look, discoveries: discoveries(all), tz });
   it("work among the last to finish is told, with the facts and no advice the record can't back", () => {
     const by = (tag: string) => r.findings.find((f) => f.title.startsWith(tag))!;
-    expect(by("P-101").title).toBe("P-101 finished 42 h after its plan: Rebuild Pump took 48 h against 6 h planned");
+    // Open from start to finish is not hours worked: the as-built record says progress was logged on two shifts.
+    expect(by("P-101").title).toBe("P-101 finished 42 h after its plan: Rebuild Pump was open 48 h, with progress logged on 2 shifts");
+    expect(by("P-101").observation).toContain("Rebuild Pump (Shop) was open 48 h from start to finish, with progress logged on 2 shifts; planned as 6 h of work.");
     expect([by("P-101").next, by("P-101").ask, by("P-101").gap]).toEqual(["", "", "No reason was written on the step."]);
     expect(by("S-4").category).toBe("contractors");
     expect(by("PI-220").category).toBe("execution");

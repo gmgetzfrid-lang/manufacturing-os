@@ -148,7 +148,7 @@ describe("the review, from the records", () => {
     const by = (k: string) => r.findings.find((f) => f.key === k)!;
     // Gas-freeing on V-7 says nothing of the plugged line on the PSVs, and the other way round.
     const gas = by("planning");
-    expect([gas.title, gas.effect]).toEqual(["Gas-freeing V-7 took 6 h the plan did not carry", "Did not move the finish."]);
+    expect([gas.title, gas.effect]).toEqual(["V-7 was held 6 h for gas-freeing that was not in the plan", "Did not move the finish."]);
     expect(`${gas.observation} ${gas.gap} ${gas.next}`).not.toMatch(/PSV|plug|clean the line/i);
     expect(`${by("planning:cleaning").observation} ${by("planning:cleaning").next}`).not.toMatch(/V-7|gas/i);
     // Ready work and a hand-off between crews are two findings.
@@ -328,5 +328,21 @@ describe("the files open on the point of the meeting", () => {
     saved.added.push({ id: "a1", category: "materials", title: "Flange not ordered: the length was not on the drawing", observation: "The warehouse asked and got no answer.", effect: "$700 to expedite", next: "Every material fully specified before scope freeze. Open questions answered in 24 hours.", at: 1, by: "me" });
     const c = pointOf(read(saved), "Phase 1", tz).conclusions.find((x) => x.key === "added:a1")!;
     expect([c.ask, c.because]).toEqual(["Every material fully specified before scope freeze.", "Flange not ordered: the length was not on the drawing ($700 to expedite)."]);
+  });
+});
+
+describe("hours a step was open are never called hours of work", () => {
+  it("says open from start to finish, with the shifts progress was logged on (the as-built record)", () => {
+    const o = { project: "Transmix Turnaround", phase: "Phase 1", tz, preparedBy: null, date: "November 13, 2026" };
+    const accepted = emptySaved();
+    for (const f of r.findings) accepted.items[f.key] = { status: "kept" };
+    const rk = read(accepted);
+    const text = [
+      ...rk.findings.map((f) => `${f.title} ${f.observation} ${f.why} ${f.because} ${f.effect}`), ...rk.qa.map((x) => `${x.q} ${x.a}`),
+      ...deckSlides(rk, o).map((x) => JSON.stringify(x)), ...reportBlocks(rk, o).map((x) => JSON.stringify(x)),
+    ].join("\n");
+    expect(text).not.toMatch(/\btook \d|\btook about \d|ran long|"Took"/);
+    expect(rk.finish!.steps[0]).toMatchObject({ tookH: 99, shifts: 4 });
+    expect(text).toContain("open 99 h from start to finish, with progress logged on 4 shifts; planned as 8 h of work");
   });
 });
