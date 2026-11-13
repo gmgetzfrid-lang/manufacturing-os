@@ -26,6 +26,14 @@ export interface HandedJob {
   id: string; name: string; order: string; crew: string;
   /** The crew whose step it followed in the work order. */
   from: string;
+  /** The step it is taken to have followed: the job was ready when that was done. */
+  afterId: string; after: string; afterOrder: string;
+  /** How that step was arrived at: the schedule's own link inside the work
+   *  order, a person's correction, or (a guess) the step before it in the
+   *  work order's planned sequence. */
+  basis: "linked" | "corrected" | "guessed";
+  /** Steps a person may pick instead: finished before this one started, on the same equipment. */
+  candidates: Array<{ id: string; name: string; order: string }>;
   /** When that step finished: from then the job was open for this crew. */
   openedAt: number; startedAt: number; finishedAt: number;
   /** Hours it sat open before this crew started it. */
@@ -110,7 +118,11 @@ export function stepBefore(steps: BuiltStep[], i: number, dependsOn: Map<string,
 }
 
 /** `dependsOn`: each step's predecessors, from the schedule's own links. */
-export function crewFlows(built: AsBuilt, work: AsBuiltWork, dependsOn: Map<string, string[]> = new Map()): CrewFlow[] {
+export function crewFlows(built: AsBuilt, work: AsBuiltWork, dependsOn: Map<string, string[]> = new Map(), readyAfter: Record<string, string> = {}): CrewFlow[] {
+  // Every finished step, to look up a person's correction and the steps on the same equipment.
+  const tagOf = (order: string) => order.split(" - ")[0].trim();
+  const finished = built.orders.flatMap((o) => o.steps.filter((p) => p.finish != null).map((p) => ({ p, order: o.name })));
+  const byStep = new Map(finished.map((x) => [x.p.id, x]));
   const crewOf = (id: string) => work.steps.get(id)?.crew ?? "Not set";
   const orderOf = new Map<string, string>();
   for (const o of built.orders) for (const s of o.steps) orderOf.set(s.id, o.name);
@@ -128,12 +140,18 @@ export function crewFlows(built: AsBuilt, work: AsBuiltWork, dependsOn: Map<stri
         plannedBy.get(crew)!.push({ from: Math.min(before.planFinish, s.planStart ?? before.planFinish), to: s.planFinish });
       }
       if (s.start == null || s.finish == null) return;
-      const prev = stepBefore(steps, i, dependsOn);
-      if (!prev || crewOf(prev.id) === crew) return;
+      // A person's correction wins; else the schedule's link in this work order; else the step planned before it.
+      const picked = readyAfter[s.id] ? byStep.get(readyAfter[s.id]) : undefined;
+      const linked = (dependsOn.get(s.id) ?? []).some((id) => steps.some((p) => p.id === id));
+      const prev = picked ? picked.p : stepBefore(steps, i, dependsOn);
+      if (!prev || (!picked && crewOf(prev.id) === crew)) return;
+      const prevOrder = picked ? picked.order : o.name;
       const openedAt = Math.min(prev.finish!, s.start);
+      const candidates = finished.filter((x) => x.p.id !== s.id && tagOf(x.order) === tagOf(o.name) && x.p.finish! <= s.start! && crewOf(x.p.id) !== crew).sort((a, b) => b.p.finish! - a.p.finish!).slice(0, 12).map((x) => ({ id: x.p.id, name: x.p.name, order: x.order }));
       if (!byCrew.has(crew)) byCrew.set(crew, []);
       byCrew.get(crew)!.push({
-        id: s.id, name: s.name, order: o.name, crew, from: crewOf(prev.id), openedAt, startedAt: s.start, finishedAt: s.finish,
+        id: s.id, name: s.name, order: o.name, crew, from: crewOf(prev.id), afterId: prev.id, after: prev.name, afterOrder: prevOrder, basis: picked ? "corrected" : linked ? "linked" : "guessed", candidates,
+        openedAt, startedAt: s.start, finishedAt: s.finish,
         waitH: r1((s.start - openedAt) / HOUR), plannedH: r1(s.plannedH), tookH: r1(s.elapsedH ?? (s.finish - s.start) / HOUR),
         lateStartH: s.planStart != null ? r1((s.start - s.planStart) / HOUR) : null,
         openedEarlyH: prev.planFinish != null ? r1((prev.planFinish - prev.finish!) / HOUR) : null, crewOn: [],

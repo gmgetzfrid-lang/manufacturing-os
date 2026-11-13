@@ -51,10 +51,11 @@ const stepRows = (r: Review, said: boolean): string[][] => (r.finish?.steps ?? [
 /** Against its planned start: "22 h late", "2 h early", "on plan". */
 const planWord = (h: number | null) => (h == null ? "" : Math.abs(h) < 1 ? "On plan" : `${Math.abs(h)} h ${h > 0 ? "late" : "early"}`);
 /** Every job handed to a crew: when it was open, when the crew started it, how long it sat. */
-const crewRows = (f: CrewFlow, tz: string): string[][] => f.jobs.map((j) => [jobWord(j), whenWord(j.openedAt, tz), whenWord(j.startedAt, tz), j.waitH >= 1 ? `${j.waitH} h` : "None", planWord(j.lateStartH), j.crewOn.length ? [...new Set(j.crewOn.map(orderWord))].join(", ") : ""]);
-const crewHead = (f: CrewFlow) => ["Job", "Open from", `${f.crew} started`, "Sat open", "Start against plan", `${f.crew} was on`];
+const plainStep = (n: string) => n.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim();
+const crewRows = (f: CrewFlow, tz: string): string[][] => f.jobs.map((j) => [jobWord(j), `${plainStep(j.after)} done${j.afterOrder !== j.order ? ` (${orderWord(j.afterOrder)})` : ""}${j.basis === "guessed" ? ", by the planned sequence" : j.basis === "corrected" ? ", as corrected" : ""}`, whenWord(j.openedAt, tz), whenWord(j.startedAt, tz), j.waitH >= 1 ? `${j.waitH} h` : "None", planWord(j.lateStartH)]);
+const crewHead = (f: CrewFlow) => ["Job", "Ready when", "Ready from", `${f.crew} started`, "Waited", "Start against plan"];
 /** The same queue with one crew and with two, as a line. */
-const queueLine = (f: CrewFlow) => `The same ${plural(f.jobs.length, "job")}, taken in the order they opened at the hours each took: one crew working without a break leaves ${f.queue.one} h of waiting; two crews leave ${f.queue.two} h.`;
+const queueLine = (f: CrewFlow) => `A what-if, not what happened: the same ${plural(f.jobs.length, "job")} in the order they were ready, at the hours each took, crews working without a break. One crew: ${f.queue.one} h of waiting in all. Two crews: ${f.queue.two} h.`;
 /** Each crew that was handed work by another: its jobs, plan, actual, waiting. */
 const crewsRows = (r: Review): string[][] => r.flows.filter((f) => f.jobs.length >= 2).map((f) => [f.crew, String(f.jobs.length), `${f.plannedH} h`, `${f.tookH} h`, `${f.waitH} h`, `${f.peak.open}${f.plannedPeak ? ` (plan ${f.plannedPeak})` : ""}`]);
 const CREWS_HEAD = ["Crew", "Jobs handed to it", "Planned", "Took", "Sat waiting for it", "Most open at once"];
@@ -107,7 +108,8 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
     pt.conclusions.forEach((c, i) => b.push({ k: "num", n: i + 1, lead: `${c.title}. `, text: c.why }));
     b.push({ k: "h2", text: "What we change" });
     pt.conclusions.forEach((c, i) => b.push({ k: "num", n: i + 1, text: c.change || "Not written." }));
-  } else b.push({ k: "p", text: "Nothing in the records calls for a change." });
+  } else b.push({ k: "p", text: pt.pending.length ? "No change has been accepted in the review yet." : "Nothing in the records calls for a change." });
+  if (pt.pending.length) { b.push({ k: "h2", text: "Waiting for a decision in the review" }); for (const c of pt.pending) b.push({ k: "bullet", text: `${c.title}.` }); }
 
   const close = toClose(r);
   b.push({ k: "h1", text: "2. Each finding, with what justifies the change" });
@@ -155,7 +157,7 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
   }
   for (const f of r.flows.filter(overloaded)) {
     b.push({ k: "h1", text: `Appendix ${letter()}. What waited for ${f.crew}` });
-    b.push({ k: "table", head: crewHead(f), rows: crewRows(f, o.tz), widths: [1.9, 1.0, 1.0, 0.7, 0.9, 1.4] });
+    b.push({ k: "table", head: crewHead(f), rows: crewRows(f, o.tz), widths: [1.6, 1.7, 1.0, 1.0, 0.7, 0.9] });
     b.push({ k: "muted", text: queueLine(f) });
   }
   if (r.late.length) {
@@ -271,7 +273,7 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
   const asks = pt.conclusions.map((c, i) => ({ n: i + 1, c }));
   const groups: Array<typeof asks> = [];
   for (let i = 0; i < asks.length; i += 6) groups.push(asks.slice(i, i + 6));
-  if (!groups.length) s.push({ kicker: "The point", title: pt.headline, notes: "Nothing in the records calls for a change.", body: { k: "asks", items: [], foot: pt.span } });
+  if (!groups.length) s.push({ kicker: "The point", title: pt.pending.length ? "No changes accepted yet" : "No changes for the next event", notes: pt.pending.length ? `${plural(pt.pending.length, "finding")} wait for a decision in the review.` : "Nothing in the records calls for a change.", body: { k: "asks", items: [], foot: [pt.pending.length ? `${plural(pt.pending.length, "finding")} in the review wait to be accepted or set aside.` : "", pt.headline].filter(Boolean).join(" ") } });
   groups.forEach((g, i) => s.push({
     kicker: `The point${part(i, groups.length)}`, title: `${plural(asks.length, "change")} for the next event`, notes: g.map(({ n, c }) => `${n}. ${c.ask} Because: ${c.because}`).join(" "),
     body: { k: "asks", items: g.map(({ n, c }) => ({ n, ask: c.ask, because: c.because })), foot: [pt.headline, pt.span].filter(Boolean).join(" ") },
@@ -292,8 +294,8 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
   if (pt.order && pt.steps.some((st) => st.said.length)) s.push({ kicker: `Backup · ${orderWord(pt.order)}`, title: `${orderWord(pt.order)}: what was written on the steps that ran long`, notes: pt.lines.join(" "),
     body: { k: "table", head: ["Step", "Crew", "Planned", "Took", "Recorded on the step"], widths: [3.0, 1.4, 0.9, 0.9, 6.1], rows: stepRows(r, true), foot: pt.lines[0] } });
   for (const f of r.flows.filter(overloaded)) pages(crewRows(f, o.tz), 2400, 12).forEach((rows, i, a) =>
-    s.push({ kicker: `Backup · ${f.crew}${part(i, a.length)}`, title: `What waited for ${f.crew}: ${f.waitH} h across ${plural(f.jobs.length, "job")}, ${f.peak.open} open at once`, notes: queueLine(f),
-      body: { k: "table", head: crewHead(f), widths: [3.4, 1.9, 1.9, 1.1, 1.5, 2.5], rows, foot: queueLine(f) } }));
+    s.push({ kicker: `Backup · ${f.crew}${part(i, a.length)}`, title: `What waited for ${f.crew}: ${plural(f.jobs.length, "job")}, ${f.peak.open} open at once${f.plannedPeak ? ` (plan ${f.plannedPeak})` : ""}`, notes: queueLine(f),
+      body: { k: "table", head: crewHead(f), widths: [3.0, 3.2, 1.8, 1.8, 1.0, 1.5], rows, foot: queueLine(f) } }));
   if (r.late.length) pages(lateRows(r), 2400, 12).forEach((rows, i, a) =>
     s.push({ kicker: `Backup · late work${part(i, a.length)}`, title: `${plural(r.late.length, "work order")} finished 8 h or more late: where the hours went`, notes: "The parts are where the record shows the time going; steps overlap, so they are not a sum.",
       body: { k: "table", head: LATE_HEAD, widths: [2.6, 1.7, 8.0], rows, foot: "Every work order that finished 8 h or more after its plan, latest against plan first." } }));
@@ -370,7 +372,7 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, out: "blob" | "no
     if (b.k === "asks") {
       const big = b.items.length <= 4;
       const rowH = Math.min(1.25, 5.1 / Math.max(1, b.items.length));
-      if (!b.items.length) s.addText("Nothing in the records calls for a change.", { x: 0.6, y: 1.7, w: 12.1, h: 0.6, fontFace: face, fontSize: 20, color: INK });
+      if (!b.items.length) s.addText(T(spec.notes), { x: 0.6, y: 1.7, w: 12.1, h: 0.6, fontFace: face, fontSize: 20, color: INK });
       b.items.forEach((it, i) => {
         const y = 1.6 + i * rowH;
         s.addText(String(it.n), { x: 0.6, y, w: 0.6, h: 0.6, fontFace: face, fontSize: big ? 26 : 22, bold: true, color: ACC, valign: "top" });

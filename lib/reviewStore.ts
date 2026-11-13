@@ -63,8 +63,12 @@ export function cleanSaved(v: unknown): ReviewSaved {
       const note = str(a.note, 1000)?.trim(); if (note) ans.note = note;
       if (typeof a.at === "number") ans.at = a.at;
       if (typeof a.by === "string") ans.by = a.by;
-      if (ans.cause || ans.note) out.answers[k] = ans;
+      if (a.known === "drawing" || a.known === "operations" || a.known === "inspection" || a.known === "no") ans.known = a.known;
+      if (ans.cause || ans.note || ans.known) out.answers[k] = ans;
     }
+  }
+  if (r.readyAfter && typeof r.readyAfter === "object") {
+    for (const [k, x] of Object.entries(r.readyAfter as Record<string, unknown>)) if (typeof x === "string" && x) out.readyAfter[k] = x;
   }
   if (r.targets && typeof r.targets === "object") {
     for (const [k, x] of Object.entries(r.targets as Record<string, unknown>)) { const t = str(x, 200)?.trim(); if (t) out.targets[k] = t; }

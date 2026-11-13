@@ -135,7 +135,7 @@ function Canvas({ spec }: { spec: SlideSpec }) {
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden", marginTop: 10 }}>
         {b.k === "asks" ? (
           <div>
-            {!b.items.length && <div style={{ fontSize: pt(20) }}>Nothing in the records calls for a change.</div>}
+            {!b.items.length && <div style={{ fontSize: pt(20) }}>{T(spec.notes)}</div>}
             {b.items.map((it) => (
               <div key={it.n} style={{ display: "flex", gap: 22, marginBottom: b.items.length <= 4 ? 30 : 18 }}>
                 <div style={{ flex: "0 0 40px", fontSize: pt(b.items.length <= 4 ? 26 : 22), fontWeight: 700, color: C.acc, lineHeight: 1 }}>{it.n}</div>
@@ -213,7 +213,7 @@ function Page({ spec }: { spec: SlideSpec }) {
       </>}
       {b.k === "asks" && (
         <ol className="mt-4 space-y-4">
-          {!b.items.length && <li className="text-[15px]">Nothing in the records calls for a change.</li>}
+          {!b.items.length && <li className="text-[15px]">{T(spec.notes)}</li>}
           {b.items.map((it) => (
             <li key={it.n} className="flex gap-3">
               <span className="text-[22px] font-black leading-none" style={{ color: C.acc }}>{it.n}</span>

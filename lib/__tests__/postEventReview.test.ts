@@ -130,7 +130,8 @@ describe("the review, from the records", () => {
     expect([r.findings[0].key, plug.rating, plug.moved]).toEqual(["planning:cleaning", "gap", 3]);
     expect(plug.title).toBe("PSVs set the finish: a line had to be cleaned first");
     expect(plug.effect).toBe("Set the finish: PSVs was the last work done, 22 h after Control Valves.");
-    expect(plug.next).toBe("Plan line cleaning into the job on PSVs: the line was found plugged this event.");
+    // No advice is written for it: nobody can plan where a line will be plugged. A person says what, if anything, to change.
+    expect([plug.next, plug.ask]).toEqual(["", ""]);
     // A hand-off on the same work is told as that, not as a crew short of people.
     const hand = by("contractors:handoff");
     expect([hand.rating, hand.moved, hand.title]).toEqual(["opportunity", 2, "PSV-021 - E-13 Overhead waited a shift on another crew"]);
@@ -159,13 +160,25 @@ describe("the review, from the records", () => {
       for (const tag of f.next.match(/\b[A-Z]{1,3}-\d+[A-Z]?\b/g) ?? []) expect(about, `${f.key}: ${tag}`).toContain(tag);
     }
   });
-  it("names the found work on the critical path, and asks for what was never written", () => {
+  it("found work: the records say what was found; a person says whether it could have been known", () => {
     const scope = r.findings.find((f) => f.key === "scope")!;
-    // One fact a line, each a whole sentence; the critical-path work first.
-    expect(scope.observation.split("\n")).toEqual(["On the critical path, V-7: Unplanned clean downcomers. About 18 h.", "1 activity was added from 1 finding: 18 h of work on a 52 h plan (35% more), by the schedule's estimates."]);
-    expect(scope.proof).toBe("On the critical path, V-7: Unplanned clean downcomers. About 18 h.");
-    expect(r.questions.map((q) => q.kind).sort()).toEqual(["approver", "stuck"]);
+    expect(scope.observation.split("\n")).toEqual(["1 activity was added from 1 finding: 18 h of work on a 52 h plan (35% more), by the schedule's estimates.", "On the critical path, V-7: Unplanned clean downcomers. About 18 h."]);
+    // No advice of the app's own, and a question for the person.
+    expect([scope.next, scope.ask]).toEqual(["", ""]);
+    expect(r.questions.map((q) => q.kind).sort()).toEqual(["approver", "known", "stuck"]);
+    expect(r.questions.find((q) => q.kind === "known")!.ask).toBe('"Unplanned clean downcomers" (V-7, 18 h): could this have been known before the event? If yes, what do we do next time?');
     expect(r.questions.find((q) => q.kind === "stuck")!.ask).toContain("E-13 Pull Blinds / Torque Flanges had started and sat the 10/28 day shift");
+    // Said to be knowable from the drawings: a finding of its own, in the person's words.
+    const yes = emptySaved(); yes.answers["known:d1"] = { known: "drawing", note: "Review the vessel drawings for welded internals and plan the hand cleaning. Ask operations what to expect." };
+    const k = read(yes).findings.find((f) => f.key === "scope:known:d1")!;
+    expect([k.title, k.ask]).toEqual(["Unplanned clean downcomers (V-7) could have been known from the drawings", "Review the vessel drawings for welded internals and plan the hand cleaning."]);
+    expect(k.because).toBe("Unplanned clean downcomers (V-7): about 18 h not in the plan. It could have been known from the drawings.");
+    expect(read(yes).questions.some((q) => q.kind === "known")).toBe(false);
+    // Said to be findable only by opening it: time to carry, nothing to have checked.
+    const no = emptySaved(); no.answers["known:d1"] = { known: "no" };
+    const s2 = read(no).findings.find((f) => f.key === "scope")!;
+    expect([s2.ask, s2.because]).toEqual(["Carry time for what can only be found by opening the equipment.", "18 h this event could only be found by opening it."]);
+    expect(read(no).findings.some((f) => f.key.startsWith("scope:known:"))).toBe(false);
   });
   it("every category has a finding; safety reads the stand-down", () => {
     expect([...new Set(r.findings.map((f) => f.category))].sort()).toEqual(["contractors", "execution", "materials", "organization", "planning", "records", "safety", "scope"]);
@@ -272,18 +285,29 @@ saved.added.push({ id: "a1", category: "materials", title: "Flange not ordered",
 
 describe("the files open on the point of the meeting", () => {
   const o = { project: "Transmix Turnaround", phase: "Phase 1", tz, preparedBy: null, date: "November 13, 2026" };
-  it("the deck: the changes, each with its reason in a line; everything else is backup", () => {
+  // A person accepted every finding the app drafted.
+  const accepted = emptySaved();
+  for (const f of r.findings) if (f.rating === "gap" || f.rating === "opportunity") accepted.items[f.key] = { status: "kept" };
+  const rk = read(accepted);
+  it("nothing is on the slide until a person accepts it", () => {
     const deck = deckSlides(r, o);
-    const n = pointOf(r, "Phase 1", tz).conclusions.length;
-    expect(deck[1].title).toBe(`${n} changes for the next event`);
+    expect(deck[1].title).toBe("No changes accepted yet");
+    expect(deck[1].body.k === "asks" && deck[1].body.items).toEqual([]);
+    expect(pointOf(r, "Phase 1", tz).pending.length).toBeGreaterThan(2);
+    expect(reportBlocks(r, o).some((x) => x.k === "p" && x.text === "No change has been accepted in the review yet.")).toBe(true);
+  });
+  it("the deck: the accepted changes, each with its reason in a line; everything else is backup", () => {
+    const deck = deckSlides(rk, o);
+    const cs = pointOf(rk, "Phase 1", tz).conclusions;
+    expect(deck[1].title).toBe(`${cs.length} changes for the next event`);
     const b = deck[1].body;
     // One short line to say, one short line why. No tables, no quotes, no list of what did not matter.
-    expect(b.k === "asks" && b.items[0]).toEqual({ n: 1, ask: "Plan line cleaning into the job on PSVs.", because: "PSVs set the finish: a line had to be cleaned first." });
+    expect(b.k === "asks" && b.items[0]).toEqual({ n: 1, ask: "Name each day's hand-offs between crews at the shift meeting.", because: "PSV-021 - E-13 Overhead waited a shift on another crew." });
     expect(b.k === "asks" && b.items.every((it) => it.ask.length <= 110 && it.because.length <= 170)).toBe(true);
-    expect(b.k === "asks" && b.items.length).toBeLessThanOrEqual(6);
+    // A finding with no change written is accepted but has nothing to say on the slide.
+    expect(cs.some((c) => c.key === "planning:cleaning")).toBe(false);
     expect(deck[2].title).toBe("What went well: keep doing it");
     expect(deck.slice(3).every((x) => x.kicker.startsWith("Backup"))).toBe(true);
-    // The full justification and the category sit in the backup.
     const full = deck.find((x) => x.title === "Each change, with what justifies it")!.body;
     expect(full.k === "table" && full.head).toEqual(["What we change", "What justifies it", "Category"]);
     const titles = deck.map((x) => `${x.kicker} ${x.title}`).join(" | ");
@@ -292,10 +316,10 @@ describe("the files open on the point of the meeting", () => {
     const waited = deck.find((x) => x.title === "Jobs that sat a whole shift, and why")!.body;
     expect(waited.k === "table" && waited.rows.find((row) => row[0].startsWith("TV-006"))![2]).toBe("Out for service (planned)");
   });
-  it("the report: the same headline and conclusions first, each finding with how it is done well", () => {
-    const blocks = reportBlocks(r, o);
+  it("the report: the same headline and accepted conclusions first, each finding with how it is done well", () => {
+    const blocks = reportBlocks(rk, o);
     expect(blocks.find((x) => x.k === "h1")).toMatchObject({ text: "1. Phase 1 finished 46 h late. PSVs set the finish." });
-    expect(blocks.find((x) => x.k === "num")).toMatchObject({ n: 1, lead: "PSVs set the finish: a line had to be cleaned first. " });
+    expect(blocks.find((x) => x.k === "num")).toMatchObject({ n: 1, lead: "PSV-021 - E-13 Overhead waited a shift on another crew. " });
     expect(blocks.some((x) => x.k === "p" && x.lead === "How it is done well (Planning and scheduling): ")).toBe(true);
     expect(blocks.some((x) => x.k !== "table" && /12 months|closure plan/i.test(x.text))).toBe(false);
   });

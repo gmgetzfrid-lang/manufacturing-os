@@ -33,8 +33,8 @@ import { fmtInTz } from "@/lib/scheduleTz";
 import { listMaterials, summarize } from "@/lib/materials";
 import { loadOrg, orgStanding } from "@/lib/eventOrganization";
 import {
-  CATEGORIES, CAUSE_CHOICES, CAUSE_WORD, RATING_MEANS, RATING_WORD, basisOf, buildReview, categoryOf, emptySaved, jobWord, orderWord, pointOf, shiftWord, shiftsWord,
-  type Answer, type CategoryId, type CauseId, type Finding, type FindingEdit, type OrgStanding, type Rating, type ReviewSaved,
+  CATEGORIES, CAUSE_CHOICES, CAUSE_WORD, KNOWN_WORD, RATING_MEANS, RATING_WORD, basisOf, buildReview, categoryOf, emptySaved, jobWord, orderWord, pointOf, shiftWord, shiftsWord,
+  type Answer, type CategoryId, type CauseId, type Finding, type Known, type FindingEdit, type OrgStanding, type Rating, type ReviewSaved,
 } from "@/lib/postEventReview";
 import { changeReview, loadReview, reviewScope, syncLesson } from "@/lib/reviewStore";
 import { deckSlides, fileStem, reviewDocx, reviewPptx, saveFile, type ReviewFileOpts } from "@/lib/reviewFiles";
@@ -173,8 +173,8 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
       await lesson({ key: `added:${id}`, category, source: "person", rating: e.rating ?? "opportunity", title: e.title ?? "Finding", observation: e.observation ?? "", evidence: [], practice: "", gap: e.gap ?? "", next: e.next ?? "", year: e.year ?? "", owner: e.owner ?? "", effect: e.effect ?? "", moved: null, proof: "", why: e.effect ?? "", hours: null, ask: e.ask ?? e.next ?? "", because: e.because ?? e.effect ?? "", info: [], status: "kept", edited: false, stale: false, drafted: { title: e.title ?? c.name, observation: e.observation ?? "", rating: e.rating ?? "opportunity" }, by: who, at: Date.now() }, true);
     });
   };
-  const filled = Object.entries(answers).filter(([, a]) => a.cause || a.note?.trim());
-  const saveAnswers = () => void act("answers", (s) => { for (const [k, a] of filled) s.answers[k] = { ...(a.cause ? { cause: a.cause } : {}), ...(a.note?.trim() ? { note: a.note.trim() } : {}), at: Date.now(), by: who }; }, () => { setAnswers({}); onReload(); setTick((t) => t + 1); });
+  const filled = Object.entries(answers).filter(([, a]) => a.cause || a.known || a.note?.trim());
+  const saveAnswers = () => void act("answers", (s) => { for (const [k, a] of filled) s.answers[k] = { ...(a.cause ? { cause: a.cause } : {}), ...(a.known ? { known: a.known } : {}), ...(a.note?.trim() ? { note: a.note.trim() } : {}), at: Date.now(), by: who }; }, () => { setAnswers({}); onReload(); setTick((t) => t + 1); });
   const saveTargets = () => { const t = targets; if (!t) return; void act("targets", (s) => { s.targets = Object.fromEntries(Object.entries(t).map(([k, v]) => [k, v.trim()]).filter(([, v]) => v)); }, () => setTargets(null)); };
   const reanalyze = () => { setMsg(null); setErr(null); onReload(); setTick((t) => t + 1); };
 
@@ -238,9 +238,9 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
 
       {!m.steps ? <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-8 text-center text-[13px] text-[var(--color-text-muted)]">No schedule{phase ? ` for ${phase.name}` : ""} yet, so there is nothing to review.</div> : <>
         <section className="rounded-2xl border-2 border-[var(--color-text)] bg-[var(--color-surface)] p-4" data-review-point>
-          <h3 className="text-[18px] sm:text-[20px] font-black leading-snug text-[var(--color-text)]">{pt.conclusions.length ? `${pt.conclusions.length} change${pt.conclusions.length === 1 ? "" : "s"} for the next event` : pt.headline}</h3>
-          <p className="text-[12.5px] text-[var(--color-text-muted)]">{pt.conclusions.length ? `${pt.headline} ` : ""}{pt.span}</p>
-          {pt.conclusions.length > 0 ? (
+          <h3 className="text-[18px] sm:text-[20px] font-black leading-snug text-[var(--color-text)]">{pt.conclusions.length ? `On the slide: ${pt.conclusions.length} change${pt.conclusions.length === 1 ? "" : "s"} for the next event` : "Nothing is on the slide yet"}</h3>
+          <p className="text-[12.5px] text-[var(--color-text-muted)]">{pt.headline} {pt.span} Only what you accept or write goes on the slide.</p>
+          {pt.conclusions.length > 0 && (
             <ol className="mt-3 space-y-2.5">
               {pt.conclusions.map((c, i) => (
                 <li key={c.key} className="flex gap-3 text-[var(--color-text)]" data-conclusion={c.key}>
@@ -249,7 +249,29 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
                 </li>
               ))}
             </ol>
-          ) : <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">Nothing in the records calls for a change.</p>}
+          )}
+          {pt.pending.length > 0 && (
+            <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-3" data-review-pending>
+              <b className="block text-[13.5px] text-amber-900 dark:text-amber-200">Needs your call ({pt.pending.length}): not on the slide</b>
+              <ul className="mt-2 space-y-2.5">
+                {pt.pending.map((c) => {
+                  const f = review.findings.find((x) => x.key === c.key)!;
+                  return (
+                    <li key={c.key} className="text-[13px] text-[var(--color-text)]" data-pending={c.key}>
+                      <b className="block">{c.title}</b>
+                      <span className="block text-[var(--color-text-muted)]">{c.because}</span>
+                      {c.ask ? <span className="block"><span className={label}>Suggested change </span>{c.ask}</span> : <span className="block text-[var(--color-text-muted)]">No change suggested. Write one with Edit, or set it aside.</span>}
+                      {canManage && <span className="mt-1 flex gap-1.5 flex-wrap">
+                        {c.ask && <button type="button" disabled={!!busy} onClick={() => keep(f)} className={dark}><Check className="w-4 h-4" /> Accept</button>}
+                        <button type="button" disabled={!!busy} onClick={() => { setEditing(f.key); setAdding(false); document.querySelector(`[data-finding="${f.key}"]`)?.scrollIntoView({ block: "center" }); }} className={btn}><Pencil className="w-4 h-4" /> {c.ask ? "Reword" : "Write the change"}</button>
+                        <button type="button" disabled={!!busy} onClick={() => discard(f)} className={btn}><Trash2 className="w-4 h-4" /> Not this</button>
+                      </span>}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
         </section>
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
@@ -312,7 +334,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
                       {closes && <>
                         {f.practice && <><dt className={`${label} pt-0.5`}>Done well</dt><dd className="text-[var(--color-text-muted)]">{f.practice}</dd></>}
                         {f.gap && <><dt className={`${label} pt-0.5`}>What was missing</dt><dd>{f.gap}</dd></>}
-                        <dt className={`${label} pt-0.5`}>Do differently</dt><dd>{f.next || <span className="text-[var(--color-text-muted)]">Not written.</span>}{f.owner && <span className="ml-1.5 text-[11px] font-extrabold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] whitespace-nowrap">Owner: {f.owner}</span>}</dd>
+                        <dt className={`${label} pt-0.5`}>{f.status === "kept" || f.source === "person" ? "Do differently" : "Suggested change"}</dt><dd>{f.next || <span className="text-[var(--color-text-muted)]">None suggested. Write one with Edit.</span>}{f.owner && <span className="ml-1.5 text-[11px] font-extrabold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] whitespace-nowrap">Owner: {f.owner}</span>}</dd>
                         {f.year && <><dt className={`${label} pt-0.5`}>Longer term</dt><dd>{f.year}</dd></>}
                       </>}
                       {!closes && f.next && <><dt className={`${label} pt-0.5`}>Do differently</dt><dd>{f.next}</dd></>}
@@ -335,8 +357,8 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
                     {canManage && infoFor !== f.key && (
                       <div className="mt-3 flex gap-1.5 flex-wrap">
                         {f.status === "discarded" ? <button type="button" disabled={!!busy} onClick={() => restore(f)} className={btn}><RotateCcw className="w-4 h-4" /> Restore</button> : <>
-                          {f.status === "kept" ? <button type="button" disabled={!!busy} onClick={() => unkeep(f)} className={btn}><Check className="w-4 h-4 text-emerald-600" /> Kept · undo</button>
-                            : <button type="button" disabled={!!busy} onClick={() => keep(f)} className={dark}>{busy === `keep:${f.key}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Keep</button>}
+                          {f.status === "kept" ? <button type="button" disabled={!!busy} onClick={() => unkeep(f)} className={btn}><Check className="w-4 h-4 text-emerald-600" /> {closes ? "On the slide · undo" : "Kept · undo"}</button>
+                            : <button type="button" disabled={!!busy} onClick={() => keep(f)} className={dark}>{busy === `keep:${f.key}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {closes ? "Accept for the slide" : "Keep"}</button>}
                           <button type="button" disabled={!!busy} onClick={() => { setEditing(f.key); setAdding(false); }} className={btn}><Pencil className="w-4 h-4" /> Edit</button>
                           <button type="button" disabled={!!busy} onClick={() => { setInfoFor(f.key); setInfoText(""); }} className={btn}><Plus className="w-4 h-4" /> Add information</button>
                           <button type="button" disabled={!!busy} onClick={() => discard(f)} className={btn}><Trash2 className="w-4 h-4" /> Discard</button>
@@ -367,7 +389,12 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
                               {CAUSE_CHOICES.map((c) => <option key={c} value={c}>{CAUSE_WORD[c]}</option>)}
                             </select>
                           )}
-                          <input aria-label="Answer" value={a.note ?? ""} onChange={(e) => set({ note: e.target.value })} placeholder={q.answer === "cause" ? "More, if it helps (optional)" : "One line is enough"} className={field} />
+                          {q.answer === "known" && (
+                            <div className="flex gap-1.5 flex-wrap">
+                              {(Object.keys(KNOWN_WORD) as Known[]).map((k) => <button key={k} type="button" aria-pressed={a.known === k} onClick={() => set({ known: a.known === k ? undefined : k })} className={`h-8 px-2.5 rounded-full border text-[12px] font-bold ${a.known === k ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border-strong)]"}`}>{KNOWN_WORD[k]}</button>)}
+                            </div>
+                          )}
+                          <input aria-label="Answer" value={a.note ?? ""} onChange={(e) => set({ note: e.target.value })} placeholder={q.answer === "known" ? "What we do next time (this is the slide line)" : q.answer === "cause" ? "More, if it helps (optional)" : "One line is enough"} className={field} />
                         </div>}
                       </div>
                     );
@@ -415,8 +442,28 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
           <summary className="cursor-pointer px-4 py-3 text-[14px] font-black text-[var(--color-text)]">The records behind it: every job that waited, by name</summary>
           <div className="px-4 pb-4 space-y-4">
             {review.flows.filter(overloaded).map((f) => (
-              <Table key={f.crew} title={`What waited for ${f.crew}: ${f.waitH} h across ${f.jobs.length} job${f.jobs.length === 1 ? "" : "s"}, ${f.peak.open} open at once`} head={["Job", "Open from", `${f.crew} started`, "Sat open", "Start against plan", `${f.crew} was on`]} empty="None."
-                rows={f.jobs.map((j) => [jobWord(j), when(j.openedAt), when(j.startedAt), j.waitH >= 1 ? `${j.waitH} h` : "None", j.lateStartH == null ? "" : Math.abs(j.lateStartH) < 1 ? "On plan" : `${Math.abs(j.lateStartH)} h ${j.lateStartH > 0 ? "late" : "early"}`, [...new Set(j.crewOn.map(orderWord))].join(", ")])} />
+              <div key={f.crew} data-crew-waits={f.crew}>
+                <h4 className="text-[13px] font-black text-[var(--color-text)]">What waited for {f.crew}: {f.jobs.length} job{f.jobs.length === 1 ? "" : "s"}, {f.peak.open} open at once{f.plannedPeak ? ` (plan ${f.plannedPeak})` : ""}</h4>
+                <p className="mb-1.5 text-[12px] text-[var(--color-text-muted)]">Each wait runs from when the job was ready to when {f.crew} started it. Check the &ldquo;ready when&rdquo; step on each: where the schedule has no link the app takes the step planned before it, and you can correct it.</p>
+                <ul className="space-y-2">
+                  {f.jobs.map((j) => (
+                    <li key={j.id} className="rounded-xl border border-[var(--color-border)] px-3 py-2 text-[12.5px] text-[var(--color-text)]">
+                      <div className="flex items-baseline gap-x-3 flex-wrap"><b>{jobWord(j)}</b><span className="ml-auto font-bold">{j.waitH >= 1 ? `Waited ${j.waitH} h` : "No wait"}</span></div>
+                      <div className="mt-0.5 flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[var(--color-text-muted)]">Ready when</span>
+                        {canManage && j.candidates.length > 1 ? (
+                          <select aria-label={`Ready when: ${jobWord(j)}`} value={j.afterId} disabled={!!busy} onChange={(e) => void act(`ready:${j.id}`, (s) => { s.readyAfter = { ...(s.readyAfter ?? {}), [j.id]: e.target.value }; })} className={`${field} !w-auto max-w-full h-8 !py-0`}>
+                            {!j.candidates.some((c) => c.id === j.afterId) && <option value={j.afterId}>{j.after}</option>}
+                            {j.candidates.map((c) => <option key={c.id} value={c.id}>{c.name.replace(/\s*\([^)]*\)/g, "")}{c.order !== j.order ? ` (${c.order})` : ""}</option>)}
+                          </select>
+                        ) : <b>{j.after}</b>}
+                        <span className="text-[var(--color-text-muted)]">was done{j.basis === "guessed" ? " (taken from the planned sequence)" : j.basis === "corrected" ? " (as corrected)" : ""}</span>
+                      </div>
+                      <div className="text-[var(--color-text-muted)]">Ready {when(j.openedAt)} · {f.crew} started {when(j.startedAt)}{j.lateStartH != null && Math.abs(j.lateStartH) >= 1 ? ` · ${Math.abs(j.lateStartH)} h ${j.lateStartH > 0 ? "after" : "before"} its planned start` : ""}{j.crewOn.length ? ` · ${f.crew} was on ${[...new Set(j.crewOn.map(orderWord))].join(", ")}` : ""}</div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ))}
             <Table title={`Work orders that finished late: ${review.late.length}, and where the hours went`} head={["Work order", "Finished late by", "Where the hours went"]} empty="No work order finished 8 h or more after its plan."
               rows={review.late.map((o) => [orderWord(o.order), `${o.lateH} h${o.added ? " (added work)" : ""}`, o.parts.slice(0, 3).map((p) => (p.kind === "over" ? `${p.step.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim()} took ${p.tookH} h against ${p.plannedH} h (${p.crew})` : p.kind === "wait" ? `${p.step.replace(/\s*\([^)]*\)/g, "").replace(/[()]/g, "").trim()} sat ${p.hours} h before ${p.crew} started it` : `Started ${p.hours} h after its planned start`)).join("; ") || "Not shown by the record"])} />

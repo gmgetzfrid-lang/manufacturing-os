@@ -6,7 +6,7 @@ import type { ProgressLogRow } from "@/lib/progressHistory";
 import { crewFlows, overloaded } from "@/lib/crewFlow";
 import { buildLookBack } from "@/lib/lookBack";
 import { discoveries } from "@/lib/discovery";
-import { buildReview, pointOf } from "@/lib/postEventReview";
+import { buildReview, emptySaved, pointOf } from "@/lib/postEventReview";
 
 const tz = "America/Los_Angeles";
 const times = { dayStart: "06:00", nightStart: "18:00", breaks: [] };
@@ -82,27 +82,41 @@ describe("where work waited between crews", () => {
 
 describe("the review's conclusion from it", () => {
   const look = buildLookBack({ milestones: all, notes: [], discoveries: discoveries(all), now: Date.parse(at(31, 12)), tz });
-  const r = buildReview({ built, work, notes: [], look, discoveries: discoveries(all), tz });
+  const base = { built, work, notes: [], look, discoveries: discoveries(all), tz };
+  const r = buildReview(base);
   const f = r.findings.find((x) => x.key === "contractors:crew:clean")!;
-  it("says the crew could not keep up, with the hours and what a second crew changes", () => {
-    expect(f.title).toBe("Not enough Clean for the equipment that was open: 4 jobs at once, 52 h of waiting");
-    expect(f.why).toBe("4 jobs were open for Clean at once against 1 in the plan, and equipment sat open 52 h waiting. One crew working without a break still leaves 18 h of waiting; two leave 4 h.");
-    expect(f.next).toBe("Bring another Clean crew for the days equipment opens (10/26 to 10/27), or open equipment only as fast as Clean can take it. Opening ahead of plan gained nothing here.");
+  it("says the crew could not keep up in plain facts: how many at once against the plan, and the longest waits", () => {
+    expect(f.title).toBe("Not enough Clean for the equipment that was open: 4 jobs at once against 1 planned");
+    expect(f.because).toBe("4 jobs were open for Clean at once against 1 planned. Longest waits: E-4 23 h, E-3 20 h, E-2 6 h.");
+    expect(f.ask).toBe("Bring a second Clean crew for the days equipment opens.");
+    // No stacked total of job-hours in the headline; the what-if is said to be one.
+    expect(`${f.title} ${f.because} ${f.why}`).not.toMatch(/52 h/);
+    expect(f.observation).toContain("A what-if, not what happened");
+    expect(f.observation).toContain("One crew: 18 h of waiting in all. Two crews: 4 h.");
+    // Each wait says what the job is taken to have followed, and that it is from the planned sequence.
+    expect(f.observation).toContain("E-4 Hydroblast Bundle 23 h (ready when Pull Bundle was done, by the planned sequence)");
     expect(f.practice).toContain("sized to the most work the schedule hands it at once");
-    expect(["gap", "opportunity"]).toContain(f.rating);
-    // The jobs it tells are not told again as ready work nobody needed to act on.
-    expect(r.findings.some((x) => x.key === "contractors" && /Nothing to change/.test(x.next))).toBe(false);
   });
-  it("is a conclusion of the review, with its change, and has its questions answered", () => {
-    const c = pointOf(r, "Phase 1", tz).conclusions.find((x) => x.key === f.key)!;
-    expect([c.category, c.title, c.change]).toEqual(["Contractors and resourcing", f.title, f.next]);
-    // What is said out loud: the change in a line, the reason in a line.
-    expect([c.ask, c.because]).toEqual(["Bring a second Clean crew for the days equipment opens.", "4 jobs were open for Clean at once and equipment sat open 52 h. With two crews: 4 h."]);
+  it("is the app's suggestion until a person accepts it: off the slide, in the list that needs their call", () => {
+    const pt = pointOf(r, "Phase 1", tz);
+    expect(pt.conclusions).toEqual([]);
+    expect(pt.pending.find((x) => x.key === f.key)).toMatchObject({ ask: f.ask, because: f.because, category: "Contractors and resourcing" });
+    const kept = buildReview({ ...base, saved: { ...emptySaved(), items: { [f.key]: { status: "kept" } } } });
+    expect(pointOf(kept, "Phase 1", tz).conclusions.map((x) => x.key)).toEqual([f.key]);
     expect(r.qa.map((x) => x.q)).toEqual(expect.arrayContaining(["What was open and waiting for Clean?", "Would another Clean crew have changed the finish?"]));
   });
+  it("a person can correct what a job followed, and its wait follows", () => {
+    // E-4's cleaning was not ready until E-3's was done (a link the schedule did not have).
+    const fixed = crewFlows(built, work, new Map(), { c4: "c3" }).find((x) => x.crew === "Clean")!.jobs.find((j) => j.id === "c4")!;
+    expect([fixed.waitH, fixed.basis, fixed.after]).toEqual([0, "corrected", "Hydroblast Bundle"]);
+    const was = clean.jobs.find((j) => j.id === "c4")!;
+    expect([was.waitH, was.basis, was.after]).toEqual([23, "guessed", "Pull Bundle"]);
+    // The review carries the correction from what was saved.
+    const r2 = buildReview({ ...base, saved: { ...emptySaved(), readyAfter: { c4: "c3" } } });
+    expect(r2.flows.find((x) => x.crew === "Clean")!.jobs.find((j) => j.id === "c4")!.waitH).toBe(0);
+  });
   it("says nothing of the kind when work passed between crews without a queue", () => {
-    const calm = crewFlows(built, work).find((x) => x.crew === "Mech")!;
-    expect(overloaded(calm)).toBe(false);
+    expect(overloaded(crewFlows(built, work).find((x) => x.crew === "Mech")!)).toBe(false);
     expect(r.findings.some((x) => x.key === "contractors:crew:mech")).toBe(false);
   });
 });

@@ -28,8 +28,10 @@ const rows: Array<[Milestone, [string, string]]> = [
   [step("b2", "wb", "Clean Strainer", "Clean", [at(26, 9), at(26, 11)], [at(27, 15), at(27, 17)]), [at(27, 15), at(27, 17)]],
   [step("c1", "wc", "Replace Gauge", "Inst", [at(26, 8), at(26, 10)], [at(27, 14), at(27, 16)]), [at(27, 14), at(27, 16)]],
   [step("d1", "wd", "Swap Filter", "Mech", [at(26, 12), at(26, 14)], [at(26, 12), at(26, 14)]), [at(26, 12), at(26, 14)]],
+  // Late against its own date, done before the three above, nothing waiting on it.
+  [step("e1", "we", "Swap Thermometer", "Inst", [at(26, 8), at(26, 10)], [at(27, 10), at(27, 12)]), [at(27, 10), at(27, 12)]],
 ];
-const all: Milestone[] = [order("wa", "P-101 - Charge Pump"), order("wb", "S-4 - Suction Strainer"), order("wc", "PI-220 - Gauge"), order("wd", "F-9 - Filter"), ...rows.map((r) => r[0])];
+const all: Milestone[] = [order("wa", "P-101 - Charge Pump"), order("wb", "S-4 - Suction Strainer"), order("wc", "PI-220 - Gauge"), order("wd", "F-9 - Filter"), order("we", "TI-7 - Thermometer"), ...rows.map((r) => r[0])];
 const log = rows.flatMap(([m, t]) => done(m.id!, t[0], t[1]));
 const kids = new Map<string, Milestone[]>();
 for (const m of all) if (m.parentId) kids.set(m.parentId, [...(kids.get(m.parentId) ?? []), m]);
@@ -43,17 +45,26 @@ describe("every late work order, and where its hours went", () => {
       ["P-101", 42, "over", 42, "Shop"],
       ["S-4", 30, "wait", 30, "Clean"],
       ["PI-220", 30, "start", 30, "Inst"],
+      ["TI-7", 26, "start", 26, "Inst"],
     ]);
   });
-  it("each one that nothing else explains becomes a conclusion with its own change", () => {
-    const look = buildLookBack({ milestones: all, notes: [], discoveries: discoveries(all), now: Date.parse(at(31, 12)), tz });
-    const r = buildReview({ built, work, notes: [], look, discoveries: discoveries(all), tz });
-    const by = (tag: string) => pointOf(r, "Phase 1", tz).conclusions.find((c) => c.title.startsWith(tag))!;
+  const look = buildLookBack({ milestones: all, notes: [], discoveries: discoveries(all), now: Date.parse(at(31, 12)), tz });
+  const r = buildReview({ built, work, notes: [], look, discoveries: discoveries(all), tz });
+  it("work among the last to finish is told, with the facts and no advice the record can't back", () => {
+    const by = (tag: string) => r.findings.find((f) => f.title.startsWith(tag))!;
     expect(by("P-101").title).toBe("P-101 finished 42 h after its plan: Rebuild Pump took 48 h against 6 h planned");
-    expect(by("P-101").change).toBe("Find out why Rebuild Pump took 48 h, and plan it at what it really takes.");
-    expect([by("S-4").category, by("S-4").change]).toEqual(["Contractors and resourcing", "Put Clean Strainer on Clean's list for the day it opens."]);
-    expect([by("PI-220").category, by("PI-220").change]).toEqual(["Execution control", "Start PI-220 on its planned day, or move it in the plan to when Inst can take it."]);
-    // The one that ran to plan is not mentioned.
+    expect([by("P-101").next, by("P-101").ask, by("P-101").gap]).toEqual(["", "", "No reason was written on the step."]);
+    expect(by("S-4").category).toBe("contractors");
+    expect(by("PI-220").category).toBe("execution");
+    // None is on the slide: each waits for a person to say what, if anything, to change.
+    const pt = pointOf(r, "Phase 1", tz);
+    expect(pt.conclusions).toEqual([]);
+    expect(pt.pending.filter((c) => /^(P-101|S-4|PI-220)/.test(c.title)).every((c) => c.ask === "")).toBe(true);
+  });
+  it("a job that finished after its own date but cost nothing is not a finding", () => {
+    // It is in the table of late work, for anyone who asks, and nowhere else.
+    expect(r.late.some((o) => o.order.startsWith("TI-7"))).toBe(true);
+    expect(r.findings.some((f) => f.title.startsWith("TI-7"))).toBe(false);
     expect(r.late.some((o) => o.order.startsWith("F-9"))).toBe(false);
   });
 });
