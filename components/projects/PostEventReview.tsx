@@ -172,7 +172,8 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
   };
 
   const keep = (f: Finding) => void act(`keep:${f.key}`, (s) => { s.items[f.key] = { ...s.items[f.key], status: "kept", basis: basisOf(f), at: Date.now(), by: who }; }, () => lesson(f, true));
-  const unkeep = (f: Finding) => void act(`keep:${f.key}`, (s) => { const it = { ...s.items[f.key] }; delete it.status; s.items[f.key] = it; }, () => lesson(f, false));
+  // Off the slide: a finding on it by default is kept off by saying so ("draft"); one a person accepted goes back to waiting.
+  const unkeep = (f: Finding) => void act(`keep:${f.key}`, (s) => { const it = { ...s.items[f.key] }; if (f.auto) it.status = "draft"; else delete it.status; s.items[f.key] = it; }, () => (f.auto ? undefined : lesson(f, false)));
   const discard = (f: Finding) => void act(`drop:${f.key}`, (s) => { s.items[f.key] = { ...s.items[f.key], status: "discarded", at: Date.now(), by: who }; }, () => (f.status === "kept" || f.source === "person" ? lesson(f, false) : undefined));
   const restore = (f: Finding) => void act(`drop:${f.key}`, (s) => { const it = { ...s.items[f.key] }; delete it.status; s.items[f.key] = it; }, () => (f.source === "person" ? lesson(f, true) : undefined));
   const takeDraft = (f: Finding) => void act(`draft:${f.key}`, (s) => { const it = { ...s.items[f.key] }; const e = { ...(it.edits ?? {}) }; delete e.title; delete e.observation; delete e.rating; it.edits = e; it.basis = basisOf(f); s.items[f.key] = it; },
@@ -211,7 +212,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
     void act("add", (s) => { s.added.push({ ...e, id, category, at: Date.now(), by: who }); }, async () => {
       setAdding(false);
       const c = areaOf(category);
-      await lesson({ key: `added:${id}`, category, source: "person", rating: e.rating ?? "opportunity", title: e.title ?? "Finding", observation: e.observation ?? "", evidence: [], practice: "", gap: e.gap ?? "", next: e.next ?? "", year: e.year ?? "", owner: e.owner ?? "", due: e.due ?? "", cost: e.cost ?? "", done: false, effect: e.effect ?? "", moved: null, proof: "", why: e.effect ?? "", hours: null, ask: e.ask ?? e.next ?? "", because: e.because ?? e.effect ?? "", info: [], status: "kept", edited: false, stale: false, drafted: { title: e.title ?? c.name, observation: e.observation ?? "", rating: e.rating ?? "opportunity" }, by: who, at: Date.now() }, true);
+      await lesson({ key: `added:${id}`, category, source: "person", rating: e.rating ?? "opportunity", title: e.title ?? "Finding", observation: e.observation ?? "", evidence: [], practice: "", gap: e.gap ?? "", next: e.next ?? "", year: e.year ?? "", owner: e.owner ?? "", due: e.due ?? "", cost: e.cost ?? "", done: false, auto: false, effect: e.effect ?? "", moved: null, proof: "", why: e.effect ?? "", hours: null, ask: e.ask ?? e.next ?? "", because: e.because ?? e.effect ?? "", info: [], status: "kept", edited: false, stale: false, drafted: { title: e.title ?? c.name, observation: e.observation ?? "", rating: e.rating ?? "opportunity" }, by: who, at: Date.now() }, true);
     });
   };
   const filled = Object.entries(answers).filter(([, a]) => a.cause || a.known || a.note?.trim());
@@ -435,7 +436,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
                     {canManage && infoFor !== f.key && (
                       <div className="mt-3 flex gap-1.5 flex-wrap">
                         {f.status === "discarded" ? <button type="button" disabled={!!busy} onClick={() => restore(f)} className={btn}><RotateCcw className="w-4 h-4" /> Restore</button> : <>
-                          {f.status === "kept" ? <button type="button" disabled={!!busy} onClick={() => unkeep(f)} className={btn}><Check className="w-4 h-4 text-emerald-600" /> {closes ? "On the slide · undo" : "Kept · undo"}</button>
+                          {f.status === "kept" ? <button type="button" disabled={!!busy} onClick={() => unkeep(f)} className={btn}><Check className="w-4 h-4 text-emerald-600" /> {closes ? (f.auto ? "On the slide (cost the finish) · take off" : "On the slide · undo") : "Kept · undo"}</button>
                             : <button type="button" disabled={!!busy} onClick={() => keep(f)} className={dark}>{busy === `keep:${f.key}` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {closes ? "Accept for the slide" : "Keep"}</button>}
                           <button type="button" disabled={!!busy} onClick={() => { setEditing(f.key); setAdding(false); }} className={btn}><Pencil className="w-4 h-4" /> Edit</button>
                           <button type="button" disabled={!!busy} onClick={() => { setInfoFor(f.key); setInfoText(""); }} className={btn}><Plus className="w-4 h-4" /> Add information</button>

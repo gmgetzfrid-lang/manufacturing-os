@@ -37,7 +37,7 @@ export function cleanSaved(v: unknown): ReviewSaved {
       if (!x || typeof x !== "object") continue;
       const i = x as Record<string, unknown>;
       const item: SavedItem = {};
-      if (i.status === "kept" || i.status === "discarded") item.status = i.status;
+      if (i.status === "kept" || i.status === "discarded" || i.status === "draft") item.status = i.status;
       if (i.done === true) item.done = true;
       const e = cleanEdit(i.edits); if (e) item.edits = e;
       if (Array.isArray(i.info)) { const lines = i.info.map((t) => str(t, 1000)?.trim()).filter(Boolean) as string[]; if (lines.length) item.info = lines; }

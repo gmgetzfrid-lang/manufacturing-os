@@ -100,8 +100,10 @@ describe("the review's conclusion from it", () => {
     expect(f.observation).toContain("E-4 Hydroblast Bundle 23 h (ready when Pull Bundle was done, no link in the schedule)");
     expect(f.practice).toContain("sized to the most work the schedule hands it at once");
   });
-  it("is the app's suggestion until a person accepts it: off the slide, in the list that needs their call", () => {
+  it("is the app's suggestion until a person accepts it, unless the records show it cost the finish", () => {
     const pt = pointOf(r, "Phase 1", tz);
+    // Here no work finished late, so the crew cost the finish nothing: it waits for a person.
+    expect(f.auto).toBe(false);
     expect(pt.conclusions).toEqual([]);
     expect(pt.pending.find((x) => x.key === f.key)).toMatchObject({ ask: f.ask, because: f.because, category: "Contractors and resourcing" });
     const kept = buildReview({ ...base, saved: { ...emptySaved(), items: { [f.key]: { status: "kept" } } } });

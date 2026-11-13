@@ -115,7 +115,8 @@ export interface FindingEdit {
 /** A person's plan, actual and verdict on a score line the records can't fill. */
 export interface ScoreEntry { plan?: string; actual?: string; verdict?: "met" | "missed" }
 export interface SavedItem {
-  status?: "kept" | "discarded";
+  /** "draft": taken off the slide by a person (a finding that is on it by default). */
+  status?: "kept" | "discarded" | "draft";
   /** The action is closed. */
   done?: boolean;
   edits?: FindingEdit;
@@ -252,6 +253,8 @@ export interface Finding {
   due: string; cost: string; done: boolean;
   info: string[];
   status: "draft" | "kept" | "discarded";
+  /** On the slide because the records show it cost the finish, not because a person accepted it. */
+  auto: boolean;
   edited: boolean;
   /** Kept or changed before the records last moved: the fresh draft differs. */
   stale: boolean;
@@ -621,7 +624,9 @@ export function buildReview(input: ReviewInput): Review {
   const notesOf = (id: string) => said.get(id) ?? [];
   const knownOf = (id: string) => saved.answers[`known:${id}`] ?? null;
   const drafts = draftFindings({ metrics, stuck, ready, found, holds, built, work, tz, finish, service, flows, late, reasonOf, notesOf, knownOf, materials: input.materials ?? null, organization: input.organization ?? null });
-  const findings: Finding[] = drafts.map((d) => overlay(d, saved.items[d.key]));
+  // Only an event that finished late has hours a finding can have cost it.
+  const lateFinish = (finish?.lateH ?? 0) >= 1 && !!finish?.delay.length;
+  const findings: Finding[] = drafts.map((d) => overlay(d, saved.items[d.key], lateFinish));
   for (const a of saved.added) {
     const it = saved.items[`added:${a.id}`];
     findings.push({
@@ -631,7 +636,7 @@ export function buildReview(input: ReviewInput): Review {
       why: a.why?.trim() || [a.effect?.trim(), (a.observation ?? "").split("\n").map((l) => l.trim()).filter(Boolean)[0]].filter(Boolean).join(". ").replace(/\.\.$/, "."), hours: null,
       ask: a.ask?.trim() || firstSentence(a.next ?? ""), because: a.because?.trim() || `${(a.title?.trim() || "Finding").replace(/[.]+$/, "")}${a.effect?.trim() ? ` (${a.effect.trim().replace(/[.]+$/, "")})` : ""}.`,
       due: a.due?.trim() ?? "", cost: a.cost?.trim() ?? "", done: !!it?.done,
-      info: it?.info ?? [], status: it?.status === "discarded" ? "discarded" : "kept", edited: false, stale: false,
+      info: it?.info ?? [], status: it?.status === "discarded" ? "discarded" : "kept", auto: false, edited: false, stale: false,
       drafted: { title: a.title?.trim() || "Finding", observation: a.observation?.trim() ?? "", rating: a.rating ?? "opportunity" }, by: a.by, at: a.at,
     });
   }
@@ -661,7 +666,7 @@ export function buildReview(input: ReviewInput): Review {
 /** The first sentence of a passage. */
 const firstSentence = (t: string) => (t.trim().match(/^.*?[.!?](?=\s|$)/)?.[0] ?? t.trim());
 /** A person's keep, change or throw-out laid over the draft. */
-function overlay(d: Draft, it: SavedItem | undefined): Finding {
+function overlay(d: Draft, it: SavedItem | undefined, late = false): Finding {
   const e = it?.edits ?? {};
   const pick = (v: string | undefined, was: string) => (v != null && v.trim() ? v.trim() : was);
   const edited = Object.values(e).some((v) => v != null && String(v).trim() !== "");
@@ -672,10 +677,18 @@ function overlay(d: Draft, it: SavedItem | undefined): Finding {
     practice: pick(e.practice, d.practice), gap: pick(e.gap, d.gap), next: pick(e.next, d.next), year: pick(e.year, d.year), owner: pick(e.owner, d.owner), effect: pick(e.effect, d.effect), moved: d.moved, proof: d.proof, why: pick(e.why, d.why || [d.proof, d.effect].filter(Boolean).join(" ")), hours: d.hours,
     ask: pick(e.ask, d.ask || firstSentence(pick(e.next, d.next))), because: pick(e.because, d.because || firstSentence(pick(e.why, d.why || d.effect || d.proof))),
     due: (e.due ?? "").trim(), cost: (e.cost ?? "").trim(), done: !!it?.done,
-    info: it?.info ?? [], status: it?.status ?? "draft", edited,
+    // What the records show cost the late finish is on the slide unless a person takes it off; the rest waits for a person.
+    info: it?.info ?? [], status: it?.status ?? (late && onByDefault(d) ? "kept" : "draft"), auto: !it?.status && late && onByDefault(d), edited,
     stale: !!it?.basis && it.basis !== basis && (edited || it.status === "kept"),
     drafted: { title: d.title, observation: d.observation, rating: d.rating }, by: it?.by ?? null, at: it?.at ?? null,
   };
+}
+/** A cause the records show cost hours of the late finish (materials, planning,
+ *  scope, a crew) with a change to say: on the slide without a click. Records,
+ *  execution, safety and organization findings, and anything that did not cost
+ *  the finish, wait for a person. */
+function onByDefault(d: Draft): boolean {
+  return (d.moved ?? 0) >= 2 && (d.rating === "gap" || d.rating === "opportunity") && ["materials", "planning", "scope", "contractors"].includes(d.category) && !!(d.ask || d.next).trim();
 }
 /** The mark a keep or a change carries, to notice the records moving after. */
 export const basisOf = (f: Pick<Finding, "drafted">) => hash(`${f.drafted.title}|${f.drafted.observation}|${f.drafted.rating}`);

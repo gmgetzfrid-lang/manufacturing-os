@@ -308,15 +308,21 @@ describe("the files open on the point of the meeting", () => {
   const accepted = emptySaved();
   for (const f of r.findings) if (f.rating === "gap" || f.rating === "opportunity") accepted.items[f.key] = { status: "kept" };
   const rk = read(accepted);
-  it("nothing is an action until a person accepts it", () => {
+  it("what the records show cost the late finish is on the slide without a click; the rest waits for a person", () => {
     const deck = deckSlides(r, o);
     expect(deck.map((x) => x.kicker.split(" · ")[0])).toEqual(["Post-event review", "1", "2", "3"]);
-    expect(deck[3].title).toBe("No actions accepted yet");
+    const bk = bookOf(r, "Phase 1", tz);
+    // On by default: causes (materials, planning, scope, a crew) that cost hours of the late finish.
+    const on = r.findings.filter((f) => f.auto).map((f) => f.key);
+    expect(on.length).toBeGreaterThan(0);
+    expect(r.findings.filter((f) => f.auto).every((f) => (f.moved ?? 0) >= 2 && ["materials", "planning", "scope", "contractors"].includes(f.category))).toBe(true);
+    expect(bk.actions.map((a) => a.key).sort()).toEqual([...on].sort());
+    // Records, execution and the rest wait for a person.
+    expect(r.findings.find((f) => f.key === "execution")!.status).toBe("draft");
     expect(pointOf(r, "Phase 1", tz).pending.length).toBeGreaterThan(2);
-    expect(bookOf(r, "Phase 1", tz).actions).toEqual([]);
-    // An area with findings nobody has ruled on says so; it is not judged.
-    expect(bookOf(r, "Phase 1", tz).areas.find((a) => a.id === "contractors")).toMatchObject({ state: "pending", items: [] });
-    expect(reportBlocks(r, o).some((x) => x.k === "p" && x.text === "No action has been accepted in the review yet.")).toBe(true);
+    // Taken off by a person, it stays off.
+    const off = emptySaved(); off.items[on[0]] = { status: "draft" };
+    expect(bookOf(read(off), "Phase 1", tz).actions.map((a) => a.key)).not.toContain(on[0]);
   });
   it("the deck runs in the review's order: the score, the seven areas, the action plan. Nothing else", () => {
     const deck = deckSlides(rk, o);
