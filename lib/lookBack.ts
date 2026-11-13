@@ -21,6 +21,7 @@ import { earliestStart } from "@/lib/scheduleLinks";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { discoveryOf, kindOf, ADDED, type Discovery, type AddedKind } from "@/lib/discovery";
 import { woOf } from "@/lib/workOrderCrew";
+import type { ProgressLogRow } from "@/lib/progressHistory";
 
 const H = 3_600_000;
 /** Within this of the plan counts as on plan — times are as entered. */
@@ -122,8 +123,30 @@ export interface LookBack {
 const HOLD = new Set(["on_hold", "blocked"]);
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
+/** A step's holds from the progress record: each from the time it went on
+ *  hold to the time it came off (the times they happened, as entered), with
+ *  the reason written on it. Null when the record has no hold for the step.
+ *  A note carries only the time it was typed unless it was given one, so a
+ *  hold released on a later entry would otherwise run to when that was typed. */
+export function holdsFromLog(rows: ProgressLogRow[], notes: MilestoneNote[], end: number): Array<{ reason: string; from: number; to: number }> | null {
+  const seq = rows.map((r) => ({ at: ms(r.at), st: r.new_status as string })).filter((x) => Number.isFinite(x.at)).sort((a, b) => a.at - b.at);
+  if (!seq.some((x) => HOLD.has(x.st))) return null;
+  const said = notes.filter((n) => n.kind === "status" && n.statusAt && HOLD.has(n.statusAt) && n.body?.trim())
+    .map((n) => ({ at: ms(n.happenedAt ?? n.createdAt), body: n.body!.trim() })).filter((x) => Number.isFinite(x.at));
+  const reasonAt = (t: number) => { const near = said.map((x) => ({ x, d: Math.abs(x.at - t) })).sort((a, b) => a.d - b.d)[0]; return near && near.d <= 10 * 60_000 ? near.x.body : ""; };
+  const out: Array<{ reason: string; from: number; to: number }> = [];
+  let open: number | null = null;
+  for (const x of seq) {
+    if (HOLD.has(x.st)) { if (open == null) open = x.at; }
+    else if (open != null) { if (x.at > open) out.push({ reason: reasonAt(open), from: open, to: x.at }); open = null; }
+  }
+  if (open != null) out.push({ reason: reasonAt(open), from: open, to: Math.max(open, end) });
+  return out;
+}
+
 /** Each step's holds from its status history: from going on hold or
- *  blocked to coming off it (or `end`), with the reason given. */
+ *  blocked to coming off it (or `end`), with the reason given. Used where
+ *  there is no progress record for the step. */
 function holdsOf(notes: MilestoneNote[], end: number, current?: { status: string; reason?: string | null }): Array<{ reason: string; from: number; to: number }> {
   const seq = notes.filter((n) => n.kind === "status" && n.statusAt).map((n) => ({ at: ms(n.happenedAt ?? n.createdAt), st: n.statusAt as string, body: n.body?.trim() ?? "" }))
     .filter((x) => Number.isFinite(x.at)).sort((a, b) => a.at - b.at);
@@ -145,6 +168,8 @@ export function buildLookBack(input: {
   tz: string;
   /** What kind of project it is, in a sentence ("turnaround"; lib/projectType). */
   word?: string;
+  /** The progress record. With it, holds are timed from when they happened. */
+  log?: ProgressLogRow[] | null;
 }): LookBack {
   const { milestones, notes, now, tz } = input;
   const word = input.word ?? "turnaround";
@@ -207,9 +232,14 @@ export function buildLookBack(input: {
   // for the crew.
   // Holds on each step, from its notes.
   const holdsById = new Map<string, ReturnType<typeof holdsOf>>();
+  const logBy = new Map<string, ProgressLogRow[]>();
+  for (const r of input.log ?? []) logBy.set(r.milestone_id, [...(logBy.get(r.milestone_id) ?? []), r]);
   for (const m of leaves) {
     const q = at.get(m.id!);
-    if (q) holdsById.set(m.id!, holdsOf(notesBy.get(m.id!) ?? [], q.done ? q.af : now, { status: m.status, reason: m.statusReason }));
+    if (!q) continue;
+    const end = q.done ? q.af : now, mine = notesBy.get(m.id!) ?? [];
+    const fromLog = logBy.has(m.id!) ? holdsFromLog(logBy.get(m.id!)!, mine, end) : null;
+    holdsById.set(m.id!, fromLog ?? holdsOf(mine, end, { status: m.status, reason: m.statusReason }));
   }
   // The time each step was really being worked: its run less its holds (a
   // crew stood down on a hold isn't busy on that job).

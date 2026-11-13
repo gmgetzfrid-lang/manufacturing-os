@@ -132,8 +132,8 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   const look = useMemo(() => {
     if (!ms || !notes) return null;
     const active = ms.filter((m) => !(m as { cancelledAt?: unknown }).cancelledAt);
-    return buildLookBack({ milestones: active, notes, discoveries: discoveries(active), now: Date.now(), tz });
-  }, [ms, notes, tz]);
+    return buildLookBack({ milestones: active, notes, discoveries: discoveries(active), now: Date.now(), tz, log });
+  }, [ms, notes, tz, log]);
   const lookById = useMemo(() => new Map((look?.steps ?? []).map((x) => [x.id, x])), [look]);
   const phaseIds = useMemo(() => (ms && pickedPhase ? new Set(inPhase(ms, phases, pickedPhase.id).map((m) => m.id!)) : null), [ms, phases, pickedPhase]);
   // All phases: each phase's own numbers, against its own plan.
@@ -195,7 +195,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   );
   if (view === "review") return (
     <div className="space-y-4">{nav}
-      <PostEventReview orgId={orgId} projectId={projectId} projectName={projectName} jobKind={jobKind} tz={tz} times={times} phases={phases} milestones={ms} log={log} notes={notes ?? []} records={records ?? new Map()}
+      <PostEventReview orgId={orgId} projectId={projectId} projectName={projectName} jobKind={jobKind} tz={tz} times={times} phases={phases} milestones={ms} log={log} notes={notes ?? []} records={records ?? new Map()} money={money0}
         canManage={canManage} actor={actor} onReload={reload} onTab={onTab} />
     </div>
   );

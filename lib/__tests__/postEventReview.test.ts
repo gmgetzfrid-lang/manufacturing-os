@@ -6,6 +6,7 @@ import { buildLookBack } from "@/lib/lookBack";
 import { discoveries, discoveryAttr, type DiscoveryRecord } from "@/lib/discovery";
 import type { ProgressLogRow } from "@/lib/progressHistory";
 import { deckSlides, reportBlocks } from "@/lib/reviewFiles";
+import { GUIDES, bookOf, scoreOf } from "@/lib/reviewBook";
 import { buildReview, causeOfText, emptySaved, basisOf, measuresOf, lessonOf, jobWord, pointOf, shiftWord, type ReviewSaved } from "@/lib/postEventReview";
 
 const tz = "America/Los_Angeles";
@@ -290,39 +291,81 @@ describe("the files open on the point of the meeting", () => {
   const accepted = emptySaved();
   for (const f of r.findings) if (f.rating === "gap" || f.rating === "opportunity") accepted.items[f.key] = { status: "kept" };
   const rk = read(accepted);
-  it("nothing is on the slide until a person accepts it", () => {
+  it("nothing is an action until a person accepts it", () => {
     const deck = deckSlides(r, o);
-    expect(deck[1].title).toBe("No changes accepted yet");
-    expect(deck[1].body.k === "asks" && deck[1].body.items).toEqual([]);
+    expect(deck.map((x) => x.kicker.split(" · ")[0])).toEqual(["Post-event review", "1", "2", "3"]);
+    expect(deck[3].title).toBe("No actions accepted yet");
     expect(pointOf(r, "Phase 1", tz).pending.length).toBeGreaterThan(2);
-    expect(reportBlocks(r, o).some((x) => x.k === "p" && x.text === "No change has been accepted in the review yet.")).toBe(true);
+    expect(bookOf(r, "Phase 1", tz).actions).toEqual([]);
+    // An area with findings nobody has ruled on says so; it is not judged.
+    expect(bookOf(r, "Phase 1", tz).areas.find((a) => a.id === "contractors")).toMatchObject({ state: "pending", items: [] });
+    expect(reportBlocks(r, o).some((x) => x.k === "p" && x.text === "No action has been accepted in the review yet.")).toBe(true);
   });
-  it("the deck: the cover, the accepted changes each with its reason in a line, and what went well. Nothing else", () => {
+  it("the deck runs in the review's order: the score, the seven areas, the action plan. Nothing else", () => {
     const deck = deckSlides(rk, o);
-    const cs = pointOf(rk, "Phase 1", tz).conclusions;
-    expect(deck[1].title).toBe(`${cs.length} changes for the next event`);
-    const b = deck[1].body;
-    // One short line to say, one short line why. No tables, no quotes, no list of what did not matter.
-    expect(b.k === "asks" && b.items[0]).toEqual({ n: 1, ask: "Name each day's hand-offs between crews at the shift meeting.", because: "PSV-021 - E-13 Overhead waited a shift on another crew." });
-    expect(b.k === "asks" && b.items.every((it) => it.ask.length <= 110 && it.because.length <= 170)).toBe(true);
-    // A finding with no change written is accepted but has nothing to say on the slide.
-    expect(cs.some((c) => c.key === "planning:cleaning")).toBe(false);
-    expect(deck[2].title).toBe("What went well: keep doing it");
-    expect(deck.map((x) => x.body.k)).toEqual(["cover", "asks", "split"]);
+    expect(deck.map((x) => x.kicker)).toEqual(["Post-event review", "1 · The score: plan against actual", "2 · What went well, what did not, and why", "3 · What we do about it"]);
+    const [, score, areas, plan] = deck.map((x) => x.body);
+    // The score: each target with its plan, its actual and a verdict; the tally on top.
+    expect(score.k === "table" && score.head).toEqual(["Target", "Plan", "Actual", "Result"]);
+    expect(score.k === "table" && score.rows.map((row) => row[0])).toEqual(["Duration", "Planned work", "Added work", "Man-hours", "Cost", "Safety", "Quality"]);
+    expect(score.k === "table" && score.tags![0]).toEqual({ text: "Missed", tone: "bad" });
+    expect(score.k === "table" && score.rows[0][3]).toBe("46 h late");
+    expect(score.k === "table" && score.tally!.map((t) => t.label)).toContain("not measured");
+    // The seven areas, by name and in order, each with what went well, what did not, the root cause and the action.
+    expect(areas.k === "table" && areas.head).toEqual(["Area", "What went well", "What did not", "Root cause", "Action"]);
+    expect(areas.k === "table" && areas.rows.map((row) => row[0])).toEqual(["Safety", "Organization", "Planning", "Contractors", "Costs", "Logistics", "Execution"]);
+    // The action plan answers the six questions.
+    expect(plan.k === "table" && plan.head).toEqual(["What we will do", "How it will be done", "Benefit", "Who", "By", "Cost"]);
+    expect(plan.k === "table" && plan.rows[0].slice(3)).toEqual(["Not set", "Not set", "Not set"]);
+    const first = bookOf(rk, "Phase 1", tz).actions[0];
+    expect([first.n, first.what, first.benefit]).toEqual([1, "Name each day's hand-offs between crews at the shift meeting.", "PSV-021 - E-13 Overhead waited a shift on another crew."]);
+    expect(plan.k === "table" && plan.rows.every((row) => row[0].length <= 125 && row[2].length <= 175)).toBe(true);
     const titles = deck.map((x) => `${x.kicker} ${x.title}`).join(" | ");
     expect(titles).not.toMatch(/backup|definition|closure plan|roadmap|proposed organization|decisions|did not move/i);
     // The records stay in the report. Service is a planned step there, not stuck work.
     const waited = reportBlocks(rk, o).find((x) => x.k === "table" && x.head[2] === "What happened");
     expect(waited?.k === "table" && waited.rows.find((row) => row[0].startsWith("TV-006"))![2]).toBe("Out for service (planned)");
   });
-  it("the report: the same headline and accepted conclusions first, each finding with how it is done well", () => {
+  it("a line the records can't fill says so and carries how to set it up", () => {
+    const sc = scoreOf(rk, tz);
+    const q = sc.rows.find((x) => x.key === "quality")!;
+    expect([q.plan, q.actual, q.verdict, q.guide]).toEqual(["Target not set", "Not recorded", "unmeasured", "quality"]);
+    expect(GUIDES.quality.steps.length).toBeGreaterThan(4);
+    expect(GUIDES.quality.steps.join(" ")).toMatch(/pressure tests/);
+    // Head counts are said in shifts, the way a person counts them.
+    const mh = sc.rows.find((x) => x.key === "manhours")!;
+    expect(mh.actual).toMatch(/^Head count on \d+ of \d+ shifts?$/);
+    expect(mh.guide).toBe("manhours");
+    expect(GUIDES.manhours.steps.join(" ")).toMatch(/rate sheet/);
+    // What a person enters is what shows, with their verdict.
+    const entered = scoreOf(rk, tz, { entries: { quality: { plan: "0 failed pressure tests", actual: "1 failed pressure test", verdict: "missed" } } }).rows.find((x) => x.key === "quality")!;
+    expect([entered.plan, entered.actual, entered.verdict, entered.guide]).toEqual(["0 failed pressure tests", "1 failed pressure test", "missed", undefined]);
+    // Money and man-hours are judged only when they were recorded.
+    const paid = scoreOf(rk, tz, { costs: { budget: 500000, spent: 520000, committed: 0 } }).rows.find((x) => x.key === "cost")!;
+    expect([paid.verdict, paid.result]).toEqual(["missed", "$20,000 over"]);
+    expect(scoreOf(rk, tz, { costs: { budget: 500000, spent: 0, committed: 53000 } }).rows.find((x) => x.key === "cost")!.verdict).toBe("unmeasured");
+    const text = JSON.stringify([deckSlides(rk, o), reportBlocks(rk, o), rk.measures]);
+    expect(text).not.toMatch(/crew-shift/i);
+  });
+  it("who, by what date and cost are a person's to set, and show once set; a closed action says so", () => {
+    const sv = emptySaved();
+    for (const f of r.findings) if (f.rating === "gap" || f.rating === "opportunity") sv.items[f.key] = { status: "kept" };
+    const k = bookOf(rk, "Phase 1", tz).actions[0].key;
+    sv.items[k] = { status: "kept", edits: { owner: "Area coordinator", due: "Before scope freeze", cost: "$0" }, done: true };
+    const a = bookOf(read(sv), "Phase 1", tz).actions.find((x) => x.key === k)!;
+    expect([a.who, a.by, a.cost, a.done]).toEqual(["Area coordinator", "Before scope freeze", "$0", true]);
+  });
+  it("the report: the headline, the score, the seven areas, the action plan, then each finding with its record", () => {
     const blocks = reportBlocks(rk, o);
-    expect(blocks.find((x) => x.k === "h1")).toMatchObject({ text: "1. Phase 1 finished 46 h late. PSVs set the finish." });
-    // The changes are listed once, as on the slide: what we change, then why.
-    expect(blocks.find((x) => x.k === "num")).toMatchObject({ n: 1, lead: "Name each day's hand-offs between crews at the shift meeting. ", text: "PSV-021 - E-13 Overhead waited a shift on another crew." });
+    expect(blocks.filter((x) => x.k === "h1").slice(0, 5).map((x) => (x.k === "table" ? "" : x.text))).toEqual(["1. Phase 1 finished 46 h late. PSVs set the finish.", "2. The score: plan against actual", "3. What went well, what did not, and why", "4. The action plan", "5. Each finding, with the record behind it"]);
+    const plan = blocks.find((x) => x.k === "table" && x.head[1] === "What we will do");
+    expect(plan?.k === "table" && plan.rows[0].slice(0, 2)).toEqual(["1", "Name each day's hand-offs between crews at the shift meeting."]);
+    expect(blocks.some((x) => x.k === "p" && x.lead === "How it is done well (Planning): ")).toBe(true);
+    expect(blocks.some((x) => x.k === "p" && x.lead === "Root cause: ")).toBe(true);
+    // How to set up what was not measured is laid out step by step at the back.
+    expect(blocks.some((x) => x.k === "h2" && x.text === "A quality plan")).toBe(true);
     // The work that set the finish has one finding; nothing lists its steps again.
     expect(blocks.some((x) => x.k === "h1" && /stayed open longest/.test(x.text))).toBe(false);
-    expect(blocks.some((x) => x.k === "p" && x.lead === "How it is done well (Planning and scheduling): ")).toBe(true);
     expect(blocks.some((x) => x.k !== "table" && /12 months|closure plan/i.test(x.text))).toBe(false);
   });
   it("a person's own finding goes on the slide by its own one-line title and cost", () => {

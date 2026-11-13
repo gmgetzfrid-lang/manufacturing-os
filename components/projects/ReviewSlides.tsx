@@ -7,13 +7,14 @@
 // On a computer each slide is drawn as the 16:9 slide, scaled to the
 // window (Full screen to present). On a phone it reads as a page, with the
 // tables as stacked rows. Left and right arrows, the buttons, or a swipe
-// move between slides; Esc closes.
+// move between slides; Esc closes. A line with more behind it (the record,
+// or how to set something up) opens it on a tap.
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Download, Loader2, Maximize2, X } from "lucide-react";
 import { noEmDash } from "@/lib/noEmDash";
-import type { SlideItem, SlidePane, SlideSpec } from "@/lib/reviewFiles";
+import { TONE_HEX, tablePt, type SlideItem, type SlideMore, type SlidePane, type SlideSpec, type SlideTag } from "@/lib/reviewFiles";
 
 // The slide in its own pixels: 13.33 x 7.5 in at 96 to the inch, so a point
 // size here is the point size in the PowerPoint.
@@ -21,6 +22,12 @@ const W = 1280, H = 720;
 const pt = (n: number) => `${(n * 4) / 3}px`;
 const C = { bg: "#F6F4EF", ink: "#16202E", acc: "#B8430F", soft: "#4A5568", band: "#ECE8DF", foot: "#6B7280" };
 const T = (v: string) => noEmDash(v);
+type Open = (m: SlideMore) => void;
+const Tag = ({ tag, size }: { tag: SlideTag; size: string }) => (
+  <span style={{ display: "inline-block", fontSize: size, fontWeight: 700, lineHeight: 1.25, padding: "1px 8px", borderRadius: 99, color: `#${TONE_HEX[tag.tone].fg}`, background: `#${TONE_HEX[tag.tone].bg}`, whiteSpace: "nowrap" }}>{T(tag.text)}</span>
+);
+/** A cell of several lines, one under the other. */
+const lines = (t: string) => { const xs = t.split("\n").filter(Boolean); return xs.length > 1 ? xs.map((x, i) => <div key={i} style={{ marginTop: i ? "0.4em" : 0 }}>{T(x)}</div>) : T(t); };
 const itemOf = (it: SlideItem) => (typeof it === "string" ? { text: it, sub: false, bold: false } : { sub: false, bold: false, ...it });
 /** A first cell of two lines: what it is in bold, the fact under it plain. */
 const cell = (t: string, first: boolean) => {
@@ -37,15 +44,19 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
   const [at, setAt] = useState(0);
   const [box, setBox] = useState<{ w: number; h: number } | null>(null);
   const [full, setFull] = useState(false);
+  const [more, setMore] = useState<SlideMore | null>(null);
+  const moreRef = useRef<SlideMore | null>(null);
+  useEffect(() => { moreRef.current = more; }, [more]);
   const shell = useRef<HTMLDivElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const touch = useRef<{ x: number; y: number } | null>(null);
-  const go = useCallback((d: number) => setAt((i) => Math.max(0, Math.min(slides.length - 1, i + d))), [slides.length]);
+  const go = useCallback((d: number) => { setMore(null); setAt((i) => Math.max(0, Math.min(slides.length - 1, i + d))); }, [slides.length]);
 
   useEffect(() => {
     // Caught first, so nothing under the slides moves with the keys.
     const on = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { if (document.fullscreenElement) return; e.stopPropagation(); e.preventDefault(); onClose(); }
+      if (e.key === "Escape") { if (moreRef.current) { e.stopPropagation(); e.preventDefault(); setMore(null); return; } if (document.fullscreenElement) return; e.stopPropagation(); e.preventDefault(); onClose(); }
+      else if (moreRef.current) return;
       else if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") { e.stopPropagation(); e.preventDefault(); go(1); }
       else if (e.key === "ArrowLeft" || e.key === "PageUp") { e.stopPropagation(); e.preventDefault(); go(-1); }
     };
@@ -95,10 +106,10 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
         {box && (wide ? (
           <div data-slide={at} onClick={full ? (e) => go(e.clientX > box.w / 2 ? 1 : -1) : undefined}
             style={{ position: "absolute", left: (box.w - W * scale) / 2, top: (box.h - H * scale) / 2, width: W, height: H, transform: `scale(${scale})`, transformOrigin: "top left", background: C.bg, color: C.ink, fontFamily: "Arial, Helvetica, sans-serif", overflow: "hidden", cursor: full ? "pointer" : undefined }}>
-            <Canvas spec={spec} />
+            <Canvas spec={spec} open={full ? undefined : setMore} />
           </div>
         ) : (
-          <div key={at} data-slide={at} className="absolute inset-0 overflow-y-auto" style={{ background: C.bg, color: C.ink }}><Page spec={spec} /></div>
+          <div key={at} data-slide={at} className="absolute inset-0 overflow-y-auto" style={{ background: C.bg, color: C.ink }}><Page spec={spec} open={setMore} /></div>
         ))}
       </div>
       {!full && (
@@ -108,6 +119,25 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
           <button type="button" disabled={at >= slides.length - 1} onClick={() => go(1)} className={bar}>Next <ChevronRight className="w-5 h-5" /></button>
         </div>
       )}
+      {more && (
+        <div className="absolute inset-0 z-10 flex items-end sm:items-center justify-center bg-slate-950/70" onClick={(e) => { if (e.target === e.currentTarget) setMore(null); }} data-slide-more>
+          <div className="w-full sm:max-w-2xl max-h-[86%] overflow-y-auto rounded-t-2xl sm:rounded-2xl px-5 py-5" style={{ background: C.bg, color: C.ink }}>
+            <div className="flex items-start gap-3">
+              <h3 className="min-w-0 flex-1 text-[18px] font-black leading-tight">{T(more.title)}</h3>
+              <button type="button" onClick={() => setMore(null)} className="shrink-0 h-9 px-3 rounded-lg text-[13px] font-black" style={{ background: C.band }}>Close</button>
+            </div>
+            {more.sections.map((sec, i) => (
+              <div key={i} className="mt-4">
+                <div className="text-[11px] font-black uppercase tracking-widest" style={{ color: C.acc }}>{T(sec.title)}</div>
+                {sec.numbered
+                  ? <ol className="mt-1.5 list-decimal pl-5 space-y-1.5 text-[14.5px] leading-snug">{sec.lines.map((l, n) => <li key={n}>{T(l)}</li>)}</ol>
+                  : sec.lines.length === 1 ? <p className="mt-1.5 text-[14.5px] leading-snug">{T(sec.lines[0])}</p>
+                    : <ul className="mt-1.5 list-disc pl-5 space-y-1.5 text-[14.5px] leading-snug">{sec.lines.map((l, n) => <li key={n}>{T(l)}</li>)}</ul>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>,
     document.body,
   );
@@ -115,7 +145,7 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
 
 // ─── The slide as drawn (a computer) ───────────────────────────────
 
-function Canvas({ spec }: { spec: SlideSpec }) {
+function Canvas({ spec, open }: { spec: SlideSpec; open?: Open }) {
   const b = spec.body;
   if (b.k === "cover") {
     return (
@@ -131,7 +161,7 @@ function Canvas({ spec }: { spec: SlideSpec }) {
   return (
     <div style={{ position: "absolute", inset: 0, padding: "32px 58px 0", display: "flex", flexDirection: "column" }}>
       <div style={{ fontSize: pt(11), fontWeight: 700, color: C.acc, letterSpacing: 2, textTransform: "uppercase" }}>{T(spec.kicker)}</div>
-      <div style={{ fontSize: pt(spec.title.length > 70 ? 21 : 25), fontWeight: 700, lineHeight: 1.12, marginTop: 6, minHeight: 74 }}>{T(spec.title)}</div>
+      <div style={{ fontSize: pt(spec.title.length > 70 ? 21 : 25), fontWeight: 700, lineHeight: 1.12, marginTop: 6, minHeight: b.k === "table" && spec.title.length <= 60 ? 40 : 74 }}>{T(spec.title)}</div>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden", marginTop: 10 }}>
         {b.k === "asks" ? (
           <div>
@@ -146,7 +176,7 @@ function Canvas({ spec }: { spec: SlideSpec }) {
               </div>
             ))}
           </div>
-        ) : b.k === "table" ? <SlideTable head={b.head} rows={b.rows} widths={b.widths} /> : (
+        ) : b.k === "table" ? <FitTable key={`${spec.kicker}|${spec.title}`} body={b} open={open} /> : (
           <div style={{ display: "flex", gap: 29, height: "100%" }}>
             <div style={{ flex: `0 0 calc(${(b.ratio ?? 0.5) * 100}% - 15px)`, minWidth: 0 }}><PaneView pane={b.left} /></div>
             {(b.right.title || b.right.items?.length || b.right.table) && <div style={{ flex: 1, minWidth: 0 }}><PaneView pane={b.right} /></div>}
@@ -185,22 +215,55 @@ function PaneView({ pane }: { pane: SlidePane }) {
     </div>
   );
 }
-function SlideTable({ head, rows, widths, size }: { head: string[]; rows: string[][]; widths: number[]; size?: number }) {
-  const total = widths.reduce((a, c) => a + c, 0);
-  const chars = rows.reduce((n, r) => n + r.join("").length, 0);
-  const fs = size ?? (chars > 1300 ? 10 : chars > 800 ? 11 : 12);
+/** A slide's table, set in the largest type that fits the slide: it starts
+ *  large and steps down until nothing is cut off. */
+function FitTable({ body: b, open }: { body: Extract<SlideSpec["body"], { k: "table" }>; open?: Open }) {
+  const box = useRef<HTMLDivElement>(null);
+  const start = Math.min(16, tablePt(b.rows) + 3);
+  // Sized on the page itself after each draw: the table's type steps down until the slide holds it all.
+  useLayoutEffect(() => {
+    const el = box.current, t = el?.querySelector("table");
+    if (!el || !t) return;
+    let fs = start; t.style.fontSize = pt(fs);
+    while (el.scrollHeight > el.clientHeight + 1 && fs > 8) { fs -= 0.5; t.style.fontSize = pt(fs); }
+  });
   return (
-    <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed", fontSize: pt(fs), lineHeight: 1.2 }}>
+    <div ref={box} style={{ height: "100%", overflow: "hidden" }} data-slide-fit>
+      {b.tally && b.tally.length > 0 && (
+        <div style={{ display: "flex", gap: 34, alignItems: "baseline", marginBottom: 12 }} data-slide-tally>
+          {b.tally.map((t) => <div key={t.label}><span style={{ fontSize: pt(24), fontWeight: 700, color: `#${TONE_HEX[t.tone].fg}` }}>{t.n}</span><span style={{ fontSize: pt(13), color: C.soft, marginLeft: 8 }}>{T(t.label)}</span></div>)}
+        </div>
+      )}
+      <SlideTable head={b.head} rows={b.rows} widths={b.widths} tags={b.tags} more={b.more} open={open} size={start} />
+    </div>
+  );
+}
+function SlideTable({ head, rows, widths, size, tags, more, open }: { head: string[]; rows: string[][]; widths: number[]; size?: number; tags?: Array<SlideTag | null>; more?: Array<SlideMore | null>; open?: Open }) {
+  const total = widths.reduce((a, c) => a + c, 0);
+  const fs = size ?? tablePt(rows);
+  return (
+    <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed", fontSize: pt(fs), lineHeight: 1.22 }}>
       <colgroup>{widths.map((w, i) => <col key={i} style={{ width: `${(w / total) * 100}%` }} />)}</colgroup>
-      <thead><tr>{head.map((h) => <th key={h} style={{ background: C.ink, color: "#fff", textAlign: "left", padding: "4px 7px", fontWeight: 700 }}>{T(h)}</th>)}</tr></thead>
-      <tbody>{rows.map((r, ri) => <tr key={ri} style={{ background: ri % 2 ? C.band : C.bg }}>{head.map((_, i) => <td key={i} style={{ padding: "4px 7px", verticalAlign: "top", fontWeight: i === 0 ? 700 : 400, overflowWrap: "anywhere" }}>{cell(r[i] ?? "", i === 0)}</td>)}</tr>)}</tbody>
+      <thead><tr>{head.map((h) => <th key={h} style={{ background: C.ink, color: "#fff", textAlign: "left", padding: "0.4em 8px", fontWeight: 700, fontSize: "0.85em" }}>{T(h)}</th>)}</tr></thead>
+      <tbody>{rows.map((r, ri) => {
+        const m = open ? more?.[ri] ?? null : null;
+        return (
+          <tr key={ri} style={{ background: ri % 2 ? C.band : C.bg, cursor: m ? "pointer" : undefined }} onClick={m ? (e) => { e.stopPropagation(); open!(m); } : undefined} data-row-more={m ? "" : undefined}>
+            {head.map((_, i) => (
+              <td key={i} style={{ padding: "0.38em 8px", verticalAlign: "top", fontWeight: i === 0 ? 700 : 400, overflowWrap: "anywhere" }}>
+                {i === 0 ? <>{cell(r[i] ?? "", true)}{tags?.[ri] && <div style={{ marginTop: 4 }}><Tag tag={tags[ri]!} size="0.78em" /></div>}</> : lines(r[i] ?? "")}
+              </td>
+            ))}
+          </tr>
+        );
+      })}</tbody>
     </table>
   );
 }
 
 // ─── The slide as a page (a phone) ─────────────────────────────────
 
-function Page({ spec }: { spec: SlideSpec }) {
+function Page({ spec, open }: { spec: SlideSpec; open?: Open }) {
   const b = spec.body;
   return (
     <div className="px-4 py-5">
@@ -222,7 +285,10 @@ function Page({ spec }: { spec: SlideSpec }) {
           ))}
         </ol>
       )}
-      {b.k === "table" && <div className="mt-3"><Rows head={b.head} rows={b.rows} /></div>}
+      {b.k === "table" && b.tally && b.tally.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1" data-slide-tally>{b.tally.map((t) => <span key={t.label} className="whitespace-nowrap"><b className="text-[20px]" style={{ color: `#${TONE_HEX[t.tone].fg}` }}>{t.n}</b> <span className="text-[13px]" style={{ color: C.soft }}>{T(t.label)}</span></span>)}</div>
+      )}
+      {b.k === "table" && <div className="mt-3"><Rows head={b.head} rows={b.rows} tags={b.tags} more={b.more} open={open} /></div>}
       {b.k === "split" && <div className="mt-3 space-y-5"><PanePage pane={b.left} /><PanePage pane={b.right} /></div>}
       {b.k !== "cover" && b.foot && <p className="mt-4 text-[12px]" style={{ color: C.foot }}>{T(b.foot)}</p>}
     </div>
@@ -244,15 +310,24 @@ function PanePage({ pane }: { pane: SlidePane }) {
   );
 }
 /** A table as stacked rows: the first cell, then each of the rest by its heading. */
-function Rows({ head, rows }: { head: string[]; rows: string[][] }) {
+function Rows({ head, rows, tags, more, open }: { head: string[]; rows: string[][]; tags?: Array<SlideTag | null>; more?: Array<SlideMore | null>; open?: Open }) {
   return (
     <ul className="space-y-2">
-      {rows.map((r, i) => (
-        <li key={i} className="rounded-xl px-3 py-2 text-[13.5px] leading-snug" style={{ background: i % 2 ? C.band : "#FFFDF9", border: "1px solid #DDD7CC" }}>
-          <div className="font-bold">{cell(r[0] ?? "", true)}</div>
-          {r.slice(1).map((c, n) => c && <div key={n} className="mt-0.5"><span style={{ color: C.foot }}>{T(head[n + 1])}: </span>{T(c)}</div>)}
-        </li>
-      ))}
+      {rows.map((r, i) => {
+        const m = open ? more?.[i] ?? null : null;
+        return (
+          <li key={i} className="rounded-xl px-3 py-2.5 text-[14px] leading-snug" style={{ background: i % 2 ? C.band : "#FFFDF9", border: "1px solid #DDD7CC", cursor: m ? "pointer" : undefined }} onClick={m ? () => open!(m) : undefined} data-row-more={m ? "" : undefined}>
+            <div className="flex items-baseline gap-2 flex-wrap font-bold text-[15px]"><span className="min-w-0">{cell(r[0] ?? "", true)}</span>{tags?.[i] && <Tag tag={tags[i]!} size="11.5px" />}</div>
+            {r.slice(1).map((c, n) => c && (
+              <div key={n} className="mt-1.5">
+                <div className="text-[10.5px] font-black uppercase tracking-wider" style={{ color: C.foot }}>{T(head[n + 1])}</div>
+                <div>{lines(c)}</div>
+              </div>
+            ))}
+            {m && <div className="mt-2 text-[12px] font-bold" style={{ color: C.acc }}>Tap for more</div>}
+          </li>
+        );
+      })}
     </ul>
   );
 }

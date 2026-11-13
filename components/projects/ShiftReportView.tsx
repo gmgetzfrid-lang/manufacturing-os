@@ -690,7 +690,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const [editing, setEditing] = useState<string | null>(null);
   // The close-out's look back (lib/lookBack) — the job as it stands, its
   // whole history of comments and holds — and the lessons the team writes.
-  const lookBack = useMemo(() => (meeting === "closeout" ? buildLookBack({ milestones: live, notes: allNotes, discoveries: discoveryList, now: pathAt, tz, word }) : null), [meeting, live, allNotes, discoveryList, pathAt, tz, word]);
+  const lookBack = useMemo(() => (meeting === "closeout" ? buildLookBack({ milestones: live, notes: allNotes, discoveries: discoveryList, now: pathAt, tz, word, log }) : null), [meeting, live, allNotes, discoveryList, pathAt, tz, word, log]);
   // Lessons & findings (the close-out's one review), and what past jobs on
   // this equipment and unit taught (the kick-off).
   const { rows: findingRows } = useProjectFindings(meeting === "closeout" ? projectId : null);

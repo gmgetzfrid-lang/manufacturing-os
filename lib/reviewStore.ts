@@ -22,7 +22,7 @@ function cleanEdit(v: unknown): SavedItem["edits"] {
   if (!v || typeof v !== "object") return undefined;
   const e = v as Record<string, unknown>;
   const out: NonNullable<SavedItem["edits"]> = {};
-  for (const k of ["title", "observation", "practice", "gap", "next", "year", "owner", "effect", "why", "ask", "because"] as const) { const t = str(e[k]); if (t != null && t.trim()) out[k] = t; }
+  for (const k of ["title", "observation", "practice", "gap", "next", "year", "owner", "effect", "why", "ask", "because", "due", "cost"] as const) { const t = str(e[k]); if (t != null && t.trim()) out[k] = t; }
   if (typeof e.rating === "string" && RATINGS.has(e.rating)) out.rating = e.rating as NonNullable<SavedItem["edits"]>["rating"];
   return Object.keys(out).length ? out : undefined;
 }
@@ -38,6 +38,7 @@ export function cleanSaved(v: unknown): ReviewSaved {
       const i = x as Record<string, unknown>;
       const item: SavedItem = {};
       if (i.status === "kept" || i.status === "discarded") item.status = i.status;
+      if (i.done === true) item.done = true;
       const e = cleanEdit(i.edits); if (e) item.edits = e;
       if (Array.isArray(i.info)) { const lines = i.info.map((t) => str(t, 1000)?.trim()).filter(Boolean) as string[]; if (lines.length) item.info = lines; }
       if (typeof i.basis === "string") item.basis = i.basis;
@@ -70,6 +71,14 @@ export function cleanSaved(v: unknown): ReviewSaved {
   if (r.readyAfter && typeof r.readyAfter === "object") {
     for (const [k, x] of Object.entries(r.readyAfter as Record<string, unknown>)) if (typeof x === "string" && x) out.readyAfter[k] = x;
   }
+  if (r.score && typeof r.score === "object") {
+    for (const [k, x] of Object.entries(r.score as Record<string, unknown>)) {
+      if (!x || typeof x !== "object") continue;
+      const e = x as Record<string, unknown>, plan = str(e.plan, 300)?.trim(), actual = str(e.actual, 300)?.trim();
+      const entry = { ...(plan ? { plan } : {}), ...(actual ? { actual } : {}), ...(e.verdict === "met" || e.verdict === "missed" ? { verdict: e.verdict as "met" | "missed" } : {}) };
+      if (Object.keys(entry).length) out.score[k] = entry;
+    }
+  }
   if (r.targets && typeof r.targets === "object") {
     for (const [k, x] of Object.entries(r.targets as Record<string, unknown>)) { const t = str(x, 200)?.trim(); if (t) out.targets[k] = t; }
   }
@@ -101,8 +110,8 @@ export async function changeReview(projectId: string, scope: string, change: (s:
   return all[scope] as ReviewSaved;
 }
 
-const TOPIC: Record<CategoryId, Topic> = { organization: "Staffing", scope: "Planning", planning: "Scheduling", materials: "Materials", contractors: "Contractors", execution: "Scheduling", safety: "Safety", records: "Other" };
-const KIND: Record<CategoryId, FindingKind> = { organization: "lesson", scope: "missed_scope", planning: "lesson", materials: "material", contractors: "lesson", execution: "lesson", safety: "lesson", records: "lesson" };
+const TOPIC: Record<CategoryId, Topic> = { organization: "Staffing", scope: "Planning", planning: "Scheduling", materials: "Materials", contractors: "Contractors", execution: "Scheduling", safety: "Safety", records: "Other", costs: "Other" };
+const KIND: Record<CategoryId, FindingKind> = { organization: "lesson", scope: "missed_scope", planning: "lesson", materials: "material", contractors: "lesson", execution: "lesson", safety: "lesson", records: "lesson", costs: "lesson" };
 
 /** Put a finding in the lessons register (kept) or take it out (not kept).
  *  `false`: the register isn't set up in the database yet. */

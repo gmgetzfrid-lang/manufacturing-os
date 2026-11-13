@@ -1,0 +1,295 @@
+// The review laid out the way an event review is run:
+//
+//   1. The score: each target, plan against actual, with a verdict.
+//   2. The seven areas (safety, organization, planning, contractors, costs,
+//      logistics, execution): what went well, what did not, the root cause,
+//      and the action it leads to.
+//   3. The action plan: what we will do, how, the benefit, who, by what
+//      date, and what it will cost.
+//
+// It is built on the review (lib/postEventReview) and adds nothing of its
+// own to the facts. A line the records can't fill says "Not measured" and
+// carries how to set it up for the next event. Only what a person accepted
+// is an action.
+
+import type { AsBuiltWork } from "@/lib/asBuiltWork";
+import { manpowerSummary, shiftCounts, type ManpowerSettings } from "@/lib/manpower";
+import type { ShiftRecord } from "@/lib/shiftRecord";
+import { AREAS, AREA_OF, pointOf, whenWord, type AreaId, type Conclusion, type Review, type ScoreEntry } from "@/lib/postEventReview";
+
+// ─── How to set up what was not measured ───────────────────────────
+
+export type GuideId = "quality" | "safety" | "manhours" | "cost" | "organization" | "materials";
+export interface Guide { id: GuideId; title: string; what: string; steps: string[]; inApp: string }
+export const GUIDES: Record<GuideId, Guide> = {
+  quality: {
+    id: "quality", title: "A quality plan",
+    what: "It says what done right means for the work, who checks it, and what gets counted. It has two parts: checks before the event that what goes in is fit for the job (people, materials, equipment, services), and checks after each task that the work meets the standard.",
+    steps: [
+      "Name one person to lead quality for the event.",
+      "Before the event, hold a quality review and set the standard for each kind of work: welds, pressure tests, joints, hand-backs.",
+      "Set a target for each thing that gets counted: failed welds, failed pressure tests, failed joints, rejected hand-backs, leaks at start-up.",
+      "Keep a control sheet for each critical item: critical joints, vessel inspections, relief valves, control valves, site modifications.",
+      "Check every job before hand-back: correct gaskets fitted, supports on new pipework, valves repacked, instrument changes tested, blinds removed.",
+      "Report quality at the daily meeting: the last 24 hours, problems, and what keeps coming back.",
+      "After start-up, count the results against the targets.",
+    ],
+    inApp: "Enter the targets and the results on the score in this review.",
+  },
+  safety: {
+    id: "safety", title: "A safety record",
+    what: "Every incident with its cause, counted against a target set before the event.",
+    steps: [
+      "Set the target before the event, for example zero recordables.",
+      "At every shift meeting, write each incident, or confirm there were none.",
+      "For each incident, write the cause and what the inquiry recommended.",
+      "Count recordables, first aids and near misses against the target.",
+    ],
+    inApp: "Each shift report has a \"Safety incidents this shift\" line. Answer it every shift.",
+  },
+  manhours: {
+    id: "manhours", title: "Man-hours and labor cost",
+    what: "Man-hours are heads on site times shift hours, by contractor. With each contractor's rate they give labor cost, shift by shift, against the bid.",
+    steps: [
+      "Before the event, get each contractor's bid manpower per shift and its rate sheet.",
+      "Enter the bid manpower and the rate per man-hour for each contractor.",
+      "At every shift meeting, take a head count for each contractor: direct (on the tools) and indirect (supervision, safety, fire and hole watch).",
+      "Heads times shift hours times the rate gives man-hours and running labor cost against the bid, every shift.",
+    ],
+    inApp: "Bid manpower and rates go in Setup under Manpower. Head counts go in at each shift meeting on the Shift tab.",
+  },
+  cost: {
+    id: "cost", title: "Cost against budget",
+    what: "What is spent and committed, held against the budget line by line while there is still time to act.",
+    steps: [
+      "Split the budget by phase and by cost line: management, planning, inspection, materials, hired equipment, own labor, contract labor, specials.",
+      "Post every commitment and invoice to its line as it happens.",
+      "Add labor each shift from head counts at each contractor's rate.",
+      "Look at spend against budget at the daily meeting.",
+    ],
+    inApp: "Cost controls holds the budget lines and the spend. Give each line its phase.",
+  },
+  organization: {
+    id: "organization", title: "An event organization",
+    what: "One person runs the event, and each part of it has a named person with written duties.",
+    steps: [
+      "Name who runs the event.",
+      "Name a person for planning, for materials and logistics, for safety, for quality, and for each area.",
+      "Write each person's duties and who they report to.",
+      "Record it before the event, so the review can say how the organization worked.",
+    ],
+    inApp: "The Members tab holds the event organization: each role and who fills it.",
+  },
+  materials: {
+    id: "materials", title: "A materials register",
+    what: "One list of every part and off-site repair: what it is, which job it is for, who owns it, and when it is due.",
+    steps: [
+      "List every part and off-site repair with its full specification, its work order, an owner, a need-by date and a delivery date.",
+      "Before the unit comes down, count each job's parts against what was ordered and close any shortfall.",
+      "Give every open material question an owner, and answer it within 24 hours.",
+    ],
+    inApp: "The materials register is on the project.",
+  },
+};
+
+// ─── The score ─────────────────────────────────────────────────────
+
+export type Verdict = "met" | "missed" | "unmeasured" | "untargeted" | "open";
+export const VERDICT_WORD: Record<Verdict, string> = { met: "Met", missed: "Missed", unmeasured: "Not measured", untargeted: "No target set", open: "Not finished" };
+export interface ScoreRow {
+  key: "duration" | "planned" | "added" | "manhours" | "cost" | "safety" | "quality";
+  measure: string; plan: string; actual: string; verdict: Verdict;
+  /** The result in a few words ("33.5 h late"). */
+  result: string;
+  /** How to set it up, when it could not be measured or has no target. */
+  guide?: GuideId;
+  /** A person can enter the plan and the actual (the records have neither). */
+  entered: boolean;
+}
+export interface Score {
+  rows: ScoreRow[];
+  met: number; missed: number; unmeasured: number; untargeted: number;
+  /** "2 of 3 targets met. 4 of 7 could not be measured." */
+  line: string;
+}
+
+export interface ScoreInputs {
+  /** Counted man-hours, the bid they are held to and their cost at the rates entered (lib/manpower). */
+  manpower?: { totalMH: number; bidMH: number | null; cost: number | null } | null;
+  /** Of the shifts worked, how many have the incident line answered, and what was written. */
+  incidents?: { answered: number; recordable: number; firstAid: number; nearMiss: number } | null;
+  /** The phase's budget, spend and commitments (cost controls). */
+  costs?: { budget: number | null; spent: number; committed: number } | null;
+  /** What a person entered on the score, and the targets set on the measures. */
+  entries?: Record<string, ScoreEntry>;
+  targets?: Record<string, string>;
+}
+
+/** Man-hours and incidents for the score, from the same shift records and
+ *  manpower settings the rest of the app reads. */
+export function scoreInputsFrom(x: { work: AsBuiltWork; records: Map<string, ShiftRecord>; manpower?: ManpowerSettings | null }): Pick<ScoreInputs, "manpower" | "incidents"> {
+  const worked = new Set<string>();
+  for (const c of x.work.crews) for (const [k, s] of Object.entries(c.byShift)) if (s.moved) worked.add(k);
+  const windows = x.work.shifts.filter((w) => worked.has(`${w.dayKey}:${w.kind}`));
+  const sum = manpowerSummary(shiftCounts(x.records, windows, x.manpower), x.records, x.manpower);
+  const bids = sum.companies.map((c) => c.bidMH).filter((n): n is number => n != null);
+  let answered = 0;
+  for (const k of worked) { const i = x.records.get(k)?.incidents; if (i?.none || (i?.items?.length ?? 0) > 0) answered++; }
+  return {
+    manpower: sum.totalMH > 0 ? { totalMH: sum.totalMH, bidMH: bids.length ? Math.round(bids.reduce((a, n) => a + n, 0) * 10) / 10 : null, cost: sum.cost } : null,
+    incidents: { answered, ...sum.incidents },
+  };
+}
+
+const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
+const num = (t: string | undefined) => { const m = (t ?? "").match(/-?\d+(\.\d+)?/); return m ? Number(m[0]) : null; };
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+export function scoreOf(r: Pick<Review, "metrics">, tz: string, x: ScoreInputs = {}): Score {
+  const m = r.metrics, e = x.entries ?? {}, t = x.targets ?? {};
+  const rows: ScoreRow[] = [];
+  const v = m.varianceH;
+
+  // Duration: the baseline finish is the target unless a person set an allowance.
+  const allowH = num(t.variance);
+  rows.push({
+    key: "duration", measure: "Duration", entered: false,
+    plan: m.baselineFinish != null ? `Finish ${whenWord(m.baselineFinish, tz)}${allowH ? `, up to ${allowH} h past it` : ""}` : "No baseline",
+    actual: m.actualFinish != null ? `Finish ${whenWord(m.actualFinish, tz)}` : "Not finished",
+    verdict: v == null ? "open" : v <= Math.max(0.99, allowH ?? 0) ? "met" : "missed",
+    result: v == null ? "Open" : Math.abs(v) < 1 ? "On the baseline finish" : `${Math.abs(v)} h ${v > 0 ? "late" : "early"}`,
+  });
+
+  rows.push({
+    key: "planned", measure: "Planned work", entered: false,
+    plan: `${plural(m.baselineSteps, "activity", "activities")}, ${m.baselineH} h`, actual: `${m.baselineDone} done`,
+    verdict: !m.baselineSteps ? "unmeasured" : m.baselineDone === m.baselineSteps ? "met" : v == null ? "open" : "missed",
+    result: m.baselineDone === m.baselineSteps ? "All done" : `${m.baselineSteps - m.baselineDone} not done`,
+  });
+
+  // Added work: judged only against an allowance a person set.
+  const allowPct = num(t.growth);
+  rows.push({
+    key: "added", measure: "Added work", entered: false,
+    plan: allowPct != null ? `Allowance ${allowPct}% of planned hours` : "No allowance set",
+    actual: m.addedSteps ? `${plural(m.addedSteps, "activity", "activities")}, ${m.addedH} h` : "None",
+    verdict: !m.addedSteps ? "met" : allowPct == null || m.addedPct == null ? "untargeted" : m.addedPct <= allowPct ? "met" : "missed",
+    result: !m.addedSteps ? "None added" : m.addedPct != null ? `${m.addedPct}% more work` : `${m.addedH} h added`,
+  });
+
+  // Man-hours: only when head counts cover the event.
+  const hc = m.headCounts, covered = hc.shiftsWorked > 0 && hc.shiftsCounted / hc.shiftsWorked >= 0.8, mp = x.manpower ?? null;
+  const em = e.manhours;
+  rows.push(em?.actual ? {
+    key: "manhours", measure: "Man-hours", entered: true, plan: em.plan || "Not set", actual: em.actual, verdict: em.verdict ?? "untargeted", result: em.verdict ? VERDICT_WORD[em.verdict] : "Entered by hand",
+  } : covered && mp ? {
+    key: "manhours", measure: "Man-hours", entered: true,
+    plan: mp.bidMH != null ? `${mp.bidMH.toLocaleString("en-US")} bid` : em?.plan || "No bid entered", actual: `${mp.totalMH.toLocaleString("en-US")} counted`,
+    verdict: mp.bidMH != null ? (mp.totalMH <= mp.bidMH ? "met" : "missed") : "untargeted",
+    result: mp.bidMH != null ? `${Math.abs(Math.round(mp.totalMH - mp.bidMH)).toLocaleString("en-US")} ${mp.totalMH <= mp.bidMH ? "under" : "over"} the bid` : "No bid to hold it to", guide: mp.bidMH == null ? "manhours" : undefined,
+  } : {
+    key: "manhours", measure: "Man-hours", entered: true, plan: mp?.bidMH != null ? `${mp.bidMH.toLocaleString("en-US")} bid` : em?.plan || "Not set",
+    actual: hc.shiftsWorked ? `Head count on ${hc.shiftsCounted} of ${plural(hc.shiftsWorked, "shift")}` : "No shifts worked", verdict: "unmeasured", result: "Not measured", guide: "manhours",
+  });
+
+  // Cost: spend posted against the phase's budget.
+  const c = x.costs ?? null, ec = e.cost;
+  rows.push(ec?.actual ? {
+    key: "cost", measure: "Cost", entered: true, plan: ec.plan || (c?.budget ? `${money(c.budget)} budget` : "Not set"), actual: ec.actual, verdict: ec.verdict ?? "untargeted", result: ec.verdict ? VERDICT_WORD[ec.verdict] : "Entered by hand",
+  } : c && c.spent > 0 && c.budget ? {
+    key: "cost", measure: "Cost", entered: true, plan: `${money(c.budget)} budget`, actual: `${money(c.spent)} spent${c.committed ? `, ${money(c.committed)} committed` : ""}`,
+    verdict: c.spent <= c.budget ? "met" : "missed", result: `${money(Math.abs(c.budget - c.spent))} ${c.spent <= c.budget ? "under" : "over"}`,
+  } : {
+    key: "cost", measure: "Cost", entered: true, plan: c?.budget ? `${money(c.budget)} budget` : ec?.plan || "Not set",
+    actual: c?.committed ? `No spend posted. ${money(c.committed)} committed.` : "No spend posted", verdict: "unmeasured", result: "Not measured", guide: "cost",
+  });
+
+  // Safety: what was written on the shift records, against a target a person set.
+  const inc = x.incidents ?? null, es = e.safety, answeredAll = !!inc && hc.shiftsWorked > 0 && inc.answered / hc.shiftsWorked >= 0.8;
+  const counts = inc ? `${plural(inc.recordable, "recordable")}, ${plural(inc.firstAid, "first aid")}, ${plural(inc.nearMiss, "near miss", "near misses")}` : "";
+  const allowRec = num(es?.plan);
+  rows.push(es?.actual ? {
+    key: "safety", measure: "Safety", entered: true, plan: es.plan || "Target not set", actual: es.actual, verdict: es.verdict ?? "untargeted", result: es.verdict ? VERDICT_WORD[es.verdict] : "Entered by hand", guide: es.plan ? undefined : "safety",
+  } : answeredAll && inc ? {
+    key: "safety", measure: "Safety", entered: true, plan: es?.plan || "Target not set", actual: counts,
+    verdict: allowRec != null ? (inc.recordable <= allowRec ? "met" : "missed") : "untargeted", result: allowRec != null ? (inc.recordable <= allowRec ? "Within target" : "Over target") : "No target set", guide: allowRec == null ? "safety" : undefined,
+  } : {
+    key: "safety", measure: "Safety", entered: true, plan: es?.plan || "Target not set",
+    actual: inc && inc.answered ? `Incident line answered on ${inc.answered} of ${plural(hc.shiftsWorked, "shift")}: ${counts}` : "No incident record", verdict: "unmeasured", result: "Not measured", guide: "safety",
+  });
+
+  // Quality: nothing in the records counts it; a person enters it.
+  const eq = e.quality;
+  rows.push({
+    key: "quality", measure: "Quality", entered: true, plan: eq?.plan || "Target not set", actual: eq?.actual || "Not recorded",
+    verdict: eq?.actual ? eq.verdict ?? "untargeted" : "unmeasured", result: eq?.actual ? (eq.verdict ? VERDICT_WORD[eq.verdict] : "No target set") : "Not measured", guide: eq?.actual && eq.plan ? undefined : "quality",
+  });
+
+  const n = (k: Verdict) => rows.filter((row) => row.verdict === k).length;
+  const met = n("met"), missed = n("missed"), unmeasured = n("unmeasured"), untargeted = n("untargeted");
+  const judged = met + missed;
+  const line = [judged ? `${met} of ${plural(judged, "target")} met.` : "", unmeasured ? `${unmeasured} of ${rows.length} could not be measured.` : "", untargeted ? `${untargeted} had no target.` : ""].filter(Boolean).join(" ");
+  return { rows, met, missed, unmeasured, untargeted, line };
+}
+
+// ─── The seven areas, and the action plan ──────────────────────────
+
+export interface Action {
+  n: number; key: string; area: AreaId; areaName: string;
+  /** What we will do, how it will be done, and the benefit (from this event). */
+  what: string; how: string; benefit: string;
+  /** Who will do it, by what date, what it will cost. Blank until a person sets it. */
+  who: string; by: string; cost: string;
+  done: boolean;
+}
+export type AreaState = "finish" | "time" | "improve" | "pending" | "well" | "none";
+export const AREA_STATE_WORD: Record<AreaState, string> = { finish: "Set the finish", time: "Cost time", improve: "To improve", pending: "Needs your call", well: "Went well", none: "Nothing recorded" };
+export interface AreaRow {
+  id: AreaId; name: string; state: AreaState;
+  well: string[];
+  /** What did not go well, its root cause, and the action it leads to: one per accepted finding. */
+  items: Array<{ key: string; didNot: string; rootCause: string; action: number }>;
+  /** Findings in this area a person has not ruled on. */
+  pending: number;
+  /** How to set this area up, when nothing was recorded for it. */
+  guide?: GuideId;
+}
+export interface Book { headline: string; span: string; score: Score; areas: AreaRow[]; actions: Action[]; pending: number }
+
+const AREA_GUIDE: Partial<Record<AreaId, GuideId>> = { safety: "safety", organization: "organization", costs: "cost", logistics: "materials" };
+const words = (t: string) => new Set(t.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w.length > 3));
+/** How it will be done, less any sentence that only says the action again. */
+export function howOf(next: string, what: string): string {
+  const said = words(what);
+  const keep = (next.match(/[^.!?]+[.!?]+(?=\s|$)|[^.!?]+$/g) ?? []).map((x) => x.trim()).filter(Boolean).filter((sn) => { const w = [...words(sn)]; return !w.length || w.filter((x) => said.has(x)).length / w.length < 0.75; });
+  return keep.join(" ");
+}
+
+export function bookOf(r: Review, name: string, tz: string, x: ScoreInputs = {}): Book {
+  const pt = pointOf(r, name, tz);
+  const areaName = (id: AreaId) => AREAS.find((a) => a.id === id)!.name;
+  const actions: Action[] = pt.conclusions.map((c: Conclusion, i) => {
+    const area = AREA_OF[c.categoryId];
+    return { n: i + 1, key: c.key, area, areaName: areaName(area), what: c.ask, how: howOf(c.change, c.ask), benefit: c.because, who: c.owner, by: c.due, cost: c.cost, done: c.done };
+  });
+  const areas: AreaRow[] = AREAS.map((a) => {
+    const mine = pt.conclusions.map((c, i) => ({ c, n: i + 1 })).filter(({ c }) => AREA_OF[c.categoryId] === a.id);
+    const pending = pt.pending.filter((c) => AREA_OF[c.categoryId] === a.id).length;
+    const well = r.wins.filter((w) => AREA_OF[w.category] === a.id).map((w) => w.text);
+    const state: AreaState = mine.some(({ c }) => c.first) ? "finish" : mine.some(({ c }) => (c.moved ?? 0) >= 1) ? "time" : mine.length ? "improve" : pending ? "pending" : well.length ? "well" : "none";
+    return {
+      id: a.id, name: a.name, state, well, pending,
+      items: mine.map(({ c, n }) => ({ key: c.key, didNot: c.because, rootCause: c.gap, action: n })),
+      guide: state === "none" ? AREA_GUIDE[a.id] : undefined,
+    };
+  });
+  return { headline: pt.headline, span: pt.span, score: scoreOf(r, tz, x), areas, actions, pending: pt.pending.length };
+}
+
+/** The guides a book points to, each once, in the order they come up. */
+export function guidesOf(b: Book): Guide[] {
+  const ids: GuideId[] = [];
+  for (const row of b.score.rows) if (row.guide && !ids.includes(row.guide)) ids.push(row.guide);
+  for (const a of b.areas) if (a.guide && !ids.includes(a.guide)) ids.push(a.guide);
+  return ids.map((id) => GUIDES[id]);
+}
