@@ -376,7 +376,7 @@ export async function findEstate(admin: SupabaseClient, principal: KnowledgePrin
         : Promise.resolve({ data: [] as unknown[] }),
       docIds.length ? admin.from("checkout_sessions").select("id, document_id, user_name, started_at, project_id, mode").eq("org_id", orgId).in("document_id", docIds).is("ended_at", null).is("released_at", null).limit(50) : Promise.resolve({ data: [] as unknown[] }),
       docIds.length ? admin.from("markup_requests").select("id, document_id, requested_by_name, requested_from_name, status, created_at").eq("org_id", orgId).in("document_id", docIds).is("resolved_at", null).limit(50) : Promise.resolve({ data: [] as unknown[] }),
-      docIds.length ? admin.from("holds").select("id, document_id, reason, opened_by_name, opened_at").eq("org_id", orgId).in("document_id", docIds).is("released_at", null).limit(50) : Promise.resolve({ data: [] as unknown[] }),
+      docIds.length ? admin.from("document_holds").select("id, document_id, reason, opened_by_name, opened_at").eq("org_id", orgId).in("document_id", docIds).is("released_at", null).limit(50) : Promise.resolve({ data: [] as unknown[] }),
       entities.length ? admin.from("estate_edges").select("a, b, type, summary").eq("org_id", orgId).eq("status", "applied").eq("type", "project_scope").in("b", entities.map((e) => e.node)).limit(200) : Promise.resolve({ data: [] as unknown[] }),
       docIds.length ? admin.from("project_documents").select("project_id, document_id").eq("org_id", orgId).in("document_id", docIds).limit(500) : Promise.resolve({ data: [] as unknown[] }),
     ]);
