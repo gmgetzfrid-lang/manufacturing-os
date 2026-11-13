@@ -126,21 +126,38 @@ describe("the review, from the records", () => {
   it("only the reason on record is named as setting the finish; the rest say what they cost", () => {
     const by = (k: string) => r.findings.find((f) => f.key === k)!;
     // The plugged line is what the last work's comments give: named, and first.
-    expect([r.findings[0].key, by("planning").rating, by("planning").moved]).toEqual(["planning", "gap", 3]);
-    expect(by("planning").title).toBe("PSVs set the finish: a line had to be cleaned first");
-    expect(by("planning").effect).toBe("Set the finish: PSVs was the last work done, 22 h after Control Valves.");
-    expect(by("planning").next).toContain("Check and clean the lines on PSVs before its job starts.");
+    const plug = by("planning:cleaning");
+    expect([r.findings[0].key, plug.rating, plug.moved]).toEqual(["planning:cleaning", "gap", 3]);
+    expect(plug.title).toBe("PSVs set the finish: a line had to be cleaned first");
+    expect(plug.effect).toBe("Set the finish: PSVs was the last work done, 22 h after Control Valves.");
+    expect(plug.next).toBe("Plan line cleaning into the job on PSVs: the line was found plugged this event.");
     // A hand-off on the same work is told as that, not as a crew short of people.
-    expect([by("contractors").rating, by("contractors").moved, by("contractors").title]).toEqual(["opportunity", 2, "PSV-021 - E-13 Overhead waited on another crew"]);
-    expect(by("contractors").effect).toBe("On PSVs, the last work to finish.");
-    expect(by("contractors").next).not.toMatch(/add a crew|more people/i);
-    // The count of jobs that sat leaves that job to the finding that tells
-    // it; what is left (the blinds, no reason written) was on E-13.
-    expect([by("execution").moved, by("execution").effect]).toEqual([1, "E-13 finished 19 h after its plan. PSVs finished later, so E-13 did not set the finish."]);
+    const hand = by("contractors:handoff");
+    expect([hand.rating, hand.moved, hand.title]).toEqual(["opportunity", 2, "PSV-021 - E-13 Overhead waited a shift on another crew"]);
+    expect(hand.effect).toBe("On PSVs, the last work to finish.");
+    expect(hand.next).not.toMatch(/add a crew|more people/i);
+    // A job that sat with no reason written is told by name, with what its work order cost.
+    expect([by("execution").title, by("execution").moved, by("execution").effect]).toEqual(["E-13 Pull Blinds / Torque Flanges sat a shift with no reason written", 1, "E-13 finished 19 h after its plan. PSVs finished later, so E-13 did not set the finish."]);
     // Found work off the late work orders did not move the finish.
     expect([by("scope").moved, by("scope").effect]).toEqual([0, "Did not move the finish."]);
     // Nothing is said about an organization the project has not recorded.
     expect([by("organization").rating, by("materials").rating]).toEqual(["none", "none"]);
+  });
+  it("one finding is one work order and one cause: nothing from another job is folded in", () => {
+    const by = (k: string) => r.findings.find((f) => f.key === k)!;
+    // Gas-freeing on V-7 says nothing of the plugged line on the PSVs, and the other way round.
+    const gas = by("planning");
+    expect([gas.title, gas.effect]).toEqual(["Gas-freeing V-7 took 6 h the plan did not carry", "Did not move the finish."]);
+    expect(`${gas.observation} ${gas.gap} ${gas.next}`).not.toMatch(/PSV|plug|clean the line/i);
+    expect(`${by("planning:cleaning").observation} ${by("planning:cleaning").next}`).not.toMatch(/V-7|gas/i);
+    // Ready work and a hand-off between crews are two findings.
+    expect([by("contractors").title, by("contractors").effect]).toEqual(["Ready work waited for a crew", "Did not move the finish."]);
+    expect(by("contractors").observation).not.toMatch(/PSV-021/);
+    // What a finding says to do names only the work it is about.
+    for (const f of r.findings) {
+      const about = `${f.title} ${f.observation}`;
+      for (const tag of f.next.match(/\b[A-Z]{1,3}-\d+[A-Z]?\b/g) ?? []) expect(about, `${f.key}: ${tag}`).toContain(tag);
+    }
   });
   it("names the found work on the critical path, and asks for what was never written", () => {
     const scope = r.findings.find((f) => f.key === "scope")!;
@@ -151,8 +168,8 @@ describe("the review, from the records", () => {
     expect(r.questions.find((q) => q.kind === "stuck")!.ask).toContain("E-13 Pull Blinds / Torque Flanges had started and sat the 10/28 day shift");
   });
   it("every category has a finding; safety reads the stand-down", () => {
-    expect(r.findings.map((f) => f.category).sort()).toEqual(["contractors", "execution", "materials", "organization", "planning", "records", "safety", "scope"]);
-    expect(r.findings.find((f) => f.key === "materials")!.observation).toBe("No job is recorded as waiting on materials, and nothing sent out for service stayed out past its quoted time.");
+    expect([...new Set(r.findings.map((f) => f.category))].sort()).toEqual(["contractors", "execution", "materials", "organization", "planning", "records", "safety", "scope"]);
+    expect(r.findings.find((f) => f.key === "materials")!.observation).toBe("No job is recorded as waiting on materials.");
     expect(r.findings.find((f) => f.key === "safety")!.rating).toBe("strength");
     expect(r.findings.find((f) => f.key === "planning")!.observation).toContain("held");
   });
@@ -162,8 +179,10 @@ describe("the review, from the records", () => {
     const r2 = buildReview({ built, work: w2, notes: late, look, discoveries: discoveries(all), tz });
     expect(r2.service[0].stillOut?.said).toContain("Still waiting");
     expect(r2.stuck.some((j) => j.id === "tv")).toBe(false);
-    const mat = r2.findings.find((f) => f.key === "materials")!;
-    expect([mat.rating, mat.title]).toEqual(["opportunity", "Equipment out for service came back later than quoted"]);
+    // Its own finding, apart from materials: it is another work order.
+    const mat = r2.findings.find((f) => f.key === "materials:service")!;
+    expect([mat.rating, mat.title]).toEqual(["opportunity", "TV-006 on the Fuel Gas Line to H-1: still out for service past the time quoted"]);
+    expect(r2.findings.find((f) => f.key === "materials")!.observation).not.toMatch(/service/);
     expect(mat.observation).toContain("went out for service as planned");
     expect(mat.next).toBe("When equipment goes out for service, get the return date in writing and check on it the day before it is due.");
   });
@@ -246,6 +265,8 @@ saved.added.push({ id: "a1", category: "materials", title: "Flange not ordered",
     expect(jobWord({ name: "PSV-021 - E-13 Overhead (Swap Existing with the New Model)", order: "PSVs" })).toBe("PSV-021 - E-13 Overhead");
     expect(jobWord({ name: "Install Bundle", order: "E-12 - Feed Exchanger" })).toBe("E-12 Install Bundle");
     expect(jobWord({ name: "Hydroblast piping", order: "Clean fuel gas header" })).toBe("Hydroblast piping, Clean fuel gas header");
+    // A bracket typed without its pair doesn't hang off the name.
+    expect(jobWord({ name: "PSV-021 - E-13 Fractanator Overhead Air Condenser)", order: "PSVs" })).toBe("PSV-021 - E-13 Fractanator Overhead Air Condenser");
   });
 });
 
