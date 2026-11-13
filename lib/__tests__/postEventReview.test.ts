@@ -270,22 +270,24 @@ saved.added.push({ id: "a1", category: "materials", title: "Flange not ordered",
   });
 });
 
-describe("the files lead with what the event showed and what changes", () => {
+describe("the files open on the point of the meeting", () => {
   const o = { project: "Transmix Turnaround", phase: "Phase 1", tz, preparedBy: null, date: "November 13, 2026" };
-  it("the deck: conclusions, then each change with what justifies it; the records are backup", () => {
+  it("the deck: the changes, each with its reason in a line; everything else is backup", () => {
     const deck = deckSlides(r, o);
-    expect(deck[1].title).toBe("Phase 1 finished 46 h late. PSVs set the finish.");
+    const n = pointOf(r, "Phase 1", tz).conclusions.length;
+    expect(deck[1].title).toBe(`${n} changes for the next event`);
     const b = deck[1].body;
-    // The conclusions, most costly first; no table of data on the slide that carries the message.
-    expect(b.k === "split" && b.left.items?.[0]).toEqual({ text: "1.  PSVs set the finish: a line had to be cleaned first", bold: true });
-    expect(b.k === "split" && b.left.table).toBeUndefined();
-    expect(deck[2].title).toBe("What we change, and what justifies it");
-    // No owner is recorded on the project, so no owner column is made up.
-    expect(deck[2].body.k === "table" && deck[2].body.head).toEqual(["What we change", "What justifies it", "Category"]);
-    expect(deck[2].body.k === "table" && deck[2].body.rows[0]).toEqual(["1.  Plan line cleaning into the job on PSVs: the line was found plugged this event.", r.findings[0].why, "Planning and scheduling"]);
+    // One short line to say, one short line why. No tables, no quotes, no list of what did not matter.
+    expect(b.k === "asks" && b.items[0]).toEqual({ n: 1, ask: "Plan line cleaning into the job on PSVs.", because: "PSVs set the finish: a line had to be cleaned first." });
+    expect(b.k === "asks" && b.items.every((it) => it.ask.length <= 110 && it.because.length <= 170)).toBe(true);
+    expect(b.k === "asks" && b.items.length).toBeLessThanOrEqual(6);
+    expect(deck[2].title).toBe("What went well: keep doing it");
     expect(deck.slice(3).every((x) => x.kicker.startsWith("Backup"))).toBe(true);
+    // The full justification and the category sit in the backup.
+    const full = deck.find((x) => x.title === "Each change, with what justifies it")!.body;
+    expect(full.k === "table" && full.head).toEqual(["What we change", "What justifies it", "Category"]);
     const titles = deck.map((x) => `${x.kicker} ${x.title}`).join(" | ");
-    expect(titles).not.toMatch(/definition|closure plan|roadmap|proposed organization|decisions/i);
+    expect(titles).not.toMatch(/definition|closure plan|roadmap|proposed organization|decisions|did not move/i);
     // Service is a planned step in the backup table, not stuck work.
     const waited = deck.find((x) => x.title === "Jobs that sat a whole shift, and why")!.body;
     expect(waited.k === "table" && waited.rows.find((row) => row[0].startsWith("TV-006"))![2]).toBe("Out for service (planned)");
@@ -296,5 +298,11 @@ describe("the files lead with what the event showed and what changes", () => {
     expect(blocks.find((x) => x.k === "num")).toMatchObject({ n: 1, lead: "PSVs set the finish: a line had to be cleaned first. " });
     expect(blocks.some((x) => x.k === "p" && x.lead === "How it is done well (Planning and scheduling): ")).toBe(true);
     expect(blocks.some((x) => x.k !== "table" && /12 months|closure plan/i.test(x.text))).toBe(false);
+  });
+  it("a person's own finding goes on the slide by its own one-line title and cost", () => {
+    const saved = emptySaved();
+    saved.added.push({ id: "a1", category: "materials", title: "Flange not ordered: the length was not on the drawing", observation: "The warehouse asked and got no answer.", effect: "$700 to expedite", next: "Every material fully specified before scope freeze. Open questions answered in 24 hours.", at: 1, by: "me" });
+    const c = pointOf(read(saved), "Phase 1", tz).conclusions.find((x) => x.key === "added:a1")!;
+    expect([c.ask, c.because]).toEqual(["Every material fully specified before scope freeze.", "Flange not ordered: the length was not on the drawing ($700 to expedite)."]);
   });
 });

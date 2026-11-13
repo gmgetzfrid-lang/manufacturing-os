@@ -133,10 +133,23 @@ function Canvas({ spec }: { spec: SlideSpec }) {
       <div style={{ fontSize: pt(11), fontWeight: 700, color: C.acc, letterSpacing: 2, textTransform: "uppercase" }}>{T(spec.kicker)}</div>
       <div style={{ fontSize: pt(spec.title.length > 70 ? 21 : 25), fontWeight: 700, lineHeight: 1.12, marginTop: 6, minHeight: 74 }}>{T(spec.title)}</div>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden", marginTop: 10 }}>
-        {b.k === "table" ? <SlideTable head={b.head} rows={b.rows} widths={b.widths} /> : (
+        {b.k === "asks" ? (
+          <div>
+            {!b.items.length && <div style={{ fontSize: pt(20) }}>Nothing in the records calls for a change.</div>}
+            {b.items.map((it) => (
+              <div key={it.n} style={{ display: "flex", gap: 22, marginBottom: b.items.length <= 4 ? 30 : 18 }}>
+                <div style={{ flex: "0 0 40px", fontSize: pt(b.items.length <= 4 ? 26 : 22), fontWeight: 700, color: C.acc, lineHeight: 1 }}>{it.n}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: pt(b.items.length <= 4 ? 20 : 17), fontWeight: 700, lineHeight: 1.15 }}>{T(it.ask)}</div>
+                  <div style={{ fontSize: pt(b.items.length <= 4 ? 15 : 13), color: C.soft, marginTop: 4, lineHeight: 1.2 }}>{T(it.because)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : b.k === "table" ? <SlideTable head={b.head} rows={b.rows} widths={b.widths} /> : (
           <div style={{ display: "flex", gap: 29, height: "100%" }}>
             <div style={{ flex: `0 0 calc(${(b.ratio ?? 0.5) * 100}% - 15px)`, minWidth: 0 }}><PaneView pane={b.left} /></div>
-            <div style={{ flex: 1, minWidth: 0 }}><PaneView pane={b.right} /></div>
+            {(b.right.title || b.right.items?.length || b.right.table) && <div style={{ flex: 1, minWidth: 0 }}><PaneView pane={b.right} /></div>}
           </div>
         )}
       </div>
@@ -150,10 +163,10 @@ function PaneTitle({ text }: { text: string }) {
 function PaneView({ pane }: { pane: SlidePane }) {
   const items = (pane.items ?? []).map(itemOf);
   const chars = items.reduce((n, it) => n + it.text.length, 0);
-  const size = chars > 620 ? 12 : chars > 420 ? 13 : 15;
+  const size = chars > 620 ? 12 : chars > 420 ? 13 : !pane.title ? 18 : 15;
   return (
     <div>
-      <PaneTitle text={pane.title} />
+      {pane.title && <PaneTitle text={pane.title} />}
       {items.length > 0 && (
         <div style={{ marginTop: 10, fontSize: pt(size), lineHeight: 1.25 }}>
           {items.map((it, i) => (
@@ -198,6 +211,17 @@ function Page({ spec }: { spec: SlideSpec }) {
         <ol className="mt-5 space-y-1.5 text-[15px]">{b.agenda.map((t, i) => <li key={i}>{i + 1}. {T(t)}</li>)}</ol>
         <p className="mt-6 text-[13px]" style={{ color: C.soft }}>{T(b.meta)}</p>
       </>}
+      {b.k === "asks" && (
+        <ol className="mt-4 space-y-4">
+          {!b.items.length && <li className="text-[15px]">Nothing in the records calls for a change.</li>}
+          {b.items.map((it) => (
+            <li key={it.n} className="flex gap-3">
+              <span className="text-[22px] font-black leading-none" style={{ color: C.acc }}>{it.n}</span>
+              <span className="min-w-0"><b className="block text-[17px] leading-snug">{T(it.ask)}</b><span className="block mt-0.5 text-[14px] leading-snug" style={{ color: C.soft }}>{T(it.because)}</span></span>
+            </li>
+          ))}
+        </ol>
+      )}
       {b.k === "table" && <div className="mt-3"><Rows head={b.head} rows={b.rows} /></div>}
       {b.k === "split" && <div className="mt-3 space-y-5"><PanePage pane={b.left} /><PanePage pane={b.right} /></div>}
       {b.k !== "cover" && b.foot && <p className="mt-4 text-[12px]" style={{ color: C.foot }}>{T(b.foot)}</p>}
@@ -209,7 +233,7 @@ function PanePage({ pane }: { pane: SlidePane }) {
   const label = "text-[11px] font-black uppercase tracking-wider";
   return (
     <div>
-      <div className={label} style={{ color: C.acc }}>{T(pane.title)}</div>
+      {pane.title && <div className={label} style={{ color: C.acc }}>{T(pane.title)}</div>}
       {items.length > 0 && (
         <div className="mt-1.5 text-[14.5px] leading-snug">
           {items.map((it, i) => <div key={i} className={`flex gap-2 mb-1.5 ${it.bold ? "font-black mt-3" : ""} ${it.sub ? "pl-4" : ""}`}>{!it.bold && <span aria-hidden>•</span>}<span>{T(it.text)}</span></div>)}

@@ -159,7 +159,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
     // Only what differs from the draft is kept as a change.
     const out: FindingEdit = { ...(s.items[f.key]?.edits ?? {}) };
     for (const k of ["title", "observation"] as const) { const v = (e[k] ?? "").trim(); if (v && v !== f.drafted[k]) out[k] = v; else delete out[k]; }
-    for (const k of ["practice", "gap", "next", "year", "owner", "effect", "why"] as const) { const v = (e[k] ?? "").trim(); if (v !== f[k]) { if (v) out[k] = v; else delete out[k]; } }
+    for (const k of ["practice", "gap", "next", "year", "owner", "effect", "why", "ask", "because"] as const) { const v = (e[k] ?? "").trim(); if (v !== f[k]) { if (v) out[k] = v; else delete out[k]; } }
     if (e.rating && e.rating !== f.drafted.rating) out.rating = e.rating; else delete out.rating;
     s.items[f.key] = { ...s.items[f.key], edits: out, basis: basisOf(f), at: Date.now(), by: who };
   }, (next) => { setEditing(null); const g = refind(next, f.key); return g && (f.status === "kept" || f.source === "person") ? lesson(g, true) : undefined; });
@@ -170,7 +170,7 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
     void act("add", (s) => { s.added.push({ ...e, id, category, at: Date.now(), by: who }); }, async () => {
       setAdding(false);
       const c = categoryOf(category);
-      await lesson({ key: `added:${id}`, category, source: "person", rating: e.rating ?? "opportunity", title: e.title ?? "Finding", observation: e.observation ?? "", evidence: [], practice: "", gap: e.gap ?? "", next: e.next ?? "", year: e.year ?? "", owner: e.owner ?? "", effect: e.effect ?? "", moved: null, proof: "", why: e.effect ?? "", hours: null, info: [], status: "kept", edited: false, stale: false, drafted: { title: e.title ?? c.name, observation: e.observation ?? "", rating: e.rating ?? "opportunity" }, by: who, at: Date.now() }, true);
+      await lesson({ key: `added:${id}`, category, source: "person", rating: e.rating ?? "opportunity", title: e.title ?? "Finding", observation: e.observation ?? "", evidence: [], practice: "", gap: e.gap ?? "", next: e.next ?? "", year: e.year ?? "", owner: e.owner ?? "", effect: e.effect ?? "", moved: null, proof: "", why: e.effect ?? "", hours: null, ask: e.ask ?? e.next ?? "", because: e.because ?? e.effect ?? "", info: [], status: "kept", edited: false, stale: false, drafted: { title: e.title ?? c.name, observation: e.observation ?? "", rating: e.rating ?? "opportunity" }, by: who, at: Date.now() }, true);
     });
   };
   const filled = Object.entries(answers).filter(([, a]) => a.cause || a.note?.trim());
@@ -238,23 +238,18 @@ export default function PostEventReview({ orgId, projectId, projectName, jobKind
 
       {!m.steps ? <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-8 text-center text-[13px] text-[var(--color-text-muted)]">No schedule{phase ? ` for ${phase.name}` : ""} yet, so there is nothing to review.</div> : <>
         <section className="rounded-2xl border-2 border-[var(--color-text)] bg-[var(--color-surface)] p-4" data-review-point>
-          <h3 className="text-[18px] sm:text-[20px] font-black leading-snug text-[var(--color-text)]">{pt.headline}</h3>
-          {pt.span && <p className="text-[12px] text-[var(--color-text-muted)]">{pt.span}</p>}
+          <h3 className="text-[18px] sm:text-[20px] font-black leading-snug text-[var(--color-text)]">{pt.conclusions.length ? `${pt.conclusions.length} change${pt.conclusions.length === 1 ? "" : "s"} for the next event` : pt.headline}</h3>
+          <p className="text-[12.5px] text-[var(--color-text-muted)]">{pt.conclusions.length ? `${pt.headline} ` : ""}{pt.span}</p>
           {pt.conclusions.length > 0 ? (
-            <ol className="mt-3 space-y-3">
+            <ol className="mt-3 space-y-2.5">
               {pt.conclusions.map((c, i) => (
-                <li key={c.key} className="grid gap-x-3 sm:grid-cols-[28px_minmax(0,1fr)] text-[13.5px] text-[var(--color-text)]" data-conclusion={c.key}>
-                  <span className="hidden sm:flex w-7 h-7 rounded-full bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-black items-center justify-center">{i + 1}</span>
-                  <div className="min-w-0">
-                    <b className="block text-[14.5px]"><span className="sm:hidden">{i + 1}. </span>{c.title}</b>
-                    <p className="text-[var(--color-text)]">{c.why}</p>
-                    {c.change && <p className="mt-0.5"><span className={label}>Change </span>{c.change}</p>}
-                  </div>
+                <li key={c.key} className="flex gap-3 text-[var(--color-text)]" data-conclusion={c.key}>
+                  <span className="shrink-0 w-7 h-7 rounded-full bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-black flex items-center justify-center">{i + 1}</span>
+                  <div className="min-w-0"><b className="block text-[15px] leading-snug">{c.ask}</b><p className="text-[13px] text-[var(--color-text-muted)]">{c.because}</p></div>
                 </li>
               ))}
             </ol>
           ) : <p className="mt-2 text-[13px] text-[var(--color-text-muted)]">Nothing in the records calls for a change.</p>}
-          {pt.quiet.length > 0 && <p className="mt-3 text-[12.5px] text-[var(--color-text-muted)]"><b className="text-[var(--color-text)]">Did not move the finish: </b>{pt.quiet.join("; ")}.</p>}
         </section>
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
@@ -485,7 +480,7 @@ function FindingForm({ title, init, pickCategory, busy, onSave, onCancel }: {
   onSave: (e: FindingEdit, category?: CategoryId) => void; onCancel: () => void;
 }) {
   const [category, setCategory] = useState<CategoryId>(init?.category ?? "materials");
-  const [e, setE] = useState<FindingEdit>({ title: init?.title ?? "", observation: init?.observation ?? "", practice: init?.practice ?? "", gap: init?.gap ?? "", next: init?.next ?? "", year: init?.year ?? "", owner: init?.owner ?? "", effect: init?.effect ?? "", why: init?.why ?? "", rating: init?.rating ?? "opportunity" });
+  const [e, setE] = useState<FindingEdit>({ title: init?.title ?? "", observation: init?.observation ?? "", practice: init?.practice ?? "", gap: init?.gap ?? "", next: init?.next ?? "", year: init?.year ?? "", owner: init?.owner ?? "", effect: init?.effect ?? "", why: init?.why ?? "", ask: init?.ask ?? "", because: init?.because ?? "", rating: init?.rating ?? "opportunity" });
   const set = (k: keyof FindingEdit, v: string) => setE((x) => ({ ...x, [k]: v }));
   const Area = ({ k, name, hint, rows = 2 }: { k: "observation" | "gap" | "next" | "year" | "why"; name: string; hint: string; rows?: number }) => (
     <label className="block"><span className={label}>{name}</span><textarea rows={rows} value={e[k] ?? ""} onChange={(ev) => set(k, ev.target.value)} placeholder={hint} className={`${field} mt-0.5`} /></label>
@@ -501,6 +496,8 @@ function FindingForm({ title, init, pickCategory, busy, onSave, onCancel }: {
       <label className="block"><span className={label}>Finding, in one line</span><input value={e.title ?? ""} onChange={(ev) => set("title", ev.target.value)} placeholder="Flange not ordered: the length was not on the drawing" className={`${field} mt-0.5`} /></label>
       {Area({ k: "observation", name: "What happened (one fact a line)", hint: "Which job, which crew, when", rows: 5 })}
       <label className="block"><span className={label}>What it cost</span><input value={e.effect ?? ""} onChange={(ev) => set("effect", ev.target.value)} placeholder="Hours on the finish, dollars, or rework" className={`${field} mt-0.5`} /></label>
+      <label className="block"><span className={label}>On the slide: the change, in one line</span><input value={e.ask ?? ""} onChange={(ev) => set("ask", ev.target.value)} placeholder="Bring a second cleaning crew for the days equipment opens." className={`${field} mt-0.5`} /></label>
+      <label className="block"><span className={label}>On the slide: why, in one line</span><input value={e.because ?? ""} onChange={(ev) => set("because", ev.target.value)} placeholder="7 jobs were open at once and equipment sat open 181.5 h." className={`${field} mt-0.5`} /></label>
       {Area({ k: "why", name: "What justifies a change (with the numbers)", hint: "Hours waited, hours over plan, what one more crew or one check would have saved" })}
       {Area({ k: "gap", name: "What was missing", hint: "What was missing or didn't work" })}
       {Area({ k: "next", name: "What we do differently next time", hint: "What will be in place before the next event" })}

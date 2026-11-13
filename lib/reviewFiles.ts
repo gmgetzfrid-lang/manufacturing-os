@@ -239,6 +239,7 @@ export interface SlideSpec {
   kicker: string; title: string; notes: string;
   body:
     | { k: "cover"; sub: string; meta: string; agenda: string[] }
+    | { k: "asks"; items: Array<{ n: number; ask: string; because: string }>; foot?: string }
     | { k: "table"; head: string[]; rows: string[][]; widths: number[]; foot?: string }
     | { k: "split"; left: Pane; right: Pane; ratio?: number; foot?: string };
 }
@@ -263,21 +264,25 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
   const m = r.metrics, s: SlideSpec[] = [], pt = point(r, o);
   const dates = eventDates(r, o.tz);
   s.push({ kicker: "Post-event review", title: dates ? `${eventName(o)}: ${dates}` : eventName(o), notes: "What the event showed, what we change and what justifies it, then the records behind each.",
-    body: { k: "cover", sub: projectLine(o), meta: [o.preparedBy, `Written ${o.date}`].filter(Boolean).join("  ·  "), agenda: ["What the event showed", "What we change, and what justifies it", "Backup: the records behind each"] } });
+    body: { k: "cover", sub: projectLine(o), meta: [o.preparedBy, `Written ${o.date}`].filter(Boolean).join("  ·  "), agenda: ["What we change for the next event", "What went well", "Backup, if asked"] } });
 
-  // What the event showed: the conclusions, and beside them what went well.
-  const shown: Item[] = pt.conclusions.map((c, i) => ({ text: `${i + 1}.  ${c.title}`, bold: true }));
-  s.push({ kicker: "1 · What the event showed", title: pt.headline, notes: pt.conclusions.map((c, i) => `${i + 1}. ${c.title}. ${c.why}`).join(" "),
-    body: { k: "split", ratio: 0.62,
-      left: { title: "What it showed", items: shown.length ? shown : ["Nothing in the records calls for a change."] },
-      right: { title: "What went well", items: r.strengths.length ? r.strengths : ["Nothing the records single out."] },
-      foot: [pt.span, scopeLine(r)].filter(Boolean).join(" ") } });
+  // The point of the meeting: what we change, each with its reason in a
+  // line. Short enough to say out loud; six to a slide.
+  const asks = pt.conclusions.map((c, i) => ({ n: i + 1, c }));
+  const groups: Array<typeof asks> = [];
+  for (let i = 0; i < asks.length; i += 6) groups.push(asks.slice(i, i + 6));
+  if (!groups.length) s.push({ kicker: "The point", title: pt.headline, notes: "Nothing in the records calls for a change.", body: { k: "asks", items: [], foot: pt.span } });
+  groups.forEach((g, i) => s.push({
+    kicker: `The point${part(i, groups.length)}`, title: `${plural(asks.length, "change")} for the next event`, notes: g.map(({ n, c }) => `${n}. ${c.ask} Because: ${c.because}`).join(" "),
+    body: { k: "asks", items: g.map(({ n, c }) => ({ n, ask: c.ask, because: c.because })), foot: [pt.headline, pt.span].filter(Boolean).join(" ") },
+  }));
+  if (r.strengths.length) s.push({ kicker: "What went well", title: "What went well: keep doing it", notes: r.strengths.join(" "), body: { k: "split", ratio: 0.99, left: { title: "", items: r.strengths }, right: { title: "", items: [] } } });
 
-  // What we change, and what justifies it.
+  // Backup from here on: only for when someone asks.
   const owned = pt.conclusions.some((c) => c.owner);
   const cRows = pt.conclusions.map((c, i) => [`${i + 1}.  ${c.change || "Not written."}`, c.why, c.category, ...(owned ? [c.owner || "To name"] : [])]);
   if (cRows.length) pages(cRows, 2400, 6).forEach((rows, i, a) =>
-    s.push({ kicker: `2 · What we change${part(i, a.length)}`, title: "What we change, and what justifies it", notes: pt.conclusions.map((c, k) => `${k + 1}. ${c.change} Because: ${c.why}`).join(" "),
+    s.push({ kicker: `Backup · the changes in full${part(i, a.length)}`, title: "Each change, with what justifies it", notes: pt.conclusions.map((c, k) => `${k + 1}. ${c.change} Because: ${c.why}`).join(" "),
       body: { k: "table", head: ["What we change", "What justifies it", "Category", ...(owned ? ["Owner"] : [])], widths: owned ? [4.4, 4.6, 1.8, 1.5] : [4.9, 5.2, 2.2], rows } }));
 
   if (r.organization) s.push({ kicker: "Backup · organization", title: `Event organization: ${r.organization.filled} of ${r.organization.required} required roles named`, notes: r.organization.missing.length ? `Not named yet: ${r.organization.missing.join(", ")}.` : "Every required role has a named person.", body: { k: "table", head: ["Role", "Named", "Responsible for"], widths: [3.6, 2.8, 5.9], rows: r.organization.roles.filter((x) => x.required || x.person).map((x) => [x.role, x.person || "Not named", x.does]) } });
@@ -335,10 +340,10 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, out: "blob" | "no
       { x, y, w, colW: widths.map((c) => (c / total) * w), border: { type: "none" }, margin: [3, 5, 3, 5] });
     };
     const pane = (pn: Pane, x: number, y: number, w: number, h: number) => {
-      s.addText(T(pn.title.toUpperCase()), { x, y, w, h: 0.3, fontFace: face, fontSize: 11, bold: true, color: ACC, charSpacing: 1 });
+      if (pn.title) s.addText(T(pn.title.toUpperCase()), { x, y, w, h: 0.3, fontFace: face, fontSize: 11, bold: true, color: ACC, charSpacing: 1 });
       const items = pn.items ?? [];
       const chars = items.reduce((n, it) => n + (typeof it === "string" ? it : it.text).length, 0);
-      const size = chars > 620 ? 12 : chars > 420 ? 13 : 15;
+      const size = chars > 620 ? 12 : chars > 420 ? 13 : !pn.title ? 18 : 15;
       // Room the lines take, so a table can sit right under them.
       const perLine = Math.max(20, Math.floor((w * 72) / (size * 0.52)));
       const lines = items.reduce((n, it) => n + Math.ceil((typeof it === "string" ? it : it.text).length / perLine), 0);
@@ -362,13 +367,23 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, out: "blob" | "no
     }
     s.addText(T(spec.kicker.toUpperCase()), { x: 0.6, y: 0.35, w: 12.1, h: 0.3, fontFace: face, fontSize: 11, bold: true, color: ACC, charSpacing: 2 });
     s.addText(T(spec.title), { x: 0.6, y: 0.65, w: 12.1, h: 0.8, fontFace: face, fontSize: spec.title.length > 70 ? 21 : 25, bold: true, color: INK, valign: "top" });
-    if (b.k === "table") {
+    if (b.k === "asks") {
+      const big = b.items.length <= 4;
+      const rowH = Math.min(1.25, 5.1 / Math.max(1, b.items.length));
+      if (!b.items.length) s.addText("Nothing in the records calls for a change.", { x: 0.6, y: 1.7, w: 12.1, h: 0.6, fontFace: face, fontSize: 20, color: INK });
+      b.items.forEach((it, i) => {
+        const y = 1.6 + i * rowH;
+        s.addText(String(it.n), { x: 0.6, y, w: 0.6, h: 0.6, fontFace: face, fontSize: big ? 26 : 22, bold: true, color: ACC, valign: "top" });
+        s.addText([{ text: T(it.ask), options: { bold: true, fontSize: big ? 20 : 17, color: INK, breakLine: true } }, { text: T(it.because), options: { fontSize: big ? 15 : 13, color: SOFT } }], { x: 1.25, y, w: 11.4, h: rowH - 0.05, fontFace: face, valign: "top", margin: 0 });
+      });
+      foot(b.foot);
+    } else if (b.k === "table") {
       table(b.head, b.rows, b.widths, 0.6, 1.55, 12.1);
       foot(b.foot);
     } else if (b.k === "split") {
       const lw = 12.1 * (b.ratio ?? 0.5) - 0.15;
       pane(b.left, 0.6, 1.55, lw, 5.2);
-      pane(b.right, 0.6 + lw + 0.3, 1.55, 12.1 - lw - 0.3, 5.2);
+      if (b.right.title || b.right.items?.length || b.right.table) pane(b.right, 0.6 + lw + 0.3, 1.55, 12.1 - lw - 0.3, 5.2);
       foot(b.foot);
     }
     s.addNotes(T(spec.notes));

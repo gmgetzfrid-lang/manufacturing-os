@@ -96,6 +96,8 @@ describe("the review's conclusion from it", () => {
   it("is a conclusion of the review, with its change, and has its questions answered", () => {
     const c = pointOf(r, "Phase 1", tz).conclusions.find((x) => x.key === f.key)!;
     expect([c.category, c.title, c.change]).toEqual(["Contractors and resourcing", f.title, f.next]);
+    // What is said out loud: the change in a line, the reason in a line.
+    expect([c.ask, c.because]).toEqual(["Bring a second Clean crew for the days equipment opens.", "4 jobs were open for Clean at once and equipment sat open 52 h. With two crews: 4 h."]);
     expect(r.qa.map((x) => x.q)).toEqual(expect.arrayContaining(["What was open and waiting for Clean?", "Would another Clean crew have changed the finish?"]));
   });
   it("says nothing of the kind when work passed between crews without a queue", () => {
