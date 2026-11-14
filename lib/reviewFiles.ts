@@ -56,6 +56,7 @@ const facts = (f: Finding) => [...f.observation.split("\n").map((l) => l.trim())
 const point = (r: Review, o: ReviewFileOpts) => pointOf(r, eventName(o), o.tz);
 export const bookFor = (r: Review, o: ReviewFileOpts): Book => bookOf(r, eventName(o), o.tz, o.score ?? {});
 const NOT_SET = "Not set";
+const NOT_WRITTEN = "Not written";
 const scopeLine = (r: Review) => { const m = r.metrics; return m.steps ? `${m.baselineDone} of ${m.baselineSteps} planned activities completed${m.addedSteps ? `, plus ${m.addedDone} of ${m.addedSteps} added from ${plural(r.found.length, "finding")}` : ""}.` : ""; };
 /** Against its planned start: "22 h late", "2 h early", "on plan". */
 const planWord = (h: number | null) => (h == null ? "" : Math.abs(h) < 1 ? "On plan" : `${Math.abs(h)} h ${h > 0 ? "late" : "early"}`);
@@ -129,17 +130,19 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
     b.push({ k: "h2", text: `${a.name}: ${a.tag.toLowerCase()}` });
     for (const w of a.well) b.push({ k: "bullet", lead: "Went well: ", text: w });
     for (const t of a.measured) b.push({ k: "bullet", lead: "Measured: ", text: t });
+    // Each finding by itself: what did not go well, where it was written, its own root cause, its action.
     for (const it of a.items) {
-      b.push({ k: "bullet", lead: "Did not: ", text: it.didNot });
-      if (it.rootCause) b.push({ k: "bullet", lead: "Root cause: ", text: it.rootCause });
-      b.push({ k: "bullet", lead: "Action: ", text: `No. ${it.action} in the action plan.` });
+      b.push({ k: "bullet", lead: "Did not go well: ", text: it.didNot });
+      if (it.where) b.push({ k: "muted", text: `${it.where}.` });
+      b.push({ k: "p", lead: "Root cause: ", text: it.rootCause || NOT_WRITTEN });
+      b.push({ k: "p", lead: "Action: ", text: `No. ${it.action} in the action plan.` });
     }
     if (a.pending) b.push({ k: "bullet", text: `${a.pending === 1 ? "1 finding waits" : `${a.pending} findings wait`} for a decision in the review.` });
     if (a.state === "none") b.push({ k: "p", text: `Nothing was recorded for this event.${a.guide ? ` How to set it up is in the last appendix (${GUIDES[a.guide].title.toLowerCase()}).` : ""}` });
   }
 
   b.push({ k: "h1", text: "4. The action plan" });
-  if (bk.actions.length) b.push({ k: "table", head: ["No.", "What we will do", "Area, for", "How it will be done", "Benefit", "Who", "By", "Cost"], rows: bk.actions.map((a) => [String(a.n), a.what, `${a.areaName}\n${appliesWord(a.applies, o.kind)}`, a.how, a.benefit, a.who || NOT_SET, a.by || NOT_SET, a.cost || NOT_SET]), widths: [0.45, 1.3, 0.95, 1.55, 1.3, 0.7, 0.7, 0.7] });
+  if (bk.actions.length) b.push({ k: "table", head: ["No.", "What we will do", "Area, for", "How it will be done", "Benefit", "Who", "By", "Cost"], rows: bk.actions.map((a) => [String(a.n), a.what, `${a.areaName}\n${appliesWord(a.applies, o.kind)}`, a.how, a.benefit || NOT_WRITTEN, a.who || NOT_SET, a.by || NOT_SET, a.cost || NOT_SET]), widths: [0.45, 1.3, 0.95, 1.55, 1.3, 0.7, 0.7, 0.7] });
   else b.push({ k: "p", text: pt.pending.length ? "No action has been accepted in the review yet." : "Nothing in the records calls for a change." });
   if (pt.pending.length) { b.push({ k: "h2", text: "Waiting for a decision in the review" }); for (const c of pt.pending) b.push({ k: "bullet", text: `${c.title}.` }); }
 
@@ -148,17 +151,22 @@ export function reportBlocks(r: Review, o: ReviewFileOpts): Block[] {
   if (!close.length) b.push({ k: "p", text: "None." });
   close.forEach((f, i) => {
     b.push({ k: "h2", text: `${i + 1}. ${f.title}` });
-    b.push({ k: "p", lead: "What justifies a change: ", text: f.why || f.effect || "Not written." });
+    // Written on the job: what the person wrote, as written, and where.
+    if (f.where) b.push({ k: "muted", text: `${f.where}.` });
+    if (f.source === "job") b.push({ k: "p", lead: "What happened: ", text: f.observation.replace(/\s*\n\s*/g, " ") });
+    if (f.source !== "job" || f.why) b.push({ k: "p", lead: "What justifies a change: ", text: f.why || f.effect || NOT_WRITTEN });
     if (f.effect && f.effect !== f.why) b.push({ k: "p", lead: "What it cost: ", text: f.effect });
-    b.push({ k: "p", lead: `How it is done well (${areaOf(f.category).name}): `, text: f.practice });
-    if (f.gap) b.push({ k: "p", lead: "Root cause: ", text: f.gap });
+    if (f.practice) b.push({ k: "p", lead: `How it is done well (${areaOf(f.category).name}): `, text: f.practice });
+    b.push({ k: "p", lead: "Root cause: ", text: f.gap || NOT_WRITTEN });
     if (f.next) b.push({ k: "p", lead: "What we will do: ", text: f.next });
     if (f.year) b.push({ k: "p", lead: "Longer term: ", text: f.year });
     if (f.owner) b.push({ k: "p", lead: "Who: ", text: f.owner });
     if (f.due) b.push({ k: "p", lead: "By: ", text: f.due });
     if (f.cost) b.push({ k: "p", lead: "Cost: ", text: f.cost });
-    b.push({ k: "p", lead: "From the records:", text: "" });
-    for (const l of facts(f)) b.push({ k: "bullet", text: l });
+    if (f.source !== "job" || f.info.length) {
+      b.push({ k: "p", lead: f.source === "job" ? "Added in the review:" : "From the records:", text: "" });
+      for (const l of f.source === "job" ? f.info : facts(f)) b.push({ k: "bullet", text: l });
+    }
   });
 
   const quiet = live(r).filter((f) => f.rating === "none" && f.source === "records" && f.moved === 0);
@@ -275,11 +283,14 @@ export type Tone = "bad" | "warn" | "good" | "none";
 export interface SlideTag { text: string; tone: Tone }
 /** What is behind a line on a slide: the record, or how to set it up. */
 export interface SlideMore { title: string; sections: Array<{ title: string; lines: string[]; numbered?: boolean }> }
+/** Rows that share their first cells: the first `cols` cells of row i run
+ *  down rows[i] rows (0: the row is under the one above). */
+export interface SlideSpan { cols: number; rows: number[] }
 /** The type size a slide table is set in, by how much there is to read: as large as fills the slide. */
 /** The largest type (9 to 15 pt) at which a slide table fits the room it
  *  has: each cell's lines at that size and width, a first cell's tag under
  *  it, and the cell margins. Inches throughout. */
-export function fitTablePt(head: string[], rows: string[][], widths: number[], w: number, h: number, tags?: Array<SlideTag | null>): number {
+export function fitTablePt(head: string[], rows: string[][], widths: number[], w: number, h: number, tags?: Array<SlideTag | null>, span?: SlideSpan): number {
   const total = widths.reduce((a, c) => a + c, 0);
   const pad = 8 / 72;
   const linesIn = (text: string, cellW: number, fs: number) => text.split("\n").reduce((n, para) => n + Math.max(1, Math.ceil((para.length * fs * 0.46) / 72 / cellW)), 0);
@@ -287,10 +298,17 @@ export function fitTablePt(head: string[], rows: string[][], widths: number[], w
     const lineH = (fs * 1.18) / 72;
     const cellW = widths.map((c) => Math.max(0.3, (c / total) * w - 12 / 72));
     const headH = Math.max(...head.map((t, i) => linesIn(t, cellW[i], fs - 2))) * ((fs - 2) * 1.2) / 72 + pad;
-    const body = rows.reduce((n, row, ri) => n + pad + Math.max(...row.map((t, i) => {
-      const paras = (t ?? "").split("\n").length;
-      return linesIn(t ?? "", cellW[i], fs) * lineH + (paras - 1) * (4 / 72) + (i === 0 && tags?.[ri] ? ((fs - 2) * 1.2) / 72 : 0);
-    })), 0);
+    const cellH = (t: string, i: number, ri: number) => linesIn(t ?? "", cellW[i], fs) * lineH + ((t ?? "").split("\n").length - 1) * (4 / 72) + (i === 0 && tags?.[ri] ? ((fs - 2) * 1.2) / 72 : 0);
+    const rowH = (ri: number, from: number) => pad + Math.max(0, ...rows[ri].map((t, i) => (i < from ? 0 : cellH(t, i, ri))));
+    let body = 0;
+    // A group: its own rows, or the cells it shares down them, whichever is taller.
+    for (let ri = 0; ri < rows.length;) {
+      const k = span ? Math.max(1, span.rows[ri] ?? 1) : 1;
+      if (!span) { body += rowH(ri, 0); ri++; continue; }
+      let own = 0; for (let j = ri; j < ri + k && j < rows.length; j++) own += rowH(j, span.cols);
+      const shared = pad + Math.max(0, ...rows[ri].slice(0, span.cols).map((t, i) => cellH(t, i, ri)));
+      body += Math.max(own, shared); ri += k;
+    }
     if (headH + body <= h) return fs;
   }
   return 9;
@@ -299,6 +317,7 @@ export function fitTablePt(head: string[], rows: string[][], widths: number[], w
 export const tablePt = (rows: string[][]) => { const c = rows.reduce((n, r) => n + r.join("").length, 0) + rows.length * 30; return c > 1900 ? 10 : c > 1550 ? 11 : c > 1250 ? 12 : c > 1000 ? 13 : c > 780 ? 14 : 15; };
 export const TONE_HEX: Record<Tone, { fg: string; bg: string }> = { bad: { fg: "A3200F", bg: "F8DFD9" }, warn: { fg: "7A4D00", bg: "F6E6C2" }, good: { fg: "1C6240", bg: "DCECDF" }, none: { fg: "5D6675", bg: "E2DED4" } };
 const VERDICT_TONE: Record<Verdict, Tone> = { met: "good", missed: "bad", unmeasured: "none", untargeted: "warn", open: "none" };
+type BorderLine = { type: "solid" | "none"; pt?: number; color?: string };
 const STATE_TONE: Record<AreaState, Tone> = { finish: "bad", time: "warn", improve: "warn", pending: "none", well: "good", none: "none" };
 const guideMore = (g: Guide): SlideMore => ({ title: g.title, sections: [{ title: "What it is", lines: [g.what] }, { title: "How to set it up", lines: g.steps, numbered: true }, { title: "In the app", lines: [g.inApp] }] });
 export type SlidePane = { title: string; items?: SlideItem[]; table?: { head: string[]; rows: string[][]; widths: number[]; title?: string } };
@@ -319,7 +338,11 @@ export interface SlideSpec {
         /** Counts above the table (the score). */
         tally?: Array<{ n: number; label: string; tone: Tone }>;
         /** One line said above the table ("Where the 33.5 h went: ..."). */
-        lead?: string }
+        lead?: string;
+        /** Rows grouped under shared first cells (an area, then each finding in it). */
+        span?: SlideSpan;
+        /** The column whose last line says where the line came from, set quieter. */
+        source?: number }
     | { k: "split"; left: Pane; right: Pane; ratio?: number; foot?: string };
 }
 
@@ -360,42 +383,71 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
     },
   });
 
-  // 2. The seven areas.
+  // 2. The seven areas: each finding on its own row, with its own root
+  // cause and action, under its area. Areas split over slides when they
+  // would not read at 11 pt on one.
   const costly = bk.areas.filter((a) => a.hours > 0).sort((a, b) => b.hours - a.hours);
   const late = r.metrics.varianceH ?? 0;
   const areasTitle = costly.length ? `${costly.map((a, i) => (i === 0 ? `${a.name} cost ${a.hours}${late ? ` of the ${late}` : ""} h` : `${a.name} ${a.hours} h`)).join(", ")}.`
     : (bk.actions.length ? "Where the event can do better, by area" : bk.pending ? "No finding has been accepted yet" : "Nothing in the records calls for a change");
-  s.push({
-    kicker: "2 · What went well, what did not, and why", title: areasTitle, notes: bk.areas.map((a) => `${a.name}: ${AREA_STATE_WORD[a.state].toLowerCase()}.`).join(" "),
-    body: {
-      k: "table", head: ["Area", "What went well", "What did not", "Root cause", "Action"], widths: [1.45, 2.5, 3.0, 2.9, 0.75],
-      rows: bk.areas.map((a) => [a.name, a.well.join("\n"),
-        [...a.items.map((it) => it.didNot), ...a.measured].join("\n") || (a.pending ? `${a.pending === 1 ? "1 finding waits" : `${a.pending} findings wait`} for your call in the review.` : a.state === "none" ? "Nothing was recorded for this event." : ""),
-        a.items.map((it) => it.rootCause).filter(Boolean).join("\n"), a.items.map((it) => `No. ${it.action}`).join("\n")]),
-      tags: bk.areas.map((a) => ({ text: a.tag, tone: STATE_TONE[a.state] })),
-      more: bk.areas.map((a) => {
-        const sections = [
-          ...(a.parts.length ? [{ title: "Hours of the late finish", lines: a.parts.map((p2) => (r.finish?.delay.find((d) => d.kind === "work" && d.order === p2.order)?.line ?? `${orderWord(p2.order)}: ${p2.hours} h.`)) }] : []),
-          ...(a.well.length ? [{ title: "Went well", lines: a.well }] : []),
-          ...a.items.map((it) => { const f = byKey.get(it.key); return { title: f?.title ?? it.didNot, lines: f ? facts(f) : [] }; }).filter((x) => x.lines.length),
-          ...(a.guide ? guideMore(GUIDES[a.guide]).sections.map((x) => ({ ...x, title: x.title === "What it is" ? GUIDES[a.guide!].title : x.title })) : []),
-        ];
-        return sections.length ? { title: a.name, sections } : null;
-      }),
-      foot: bk.pending ? `${bk.pending === 1 ? "1 finding waits" : `${bk.pending} findings wait`} for a decision in the review and ${bk.pending === 1 ? "is" : "are"} not shown.` : "",
-    },
+  const AREA_HEAD = ["Area", "What went well", "What did not go well", "Root cause", "Action"], AREA_W = [1.35, 2.3, 3.85, 2.75, 0.75];
+  const areaGroups = bk.areas.map((a) => {
+    const own: string[][] = [
+      ...a.items.map((it) => [it.where ? `${it.didNot}\n${it.where}.` : it.didNot, it.rootCause || NOT_WRITTEN, `No. ${it.action}`]),
+      ...a.measured.map((t) => [`${t}\nFrom the records.`, NOT_WRITTEN, "None"]),
+      ...(a.pending ? [[`${a.pending === 1 ? "1 finding waits" : `${a.pending} findings wait`} for your call in the review.`, "", ""]] : []),
+    ];
+    if (!own.length) own.push([a.state === "none" ? "Nothing was recorded for this event." : "", "", ""]);
+    const sections = [
+      ...(a.parts.length ? [{ title: "Hours of the late finish", lines: a.parts.map((p2) => (r.finish?.delay.find((d) => d.kind === "work" && d.order === p2.order)?.line ?? `${orderWord(p2.order)}: ${p2.hours} h.`)) }] : []),
+      ...(a.well.length ? [{ title: "Went well", lines: a.well }] : []),
+      ...a.items.map((it) => { const f = byKey.get(it.key); return { title: f?.title ?? it.didNot, lines: f ? facts(f) : [] }; }).filter((x) => x.lines.length),
+      ...(a.guide ? guideMore(GUIDES[a.guide]).sections.map((x) => ({ ...x, title: x.title === "What it is" ? GUIDES[a.guide!].title : x.title })) : []),
+    ];
+    const tag: SlideTag = { text: a.tag, tone: STATE_TONE[a.state] }, more = sections.length ? { title: a.name, sections } as SlideMore : null;
+    return { a, own, tag, more };
   });
+  // Rows grouped under their area; a group that would not read at 11 pt on
+  // a slide of its own goes on over the next ("Planning, continued").
+  type Unit = { rows: string[][]; tag: SlideTag | null; more: SlideMore | null };
+  const reads = (us: Unit[]) => fitTablePt(AREA_HEAD, us.flatMap((u) => u.rows), AREA_W, 12.1, 6.8 - 1.55, us.flatMap((u) => u.rows.map((_, i) => (i ? null : u.tag))), { cols: 2, rows: us.flatMap((u) => u.rows.map((_, i) => (i ? 0 : u.rows.length))) }) >= 11;
+  const units: Unit[] = [];
+  for (const g of areaGroups) {
+    let part: string[][] = [], first = true;
+    const unit = (rows: string[][]): Unit => ({ rows: rows.map((x, i) => [i ? "" : first ? g.a.name : `${g.a.name}, continued`, i || !first ? "" : g.a.well.join("\n"), ...x]), tag: first ? g.tag : null, more: g.more });
+    for (const x of g.own) {
+      if (part.length && !reads([unit([...part, x])])) { units.push(unit(part)); part = []; first = false; }
+      part.push(x);
+    }
+    units.push(unit(part));
+  }
+  const areaSlides: Unit[][] = [[]];
+  for (const u of units) {
+    const cur = areaSlides[areaSlides.length - 1];
+    if (cur.length && !reads([...cur, u])) areaSlides.push([u]); else cur.push(u);
+  }
+  areaSlides.forEach((gs, i) => s.push({
+    kicker: `2 · What went well, what did not, and why${part(i, areaSlides.length)}`, title: areasTitle,
+    notes: bk.areas.filter((a) => gs.some((g) => g.rows[0][0] === a.name)).map((a) => `${a.name}: ${AREA_STATE_WORD[a.state].toLowerCase()}.`).join(" ") || `${gs[0].rows[0][0]}.`,
+    body: {
+      k: "table", head: AREA_HEAD, widths: AREA_W, span: { cols: 2, rows: gs.flatMap((g) => g.rows.map((_, j) => (j ? 0 : g.rows.length))) }, source: 2,
+      rows: gs.flatMap((g) => g.rows),
+      tags: gs.flatMap((g) => g.rows.map((_, j) => (j ? null : g.tag))),
+      more: gs.flatMap((g) => g.rows.map((_, j) => (j ? null : g.more))),
+      foot: i === areaSlides.length - 1 && bk.pending ? `${bk.pending === 1 ? "1 finding waits" : `${bk.pending} findings wait`} for a decision in the review and ${bk.pending === 1 ? "is" : "are"} not shown.` : "",
+    },
+  }));
 
   // 3. The action plan, seven to a slide.
   const groups: Array<typeof bk.actions> = [];
   for (let i = 0; i < bk.actions.length; i += 7) groups.push(bk.actions.slice(i, i + 7));
   if (!groups.length) s.push({ kicker: "3 · What we do about it", title: bk.pending ? "No actions accepted yet" : "No actions for the next event", notes: bk.pending ? `${bk.pending} findings wait for a decision in the review.` : "Nothing in the records calls for a change.", body: { k: "asks", items: [], foot: "" } });
   groups.forEach((g, i) => s.push({
-    kicker: `3 · What we do about it${part(i, groups.length)}`, title: `${bk.actions.length === 1 ? "1 action" : `${bk.actions.length} actions`} for the next event`, notes: g.map((a) => `${a.n}. ${a.what} Benefit: ${a.benefit}`).join(" "),
+    kicker: `3 · What we do about it${part(i, groups.length)}`, title: `${bk.actions.length === 1 ? "1 action" : `${bk.actions.length} actions`} for the next event`, notes: g.map((a) => `${a.n}. ${a.what}${a.benefit ? ` Benefit: ${a.benefit}` : ""}`).join(" "),
     body: {
       k: "table", head: ["What we will do", "How it will be done", "Benefit", "Who", "By", "Cost"], widths: [2.7, 3.0, 2.6, 1.2, 0.95, 0.95],
-      rows: g.map((a) => [`${a.n}. ${a.what}\n${a.areaName} · ${appliesWord(a.applies, o.kind)}`, a.how, a.benefit, a.who || NOT_SET, a.by || NOT_SET, a.cost || NOT_SET]),
-      more: g.map((a) => { const f = byKey.get(a.key); return f ? { title: a.what, sections: [...(f.next ? [{ title: "How it will be done", lines: [f.next] }] : []), ...(f.gap ? [{ title: "Root cause", lines: [f.gap] }] : []), { title: "From the records", lines: facts(f) }] } : null; }),
+      rows: g.map((a) => [`${a.n}. ${a.what}\n${a.areaName} · ${appliesWord(a.applies, o.kind)}`, a.how, a.benefit || NOT_WRITTEN, a.who || NOT_SET, a.by || NOT_SET, a.cost || NOT_SET]),
+      more: g.map((a) => { const f = byKey.get(a.key); return f ? { title: a.what, sections: [...(f.next ? [{ title: "How it will be done", lines: [f.next] }] : []), { title: "Root cause", lines: [f.gap || NOT_WRITTEN] }, { title: f.source === "job" ? (f.where ?? "What happened") : "From the records", lines: facts(f) }] } : null; }),
       foot: g.some((a) => !a.who || !a.by || !a.cost) ? "Who, by what date and cost are set on each action in the review." : "",
     },
   }));
@@ -417,21 +469,28 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, out: "blob" | "no
     const b = spec.body;
     const bullets = (items: Item[], x: number, y: number, w: number, h: number, size: number) =>
       s.addText(items.map((it) => { const o = typeof it === "string" ? { text: it } : it; return { text: T(o.text), options: { bullet: o.bold ? false : { indent: 14 }, bold: !!o.bold, indentLevel: o.sub ? 1 : 0, breakLine: true, paraSpaceBefore: o.bold ? 6 : 0, paraSpaceAfter: 5 } }; }), { x, y, w, h, fontFace: face, fontSize: size, color: INK, valign: "top" });
-    const table = (head: string[], rows: string[][], widths: number[], x: number, y: number, w: number, size?: number, tags?: Array<SlideTag | null>) => {
+    const table = (head: string[], rows: string[][], widths: number[], x: number, y: number, w: number, size?: number, tags?: Array<SlideTag | null>, span?: SlideSpan, source?: number) => {
       const total = widths.reduce((a, c) => a + c, 0);
       // Sized to end above the footnote line (6.8 in).
-      const fs = size ?? fitTablePt(head, rows, widths, w, 6.8 - y, tags);
+      const fs = size ?? fitTablePt(head, rows, widths, w, 6.8 - y, tags, span);
+      // Rows band by group when rows share their first cells.
+      let band = -1;
+      const bands = rows.map((_, ri) => (!span || (span.rows[ri] ?? 1) > 0 ? ++band : band));
       s.addTable([head.map((h) => ({ text: T(h), options: { bold: true, color: "FFFFFF", fill: { color: INK }, fontFace: face, fontSize: Math.max(9, fs - 2) } })),
         ...rows.map((row, ri) => head.map((_, i) => {
-          const options = { color: INK, fill: { color: ri % 2 ? "ECE8DF" : BG }, fontFace: face, fontSize: fs, valign: "top" as const };
+          const down = span && i < span.cols ? span.rows[ri] ?? 1 : 1;
+          if (down === 0) return null;
+          // Another finding in the same area: a thin rule above it.
+          const under = !!span && i >= span.cols && (span.rows[ri] ?? 1) === 0;
+          const options = { color: INK, fill: { color: bands[ri] % 2 ? "ECE8DF" : BG }, fontFace: face, fontSize: fs, valign: "top" as const, ...(down > 1 ? { rowspan: down } : {}), ...(under ? { border: [{ type: "solid", pt: 0.75, color: "CFC7B8" }, { type: "none" }, { type: "none" }, { type: "none" }] as [BorderLine, BorderLine, BorderLine, BorderLine] } : {}) };
           // A first cell: what it is in bold, then the fact or the verdict under it.
           const [lead, ...more] = (row[i] ?? "").split("\n");
           const tag = i === 0 ? tags?.[ri] : null;
           if (i === 0 && (more.length || tag)) return { text: [{ text: T(lead), options: { bold: true, breakLine: true } }, ...(more.length ? [{ text: T(more.join(" ")), options: { bold: false, breakLine: !!tag } }] : []), ...(tag ? [{ text: T(tag.text), options: { bold: true, fontSize: Math.max(9, fs - 2), color: TONE_HEX[tag.tone].fg } }] : [])], options };
-          // Several lines in a cell: one under the other.
-          if (more.length) return { text: [lead, ...more].map((t, k, all) => ({ text: T(t), options: { breakLine: k < all.length - 1, paraSpaceAfter: 4 } })), options };
+          // Several lines in a cell: one under the other; where the line came from set quieter.
+          if (more.length) return { text: [lead, ...more].map((t, k, all) => ({ text: T(t), options: { breakLine: k < all.length - 1, paraSpaceAfter: 4, ...(i === source && k === all.length - 1 ? { color: SOFT, fontSize: Math.max(9, fs - 2) } : {}) } })), options };
           return { text: T(row[i] ?? ""), options: { ...options, bold: i === 0 } };
-        }))],
+        }).filter((c): c is NonNullable<typeof c> => c != null))],
       { x, y, w, colW: widths.map((c) => (c / total) * w), border: { type: "none" }, margin: [4, 6, 4, 6] });
     };
     const pane = (pn: Pane, x: number, y: number, w: number, h: number) => {
@@ -487,7 +546,7 @@ export async function reviewPptx(r: Review, o: ReviewFileOpts, out: "blob" | "no
       let y = 1.5;
       if (b.lead) { s.addText(T(b.lead), { x: 0.6, y, w: 12.1, h: 0.42, fontFace: face, fontSize: 16, bold: true, color: ACC, valign: "middle" }); y += 0.48; }
       if (b.tally?.length) { s.addText(b.tally.flatMap((t, i) => [{ text: `${i ? "     " : ""}${t.n} `, options: { bold: true, fontSize: 20, color: TONE_HEX[t.tone].fg } }, { text: T(t.label), options: { fontSize: 13, color: SOFT } }]), { x: 0.6, y, w: 12.1, h: 0.45, fontFace: face, valign: "middle" }); y += 0.55; }
-      table(b.head, b.rows, b.widths, 0.6, y === 1.5 ? 1.55 : y, 12.1, undefined, b.tags);
+      table(b.head, b.rows, b.widths, 0.6, y === 1.5 ? 1.55 : y, 12.1, undefined, b.tags, b.span, b.source);
       foot(b.foot);
     } else if (b.k === "split") {
       const lw = 12.1 * (b.ratio ?? 0.5) - 0.15;

@@ -417,7 +417,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
                   return (
                     <li key={c.key} className="text-[13px] text-[var(--color-text)]" data-pending={c.key}>
                       <b className="block">{c.title}</b>
-                      <span className="block text-[var(--color-text-muted)]">{c.because}</span>
+                      <span className="block text-[var(--color-text-muted)]">{c.didNot}</span>
                       {c.ask ? <span className="block"><span className={label}>Suggested change </span>{c.ask}</span> : <span className="block text-[var(--color-text-muted)]">No change suggested. Write one with Edit, or set it aside.</span>}
                       {canManage && <span className="mt-1 flex gap-1.5 flex-wrap">
                         {c.ask && <button type="button" disabled={!!busy} onClick={() => keep(f)} className={dark}><Check className="w-4 h-4" /> Accept</button>}
@@ -468,7 +468,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
                       <span className={label}>{c.name}</span>
                       <span className={`text-[10.5px] font-black px-1.5 py-0.5 rounded ${RATE_CLS[f.rating]}`}>{f.rating === "none" && f.moved === 0 ? "No effect on the finish" : RATING_WORD[f.rating]}</span>
                       {f.source === "person" && <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">Added by {f.by ?? "a person"}</span>}
-                      {f.source === "job" && <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-sky-50 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300" data-job-finding>Written on the job{f.by ? ` by ${f.by}` : ""}</span>}
+                      {f.source === "job" && <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-sky-50 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300" data-job-finding>Written on the job{f.by ? ` by ${f.by}` : ""}{f.at ? `, ${day(f.at)}` : ""}</span>}
                       {(f.areas?.length ?? 0) > 1 && <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">{f.areas!.map((a) => AREAS.find((x) => x.id === a)?.name).join(" · ")}</span>}
                       <span className={`ml-auto text-[11px] font-black px-2 py-0.5 rounded-full ${f.status === "kept" ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
                         {f.status === "kept" ? `Kept${f.at ? ` ${day(f.at)}` : ""}${f.edited ? " · changed" : ""}` : f.status === "discarded" ? "Discarded" : `Draft${f.edited ? " · changed" : ""}${asks ? ` · ${asks} question${asks === 1 ? "" : "s"} open` : ""}`}
@@ -484,7 +484,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
                         {f.info.map((line, i) => (
                           <div key={i} className="mt-1 flex items-start gap-1.5 text-[12.5px]"><span className="font-bold text-[var(--color-text-muted)] whitespace-nowrap">Added:</span><span className="min-w-0 flex-1">{line}</span>{canManage && <button type="button" aria-label="Remove this line" onClick={() => dropInfo(f, i)} className="text-[var(--color-text-muted)] hover:text-rose-600"><X className="w-3.5 h-3.5" /></button>}</div>
                         ))}
-                        {f.evidence.length > 0 && (
+                        {f.evidence.length > 0 && f.source !== "job" && (
                           <details className="mt-1.5">
                             <summary className="cursor-pointer text-[12px] font-bold text-[var(--color-accent)]">From the records ({f.evidence.length})</summary>
                             <ul className="mt-1 space-y-1 text-[12px] text-[var(--color-text-muted)] list-disc pl-4">{f.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>
@@ -493,7 +493,8 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
                       </dd>
                       {closes && <>
                         {f.practice && <><dt className={`${label} pt-0.5`}>Done well</dt><dd className="text-[var(--color-text-muted)]">{f.practice}</dd></>}
-                        {f.gap && <><dt className={`${label} pt-0.5`}>Root cause</dt><dd>{f.gap}</dd></>}
+                        <dt className={`${label} pt-0.5`}>Root cause</dt>
+                        <dd data-root-cause>{f.gap || <span className="text-[var(--color-text-muted)]">Not written.{canManage && <> <button type="button" onClick={() => { setEditing(f.key); setAdding(false); }} className="font-bold text-[var(--color-accent)] hover:underline">Write it</button></>}</span>}</dd>
                         <dt className={`${label} pt-0.5`}>{f.status === "kept" || f.source === "person" ? "Do differently" : "Suggested change"}</dt><dd>{f.next || <span className="text-[var(--color-text-muted)]">None suggested. Write one with Edit.</span>}{f.owner && <span className="ml-1.5 text-[11px] font-extrabold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)] whitespace-nowrap">Owner: {f.owner}</span>}</dd>
                         {f.year && <><dt className={`${label} pt-0.5`}>Longer term</dt><dd>{f.year}</dd></>}
                       </>}
@@ -766,7 +767,7 @@ function ActionLine({ a, kind, busy, canManage, onPlan, onDone }: { a: Action; k
         <b className="block text-[15px] leading-snug">{a.what}</b>
         <span className={`inline-block mt-0.5 rounded-full px-2 py-0.5 text-[11px] font-black ${a.applies === "all" ? "bg-sky-100 text-sky-800 dark:bg-sky-950/50 dark:text-sky-300" : "bg-[var(--color-border)]/60 text-[var(--color-text-muted)]"}`} data-applies={a.applies}>{appliesWord(a.applies, kind)}</span>
         {a.how && <p className="text-[13px]"><span className={label}>How </span>{a.how}</p>}
-        <p className="text-[13px] text-[var(--color-text-muted)]"><span className={label}>Benefit </span>{a.benefit} <span className="whitespace-nowrap">({a.areaName})</span></p>
+        <p className="text-[13px] text-[var(--color-text-muted)]"><span className={label}>Benefit </span>{a.benefit || "Not written. Write it with Edit on the finding."} <span className="whitespace-nowrap">({a.areaName})</span></p>
         <div className="mt-1.5 grid gap-2 grid-cols-3 sm:max-w-xl">
           {box("owner", "Who", a.who, "Who will do it")}{box("due", "By", a.by, "By what date")}{box("cost", "Cost", a.cost, "What it will cost")}
         </div>

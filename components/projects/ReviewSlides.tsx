@@ -14,7 +14,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Download, Loader2, Maximize2, X } from "lucide-react";
 import { noEmDash } from "@/lib/noEmDash";
-import { TONE_HEX, tablePt, type SlideItem, type SlideMore, type SlidePane, type SlideSpec, type SlideTag } from "@/lib/reviewFiles";
+import { TONE_HEX, tablePt, type SlideItem, type SlideMore, type SlidePane, type SlideSpan, type SlideSpec, type SlideTag } from "@/lib/reviewFiles";
 
 // The slide in its own pixels: 13.33 x 7.5 in at 96 to the inch, so a point
 // size here is the point size in the PowerPoint.
@@ -27,7 +27,12 @@ const Tag = ({ tag, size }: { tag: SlideTag; size: string }) => (
   <span style={{ display: "inline-block", fontSize: size, fontWeight: 700, lineHeight: 1.25, padding: "1px 8px", borderRadius: 99, color: `#${TONE_HEX[tag.tone].fg}`, background: `#${TONE_HEX[tag.tone].bg}`, whiteSpace: "nowrap" }}>{T(tag.text)}</span>
 );
 /** A cell of several lines, one under the other. */
-const lines = (t: string) => { const xs = t.split("\n").filter(Boolean); return xs.length > 1 ? xs.map((x, i) => <div key={i} style={{ marginTop: i ? "0.4em" : 0 }}>{T(x)}</div>) : T(t); };
+const lines = (t: string, quiet = false) => { const xs = t.split("\n").filter(Boolean); return xs.length > 1 ? xs.map((x, i) => <div key={i} style={{ marginTop: i ? "0.4em" : 0, ...(quiet && i === xs.length - 1 ? { color: C.foot, fontSize: "0.85em" } : {}) }}>{T(x)}</div>) : T(t); };
+/** Rows under shared first cells: each row's group number, and the row its group starts on. */
+const groupsOf = (n: number, span?: SlideSpan) => {
+  let g = -1, start = 0;
+  return Array.from({ length: n }, (_, ri) => { if (!span || (span.rows[ri] ?? 1) > 0) { g++; start = ri; } return { band: g, start }; });
+};
 const itemOf = (it: SlideItem) => (typeof it === "string" ? { text: it, sub: false, bold: false } : { sub: false, bold: false, ...it });
 /** A first cell of two lines: what it is in bold, the fact under it plain. */
 const cell = (t: string, first: boolean) => {
@@ -247,26 +252,34 @@ function FitTable({ body: b, open }: { body: Extract<SlideSpec["body"], { k: "ta
           {b.tally.map((t) => <div key={t.label}><span style={{ fontSize: pt(24), fontWeight: 700, color: `#${TONE_HEX[t.tone].fg}` }}>{t.n}</span><span style={{ fontSize: pt(13), color: C.soft, marginLeft: 8 }}>{T(t.label)}</span></div>)}
         </div>
       )}
-      <SlideTable head={b.head} rows={b.rows} widths={b.widths} tags={b.tags} more={b.more} open={open} size={start} />
+      <SlideTable head={b.head} rows={b.rows} widths={b.widths} tags={b.tags} more={b.more} open={open} size={start} span={b.span} source={b.source} />
     </div>
   );
 }
-function SlideTable({ head, rows, widths, size, tags, more, open }: { head: string[]; rows: string[][]; widths: number[]; size?: number; tags?: Array<SlideTag | null>; more?: Array<SlideMore | null>; open?: Open }) {
+function SlideTable({ head, rows, widths, size, tags, more, open, span, source }: { head: string[]; rows: string[][]; widths: number[]; size?: number; tags?: Array<SlideTag | null>; more?: Array<SlideMore | null>; open?: Open; span?: SlideSpan; source?: number }) {
   const total = widths.reduce((a, c) => a + c, 0);
   const fs = size ?? tablePt(rows);
+  const gs = groupsOf(rows.length, span);
   return (
     <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed", fontSize: pt(fs), lineHeight: 1.22 }}>
       <colgroup>{widths.map((w, i) => <col key={i} style={{ width: `${(w / total) * 100}%` }} />)}</colgroup>
       <thead><tr>{head.map((h) => <th key={h} style={{ background: C.ink, color: "#fff", textAlign: "left", padding: "0.4em 8px", fontWeight: 700, fontSize: "0.85em" }}>{T(h)}</th>)}</tr></thead>
       <tbody>{rows.map((r, ri) => {
-        const m = open ? more?.[ri] ?? null : null;
+        const m = open ? more?.[gs[ri].start] ?? null : null;
+        const bg = gs[ri].band % 2 ? C.band : C.bg;
+        // A row under the one above (another finding in the same area): a rule between them.
+        const under = !!span && (span.rows[ri] ?? 1) === 0;
         return (
-          <tr key={ri} style={{ background: ri % 2 ? C.band : C.bg, cursor: m ? "pointer" : undefined }} onClick={m ? (e) => { e.stopPropagation(); open!(m); } : undefined} data-row-more={m ? "" : undefined}>
-            {head.map((_, i) => (
-              <td key={i} style={{ padding: "0.38em 8px", verticalAlign: "top", fontWeight: i === 0 ? 700 : 400, overflowWrap: "anywhere" }}>
-                {i === 0 ? <>{cell(r[i] ?? "", true)}{tags?.[ri] && <div style={{ marginTop: 4 }}><Tag tag={tags[ri]!} size="0.78em" /></div>}</> : lines(r[i] ?? "")}
-              </td>
-            ))}
+          <tr key={ri} style={{ background: bg, cursor: m ? "pointer" : undefined }} onClick={m ? (e) => { e.stopPropagation(); open!(m); } : undefined} data-row-more={m ? "" : undefined} data-row-group={gs[ri].band}>
+            {head.map((_, i) => {
+              const down = span && i < span.cols ? span.rows[ri] ?? 1 : 1;
+              if (down === 0) return null;
+              return (
+                <td key={i} rowSpan={down > 1 ? down : undefined} style={{ padding: "0.38em 8px", verticalAlign: "top", fontWeight: i === 0 ? 700 : 400, overflowWrap: "anywhere", background: bg, borderTop: under ? "1px solid #D5CEC1" : undefined }}>
+                  {i === 0 ? <>{cell(r[i] ?? "", true)}{tags?.[ri] && <div style={{ marginTop: 4 }}><Tag tag={tags[ri]!} size="0.78em" /></div>}</> : lines(r[i] ?? "", i === source)}
+                </td>
+              );
+            })}
           </tr>
         );
       })}</tbody>
@@ -303,7 +316,7 @@ function Page({ spec, open }: { spec: SlideSpec; open?: Open }) {
       {b.k === "table" && b.tally && b.tally.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1" data-slide-tally>{b.tally.map((t) => <span key={t.label} className="whitespace-nowrap"><b className="text-[20px]" style={{ color: `#${TONE_HEX[t.tone].fg}` }}>{t.n}</b> <span className="text-[13px]" style={{ color: C.soft }}>{T(t.label)}</span></span>)}</div>
       )}
-      {b.k === "table" && <div className="mt-3"><Rows head={b.head} rows={b.rows} tags={b.tags} more={b.more} open={open} /></div>}
+      {b.k === "table" && <div className="mt-3"><Rows head={b.head} rows={b.rows} tags={b.tags} more={b.more} open={open} span={b.span} source={b.source} /></div>}
       {b.k === "split" && <div className="mt-3 space-y-5"><PanePage pane={b.left} /><PanePage pane={b.right} /></div>}
       {b.k !== "cover" && b.foot && <p className="mt-4 text-[12px]" style={{ color: C.foot }}>{T(b.foot)}</p>}
     </div>
@@ -324,19 +337,30 @@ function PanePage({ pane }: { pane: SlidePane }) {
     </div>
   );
 }
-/** A table as stacked rows: the first cell, then each of the rest by its heading. */
-function Rows({ head, rows, tags, more, open }: { head: string[]; rows: string[][]; tags?: Array<SlideTag | null>; more?: Array<SlideMore | null>; open?: Open }) {
+/** A table as stacked rows: the first cell, then each of the rest by its
+ *  heading. Rows under shared first cells (an area's findings) are one card,
+ *  each row its own block under a rule. */
+function Rows({ head, rows, tags, more, open, span, source }: { head: string[]; rows: string[][]; tags?: Array<SlideTag | null>; more?: Array<SlideMore | null>; open?: Open; span?: SlideSpan; source?: number }) {
+  const shared = span?.cols ?? 1;
+  const starts = groupsOf(rows.length, span).map((g, i) => (g.start === i ? i : -1)).filter((i) => i >= 0);
+  const field = (c: string, n: number, k: string) => c ? (
+    <div key={k} className="mt-1.5">
+      <div className="text-[10.5px] font-black uppercase tracking-wider" style={{ color: C.foot }}>{T(head[n])}</div>
+      <div>{lines(c, n === source)}</div>
+    </div>
+  ) : null;
   return (
     <ul className="space-y-2">
-      {rows.map((r, i) => {
+      {starts.map((i, gi) => {
         const m = open ? more?.[i] ?? null : null;
+        const r = rows[i], own = span ? rows.slice(i, i + Math.max(1, span.rows[i] ?? 1)) : [r];
         return (
-          <li key={i} className="rounded-xl px-3 py-2.5 text-[14px] leading-snug" style={{ background: i % 2 ? C.band : "#FFFDF9", border: "1px solid #DDD7CC", cursor: m ? "pointer" : undefined }} onClick={m ? () => open!(m) : undefined} data-row-more={m ? "" : undefined}>
+          <li key={i} className="rounded-xl px-3 py-2.5 text-[14px] leading-snug" style={{ background: gi % 2 ? C.band : "#FFFDF9", border: "1px solid #DDD7CC", cursor: m ? "pointer" : undefined }} onClick={m ? () => open!(m) : undefined} data-row-more={m ? "" : undefined} data-row-group={gi}>
             <div className="flex items-baseline gap-2 flex-wrap font-bold text-[15px]"><span className="min-w-0">{cell(r[0] ?? "", true)}</span>{tags?.[i] && <Tag tag={tags[i]!} size="11.5px" />}</div>
-            {r.slice(1).map((c, n) => c && (
-              <div key={n} className="mt-1.5">
-                <div className="text-[10.5px] font-black uppercase tracking-wider" style={{ color: C.foot }}>{T(head[n + 1])}</div>
-                <div>{lines(c)}</div>
+            {r.slice(1, shared).map((c, n) => field(c, n + 1, `s${n}`))}
+            {own.map((row, k) => row.slice(shared).some(Boolean) && (
+              <div key={k} className={k || shared > 1 ? "mt-2 pt-1 border-t" : ""} style={{ borderColor: "#D5CEC1" }} data-row-item>
+                {row.slice(shared).map((c, n) => field(c, n + shared, `o${n}`))}
               </div>
             ))}
             {m && <div className="mt-2 text-[12px] font-bold" style={{ color: C.acc }}>Tap for more</div>}

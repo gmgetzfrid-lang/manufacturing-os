@@ -5,7 +5,7 @@ import { buildAsBuiltWork } from "@/lib/asBuiltWork";
 import { buildLookBack } from "@/lib/lookBack";
 import { discoveries, discoveryAttr, type DiscoveryRecord } from "@/lib/discovery";
 import type { ProgressLogRow } from "@/lib/progressHistory";
-import { appliesWord, deckSlides, reportBlocks } from "@/lib/reviewFiles";
+import { appliesWord, deckSlides, fitTablePt, reportBlocks } from "@/lib/reviewFiles";
 import { GUIDES, bookOf, scoreOf } from "@/lib/reviewBook";
 import { buildReview, causeOfText, emptySaved, basisOf, measuresOf, lessonOf, jobWord, pointOf, shiftWord, type ReviewSaved, type JobFinding } from "@/lib/postEventReview";
 
@@ -322,14 +322,32 @@ describe("the files open on the point of the meeting", () => {
     };
     const withJob = buildReview({ built, work, notes, look, discoveries: discoveries(all), tz, jobFindings: [lel] });
     const jf = withJob.findings.find((f) => f.key === "job:f1")!;
-    expect(jf).toMatchObject({ source: "job", status: "kept", category: "safety", areas: ["safety", "planning"], title: "V-7: LEL levels were high in the tower.", ask: "Put the tower fan on as soon as the manways are open.", applies: "unit" });
-    // The headline is the first sentence; what happened says the rest, once.
-    expect(jf.observation).toBe("The fan was not put on until the afternoon.");
+    // Headed by the job it was written on; what happened is all of what was written; nothing it did not say.
+    expect(jf).toMatchObject({ source: "job", status: "kept", category: "safety", areas: ["safety", "planning"], title: "V-7 Open Internal Manways", ask: "Put the tower fan on as soon as the manways are open.", applies: "unit", gap: "", because: "", why: "" });
+    expect(jf.observation).toBe("LEL levels were high in the tower. The fan was not put on until the afternoon.");
     const bk = bookOf(withJob, "Phase 1", tz);
-    expect(bk.actions.map((a) => [a.key, a.areaName])).toEqual([["job:f1", "Safety, Planning"]]);
-    expect(bk.areas.find((a) => a.id === "safety")!.items.map((x) => x.key)).toEqual(["job:f1"]);
+    expect(bk.actions.map((a) => [a.key, a.areaName, a.benefit])).toEqual([["job:f1", "Safety, Planning", ""]]);
+    const item = bk.areas.find((a) => a.id === "safety")!.items[0];
+    expect(item).toMatchObject({ key: "job:f1", didNot: "LEL levels were high in the tower. The fan was not put on until the afternoon.", rootCause: "", action: 1 });
+    expect(item.where).toMatch(/^Written on V-7 Open Internal Manways by eng@kern\.test, 10\/28/);
     expect(bk.areas.find((a) => a.id === "planning")!.items.map((x) => x.key)).toEqual(["job:f1"]);
     expect(bk.categories.find((c) => c.key === "planning")!.where).toMatch(/Action 1/);
+    // Two findings in one area: each its own row, its own root cause; one never stands for the other.
+    const spools: JobFinding = { ...lel, id: "f2", areas: ["planning"], on: "V-7 - Overhead and Bottoms Piping", body: "Two piping spools were found with low UT readings.", nextTime: "Inspect before the outage." };
+    const saved2 = emptySaved(); saved2.items["job:f1"] = { edits: { gap: "No step in the plan to put the fan on." } };
+    const two = buildReview({ built, work, notes, look, discoveries: discoveries(all), tz, saved: saved2, jobFindings: [lel, spools] });
+    const plan = bookOf(two, "Phase 1", tz).areas.find((a) => a.id === "planning")!;
+    expect(Object.fromEntries(plan.items.map((x) => [x.key, x.rootCause]))).toEqual({ "job:f1": "No step in the plan to put the fan on.", "job:f2": "" });
+    const slide = deckSlides(two, o).find((x) => x.kicker.startsWith("2 ") && x.body.k === "table" && x.body.rows.some((row) => row[0] === "Planning"))!;
+    if (slide.body.k !== "table") throw new Error("areas slide is a table");
+    const rows = slide.body.rows.filter((row) => /spools|LEL/.test(row[2]));
+    expect(rows.map((row) => [/spools/.test(row[2]) ? "spools" : "LEL", row[3]])).toContainEqual(["spools", "Not written"]);
+    expect(rows.filter((row) => /LEL/.test(row[2])).every((row) => row[3] === "No step in the plan to put the fan on.")).toBe(true);
+    expect(rows.find((row) => /spools/.test(row[2]))![2]).toMatch(/\nWritten on V-7 - Overhead and Bottoms Piping by /);
+    // The area's own cells run down its rows once.
+    const at = slide.body.rows.findIndex((row) => row[0] === "Planning");
+    expect(slide.body.span!.rows[at]).toBeGreaterThanOrEqual(2);
+    expect(slide.body.span!.rows[at + 1]).toBe(0);
     // Taken off in the review, it stays off.
     const off = emptySaved(); off.items["job:f1"] = { status: "discarded" };
     expect(bookOf(buildReview({ built, work, notes, look, discoveries: discoveries(all), tz, saved: off, jobFindings: [lel] }), "Phase 1", tz).actions).toEqual([]);
@@ -349,8 +367,12 @@ describe("the files open on the point of the meeting", () => {
   });
   it("the deck runs in the review's order: the score, the seven areas, the action plan. Nothing else", () => {
     const deck = deckSlides(rk, o);
-    expect(deck.map((x) => x.kicker)).toEqual(["Post-event review", "1 · The score: plan against actual", "2 · What went well, what did not, and why", "3 · What we do about it"]);
-    const [, score, areas, plan] = deck.map((x) => x.body);
+    // The areas run over as many slides as it takes to read at 11 pt or more.
+    expect([...new Set(deck.map((x) => x.kicker.replace(/ \(\d+ of \d+\)$/, "")))]).toEqual(["Post-event review", "1 · The score: plan against actual", "2 · What went well, what did not, and why", "3 · What we do about it"]);
+    const score = deck[1].body, plan = deck.find((x) => x.kicker.startsWith("3 "))!.body;
+    const areaBodies = deck.filter((x) => x.kicker.startsWith("2 ")).map((x) => x.body);
+    for (const b of areaBodies) if (b.k === "table" && b.span!.rows.filter((n) => n > 0).length > 1) expect(fitTablePt(b.head, b.rows, b.widths, 12.1, 6.8 - 1.55, b.tags, b.span)).toBeGreaterThanOrEqual(11);
+    const areas = { ...areaBodies[0], rows: areaBodies.flatMap((b) => (b.k === "table" ? b.rows : [])) } as typeof areaBodies[0];
     // The score: each target with its plan, its actual and a verdict; the tally on top.
     expect(score.k === "table" && score.head).toEqual(["Measure", "Target", "Actual", "Result"]);
     expect(score.k === "table" && score.lead).toMatch(/^Where the 46 h went: PSVs 22 h/);
@@ -367,8 +389,10 @@ describe("the files open on the point of the meeting", () => {
     expect(score.k === "table" && score.rows[0][3]).toBe("46 h late");
     expect(score.k === "table" && score.tally!.map((t) => t.label)).toContain("not measured");
     // The seven areas, by name and in order, each with what went well, what did not, the root cause and the action.
-    expect(areas.k === "table" && areas.head).toEqual(["Area", "What went well", "What did not", "Root cause", "Action"]);
-    expect(areas.k === "table" && areas.rows.map((row) => row[0])).toEqual(["Safety", "Organization", "Planning", "Contractors", "Costs", "Logistics", "Execution"]);
+    expect(areas.k === "table" && areas.head).toEqual(["Area", "What went well", "What did not go well", "Root cause", "Action"]);
+    expect(areas.k === "table" && areas.rows.map((row) => row[0]).filter(Boolean)).toEqual(["Safety", "Organization", "Planning", "Contractors", "Costs", "Logistics", "Execution"]);
+    // Every finding row has its own root cause or says none was written, and its own action.
+    expect(areas.k === "table" && areas.rows.filter((row) => /^No\. \d+$/.test(row[4])).every((row) => row[3].trim().length > 0)).toBe(true);
     // The action plan answers the six questions.
     expect(plan.k === "table" && plan.head).toEqual(["What we will do", "How it will be done", "Benefit", "Who", "By", "Cost"]);
     expect(plan.k === "table" && plan.rows[0].slice(3)).toEqual(["Not set", "Not set", "Not set"]);

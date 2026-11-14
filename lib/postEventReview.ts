@@ -236,6 +236,8 @@ export interface Finding {
   /** Every area it is about, when more than its category's ("LEL high
    *  [Safety] because the fan went on late [Planning]"). */
   areas?: AreaId[];
+  /** Where a finding written on the job was written, and by whom ("PSVs, by Pat, 10/29 3:10 PM"). */
+  where?: string;
   rating: Rating;
   title: string;
   observation: string;
@@ -681,19 +683,22 @@ export function buildReview(input: ReviewInput): Review {
   for (const j of input.jobFindings ?? []) {
     const key = `job:${j.id}`, it = saved.items[key], e = it?.edits ?? {};
     const pick = (v: string | undefined, was: string) => (v != null && v.trim() ? v.trim() : was);
+    // Said in the person's own words: the headline is the job it was written
+    // on, what happened is all of what they wrote. Nothing is cut or added:
+    // no root cause, benefit or justification they did not write.
     const body = plainText(j.body), next = plainText(j.nextTime);
-    const head = `${j.tag ? `${j.tag}: ` : ""}${firstSentence(body)}`;
-    // What happened after the headline, so the first sentence isn't said twice.
-    const rest = body.slice(firstSentence(body).length).trim();
+    const head = j.on?.trim() || j.tag || "Written on the job";
+    const when = `${fmtInTz(j.at, tz, { month: "numeric", day: "numeric" })} ${fmtInTz(j.at, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`;
     const category = CATEGORY_OF_AREA[j.areas[0] ?? "execution"];
     const rating: Rating = j.kind === "lesson" ? "opportunity" : "gap";
     findings.push({
       key, category, areas: j.areas, source: "job", rating: e.rating ?? rating,
-      title: pick(e.title, head), observation: pick(e.observation, rest),
-      evidence: [`Written on ${j.on ?? "the job"}${j.by ? ` by ${j.by}` : ""}, ${fmtInTz(j.at, tz, { month: "numeric", day: "numeric" })} ${fmtInTz(j.at, tz, { hour: "numeric", minute: "2-digit", hour12: true })}.`],
-      practice: pick(e.practice, PRACTICE_OF[category]), gap: pick(e.gap, ""), next: pick(e.next, next), year: pick(e.year, ""), owner: pick(e.owner, ""), effect: pick(e.effect, ""),
-      moved: null, proof: firstSentence(body), why: pick(e.why, firstSentence(body)), hours: null,
-      ask: pick(e.ask, firstSentence(pick(e.next, next))), because: pick(e.because, head),
+      where: `Written on ${head}${j.by ? ` by ${j.by}` : ""}, ${when}`,
+      title: pick(e.title, head), observation: pick(e.observation, body),
+      evidence: [`Written on ${head}${j.by ? ` by ${j.by}` : ""}, ${when}.`],
+      practice: pick(e.practice, ""), gap: pick(e.gap, ""), next: pick(e.next, next), year: pick(e.year, ""), owner: pick(e.owner, ""), effect: pick(e.effect, ""),
+      moved: null, proof: firstSentence(body), why: pick(e.why, ""), hours: null,
+      ask: pick(e.ask, firstSentence(pick(e.next, next))), because: pick(e.because, ""),
       due: (e.due ?? "").trim(), cost: (e.cost ?? "").trim(), done: !!it?.done,
       info: it?.info ?? [], status: it?.status === "discarded" ? "discarded" : "kept", auto: false, applies: j.every ? "all" : "unit",
       edited: Object.values(e).some((v) => v != null && String(v).trim() !== ""), stale: false,
@@ -1299,8 +1304,13 @@ export interface Conclusion {
   why: string;
   /** What to do differently. */
   change: string;
-  /** The change in one short line, and the reason in one short line. */
+  /** The change in one short line, and the benefit in one short line (blank when no one wrote one). */
   ask: string; because: string;
+  /** What did not go well: the person's own words for a finding written on the job, else the reason line. */
+  didNot: string;
+  /** Where a finding written on the job was written, and by whom. */
+  where?: string;
+  source: Finding["source"];
   owner: string;
   /** It set the finish. */
   first: boolean;
@@ -1334,7 +1344,7 @@ export function pointOf(r: Pick<Review, "metrics" | "finish" | "findings" | "ser
   const delay = late && fin?.delay.length ? `Where the ${m.varianceH} h went: ${fin.delay.map((d) => (d.kind === "longer" ? `start-up ran ${d.hours} h long` : d.kind === "gap" ? `start-up began ${d.hours} h after the work was done` : `${orderWord(d.order)} ${d.hours} h`)).join(", ")}.` : "";
   const lines = !m.steps ? [] : m.varianceH == null ? ["The numbers here are to date."] : late && fin ? [lastLine(fin, tz), becauseLine(fin), closingLine(fin)].filter(Boolean) : [];
   const live = r.findings.filter((f) => f.status !== "discarded");
-  const toC = (f: Finding): Conclusion => ({ key: f.key, areas: f.areas, category: categoryOf(f.category).name, practice: f.practice, title: f.title, why: f.why || f.effect || f.proof, change: f.next, ask: f.ask || f.next, because: f.because || f.why || f.effect, owner: f.owner, first: f.moved === 3, categoryId: f.category, gap: f.gap, due: f.due, cost: f.cost, done: f.done, moved: f.moved, applies: f.applies });
+  const toC = (f: Finding): Conclusion => ({ key: f.key, areas: f.areas, category: categoryOf(f.category).name, practice: f.practice, title: f.title, why: f.source === "job" ? f.why : f.why || f.effect || f.proof, change: f.next, ask: f.ask || f.next, because: f.source === "job" ? f.because : f.because || f.why || f.effect, didNot: f.source === "job" ? f.observation.replace(/\s*\n\s*/g, " ") : f.because || f.why || f.effect, where: f.where ?? (f.source === "records" ? "From the records" : `Added in the review${f.by ? ` by ${f.by}` : ""}`), source: f.source, owner: f.owner, first: f.moved === 3, categoryId: f.category, gap: f.gap, due: f.due, cost: f.cost, done: f.done, moved: f.moved, applies: f.applies });
   const open = live.filter((f) => f.rating === "gap" || f.rating === "opportunity");
   // On the slide: what a person accepted (or wrote), with a change to say.
   const conclusions = open.filter((f) => f.status === "kept" && (f.ask || f.next).trim()).map(toC);

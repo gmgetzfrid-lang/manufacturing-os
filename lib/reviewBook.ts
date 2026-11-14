@@ -300,8 +300,9 @@ export interface AreaRow {
   /** What the records measure for it that no finding says (start-up overrun, jobs that sat, repairs back late). */
   measured: string[];
   well: string[];
-  /** What did not go well, its root cause, and the action it leads to: one per accepted finding. */
-  items: Array<{ key: string; didNot: string; rootCause: string; action: number }>;
+  /** What did not go well, where it was written, its own root cause (blank:
+   *  no one wrote one), and the action it leads to: one per accepted finding. */
+  items: Array<{ key: string; didNot: string; where?: string; rootCause: string; action: number }>;
   /** Findings in this area a person has not ruled on. */
   pending: number;
   /** How to set this area up, when nothing was recorded for it. */
@@ -346,7 +347,7 @@ export function bookOf(r: Review, name: string, tz: string, x: ScoreInputs = {})
     // The start-up running long, or starting after the work was done: how the event was run.
     if (d.kind !== "work") { if (d.hours > 0) owner.set("execution", [...(owner.get("execution") ?? []), { order: d.order, hours: d.hours }]); continue; }
     const tag = orderWord(d.order);
-    const hits = pt.conclusions.map((c) => ({ c, head: names(`${c.title} ${c.because} ${c.why}`, tag), any: names(byKey.get(c.key)?.observation, tag) }))
+    const hits = pt.conclusions.map((c) => ({ c, head: names(c.source === "job" ? c.didNot : `${c.title} ${c.because} ${c.why}`, tag), any: names(byKey.get(c.key)?.observation, tag) }))
       .filter((h) => h.head || h.any).sort((x2, y2) => Number(y2.head) - Number(x2.head) || (y2.c.moved ?? 0) - (x2.c.moved ?? 0));
     if (!hits.length) continue;
     const area = AREA_OF[hits[0].c.categoryId];
@@ -356,7 +357,7 @@ export function bookOf(r: Review, name: string, tz: string, x: ScoreInputs = {})
   // Measured from the records for each area, said once: what no finding on the slide already says.
   const delayed = new Set((r.finish?.delay ?? []).filter((d) => d.kind === "work").map((d) => d.order));
   const held = (orders: string[]) => orders.some((o) => delayed.has(o));
-  const told = pt.conclusions.map((c) => `${c.title} ${c.because}`).join(" ");
+  const told = pt.conclusions.map((c) => `${c.title} ${c.didNot}`).join(" ");
   const measured: Partial<Record<AreaId, string[]>> = {};
   const add = (a: AreaId, line: string) => { measured[a] = [...(measured[a] ?? []), line]; };
   const m = r.metrics, cl = r.finish?.closing;
@@ -376,7 +377,7 @@ export function bookOf(r: Review, name: string, tz: string, x: ScoreInputs = {})
     const state: AreaState = parts.some((p2) => p2.order === top) || mine.some(({ c }) => c.first) ? "finish" : hours > 0 || mine.some(({ c }) => (c.moved ?? 0) >= 2) ? "time" : mine.length || facts.length ? "improve" : pending ? "pending" : well.length ? "well" : "none";
     return {
       id: a.id, name: a.name, state, well, pending, hours, parts, measured: facts, tag: hours > 0 ? `${hours} h of the finish` : AREA_STATE_WORD[state],
-      items: mine.map(({ c, n }) => ({ key: c.key, didNot: c.because, rootCause: c.gap, action: n })),
+      items: mine.map(({ c, n }) => ({ key: c.key, didNot: c.didNot, where: c.where, rootCause: c.gap, action: n })),
       guide: state === "none" ? AREA_GUIDE[a.id] : undefined,
     };
   });
