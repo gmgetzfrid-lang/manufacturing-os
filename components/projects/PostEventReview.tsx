@@ -63,7 +63,7 @@ const RATE_CLS: Record<Rating, string> = {
   none: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]",
 };
 
-type Filter = "all" | "gap" | "opportunity" | "strength" | "kept" | "discarded";
+type Filter = "all" | "pending" | "gap" | "opportunity" | "strength" | "kept" | "discarded";
 
 /** Lesson versions already written this session (see the effect in the review). */
 const SYNCED = new Set<string>();
@@ -95,7 +95,8 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [filter, setFilter] = useState<Filter>("all");
+  // Until a person picks one: what needs a decision, else everything.
+  const [filterPick, setFilter] = useState<Filter | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [infoFor, setInfoFor] = useState<string | null>(null);
@@ -319,7 +320,11 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   };
   const liveF = review.findings.filter((f) => f.status !== "discarded");
   const count = (r: Rating) => liveF.filter((f) => f.rating === r).length;
-  const shown = review.findings.filter((f) => filter === "discarded" ? f.status === "discarded" : f.status !== "discarded" && (filter === "all" || (filter === "kept" ? f.status === "kept" : f.rating === filter)));
+  const pendingKeys = new Set(pt.pending.map((c) => c.key));
+  const filter: Filter = filterPick === "pending" && !pendingKeys.size ? "all" : filterPick ?? (pendingKeys.size ? "pending" : "all");
+  const shown = review.findings.filter((f) => filter === "discarded" ? f.status === "discarded" : f.status !== "discarded" && (filter === "all" || (filter === "pending" ? pendingKeys.has(f.key) : filter === "kept" ? f.status === "kept" : f.rating === filter)));
+  /** Show the findings that wait for a decision, in the list where each is decided. */
+  const showPending = () => { setFilter("pending"); requestAnimationFrame(() => document.querySelector("[data-findings-list]")?.scrollIntoView({ block: "start", behavior: "smooth" })); };
   const day = (t: number | null) => (t == null ? "" : fmtInTz(t, tz, { month: "numeric", day: "numeric" }));
   const when = (t: number) => `${fmtInTz(t, tz, { weekday: "short", month: "numeric", day: "numeric" })} ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`;
   const Pill = ({ id, children }: { id: Filter; children: React.ReactNode }) => (
@@ -410,46 +415,28 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
             )}
           </div>
           {pt.pending.length > 0 && (
-            <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-3" data-review-pending>
-              <b className="block text-[13.5px] text-amber-900 dark:text-amber-200">Needs your call ({pt.pending.length}): not on the slide</b>
-              <ul className="mt-2 space-y-2.5">
-                {pt.pending.map((c) => {
-                  const f = review.findings.find((x) => x.key === c.key)!;
-                  return (
-                    <li key={c.key} className="text-[13px] text-[var(--color-text)]" data-pending={c.key}>
-                      <b className="block">{c.title}</b>
-                      <span className="block text-[var(--color-text-muted)]">{c.didNot}</span>
-                      {c.ask ? <span className="block"><span className={label}>Suggested change </span>{c.ask}</span> : <span className="block text-[var(--color-text-muted)]">No change suggested. Write one with Edit, or set it aside.</span>}
-                      {canManage && <span className="mt-1 flex gap-1.5 flex-wrap">
-                        {c.ask && <button type="button" disabled={!!busy} onClick={() => keep(f)} className={dark}><Check className="w-4 h-4" /> Accept</button>}
-                        <button type="button" disabled={!!busy} onClick={() => { setEditing(f.key); setAdding(false); document.querySelector(`[data-finding="${f.key}"]`)?.scrollIntoView({ block: "center" }); }} className={btn}><Pencil className="w-4 h-4" /> {c.ask ? "Reword" : "Write the change"}</button>
-                        <button type="button" disabled={!!busy} onClick={() => discard(f)} className={btn}><Trash2 className="w-4 h-4" /> Not this</button>
-                      </span>}
-                    </li>
-                  );
-                })}
-              </ul>
+            <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-3 py-2.5 flex items-center gap-2 flex-wrap" data-review-pending>
+              <span className="min-w-0 flex-1 basis-56 text-[13px] text-amber-900 dark:text-amber-200"><b>{pt.pending.length === 1 ? "1 finding needs your call" : `${pt.pending.length} findings need your call`}</b> before {pt.pending.length === 1 ? "it goes" : "they go"} on the slide.</span>
+              <button type="button" onClick={showPending} className={dark}>Show {pt.pending.length === 1 ? "it" : "them"}</button>
             </div>
           )}
         </section>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
-          <Kpi name="Schedule variance" value={m.varianceH == null ? "Open" : `${m.varianceH > 0 ? "+" : ""}${m.varianceH} h`} bad={(m.varianceH ?? 0) > 0.5} detail={m.baselineFinish != null ? `against the baseline finish, ${when(m.baselineFinish)}` : "no baseline finish"} />
-          <Kpi name="Scope" value={`${m.baselineSteps} + ${m.addedSteps}`} detail={`planned activities + added from ${review.found.length} finding${review.found.length === 1 ? "" : "s"}`} />
-          <Kpi name="Scope growth" value={m.addedPct == null ? "n/a" : `${m.addedPct}%`} detail={`${m.addedH} h added on a ${m.baselineH} h plan (schedule estimates)`} />
-          <Kpi name="Stuck work" value={`${m.shiftsWithStuck} of ${m.shifts}`} bad={m.shiftsWithStuck > 0} detail={m.shiftsWithStuck ? `shifts had jobs sitting, ${m.leastAtOnce === m.mostAtOnce ? m.mostAtOnce : `${m.leastAtOnce} to ${m.mostAtOnce}`} at a time; equipment out for service not counted` : "shifts had a job sitting"} />
-        </div>
 
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px] items-start">
-          <div className="order-2 lg:order-1 min-w-0 space-y-3">
-            <div className="flex gap-1.5 flex-wrap items-center">
+          <div className="min-w-0 space-y-3 scroll-mt-4" data-findings-list>
+            <div className="flex gap-1.5 items-center">
+              {/* One row that scrolls sideways on a phone, so the list starts high. */}
+              <div className="min-w-0 flex-1 flex gap-1.5 overflow-x-auto sm:flex-wrap pb-0.5 [scrollbar-width:none]" data-finding-pills>
+              {pt.pending.length > 0 && <Pill id="pending">Needs your call {pt.pending.length}</Pill>}
               <Pill id="all">All {liveF.length}</Pill>
               <Pill id="gap">Gaps {count("gap")}</Pill>
               <Pill id="opportunity">Opportunities {count("opportunity")}</Pill>
               <Pill id="strength">Strengths {count("strength")}</Pill>
               <Pill id="kept">Kept {liveF.filter((f) => f.status === "kept").length}</Pill>
               <Pill id="discarded">Discarded {review.findings.length - liveF.length}</Pill>
-              {canManage && <button type="button" onClick={() => { setAdding(true); setEditing(null); }} className={`${btn} ml-auto`}><Plus className="w-4 h-4" /> Add a finding</button>}
+              </div>
+              {canManage && <button type="button" onClick={() => { setAdding(true); setEditing(null); }} className={`${btn} shrink-0`} aria-label="Add a finding"><Plus className="w-4 h-4" /> <span className="hidden sm:inline">Add a finding</span></button>}
             </div>
             <p className="text-[11.5px] text-[var(--color-text-muted)]">{RATING_MEANS}</p>
 
@@ -533,7 +520,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
             })}
           </div>
 
-          <aside className="order-1 lg:order-2 space-y-3">
+          <aside className="space-y-3">
             {review.questions.length > 0 ? (
               <div className="rounded-2xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 p-3.5" data-review-questions>
                 <h3 className="text-[14px] font-black text-amber-900 dark:text-amber-200">Fill in what the records don&rsquo;t say ({review.questions.length})</h3>
@@ -649,16 +636,6 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   );
 }
 
-function Kpi({ name, value, detail, bad }: { name: string; value: string; detail: string; bad?: boolean }) {
-  return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5">
-      <div className={label}>{name}</div>
-      <div className={`text-[22px] font-black leading-tight ${bad ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text)]"}`}>{value}</div>
-      <div className="text-[12px] text-[var(--color-text-muted)]">{detail}</div>
-    </div>
-  );
-}
-
 /** A table that reads as stacked rows on a phone. */
 function Table({ title, head, rows, empty }: { title: string; head: string[]; rows: string[][]; empty: string }) {
   return (
@@ -766,13 +743,17 @@ function ActionLine({ a, kind, busy, canManage, onPlan, onDone }: { a: Action; k
       <span className="shrink-0 w-7 h-7 rounded-full bg-[var(--color-text)] text-[var(--color-surface)] text-[13px] font-black flex items-center justify-center">{a.n}</span>
       <div className="min-w-0 flex-1">
         <b className="block text-[15px] leading-snug">{a.what}</b>
-        <span className={`inline-block mt-0.5 rounded-full px-2 py-0.5 text-[11px] font-black ${a.applies === "all" ? "bg-sky-100 text-sky-800 dark:bg-sky-950/50 dark:text-sky-300" : "bg-[var(--color-border)]/60 text-[var(--color-text-muted)]"}`} data-applies={a.applies}>{appliesWord(a.applies, kind)}</span>
-        {a.how && <p className="text-[13px]"><span className={label}>How </span>{a.how}</p>}
-        <p className="text-[13px] text-[var(--color-text-muted)]"><span className={label}>Benefit </span>{a.benefit || "Not written. Write it with Edit on the finding."} <span className="whitespace-nowrap">({a.areaName})</span></p>
-        <div className="mt-1.5 grid gap-2 grid-cols-3 sm:max-w-xl">
-          {box("owner", "Who", a.who, "Who will do it")}{box("due", "By", a.by, "By what date")}{box("cost", "Cost", a.cost, "What it will cost")}
+        <div className="mt-1 flex items-center gap-1.5 flex-wrap text-[12px]">
+          <span className={`rounded-full px-2 py-0.5 font-black ${a.applies === "all" ? "bg-sky-100 text-sky-800 dark:bg-sky-950/50 dark:text-sky-300" : "bg-[var(--color-border)]/60 text-[var(--color-text-muted)]"}`} data-applies={a.applies}>{appliesWord(a.applies, kind)}</span>
+          <span className="text-[var(--color-text-muted)]">{a.areaName}{a.keys.length > 1 ? `, from ${a.keys.length} findings` : ""}</span>
+
         </div>
-        {canManage && <label className="mt-1.5 inline-flex items-center gap-1.5 text-[12.5px] text-[var(--color-text-muted)]"><input type="checkbox" checked={a.done} disabled={busy} onChange={(ev) => onDone(ev.target.checked)} /> Done</label>}
+        {a.how && <p className="mt-1 text-[13px]"><span className={label}>How </span>{a.how}</p>}
+        {a.benefit && <p className="text-[13px] text-[var(--color-text-muted)]"><span className={label}>Benefit </span>{a.benefit}</p>}
+        <div className="mt-2 grid gap-2 grid-cols-3 sm:grid-cols-[repeat(3,minmax(0,10rem))_auto] items-end">
+          {box("owner", "Who", a.who, "Who will do it")}{box("due", "By", a.by, "By what date")}{box("cost", "Cost", a.cost, "What it will cost")}
+          {canManage && <label className="col-span-3 sm:col-span-1 inline-flex items-center gap-1.5 h-9 text-[13px] text-[var(--color-text)] font-semibold"><input type="checkbox" className="w-4 h-4" checked={a.done} disabled={busy} onChange={(ev) => onDone(ev.target.checked)} /> Done</label>}
+        </div>
       </div>
     </li>
   );

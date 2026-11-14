@@ -12,7 +12,7 @@
 // is; each phase has its own PSSR.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Check, UploadCloud, ArrowRight, Loader2, Plus, FileText } from "lucide-react";
+import { Check, UploadCloud, ArrowRight, Loader2, Plus, FileText, ChevronDown, ChevronUp } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { listMilestones } from "@/lib/milestones";
 import { loadProgressLog, type ProgressLogRow } from "@/lib/progressHistory";
@@ -457,10 +457,25 @@ function Progress({ stats, tz, look, lookById, ids, loading, records, mp }: {
   records: Map<string, ShiftRecord> | null; mp: ManpowerSettings | null;
 }) {
   const [now] = useState(() => Date.now());
+  // The shift-by-shift story is long: one tap opens it.
+  const [open, setOpen] = useState(false);
   const counts = useMemo(() => (records ? shiftCounts(records, stats.shifts.filter((r) => r.start <= now).map((r) => ({ kind: r.kind, dayKey: r.dayKey, start: r.start, end: Math.min(r.end, now) })), mp) : []), [records, stats.shifts, mp, now]);
   const steps = useMemo(() => (look?.steps ?? []).filter((x) => !ids || ids.has(x.id)), [look, ids]);
+  const late = stats.finishedAt != null && stats.plannedFinish != null && stats.finishedAt - stats.plannedFinish > 3_600_000;
+  if (!open) return (
+    <button type="button" onClick={() => setOpen(true)} aria-expanded={false} data-progress-open
+      className="w-full flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 h-10 text-left text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+      <span className="min-w-0 flex-1">{late || stats.actualPct < stats.plannedPct ? "Shift by shift, and why it slipped" : "Shift by shift"}</span>
+      <ChevronDown className="w-4 h-4 text-[var(--color-text-muted)]" />
+    </button>
+  );
   return (
     <>
+      <button type="button" onClick={() => setOpen(false)} aria-expanded data-progress-open
+        className="w-full flex items-center gap-2 rounded-lg px-3 h-9 text-left text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+        <span className="min-w-0 flex-1">Hide the shift-by-shift story</span>
+        <ChevronUp className="w-4 h-4 text-[var(--color-text-muted)]" />
+      </button>
       <div>
         <div className="text-[12.5px] font-bold text-[var(--color-text)]">Against the original plan, shift by shift</div>
         <ul className="mt-1 mb-2 space-y-0.5 text-[11.5px] leading-snug text-[var(--color-text-muted)]">

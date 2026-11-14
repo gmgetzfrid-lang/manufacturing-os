@@ -343,12 +343,15 @@ function PanePage({ pane }: { pane: SlidePane }) {
 function Rows({ head, rows, tags, more, open, span, source }: { head: string[]; rows: string[][]; tags?: Array<SlideTag | null>; more?: Array<SlideMore | null>; open?: Open; span?: SlideSpan; source?: number }) {
   const shared = span?.cols ?? 1;
   const starts = groupsOf(rows.length, span).map((g, i) => (g.start === i ? i : -1)).filter((i) => i >= 0);
-  const field = (c: string, n: number, k: string) => c ? (
+  // A short answer ("Not set", "No. 4") sits on its heading's line; a longer one goes under it.
+  const field = (c: string, n: number, k: string) => !c ? null : !c.includes("\n") && c.length <= 28 ? (
+    <div key={k} className="mt-1.5"><span className="text-[12px] font-bold" style={{ color: C.foot }}>{T(head[n])}</span> <span>{T(c)}</span></div>
+  ) : (
     <div key={k} className="mt-1.5">
-      <div className="text-[10.5px] font-black uppercase tracking-wider" style={{ color: C.foot }}>{T(head[n])}</div>
+      <div className="text-[12px] font-bold" style={{ color: C.foot }}>{T(head[n])}</div>
       <div>{lines(c, n === source)}</div>
     </div>
-  ) : null;
+  );
   return (
     <ul className="space-y-2">
       {starts.map((i, gi) => {
