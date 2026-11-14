@@ -71,7 +71,7 @@ export function setupChecklist(s: {
       why: "Schedule files often mark nearly everything critical - choose where it comes from." },
     { id: "baseline", label: "Baseline", required: false, done: s.hasBaseline,
       why: "Without one, moving work later quietly erases the slip - progress is measured against today's plan." },
-    { id: "manpower", label: "Manpower & staffing", required: false, extra: true, done: s.manpowerSet === true, checking: s.manpowerSet === null,
+    { id: "manpower", label: "Contractors and rates", required: false, extra: true, done: s.manpowerSet === true, checking: s.manpowerSet === null,
       why: "Each crew's company, each company's bid hands per shift and rate, and its staffing plan: the meeting's head counts are held to them, and labor cost runs from them." },
     { id: "roles", label: "Roles & responsibilities", required: false, extra: true, done: s.rolesSet === true, checking: s.rolesSet === null,
       why: "Who runs the event: each role, what it is responsible for, and the person named to it. The post-event review's Organization line reads it." },

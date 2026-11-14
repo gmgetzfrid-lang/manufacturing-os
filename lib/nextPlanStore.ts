@@ -54,7 +54,20 @@ function cleanPlan(v: unknown): StaffingPlan | null {
   }
   if (!Object.keys(shifts).length) return null;
   const phases = Array.isArray(p.phases) ? p.phases.flatMap((x) => (str(x?.name, 80) && /^\d{4}-\d{2}-\d{2}$/.test(str(x?.from, 10)) ? [{ name: str(x.name, 80), from: str(x.from, 10) }] : [])) : undefined;
-  return { file: str(p.file, 200), at: str(p.at, 40), by: str(p.by, 120) || null, shifts, phases };
+  // Heads by craft (what a rate sheet prices), when the plan has them.
+  const crafts = Array.isArray(p.crafts) ? p.crafts.flatMap((c) => (str(c?.name, 80) ? [{ name: str(c.name, 80), code: str(c?.code, 12), direct: c?.direct !== false }] : [])).slice(0, 120) : undefined;
+  let byCraft: Record<string, Record<string, number>> | undefined;
+  if (crafts?.length && p.byCraft && typeof p.byCraft === "object") {
+    const names = new Set(crafts.map((c) => c.name));
+    byCraft = {};
+    for (const [k, m] of Object.entries(p.byCraft as Record<string, unknown>)) {
+      if (!/^\d{4}-\d{2}-\d{2}:(day|night)$/.test(k) || !m || typeof m !== "object") continue;
+      const row: Record<string, number> = {};
+      for (const [c, n] of Object.entries(m as Record<string, unknown>)) { const v = num(n); if (names.has(c) && v != null && v > 0 && v <= 2000) row[c] = Math.round(v); }
+      if (Object.keys(row).length) byCraft[k] = row;
+    }
+  }
+  return { file: str(p.file, 200), at: str(p.at, 40), by: str(p.by, 120) || null, shifts, phases, ...(crafts?.length ? { crafts, byCraft: byCraft ?? {} } : {}) };
 }
 
 export function cleanNextPlanSettings(st: Record<string, unknown> | null | undefined): NextPlanSettings {
@@ -72,7 +85,8 @@ export async function loadNextPlanSettings(projectId: string): Promise<NextPlanS
   return cleanNextPlanSettings((data as { shift_times?: Record<string, unknown> | null } | null)?.shift_times ?? null);
 }
 
-async function patch(projectId: string, f: (st: Record<string, unknown>) => void): Promise<void> {
+/** Change the project's settings (projects.shift_times) in place, keeping everything else saved there. */
+export async function patchProjectSettings(projectId: string, f: (st: Record<string, unknown>) => void): Promise<void> {
   const { data: cur, error: readErr } = await supabase.from("projects").select("shift_times").eq("id", projectId).maybeSingle();
   if (readErr) throw new Error(readErr.message);
   const st = { ...(((cur as { shift_times?: Record<string, unknown> | null } | null)?.shift_times) ?? {}) };
@@ -84,12 +98,12 @@ async function patch(projectId: string, f: (st: Record<string, unknown>) => void
 
 /** The changes for one scope (a phase id, or "all"). */
 export function saveNextPlanChanges(projectId: string, scope: string, changes: PlanChange[]): Promise<void> {
-  return patch(projectId, (st) => { st.nextPlan = { ...((st.nextPlan ?? {}) as Record<string, unknown>), [scope]: changes.map(cleanChange).filter(Boolean) }; });
+  return patchProjectSettings(projectId, (st) => { st.nextPlan = { ...((st.nextPlan ?? {}) as Record<string, unknown>), [scope]: changes.map(cleanChange).filter(Boolean) }; });
 }
 
 /** A company's staffing plan (null removes it). */
 export function saveStaffingPlan(projectId: string, company: string, plan: StaffingPlan | null): Promise<void> {
-  return patch(projectId, (st) => {
+  return patchProjectSettings(projectId, (st) => {
     const cur = { ...((st.staffingPlans ?? {}) as Record<string, unknown>) };
     if (plan) cur[company] = plan; else delete cur[company];
     st.staffingPlans = cur;

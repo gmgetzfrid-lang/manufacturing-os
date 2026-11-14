@@ -1256,7 +1256,7 @@ function draftFindings(x: { reporting: Reporting | null; metrics: ReviewMetrics;
 }
 
 /** How head counts turn into man-hours and labor cost, step by step. */
-export const HEAD_COUNT_HOW = "Take a head count for each contractor at every shift meeting, direct and indirect. Get each contractor's rate sheet before the event and enter its rate with its bid manpower. Man-hours and labor cost then show against the bid each shift.";
+export const HEAD_COUNT_HOW = "Take a head count for each contractor at every shift meeting. Put each contractor's staffing plan and rate sheet on its page in Costs, Contractors before the event. Man-hours and labor cost then show against the plan each shift.";
 
 /** What performed well, as the records have it. */
 function strengthsOf(m: ReviewMetrics, found: FoundWork[], holds: HoldFact[], live: Finding[]): Array<{ category: CategoryId; text: string }> {

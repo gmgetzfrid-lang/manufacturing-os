@@ -49,14 +49,14 @@ export const GUIDES: Record<GuideId, Guide> = {
   },
   manhours: {
     id: "manhours", title: "Man-hours and labor cost",
-    what: "Man-hours are heads on site times shift hours, by contractor. With each contractor's rate they give labor cost, shift by shift, against the bid.",
+    what: "Man-hours are heads on site times shift hours, by contractor. With each contractor's rate sheet they give labor cost, shift by shift, against its staffing plan.",
     steps: [
-      "Before the event, get each contractor's bid manpower per shift and its rate sheet.",
-      "Enter the bid manpower and the rate per man-hour for each contractor.",
-      "At every shift meeting, take a head count for each contractor: direct (on the tools) and indirect (supervision, safety, fire and hole watch).",
-      "Heads times shift hours times the rate gives man-hours and running labor cost against the bid, every shift.",
+      "Before the event, get each contractor's staffing plan (heads by craft, day and night) and its rate sheet.",
+      "Put both on the contractor's page: upload them or type them in.",
+      "At every shift meeting, take a head count for each contractor; its plan for the shift shows beside the box.",
+      "Heads at the rate sheet give what each shift cost against the plan, every shift, overtime included.",
     ],
-    inApp: "Bid manpower and rates go in Setup under Manpower. Head counts go in at each shift meeting on the Shift tab.",
+    inApp: "Staffing plans and rate sheets go on each contractor's page in Costs, Contractors. Head counts go in at each shift meeting on the Shift tab.",
   },
   cost: {
     id: "cost", title: "Cost against budget",
@@ -67,7 +67,7 @@ export const GUIDES: Record<GuideId, Guide> = {
       "Add labor each shift from head counts at each contractor's rate.",
       "Look at spend against budget at the daily meeting.",
     ],
-    inApp: "Cost controls holds the budget lines and the spend. Give each line its phase.",
+    inApp: "Costs holds the budget lines and the spend; each contractor's labor shows on its page in Costs, Contractors. Give each line its phase.",
   },
   organization: {
     id: "organization", title: "An event organization",
@@ -156,7 +156,7 @@ const MEANS: Record<ScoreRow["key"], string> = {
   planned: "The activities on the saved plan, and how many got done.",
   added: "Work put in after the plan: added scope (known work that was not planned) and discovery (found when the equipment was opened).",
   manhours: "Heads on site times shift hours, from the head count at each shift meeting, against the contractors' bid.",
-  cost: "Spend posted in Cost controls against this phase's budget.",
+  cost: "Spend posted in Costs against this phase's budget.",
   safety: "Recordables, first aids and near misses, from the incident line on each shift report.",
   quality: "Tests that failed and had to be done again (hydros, pressure tests, leak tests), from the comments on the work.",
 };

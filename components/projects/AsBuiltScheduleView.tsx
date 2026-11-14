@@ -10,7 +10,7 @@
 // in), the crew load and the hands it needs. lib/asBuiltWork, lib/nextPlan.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Send, Undo2, Upload, Check, X, Download, Printer, CalendarClock } from "lucide-react";
+import { Loader2, Send, Undo2, Check, X, Download, Printer, CalendarClock } from "lucide-react";
 import type { Milestone, MilestoneNote } from "@/types/schema";
 import type { CancelledJob } from "@/lib/cancelledJobs";
 import type { ProjectPhase } from "@/lib/projectPhases";
@@ -20,8 +20,9 @@ import type { ProgressLogRow } from "@/lib/progressHistory";
 import { buildAsBuilt } from "@/lib/asBuiltSchedule";
 import { buildAsBuiltWork, shiftKey, type AsBuiltWork, type WaitRun } from "@/lib/asBuiltWork";
 import { nextPlan, finishLever, dayNumber, type NextPlan, type PlanChange } from "@/lib/nextPlan";
-import { loadNextPlanSettings, saveNextPlanChanges, saveStaffingPlan, type NextPlanSettings } from "@/lib/nextPlanStore";
-import { parseStaffingGrid, type StaffingPlan } from "@/lib/staffingPlan";
+import { loadNextPlanSettings, saveNextPlanChanges, type NextPlanSettings } from "@/lib/nextPlanStore";
+import { openContractor } from "@/lib/costsNav";
+import type { StaffingPlan } from "@/lib/staffingPlan";
 import { talkCatalog, parseTalkReply } from "@/lib/nextPlanTalk";
 import { loadProgressLog } from "@/lib/progressHistory";
 import { notesFor } from "@/lib/milestones";
@@ -419,25 +420,6 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
   };
 
   // Staffing plan read in.
-  const [company, setCompany] = useState("");
-  const [planMsg, setPlanMsg] = useState<string | null>(null);
-  const companies = [...new Set(work.crews.map((c) => c.company))].sort();
-  const readPlan = async (f: File) => {
-    setPlanMsg(null);
-    try {
-      const XLSX = await import("xlsx");
-      const wb = XLSX.read(await f.arrayBuffer(), { type: "array", cellDates: true });
-      const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: null });
-      const g = parseStaffingGrid(rows as unknown[][]);
-      if (!g) { setPlanMsg("That doesn't look like a staffing plan: crafts down the side, dates across the top, a Day and a Night column under each date."); return; }
-      const co = company || companies.find((c) => !/kern|\(KE\)/i.test(c)) || "Contractor";
-      const plan1 = { file: f.name, at: new Date().toISOString(), by: p.userName ?? null, shifts: g.shifts, phases: g.phases };
-      await saveStaffingPlan(p.projectId, co, plan1);
-      p.onStaffing({ ...p.settings.staffing, [co]: plan1 });
-      setPlanMsg(`Read for ${co}: ${g.crafts.length} crafts, ${g.from} to ${g.to}${g.phases.length ? ` (${g.phases.map((x) => x.name).join(", ")})` : ""}.`);
-    } catch (e) { setPlanMsg((e as Error).message); }
-  };
-
   // This year's hands for the same shift: a staffing plan, else the count.
   const thisYear = (crew: string, i: number): { n: number; word: string } | null => {
     const s = work.shifts[i]; const cw = crewWork.get(crew);
@@ -513,16 +495,10 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
         <div className="font-bold">Staffing plans</div>
         {Object.entries(p.settings.staffing).map(([co, sp]) => {
           const s = summaryOver(sp, work.shifts.map(shiftKey));
-          return <div key={co}><b>{co}</b> ({sp.file}): days <b>{s.day.direct} on the tools</b> + {s.day.indirect}, nights <b>{s.night.direct}</b> + {s.night.indirect}, over these dates. {p.canEdit && <button type="button" onClick={() => void saveStaffingPlan(p.projectId, co, null).then(() => { const n = { ...p.settings.staffing }; delete n[co]; p.onStaffing(n); })} className="underline font-bold text-[var(--color-text-muted)] cursor-pointer">Remove</button>}</div>;
+          return <div key={co}><b>{co}</b> ({sp.file || "typed in"}): days <b>{s.day.direct} on the tools</b> + {s.day.indirect}, nights <b>{s.night.direct}</b> + {s.night.indirect}, over these dates.</div>;
         })}
         {!Object.keys(p.settings.staffing).length && <div className="text-[var(--color-text-muted)]">None read yet. A contractor&apos;s staffing plan gives each shift its planned hands, by date, so each phase lines up with its own days.</div>}
-        {p.canEdit && (
-          <div className="flex flex-wrap items-center gap-2">
-            <select value={company} onChange={(e) => setCompany(e.target.value)} aria-label="Company" className="rounded border border-slate-400 bg-[var(--color-surface)] px-2 py-1 text-[12.5px]"><option value="">Company?</option>{companies.map((c) => <option key={c}>{c}</option>)}</select>
-            <label className={`${btnQuiet} !py-1`}><Upload className="w-4 h-4" /> Read a staffing plan<input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void readPlan(f); }} /></label>
-          </div>
-        )}
-        {planMsg && <div role="status" className="text-[12px]">{planMsg}</div>}
+        <button type="button" onClick={() => openContractor(null)} className="font-bold text-[var(--color-accent)] hover:underline cursor-pointer">{Object.keys(p.settings.staffing).length ? "Change them" : "Put one in"} on each contractor&apos;s page in Costs › Contractors</button>
       </div>
 
       <div className="flex flex-wrap gap-2 text-[12.5px]">

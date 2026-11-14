@@ -9,7 +9,11 @@
 // here; the result is kept in the project's settings.
 
 export interface PlanShift { direct: number; indirect: number }
+/** A craft on the plan: its name and code as the sheet has them, and
+ *  whether it is on the tools (direct) or supervision and support. */
+export interface PlanCraft { name: string; code: string; direct: boolean }
 export interface StaffingPlan {
+  /** The file it was read from ("" when typed in). */
   file: string;
   /** When it was read, and by whom. */
   at: string;
@@ -18,6 +22,9 @@ export interface StaffingPlan {
   shifts: Record<string, PlanShift>;
   /** The phases the sheet names over its dates ("Transmix-1" from 10/26). */
   phases?: Array<{ name: string; from: string }>;
+  /** The crafts, and each shift's heads by craft (what a rate sheet prices). */
+  crafts?: PlanCraft[];
+  byCraft?: Record<string, Record<string, number>>;
 }
 /** By company ("Schultz"). */
 export type StaffingPlans = Record<string, StaffingPlan>;
@@ -33,7 +40,8 @@ export function isDirectCraft(name: string, code?: string | null): boolean {
 }
 
 const dayOf = (v: unknown): string | null => {
-  if (v instanceof Date && Number.isFinite(v.getTime())) return v.toISOString().slice(0, 10);
+  // A date cell is midnight where the sheet was read: noon UTC of it is the same day east or west of UTC.
+  if (v instanceof Date && Number.isFinite(v.getTime())) return new Date(v.getTime() + 12 * 3_600_000).toISOString().slice(0, 10);
   if (typeof v === "number" && v > 30000 && v < 80000) {
     // A spreadsheet serial date (days since 1899-12-30).
     return new Date(Date.UTC(1899, 11, 30) + v * 86_400_000).toISOString().slice(0, 10);
@@ -48,7 +56,18 @@ const dayOf = (v: unknown): string | null => {
 
 /** Read the grid. Null when it isn't shaped like a staffing plan (no row of
  *  Day/Night under a row of dates). */
-export function parseStaffingGrid(rows: unknown[][]): { shifts: Record<string, PlanShift>; crafts: Array<{ name: string; code: string; direct: boolean; peak: number }>; phases: Array<{ name: string; from: string }>; from: string; to: string } | null {
+export interface PlanGrid {
+  shifts: Record<string, PlanShift>;
+  crafts: Array<PlanCraft & { peak: number }>;
+  byCraft: Record<string, Record<string, number>>;
+  phases: Array<{ name: string; from: string }>;
+  /** The runs of dates the sheet names ("Transmix-1", Oct 26 to Oct 31), with people in them. */
+  bands: PlanBand[];
+  from: string; to: string;
+}
+export interface PlanBand { name: string; from: string; to: string; shifts: string[]; heads: number }
+
+export function parseStaffingGrid(rows: unknown[][]): PlanGrid | null {
   // The Day/Night row, and the dates above it.
   let dn = -1;
   for (let r = 0; r < Math.min(rows.length, 40); r++) {
@@ -78,27 +97,123 @@ export function parseStaffingGrid(rows: unknown[][]): { shifts: Record<string, P
     }
   }
   const shifts: Record<string, PlanShift> = {};
-  const crafts: Array<{ name: string; code: string; direct: boolean; peak: number }> = [];
+  const byCraft: Record<string, Record<string, number>> = {};
+  const crafts: Array<PlanCraft & { peak: number }> = [];
   for (let r = dn + 1; r < rows.length; r++) {
     const row = rows[r] ?? [];
-    const name = String(row[0] ?? "").trim();
+    let name = String(row[0] ?? "").trim();
     if (!name || /^total/i.test(name)) continue;
     const code = String(row[1] ?? "").trim();
     const direct = isDirectCraft(name, code);
+    // The same craft name twice on a sheet (two "Project Manager" rows) is kept as two.
+    if (crafts.some((c) => c.name === name)) name = `${name} (${crafts.filter((c) => c.name.startsWith(name)).length + 1})`;
     let peak = 0;
     for (const [c, k] of cols) {
       const n = Number(row[c]);
       if (!Number.isFinite(n) || n <= 0) continue;
       const cell = shifts[k] ?? (shifts[k] = { direct: 0, indirect: 0 });
       if (direct) cell.direct += n; else cell.indirect += n;
+      (byCraft[k] ??= {})[name] = n;
       peak = Math.max(peak, n);
     }
     if (peak > 0) crafts.push({ name, code, direct, peak });
   }
   const used = Object.keys(shifts).sort();
   if (!used.length) return null;
-  return { shifts, crafts, phases, from: used[0].split(":")[0], to: used[used.length - 1].split(":")[0] };
+  return { shifts, crafts, byCraft, phases, bands: bandsOf(phases, used, shifts), from: used[0].split(":")[0], to: used[used.length - 1].split(":")[0] };
 }
+
+/** The sheet's named runs of dates that have people in them, each with its
+ *  shifts. With no names on the sheet, the whole plan is one run. */
+export function bandsOf(phases: Array<{ name: string; from: string }>, used: string[], shifts: Record<string, PlanShift>): PlanBand[] {
+  const named = [...phases].sort((a, b) => a.from.localeCompare(b.from));
+  const nameAt = (day: string) => [...named].reverse().find((p) => p.from <= day)?.name ?? "The plan";
+  const out = new Map<string, PlanBand>();
+  for (const k of used) {
+    const day = k.split(":")[0], name = named.length ? nameAt(day) : "The plan";
+    const b = out.get(name) ?? { name, from: day, to: day, shifts: [], heads: 0 };
+    b.shifts.push(k); b.to = day > b.to ? day : b.to; b.from = day < b.from ? day : b.from;
+    b.heads += shifts[k].direct + shifts[k].indirect;
+    out.set(name, b);
+  }
+  return [...out.values()].sort((a, b) => a.from.localeCompare(b.from));
+}
+
+/** Where a run of the sheet's dates belongs on this project: the phase its
+ *  dates fall in (most of its shifts), else null (not this project). A
+ *  project with no phases takes the run whose dates overlap its own. */
+export function bandTarget(band: PlanBand, phases: Array<{ id: string; start: string | null; end: string | null }>, span?: { start: string | null; end: string | null }): string | null {
+  const days = band.shifts.map((k) => k.split(":")[0]);
+  const within = (s: string | null, e: string | null) => days.filter((d) => (!s || d >= s) && (!e || d <= e)).length;
+  if (phases.length) {
+    const best = phases.map((p) => ({ id: p.id, n: within(p.start, p.end) })).sort((a, b) => b.n - a.n)[0];
+    return best && best.n * 2 >= days.length ? best.id : null;
+  }
+  if (!span || (!span.start && !span.end)) return "project";
+  return within(span.start, span.end) * 2 >= days.length ? "project" : null;
+}
+
+/** The plan this project keeps from a sheet: the runs picked, by craft. */
+export function planFromGrid(g: PlanGrid, keep: (band: PlanBand) => boolean, meta: { file: string; at: string; by: string | null }, direct?: Record<string, boolean>): StaffingPlan {
+  const keys = new Set(g.bands.filter(keep).flatMap((b) => b.shifts));
+  const crafts = g.crafts.map(({ name, code, direct: d }) => ({ name, code, direct: direct?.[name] ?? d }));
+  const byCraft: Record<string, Record<string, number>> = {};
+  for (const k of keys) if (g.byCraft[k]) byCraft[k] = { ...g.byCraft[k] };
+  const used = new Set(Object.values(byCraft).flatMap((m) => Object.keys(m)));
+  const kept = crafts.filter((c) => used.has(c.name));
+  return { ...meta, phases: g.phases, crafts: kept, byCraft, shifts: totalsOf(byCraft, kept) };
+}
+
+/** Each shift's direct and indirect hands from its heads by craft. */
+export function totalsOf(byCraft: Record<string, Record<string, number>>, crafts: PlanCraft[]): Record<string, PlanShift> {
+  const isDirect = new Map(crafts.map((c) => [c.name, c.direct]));
+  const out: Record<string, PlanShift> = {};
+  for (const [k, m] of Object.entries(byCraft)) {
+    let d = 0, i = 0;
+    for (const [c, n] of Object.entries(m)) { if (!(n > 0)) continue; if (isDirect.get(c) ?? true) d += n; else i += n; }
+    if (d + i > 0) out[k] = { direct: d, indirect: i };
+  }
+  return out;
+}
+
+/** A plan typed in: the same heads every day and night over a run of
+ *  days for one craft (0 clears it). */
+export function fillRange(plan: StaffingPlan, craft: PlanCraft, from: string, to: string, day: number, night: number): StaffingPlan {
+  const byCraft: Record<string, Record<string, number>> = Object.fromEntries(Object.entries(plan.byCraft ?? {}).map(([k, m]) => [k, { ...m }]));
+  for (let d = from; d <= to; d = nextDay(d)) {
+    for (const [kind, n] of [["day", day], ["night", night]] as const) {
+      const k = `${d}:${kind}`;
+      if (n > 0) (byCraft[k] ??= {})[craft.name] = Math.round(n);
+      else if (byCraft[k]) { delete byCraft[k][craft.name]; if (!Object.keys(byCraft[k]).length) delete byCraft[k]; }
+    }
+  }
+  const crafts = (plan.crafts ?? []).some((c) => c.name === craft.name) ? plan.crafts!.map((c) => (c.name === craft.name ? craft : c)) : [...(plan.crafts ?? []), craft];
+  return { ...plan, crafts, byCraft, shifts: totalsOf(byCraft, crafts) };
+}
+
+/** One shift's heads for one craft (0 clears it). */
+export function setShiftHeads(plan: StaffingPlan, craft: string, key: string, n: number): StaffingPlan {
+  const byCraft: Record<string, Record<string, number>> = Object.fromEntries(Object.entries(plan.byCraft ?? {}).map(([k, m]) => [k, { ...m }]));
+  if (n > 0) (byCraft[key] ??= {})[craft] = Math.round(n);
+  else if (byCraft[key]) { delete byCraft[key][craft]; if (!Object.keys(byCraft[key]).length) delete byCraft[key]; }
+  return { ...plan, byCraft, shifts: totalsOf(byCraft, plan.crafts ?? []) };
+}
+
+export function nextDay(d: string): string {
+  const t = new Date(`${d}T12:00:00Z`); t.setUTCDate(t.getUTCDate() + 1); return t.toISOString().slice(0, 10);
+}
+
+/** The crafts a sheet usually lists, for picking one when typing a plan in. */
+export const COMMON_CRAFTS: PlanCraft[] = [
+  { name: "BoilerMaker Journeyman", code: "BM", direct: true }, { name: "Pipefitter Journeyman", code: "PF", direct: true },
+  { name: "Welder Plater", code: "WE", direct: true }, { name: "Millwright Journeyman", code: "MW", direct: true },
+  { name: "Electrician Journeyman", code: "EL", direct: true }, { name: "Laborer Journeyman", code: "LA", direct: true },
+  { name: "Equipment Operator", code: "EO", direct: true }, { name: "Firewatch/Holewatch", code: "HW", direct: false },
+  { name: "BoilerMaker Foreman", code: "FM", direct: false }, { name: "BoilerMaker Gen.Foreman", code: "GF", direct: false },
+  { name: "Pipefitter Foreman", code: "FM", direct: false }, { name: "Project Manager", code: "SPV", direct: false },
+  { name: "Quality Control Manager", code: "SPV", direct: false }, { name: "Safety Manager", code: "SPV", direct: false },
+  { name: "Safety Tech", code: "SFTY", direct: false }, { name: "Time Keeper", code: "CLK", direct: false },
+];
 
 /** A plan's day and night hands over some dates, for saying it in words:
  *  "days 14 on the tools + 6, nights 4 + 2" (the most on any one day). */

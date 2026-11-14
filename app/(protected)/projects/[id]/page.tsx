@@ -573,6 +573,7 @@ export default function ProjectDetailPage() {
             onDataChanged={() => setCoachKey((k) => k + 1)}
             phases={phases}
             phase={phase}
+            tz={project.timezone || "America/Los_Angeles"}
           />
         )}
         {tab === "closeout" && project.id && project.orgId && uid && (

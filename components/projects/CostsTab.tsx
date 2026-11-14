@@ -43,8 +43,10 @@ import { loadBudgetHistory, parseMoney, type BudgetChange } from "@/lib/costRevi
 import BudgetTable, { LinesChart } from "@/components/projects/cost/BudgetTable";
 import { phaseStats } from "@/lib/phaseReport";
 import type { ProjectPhase } from "@/lib/projectPhases";
+import ContractorsPanel from "@/components/projects/cost/ContractorsPanel";
+import { OPEN_COSTS_EVENT, takePendingCosts, type CostsViewAsked } from "@/lib/costsNav";
 
-type CostView = "overview" | "budget" | "quotes" | "invoices" | "changes";
+type CostView = "overview" | "contractors" | "budget" | "quotes" | "invoices" | "changes";
 
 interface BudgetBasis { afeNumber: string | null; chargeAccount: string | null; authorized: number | null; docId: string | null }
 
@@ -54,8 +56,10 @@ const ENTRY_TYPES: Array<{ v: CostEntryType; label: string; hint: string }> = [
   { v: "adjustment", label: "Adjustment", hint: "Signed correction (can be negative to credit back)" },
 ];
 
-export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, onDataChanged, phases = [], phase = null }: {
+export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, onDataChanged, phases = [], phase = null, tz = "America/Los_Angeles" }: {
   orgId: string; projectId: string; canManage: boolean; uid: string; userEmail?: string | null;
+  /** The plant's time zone (shift windows for the contractors' days). */
+  tz?: string;
   /** Fires after each data reload so the page's coach/health re-gathers. */
   onDataChanged?: () => void;
   /** The project's phases and the one picked: each line's phase, and the
@@ -75,7 +79,14 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [showParties, setShowParties] = useState(false);
-  const [view, setView] = useState<CostView | null>(null);
+  // A view asked for from elsewhere (a contractor's page from the shift meeting).
+  const [asked, setAsked] = useState<CostsViewAsked | null>(() => takePendingCosts());
+  const [view, setView] = useState<CostView | null>(() => asked?.view ?? null);
+  useEffect(() => {
+    const on = (e: Event) => { const a = (e as CustomEvent<CostsViewAsked>).detail; if (!a) return; takePendingCosts(); setAsked({ ...a }); setView(a.view); };
+    window.addEventListener(OPEN_COSTS_EVENT, on);
+    return () => window.removeEventListener(OPEN_COSTS_EVENT, on);
+  }, []);
   const [basis, setBasis] = useState<BudgetBasis | null>(null);
   const [importing, setImporting] = useState<BudgetReadResult | null>(null);
   const [showDrop, setShowDrop] = useState(false);
@@ -210,6 +221,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       {/* ── Sub-tabs: one job per screen ── */}
       <div className="flex items-center gap-1 overflow-x-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-1">
         <SubTab active={view === "overview"} onClick={() => setView("overview")} icon={<LayoutDashboard className="w-3.5 h-3.5" />} label="Overview" />
+        <SubTab active={view === "contractors"} onClick={() => { setAsked(null); setView("contractors"); }} icon={<HardHat className="w-3.5 h-3.5" />} label="Contractors" />
         <SubTab active={view === "budget"} onClick={() => setView("budget")} icon={<Landmark className="w-3.5 h-3.5" />} label="Budget" count={accounts.length} />
         <SubTab active={view === "quotes"} onClick={() => setView("quotes")} icon={<ScanSearch className="w-3.5 h-3.5" />} label="Quotes" count={quoteCount} />
         <SubTab active={view === "invoices"} onClick={() => setView("invoices")} icon={<Receipt className="w-3.5 h-3.5" />} label="Invoices" count={invoiceOpen} attention={invoiceOpen > 0} />
@@ -299,6 +311,12 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       )}
 
       {/* ── Change orders — never a silent budget edit ── */}
+      {view === "contractors" && (
+        <ContractorsPanel key={asked?.company ?? "list"} orgId={orgId} projectId={projectId} canManage={canManage} actor={actor} tz={tz} phases={phases} phase={phase}
+          parties={parties} accounts={accounts} entries={entries} docs={docs} initial={asked?.company ?? null}
+          onPartiesChanged={() => void refresh()} onQuotes={() => setView("quotes")} />
+      )}
+
       {view === "changes" && (
         <ChangeOrdersPanel orgId={orgId} projectId={projectId} canManage={canManage} actor={actor}
           accounts={accounts} parties={parties} onMoneyMoved={() => void refresh()} setErr={setErr} />

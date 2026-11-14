@@ -15,12 +15,12 @@ describe("what the review needs from a person", () => {
   it("each item says where it stands and the one place it goes", () => {
     const n = closeNeeds(phase1);
     const by = (id: string) => n.find((x) => x.id === id)!;
-    expect(n.map((x) => x.id)).toEqual(["type", "roles", "bids", "staffing", "heads", "incidents", "targets", "costs", "materials", "steps"]);
+    expect(n.map((x) => x.id)).toEqual(["type", "roles", "staffing", "rates", "heads", "incidents", "targets", "costs", "materials", "steps"]);
     expect(by("type")).toMatchObject({ done: true, status: "Turnaround. Lessons go to every turnaround." });
     expect(by("roles")).toMatchObject({ done: false, status: "Not filled in.", go: { kind: "setup", step: "roles" } });
-    // Kern Energy's own crews have no bid to hold them to.
-    expect(by("bids")).toMatchObject({ done: false, status: "No bid entered.", go: { kind: "setup", step: "manpower" } });
-    expect(by("staffing").go).toEqual({ kind: "setup", step: "manpower" });
+    // Kern Energy's own crews have no plan or rates to hold them to; each contractor's go on its page.
+    expect(by("staffing")).toMatchObject({ done: false, status: "None in. Each shift's head count has no plan to hold it to.", go: { kind: "contractors" }, button: "Costs › Contractors" });
+    expect(by("rates")).toMatchObject({ done: false, status: "None in, so labor cost can't be shown.", go: { kind: "contractors" } });
     expect(by("heads")).toMatchObject({ done: false, status: "2 of 17 shifts worked.", go: { kind: "tab", tab: "today" } });
     expect(by("incidents").status).toBe("Answered on 0 of 17 shifts.");
     expect(by("targets")).toMatchObject({ title: "Targets for added work, safety, quality", status: "None set.", go: { kind: "score" } });
@@ -31,14 +31,15 @@ describe("what the review needs from a person", () => {
   });
   it("filled in, each is done", () => {
     const n = closeNeeds({
-      ...phase1, roles: { recorded: true, required: 9, filled: 9 }, bids: ["Ancon", "Schultz"], rates: ["Ancon"], staffing: ["Ancon"],
+      ...phase1, roles: { recorded: true, required: 9, filled: 9 }, bids: ["Ancon"], rates: ["Ancon", "Schultz"], staffing: ["Schultz"],
       headCounts: { shiftsCounted: 15, shiftsWorked: 17 }, incidentsAnswered: 16, targets: phase1.targets.map((t) => ({ ...t, set: true })),
       costs: { budget: 630000, spent: 410000 }, materials: 12, stepsLeft: 0,
     });
     expect(n.every((x) => x.done)).toBe(true);
-    expect(n.find((x) => x.id === "bids")!.status).toBe("Bids for all 2 contractors; 1 rate entered.");
+    expect(n.find((x) => x.id === "staffing")!.status).toBe("In for all 2 contractors.");
   });
-  it("a missing bid names the contractor", () => {
-    expect(closeNeeds({ ...phase1, bids: ["Ancon"] }).find((x) => x.id === "bids")!.status).toBe("No bid for Schultz.");
+  it("a missing plan or rate sheet names the contractor", () => {
+    expect(closeNeeds({ ...phase1, staffing: ["Ancon"] }).find((x) => x.id === "staffing")!.status).toBe("None for Schultz.");
+    expect(closeNeeds({ ...phase1, rates: ["Schultz"] }).find((x) => x.id === "rates")!.status).toBe("None for Ancon.");
   });
 });

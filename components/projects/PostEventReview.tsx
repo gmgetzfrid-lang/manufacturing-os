@@ -27,6 +27,8 @@ import { discoveries } from "@/lib/discovery";
 import { inPhase, phaseOnDay, type ProjectPhase } from "@/lib/projectPhases";
 import { companyOf } from "@/lib/manpower";
 import { useManpowerSettings } from "@/components/projects/ManpowerSetup";
+import { useCrewSettings } from "@/lib/useCrewSettings";
+import { openContractor } from "@/lib/costsNav";
 import { loadNextPlanSettings } from "@/lib/nextPlanStore";
 import type { StaffingPlans } from "@/lib/staffingPlan";
 import { dayKey, fmtInTz } from "@/lib/scheduleTz";
@@ -88,6 +90,8 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   const scope = reviewScope(phases.length ? phaseId : null);
   const mp = useManpowerSettings(projectId);
   const [plans, setPlans] = useState<StaffingPlans | null>(null);
+  // Each contractor's rate sheet (Costs > Contractors), for the checklist.
+  const crewSettings = useCrewSettings(projectId);
   const [saved, setSaved] = useState<ReviewSaved | null>(null);
   const [register, setRegister] = useState<{ lines: number; specIncomplete: number; openQuestions: number; late: number } | null>(null);
   const [organization, setOrganization] = useState<OrgStanding | null>(null);
@@ -303,7 +307,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
     roles: organization ? { recorded: organization.recorded, required: organization.required, filled: organization.filled } : null,
     companies: [...new Set(made!.work.crews.map((c) => c.company))].sort(),
     bids: bidOf.filter(([, b]) => b.day?.direct != null || b.night?.direct != null).map(([co]) => co),
-    rates: bidOf.filter(([, b]) => b.rate != null).map(([co]) => co),
+    rates: [...bidOf.filter(([, b]) => b.rate != null).map(([co]) => co), ...Object.keys(crewSettings?.rateSheets ?? {})],
     staffing: Object.keys(plans ?? {}),
     headCounts: m.headCounts,
     incidentsAnswered: scoreIn.incidents ? scoreIn.incidents.answered : null,
@@ -314,6 +318,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   });
   const goNeed = (go: NeedGo) => {
     if (go.kind === "setup") { requestSetup(go.step); onTab("plan"); }
+    else if (go.kind === "contractors") openContractor(null);
     else if (go.kind === "tab") onTab(go.tab);
     else if (go.kind === "score") document.querySelector("[data-review-score]")?.scrollIntoView({ behavior: "smooth", block: "start" });
     else onSteps?.();

@@ -7,6 +7,7 @@
 
 export type NeedGo =
   | { kind: "setup"; step: "type" | "roles" | "manpower" }
+  | { kind: "contractors" }
   | { kind: "tab"; tab: "today" | "costs" | "materials" }
   | { kind: "score" }
   | { kind: "steps" };
@@ -30,11 +31,11 @@ export interface NeedsInput {
   typeKnown: boolean;
   typeWord: string;
   roles: { recorded: boolean; required: number; filled: number } | null;
-  /** Companies on the schedule; those with a bid; those with a rate. */
+  /** Companies on the schedule; those with planned hands (a staffing plan or bid); those with rates (a rate sheet or bid rate). */
   companies: string[];
   bids: string[];
   rates: string[];
-  /** Companies with a staffing plan read in. */
+  /** Companies with a staffing plan in. */
   staffing: string[];
   headCounts: { shiftsCounted: number; shiftsWorked: number };
   /** Shifts whose report answers the incident line. */
@@ -67,17 +68,20 @@ export function closeNeeds(x: NeedsInput): Need[] {
     status: !r || !r.recorded ? "Not filled in." : r.filled === r.required ? `All ${r.required} roles named.` : `${r.filled} of ${r.required} roles named.`,
     go: { kind: "setup", step: "roles" }, button: "Setup › Roles",
   });
+  // Each contractor's page in Costs > Contractors: its staffing plan, then its rate sheet.
   const cos = x.companies.filter((c) => !/kern|\(KE\)/i.test(c));
-  const noBid = cos.filter((c) => !x.bids.includes(c));
+  const noPlan = cos.filter((c) => !x.staffing.includes(c) && !x.bids.includes(c));
+  const noRate = cos.filter((c) => !x.rates.includes(c));
+  const list = (xs: string[]) => (xs.length <= 3 ? xs.join(", ") : `${xs.slice(0, 3).join(", ")} and ${xs.length - 3} more`);
   out.push({
-    id: "bids", title: "Each contractor's bid hands and rate", category: "Contractors · Costs", done: cos.length > 0 && noBid.length === 0 && x.rates.length > 0,
-    status: !cos.length ? "No contractor crews on the schedule." : noBid.length === cos.length ? "No bid entered." : noBid.length ? `No bid for ${noBid.join(", ")}.` : x.rates.length ? `Bids for all ${plural(cos.length, "contractor")}; ${plural(x.rates.length, "rate")} entered.` : "Bids entered; no rate, so labor cost can't be shown.",
-    go: { kind: "setup", step: "manpower" }, button: "Setup › Manpower",
+    id: "staffing", title: "Each contractor's staffing plan", category: "Contractors", done: cos.length > 0 && noPlan.length === 0,
+    status: !cos.length ? "No contractor crews on the schedule." : noPlan.length === cos.length ? "None in. Each shift's head count has no plan to hold it to." : noPlan.length ? `None for ${list(noPlan)}.` : `In for all ${plural(cos.length, "contractor")}.`,
+    go: { kind: "contractors" }, button: "Costs › Contractors",
   });
   out.push({
-    id: "staffing", title: "Staffing plans", category: "Contractors", done: x.staffing.length > 0,
-    status: x.staffing.length ? `Read in for ${x.staffing.join(", ")}.` : "None read in. Each shift's head count has no plan to hold it to.",
-    go: { kind: "setup", step: "manpower" }, button: "Setup › Manpower",
+    id: "rates", title: "Each contractor's rate sheet", category: "Contractors · Costs", done: cos.length > 0 && noRate.length === 0,
+    status: !cos.length ? "No contractor crews on the schedule." : noRate.length === cos.length ? "None in, so labor cost can't be shown." : noRate.length ? `None for ${list(noRate)}.` : `In for all ${plural(cos.length, "contractor")}.`,
+    go: { kind: "contractors" }, button: "Costs › Contractors",
   });
   out.push({
     id: "heads", title: "Head count at each shift meeting", category: "Contractors · Costs", done: most(hc.shiftsCounted, hc.shiftsWorked),

@@ -9,7 +9,11 @@
 // typed. A meeting that wasn't held comes off the log (and can be put
 // back). Work logged during the end meeting gets its own row after it.
 
-import { withCounts, withTotal, countOf } from "@/lib/manpower";
+import { withCounts, withTotal, countOf, companyOf } from "@/lib/manpower";
+import { useCrewSettings } from "@/lib/useCrewSettings";
+import { holdCost, paidHoursOf } from "@/lib/rateSheet";
+import { openContractor } from "@/lib/costsNav";
+import type { CrewSettings } from "@/lib/crewSettings";
 import { newFinding } from "@/components/projects/Findings";
 import React, { useId, useRef, useState } from "react";
 import { AlertTriangle, Check, Pencil, Plus, Trash2, X as XIcon } from "lucide-react";
@@ -43,7 +47,9 @@ export interface HourlyCtx {
   /** Put discovery or added scope into the schedule at this hour (the hour's start). */
   onAddWork?: (at: number) => void;
   /** Keeping a crew on past the end of the shift (overtime, lib/holdOver). */
-  overtime?: { list: HoldOver[]; crews: string[]; shiftEnd: number; cap: number; tz: string; save: (change: (l: HoldOver[]) => HoldOver[]) => Promise<void> };
+  overtime?: { list: HoldOver[]; crews: string[]; shiftEnd: number; cap: number; tz: string; save: (change: (l: HoldOver[]) => HoldOver[]) => Promise<void>;
+    /** To price a hold-over at the contractor's rate sheet: the project, this shift, its length. */
+    projectId?: string; shiftKey?: string; shiftHours?: number };
   /** The entries that finish a whole work order (lib/shiftHourly workOrderClosers): their lines in green. */
   closes?: (r: TimeLogRow) => boolean;
   /** The two meetings as the log says them (lib/shiftMeeting), which are
@@ -73,6 +79,26 @@ export interface MeetingCtx {
   topics?: string[];
   /** Change that record (read fresh). */
   save: (change: (r: ShiftRecord) => ShiftRecord) => Promise<void>;
+  /** The project and that shift ("2026-10-26:day"): each contractor's staffing plan for it shows beside its count. */
+  projectId?: string; shiftKey?: string;
+}
+
+/** A contractor's plan for one shift, for the crews at a meeting: the
+ *  first crew of each company carries it, with how many crews share it. */
+function plansAt(s: CrewSettings | null, key: string | undefined, crews: string[], plant: (c: string) => boolean) {
+  const out = new Map<string, { company: string; heads: number; direct: number; indirect: number; across: number; first: boolean }>();
+  if (!s || !key) return out;
+  const seen = new Set<string>();
+  for (const crew of crews) {
+    if (plant(crew)) continue;
+    const co = companyOf(crew, s.manpower);
+    const ps = s.staffing[co]?.shifts[key];
+    if (!ps || ps.direct + ps.indirect <= 0) continue;
+    const across = crews.filter((c) => !plant(c) && companyOf(c, s.manpower) === co).length;
+    out.set(crew, { company: co, heads: ps.direct + ps.indirect, direct: ps.direct, indirect: ps.indirect, across, first: !seen.has(co) });
+    seen.add(co);
+  }
+  return out;
 }
 
 export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
@@ -334,6 +360,29 @@ const selCls = "h-7 rounded-md border border-[var(--color-border-strong)] bg-[va
 
 /** A crew held over: which crew, how many, who or why, sent home when
  *  (or still on), and who takes over after. */
+/** What a crew held over costs at its contractor's rate sheet: the hours
+ *  past the shift at its overtime rates (or one hour of it, when still on). */
+function HoldCost({ ot, crew, hands, until }: { ot: OtCtx; crew: string; hands: number; until: number | null }) {
+  const s = useCrewSettings(ot.projectId);
+  if (!s || !crew || !(hands > 0)) return null;
+  const co = companyOf(crew, s.manpower);
+  if (co === "Kern Energy") return null;
+  const sheet = s.rateSheets[co] ?? null, plan = s.staffing[co] ?? null;
+  if (!sheet || !Object.keys(sheet.crafts).length) return <span className="basis-full text-[11px] text-[var(--color-text-muted)]">No rate sheet for {co}: <button type="button" onClick={() => openContractor(co)} className="font-bold text-[var(--color-accent)] hover:underline">add it</button> to see what this costs.</span>;
+  const paid = paidHoursOf(sheet, ot.shiftHours ?? 12);
+  const mix = (ot.shiftKey && plan?.byCraft?.[ot.shiftKey]) || {};
+  const hours = until != null ? Math.max(0, (until - ot.shiftEnd) / 3_600_000) : null;
+  const perHour = holdCost(sheet, mix, plan?.crafts, paid, hands, 1);
+  if (perHour == null) return null;
+  const m = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
+  return (
+    <span className="basis-full text-[11.5px] text-[var(--color-text)]" data-hold-cost>
+      {hours != null && hours > 0 ? <><b>{m(holdCost(sheet, mix, plan?.crafts, paid, hands, hours) ?? perHour * hours)}</b> for {hands} hands, {Math.round(hours * 10) / 10} h past the shift</> : <><b>{m(perHour)}</b> for each hour {hands} hands stay past the shift</>}
+      {" "}at {co}&apos;s rates. <button type="button" onClick={() => openContractor(co)} className="font-bold text-[var(--color-accent)] hover:underline">{co}&apos;s cost to date</button>
+    </span>
+  );
+}
+
 function HoldOverForm({ ot, adding, onDone, onError }: { ot: OtCtx; adding: boolean; onDone: () => void; onError: (m: string | null) => void }) {
   type Row = { id: string; crew: string; hands: string; note: string; until: string; takeover: string };
   const toRow = (x: HoldOver): Row => ({ id: x.id, crew: x.crew, hands: x.hands != null ? String(x.hands) : "", note: x.note ?? "", until: x.until != null ? hmOf(x.until, ot.tz) : "", takeover: x.takeover ?? "" });
@@ -375,6 +424,7 @@ function HoldOverForm({ ot, adding, onDone, onError }: { ot: OtCtx; adding: bool
             {ot.crews.map((c) => <option key={c} value={c}>{c} takes over</option>)}
           </select>
           <button type="button" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label={`Take ${x.crew || "this crew"} off overtime`} className="p-1 rounded text-[var(--color-text-muted)] hover:text-rose-700"><Trash2 className="w-3.5 h-3.5" /></button>
+          <HoldCost ot={ot} crew={x.crew} hands={Number(x.hands) || 0} until={x.until ? timeAfter(ot.shiftEnd, x.until, ot.tz, timeOnDay, dayKey) : null} />
         </div>
       ))}
       <button type="button" onClick={() => setRows([...rows, blank()])} className="text-[11px] font-semibold text-[var(--color-accent)] hover:underline">+ Another crew</button>
@@ -478,6 +528,9 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
     return { ...base, crews: cs };
   });
   const entered = list.some((c) => crewNames(crews[c]).length || crews[c]?.headcount != null || crews[c]?.plant);
+  // Each contractor's staffing plan for this shift, beside its count.
+  const crewSettings = useCrewSettings(m.projectId);
+  const plans = plansAt(crewSettings, m.shiftKey, list, (c) => !!crews[c]?.plant);
   const grid = "grid grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(5.5rem,9.5rem)_minmax(0,1fr)_auto] gap-x-2";
   return (
     <div className="mt-1 space-y-1">
@@ -502,7 +555,7 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
         </div>
         {list.length === 0 && <div className="px-2 py-1 text-[12px] italic text-[var(--color-text-muted)]">No crews on the plan{edit ? " - add a company below" : ""}</div>}
         {list.map((crew) => (
-          <CrewRow key={crew} grid={grid} crew={crew} value={crews[crew]} known={m.known?.[crew]} edit={edit}
+          <CrewRow key={crew} grid={grid} crew={crew} value={crews[crew]} known={m.known?.[crew]} edit={edit} plan={plans.get(crew) ?? null}
             onNames={(f) => setCrew(crew, (c) => setNames(c, f))}
             onCount={(d, i) => void setCrew(crew, (c) => withCounts(c, d, i)).catch(() => undefined)}
             onTotal={(t) => void setCrew(crew, (c) => withTotal(c, t)).catch(() => undefined)}
@@ -527,8 +580,10 @@ let opSeq = 0;
 
 /** One crew at the meeting: its name, a pill for each person there (edit,
  *  remove; + adds the next one beside them), and its head count on site. */
-function CrewRow({ grid, crew, value, known, edit, onNames, onCount, onTotal, onPlant, onRemove }: {
+function CrewRow({ grid, crew, value, known, edit, plan, onNames, onCount, onTotal, onPlant, onRemove }: {
   grid: string; crew: string; value?: CrewCount; known?: string[]; edit: boolean;
+  /** Its contractor's staffing plan for the shift (on the company's first crew). */
+  plan?: { company: string; heads: number; direct: number; indirect: number; across: number; first: boolean } | null;
   onNames: (change: (names: string[]) => string[]) => Promise<void>;
   onCount: (direct: number | null, indirect: number | null) => void;
   /** Everyone on site in one number (no split). */
@@ -552,12 +607,13 @@ function CrewRow({ grid, crew, value, known, edit, onNames, onCount, onTotal, on
   const pick = (known ?? []).filter((x) => !names.includes(x));
   return (
     <div className={`${grid} items-start px-2 py-1 border-t border-[var(--color-border)]`}>
-      <div className="min-w-0 flex items-center gap-1 pt-0.5 max-sm:col-start-1 max-sm:row-start-1">
+      <div className="min-w-0 flex flex-wrap items-center gap-1 pt-0.5 max-sm:col-start-1 max-sm:row-start-1">
         <b className="text-[12px] text-[var(--color-text)] break-words">{crew}</b>
         {edit && onRemove && (
           <button type="button" onClick={onRemove} aria-label={`Take ${crew} off the meeting`} title="Take this company off the meeting"
             className="shrink-0 p-0.5 rounded text-[var(--color-text-faint)] hover:text-rose-700"><XIcon className="w-3 h-3" /></button>
         )}
+        {plan?.first && <PlanBeside plan={plan} count={countOf(value).total} edit={edit} onSame={() => onCount(plan.direct, plan.indirect)} />}
       </div>
       <div className="min-w-0 flex flex-wrap items-center gap-1 max-sm:col-start-1 max-sm:row-start-2 max-sm:pb-0.5">
         {names.map((n) => (
@@ -630,6 +686,23 @@ function NameInput({ init, listId, label, keepOpen, onDone, onClose }: {
       }}
       onBlur={() => { if (!done.current) finish(true); }}
       className="h-6 w-36 max-w-full rounded-full border border-[var(--color-accent-ring)] bg-[var(--color-surface)] px-2 text-[12px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none" />
+  );
+}
+
+/** A contractor's plan for the shift, under its crew: "Plan 20 (14 + 6)",
+ *  how the count stands against it, and one tap to count it as planned. */
+function PlanBeside({ plan, count, edit, onSame }: { plan: { company: string; heads: number; direct: number; indirect: number; across: number }; count: number | null; edit: boolean; onSame: () => void }) {
+  const diff = count == null || plan.across > 1 ? null : count - plan.heads;
+  return (
+    <span className="basis-full flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-[var(--color-text-muted)]" data-plan-beside={plan.company}>
+      <button type="button" onClick={() => openContractor(plan.company)} className="hover:underline" title={`${plan.company}'s staffing plan in Costs, Contractors`}>
+        Plan {plan.heads} ({plan.direct} + {plan.indirect}){plan.across > 1 ? ` across ${plan.across} ${plan.company} crews` : ""}
+      </button>
+      {diff != null && diff !== 0 && <b className={diff < 0 ? "text-amber-700 dark:text-amber-400" : "text-rose-700 dark:text-rose-400"}>{diff < 0 ? `${-diff} short` : `${diff} over`}</b>}
+      {edit && plan.across === 1 && count !== plan.heads && (
+        <button type="button" onClick={onSame} className="h-5 px-1.5 rounded border border-[var(--color-border-strong)] text-[10.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Same as plan</button>
+      )}
+    </span>
   );
 }
 

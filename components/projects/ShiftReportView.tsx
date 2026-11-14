@@ -575,7 +575,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     const carriedOf = (x: { record?: ShiftRecord; from: string | null }) => (x.from ? { crews: x.record?.crews ?? {}, label: shiftName(x.from) } : undefined);
     const by = userName ?? null;
     return {
-      stamps, timeOf, whyOf, taskPct,
+      stamps, timeOf, whyOf, taskPct, projectId, thisKey, nextKey,
       // A locked report: nothing on it changes until it's unlocked.
       edit: canEdit && !!userId && !!orgId && !locked,
       locked,
@@ -610,6 +610,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         // Keeping a crew on past the end of the shift (overtime).
         overtime: canEdit && userId && !locked ? {
           list: recThis?.holdOver ?? [], crews: allCrews, shiftEnd: shift.end, cap: shift.end + (shift.end - shift.start), tz,
+          // What a hold-over costs at the contractor's rate sheet.
+          projectId, shiftKey: thisKey, shiftHours: (shift.end - shift.start) / 3_600_000,
           save: async (change: (l: HoldOver[]) => HoldOver[]) => {
             await saveShiftRecord({ orgId, projectId, shiftKey: thisKey, userId, change: (r) => ({ ...r, holdOver: change(r.holdOver ?? []) }) });
           },
@@ -1732,6 +1734,8 @@ function rowFromPlan(r: PlanRow, c: Ctx, o: { when?: string; right?: string; n?:
  *  incidents, notes & actions) with how to change it. */
 interface SheetCtx {
   stamps: boolean;
+  /** The project, and this shift's key and the next one's ("2026-10-26:day"). */
+  projectId: string; thisKey: string; nextKey: string;
   timeOf: (id: string) => number | undefined;
   whyOf: (id: string) => string | undefined;
   taskPct: (id: string) => { pct: number; plan?: number } | undefined;
@@ -2063,8 +2067,8 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     ? safetyBrief(rankHazards(hazardJobs, { shift: next, T: c.T, max: RISKS_RANKED }), next, { project: projectFacts(o.safety?.project, next, hazardJobs.map((j) => j.name)), recentRisks: o.safety?.recent }).map((t) => t.title)
     : undefined;
   const meetings: { start?: MeetingCtx; end?: MeetingCtx } | undefined = sh ? {
-    start: { crews: named(cr.worked), record: sh.recThis, shiftStart: shift.start, carried: sh.carriedThis, known: sh.known, save: (f) => sh.saveMeeting("this", f) },
-    end: { crews: named(cr.coming), record: sh.recNext, shiftStart: next.start, carried: sh.carriedNext, known: sh.known, topics: topicPicks, save: (f) => sh.saveMeeting("next", f) },
+    start: { crews: named(cr.worked), record: sh.recThis, shiftStart: shift.start, carried: sh.carriedThis, known: sh.known, save: (f) => sh.saveMeeting("this", f), projectId: sh.projectId, shiftKey: sh.thisKey },
+    end: { crews: named(cr.coming), record: sh.recNext, shiftStart: next.start, carried: sh.carriedNext, known: sh.known, topics: topicPicks, save: (f) => sh.saveMeeting("next", f), projectId: sh.projectId, shiftKey: sh.nextKey },
   } : undefined;
   // Each table's rows drag into the order the meeting wants; the email follows.
   // The dragged order shows the same for everyone and in print (as the
