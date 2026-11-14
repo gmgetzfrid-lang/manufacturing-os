@@ -6,7 +6,7 @@ import { buildLookBack } from "@/lib/lookBack";
 import { discoveries, discoveryAttr, type DiscoveryRecord } from "@/lib/discovery";
 import type { ProgressLogRow } from "@/lib/progressHistory";
 import { appliesWord, deckSlides, fitTablePt, reportBlocks } from "@/lib/reviewFiles";
-import { GUIDES, bookOf, scoreOf } from "@/lib/reviewBook";
+import { GUIDES, bookOf, sameAction, scoreOf } from "@/lib/reviewBook";
 import { buildReview, causeOfText, emptySaved, basisOf, measuresOf, lessonOf, jobWord, pointOf, shiftWord, type ReviewSaved, type JobFinding } from "@/lib/postEventReview";
 
 const tz = "America/Los_Angeles";
@@ -351,6 +351,27 @@ describe("the files open on the point of the meeting", () => {
     // Taken off in the review, it stays off.
     const off = emptySaved(); off.items["job:f1"] = { status: "discarded" };
     expect(bookOf(buildReview({ built, work, notes, look, discoveries: discoveries(all), tz, saved: off, jobFindings: [lel] }), "Phase 1", tz).actions).toEqual([]);
+  });
+  it("two findings that ask for the same change are one action, and each points to it", () => {
+    // The changes written on Phase 1's findings: only the two materials ones say the same thing.
+    const asks = [
+      "Account for hand cleaning the downcomers within the schedule.",
+      "Complete all upcoming inspections of equipment that doesn't require a turnaround within the weeks prior to the outage.",
+      "Complete a more thorough check on the project packages prior to the start of the turnaround.",
+      "Ensure work is properly planned and ready for execution before assigning crews.",
+      "Verify all materials are onsite at least two weeks prior to the start of the turnaround.",
+      "Verify materials are ordered and on site two weeks prior to the turnaround.",
+      "Plan to install the tower fan as soon as the external manway doors are opened.",
+      "Set an expectation at the start of this work of what we expect, rather than letting the contractors do what they believe is expected.",
+    ];
+    const same = asks.flatMap((a, i) => asks.slice(i + 1).map((b, j) => [i, i + 1 + j, sameAction(a, b)] as const)).filter(([, , y]) => y).map(([i, j]) => [i, j]);
+    expect(same).toEqual([[4, 5]]);
+    const base = { kind: "material" as const, tag: null, every: false, by: "eng@kern.test", at: Date.parse("2026-10-30T15:00:00Z") };
+    const gaskets: JobFinding = { ...base, id: "g1", areas: ["logistics"], on: "E-12 - Exchanger", body: "Four conical gaskets were short.", nextTime: asks[4] };
+    const tap: JobFinding = { ...base, id: "g2", areas: ["logistics"], on: "E-13 - Air Condenser", body: "Gasket materials were not ordered.", nextTime: `${asks[5]} Include a tap for the tubes.` };
+    const bk = bookOf(buildReview({ built, work, notes, look, discoveries: discoveries(all), tz, jobFindings: [gaskets, tap] }), "Phase 1", tz);
+    expect(bk.actions.map((a) => [a.n, a.keys, a.what, a.how])).toEqual([[1, ["job:g1", "job:g2"], asks[4], "Include a tap for the tubes."]]);
+    expect(bk.areas.find((a) => a.id === "logistics")!.items.map((x) => [x.key, x.action])).toEqual([["job:g1", 1], ["job:g2", 1]]);
   });
   it("the start-up running long is Execution's share of the late finish", () => {
     const longer = { order: "Start-up", hours: 2.5, kind: "longer" as const, line: "Start-up ran 2.5 h long." };

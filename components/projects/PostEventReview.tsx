@@ -249,7 +249,8 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
     for (const [k, v] of Object.entries(patch)) { const t = (v ?? "").trim(); if (t) e[k] = t; else delete e[k]; }
     it.edits = e as FindingEdit; s.items[key] = it;
   });
-  const setDone = (key: string, done: boolean) => void act(`done:${key}`, (s) => { const it = { ...s.items[key] }; if (done) it.done = true; else delete it.done; s.items[key] = it; });
+  // An action can stand for several findings that asked for the same change: closing it closes each.
+  const setDone = (keys: string[], done: boolean) => void act(`done:${keys[0]}`, (s) => { for (const key of keys) { const it = { ...s.items[key] }; if (done) it.done = true; else delete it.done; s.items[key] = it; } });
   const setScore = (key: string, en: ScoreEntry) => void act(`score:${key}`, (s) => {
     const out: ScoreEntry = { ...(en.plan?.trim() ? { plan: en.plan.trim() } : {}), ...(en.actual?.trim() ? { actual: en.actual.trim() } : {}), ...(en.verdict ? { verdict: en.verdict } : {}) };
     if (Object.keys(out).length) s.score[key] = out; else delete s.score[key];
@@ -404,7 +405,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
             </div>
             {bk.actions.length > 0 && (
               <ol className="mt-2 space-y-3">
-                {bk.actions.map((a) => <ActionLine key={a.key} a={a} kind={typeIn} busy={busy === `plan:${a.key}` || busy === `done:${a.key}`} canManage={canManage} onPlan={(patch) => setPlan(a.key, patch)} onDone={(d) => setDone(a.key, d)} />)}
+                {bk.actions.map((a) => <ActionLine key={a.key} a={a} kind={typeIn} busy={busy === `plan:${a.key}` || busy === `done:${a.key}`} canManage={canManage} onPlan={(patch) => setPlan(a.key, patch)} onDone={(d) => setDone(a.keys, d)} />)}
               </ol>
             )}
           </div>

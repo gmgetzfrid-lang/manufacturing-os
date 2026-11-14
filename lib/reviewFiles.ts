@@ -447,7 +447,13 @@ export function deckSlides(r: Review, o: ReviewFileOpts): SlideSpec[] {
     body: {
       k: "table", head: ["What we will do", "How it will be done", "Benefit", "Who", "By", "Cost"], widths: [2.7, 3.0, 2.6, 1.2, 0.95, 0.95],
       rows: g.map((a) => [`${a.n}. ${a.what}\n${a.areaName} · ${appliesWord(a.applies, o.kind)}`, a.how, a.benefit || NOT_WRITTEN, a.who || NOT_SET, a.by || NOT_SET, a.cost || NOT_SET]),
-      more: g.map((a) => { const f = byKey.get(a.key); return f ? { title: a.what, sections: [...(f.next ? [{ title: "How it will be done", lines: [f.next] }] : []), { title: "Root cause", lines: [f.gap || NOT_WRITTEN] }, { title: f.source === "job" ? (f.where ?? "What happened") : "From the records", lines: facts(f) }] } : null; }),
+      // Behind each action: how it will be done, then each finding it came from, with its own root cause.
+      more: g.map((a) => {
+        const fs = a.keys.map((k) => byKey.get(k)).filter((f): f is Finding => !!f);
+        if (!fs.length) return null;
+        const how = [...new Set(fs.map((f) => f.next).filter(Boolean))];
+        return { title: a.what, sections: [...(how.length ? [{ title: "How it will be done", lines: how }] : []), ...fs.flatMap((f) => [{ title: f.source === "job" ? (f.where ?? "What happened") : "From the records", lines: facts(f) }, { title: "Root cause", lines: [f.gap || NOT_WRITTEN] }])] };
+      }),
       foot: g.some((a) => !a.who || !a.by || !a.cost) ? "Who, by what date and cost are set on each action in the review." : "",
     },
   }));

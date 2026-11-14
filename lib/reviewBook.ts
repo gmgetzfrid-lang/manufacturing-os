@@ -260,7 +260,8 @@ export function scoreOf(r: Pick<Review, "metrics"> & Partial<Pick<Review, "faile
 // ─── The seven areas, and the action plan ──────────────────────────
 
 export interface Action {
-  n: number; key: string; area: AreaId; areaName: string;
+  /** keys: every finding behind it (two findings that ask for the same change are one action); key is the first. */
+  n: number; key: string; keys: string[]; area: AreaId; areas: AreaId[]; areaName: string;
   /** A rule for every event of this kind, or for this unit's next one. */
   applies: "all" | "unit";
   /** What we will do, how it will be done, and the benefit (from this event). */
@@ -327,15 +328,42 @@ export function howOf(next: string, what: string): string {
   return keep.join(" ");
 }
 
+/** Words that carry what an action asks for, less the ones every action uses. */
+const FILLER = new Set(["prior", "start", "before", "after", "turnaround", "outage", "event", "that", "this", "with", "within", "will", "make", "sure", "ensure", "them", "their", "there", "from", "into", "each", "every", "next", "time", "least", "more"]);
+const gist = (t: string) => new Set(t.toLowerCase().replace(/\bon[- ]?site\b/g, "site").replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).map((w) => w.replace(/ies$/, "y").replace(/s$/, "")).filter((w) => w.length > 3 && !FILLER.has(w)));
+/** Two actions that ask for the same change in other words ("Verify all
+ *  materials are onsite two weeks prior" and "Verify materials are ordered
+ *  and on site two weeks prior"). */
+export function sameAction(a: string, b: string): boolean {
+  const x = gist(a), y = gist(b), small = Math.min(x.size, y.size);
+  if (small < 3) return false;
+  let common = 0; for (const w of x) if (y.has(w)) common++;
+  return common / small >= 0.75;
+}
+
 export function bookOf(r: Review, name: string, tz: string, x: ScoreInputs = {}): Book {
   const pt = pointOf(r, name, tz);
   const areaName = (id: AreaId) => AREAS.find((a) => a.id === id)!.name;
-  const actions: Action[] = pt.conclusions.map((c: Conclusion, i) => {
+  // One action per change: findings that ask for the same change, for the same
+  // events, are one action with each finding behind it.
+  const actions: Action[] = [];
+  const numOf = new Map<string, number>();
+  const joined = (text: string, more: string) => (!more || text.includes(more) ? text : [text, more].filter(Boolean).join(" "));
+  for (const c of pt.conclusions as Conclusion[]) {
     const area = AREA_OF[c.categoryId];
     // A finding about several areas says each.
     const all = [...new Set([area, ...(c.areas ?? [])])];
-    return { n: i + 1, key: c.key, area, areaName: all.map(areaName).join(", "), applies: c.applies, what: c.ask, how: howOf(c.change, c.ask), benefit: c.because, who: c.owner, by: c.due, cost: c.cost, done: c.done };
-  });
+    const same = actions.find((a) => a.applies === c.applies && sameAction(a.what, c.ask));
+    if (same) {
+      numOf.set(c.key, same.n); same.keys.push(c.key);
+      same.areas = [...new Set([...same.areas, ...all])]; same.areaName = same.areas.map(areaName).join(", ");
+      same.how = joined(same.how, howOf(c.change, c.ask)); same.benefit = joined(same.benefit, c.because);
+      same.who ||= c.owner; same.by ||= c.due; same.cost ||= c.cost; same.done = same.done && c.done;
+      continue;
+    }
+    const n = actions.length + 1; numOf.set(c.key, n);
+    actions.push({ n, key: c.key, keys: [c.key], area, areas: all, areaName: all.map(areaName).join(", "), applies: c.applies, what: c.ask, how: howOf(c.change, c.ask), benefit: c.because, who: c.owner, by: c.due, cost: c.cost, done: c.done });
+  }
   // Each piece of the late finish goes to the area of the accepted finding
   // that explains it: the one that names its work order in its headline (else
   // in what happened), and that moved the finish most.
@@ -367,7 +395,7 @@ export function bookOf(r: Review, name: string, tz: string, x: ScoreInputs = {})
   const late = r.service.filter((j) => j.stillOut);
   if (late.length && !late.every((j) => told.includes(orderWord(j.order)))) add("logistics", `${plural(late.length, "repair")} sent off site came back after the time quoted: ${late.map((j) => orderWord(j.order)).join(", ")}.${held(late.map((j) => j.order)) ? "" : ` ${late.length === 1 ? "It" : "None"} held up the finish.`.replace("It held", "It did not hold")}`);
   const areas: AreaRow[] = AREAS.map((a) => {
-    const mine = pt.conclusions.map((c, i) => ({ c, n: i + 1 })).filter(({ c }) => AREA_OF[c.categoryId] === a.id || !!c.areas?.includes(a.id));
+    const mine = pt.conclusions.map((c) => ({ c, n: numOf.get(c.key)! })).filter(({ c }) => AREA_OF[c.categoryId] === a.id || !!c.areas?.includes(a.id));
     const parts = owner.get(a.id) ?? [], hours = Math.round(parts.reduce((n, p2) => n + p2.hours, 0) * 10) / 10;
     const pending = pt.pending.filter((c) => AREA_OF[c.categoryId] === a.id).length;
     const well = r.wins.filter((w) => AREA_OF[w.category] === a.id).map((w) => w.text);
@@ -382,7 +410,7 @@ export function bookOf(r: Review, name: string, tz: string, x: ScoreInputs = {})
   const score = scoreOf(r, tz, x);
   const categories = REVIEW_CATEGORIES.map((c) => {
     const rows = score.rows.filter((row) => SCORE_CATEGORY[row.key] === c.key).map((row) => row.measure);
-    const acts = actions.filter((a) => a.area === c.key || !!pt.conclusions.find((x) => x.key === a.key)?.areas?.includes(c.key as AreaId)).map((a) => a.n);
+    const acts = actions.filter((a) => a.areas.includes(c.key as AreaId)).map((a) => a.n);
     const where = [rows.length ? `Score (${rows.join(", ")})` : "", c.key !== "event" ? "Areas" : "", acts.length ? `${acts.length === 1 ? "Action" : "Actions"} ${acts.join(", ")}` : ""].filter(Boolean).join("; ");
     return { ...c, where };
   });
