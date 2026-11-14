@@ -157,16 +157,18 @@ const MEANS: Record<ScoreRow["key"], string> = {
   added: "Work put in after the plan: added scope (known work that was not planned) and discovery (found when the equipment was opened).",
   manhours: "Heads on site times shift hours, from the head count at each shift meeting, against the contractors' bid.",
   cost: "Spend posted in Cost controls against this phase's budget.",
-  safety: "Injuries written on the shift reports' incident line: recordables, first aids, near misses. The target is how many the event allows; most sites set zero recordables.",
-  quality: "Work that failed its check and was done again: failed pressure tests, leaks at start-up, rework. The target is how many the event allows.",
+  safety: "Recordables, first aids and near misses, from the incident line on each shift report.",
+  quality: "Tests that failed and had to be done again (hydros, pressure tests, leak tests), from the comments on the work.",
 };
 const PICKS: Record<ScoreRow["key"], string[]> = {
   duration: [], planned: [],
   added: ["10% of the planned hours", "15% of the planned hours"],
   manhours: [], cost: [],
   safety: ["0 recordables", "0 recordables, 0 first aids"],
-  quality: ["0 failed pressure tests", "0 failed tests, 0 start-up leaks"],
+  quality: ["0 failed tests", "0 failed tests, 0 start-up leaks"],
 };
+/** Safety and quality are held to zero unless a person sets another target. */
+export const ZERO_TARGET = { safety: "0 recordables", quality: "0 failed tests" } as const;
 
 export function scoreOf(r: Pick<Review, "metrics"> & Partial<Pick<Review, "failedTests" | "standDowns" | "found">>, tz: string, x: ScoreInputs = {}): Score {
   const m = r.metrics, e = x.entries ?? {}, t = x.targets ?? {};
@@ -228,29 +230,25 @@ export function scoreOf(r: Pick<Review, "metrics"> & Partial<Pick<Review, "faile
       actual: c?.committed ? `No spend posted. ${money(c.committed)} committed.` : "No spend posted", verdict: "unmeasured", result: "Not measured", guide: "cost", fromRecords: false, entered: true,
     }));
 
-  // Safety: the shift reports' incident line, and the stand-downs written on the work.
+  // A result a person typed: their verdict, else judged by the number in it ("None" is 0).
+  const typed = (target: string, en: ScoreEntry): Verdict => en.verdict ?? (/^\s*(none|no)\b/i.test(en.actual ?? "") ? allows(target, 0) : num(en.actual) != null ? allows(target, num(en.actual)!) : "unmeasured");
+  // Safety: injuries on the shift reports' incident line, held to zero unless a person set another target.
   const inc = x.incidents ?? null, es = e.safety, answeredAll = !!inc && hc.shiftsWorked > 0 && inc.answered / hc.shiftsWorked >= 0.8;
-  const sd = r.standDowns ?? [];
-  const sdLine = sd.length ? ` ${plural(sd.length, "stand-down")} on ${[...new Set(sd.map((h) => h.order.split(" - ")[0]))].join(", ")} (${Math.round(sd.reduce((n, h) => n + h.hours, 0) * 10) / 10} h).` : "";
   const counts = inc ? `${plural(inc.recordable, "recordable")}, ${plural(inc.firstAid, "first aid")}, ${plural(inc.nearMiss, "near miss", "near misses")}` : "";
-  const target = es?.plan || "Target not set";
-  rows.push(es?.actual ? row("safety", "Safety", { plan: target, actual: es.actual, verdict: es.verdict ?? "untargeted", result: es.verdict ? VERDICT_WORD[es.verdict] : "Entered by hand", guide: es.plan ? undefined : "safety", fromRecords: false, entered: true })
+  const target = es?.plan || ZERO_TARGET.safety;
+  rows.push(es?.actual ? row("safety", "Safety", { plan: target, actual: es.actual, verdict: typed(target, es), result: VERDICT_WORD[typed(target, es)], fromRecords: false, entered: true })
     : answeredAll && inc ? row("safety", "Safety", {
-      plan: target, actual: `${counts}.${sdLine}`, verdict: allows(es?.plan, inc.recordable),
-      result: es?.plan ? (allows(es.plan, inc.recordable) === "met" ? "Within target" : "Over target") : "No target set", guide: es?.plan ? undefined : "safety", entered: true,
+      plan: target, actual: counts, verdict: allows(target, inc.recordable), result: VERDICT_WORD[allows(target, inc.recordable)], entered: true,
     }) : row("safety", "Safety", {
-      plan: target, actual: `${inc && inc.answered ? `Incident line answered on ${inc.answered} of ${plural(hc.shiftsWorked, "shift")}: ${counts}.` : "No incident line answered on the shift reports."}${sdLine}`,
+      plan: target, actual: inc && inc.answered ? `Recorded on ${inc.answered} of ${plural(hc.shiftsWorked, "shift")}: ${counts}` : "Not recorded on the shift reports",
       verdict: "unmeasured", result: "Not measured", guide: "safety", fromRecords: false, entered: true,
     }));
 
-  // Quality: tests that failed and were done again, as written on the work.
-  const ft = r.failedTests ?? [], eq = e.quality;
-  const ftLine = ft.length ? `${plural(ft.length, "failed test")}, done again: ${ft.map((f) => `${f.order.split(" - ")[0]} ${f.step}`).join(", ")}` : "No failed test written on the work";
-  rows.push(eq?.actual ? row("quality", "Quality", { plan: eq.plan || "Target not set", actual: eq.actual, verdict: eq.verdict ?? "untargeted", result: eq.verdict ? VERDICT_WORD[eq.verdict] : "No target set", guide: eq.plan ? undefined : "quality", fromRecords: false, entered: true })
-    : row("quality", "Quality", {
-      plan: eq?.plan || "Target not set", actual: ftLine, verdict: allows(eq?.plan, ft.length),
-      result: eq?.plan ? (allows(eq.plan, ft.length) === "met" ? "Within target" : "Over target") : "No target set", guide: eq?.plan ? undefined : "quality", entered: true,
-    }));
+  // Quality: tests that failed and were done again, as written on the work, held to zero unless a person set another target.
+  const ft = r.failedTests ?? [], eq = e.quality, qTarget = eq?.plan || ZERO_TARGET.quality;
+  const ftLine = ft.length ? `${plural(ft.length, "failed test")}, redone: ${ft.map((f) => `${f.order.split(" - ")[0]} ${f.step}`).join(", ")}` : "No failed test written on the work";
+  rows.push(eq?.actual ? row("quality", "Quality", { plan: qTarget, actual: eq.actual, verdict: typed(qTarget, eq), result: VERDICT_WORD[typed(qTarget, eq)], fromRecords: false, entered: true })
+    : row("quality", "Quality", { plan: qTarget, actual: ftLine, verdict: allows(qTarget, ft.length), result: VERDICT_WORD[allows(qTarget, ft.length)], entered: true }));
 
   const n = (k: Verdict) => rows.filter((row) => row.verdict === k).length;
   const met = n("met"), missed = n("missed"), unmeasured = n("unmeasured"), untargeted = n("untargeted");

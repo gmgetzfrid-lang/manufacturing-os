@@ -1265,9 +1265,8 @@ function strengthsOf(m: ReviewMetrics, found: FoundWork[], holds: HoldFact[], li
   if (m.baselineSteps && m.baselineDone === m.baselineSteps) put("planning", `Baseline scope closed: all ${m.baselineSteps} planned activities completed${m.addedSteps && m.addedDone === m.addedSteps ? `, plus all ${m.addedSteps} added` : ""}.`);
   if (m.varianceH != null && m.varianceH <= 0.5) put("planning", "Finished on or ahead of the baseline finish.");
   const approved = found.filter((f) => f.approvedBy).length;
-  const disc = found.filter((f) => f.kind !== "added"), discH = Math.round(disc.reduce((n, f) => n + f.hours, 0) * 10) / 10, discCrit = Math.round(disc.filter((f) => f.critical).reduce((n, f) => n + f.hours, 0) * 10) / 10;
-  if (discH >= 8 && discCrit <= discH * 0.25) put("planning", `Discovery was kept off the critical path: ${Math.round((discH - discCrit) * 10) / 10} of ${discH} h ran in the time the plan had to spare.`);
-  if (found.length && approved) put("execution", `Added work was approved before it ran: ${approved} of ${plural(found.length, "finding")} carry a recorded approver.`);
+  // Added and found work with an approver on record, when most of it has one.
+  if (found.length && approved / found.length >= 0.8) put("execution", `${approved === found.length ? `All ${found.length}` : `${approved} of ${found.length}`} added or found jobs have an approver on record.`);
   if (holds.some((h) => h.cause === "permit")) put("safety", "Crews stood down on gas detection until the equipment was cleared.");
   for (const f of live) if (f.rating === "strength" && f.category !== "safety" && f.category !== "scope") put(f.category, `${f.title}.`);
   return out;

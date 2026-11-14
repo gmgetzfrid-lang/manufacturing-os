@@ -407,19 +407,23 @@ describe("the files open on the point of the meeting", () => {
   });
   it("a line the records can't fill says so and carries how to set it up", () => {
     const sc = scoreOf(rk, tz);
-    // Quality is read from the work: a test written as failed and done again. None here, and no target yet.
+    // Quality is read from the work: a test written as failed and done again. Held to zero until a person sets another target.
     const q = sc.rows.find((x) => x.key === "quality")!;
-    expect([q.plan, q.actual, q.verdict, q.guide]).toEqual(["Target not set", "No failed test written on the work", "untargeted", "quality"]);
-    expect(q.means).toMatch(/failed pressure tests/);
-    expect(q.picks).toContain("0 failed pressure tests");
-    // A target set with one tap is judged against what the records show.
+    expect([q.plan, q.actual, q.verdict, q.result, q.guide]).toEqual(["0 failed tests", "No failed test written on the work", "met", "Met", undefined]);
+    expect(q.means).toMatch(/hydros/);
+    expect(q.picks).toContain("0 failed tests");
+    // Judged against what the records show.
     const two = [{ id: "t1", step: "Tube Side Hydro", order: "E-12 - Exchanger", said: "Leaks on shell side preventing tube side." }, { id: "t2", step: "Shell Side Hydro", order: "E-12 - Exchanger", said: "Starting filling for re-test" }];
-    const qq = scoreOf({ ...rk, failedTests: two }, tz, { entries: { quality: { plan: "0 failed pressure tests" } } }).rows.find((x) => x.key === "quality")!;
-    expect([qq.actual, qq.verdict, qq.result]).toEqual(["2 failed tests, done again: E-12 Tube Side Hydro, E-12 Shell Side Hydro", "missed", "Over target"]);
-    // Safety: the shift reports' incident line, and stand-downs written on the work.
-    const sf = scoreOf(rk, tz, { entries: { safety: { plan: "0 recordables" } } }).rows.find((x) => x.key === "safety")!;
-    expect([sf.plan, sf.verdict]).toEqual(["0 recordables", "unmeasured"]);
+    const qq = scoreOf({ ...rk, failedTests: two }, tz).rows.find((x) => x.key === "quality")!;
+    expect([qq.actual, qq.verdict, qq.result]).toEqual(["2 failed tests, redone: E-12 Tube Side Hydro, E-12 Shell Side Hydro", "missed", "Missed"]);
+    // Safety: held to zero recordables; the shift reports' incident line is what measures it, and nothing else is said in its place.
+    const sf = sc.rows.find((x) => x.key === "safety")!;
+    expect([sf.plan, sf.actual, sf.verdict, sf.result]).toEqual(["0 recordables", "Not recorded on the shift reports", "unmeasured", "Not measured"]);
     expect(sf.picks).toEqual(["0 recordables", "0 recordables, 0 first aids"]);
+    // A result typed by hand is judged by its number against the target.
+    const typed = scoreOf(rk, tz, { entries: { safety: { actual: "0 recordables, 1 first aid" } } }).rows.find((x) => x.key === "safety")!;
+    expect([typed.verdict, typed.result]).toEqual(["met", "Met"]);
+    expect(scoreOf(rk, tz, { entries: { safety: { actual: "None" } } }).rows.find((x) => x.key === "safety")!.verdict).toBe("met");
     expect(GUIDES.quality.steps.length).toBeGreaterThan(4);
     expect(GUIDES.quality.steps.join(" ")).toMatch(/pressure tests/);
     // Head counts are said in shifts, the way a person counts them.
@@ -453,7 +457,9 @@ describe("the files open on the point of the meeting", () => {
     expect(blocks.some((x) => x.k === "p" && x.lead === "How it is done well (Planning): ")).toBe(true);
     expect(blocks.some((x) => x.k === "p" && x.lead === "Root cause: ")).toBe(true);
     // How to set up what was not measured is laid out step by step at the back.
-    expect(blocks.some((x) => x.k === "h2" && x.text === "A quality plan")).toBe(true);
+    expect(blocks.some((x) => x.k === "h2" && x.text === "A safety record")).toBe(true);
+    // Quality is measured from the work against zero, so it needs no set-up guide.
+    expect(blocks.some((x) => x.k === "h2" && x.text === "A quality plan")).toBe(false);
     // The work that set the finish has one finding; nothing lists its steps again.
     expect(blocks.some((x) => x.k === "h1" && /stayed open longest/.test(x.text))).toBe(false);
     expect(blocks.some((x) => x.k !== "table" && /12 months|closure plan/i.test(x.text))).toBe(false);

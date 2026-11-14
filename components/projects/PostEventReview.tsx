@@ -717,8 +717,8 @@ function ScoreLine({ row, entry, busy, canManage, onSave }: { row: ScoreRow; ent
         <div className="mt-1.5 flex items-center gap-1.5 flex-wrap" data-score-target>
           <span className={label}>{hasTarget ? "Change the target" : "Set the target"}</span>
           {row.picks.map((t) => (
-            <button key={t} type="button" disabled={busy} onClick={() => setTarget(t)} aria-pressed={entry?.plan === t}
-              className={`h-8 px-2.5 rounded-full border text-[12.5px] font-bold ${entry?.plan === t ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-border)]/40"}`}>{t}</button>
+            <button key={t} type="button" disabled={busy} onClick={() => setTarget(t)} aria-pressed={row.plan === t}
+              className={`h-8 px-2.5 rounded-full border text-[12.5px] font-bold ${row.plan === t ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-border)]/40"}`}>{t}</button>
           ))}
           <button type="button" onClick={() => { setE(entry ?? {}); setOpen(open === "target" ? null : "target"); }} className="h-8 px-2.5 rounded-full border border-dashed border-[var(--color-border)] text-[12.5px] font-bold text-[var(--color-accent)]">{row.picks.length ? "Other" : "Type it"}</button>
           {!row.fromRecords && <button type="button" onClick={() => { setE(entry ?? {}); setOpen(open === "result" ? null : "result"); }} className="h-8 px-2.5 rounded-full text-[12.5px] font-bold text-[var(--color-accent)]">{entry?.actual ? "Change the result" : "Enter the result"}</button>}
