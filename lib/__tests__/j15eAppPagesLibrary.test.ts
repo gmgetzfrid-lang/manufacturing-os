@@ -215,8 +215,16 @@ describe("the two inline saves, pinned by source", () => {
   it("ruling R1: the two never-sent column-width saves are gone (nothing was ever written by them); the page still reads and live-syncs the stored widths (REV-38)", () => {
     expect(page).not.toMatch(/update\(\{ column_widths/);
     expect(page).not.toMatch(/saveWidthsTimerRef|colWidthsRef/);
-    expect(page).toMatch(/const widths = data\.column_widths \?\? \{\};\s*\n\s*setColWidths\(widths\);/);
-    expect(page).toMatch(/\?\.column_widths;\s*\n\s*if \(next && !resizingRef\.current\) setColWidths\(next\);/);
+    // (REV-38 F6 since: the load hands the stored widths to the width saver,
+    // so this tab's unsaved columns win; without a saver, as before.)
+    expect(page).toMatch(/const widths = data\.column_widths \?\? \{\};[\s\S]{0,600}widthSaverRef\.current\.load\(widthsOf\(widths\), revOf\([^\n]*\);\s*\n\s*else setColWidths\(widths\);/);
+    // document-control REV-38 (F6-column-widths) since: the live-sync hands
+    // every stored map to the width saver (per-column last-writer-wins; the
+    // dragged column and this tab's unsaved columns stay) — pinned in
+    // dcRev38ColumnWidths.test.ts; without a saver, as before. The page's one
+    // width write is the checked saveLibraryColumnWidths
+    // (lib/libraryColumnWidths.ts), not an inline one.
+    expect(page).toMatch(/\?\.column_widths;\s*\n[\s\S]{0,400}widthSaverRef\.current\.remote\(widthsOf\(next\), revOf\(row\?\.column_widths_rev\)\);\s*\n\s*else if \(!resizingRef\.current\) setColWidths\(next\);/);
   });
 });
 

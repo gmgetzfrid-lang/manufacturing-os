@@ -320,6 +320,7 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   { table: "codebook_entries", column: "codebook_version", migration: "20261178_intel_roundG_codebook_lifecycle.sql", feature: "The codebook version each code was written in (CB-6)" },
   { table: "assets", column: "codebook_version", migration: "20261178_intel_roundG_codebook_lifecycle.sql", feature: "The codebook version an asset's site code was filed under — what a re-decode compares (CB-6)" },
   { table: "drawing_audit_logs", column: "source", migration: "20261270_df_roundG_drawing_audit_history.sql", feature: "Who produced a drawing audit verdict (engine / orchestrator / human) — drafting-flow EVID-14" },
+  { table: "libraries", column: "column_widths_rev", migration: "20261271_dc_rev38_column_widths_merge.sql", feature: "Library column widths ordered by a server-owned version (REV-38)" },
 ];
 
 export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
@@ -391,6 +392,18 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     probeArgs: { p_signature: {}, p_audit: {}, p_pair: null, p_paired_at: "schema-health-probe" },
     migration: "20261269_df_roundG_signature_transaction.sql",
     feature: "A signature, its audit mirror and its roster row are written in one transaction (drafting-flow EVID-11)",
+  },
+  // document-control F6 (REV-38 / REV-39): a controller's column widths are
+  // merged per column by this function. The uuid cast of the probe id fails
+  // with 22P02 before the body runs, so nothing is written. Missing until
+  // 20261271 is pasted (42883 / PGRST202) — the page then re-reads and makes
+  // today's whole-map checked write.
+  {
+    signature: "save_library_column_widths(uuid, jsonb, text[])",
+    fn: "save_library_column_widths",
+    probeArgs: { p_library: "schema-health-probe", p_set: {}, p_reset: [] },
+    migration: "20261271_dc_rev38_column_widths_merge.sql",
+    feature: "Per-column library width save (document-control REV-38 / REV-39)",
   },
   {
     signature: "apply_checklist_item_writes(uuid, jsonb)",

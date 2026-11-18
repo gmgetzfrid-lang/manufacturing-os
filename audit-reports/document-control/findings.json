@@ -15,23 +15,24 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 189,
+    "findings": 190,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 20,
       "HIGH": 56,
       "MEDIUM": 80,
-      "LOW": 33
+      "LOW": 34
     },
     "by_status": {
-      "RESOLVED": 170,
-      "OPEN": 13,
+      "RESOLVED": 171,
+      "OPEN": 12,
       "RESOLVED (2026-11-18, fleet F7-EVID12 — see the Resolution)": 1,
       "RESOLVED (as split under `DEC-31`; ruled by the integrator at the P27 merge, 2026-10-20 (`DEC-90`) — the access-control door, a member reading `portal_token` over REST, stays open until `DIST-18` lands)": 1,
       "RESOLVED (2026-10-21, the integrator's fix pass at the P28 merge — ruled by the integrator at the P28 merge, 2026-10-21 (`DEC-90`): done-when 2 landed; the restore hooks beyond the brief's ruling (4) ratified)": 1,
       "RESOLVED by record (pending migrations — `20261257`, `20261259` pasted AFTER `20261219`, and `20261160` for `nudgeAcknowledgment`'s browser re-send — DEC-30)": 1,
       "RESOLVED (pending migrations — `20261259_dc_roundG_notice_deferred_read.sql`, pasted AFTER `20261219`; and `20261160` for `nudgeAcknowledgment`'s browser re-send — DEC-30)": 1,
-      "RESOLVED (2026-10-21, document-control Round G P37 DOOR B GUARD final fix pass — every done-when holds as written or as ratified by the integrator at the P37 merge (`DEC-90`): the `DOC_SPLIT` / `DOC_MERGED` evidence acceptance confirmed; the `REV_HOLD_OVERRIDDEN` rows written before `20261254`'s paste accepted as a recorded residual, looked over by the operator at the paste)": 1
+      "RESOLVED (2026-10-21, document-control Round G P37 DOOR B GUARD final fix pass — every done-when holds as written or as ratified by the integrator at the P37 merge (`DEC-90`): the `DOC_SPLIT` / `DOC_MERGED` evidence acceptance confirmed; the `REV_HOLD_OVERRIDDEN` rows written before `20261254`'s paste accepted as a recorded residual, looked over by the operator at the paste)": 1,
+      "RESOLVED (`20261271`, PASTE pending)": 1
     }
   },
   "status_vocabulary": [
@@ -4829,7 +4830,7 @@
       "id": "REV-38",
       "title": "Library column widths are never saved: a resize or its reset changes only the viewer's screen, though the page reads and live-syncs a stored width",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": null,
       "verification_note": "READ (`app/(protected)/documents/[libraryId]/page.tsx` at `eff6db91`, the resize handle's pointer-up timer and the reset double-click; `node_modules/@supabase/postgrest-js` `PostgrestBuilder.then` builds and sends the request — a builder that is never awaited sends nothing)",
       "blast_radius": null,
@@ -4847,6 +4848,33 @@
       ],
       "refuted": false,
       "summary": "Document Control widens the Title column of a busy library, reloads the next morning, and finds it narrow again; a colleague never sees the widening either. Nothing is lost and nothing is wrong on the record — the width simply was never kept.",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-39",
+      "title": "A library's shared layout is held to controllers only by the UI: any member's direct UPDATE may rewrite its column widths, custom columns, uniqueness rule and home layout",
+      "severity": "LOW",
+      "status": "RESOLVED (`20261271`, PASTE pending)",
+      "verification": null,
+      "verification_note": "READ (`supabase/schema.sql:1068`; every UPDATE trigger on `libraries` at its newest definition — `trg_library_sensitive_columns` (`enforce_library_sensitive_columns`, `20261077`), `trg_libraries_review_control_audit` (`audit_review_control_change`, `20261072`), `trg_node_appearance_columns` (`enforce_node_appearance_columns`, `20261216`), `trg_library_routing_control_guard` (`enforce_routing_control_change`, `20261241`), `trg_libraries_routing_control_audit` (`audit_routing_control_change`, `20261241`); no migration names `column_widths`, `custom_columns`, `uniqueness_keys` or `home_config` in a policy or trigger)",
+      "blast_radius": null,
+      "related": [
+        "REV-38",
+        "ORG-17",
+        "DEC-90"
+      ],
+      "locations": [
+        "app/(protected)/documents/[libraryId]/page.tsx",
+        "lib/libraryColumnWidths.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A member who is not a controller, with the browser's own session, sends PATCH /libraries?id=eq.<id> with { \"columnwidths\": { \"title\": 50 } } (or a changed uniquenesskeys); every viewer's library takes it live. Nothing in the app offers it; only a hand-made request does.",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },
