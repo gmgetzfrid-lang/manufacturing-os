@@ -767,7 +767,7 @@ describe("EDGE-20 (nit) — every restore line naming the current number is trie
     })).toEqual({ kind: "server" });
   });
 
-  it("never wider: the forged line's own folder is still refused without an audit row for ITS pair; with no audit row at all the real file is refused as before; an unreadable trail is still a 503", async () => {
+  it("never wider: the forged line's own folder is still refused without an audit row for ITS pair; with no audit row at all the real file is refused as before; an unreadable trail is now a 503 here (base: 400 — the accepted trade)", async () => {
     const r = await restoreTwoCarriers();
     const final = (r.b2.attachments as TicketAttachment[])[0];
     const forgedKey = `orgs/${ORG}/tickets/${FORGED}/plant.pdf`;
@@ -787,7 +787,12 @@ describe("EDGE-20 (nit) — every restore line naming the current number is trie
     const none = await workflow({ ticketId: B2, actionType: "submit_final", finalAttachment: final });
     expect(none.status).toBe(400);
     expect(ticketWrites()).toHaveLength(0);
-    // unreadable
+    // An unreadable trail. On base this shadowed request answered 400 with NO
+    // audit read (the newest line's folder did not hold the key, so the real
+    // pair was never asked); it now asks the real pair, and a failed read is
+    // the same 503 "try again" a one-line request gets — accepted by the
+    // integrator (DEC-90): base refused a legitimate file, and a retry on an
+    // unreadable trail is the fail-safe answer.
     seed(r, { b2: { history } });
     state.errors["audit_logs.select"] = [{ message: "timeout" }];
     vi.spyOn(console, "error").mockImplementation(() => undefined);

@@ -57,10 +57,20 @@ export function isControllerPrincipal(p: Pick<Principal, "roles" | "isActiveMemb
  *  the membership read succeeded and found no active row, ORG-22) passes no
  *  shortcut and is denied, as RLS (is_org_controller, user_is_effective_owner,
  *  node_visible — each reads the ACTIVE membership) will answer. An unknown
- *  status (no flag) and an active member are unchanged. */
-function knownInactive(p: Pick<Principal, "isActiveMember">): boolean {
+ *  status (no flag) and an active member are unchanged. Exported for the
+ *  document-ownership rungs outside this module (lib/retention.ts,
+ *  lib/revisions.ts, lib/documentLifecycle/*), which ask
+ *  isEffectiveOwnerOfDocument after a resolved principal. */
+export function knownInactive(p: Pick<Principal, "isActiveMember">): boolean {
   return p.isActiveMember === false;
 }
+
+/** ORG-23: what a refusal says when the actor is known not to be an active
+ *  member — in place of "you don't have authority here", which would send a
+ *  suspended owner looking for a grant. Every site that uses it refuses
+ *  before it writes anything. */
+export const NOT_ACTIVE_MEMBER_MESSAGE =
+  "You're no longer an active member of this workspace, so this was refused and nothing was changed. Ask an Admin if that's wrong.";
 
 export function canWithAclChain(params: {
   principal: Principal;

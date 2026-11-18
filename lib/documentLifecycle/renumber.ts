@@ -17,6 +17,7 @@ import { logRevisionEvent } from "@/lib/audit";
 import { CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
 import { resolveActorPrincipal } from "@/lib/principal";
 import { resolveCanControlLibrary } from "@/lib/documentGuards";
+import { knownInactive, NOT_ACTIVE_MEMBER_MESSAGE } from "@/lib/permissions";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
 import { assertNotOnHold } from "@/lib/holdGate";
 import type { DocumentRecord } from "@/types/schema";
@@ -44,9 +45,10 @@ export async function renumberDocument(input: RenumberInput): Promise<{ unitCode
 
   const principal = await resolveActorPrincipal({ uid: actorUserId, orgId, headlineRole: actorRole });
   let authorized = await resolveCanControlLibrary(doc.libraryId, principal);
-  if (!authorized) authorized = await isEffectiveOwnerOfDocument(doc.id, actorUserId);
+  // ORG-23: the owner rung is a member's (lib/permissions knownInactive).
+  if (!authorized && !knownInactive(principal)) authorized = await isEffectiveOwnerOfDocument(doc.id, actorUserId);
   if (!authorized) {
-    throw new Error("You don't have authority to renumber this document. Ask an Admin or Doc Control to grant publish authority on this library.");
+    throw new Error(knownInactive(principal) ? NOT_ACTIVE_MEMBER_MESSAGE : "You don't have authority to renumber this document. Ask an Admin or Doc Control to grant publish authority on this library.");
   }
   // HLD-1: a held document keeps the number its hold cards were printed
   // with until the hold is released (the shared gate; fails closed).

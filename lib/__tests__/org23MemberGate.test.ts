@@ -134,13 +134,22 @@ describe("ORG-23: the member gate runs before every lib/permissions.ts shortcut"
       }
     }
     expect(mismatches.slice(0, 5)).toEqual([]);
-    // Sized, so the test cannot pass by asking nothing.
-    expect(compared).toBeGreaterThan(1_000_000);
-    // The defect was real on base: inactive principals passed shortcuts.
-    expect(inactiveChanged).toBeGreaterThan(0);
-    for (const fn of ["isControllerPrincipal", "canWithAclChain", "canPublishOnLibrary", "canPublishViaIndex", "canDiscover", "canReadNode", "canReadViaIndex", "canServeContent", "controllerBypassDecided"]) {
-      expect(changedBy.get(fn) ?? 0, fn).toBeGreaterThan(0);
-    }
+    // Sized exactly (the figures the ORG-23 record reports), so the test can
+    // neither pass by asking less nor drift from what is recorded.
+    expect(compared).toBe(8_117_928);
+    // The defect was real on base: these inactive answers were not "denied".
+    expect(inactiveChanged).toBe(1_177_744);
+    expect(Object.fromEntries(changedBy)).toEqual({
+      isControllerPrincipal: 7_644,
+      canPublishViaIndex: 46_368,
+      canPublishOnLibrary: 7_644,
+      canDiscover: 20_162,
+      canServeContent: 47_962,
+      canWithAclChain: 179_596,
+      canReadNode: 201_620,
+      canReadViaIndex: 661_680,
+      controllerBypassDecided: 5_068,
+    });
   }, 120_000);
 
   const SUSPENDED_DOCCTRL: Principal = { uid: UID, role: "DocCtrl", roles: ["DocCtrl"], orgId: ORG, teamIds: [], isActiveMember: false };
