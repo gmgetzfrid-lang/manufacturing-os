@@ -378,6 +378,18 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     migration: "20261268_df_roundG_issuing_path_stops.sql",
     feature: "Exception-only review: a slot satisfied by a recorded rule and re-opened on an exception (drafting-flow DF-P26, GAP-115)",
   },
+  // drafting-flow F4 (EVID-11): the signing route writes a signature, its audit
+  // mirror and its roster row in one transaction through this function. The
+  // bad timestamptz argument fails with 22007 while the arguments are
+  // converted, so the body never runs and nothing is written. Missing until
+  // 20261269 is pasted (42883 / PGRST202) — the route then writes as today.
+  {
+    signature: "record_signature_transaction(jsonb, jsonb, jsonb, timestamptz)",
+    fn: "record_signature_transaction",
+    probeArgs: { p_signature: {}, p_audit: {}, p_pair: null, p_paired_at: "schema-health-probe" },
+    migration: "20261269_df_roundG_signature_transaction.sql",
+    feature: "A signature, its audit mirror and its roster row are written in one transaction (drafting-flow EVID-11)",
+  },
   {
     signature: "apply_checklist_item_writes(uuid, jsonb)",
     fn: "apply_checklist_item_writes",
