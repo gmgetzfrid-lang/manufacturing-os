@@ -552,7 +552,22 @@ export async function recordAcknowledgment(input: {
     signerRole: input.signerRole ?? undefined, signerEmail: input.signerEmail ?? undefined,
     signatureImage: input.signatureImage ?? undefined,
     reauth: input.reauth ?? null,
+    pair: { kind: "acknowledgment", rosterId: input.rosterId ?? null },
   });
+
+  // drafting-flow EVID-11 done-when 2 (20261269): once pasted, the route marks
+  // the roster row in the signature's own transaction — the same filters, the
+  // same patch, judged by the database as this signer — and a row that was not
+  // there refused the signature with it (nothing signed; said by the route).
+  // Before the paste the route says nothing about the roster and the write
+  // below is today's, unchanged.
+  if (sig.pairedRosterIds) {
+    if (sig.pairedRosterIds.length === 0) {
+      throw new Error("Your signature was recorded, but there was no pending acknowledgment of yours to mark — it may have been replaced by a newer revision. Reload and acknowledge the current revision; the roster still shows the old row as it was.");
+    }
+    await maybeNotifyComplete(input.orgId, input.documentId, input.documentVersionId ?? null, input.signerUserId, input.signerName);
+    return;
+  }
 
   const nowIso = new Date().toISOString();
   const patch = { status: "acknowledged", signature_id: sig.id, acknowledged_at: nowIso, updated_at: nowIso };

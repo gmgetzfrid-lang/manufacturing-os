@@ -727,23 +727,31 @@ export async function recordReviewSignoff(input: {
     signerRole: input.signerRole ?? undefined, signerEmail: input.signerEmail ?? undefined,
     signatureImage: input.signatureImage ?? undefined,
     reauth: input.reauth ?? null,
+    pair: { kind: "review_signoff", signoffId: input.signoffId },
   });
-  const nowIso = new Date().toISOString();
-  // Pin the write to the signer's OWN roster row and check the result (RG-2):
-  // filtered by id alone, a publisher could attach their signature to another
-  // reviewer's row and the roster would render it as that reviewer's approval;
-  // and a refused write (RLS, concurrent void) returned success with zero rows
-  // — the e-signature existed but the roster stayed pending forever.
-  const { data: signedRows, error: signErr } = await supabase.from("document_review_signoffs")
-    .update({ status: "signed", signature_id: sig.id, signed_at: nowIso, updated_at: nowIso })
-    .eq("id", input.signoffId)
-    .eq("reviewer_user_id", input.signerUserId)
-    .select("id");
-  if (signErr) throw new Error(signErr.message);
-  if (!signedRows || signedRows.length === 0) {
-    throw new Error(
-      "Your signature was recorded but the roster row was not yours to sign — only the named reviewer can sign their own row. If your row was voided by a newer draft, review the new draft instead.",
-    );
+  // drafting-flow EVID-11 done-when 2 (20261269): once pasted, the route signs
+  // the roster row in the signature's own transaction — the same filters, the
+  // same patch, judged by the database guard as this signer — and a row that
+  // was not theirs refused the signature with it (nothing signed; said by the
+  // route). Before the paste (no pairedRosterIds) the write below is today's.
+  const notYours = "Your signature was recorded but the roster row was not yours to sign — only the named reviewer can sign their own row. If your row was voided by a newer draft, review the new draft instead.";
+  if (sig.pairedRosterIds && sig.pairedRosterIds.length === 0) throw new Error(notYours);
+  if (!sig.pairedRosterIds) {
+    const nowIso = new Date().toISOString();
+    // Pin the write to the signer's OWN roster row and check the result (RG-2):
+    // filtered by id alone, a publisher could attach their signature to another
+    // reviewer's row and the roster would render it as that reviewer's approval;
+    // and a refused write (RLS, concurrent void) returned success with zero rows
+    // — the e-signature existed but the roster stayed pending forever.
+    const { data: signedRows, error: signErr } = await supabase.from("document_review_signoffs")
+      .update({ status: "signed", signature_id: sig.id, signed_at: nowIso, updated_at: nowIso })
+      .eq("id", input.signoffId)
+      .eq("reviewer_user_id", input.signerUserId)
+      .select("id");
+    if (signErr) throw new Error(signErr.message);
+    if (!signedRows || signedRows.length === 0) {
+      throw new Error(notYours);
+    }
   }
 
   // DEC-21: completion is judged for THIS signer as the would-be publisher —

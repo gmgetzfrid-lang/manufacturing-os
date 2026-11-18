@@ -35,6 +35,9 @@ vi.mock("@/lib/supabaseAdmin", () => ({
   supabaseAdmin: {
     auth: { getUser: vi.fn(async () => state.user ? { data: { user: state.user }, error: null } : { data: { user: null }, error: { message: "bad" } }) },
     from: (t: string) => chain(t),
+    // EVID-11 (F4, 20261269): these cases pin the route's direct writes — the
+    // path it takes before the paste, when the transaction RPC is missing.
+    rpc: vi.fn(async () => ({ data: null, error: { code: "PGRST202", message: "Could not find the function" } })),
   },
 }));
 vi.mock("@supabase/supabase-js", () => ({
@@ -159,7 +162,7 @@ describe("pinned at the source — no browser path mints a signature", () => {
     const r = src("app/api/signatures/sign/route.ts");
     expect(r).not.toMatch(/body\.signer(Name|Role|Email|UserId)/);
     expect(r).toContain("signer_user_id: user.id, signer_name: signerName, signer_role: signerRole, signer_email: signerEmail,");
-    expect(r).toContain('const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert({');
+    expect(r).toContain('const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert(mirror);');
     expect(r).toContain("signInWithPassword({ email: user.email, password })");
   });
 });

@@ -20,8 +20,21 @@
 // INSERT policy and adds a trigger that refuses any non-service insert), then an
 // ESIGNATURE_CAPTURED audit row is written as a CHECKED write.
 //
+// drafting-flow EVID-11 done-whens 2-3 (F4 SIGNATURE TRANSACTION, 20261269):
+// once that migration is pasted, the signature, its audit mirror and — when
+// the body names it (`pair`) — the roster row the signature authorises (a
+// read-and-understood acknowledgment, a review sign-off) are written in ONE
+// database transaction by record_signature_transaction, from the very rows
+// below: a signature never exists without its sign-off or the reverse, and a
+// refused mirror is kept in the audit outbox (DEC-109) in that transaction.
+// Before the paste (PGRST202 / 42883) every write is today's, byte for byte,
+// and the browser writes its roster row itself, as today. Every check above
+// the write stays here; the roster write is judged by the database as the
+// signer (lib/signatureReconciliation.ts finds any orphan).
+//
 // Body: { orgId, resourceType, resourceId, documentVersionId?, contentHash?,
-//         intent, statement, signatureImage?, reauth: { method: "password", password } | { method: "sso" } }
+//         intent, statement, signatureImage?, reauth: { method: "password", password } | { method: "sso" },
+//         pair?: { kind: "acknowledgment", rosterId? } | { kind: "review_signoff", signoffId } }
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -40,7 +53,18 @@ interface Body {
   documentVersionId?: unknown; contentHash?: unknown;
   intent?: unknown; statement?: unknown; signatureImage?: unknown;
   reauth?: { method?: unknown; password?: unknown } | null;
+  pair?: { kind?: unknown; rosterId?: unknown; signoffId?: unknown } | null;
 }
+
+/** The roster row a signature authorises, written in its transaction (20261269). */
+type Pair = { kind: "acknowledgment"; rosterId: string | null } | { kind: "review_signoff"; signoffId: string };
+
+/** What the signer reads when the roster write matched no row of theirs —
+ *  the transaction rolled the signature back with it. */
+const PAIR_NO_ROW: Record<Pair["kind"], string> = {
+  acknowledgment: "There was no pending acknowledgment of yours to mark — it may have been replaced by a newer revision. Nothing was signed: reload and acknowledge the current revision.",
+  review_signoff: "That roster row is not yours to sign — only the named reviewer can sign their own row. If your row was voided by a newer draft, review the new draft instead. Nothing was signed.",
+};
 
 const bad = (error: string, status: number) => NextResponse.json({ error }, { status });
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
@@ -62,6 +86,19 @@ export async function POST(req: NextRequest) {
   const documentVersionId = str(body.documentVersionId);
   const claimedHash = str(body.contentHash);
   const signatureImage = typeof body.signatureImage === "string" && body.signatureImage.startsWith("data:image/") ? body.signatureImage : null;
+  // EVID-11: the roster row this signature authorises — only the pairs the
+  // two roster ceremonies send, with the intent and resource they sign.
+  let pair: Pair | null = null;
+  if (body.pair != null) {
+    const kind = str(body.pair.kind);
+    if (kind === "acknowledgment" && intent === "Acknowledged" && resourceType === "document") {
+      pair = { kind, rosterId: str(body.pair.rosterId) };
+    } else if (kind === "review_signoff" && intent === "Reviewed" && resourceType === "document_version" && str(body.pair.signoffId)) {
+      pair = { kind, signoffId: str(body.pair.signoffId) as string };
+    } else {
+      return bad("That roster row cannot be signed with this signature", 400);
+    }
+  }
 
   // ── 1. re-authentication, verified here ────────────────────────────────────
   const provider = (user.app_metadata as { provider?: string } | null)?.provider ?? "email";
@@ -122,29 +159,63 @@ export async function POST(req: NextRequest) {
   }
 
   const signedAt = new Date(now).toISOString();
+  const signatureRow = {
+    org_id: orgId, resource_type: resourceType, resource_id: resourceId,
+    document_version_id: documentVersionId, content_hash: contentHash,
+    intent, statement,
+    signer_user_id: user.id, signer_name: signerName, signer_role: signerRole, signer_email: signerEmail,
+    signature_image: signatureImage,
+    user_agent: req.headers.get("user-agent"),
+    signed_at: signedAt,
+    reauth_method: reauthMethod, reauth_at: signedAt,
+    metadata: { reauth: { method: reauthMethod, at: signedAt, provider }, minted_by: "api/signatures/sign" },
+  };
+  const auditRow = (signatureId: string | null) => ({
+    action: "ESIGNATURE_CAPTURED",
+    resource_id: resourceId, resource_type: resourceType, org_id: orgId,
+    user_id: user.id, user_email: signerEmail, user_role: signerRole,
+    details: { intent, statement, signerName, signatureId, documentVersionId, reauthMethod },
+  });
+
+  // ── 5. EVID-11: one transaction — the signature, its mirror, its roster row ─
+  const { data: tx, error: txErr } = await supabaseAdmin.rpc("record_signature_transaction", {
+    p_signature: signatureRow, p_audit: auditRow(null), p_pair: pair, p_paired_at: new Date().toISOString(),
+  });
+  if (!txErr) {
+    // An answer with no row is never retried as a second write.
+    if (!tx) return bad("The signature could not be confirmed — reload before signing again.", 500);
+    const t = tx as { signature: Record<string, unknown>; paired: { kind: string; rosterIds: string[] } | null; auditError: string | null };
+    return NextResponse.json({
+      signature: t.signature,
+      ...(t.paired ? { paired: t.paired } : {}),
+      ...(t.auditError ? { warning: `Signed, but the audit row failed: ${t.auditError}` } : {}),
+    });
+  }
+  if (txErr && txErr.code !== "PGRST202" && txErr.code !== "42883") {
+    // The transaction wrote nothing: say so, in the words the signer can act on.
+    if (pair && txErr.code === "P0002") return bad(PAIR_NO_ROW[pair.kind], 409);
+    if (txErr.code === "23514") return bad(`${txErr.message} Nothing was signed.`, 409);
+    return bad(txErr.message || "Failed to record signature", 500);
+  }
+
+  // ── Before 20261269 (PGRST202 / 42883): today's path, byte for byte ───────
   const { data: row, error: insErr } = await supabaseAdmin
     .from("e_signatures")
-    .insert({
-      org_id: orgId, resource_type: resourceType, resource_id: resourceId,
-      document_version_id: documentVersionId, content_hash: contentHash,
-      intent, statement,
-      signer_user_id: user.id, signer_name: signerName, signer_role: signerRole, signer_email: signerEmail,
-      signature_image: signatureImage,
-      user_agent: req.headers.get("user-agent"),
-      signed_at: signedAt,
-      reauth_method: reauthMethod, reauth_at: signedAt,
-      metadata: { reauth: { method: reauthMethod, at: signedAt, provider }, minted_by: "api/signatures/sign" },
-    })
+    .insert(signatureRow)
     .select("*")
     .single();
   if (insErr || !row) return bad(insErr?.message || "Failed to record signature", 500);
 
-  // The audit mirror is a CHECKED write: a signature without its trail is reported.
-  const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert({
-    action: "ESIGNATURE_CAPTURED",
-    resource_id: resourceId, resource_type: resourceType, org_id: orgId,
-    user_id: user.id, user_email: signerEmail, user_role: signerRole,
-    details: { intent, statement, signerName, signatureId: (row as { id: string }).id, documentVersionId, reauthMethod },
-  });
+  // The audit mirror is a CHECKED write: a signature without its trail is reported
+  // — and (DEC-109, EVID-11 done-when 3) kept in the audit outbox, never dropped.
+  const mirror = auditRow((row as { id: string }).id);
+  const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert(mirror);
+  if (auditErr) {
+    const { error: outboxErr } = await supabaseAdmin.from("audit_dead_letters").insert({
+      org_id: orgId, action: mirror.action, entry: { row: { ...mirror, metadata: null }, reporter: null },
+      error: (auditErr.message || "audit insert refused").slice(0, 2000), source: "server", reported_by: null,
+    });
+    if (outboxErr) console.warn("[signatures/sign] the refused ESIGNATURE_CAPTURED mirror was not kept in the outbox:", outboxErr.message);
+  }
   return NextResponse.json({ signature: row, ...(auditErr ? { warning: `Signed, but the audit row failed: ${auditErr.message}` } : {}) });
 }

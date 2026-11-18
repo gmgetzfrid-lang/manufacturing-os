@@ -30,7 +30,18 @@ export interface ESignature {
   /** RG-9: how the signer re-authenticated at the moment of signing, set server-side. */
   reauthMethod?: "password" | "sso" | null;
   reauthAt?: string | null;
+  /** drafting-flow EVID-11 (20261269): set only when the signing route wrote
+   *  the roster row named by `pair` in the signature's own transaction — the
+   *  ids it marked. Absent (before the paste, or with no pair) the caller
+   *  writes its roster row itself, as before. */
+  pairedRosterIds?: string[];
 }
+
+/** The roster row a signature authorises — sent so the route can write it in
+ *  the signature's transaction (EVID-11, 20261269). */
+export type SignaturePair =
+  | { kind: "acknowledgment"; rosterId?: string | null }
+  | { kind: "review_signoff"; signoffId: string };
 
 function rowTo(r: Record<string, unknown>): ESignature {
   return {
@@ -126,6 +137,9 @@ export async function recordSignature(input: {
   signatureImage?: string | null;
   /** The re-authentication the ceremony collected; verified server-side. */
   reauth?: SigningCredential | null;
+  /** EVID-11: the roster row this signature authorises (acknowledgment /
+   *  review sign-off ceremonies only). */
+  pair?: SignaturePair | null;
 }): Promise<ESignature> {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Not authenticated");
@@ -142,9 +156,15 @@ export async function recordSignature(input: {
       statement: input.statement,
       signatureImage: input.signatureImage ?? null,
       reauth: input.reauth ?? { method: "sso" },
+      ...(input.pair ? { pair: input.pair } : {}),
     }),
   });
-  const out = (await res.json().catch(() => ({}))) as { signature?: Record<string, unknown>; error?: string };
+  const out = (await res.json().catch(() => ({}))) as { signature?: Record<string, unknown>; error?: string; paired?: { kind?: string; rosterIds?: unknown } | null };
   if (!res.ok || !out.signature) throw new Error(out.error || "Failed to record signature");
-  return rowTo(out.signature);
+  const sig = rowTo(out.signature);
+  // Only an answer for the pair this call sent counts as the roster write.
+  if (input.pair && out.paired?.kind === input.pair.kind && Array.isArray(out.paired.rosterIds)) {
+    sig.pairedRosterIds = out.paired.rosterIds.map(String);
+  }
+  return sig;
 }
