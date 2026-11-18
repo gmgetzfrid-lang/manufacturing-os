@@ -25,7 +25,7 @@ type Call = { table: string; method: string; args: unknown[] };
 const state = vi.hoisted(() => ({
   user: null as null | { id: string; email?: string; app_metadata?: Record<string, unknown> },
   tables: {} as Record<string, unknown>,
-  errors: {} as Record<string, { message: string } | undefined>,
+  errors: {} as Record<string, { message: string; code?: string } | undefined>,
   calls: [] as Call[],
   rpc: null as null | { data: unknown; error: { code?: string; message: string } | null },
   rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
@@ -37,7 +37,7 @@ function chain(table: string) {
       if (prop === "then") return (resolve: (v: unknown) => void) => resolve({ data: state.tables[table] ?? null, error: state.errors[table] ?? null });
       return (...args: unknown[]) => {
         state.calls.push({ table, method: prop, args });
-        if (prop === "maybeSingle" || prop === "single") return Promise.resolve({ data: state.tables[table] ?? null, error: null });
+        if (prop === "maybeSingle" || prop === "single") return Promise.resolve({ data: state.errors[table] ? null : (state.tables[table] ?? null), error: state.errors[table] ?? null });
         return new Proxy(c, h);
       };
     },
@@ -78,6 +78,7 @@ const ack = { orgId: "o1", resourceType: "document", resourceId: "d1", documentV
 const review = { orgId: "o1", resourceType: "document_version", resourceId: "v1", documentVersionId: "v1", intent: "Reviewed", statement: "Reviewed", reauth, pair: { kind: "review_signoff", signoffId: SIGNOFF } };
 const ticket = { orgId: "o1", resourceType: "ticket", resourceId: "t1", intent: "Reviewed", statement: "Reviewed", reauth };
 const inserts = (t: string) => state.calls.filter((c) => c.table === t && c.method === "insert").map((c) => c.args[0] as Record<string, unknown>);
+const UNCONFIRMED = "Your signature could not be confirmed — the server did not answer clearly. Reload the page to check whether it was recorded before you sign again.";
 const SIG_ROW = { id: "sig1", org_id: "o1", signer_user_id: "u1", signed_at: "2026-11-18T10:00:00+00:00" };
 
 beforeEach(() => {
@@ -211,10 +212,78 @@ describe("after the paste: one transaction", () => {
     expect(state.rpcCalls).toEqual([]);
     expect(state.calls.filter((c) => c.method === "insert")).toEqual([]);
   });
-  it("an answer with no row is a 500, never a second write through the fallback", async () => {
+  it("an answer with no row is an unknown outcome (503, check before signing again), never a second write through the fallback", async () => {
     state.rpc = { data: null, error: null };
-    expect((await post(ack)).status).toBe(500);
+    const res = await post(ack);
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { error: string }).error).toBe(UNCONFIRMED);
     expect(state.calls.filter((c) => c.method === "insert")).toEqual([]);
+  });
+  it("an unknown outcome — a transport failure, a gateway's HTML page, a PostgREST connection code — never says 'Nothing was signed' and never shows the body", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      for (const e of [
+        { code: "", message: "TypeError: fetch failed" },
+        { message: "AbortError: This operation was aborted" },
+        { message: "<html><head><title>502 Bad Gateway</title></head><body>cloudflare</body></html>" },
+        { code: "P0001", message: "<!DOCTYPE html><html><body>504 Gateway Time-out</body></html>" },
+        { code: "PGRST000", message: "Could not connect with the database" },
+        { code: "PGRST003", message: "Timed out acquiring connection from connection pool." },
+        { code: "08006", message: "connection failure" },
+      ]) {
+        state.rpc = { data: null, error: e as { code?: string; message: string } };
+        const res = await post(ack);
+        expect(res.status, e.message).toBe(503);
+        const text = ((await res.json()) as { error: string }).error;
+        expect(text, e.message).toBe(UNCONFIRMED);
+        expect(text).not.toMatch(/Nothing was signed|<|cloudflare|fetch failed/);
+      }
+      expect(state.calls.filter((c) => c.method === "insert")).toEqual([]);
+    } finally { err.mockRestore(); }
+  });
+  it("every definitive database refusal says 'Nothing was signed' in plain language, and its detail goes to the server log", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const cases: Array<[string, string, RegExp]> = [
+        ["42501", "record_signature_transaction is the signing route alone.", /^Nothing was signed\. record_signature_transaction is the signing route alone\.$/],
+        ["22023", "record_signature_transaction: unknown roster kind x", /^Nothing was signed\. A value isn't in the expected format\.$/],
+        ["23502", 'null value in column "intent" of relation "e_signatures" violates not-null constraint', /^Nothing was signed\. A required value is missing\.$/],
+        ["23503", 'insert or update on table "e_signatures" violates foreign key constraint "x"', /^Nothing was signed\. Something this refers to/],
+        ["23505", 'duplicate key value violates unique constraint "x"', /^Nothing was signed\. That already exists\.$/],
+        ["22P02", 'invalid input syntax for type uuid: "x"', /^Nothing was signed\. A value isn't in the expected format\.$/],
+        ["22007", 'invalid input syntax for type timestamp with time zone: "x"', /^Nothing was signed\. A value isn't in the expected format\.$/],
+        ["40001", "could not serialize access", /^Nothing was signed\. Someone else changed this/],
+        ["40P01", "deadlock detected", /^Nothing was signed\. Someone else changed this/],
+        ["55P03", "could not obtain lock on row", /^Nothing was signed\. Someone else is changing this/],
+        ["57014", "canceling statement due to statement timeout", /^Nothing was signed\. The database took too long/],
+      ];
+      for (const [code, message, want] of cases) {
+        state.rpc = { data: null, error: { code, message } };
+        const res = await post(ticket);
+        expect(res.status, code).toBe(500);
+        expect(((await res.json()) as { error: string }).error, code).toMatch(want);
+      }
+      // P0001: the function's sentence, with both refusals in the server log
+      err.mockClear();
+      state.rpc = { data: null, error: { code: "P0001", message: "The audit trail could not record this signature, so it was not kept. Try again; if it keeps happening, tell your administrator.", details: "mirror: x / outbox: permission denied for table audit_dead_letters" } as never };
+      await post(ticket);
+      expect(err.mock.calls.some((c) => JSON.stringify(c).includes("mirror: x / outbox: permission denied for table audit_dead_letters"))).toBe(true);
+    } finally { err.mockRestore(); }
+  });
+  it("before the paste: the insert's own refusal is said in plain language (same writes); an insert with no answer is 'check before signing again'", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      state.errors.e_signatures = { code: "23503", message: 'insert or update on table "e_signatures" violates foreign key constraint "e_signatures_org_id_fkey"' };
+      const a = await post(ticket);
+      expect(a.status).toBe(500);
+      expect(((await a.json()) as { error: string }).error).toMatch(/^Nothing was signed\. Something this refers to has been removed/);
+      state.errors.e_signatures = { message: "<html><body>502 Bad Gateway</body></html>" };
+      const b = await post(ticket);
+      expect(b.status).toBe(503);
+      expect(((await b.json()) as { error: string }).error).toBe(UNCONFIRMED);
+      expect(inserts("e_signatures")).toHaveLength(2);
+      expect(inserts("audit_logs")).toEqual([]);
+    } finally { err.mockRestore(); }
   });
   it("a pair that is not the one its signature signs is refused before anything is written", async () => {
     for (const body of [{ ...ack, intent: "Approved" }, { ...ack, resourceType: "ticket" }, { ...review, pair: { kind: "review_signoff" } }, { ...ticket, pair: { kind: "other" } }]) {

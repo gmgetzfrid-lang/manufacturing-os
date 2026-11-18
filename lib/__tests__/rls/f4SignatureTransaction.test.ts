@@ -363,7 +363,7 @@ describe.skipIf(skip !== null)("EVID-11 (F4): the signature, its audit mirror an
   });
 
   it("the reconciliation finds every kind of orphan, and nothing else", () => {
-    const o = seedOrg(db, { ann: { role: "Viewer" }, rex: { role: "Engineer-1" }, cy: { role: "Viewer" }, dee: { role: "Viewer" }, eve: { role: "Engineer-2" }, fay: { role: "Viewer" } });
+    const o = seedOrg(db, { ann: { role: "Viewer" }, rex: { role: "Engineer-1" }, cy: { role: "Viewer" }, dee: { role: "Viewer" }, eve: { role: "Engineer-2" }, fay: { role: "Viewer" }, gus: { role: "Engineer-3" } });
     const org = o.orgId;
     const d = randomUUID(); const v = randomUUID(); const v2 = randomUUID(); const l = randomUUID(); const t = randomUUID();
     const sig = (who: SeededMember, intent: string, type: string, resource: string, version: string | null) => {
@@ -412,6 +412,9 @@ describe.skipIf(skip !== null)("EVID-11 (F4): the signature, its audit mirror an
     // 6b. a review signature on draft 1B whose signer's sign-off row is on draft 1A
     const eveRev = sig(o.m.eve, "Reviewed", "document_version", v2, v2); mirror(eveRev, o.m.eve);
     admin(db, `INSERT INTO document_review_signoffs (org_id, document_id, document_version_id, reviewer_user_id, slot, activated, status) VALUES ('${org}', '${d}', '${v}', '${o.m.eve.uid}', 'primary', true, 'pending')`);
+    // 6a. a versionless review signature on draft 1B (the resource names the draft) whose signer's row is on 1A
+    const gusRev = sig(o.m.gus, "Reviewed", "document_version", v2, null); mirror(gusRev, o.m.gus);
+    admin(db, `INSERT INTO document_review_signoffs (org_id, document_id, document_version_id, reviewer_user_id, slot, activated, status) VALUES ('${org}', '${d}', '${v}', '${o.m.gus.uid}', 'primary', true, 'pending')`);
     // healthy: a carried acknowledgment and a carried sign-off are never orphans
     const fayAck = sig(o.m.fay, "Acknowledged", "document", d, v); mirror(fayAck, o.m.fay);
     admin(db, `INSERT INTO document_acknowledgments (org_id, document_id, document_version_id, assignee_user_id, status, signature_id, acknowledged_at) VALUES ('${org}', '${d}', '${v}', '${o.m.fay.uid}', 'acknowledged', '${fayAck}', now())`);
@@ -425,7 +428,7 @@ describe.skipIf(skip !== null)("EVID-11 (F4): the signature, its audit mirror an
       signed_review_row_without_its_signature: [revBad],
       satisfied_ticket_slot_without_its_signature: [slotBad],
       acknowledgment_signature_without_roster_row: sorted([rexAck, cyAck, deeAck]),
-      review_signature_without_signoff_row: sorted([annRev, eveRev]),
+      review_signature_without_signoff_row: sorted([annRev, eveRev, gusRev]),
     });
     // the index-friendly trail check answers exactly what the first one did
     expect(admin(db, `SELECT q.id FROM (${OLD_TRAIL}) q WHERE q.org_id = '${org}' ORDER BY q.id`).split("\n").filter(Boolean)).toEqual([silent]);

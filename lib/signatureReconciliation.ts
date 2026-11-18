@@ -102,7 +102,7 @@ export const SIGNATURE_ORPHAN_CHECKS: readonly SignatureOrphanCheck[] = [
     key: "review_signature_without_signoff_row",
     label: "review signatures whose signer is on that document review roster (any draft) but that no sign-off row carries",
     sql: `SELECT s.org_id, s.id FROM e_signatures s
-  JOIN document_versions v ON v.id = s.document_version_id
+  JOIN document_versions v ON v.id = COALESCE(s.document_version_id, s.resource_id)
  WHERE s.intent = 'Reviewed' AND s.resource_type = 'document_version'
    AND EXISTS (SELECT 1 FROM document_review_signoffs r
                 WHERE r.document_id = v.record_id AND r.reviewer_user_id = s.signer_user_id)

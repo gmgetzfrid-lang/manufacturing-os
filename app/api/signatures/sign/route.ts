@@ -69,6 +69,26 @@ const PAIR_NO_ROW: Record<Pair["kind"], string> = {
 
 const bad = (error: string, status: number) => NextResponse.json({ error }, { status });
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The database refusals that prove nothing was written: Postgres raised them
+ *  inside the statement, so its transaction rolled back (PostgREST commits
+ *  only after the function returns). The function's own: 42501 (a caller
+ *  carrying a user JWT), 22023 (a pair that is not its signature's), P0002
+ *  (no roster row of the signer's), P0001 (the mirror and the outbox both
+ *  refused); the roster guards' 23514; and the insert's own refusals —
+ *  23502 / 23503 / 23505 / 22P02 / 22007 (a value the columns refuse), 40001 /
+ *  40P01 (a conflict), 55P03 (a lock), 57014 (a statement timeout). Anything
+ *  else — no code, a PostgREST or gateway answer, a transport failure — is an
+ *  UNKNOWN outcome: the write may have committed before the answer was lost. */
+const DEFINITIVE = new Set(["42501", "22023", "P0002", "P0001", "23514", "23502", "23503", "23505", "22P02", "22007", "40001", "40P01", "55P03", "57014"]);
+/** What the signer reads when the outcome is unknown — never the raw body. */
+const UNCONFIRMED = "Your signature could not be confirmed — the server did not answer clearly. Reload the page to check whether it was recorded before you sign again.";
+type DbErr = { code?: string | null; message?: string | null; details?: string | null; hint?: string | null };
+/** A refusal the database proves wrote nothing (and whose text is not a page body). */
+const definitive = (e: DbErr) => DEFINITIVE.has(e.code ?? "") && !/<[a-z!/]/i.test(e.message ?? "");
+const logRefusal = (what: string, e: DbErr) => console.error(`[signatures/sign] ${what}:`, {
+  code: e.code ?? null, message: (e.message ?? "").slice(0, 500), details: (e.details ?? "").slice(0, 2000) || null, hint: e.hint ?? null,
+});
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 
 export async function POST(req: NextRequest) {
@@ -189,7 +209,7 @@ export async function POST(req: NextRequest) {
   });
   if (!txErr) {
     // An answer with no row is never retried as a second write.
-    if (!tx) return bad("The signature could not be confirmed — reload before signing again.", 500);
+    if (!tx) return bad(UNCONFIRMED, 503);
     const t = tx as { signature: Record<string, unknown>; paired: { kind: string; rosterIds: string[] } | null; auditError: string | null };
     return NextResponse.json({
       signature: t.signature,
@@ -198,12 +218,17 @@ export async function POST(req: NextRequest) {
     });
   }
   if (txErr.code !== "PGRST202" && txErr.code !== "42883") {
-    // The transaction wrote nothing: say so, in the words the signer can act
-    // on — a guard's or the function's own sentence as written, any driver
-    // text replaced (userFacingError logs the raw detail).
+    // "Nothing was signed" only where the database proves it (a refusal
+    // inside the statement rolled the transaction back): a guard's or the
+    // function's own sentence as written, any driver text replaced. Any
+    // other answer is an unknown outcome — the signer is told to check.
+    if (!definitive(txErr)) {
+      logRefusal("record_signature_transaction: outcome unknown", txErr);
+      return bad(UNCONFIRMED, 503);
+    }
+    logRefusal("record_signature_transaction refused", txErr);
     if (pair && txErr.code === "P0002") return bad(PAIR_NO_ROW[pair.kind], 409);
     if (txErr.code === "23514") return bad(`${userFacingError(txErr, { context: "signatures/sign", clause: true })}. Nothing was signed.`, 409);
-    console.error("[signatures/sign] record_signature_transaction refused:", { code: txErr.code ?? null, message: txErr.message ?? null });
     return bad(`Nothing was signed. ${userFacingError(txErr, { context: "signatures/sign", embed: true })}`, 500);
   }
   // Said in the server log, never silent: PGRST202 is the function not in the
@@ -219,7 +244,16 @@ export async function POST(req: NextRequest) {
     .insert(signatureRow)
     .select("*")
     .single();
-  if (insErr || !row) return bad(insErr?.message || "Failed to record signature", 500);
+  // The same writes as before the change; only what the signer reads is
+  // plain language (a definitive refusal) or "check before signing again".
+  if (insErr || !row) {
+    if (insErr && definitive(insErr)) {
+      logRefusal("e_signatures insert refused", insErr);
+      return bad(`Nothing was signed. ${userFacingError(insErr, { context: "signatures/sign", embed: true })}`, 500);
+    }
+    if (insErr) logRefusal("e_signatures insert: outcome unknown", insErr);
+    return bad(UNCONFIRMED, 503);
+  }
 
   // The audit mirror is a CHECKED write: a signature without its trail is reported
   // — and (DEC-109, EVID-11 done-when 3) kept in the audit outbox, never dropped.
