@@ -67,9 +67,16 @@ import { Loader2, X, BookOpenText, CheckCircle2, Eye, Minus, AlertTriangle } fro
 import { CornerPortal, useDockAllowance, DOCK_PRIORITY } from "@/components/ui/CornerDock";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
-import { ingestKnowledgeDocument, isIngestActive } from "@/lib/knowledge";
 import { isUploading, onUploadActivity } from "@/lib/uploadActivity";
 import { useDismissed } from "@/hooks/useDismissed";
+import { lazyModule } from "@/lib/lazyModule";
+
+/** The indexing engine (lib/knowledge.ts) loads on use, not with the app
+ *  shell (projects-tab PERF-12, projects-joint J18): only a controller's tab
+ *  drains the queue, and its first pass fetches the engine at the same
+ *  moment it reads the queue. It is the same module instance the library
+ *  page uses, so `isIngestActive` still sees that page's own loop. */
+const knowledgeEngine = lazyModule(() => import("@/lib/knowledge"), "indexing engine");
 
 const POLL_MS = 120_000;
 
@@ -188,6 +195,13 @@ export default function KnowledgeIndexIndicator() {
       if (isUploading()) return;
       runningRef.current = true;
       try {
+        // Fetched alongside the first queue read. A fetch that fails (offline
+        // before the engine was ever loaded) ends this pass as an empty queue
+        // would; the next poll tries again.
+        const engineLoad = knowledgeEngine.preload().catch((e) => {
+          console.warn("[KnowledgeIndexIndicator] could not load the indexing engine; the next poll tries again", e);
+          return null;
+        });
         const attempted = new Set<string>();
         let finished = 0;
         let sawProgress = false;
@@ -198,7 +212,11 @@ export default function KnowledgeIndexIndicator() {
           // Re-checked between documents, not just at the top: a batch that
           // starts mid-drain must not have to wait out a long document.
           if (isUploading()) break;
-          const queue = (await readQueue())
+          const rows = await readQueue();
+          const engine = await engineLoad;
+          if (!engine) break;
+          const { ingestKnowledgeDocument, isIngestActive } = engine;
+          const queue = rows
             .filter((d) => !attempted.has(d.id) && !isIngestActive(d.id))
             .filter((d) => !isParked(d) || parkedTriedRef.current.get(d.id) !== parkedState(d));
           const next = queue[0];

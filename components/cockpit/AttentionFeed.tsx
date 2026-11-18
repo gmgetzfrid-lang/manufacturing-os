@@ -27,7 +27,7 @@ import React from "react";
 import Link from "next/link";
 import { Loader2, ChevronRight, ClipboardList, CheckCheck } from "lucide-react";
 import { useAttentionStatus, type AttentionItem, type AttentionCounts } from "@/hooks/useTicketNotifications";
-import { formatAgo } from "@/components/cockpit/CommandDeck";
+import { formatAgo } from "@/lib/formatAgo";
 import { kindMeta, type KindGroup, type KindTone } from "@/lib/notificationKinds";
 import { iconForKind, type IconComponent } from "@/components/notifications/kindIcon";
 

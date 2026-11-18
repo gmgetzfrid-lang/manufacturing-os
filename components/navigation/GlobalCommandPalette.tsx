@@ -17,10 +17,14 @@
 //  - Up/Down arrow + Enter to select. Esc to close.
 //  - ? typed alone opens the shortcut help.
 //
-// Mounted once at the protected-layout level. Lives in a single
-// useEffect-bound keydown listener so we don't fight component-
-// scoped CommandPalette instances (they still work for in-library
-// quick nav).
+// Mounted once at the protected-layout level, through
+// GlobalCommandPaletteHost (PERF-12, projects-joint J18): the host stays in
+// the app shell and owns the open state and the single window keydown
+// listener (Cmd+K / Ctrl+K, `/`, `?`, Escape), so the first press works
+// from the moment the page is up; this module — the palette itself, its
+// search and its actions — is fetched when the browser is first idle, or at
+// that first press. Component-scoped CommandPalette instances still work for
+// in-library quick nav.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
@@ -113,11 +117,19 @@ function pushRecent(item: RecentItem): RecentItem[] {
   return next;
 }
 
-export default function GlobalCommandPalette() {
+/** The host's state (components/navigation/GlobalCommandPaletteHost.tsx):
+ *  whether the palette is open, and whether it was opened by the global `?`
+ *  (the open effect reads and clears it). */
+export interface GlobalCommandPaletteProps {
+  open: boolean;
+  setOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  wantShortcutsRef: React.MutableRefObject<boolean>;
+}
+
+export default function GlobalCommandPalette({ open, setOpen, wantShortcutsRef }: GlobalCommandPaletteProps) {
   const { activeOrgId } = useRole();
   const router = useRouter();
   const pathname = usePathname();
-  const [open, setOpen] = useState(false);
   const [recents, setRecents] = useState<RecentItem[]>([]);
   const [query, setQuery] = useState("");
   const [activeIdx, setActiveIdx] = useState(0);
@@ -125,41 +137,6 @@ export default function GlobalCommandPalette() {
   const [busy, setBusy] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  // Set when the palette is opened via the global `?` so it lands directly
-  // on the shortcuts cheatsheet (the open effect reads + clears this).
-  const wantShortcutsRef = useRef(false);
-
-  // Open on Cmd+K / Ctrl+K — or just `/` when no input is focused — from
-  // anywhere. The `/` shortcut matches Linear / GitHub / Vercel patterns
-  // and is fast to reach for power users.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const isCmdK = (e.key === "k" || e.key === "K") && (e.metaKey || e.ctrlKey);
-      const isSlash = e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey;
-      // Don't hijack `/` when the user's typing into a field
-      const target = e.target as HTMLElement | null;
-      const inField = !!target && (
-        target.tagName === "INPUT" ||
-        target.tagName === "TEXTAREA" ||
-        target.isContentEditable
-      );
-      // `?` (Shift+/) from anywhere opens straight to the shortcuts cheatsheet —
-      // the standard GitHub/Linear/Gmail gesture the placeholder advertises.
-      const isHelp = e.key === "?" && !e.metaKey && !e.ctrlKey && !e.altKey;
-      if (isCmdK || (isSlash && !inField && !open)) {
-        e.preventDefault();
-        setOpen((v) => !v);
-      } else if (isHelp && !inField && !open) {
-        e.preventDefault();
-        wantShortcutsRef.current = true;
-        setOpen(true);
-      } else if (e.key === "Escape" && open) {
-        setOpen(false);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
 
   // Autofocus on open
   useEffect(() => {
@@ -173,7 +150,7 @@ export default function GlobalCommandPalette() {
       setRecents(loadRecents());
       requestAnimationFrame(() => inputRef.current?.focus());
     }
-  }, [open]);
+  }, [open, wantShortcutsRef]);
 
   // Debounced search. Skip when query starts with "g " or "?" — those
   // are nav/help intents handled below.
@@ -216,7 +193,7 @@ export default function GlobalCommandPalette() {
       acts.push({ key: "ctx-proj-evidence", label: "Evidence pack for this project", run: () => openProjectEvidencePack(projMatch[1]) });
     }
     return acts;
-  }, [open, pathname, activeOrgId, router]);
+  }, [open, pathname, activeOrgId, router, setOpen]);
 
   // Compose the visible items: context + actions + quick-nav, then resource hits.
   const visible = useMemo(() => {
@@ -293,7 +270,7 @@ export default function GlobalCommandPalette() {
       }
       router.push(item.href);
     }
-  }, [router]);
+  }, [router, setOpen]);
 
   // Key handling inside the input
   const handleKey = (e: React.KeyboardEvent<HTMLInputElement>) => {

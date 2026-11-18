@@ -8,6 +8,7 @@
     "prebuild": "node scripts/copy-pdfjs-worker.mjs && node scripts/stamp-sw-version.mjs",
     "build": "next build",
     "start": "next start",
+    "perf:budget": "node scripts/perf/route-js-budget/check.mjs",
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",

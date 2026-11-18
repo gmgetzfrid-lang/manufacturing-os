@@ -51,12 +51,17 @@ import {
 import { useTicketNotifications, useAttentionStatus, type AttentionSection } from '@/hooks/useTicketNotifications';
 import { useNotificationCenter } from '@/components/notifications/NotificationCenter';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import LogoUploadModal from '@/components/branding/LogoUploadModal';
+import { lazyModule, usePreloadWhenIdle } from '@/lib/lazyModule';
 import UserAvatar from '@/components/ui/UserAvatar';
 import {
   DOCUMENT_VIEWS, EQUIPMENT_VIEWS, HOME_VIEWS, ACTIVITY_VIEWS, INTELLIGENCE_VIEWS,
 } from '@/components/navigation/ViewTabs';
 import { ZC } from "@/lib/zLayers";
+
+/** The logo upload modal opens on a click: it is fetched when the browser is
+ *  first idle, or at that click, not with the app shell (projects-tab
+ *  PERF-12, projects-joint J18). */
+export const logoUploadModalModule = lazyModule(() => import('@/components/branding/LogoUploadModal'), 'logo upload');
 
 // A consolidated tool stays highlighted on any of its views. DERIVED from
 // the ViewTabs arrays so the two surfaces can never drift again (a new view
@@ -135,6 +140,9 @@ export default function Sidebar({
   }, []);
   const { logoUrl, branding, canEdit: canEditBranding } = useOrgBranding();
   const [logoModalOpen, setLogoModalOpen] = useState(false);
+  // Only someone who can edit the branding can open it.
+  usePreloadWhenIdle(logoUploadModalModule, canEditBranding);
+  const LogoUploadModal = logoUploadModalModule.useLoaded(logoModalOpen)?.default;
   const isMobile = useIsMobile();
 
   // `railCollapsed` is the persisted DESKTOP icon-rail preference. The
@@ -417,7 +425,7 @@ export default function Sidebar({
         </div>
       )}
 
-      {logoModalOpen && <LogoUploadModal onClose={() => setLogoModalOpen(false)} />}
+      {logoModalOpen && LogoUploadModal && <LogoUploadModal onClose={() => setLogoModalOpen(false)} />}
 
       <nav className="flex-1 overflow-y-auto overflow-x-hidden py-3 custom-scrollbar min-h-0">
         {sections.map((section) => {

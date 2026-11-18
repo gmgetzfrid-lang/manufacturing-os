@@ -4,9 +4,19 @@
 // `open-relationship-graph` CustomEvent carrying { documentId }. This lets any
 // surface (the command palette, a doc inspector button) open the relationship
 // map without threading state through the tree.
+//
+// The listener is in the app shell from mount; the map itself
+// (RelationshipGraph and its search) is fetched when the browser is first
+// idle, or at the first open, and shows as soon as it lands (projects-tab
+// PERF-12, projects-joint J18).
 
 import React from "react";
-import RelationshipGraph from "@/components/documents/RelationshipGraph";
+import { lazyModule, usePreloadWhenIdle } from "@/lib/lazyModule";
+
+export const relationshipGraphModule = lazyModule(
+  () => import("@/components/documents/RelationshipGraph"),
+  "relationship map",
+);
 
 export interface OpenRelationshipGraphDetail { documentId: string }
 
@@ -16,6 +26,7 @@ export function openRelationshipGraph(documentId: string) {
 
 export default function RelationshipGraphHost() {
   const [docId, setDocId] = React.useState<string | null>(null);
+  usePreloadWhenIdle(relationshipGraphModule);
 
   React.useEffect(() => {
     const onOpen = (e: Event) => {
@@ -26,6 +37,8 @@ export default function RelationshipGraphHost() {
     return () => window.removeEventListener("open-relationship-graph", onOpen as EventListener);
   }, []);
 
-  if (!docId) return null;
+  const loaded = relationshipGraphModule.useLoaded(!!docId);
+  if (!docId || !loaded) return null;
+  const RelationshipGraph = loaded.default;
   return <RelationshipGraph documentId={docId} onClose={() => setDocId(null)} />;
 }
