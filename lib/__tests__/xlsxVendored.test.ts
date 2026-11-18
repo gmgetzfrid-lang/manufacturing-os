@@ -189,6 +189,32 @@ describe("XEDGE-12 — text cells keep the 0.18.5 typing rules", () => {
     expect(values(html(["1:45 PM", "13:45"]))).toEqual(["1:45 PM", "13:45"]);
   }));
 
+  it("an HTML cell marked as text (data-t=\"s\", t=\"s\", T=s) keeps its text exactly, as 0.18.5 kept it", () => {
+    const marked = ["00123", "1-2", "1/2", "1e5", "TRUE", "(12)", "50%", "12345678901234567890", "#N/A", "15-Mar-2026", "13:45", "1:45 PM", "2026-03-15", " padded "];
+    const table = (attr: string) => Buffer.from(
+      "<table><tr><td>Tag</td><td>Value</td></tr>"
+      + marked.map((v, i) => `<tr><td>R${i}</td><td${attr}>${v}</td></tr>`).join("")
+      + "</table>",
+    );
+    for (const zone of ["UTC", "America/Chicago", "Asia/Kolkata"]) {
+      for (const attr of [' data-t="s"', ' t="s"', " T=s"]) {
+        expect(inZone(zone, () => values(table(attr)))).toEqual(marked.map((v) => v.trim()));
+      }
+    }
+  });
+
+  it("in a table that marks some cells, an UNMARKED cell is re-typed as before — except a date only 0.18.5 could read (recorded)", () => inZone("UTC", () => {
+    const mixed = Buffer.from(
+      "<table><tr><td>Tag</td><td>Value</td></tr><tr><td>R0</td><td data-t=\"s\">00123</td></tr>"
+      + "<tr><td>R1</td><td>00123</td></tr><tr><td>R2</td><td>13:45</td></tr><tr><td>R3</td><td>#N/A</td></tr>"
+      + "<tr><td>R4</td><td>15-Mar-2026</td></tr></table>",
+    );
+    // 0.18.5: ["00123", "123", "13:45", "#N/A", "2026-03-15"]. The last cell
+    // keeps its typed text: the mark is gone by the time cells are re-typed,
+    // so a cell 0.20.3 left as text is kept as text in such a table.
+    expect(values(mixed)).toEqual(["00123", "123", "13:45", "#N/A", "15-Mar-2026"]);
+  }));
+
   it("CSV formulas read blank, a quoted =\"x\" reads x, a CRLF inside a quoted field reads LF", () => inZone("UTC", () => {
     const bytes = Buffer.from('Tag,Value\r\nA,=SUM(A1:B1)\r\nB,"=""x"""\r\nC,=\r\nD,"one\r\ntwo"\r\n');
     expect(values(bytes)).toEqual(["", "x", "=", "one\ntwo"]);

@@ -1038,7 +1038,6 @@
     "PKG-12": "operator: read 20261143's MEASURE rows, have any package or asset tag over the budget split, then set NEXT_PUBLIC_FIELD_PACK_BUDGET=on and rebuild (DEC-70 §2 ratified at 150 sheets / 1000 pages / 150 MB, DEC-90)",
     "REV-9": "set NEXT_PUBLIC_FACILITY_TIME_ZONE in every deployment (closes public-surfaces VFY-4 too)",
     "VFY-20": "operator: run VFY-20's read-only IFC count (or read 20261134's inventory row) and send it back (DEC-77 ratified, DEC-90)",
-    "XEDGE-12": "operator: allow cdn.sheetjs.com in the environment's network policy, or fetch xlsx-0.20.3.tgz on another machine and commit it under vendor/ (the vendored SheetJS 0.20.3; exceljs not ratified, DEC-90); the integrator then does the swap",
     "TRX-15": "operator: check one hidden-frame portal download on iOS Safari and one on Firefox (the &nav=1 save and the visible fallback link) — done-when 2; the DEC-61 §5 amendment is ratified (DEC-90) and document-control P22 arms it",
     "DRLS-14": "operator: paste 20261149 once identity-and-session IS-P1's checked bulk delete is deployed (DEC-79 ratified, DEC-90)"
   }

@@ -22,8 +22,13 @@
 // Invalid Date that refused the whole file. Every one of those reads worked
 // a person's way before, so text-typed cells are re-typed here from the text
 // SheetJS keeps for them (`cell.w`) with the 0.18.5 rules
-// (`legacyTextCell`) — the same values every import made before the move.
-// Cells a binary workbook (xlsx / xls / xlsb) types are SheetJS's own; an
+// (`legacyTextCell`), so a text cell reads as it did before the move — with
+// one exception: in an HTML table whose source carries a `t="s"` /
+// `data-t="s"` text mark anywhere (`htmlMayMarkText`), a cell 0.20.3 left as
+// text keeps its text, so an UNMARKED cell there whose text only 0.18.5 read
+// as a date ("15-Mar-2026") stays as typed (XEDGE-12, recorded). Cells a
+// binary workbook (xlsx / xls / xlsb) types are SheetJS 0.20.3's own (Excel's
+// calendar for serials before 1900-03-01, ruled under DEC-90); an
 // OpenDocument sheet keeps 0.18.5's error text and calendar dates (below).
 //
 // The row cap REFUSES, never truncates: the draft action reports
@@ -188,14 +193,30 @@ function textFamily(wb: XLSX.WorkBook, bytes: Uint8Array): "dsv" | "html" | null
   return "dsv";
 }
 
+/** Whether an HTML table's source may mark a cell as text with a `t="s"` /
+ *  `data-t="s"` attribute (SheetJS's own HTML export writes one on every
+ *  string cell). Both versions keep such a cell as its text, but the mark is
+ *  gone by the time the cells are re-typed, so its presence anywhere in the
+ *  source is read as "this table may carry it" — deliberately broad: a false
+ *  hit only keeps a cell's typed text. Linear: no nested quantifier. */
+function htmlMayMarkText(bytes: Uint8Array): boolean {
+  const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const text = buf[0] === 0xff && buf[1] === 0xfe ? buf.subarray(2).toString("utf16le") : buf.toString("latin1");
+  return /(data-)?t\s*=\s*["']?s/i.test(text);
+}
+
 /** Re-type every text cell of `ws` with the 0.18.5 rules, from the text
  *  SheetJS keeps for it. A CRLF inside a quoted CSV field reads as LF, as
- *  0.18.5 (which normalised line ends before splitting) read it. */
-function retypeTextCells(ws: XLSX.WorkSheet, family: "dsv" | "html"): void {
+ *  0.18.5 (which normalised line ends before splitting) read it. With
+ *  `keepStrings` (an HTML table that may mark cells `t="s"`), a non-blank
+ *  cell 0.20.3 itself left a string keeps its text: a marked cell is one of
+ *  them, and 0.18.5 kept every marked cell as text. */
+function retypeTextCells(ws: XLSX.WorkSheet, family: "dsv" | "html", keepStrings = false): void {
   for (const key of Object.keys(ws)) {
     if (key.charAt(0) === "!") continue;
     const cell = ws[key] as XLSX.CellObject | undefined;
     if (!cell || typeof cell.w !== "string" || cell.w.length === 0) continue;
+    if (keepStrings && cell.t === "s" && cell.w.trim().length > 0) continue;
     const text = family === "dsv" ? cell.w.replace(/\r\n/g, "\n") : cell.w;
     ws[key] = legacyTextCell(text, family);
   }
@@ -241,7 +262,7 @@ export function parseWorkbook(bytes: Uint8Array | Buffer, sheet?: string): Sheet
 
   const ws = wb.Sheets[sheetName];
   const family = textFamily(wb, bytes);
-  if (family) retypeTextCells(ws, family);
+  if (family) retypeTextCells(ws, family, family === "html" && htmlMayMarkText(bytes));
   // An OpenDocument sheet (.ods / flat .fods): 0.18.5 kept a formula's error
   // ("#DIV/0!", "#N/A") as its text and read a date as the calendar date the
   // file states; 0.20.3 makes the error a blank error cell and shifts the
