@@ -379,6 +379,18 @@ describe("EVID-12 (F7) — the serial approval's own row carries each approved D
     expect(f).toMatchObject({ issuedFromDraftId: "a-d", sha256: SHA, matchesStoredHash: true });
     expect("sha256AtAttach" in f).toBe(false);
   });
+
+  it("issue-as-is over a Draft whose stored hash does not verify: the approval row says so; the follow-up's Final has the same shape as every other (no stored-side field)", async () => {
+    state.rows.tickets = [awaiting([{ ...DRAFT, contentHash: { ...sealed(), seal: "x" } }], { metadata: { issue_ready: { rev: "1A", by: "d-1", at: LM } } })];
+    state.user = { id: "req-1" };
+    expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc", issueAsIsAcknowledged: true })).status).toBe(200);
+    const asIs = (row("TICKET_APPROVE_DRAFT_IFC")!.details.issuedAsIsFinals as Array<Record<string, unknown>>)[0];
+    expect(asIs).toMatchObject({ issuedFromDraftId: "a-d", sha256AtAttachUnverified: "seal did not verify" });
+    await runAfter();
+    const f = (row("TICKET_APPROVE_DRAFT_IFC_FILES_HASHED")!.details.issuedAsIsFinals as Array<Record<string, unknown>>)[0];
+    expect(f).toMatchObject({ issuedFromDraftId: "a-d", sha256: SHA });
+    for (const k of ["sha256AtAttach", "sha256AtAttachUnverified", "matchesStoredHash"]) expect(k in f, k).toBe(false);
+  });
 });
 
 describe("EVID-12 (F7) — lib/ticketFileHash.ts", () => {

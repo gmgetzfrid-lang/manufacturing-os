@@ -17,11 +17,11 @@
     "audit-reports/drafting-flow/13-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 160,
+    "findings": 161,
     "gaps": 16,
     "by_severity": {
       "CRITICAL": 9,
-      "HIGH": 48,
+      "HIGH": 49,
       "MEDIUM": 68,
       "LOW": 35
     },
@@ -29,7 +29,7 @@
       "RESOLVED": 127,
       "RESOLVED (2026-10-13, DF-P4 — PASTE pending: `20261208`, after `20261195` and after the DF-P2 app deploy; until it is pasted a member's hand-written PostgREST insert can still choose `requester_name`)": 1,
       "RESOLVED (2026-10-13 — done-when 2's `CLOSED` reading ratified by the integrator at DF-P10's review fix pass 6: \"a closed row with no issued label answers cannot confirm\"; the forged-line residual below is owned by drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS)": 1,
-      "OPEN": 7,
+      "OPEN": 8,
       "RESOLVED (2026-10-13, by the integrator at the admin-and-org P8 merge — done-when 2 superseded by `DEC-103`; PASTE pending: `20261195`, paste guide row 153)": 1,
       "RESOLVED *(2026-10-14, admin-and-org Round G P13 — the dead-letter outbox and its drain, pending the `20261219` paste; see the Resolution at the end)*": 1,
       "RESOLVED (2026-11-18, fleet F7-EVID12 fix pass — see the Resolution)": 1,
@@ -824,6 +824,30 @@
       ],
       "refuted": false,
       "summary": "A member who knows an issued Final's key (it is on the ticket row every member of the workspace reads) asks upload-url for that key and PUTs other bytes. The ticket, its approval and issue rows, the attach row's ETag and sha256 (EVID-12) all still name the file; every print and download now serves the new bytes. No audit row records the write, and storage keeps no earlier version.",
+      "area": "drafting-flow",
+      "report": "audit-reports/drafting-flow/10-audit-evidence.md"
+    },
+    {
+      "id": "EVID-19",
+      "title": "The signing doors sign a write to ANY key outside `orgs/<uuid>/` for any signed-in user of any workspace — a legacy key a request or record still lists can be overwritten across tenants",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading the code on F7-EVID12's last pass (base `be205317`).",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/storage/upload-url/route.ts:40",
+        "app/api/storage/multipart/route.ts",
+        "lib/userProfiles.ts:200"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A user of workspace B learns a legacy key that a request of workspace A lists (from a shared export, a screenshot, an old link). They PUT other bytes under it. Workspace A's request now serves them, and no row of either workspace records the write.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/10-audit-evidence.md"
     },

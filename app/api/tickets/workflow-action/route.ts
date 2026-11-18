@@ -2500,10 +2500,13 @@ async function handleWorkflowAction(req: NextRequest, attachHashAbort: AbortSign
                 issuedAsIsFinals: asIs.map((f) => {
                   const d = approvedDrafts.find((x) => x.id === f.issuedFromDraftId);
                   const h = d ? hashOf(d) : undefined;
-                  // the approval's row carried the stored hash on `f`; this
-                  // row states the hash read now (and whether it matches)
-                  const { sha256: _stored, sha256AtAttach: _boundTo, ...named } = f as typeof f & { sha256?: unknown; sha256AtAttach?: unknown };
-                  void _stored; void _boundTo;
+                  // the approval's row carried what was stored on `f` (the
+                  // hash and its binding, or that its seal did not verify);
+                  // this row states only the hash read now and whether it
+                  // matches — all three stored-side fields are left out, so
+                  // every as-is Final here has the same shape
+                  const { sha256: _stored, sha256AtAttach: _boundTo, sha256AtAttachUnverified: _unverified, ...named } = f as typeof f & { sha256?: unknown; sha256AtAttach?: unknown; sha256AtAttachUnverified?: unknown };
+                  void _stored; void _boundTo; void _unverified;
                   return { ...named, sha256: h?.ok ? h.sha256 : null, ...(h && !h.ok ? { sha256Unavailable: h.reason } : {}), ...matchFields(d, h) };
                 }),
               } : {}),

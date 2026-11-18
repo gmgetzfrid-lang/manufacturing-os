@@ -505,8 +505,36 @@ async function multipartCall<T>(payload: Record<string, unknown>): Promise<T> {
     body: JSON.stringify(payload),
   });
   const body = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
-  if (!res.ok || !body) throw new Error(body?.error || `multipart ${payload.action} failed (HTTP ${res.status})`);
+  // The HTTP status rides the error (same message as before) so `complete`
+  // can tell a transient refusal (503) from a final one (409).
+  if (!res.ok || !body) throw Object.assign(new Error(body?.error || `multipart ${payload.action} failed (HTTP ${res.status})`), { status: res.status });
   return body;
+}
+
+/** How long `complete` waits before its one retry after a 503. */
+export const COMPLETE_RETRY_DELAY_MS = 1_500;
+
+/**
+ * drafting-flow EVID-17 / document-control PKG-15 follow-up: `complete` now
+ * asks the version ledger and the request lookup before it writes, and a
+ * read it cannot make answers 503. That is transient, and the parts of a
+ * multi-GB upload are already in storage, so a 503 is retried ONCE after a
+ * short wait before the caller aborts the upload. Any other failure — a 409
+ * refusal above all — is thrown at once (the caller aborts at once, as
+ * before). A cancel during the wait is a cancel.
+ */
+export async function completeMultipartWithRetry<T>(
+  call: () => Promise<T>,
+  opts: { signal?: AbortSignal; sleep?: (ms: number) => Promise<void>; delayMs?: number } = {},
+): Promise<T> {
+  try {
+    return await call();
+  } catch (e) {
+    if ((e as { status?: unknown } | null)?.status !== 503) throw e;
+    await (opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms))))(opts.delayMs ?? COMPLETE_RETRY_DELAY_MS);
+    if (opts.signal?.aborted) throw new UploadCancelledError();
+    return await call();
+  }
 }
 
 async function uploadMultipart(
@@ -552,7 +580,7 @@ async function uploadMultipart(
       doneBytes += chunk.size;
       onBytes(doneBytes);
     }
-    await multipartCall({ action: "complete", path, uploadId, parts });
+    await completeMultipartWithRetry(() => multipartCall({ action: "complete", path, uploadId, parts }), { signal });
   } catch (e) {
     // Leave nothing half-assembled (or billable) behind.
     await multipartCall({ action: "abort", path, uploadId }).catch(() => undefined);

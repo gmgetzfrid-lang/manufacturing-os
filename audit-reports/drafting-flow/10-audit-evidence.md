@@ -1,6 +1,6 @@
 # 10 · Audit trail & evidentiary completeness
 
-**18 findings** — 1 CRITICAL · 5 HIGH · 9 MEDIUM · 3 LOW. *(Recounted 2026-11-18 at F7-EVID12's fix pass, which opened `EVID-17` (HIGH) and `EVID-18` (MEDIUM); the line had read "14 findings — 1 CRITICAL · 5 HIGH · 8 MEDIUM" since before `EVID-13`–`EVID-16`.)*
+**19 findings** — 1 CRITICAL · 6 HIGH · 9 MEDIUM · 3 LOW. *(Recounted 2026-11-18 at F7-EVID12's fix pass, which opened `EVID-17` (HIGH) and `EVID-18` (MEDIUM), and again at its last pass, which opened `EVID-19` (HIGH); the line had read "14 findings — 1 CRITICAL · 5 HIGH · 8 MEDIUM" since before `EVID-13`–`EVID-16`.)*
 
 Judged as a PSM/OSHA auditor would: what could this system prove, and what could it not?
 
@@ -1443,7 +1443,7 @@ components/viewers/SecureDocViewer.tsx:83-92 —
 
 **Resolution (2026-11-18, fleet F7-EVID12 fix pass).** Reproduced on `a1d70abb`: `upload-url` signed a PUT for a listed, stored ticket key (only `document_versions` was asked), and the multipart route opened and completed an upload to it.
 - `lib/ticketKeyOverwrite.ts` `ticketKeyOverwriteRefusal` (`:54`): for a key under `orgs/<org>/tickets/` (`ticketKeyOrg`, `:41`), asks whether a request of that workspace lists it. This is `lib/ticketShed.ts`'s lookup, `.contains("attachments", [{ url }])` scoped by `org_id`; any request row counts, archived or not, which is stricter than "live". If one does, it asks storage whether the bytes are there (HEAD). Listed and stored is refused, 409: "That file is already attached to a request, so it can't be overwritten. Upload it as a new file instead." A lookup error, or a storage answer other than not-found, is refused, 503: "Couldn't check whether that file is already attached to a request, so the upload was refused. Try again in a moment." A key outside `orgs/<org>/tickets/` reads nothing.
-- `app/api/storage/upload-url/route.ts:111-113` asks it after `PKG-1`'s check, which is unchanged and still first.
+- `app/api/storage/upload-url/route.ts:112-113` asks it after `PKG-1`'s check, which is unchanged and still first.
 - `app/api/storage/multipart/route.ts:92-93` asks it at **create** and again at **complete** (the moment the bytes land), so an upload opened before the file was attached cannot complete over it. Signing a part and aborting are unchanged; an abort must always work.
 - **Every legitimate writer traced (no regression):**
   - `lib/storage.ts` `uploadTicketAttachment` (the request page's attach, the new-request page and the check-in panel's staging folder) always mints a fresh timestamped key and signs it before any request lists it. The request is attached only after the upload completes, and the PUT is not retried on the same URL; a retry re-signs a new key.
@@ -1457,7 +1457,9 @@ Tests: `lib/__tests__/evid17TicketKeyOverwrite.test.ts`, 11 cases.
 - Fail closed: a lookup error is 503 (both doors); a storage error is 503. PKG-1 is unchanged and first.
 - Mutation-checked, seven mutations, each failing the suite: the upload-url gate removed; complete not gated; an absent file refused (the restore broken); the lookup failing open; the storage check failing open; sign and abort gated; the lookup not scoped to the workspace. `lib/__tests__/aoRoundGLogoUpload.test.ts`'s Supabase stand-in now answers the new `tickets` read with no rows (a harness addition; no assertion changed).
 
-**Done-when.** ✓ (1), ✓ (2), ✓ (3) as written above. **Residual (DEC-31):** two narrower ways to replace a listed file's bytes are not closed by a signing door, and are opened as [`EVID-18`](#evid-18): the uploader's own PUT URL signed before the attach, and a controller's audited delete followed by a fresh put-back. **Also found, not this finding's:** the multipart route had no `PKG-1` check either, so a published revision's bytes (a file of 64 MB or more) could be overwritten through it. *Opened by the integrator, 2026-11-18, as document-control [`PKG-15`](../document-control/07-packages.md#pkg-15) (CRITICAL) and RESOLVED in this branch: the same check, at create and complete.*
+**Scope (narrowed at F7-EVID12's last pass, DEC-29).** This finding and its fix cover keys under `orgs/<uuid>/tickets/` only (`ticketKeyOrg`). A request row that still lists a legacy key outside the `orgs/` layout gets no protection from this check. Such keys sit behind a wider gap: the signing doors sign a write to ANY key outside `orgs/<uuid>/` for any signed-in user of any workspace. That gap is [`EVID-19`](#evid-19).
+
+**Done-when.** ✓ (1), ✓ (2), ✓ (3) as written above, for keys under `orgs/<uuid>/tickets/`. **Residual (DEC-31):** two narrower ways to replace a listed file's bytes are not closed by a signing door, and are opened as [`EVID-18`](#evid-18): the uploader's own PUT URL signed before the attach, and a controller's audited delete followed by a fresh put-back. **Also found, not this finding's:** the multipart route had no `PKG-1` check either, so a published revision's bytes (a file of 64 MB or more) could be overwritten through it. *Opened by the integrator, 2026-11-18, as document-control [`PKG-15`](../document-control/07-packages.md#pkg-15) (CRITICAL) and RESOLVED in this branch: the same check, at create and complete.*
 
 ---
 
@@ -1473,7 +1475,7 @@ Tests: `lib/__tests__/evid17TicketKeyOverwrite.test.ts`, 11 cases.
 - **Locations:** `app/api/storage/upload-url/route.ts` (`expiresIn: 900`), `lib/storage.ts` (`uploadToPathInner`: sign, then PUT), `app/api/storage/delete/route.ts` (`keysReferencedOutside` skips JSON key columns: `lib/storageKeyRegistry.ts` `plainKeyColumns`)
 - **Independently verified:** — opened 2026-11-18 by F7-EVID12's fix pass; not yet challenged by a second party.
 
-**Mechanism.** (1) A signed PUT URL is reusable until it expires, 15 minutes after it was signed. The uploader signs it before the file is attached; `EVID-17`'s check passes then, since nothing lists the key yet. The uploader can PUT again after the attach until the URL expires, and no door is asked. (2) `/api/storage/delete` lets a controller (Admin / DocCtrl) delete a stored object. Its "another record still uses this file" check reads plain key columns only, not `tickets.attachments`. Once the object is gone, `EVID-17`'s rule signs a write to the absent key, because that is the backup restore's put-back.
+**Mechanism.** (0) *(Added at F7-EVID12's last pass, from the re-review.)* `EVID-17`'s rule signs a write to a listed key whose object is ABSENT, because the backup restore's put-back must work. So ANY member — not only after a controller's delete — can get a signed write for such a key. The ticket shed makes that case common: its commit keeps a shed request's `attachments` on the stub (`app/api/admin/ticket-shed/commit/route.ts:281`, the stamp clears comments, history and metadata, not attachments) while it deletes the binaries (`:103-110`, `deleteR2Keys`). A member can plant bytes under a shed request's key. The shed restore writes the archived bytes back with an unconditional `PutObject` (`app/api/admin/ticket-shed/restore/route.ts:205`), so a plant is overwritten on restore. It survives only where the archive holds no copy of that key. (1) A signed PUT URL is reusable until it expires, 15 minutes after it was signed. The uploader signs it before the file is attached; `EVID-17`'s check passes then, since nothing lists the key yet. The uploader can PUT again after the attach until the URL expires, and no door is asked. (2) `/api/storage/delete` lets a controller (Admin / DocCtrl) delete a stored object. Its "another record still uses this file" check reads plain key columns only, not `tickets.attachments`. Once the object is gone, `EVID-17`'s rule signs a write to the absent key, because that is the backup restore's put-back.
 
 **Failure scenario.** A drafter uploads a Draft, attaches it, and within the URL's remaining minutes PUTs other bytes under the same key. The approval row carries the attach-time sha256 (`EVID-12`), which no longer describes the stored file. Or a controller deletes an issued Final (audited `STORAGE_DELETE`) and uploads other bytes under its key.
 
@@ -1483,6 +1485,36 @@ Tests: `lib/__tests__/evid17TicketKeyOverwrite.test.ts`, 11 cases.
 
 - [ ] A write to a listed ticket key through a URL signed before the attach is impossible or refused (for example a conditional PUT that storage refuses when the key exists, signed into the URL, with the browser path sending the header; or the attach moving the file to a server-minted key no URL names), with every legitimate upload pinned unchanged
 - [ ] `/api/storage/delete` refuses a key a request lists (`lib/ticketShed.ts` `keysOnOtherLiveTickets`), fail closed, with the shed's own frees unchanged
+- [ ] A signed write to a listed but absent key is held to the restore that needs it (for example signed only for the restore surface's caller, or only for a key whose request is not a shed stub), with the backup restore's put-back pinned unchanged
 - [ ] Or the integrator rules both windows an accepted, documented limit (detected and recorded as above), which also closes `EVID-12`
 
 **Owner (DEC-31):** the integrator — a ruling, or a package for the next holder of `app/api/storage/upload-url/route.ts` and `app/api/storage/delete/route.ts`.
+
+---
+
+<a id="evid-19"></a>
+
+## EVID-19 · The signing doors sign a write to ANY key outside `orgs/<uuid>/` for any signed-in user of any workspace — a legacy key a request or record still lists can be overwritten across tenants
+
+- **Severity:** HIGH
+- **Status:** OPEN
+- **Assigned:** the next holder of `app/api/storage/upload-url/route.ts` and `app/api/storage/multipart/route.ts` — by the integrator, 2026-11-18 (DEC-31), at F7-EVID12's last pass (with `EVID-18`).
+- **Verification:** CONFIRMED by reading the code on F7-EVID12's last pass (base `be205317`).
+- **Locations:** `app/api/storage/upload-url/route.ts:40` (`orgMatch`: membership, the subscription gate, the logo and cover rules apply only when the key starts `orgs/<uuid>/`), `app/api/storage/multipart/route.ts` (the same), `lib/userProfiles.ts:200` (`avatars/<uid>/…`, a legitimate key outside `orgs/`)
+- **Independently verified:** — reported by the F7-EVID12 re-review, 2026-11-18, and confirmed here; not yet challenged by a second party. Noted earlier, without an id, in admin-and-org `02-backup-restore.md`'s sound-invariants table ("the untreated non-org-prefixed branch").
+
+**Mechanism.** Both signing doors authorize a key by its prefix. For `orgs/<uuid>/…` they require active membership of that workspace. For any other key they require only a signed-in session. The checks still made are `assertSafeStorageKey`, `PKG-1` / `PKG-15`'s version-key check (a document version's bytes are refused) and `EVID-17`'s, which applies only under `orgs/<uuid>/tickets/`. So a signed-in user of ANY workspace can obtain a signed write for any non-`orgs/` key that is not a version's bytes:
+- a legacy ticket attachment from before the `orgs/` layout that a request still lists;
+- another user's avatar (`avatars/<uid>/…`);
+- any other legacy object the app still serves.
+
+**Failure scenario.** A user of workspace B learns a legacy key that a request of workspace A lists (from a shared export, a screenshot, an old link). They PUT other bytes under it. Workspace A's request now serves them, and no row of either workspace records the write.
+
+**Why not fixed in F7-EVID12.** A one-line refusal of every non-`orgs/` key is not clearly safe: avatars are written outside `orgs/` by design (`avatars/<uid>/`, user-scoped, `lib/userProfiles.ts:200`), and the backup restore's put-back may carry legacy keys (admin-and-org `02-backup-restore.md`). The fix needs an allow-list and a trace of every writer.
+
+**Done when.**
+
+- [ ] Neither signing door signs a write to a key outside `orgs/<uuid>/` except an allow-listed, owner-scoped layout (for example `avatars/<own uid>/` for the caller alone), with the refusal in plain words
+- [ ] A legacy key that a request or a record of a workspace lists is signed only for a member of that workspace, and `EVID-17`'s listed-and-stored refusal applies to it too
+- [ ] Every legitimate writer (avatars, the restore's put-back of legacy keys) is traced and pinned unchanged
+
