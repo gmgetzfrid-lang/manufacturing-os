@@ -5,6 +5,9 @@ import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useSt
 import dynamic from "next/dynamic";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { checkedWrite, CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
+import { notLandedReason } from "@/lib/checkedWriteReason";
 import { stateStyle, documentState } from "@/lib/stateColors";
 import { useRole } from "@/components/providers/RoleContext";
 import { holdsReadOnlyRole } from "@/lib/roleHeld";
@@ -430,7 +433,11 @@ export default function LibraryExplorerPage() {
       const currentCols = library.customColumns || [];
       const updatedCols = [...currentCols, field];
 
-      await supabase.from("libraries").update({ custom_columns: updatedCols, updated_by: uid }).eq("id", library.id!);
+      // projects-tab SAF-22 (J15e): class (a) — the column is the person's
+      // act; a write that failed or matched no row (discarded before, so the
+      // column showed as made) throws, and nothing after it claims it.
+      const made = await checkedWrite(supabase.from("libraries").update({ custom_columns: updatedCols, updated_by: uid }).eq("id", library.id!).select("id"));
+      if (!made.ok) throw new Error(made.error);
       setLibrary((prev) => prev ? { ...prev, customColumns: updatedCols } : prev);
 
       // Auto-add to view (active columns) — schema act, lands org-wide.
@@ -446,10 +453,12 @@ export default function LibraryExplorerPage() {
   const handleSaveUniquenessKeys = async (next: string[]) => {
     if (!library || !activeOrgId) return;
     try {
-      await supabase.from("libraries").update({
+      // SAF-22 (J15e): class (a), as handleSaveColumn.
+      const saved = await checkedWrite(supabase.from("libraries").update({
         uniqueness_keys: next.length ? next : null,
         updated_by: uid,
-      }).eq("id", library.id!);
+      }).eq("id", library.id!).select("id"));
+      if (!saved.ok) throw new Error(saved.error);
       setLibrary((prev) => prev ? { ...prev, uniquenessKeys: next.length ? next : undefined } : prev);
     } catch (e) {
       console.error("Failed to save uniqueness keys", e);
@@ -468,11 +477,20 @@ export default function LibraryExplorerPage() {
       let nextCols = currentCols;
       if (!hasSheet) {
         nextCols = [...currentCols, { key: "sheet", label: "Sheet", type: "text" }];
-        await supabase.from("libraries").update({ custom_columns: nextCols, updated_by: uid }).eq("id", library.id!);
+        // SAF-22 (J15e): class (a), as handleSaveColumn.
+        const made = await checkedWrite(supabase.from("libraries").update({ custom_columns: nextCols, updated_by: uid }).eq("id", library.id!).select("id"));
+        if (!made.ok) throw new Error(made.error);
       }
       const baseKeys = library.uniquenessKeys?.length ? library.uniquenessKeys : ["documentNumber"];
       const nextKeys = Array.from(new Set([...baseKeys, "sheet"]));
-      await supabase.from("libraries").update({ uniqueness_keys: nextKeys, updated_by: uid }).eq("id", library.id!);
+      const keyedKept = keptAnswer();
+      const keyed = await checkedWrite(answered(supabase.from("libraries").update({ uniqueness_keys: nextKeys, updated_by: uid }).eq("id", library.id!).select("id"), keyedKept));
+      if (!keyed.ok) {
+        // the Sheet column, when it was just made, landed: keep it on screen
+        // and say so — never "nothing was changed" after it
+        if (!hasSheet) setLibrary((prev) => prev ? { ...prev, customColumns: nextCols } : prev);
+        throw new Error(hasSheet ? keyed.error : `The Sheet column was added, but it was not made part of the uniqueness rule: ${notLandedReason(keyedKept, "library uniqueness rule")}`);
+      }
       setLibrary((prev) => prev ? { ...prev, customColumns: nextCols, uniquenessKeys: nextKeys } : prev);
       if (!hasSheet && !activeColumns.includes("sheet")) {
         await updateColumns([...activeColumns, "sheet"], { scope: "org" });
@@ -630,9 +648,13 @@ export default function LibraryExplorerPage() {
         const aclIndex = buildAclIndexFromChain(myChain, Date.now()); // OWN-7
         // A failed index write would leave the folder's RLS index missing its
         // inherited restrictions — that must fail the upload, not pass silently.
-        const { error: idxErr } = await supabase.from("collections")
-          .update({ acl_index: aclIndex ?? null }).eq("id", newId);
-        if (idxErr) throw new Error(`Couldn't apply permissions to the new folder "${node.name}": ${idxErr.message}`);
+        // projects-tab SAF-22 (J15e): a write that matched no row fails the
+        // upload too (it was read as applied before).
+        const idxKept = keptAnswer();
+        const idx = await checkedWrite(answered(supabase.from("collections")
+          .update({ acl_index: aclIndex ?? null }).eq("id", newId).select("id"), idxKept));
+        if (idxKept.error) throw new Error(`Couldn't apply permissions to the new folder "${node.name}": ${idxKept.error.message}`);
+        if (!idx.ok) throw new Error(`Couldn't apply permissions to the new folder "${node.name}": ${CHECKED_WRITE_REFUSED}`);
       }
       chainByFolderId.set(newId, myChain);
       register(parentCollectionId, node.name, newId);
@@ -821,10 +843,14 @@ export default function LibraryExplorerPage() {
     setSavingTitle(true);
     try {
       if (title) {
-        const { error: upErr } = await supabase.from("documents")
+        // projects-tab SAF-22 (J15e): class (a) — a rename that matched no row
+        // is the typed refusal (a database error keeps its own words).
+        const upKept = keptAnswer();
+        const renamed = await checkedWrite(answered(supabase.from("documents")
           .update({ title, updated_at: new Date().toISOString(), updated_by: uid ?? null })
-          .eq("id", docId);
-        if (upErr) throw new Error(upErr.message);
+          .eq("id", docId).select("id"), upKept));
+        if (upKept.error) throw new Error(upKept.error.message);
+        if (!renamed.ok) throw new Error(CHECKED_WRITE_REFUSED);
         setDocuments((prev) => prev.map((d) => (d.id === docId ? { ...d, title } : d)));
       }
       setEditingTitleId(null);
@@ -1120,14 +1146,18 @@ export default function LibraryExplorerPage() {
       await appAlert({ message: `All ${ids.length} selected document${ids.length === 1 ? " is" : "s are"} under legal hold and cannot be archived.`, tone: "danger" });
       return;
     }
-    const { data: archived, error: archErr } = await supabase.from("documents").update({
+    // projects-tab SAF-22 (J15e): read through checkedWrite — the rows
+    // returned are the rows archived (below), as before.
+    const archKept = keptAnswer();
+    await checkedWrite(answered(supabase.from("documents").update({
       status: "Archived",
       archived_at: now,
       archived_by: uid ?? null,
       archive_reason: archiveReason.trim(),
       updated_at: now,
       updated_by: uid ?? null,
-    }).in("id", targets).select("id");
+    }).in("id", targets).select("id"), archKept));
+    const { data: archived, error: archErr } = archKept;
     if (archErr) { await appAlert({ message: `Archive failed: ${archErr.message}`, tone: "danger" }); return; }
     const done = new Set(((archived ?? []) as Array<{ id: string }>).map((r) => r.id));
     // PROD-17 (document-control P28): a bulk archive is a retirement. ONE
@@ -1302,14 +1332,11 @@ export default function LibraryExplorerPage() {
   const [commandOpen, setCommandOpen] = useState(false);
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
 
-  // Column resize state — persisted to libraries.column_widths in Supabase
+  // Column resize state — read from libraries.column_widths (and live-synced
+  // below); this page never writes it: document-control REV-38 (a resize
+  // and its reset are kept for this view only).
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
-  const colWidthsRef = useRef<Record<string, number>>({});
   const resizingRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null);
-  const saveWidthsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Keep colWidthsRef in sync so resize handler can read latest value on mouseup
-  useEffect(() => { colWidthsRef.current = colWidths; }, [colWidths]);
 
   const [activeColumns, setActiveColumns] = useState<string[]>([]);
   const [columnDefs, setColumnDefs] = useState<MetadataFieldDefinition[]>([]);
@@ -2346,7 +2373,12 @@ export default function LibraryExplorerPage() {
       if (newAcl) {
         const chain = [...buildFolderChain(currentFolder), newAcl];
         const aclIndex = buildAclIndexFromChain(chain, Date.now()); // OWN-7
-        await supabase.from("collections").update({ acl_index: aclIndex ?? null }).eq("id", newId);
+        // projects-tab SAF-22 (J15e): the folder exists either way (it is
+        // never said as not created); an index write that failed or matched
+        // no row — discarded before — is said.
+        const idxKept = keptAnswer();
+        const idx = await checkedWrite(answered(supabase.from("collections").update({ acl_index: aclIndex ?? null }).eq("id", newId).select("id"), idxKept));
+        if (!idx.ok) setError(`The folder "${name}" was created, but its permissions could not be applied: ${notLandedReason(idxKept, "folder index")}`);
       }
 
       setCreatingFolder(false);
@@ -3342,17 +3374,22 @@ export default function LibraryExplorerPage() {
         status: doc.status,
         customFields: doc.metadata as Record<string, unknown>,
       }, library.uniquenessKeys);
-      const { error } = await supabase.from("documents").update({
+      // projects-tab SAF-22 (J15e): class (a) — a renumber that matched no
+      // row is the typed refusal, said where a database error is said.
+      const numKept = keptAnswer();
+      const renumbered = await checkedWrite(answered(supabase.from("documents").update({
         document_number: trimmed,
         uniqueness_key: uniquenessKey,
         updated_at: new Date().toISOString(),
         updated_by: uid ?? null,
-      }).eq("id", docId);
+      }).eq("id", docId).select("id"), numKept));
+      const { error } = numKept;
       if (error) {
         const f = translatePostgresError(error, { entity: "document", field: "document_number" });
         setEditingDocNumError(f.message);
         return;
       }
+      if (!renumbered.ok) { setEditingDocNumError(CHECKED_WRITE_REFUSED); return; }
       // Optimistically update local state so the cell shows the new value immediately.
       setDocuments((prev) => prev.map((d) => d.id === docId ? { ...d, documentNumber: trimmed } : d));
       setEditingDocNumId(null);
@@ -3373,15 +3410,23 @@ export default function LibraryExplorerPage() {
     }
   };
 
-  const handleDeleteColumn = async (key: string) => {
-    if (!library || !activeOrgId) return;
+  const handleDeleteColumn = async (key: string): Promise<boolean> => {
+    if (!library || !activeOrgId) return false;
     const updatedCols = (library.customColumns ?? []).filter((c) => c.key !== key);
-    await supabase.from("libraries").update({ custom_columns: updatedCols, updated_by: uid }).eq("id", library.id!);
+    // projects-tab SAF-22 (J15e): class (a) — a delete that failed or matched
+    // no row (discarded before) is said here, and nothing after it runs.
+    // Said, not thrown: the Column Manager awaits this without a catch.
+    const removed = await checkedWrite(supabase.from("libraries").update({ custom_columns: updatedCols, updated_by: uid }).eq("id", library.id!).select("id"));
+    if (!removed.ok) {
+      await appAlert({ message: `The column was not deleted: ${removed.error}`, tone: "danger" });
+      return false;
+    }
     setLibrary((prev) => prev ? { ...prev, customColumns: updatedCols } : prev);
     // Remove from active view columns too — schema act, lands org-wide so
     // the deleted column doesn't linger as an orphan in the org default.
     const nextActive = activeColumns.filter((k) => k !== key);
     await updateColumns(nextActive, { scope: "org" });
+    return true;
   };
 
   // Rename a column's display label. Works for both system columns
@@ -3398,22 +3443,31 @@ export default function LibraryExplorerPage() {
       const updatedCols = (library.customColumns ?? []).map((c) =>
         c.key === key ? { ...c, label: trimmed } : c
       );
-      const { error } = await supabase
+      // projects-tab SAF-22 (J15e): class (a) — the database's own words as
+      // before (the Column Manager reads them for its migration hint); a
+      // write that matched no row is the typed refusal.
+      const kept = keptAnswer();
+      const renamed = await checkedWrite(answered(supabase
         .from("libraries")
         .update({ custom_columns: updatedCols, updated_by: uid })
-        .eq("id", library.id!);
-      if (error) throw new Error(error.message);
+        .eq("id", library.id!)
+        .select("id"), kept));
+      if (kept.error) throw new Error(kept.error.message);
+      if (!renamed.ok) throw new Error(CHECKED_WRITE_REFUSED);
       setLibrary((prev) => prev ? { ...prev, customColumns: updatedCols } : prev);
       return;
     }
 
     // System column rename: persist as a label override on the library
     const overrides = { ...(library.columnLabelOverrides ?? {}), [key]: trimmed };
-    const { error } = await supabase
+    const kept = keptAnswer();
+    const relabelled = await checkedWrite(answered(supabase
       .from("libraries")
       .update({ column_label_overrides: overrides, updated_by: uid })
-      .eq("id", library.id!);
-    if (error) throw new Error(error.message);
+      .eq("id", library.id!)
+      .select("id"), kept));
+    if (kept.error) throw new Error(kept.error.message);
+    if (!relabelled.ok) throw new Error(CHECKED_WRITE_REFUSED);
     setLibrary((prev) => prev ? { ...prev, columnLabelOverrides: overrides } : prev);
   };
 
@@ -3484,19 +3538,15 @@ export default function LibraryExplorerPage() {
       document.removeEventListener("pointerup", onUp);
       document.removeEventListener("pointercancel", onUp);
       resizingRef.current = null;
-      if (library?.id && uid) {
-        if (saveWidthsTimerRef.current) clearTimeout(saveWidthsTimerRef.current);
-        const snapshot = { ...colWidthsRef.current };
-        saveWidthsTimerRef.current = setTimeout(() => {
-          supabase.from("libraries").update({ column_widths: snapshot, updated_by: uid }).eq("id", library.id!);
-        }, 600);
-      }
+      // projects-tab SAF-22 (J15e, the integrator's ruling R1): the width
+      // save that stood here built an update and never awaited it, so it was
+      // never sent — removed, nothing written before or after (REV-38).
     };
 
     document.addEventListener("pointermove", onMove);
     document.addEventListener("pointerup", onUp);
     document.addEventListener("pointercancel", onUp);
-  }, [colWidths, getDefaultColWidth, library, uid]);
+  }, [colWidths, getDefaultColWidth]);
 
   // Double-click handle to reset a column to its default width
   const handleResizeReset = useCallback((e: React.MouseEvent, colKey: string) => {
@@ -3505,12 +3555,10 @@ export default function LibraryExplorerPage() {
     setColWidths(prev => {
       const next = { ...prev };
       delete next[colKey];
-      if (library?.id && uid) {
-        supabase.from("libraries").update({ column_widths: next, updated_by: uid }).eq("id", library.id!);
-      }
+      // (SAF-22 / REV-38: the never-sent width save removed here too.)
       return next;
     });
-  }, [library, uid]);
+  }, []);
 
   const renderDocCell = (docRecord: DocumentRecord, key: string) => {
     if (key === "title") return docRecord.title || docRecord.name || "Untitled";
@@ -4343,7 +4391,11 @@ export default function LibraryExplorerPage() {
                 onOpenFolder={(id) => setCurrentFolderId(id)}
                 onOpenDoc={(doc) => setSelectedDoc(doc)}
                 onSave={async (cfg) => {
-                  await supabase.from("libraries").update({ home_config: cfg, updated_by: uid }).eq("id", library.id!);
+                  // projects-tab SAF-22 (J15e): class (a) — a save that failed or
+                  // matched no row (discarded before) throws; the board says it
+                  // and keeps its editor open (LibraryHomeBoard's catch).
+                  const saved = await checkedWrite(supabase.from("libraries").update({ home_config: cfg, updated_by: uid }).eq("id", library.id!).select("id"));
+                  if (!saved.ok) throw new Error(`The home could not be saved: ${saved.error}`);
                   setLibrary((prev) => (prev ? { ...prev, homeConfig: cfg } : prev));
                 }}
               />
@@ -4859,10 +4911,20 @@ export default function LibraryExplorerPage() {
                                             setDocuments((prev) => prev.map((d) =>
                                               d.id === docRecord.id ? { ...d, metadata: newMeta } : d
                                             ));
-                                            await supabase.from("documents").update({
+                                            // projects-tab SAF-22 (J15e): class (a) — a
+                                            // save that failed or matched no row (discarded
+                                            // before) puts the cell back and is said; never
+                                            // thrown (PillCell awaits this without a catch).
+                                            const saved = await checkedWrite(supabase.from("documents").update({
                                               metadata: newMeta,
                                               updated_at: new Date().toISOString(),
-                                            }).eq("id", docRecord.id);
+                                            }).eq("id", docRecord.id).select("id"));
+                                            if (!saved.ok) {
+                                              setDocuments((prev) => prev.map((d) =>
+                                                d.id === docRecord.id ? { ...d, metadata: docRecord.metadata } : d
+                                              ));
+                                              setError(`${def.label || "The field"} was not saved: ${saved.error}`);
+                                            }
                                           }}
                                         />
                                       </td>

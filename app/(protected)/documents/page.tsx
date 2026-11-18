@@ -4,6 +4,8 @@ import React, { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { checkedWrite, CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { useRole } from "@/components/providers/RoleContext";
 import { LibraryConfig, Role } from "@/types/schema";
 import {
@@ -166,7 +168,11 @@ export default function DocumentsHomePage() {
       ? { type: v.bgType, tint: v.bgTint, imagePath: v.bgImagePath, opacity: v.bgOpacity }
       : { type: "none" as const };
     const pageConfig = { ...existing, header: { ...(existing.header ?? {}), height }, background };
-    const { error } = await supabase.from("libraries").update({
+    // projects-tab SAF-22 (J15e): class (a) — a save that matched no row
+    // (row-level security: the library's admins only) is said like an error
+    // (the database's own words kept for an error, as before).
+    const kept = keptAnswer();
+    const saved = await checkedWrite(answered(supabase.from("libraries").update({
       color: v.color ?? null,
       icon: v.icon ?? null,
       cover_image_url: v.coverImageUrl ?? null,
@@ -174,8 +180,10 @@ export default function DocumentsHomePage() {
       description: v.description ?? null,
       page_config: pageConfig,
       updated_at: new Date().toISOString(),
-    }).eq("id", libId);
+    }).eq("id", libId).select("id"), kept));
+    const { error } = kept;
     if (error) { await appAlert({ message: `Save failed: ${error.message}`, tone: "danger" }); return; }
+    if (!saved.ok) { await appAlert({ message: `Save failed: ${CHECKED_WRITE_REFUSED}`, tone: "danger" }); return; }
     setLibraries((arr) => arr.map((l) => l._id === libId
       ? { ...l, color: v.color, icon: v.icon, coverImageUrl: v.coverImageUrl, coverTint: v.coverTint, description: v.description ?? l.description, pageConfig }
       : l));

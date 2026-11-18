@@ -444,7 +444,7 @@ function ticketResolver(opts: {
       const ids = (filter(ops, "in", "id") as string[] | undefined) ?? [];
       if (upd && "archive_id" in upd && upd.archive_id && !("archived_at" in upd)) { opts.claims?.push(ids); return { data: ids.map((id) => ({ id })), error: null }; }
       if (upd && "archive_id" in upd && !upd.archive_id) { opts.unclaims?.push(ids); return { data: [], error: null }; }
-      if (upd && "archived_at" in upd) { opts.stamps?.push(filter(ops, "eq", "id") as string); return { data: null, error: null, count: 1 }; }
+      if (upd && "archived_at" in upd) { opts.stamps?.push(filter(ops, "eq", "id") as string); return { data: [{ id: filter(ops, "eq", "id") }], error: null }; } // SAF-22 (J15e): the matched row
       return { data: opts.tickets, error: null };
     }
     if (table === "document_versions") {
@@ -546,7 +546,7 @@ describe("ticket restore — RET-14 exact entries, manifest-verified bytes", () 
     state.resolve = (table, ops) => {
       if (table === "tickets") {
         const upd = argOf(ops, "update")?.[0] as Record<string, unknown> | undefined;
-        if (upd) { updates.push(upd); return { data: null, error: null, count: 1 }; }
+        if (upd) { updates.push(upd); return { data: [{ id: "t1" }], error: null }; } // SAF-22 (J15e): the matched row
         return { data: [{ id: "t1", attachments: [{ url: key }] }], error: null };
       }
       return { data: [], error: null };

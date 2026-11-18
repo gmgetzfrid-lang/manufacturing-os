@@ -1420,3 +1420,32 @@ describe("SURF-19's stripe limb (A&O P5) — checkout and the portal ask the bil
     }
   });
 });
+
+// projects-joint J15e (projects-tab SAF-22): the lock's two deletes read their
+// matched rows; Stripe is answered exactly as before either way.
+describe("SAF-22 (J15e) — the customer lock's deletes, read through checkedWrite", () => {
+  it("regression: the delivery takes and releases its own lock, 200", async () => {
+    state.event = subEvent("customer.subscription.created", { id: "evt_1" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect((await deliver()).status).toBe(200);
+    expect(rowsOf("stripe_event_locks")).toEqual([]);
+    expect(warn.mock.calls.some((c) => /no longer this delivery's to release/.test(String(c[0])))).toBe(false);
+    warn.mockRestore();
+  });
+  it("a release that matched no row (the lease lapsed and another delivery took the lock) is logged, never read as released; Stripe still gets 200", async () => {
+    state.event = subEvent("customer.subscription.created", { id: "evt_1" });
+    // while this delivery runs, its lock lapses and another delivery takes it
+    state.writeError = (table, op) => {
+      if (table === "stripe_events" && op === "insert") {
+        const lock = rowsOf("stripe_event_locks")[0];
+        if (lock) lock.event_id = "evt_other";
+      }
+      return null;
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect((await deliver()).status).toBe(200);
+    expect(rowsOf("stripe_event_locks")).toEqual([expect.objectContaining({ event_id: "evt_other" })]);
+    expect(warn.mock.calls.some((c) => /the Stripe event lock for .* was no longer this delivery's to release/.test(String(c[0])))).toBe(true);
+    warn.mockRestore();
+  });
+});

@@ -307,3 +307,91 @@ describe("census, widened — components/ (SAF-22, J15e components batch)", () =
     expect([...files].some((f) => f.startsWith("components/projects/"))).toBe(false);
   });
 });
+
+// ── the census, widened to app/ (projects-joint J15e — projects-tab SAF-22) ──
+// The census above reads lib/, components/projects and the Projects routes.
+// SAF-22: every other file under app/ — routes, pages, server actions — is
+// read here by the same rule (writeSites: supabase and client-parameter
+// writes). The Projects surface stays in PROJECTS_UI_CLEAN above. (The
+// components/ tree is J15e-components' scope, added beside this one.)
+/** The app/ paths the Projects surface census above already reads. */
+const APP_PROJECTS_SURFACE = ["app/api/projects/", "app/api/intake/", "app/(protected)/projects/"];
+const appScope = () => walkTs("app").filter((f) => !APP_PROJECTS_SURFACE.some((p) => f.startsWith(p)));
+/** app/ files still carrying unchecked sites — the count may fall, never
+ *  rise. Empty: J15e left the library page's two column-width saves (never
+ *  sent — the builder was never awaited) and the integrator's ruling R1
+ *  removed them (nothing was ever written; document-control REV-38). */
+const APP_RATCHET: Record<string, number> = {};
+/** What J15e measured at c3520544 with this rule (106 sites in 43 files). */
+const APP_MEASURED_AT_BASE: Record<string, number> = {
+    "app/(protected)/admin/libraries/page.tsx": 1,
+    "app/(protected)/admin/users/page.tsx": 2,
+    "app/(protected)/documents/[libraryId]/page.tsx": 16,
+    "app/(protected)/documents/page.tsx": 1,
+    "app/(protected)/requests/[id]/page.tsx": 2,
+    "app/(protected)/requests/page.tsx": 1,
+    "app/api/admin/access-requests/route.ts": 1,
+    "app/api/admin/archive-cancel/route.ts": 2,
+    "app/api/admin/capability-policy/route.ts": 1,
+    "app/api/admin/create-user/route.ts": 3,
+    "app/api/admin/purge/route.ts": 1,
+    "app/api/admin/restore/begin/route.ts": 1,
+    "app/api/admin/shed/commit/route.ts": 1,
+    "app/api/admin/shed/route.ts": 5,
+    "app/api/admin/ticket-shed/commit/route.ts": 2,
+    "app/api/admin/ticket-shed/restore/route.ts": 1,
+    "app/api/admin/ticket-shed/route.ts": 4,
+    "app/api/ai/connection/route.ts": 4,
+    "app/api/auth/signup/route.ts": 1,
+    "app/api/collections/delete/route.ts": 4,
+    "app/api/collections/move/route.ts": 1,
+    "app/api/collections/trash/route.ts": 2,
+    "app/api/data-export/run-scheduled/route.ts": 8,
+    "app/api/documents/move/route.ts": 1,
+    "app/api/equipment-bridge/route.ts": 1,
+    "app/api/knowledge/drawing/route.ts": 1,
+    "app/api/knowledge/embed/route.ts": 2,
+    "app/api/knowledge/exclusion/route.ts": 3,
+    "app/api/knowledge/feedback/route.ts": 1,
+    "app/api/knowledge/ingest/route.ts": 1,
+    "app/api/knowledge/locate/route.ts": 1,
+    "app/api/knowledge/sources/route.ts": 1,
+    "app/api/notifications/send-queued/route.ts": 7,
+    "app/api/storage/delete/route.ts": 1,
+    "app/api/stripe/webhook/route.ts": 2,
+    "app/api/templates/generate/route.ts": 1,
+    "app/api/templates/route.ts": 2,
+    "app/api/tickets/comment/route.ts": 5,
+    "app/api/tickets/create/route.ts": 1,
+    "app/api/tickets/handback/route.ts": 1,
+    "app/api/tickets/project-link/route.ts": 1,
+    "app/api/tickets/workflow-action/route.ts": 7,
+    "app/api/transmittal/stamp-check/route.ts": 1,
+};
+
+describe("census, widened — app/ outside the Projects surface (SAF-22, J15e)", () => {
+  it("every app/ file outside the Projects surface has no unchecked update/delete (save APP_RATCHET)", () => {
+    const scope = appScope();
+    expect(scope.length).toBeGreaterThan(100);
+    const offenders = scope.filter((f) => !(f in APP_RATCHET)).map((f) => [f, unchecked(f)] as const).filter(([, raw]) => raw.length > 0)
+      .map(([f, raw]) => `${f}: ${raw.map((s) => `L${s.line} ${s.snippet}`).join(" | ")}`);
+    expect(offenders).toEqual([]);
+  });
+  it("APP_RATCHET may only fall (lower the number here when one does)", () => {
+    for (const [f, max] of Object.entries(APP_RATCHET)) {
+      const raw = unchecked(f);
+      expect(raw.length, `${f}: ${raw.length} unchecked (was ${max}): ${raw.map((s) => `L${s.line} ${s.snippet}`).join(" | ")}`).toBeLessThanOrEqual(max);
+    }
+  });
+  it("every file J15e measured is still in scope and counted (a moved file is re-measured, never forgotten)", () => {
+    const scope = new Set(appScope());
+    for (const f of Object.keys(APP_MEASURED_AT_BASE)) expect(scope.has(f), f).toBe(true);
+    for (const f of Object.keys(APP_RATCHET)) expect(f in APP_MEASURED_AT_BASE, f).toBe(true);
+    // ruling R1: app/ is at zero everywhere
+    expect(appScope().filter((f) => unchecked(f).length > 0)).toEqual([]);
+    expect(Object.values(APP_MEASURED_AT_BASE).reduce((a, b) => a + b, 0)).toBe(106);
+  });
+  it("the Projects surface is not counted twice: its app/ files are the ones PROJECTS_UI_CLEAN names or the walk above reads", () => {
+    for (const f of PROJECTS_UI_CLEAN.filter((x) => x.startsWith("app/"))) expect(appScope().includes(f), f).toBe(false);
+  });
+});

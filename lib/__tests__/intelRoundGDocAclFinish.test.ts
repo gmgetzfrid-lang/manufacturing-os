@@ -40,7 +40,8 @@ vi.mock("@/lib/supabaseAdmin", () => {
       get(_t, prop: string) {
         if (prop === "then") {
           return (resolve: (v: unknown) => void) => {
-            if (op === "update") { mv.updates.push({ table, patch }); resolve({ data: null, error: null }); return; }
+            // SAF-22 (J15e): the move reads its matched rows (`.select("id")`), as PostgREST answers it
+            if (op === "update") { mv.updates.push({ table, patch }); resolve({ data: table === "documents" ? (mv.docs as Array<{ id: string }>).map((d) => ({ id: d.id })) : null, error: null }); return; }
             if (op === "insert") { resolve({ data: null, error: null }); return; }
             if (table === "documents") resolve({ data: mv.docs, error: null });
             else resolve({ data: [], error: null });

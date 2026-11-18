@@ -23,9 +23,9 @@
       "LOW": 13
     },
     "by_status": {
-      "RESOLVED": 144,
+      "RESOLVED": 145,
       "REFUTED": 2,
-      "OPEN": 7,
+      "OPEN": 6,
       "RESOLVED (2026-10-14, by the integrator's ruling at the J20 integrator fix pass — done-when 1 met as narrowed under DEC-90: the pending pointer, the trusted promote and the redline accepted as documented exceptions; PASTE pending: `20261214`, after `20261184` and `20261205`)": 1
     }
   },
@@ -3309,7 +3309,7 @@
       "id": "SAF-22",
       "title": "113 update / delete sites under app/ and components/ discard a zero-row result, outside the census's reach",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (the census rule of `lib/__tests__/checkedWrite.test.ts`, widened by J15d, run over `app/` and `components/` at the J15d head by J15d and again by its independent reviewer, with the same counts; not exercised against a live database)",
       "blast_radius": "audit integrity / silent failure",

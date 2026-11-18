@@ -53,6 +53,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import { aiReadableControlledIds } from "@/lib/aiBoundaryServer";
@@ -1033,9 +1035,14 @@ async function writeRebuildMark(orgId: string, libraryId: string, cursor: string
   } else {
     features[REBUILD_MARK_KEY] = { cursor, at: new Date().toISOString() };
   }
-  const { error: writeError } = await supabaseAdmin
-    .from("knowledge_libraries").update({ ai_features: features }).eq("id", libraryId).eq("org_id", orgId);
-  return writeError ? writeError.message : null;
+  // projects-tab SAF-22 (J15e): class (b) — a mark that matched no library
+  // (removed between the read and the write) is a failure said, never a
+  // place kept.
+  const kept = keptAnswer();
+  const w = await checkedWrite(answered(supabaseAdmin
+    .from("knowledge_libraries").update({ ai_features: features }).eq("id", libraryId).eq("org_id", orgId).select("id"), kept));
+  if (kept.error) return kept.error.message;
+  return w.ok ? null : "the library was not found (it may have been removed meanwhile), so its place was not kept";
 }
 
 export async function POST(req: NextRequest) {

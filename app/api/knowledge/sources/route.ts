@@ -25,6 +25,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import {
   loadPrincipal, loadDcLandscape, containerReadable,
   PrincipalUnreadableError, PRINCIPAL_UNREADABLE,
@@ -299,9 +301,14 @@ export async function DELETE(req: NextRequest) {
   if (!source) return bad("Source not found", 404);
 
   // Mirrored docs + chunks cascade via FK.
-  const { error } = await supabaseAdmin
-    .from("knowledge_sources").delete().eq("id", sourceId);
-  if (error) return bad(`Couldn't remove the source: ${error.message}`, 500);
+  // projects-tab SAF-22 (J15e): class (a) — the removal is the person's
+  // decision; a delete that matched no row (removed meanwhile, elsewhere)
+  // is refused: no re-sync, no KNOWLEDGE_SOURCE_REMOVED row claims it.
+  const kept = keptAnswer();
+  const removed = await checkedWrite(answered(supabaseAdmin
+    .from("knowledge_sources").delete().eq("id", sourceId).select("id"), kept));
+  if (kept.error) return bad(`Couldn't remove the source: ${kept.error.message}`, 500);
+  if (!removed.ok) return bad("This source was already removed (by someone else, or in another tab). Reload to see the library's sources.", 409);
 
   // Re-sync immediately: a document covered by TWO sources loses its mirror
   // in the cascade above — the remaining source re-adds it right now instead

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { callerScopedClient } from "@/lib/serverAuth";
 import { ticketReadScope } from "@/lib/ticketReadScope";
 import { loadCapabilityPolicyStrict, policyAllows } from "@/lib/capabilityPolicy";
@@ -262,8 +264,12 @@ export async function POST(req: NextRequest) {
     // PROJ-13: a project created from this request names it (linked_ticket_id);
     // moving the request off that project clears the name, so a mislink is
     // corrected in one place. Only that exact pairing is touched; checked.
-    const { error: chipErr } = await supabaseAdmin.from("projects")
-      .update({ linked_ticket_id: null }).eq("id", previous.id).eq("linked_ticket_id", t.id).select("id");
+    // projects-tab SAF-22 (J15e): class (c) — a project that never named
+    // this request matches nothing; only a database error is said.
+    const chipKept = keptAnswer();
+    await checkedWrite(answered(supabaseAdmin.from("projects")
+      .update({ linked_ticket_id: null }).eq("id", previous.id).eq("linked_ticket_id", t.id).select("id"), chipKept));
+    const chipErr = chipKept.error;
     if (chipErr) warnings.push(`The previous project still names this request as its origin: ${chipErr.message}`);
     // DF-P8 fix pass 4: the feed row is written as the service role only into
     // a project the CALLER can see (read as the caller — project_activity_insert's

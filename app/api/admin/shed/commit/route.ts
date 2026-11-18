@@ -16,6 +16,8 @@ import { r2, R2_BUCKET } from "@/lib/r2";
 import { partitionOrgKeys, sharedLiveKeys } from "@/lib/shedKeyGuard";
 import { keysReferencedOutside } from "@/lib/storageKeyRegistry";
 import { persistReclaimShortfall } from "@/lib/archiveCatalog";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 
 export const runtime = "nodejs";
 
@@ -155,13 +157,17 @@ export async function POST(req: NextRequest) {
   const stamped: Array<{ file_url: string | null }> = [];
   for (let i = 0; i < unstamped.length; i += 200) {
     const chunk = unstamped.slice(i, i + 200).map((v) => v.id);
-    const { data, error } = await sb
+    // SAF-22 (J15e): class (c) — a chunk a concurrent commit already
+    // stamped matches nothing, and only the rows returned are counted.
+    const kept = keptAnswer();
+    await checkedWrite(answered(sb
       .from("document_versions")
       .update({ archived_at: now })
       .in("id", chunk)
       .eq("org_id", orgId)
       .is("archived_at", null)
-      .select("file_url");
+      .select("file_url"), kept));
+    const { data, error } = kept;
     if (error) errors.push(`stamp[${i}]: ${error.message}`);
     else stamped.push(...((data as Array<{ file_url: string | null }>) ?? []));
   }

@@ -30,6 +30,9 @@ import JSZip from "jszip";
 import { authorizeAdminSurface } from "@/lib/adminGate";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { exactEntryFor, bytesMatchManifest, type ManifestEntry } from "@/lib/restoreVerify";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
+import { eqOrNull } from "@/lib/writeFilters";
 
 export const runtime = "nodejs";
 export const maxDuration = 300; // bounded work; never run unbounded on a hostile zip
@@ -236,26 +239,24 @@ export async function POST(req: NextRequest) {
     // SM-9 (DF-P11): a compare-and-set on the stub as read — its archive and
     // its last_modified (the null its own leg) — like every other writer of
     // the ticket's arrays.
-    let restoreQ = sb
+    // projects-tab SAF-22 (J15e): read through checkedWrite — the matched
+    // row, not a count — with the same answers and the same filters.
+    const restoreKept = keptAnswer();
+    const restore = await checkedWrite(answered(eqOrNull(eqOrNull(sb
       .from("tickets")
-      .update(
-        {
-          comments: row.comments ?? [],
-          history: row.history ?? [],
-          metadata: (row.metadata as Record<string, unknown> | null) ?? {},
-          archived_at: null,
-          archive_id: null,
-        },
-        { count: "exact" },
-      )
+      .update({
+        comments: row.comments ?? [],
+        history: row.history ?? [],
+        metadata: (row.metadata as Record<string, unknown> | null) ?? {},
+        archived_at: null,
+        archive_id: null,
+      })
       .eq("id", id)
       .eq("org_id", orgId)
-      .not("archived_at", "is", null);
-    restoreQ = stub.archive_id ? restoreQ.eq("archive_id", stub.archive_id) : restoreQ.is("archive_id", null);
-    restoreQ = stub.last_modified ? restoreQ.eq("last_modified", stub.last_modified) : restoreQ.is("last_modified", null);
-    const { error, count } = await restoreQ;
-    if (error) { errors.push(`update ${id}: ${error.message}`); continue; }
-    if ((count ?? 0) === 0) { notArchived++; continue; }
+      .not("archived_at", "is", null), "archive_id", stub.archive_id), "last_modified", stub.last_modified)
+      .select("id"), restoreKept));
+    if (restoreKept.error) { errors.push(`update ${id}: ${restoreKept.error.message}`); continue; }
+    if (!restore.ok) { notArchived++; continue; }
     restored++;
   }
 

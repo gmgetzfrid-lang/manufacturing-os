@@ -30,6 +30,9 @@ export default function AiBoundaryChip({
   const [inSource, setInSource] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
+  // projects-tab SAF-22 (review L4): a non-blocking note from a change that
+  // landed (the route's `warning`), shown beside the chip like `failed`.
+  const [note, setNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     // Is this document's library (or a folder above it) linked as a
@@ -66,13 +69,15 @@ export default function AiBoundaryChip({
     if (!canManage) return;
     setBusy(true);
     setFailed(null);
+    setNote(null);
     try {
       const next = !excluded;
       // Never flip the label optimistically. This chip is a claim about what
       // the AI can see; showing "held from AI" while the indexed copy is
       // still sitting there would be the one lie this component must not tell.
-      await setDocumentAiExclusion(orgId, documentId, next);
+      const out = await setDocumentAiExclusion(orgId, documentId, next);
       setExcluded(next);
+      if (out?.warning) setNote(out.warning);
     } catch (e) {
       setFailed(e instanceof Error ? e.message : "Couldn't change this.");
     } finally { setBusy(false); }
@@ -98,6 +103,7 @@ export default function AiBoundaryChip({
       {excluded ? "Held from AI" : "AI-readable"}
     </button>
     {failed && <span className="text-[10px] font-bold text-rose-600" title={failed}>failed</span>}
+    {note && <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300" title={note} data-testid="ai-boundary-note">note</span>}
     </span>
   );
 }

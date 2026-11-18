@@ -1,6 +1,6 @@
 # 01 · Checkout, check-in & the lock
 
-**14 findings** — 3 CRITICAL · 7 HIGH · 4 MEDIUM.
+**18 findings** — 3 CRITICAL · 3 HIGH · 10 MEDIUM · 2 LOW. *(Corrected 2026-11-18 by the integrator at the J15e merge: the line read "14 findings — 3 CRITICAL · 7 HIGH · 4 MEDIUM", before DCK-15 to DCK-18 were opened and four severities were lowered by the independent passes; it now counts the report's Severity lines.)*
 
 Whether the lock is a control or a convention.
 

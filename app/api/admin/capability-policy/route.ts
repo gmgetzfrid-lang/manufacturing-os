@@ -74,6 +74,9 @@ import {
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { isControllerRole } from "@/lib/permissions";
 import { ALL_ROLES } from "@/types/schema";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
+import { eqOrNull } from "@/lib/writeFilters";
 
 export const runtime = "nodejs";
 
@@ -381,14 +384,16 @@ export async function POST(req: NextRequest) {
   // Compare-and-set on the stamp we read: a concurrent write (a second
   // grant, another admin's save) is refused, not silently overwritten.
   if (stored) {
-    let q = supabaseAdmin
+    // projects-tab SAF-22 (J15e): the same compare-and-set, read through
+    // checkedWrite (the guard built in the one statement); the same answers.
+    const kept = keptAnswer();
+    const w = await checkedWrite(answered(eqOrNull(supabaseAdmin
       .from("org_configurations")
       .update({ data: after, updated_at: nowIso })
-      .eq("org_id", orgId).eq("key", "capability_policy");
-    q = storedVersion ? q.eq("updated_at", storedVersion) : q.is("updated_at", null);
-    const { data: written, error: writeErr } = await q.select("org_id");
-    if (writeErr) return bad(`Couldn't save the policy: ${writeErr.message}`, 500);
-    if (!written || (written as unknown[]).length === 0) {
+      .eq("org_id", orgId).eq("key", "capability_policy"), "updated_at", storedVersion)
+      .select("org_id"), kept));
+    if (kept.error) return bad(`Couldn't save the policy: ${kept.error.message}`, 500);
+    if (!w.ok) {
       return changed("The policy changed while you were editing — reload and try again");
     }
   } else {

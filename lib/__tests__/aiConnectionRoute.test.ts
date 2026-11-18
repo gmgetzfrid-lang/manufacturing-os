@@ -19,6 +19,8 @@ const db = vi.hoisted(() => ({
   tables: {} as Record<string, Row[]>,
   errors: {} as Record<string, { code?: string; message: string } | undefined>,
   seq: 0,
+  /** SAF-22 (J15e): tables whose UPDATE / DELETE matches no row (the row removed meanwhile). */
+  vanish: new Set<string>(),
 }));
 const ai = vi.hoisted(() => ({
   chat: [] as Array<Record<string, unknown>>,
@@ -45,8 +47,10 @@ vi.mock("@/lib/supabaseAdmin", () => {
         return { data: one ? { id: row.id } : [row], error: null };
       }
       const hit = rows.filter((r) => filters.every((f) => f(r)));
-      if (action === "update") { for (const r of hit) Object.assign(r, payload); return { data: null, error: null }; }
-      if (action === "delete") { db.tables[table] = rows.filter((r) => !hit.includes(r)); return { data: null, error: null }; }
+      // SAF-22 (J15e): an UPDATE / DELETE answers its matched rows (`.select("id")`), as PostgREST does
+      if ((action === "update" || action === "delete") && db.vanish.has(table)) return { data: [], error: null };
+      if (action === "update") { for (const r of hit) Object.assign(r, payload); return { data: hit.map((r) => ({ id: r.id })), error: null }; }
+      if (action === "delete") { db.tables[table] = rows.filter((r) => !hit.includes(r)); return { data: hit.map((r) => ({ id: r.id })), error: null }; }
       if (head) return { data: null, error: null, count: hit.length };
       const out = range ? hit.slice(range[0], range[1] + 1) : hit;
       return { data: one ? (out[0] ?? null) : out, error: null, count: out.length };
@@ -120,6 +124,7 @@ beforeEach(() => {
   process.env.EXPORT_ENCRYPTION_KEY = HEX;
   db.seq = 0;
   db.errors = {};
+  db.vanish = new Set();
   db.tables = {
     org_members: [
       { org_id: ORG, uid: ME, role: "Engineer", roles: ["Engineer"], status: "active", display_name: "Me" },
@@ -263,5 +268,32 @@ describe("GOV-12 — keys at rest", () => {
     expect(ctl.keyStorage).toMatchObject({ yoursUnsealed: 0, orgUnsealed: 2 });
     // the masked view never carries a key
     expect(JSON.stringify(mine)).not.toMatch(/sk-ant|pa-plain|encv1/);
+  });
+});
+
+// projects-joint J15e (projects-tab SAF-22): the connection writes read their matched rows.
+describe("SAF-22 (J15e) — a save whose connection row went between the read and the write", () => {
+  it("a chat save (model only) that matched no row is 409 and writes no AI_CONNECTION_SAVED row", async () => {
+    db.vanish.add("ai_connections");
+    const out = await post({ provider: "anthropic", model: "chat-model-2" });
+    expect(out.status).toBe(409);
+    expect(out.json.error).toMatch(/^Your AI connection was removed meanwhile/);
+    expect(db.tables.audit_logs.filter((a) => a.action === "AI_CONNECTION_SAVED")).toEqual([]);
+  });
+  it("regression: a chat save that lands is recorded and answered as before", async () => {
+    const out = await post({ provider: "anthropic", model: "chat-model-2" });
+    expect(out).toMatchObject({ status: 200, json: { ok: true } });
+    expect(db.tables.ai_connections[0].model).toBe("chat-model-2");
+    expect(db.tables.audit_logs.filter((a) => a.action === "AI_CONNECTION_SAVED")).toHaveLength(1);
+  });
+  it("an embeddings save that matched no row is 409 and writes no AI_EMBEDDING_KEY_SAVED row", async () => {
+    db.vanish.add("ai_connections");
+    const out = await post({ action: "embedding", embeddingProvider: "voyage", embeddingModel: "embed-model-2" });
+    expect(out.status).toBe(409);
+    expect(db.tables.audit_logs.filter((a) => a.action === "AI_EMBEDDING_KEY_SAVED")).toEqual([]);
+  });
+  it("clearing an embeddings key (or removing a connection) already gone leaves the asked state: still ok (class c)", async () => {
+    db.vanish.add("ai_connections");
+    expect(await post({ action: "embedding", clearEmbedding: true })).toMatchObject({ status: 200, json: { ok: true } });
   });
 });

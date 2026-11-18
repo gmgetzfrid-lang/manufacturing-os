@@ -28,6 +28,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { loadPrincipal } from "@/lib/knowledgeAccess";
 import {
   loadDestinationPolicies,
@@ -103,16 +105,27 @@ export async function POST(req: NextRequest) {
   // change, and several retention bases ("issued"/"superseded") clock from
   // updated_at — bumping it here would silently extend those clocks by the
   // age of the record on every move.
-  const { error: moveErr } = await supabaseAdmin
+  // projects-tab SAF-22 (J15e): class (a) — the move is the person's
+  // decision, read through its matched rows. None matched (every document
+  // removed meanwhile): refused, nothing re-clocked or recorded. Some
+  // matched: only those are re-clocked, counted and recorded, and the answer
+  // says how many were not moved.
+  const moveKept = keptAnswer();
+  const movedW = await checkedWrite(answered(supabaseAdmin
     .from("documents")
     .update({ collection_id: targetFolderId, updated_by: user.id })
-    .in("id", docIds);
-  if (moveErr) return bad(`Couldn't move the documents: ${moveErr.message}`, 500);
+    .in("id", docIds)
+    .select("id"), moveKept));
+  if (moveKept.error) return bad(`Couldn't move the documents: ${moveKept.error.message}`, 500);
+  if (!movedW.ok) return bad("The documents weren't moved: they were removed meanwhile — nothing was changed. Reload and try again.", 409);
+  const movedIds = new Set(movedW.ids);
+  const movedDocs = docs.filter((d) => movedIds.has(d.id));
+  const notMoved = docIds.length - movedDocs.length;
 
   // Re-clock retention against the destination. One folder + one library
   // policy covers the whole batch (same destination for every doc).
   const { libPolicy } = await loadDestinationPolicies(supabaseAdmin, libraryId, null);
-  const reclock = await reclockRetentionForDocs(supabaseAdmin, docs, folderPolicy, libPolicy);
+  const reclock = await reclockRetentionForDocs(supabaseAdmin, movedDocs, folderPolicy, libPolicy);
 
   // DACL-1 c3: the moved documents now sit under another folder's rules —
   // rebuild the library's chain-resolved acl_index now (only what changed is
@@ -133,7 +146,8 @@ export async function POST(req: NextRequest) {
     resource_type: "collection", resource_id: targetFolderId ?? libraryId,
     org_id: orgId, user_id: user.id, user_email: user.email ?? null,
     details: {
-      count: docIds.length, targetFolderId, libraryId,
+      count: movedDocs.length, targetFolderId, libraryId,
+      ...(notMoved > 0 ? { notMoved } : {}),
       retentionRecomputed: reclock.updated,
       retentionFailed: reclock.failed,
       ...(reclock.firstError ? { retentionError: reclock.firstError } : {}),
@@ -143,6 +157,9 @@ export async function POST(req: NextRequest) {
   }).then(() => undefined, () => undefined);
 
   const warnings: string[] = [];
+  if (notMoved > 0) {
+    warnings.push(`${notMoved} of ${docIds.length} document${docIds.length === 1 ? " was" : "s were"} not moved: removed meanwhile.`);
+  }
   if (reclock.failed > 0) {
     warnings.push(`Moved, but ${reclock.failed} retention clock${reclock.failed === 1 ? "" : "s"} couldn't be recomputed (${reclock.firstError ?? "unknown error"}). They'll correct on the next retention pass.`);
   }
@@ -152,7 +169,7 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     ok: true,
-    moved: docIds.length,
+    moved: movedDocs.length,
     retentionRecomputed: reclock.updated,
     retentionFailed: reclock.failed,
     aclIndexRebuilt,

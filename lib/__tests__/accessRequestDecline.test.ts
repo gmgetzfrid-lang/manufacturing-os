@@ -13,11 +13,17 @@ const state = vi.hoisted(() => ({
   request: null as Record<string, unknown> | null,
   member: null as Record<string, unknown> | null,
   updates: [] as Array<{ patch: Record<string, unknown>; filters: Array<[string, unknown]> }>,
+  /** SAF-22 (J15e): false = the decline's guarded UPDATE matches no row (the request is no longer pending). */
+  updateMatches: true,
+  outcomes: [] as unknown[],
+  /** SAF-22 review L3: the re-read after a zero-row decline fails with this. */
+  rereadError: null as null | { message: string },
 }));
 
 function chain(table: string) {
   let pendingPatch: Record<string, unknown> | null = null;
   let filters: Array<[string, unknown]> = [];
+  let args0: unknown = undefined;
   const c: Record<string, unknown> = {};
   const handler: ProxyHandler<Record<string, unknown>> = {
     get(_t, prop: string) {
@@ -26,14 +32,19 @@ function chain(table: string) {
           if (pendingPatch) {
             state.updates.push({ patch: pendingPatch, filters });
             pendingPatch = null;
+            // SAF-22 (J15e): PostgREST answers `.select("id")` with the matched row
+            return resolve({ data: state.updateMatches ? [{ id: "req1" }] : [], error: null });
           }
           resolve({ data: null, error: null });
         };
       }
       return (...args: unknown[]) => {
         if (prop === "update") { pendingPatch = args[0] as Record<string, unknown>; filters = []; }
+        if (prop === "select") args0 = args[0];
         if (prop === "eq") filters.push(args as [string, unknown]);
         if (prop === "maybeSingle") {
+          // the decline's re-read (after its UPDATE matched nothing) selects "status" alone
+          if (table === "access_requests" && state.rereadError && args0 === "status") return Promise.resolve({ data: null, error: state.rereadError });
           const d = table === "access_requests" ? state.request : table === "org_members" ? state.member : null;
           return Promise.resolve({ data: d, error: null });
         }
@@ -54,6 +65,11 @@ vi.mock("@/lib/supabaseAdmin", () => ({
   },
 }));
 
+vi.mock("@/lib/accessRequestOutcome", () => ({
+  queueAccessRequestOutcome: vi.fn(async (_sb: unknown, o: unknown) => { state.outcomes.push(o); }),
+  clearAccessRequestNotices: vi.fn(async () => undefined),
+}));
+
 import { POST } from "@/app/api/admin/access-requests/route";
 
 function decline(id: string, token = "Bearer t"): Promise<Response> {
@@ -69,6 +85,9 @@ beforeEach(() => {
   state.request = { id: "req1", org_id: "org1", status: "pending" };
   state.member = { role: "Admin", roles: [] };
   state.updates = [];
+  state.updateMatches = true;
+  state.outcomes = [];
+  state.rereadError = null;
 });
 
 describe("POST /api/admin/access-requests", () => {
@@ -108,5 +127,38 @@ describe("POST /api/admin/access-requests", () => {
     expect(u.patch).toEqual({ status: "declined" });
     expect(u.filters).toContainEqual(["id", "req1"]);
     expect(u.filters).toContainEqual(["status", "pending"]);
+  });
+});
+
+// projects-joint J15e (projects-tab SAF-22): the decline reads its matched row.
+describe("SAF-22 (J15e) — a decline that matched no pending row", () => {
+  it("regression: a pending request is declined and its outcome queued, as before", async () => {
+    const res = await decline("req1");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(state.outcomes).toHaveLength(1);
+  });
+  it("already declined (a second click): the decline holds, 200, nothing re-announced", async () => {
+    state.updateMatches = false;
+    state.request = { id: "req1", org_id: "org1", status: "declined" };
+    const res = await decline("req1");
+    expect(res.status).toBe(200);
+    expect(state.outcomes).toEqual([]);
+  });
+  it("REPRODUCED: answered otherwise meanwhile (granted through Add member) — before, 200 'ok'; now a 409 that says it was not declined", async () => {
+    state.updateMatches = false;
+    state.request = { id: "req1", org_id: "org1", status: "approved" };
+    const res = await decline("req1");
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("This request was already answered (it is no longer pending), so it was not declined. Reload to see where it stands.");
+    expect(state.outcomes).toEqual([]);
+  });
+  it("review L3: a re-read that fails is a 500 naming it, never '409 already answered'", async () => {
+    state.updateMatches = false;
+    state.rereadError = { message: "statement timeout" };
+    const res = await decline("req1");
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("The request was not declined, and where it stands could not be read (statement timeout). Reload and try again.");
+    expect(state.outcomes).toEqual([]);
   });
 });

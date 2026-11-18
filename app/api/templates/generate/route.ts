@@ -43,6 +43,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import JSZip from "jszip";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { loadPrincipal } from "@/lib/knowledgeAccess";
 import { memberDisplayName } from "@/lib/orgMemberName";
 import { callAiModel, AiCallError, type AiProviderId } from "@/lib/ai/providerCall";
@@ -161,9 +163,13 @@ export async function POST(req: NextRequest) {
     const filed = Math.max(0, Math.min(
       Number(body.filedCount ?? 0) || 0, Number(gen.document_count ?? 0),
     ));
-    const { error } = await supabaseAdmin
-      .from("output_generations").update({ filed_count: filed }).eq("id", generationId);
-    if (error) return bad(`Couldn't record the filing: ${error.message}`, 500);
+    // projects-tab SAF-22 (J15e): class (a) — the person's record of the
+    // filing; a write that matched no row (removed meanwhile) is refused.
+    const kept = keptAnswer();
+    const recorded = await checkedWrite(answered(supabaseAdmin
+      .from("output_generations").update({ filed_count: filed }).eq("id", generationId).select("id"), kept));
+    if (kept.error) return bad(`Couldn't record the filing: ${kept.error.message}`, 500);
+    if (!recorded.ok) return bad("Couldn't record the filing: the production record was removed meanwhile.", 409);
     return NextResponse.json({ ok: true, filedCount: filed });
   }
 

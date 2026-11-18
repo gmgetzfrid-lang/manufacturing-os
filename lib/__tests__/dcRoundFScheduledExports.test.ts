@@ -28,6 +28,10 @@ const state = vi.hoisted(() => {
     plan: "growth",
     destination: {} as Record<string, unknown>,
     delivered: [] as unknown[],
+    /** SAF-22 (J15e): false = the card write (an export_destinations UPDATE carrying last_run_at) matches no row. */
+    cardMatches: true,
+    /** SAF-22 (J15e): false = the claim (the UPDATE of next_run_at alone) matches no row. */
+    claimMatches: true,
   };
 });
 
@@ -36,7 +40,11 @@ function makeClient() {
     const has = (m: string) => calls.some((c) => c.m === m);
     switch (table) {
       case "export_destinations":
-        if (has("update")) return { data: [{ id: state.destination.id }], error: null };
+        if (has("update")) {
+          const patch = calls.find((c) => c.m === "update")!.args[0] as Record<string, unknown>;
+          const matches = "last_run_at" in patch ? state.cardMatches : state.claimMatches;
+          return { data: matches ? [{ id: state.destination.id }] : [], error: null };
+        }
         return { data: [state.destination], error: null };
       case "org_members":
         if (state.memberError) return { data: null, error: { message: state.memberError } };
@@ -107,6 +115,7 @@ beforeEach(() => {
   state.log = []; state.delivered = [];
   state.memberActive = true; state.memberError = null; state.orgError = null; state.runInsertError = null; state.subStatus = "active"; state.plan = "growth";
   state.destination = { ...DUE };
+  state.cardMatches = true; state.claimMatches = true;
   delete process.env.SUBSCRIPTION_ENFORCE;
 });
 afterEach(() => { if (prevEnforce === undefined) delete process.env.SUBSCRIPTION_ENFORCE; else process.env.SUBSCRIPTION_ENFORCE = prevEnforce; });
@@ -292,5 +301,29 @@ describe("the plan gate on PATCH and POST (XEDGE-8)", () => {
     }));
     expect(res.status).toBe(402);
     expect(logged("export_destinations")).toEqual([]);
+  });
+});
+
+// projects-joint J15e (projects-tab SAF-22): the sweep's writes read their matched rows.
+describe("SAF-22 (J15e) — the scheduled sweep's bookkeeping writes (class b)", () => {
+  it("regression: a run that lands writes its card and answers ok with no warning", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const out = await (await sweep()).json() as { results: Array<Record<string, unknown>> };
+    expect(out.results[0]).toMatchObject({ destinationId: "dest-1", ok: true, bytes: 10 });
+    expect(out.results[0].warnings).toBeUndefined();
+  });
+  it("REPRODUCED: a card write that matched no row (the destination removed meanwhile) passed as recorded; now it is named on the result, the push still ok", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    state.cardMatches = false;
+    const out = await (await sweep()).json() as { results: Array<{ ok: boolean; warnings?: string[] }> };
+    expect(out.results[0].ok).toBe(true);
+    expect(out.results[0].warnings).toContain("last-run status not recorded: the destination row was not found (it may have been removed meanwhile)");
+    expect(err.mock.calls.some((c) => /last-run status not recorded: the destination row was not found/.test(String(c[0])))).toBe(true);
+  });
+  it("a claim that matched no row is still 'already claimed by another run' and runs nothing", async () => {
+    state.claimMatches = false;
+    const out = await (await sweep()).json() as { results: Array<Record<string, unknown>> };
+    expect(out.results[0]).toEqual({ destinationId: "dest-1", ok: false, error: "skipped: already claimed by another run" });
+    expect(state.delivered).toEqual([]);
   });
 });

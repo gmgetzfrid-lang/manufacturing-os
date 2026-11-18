@@ -43,6 +43,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import { aiReadableControlledIds } from "@/lib/aiBoundaryServer";
 import { callAiModel, type AiProviderId } from "@/lib/ai/providerCall";
@@ -500,11 +502,16 @@ export async function POST(req: NextRequest) {
     // Cache, as the model's ESTIMATE (pos_source 'vision' — drawn as
     // approximate): the next person to ask pays nothing, until a rev-up or
     // a rebuild clears it, or a viewer rejects it.
+    // projects-tab SAF-22 (J15e): class (b) — the cache never fails the
+    // answer; a row gone meanwhile caches nothing (zero rows is legitimate),
+    // and a failure, swallowed before, is logged. Every tag is tried.
     for (const pos of located) {
-      await supabaseAdmin.from("knowledge_page_entities")
+      const kept = keptAnswer();
+      await checkedWrite(answered(supabaseAdmin.from("knowledge_page_entities")
         .update({ nx: pos.nx, ny: pos.ny, pos_source: "vision" })
         .eq("document_id", documentId).eq("page", page).eq("tag", pos.tag)
-        .then(() => undefined, () => undefined);
+        .select("id"), kept));
+      if (kept.error) console.warn(`[knowledge/locate] the located position of ${pos.tag} (document ${documentId}, page ${page}) was not cached: ${kept.error.message}`);
       found.set(pos.tag, visionMark(pos));
     }
     return NextResponse.json({

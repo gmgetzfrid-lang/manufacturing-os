@@ -52,6 +52,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import {
   computeForDocument, applyForDocument, dismissForDocument, reviewVanished, discoverFromKnowledge,
   adoptDrawingRelation, loadBridgeConfig, type BridgeConfig, type ComputeReason,
@@ -291,9 +293,14 @@ export async function POST(req: NextRequest) {
       reviewedAt: prior?.reviewedAt,
       reviewedBy: prior?.reviewedBy,
     };
-    const { error } = await supabaseAdmin.from("libraries")
-      .update({ equipment_bridge: cfg }).eq("id", libraryId).eq("org_id", orgId);
-    if (error) return bad(error.message, 500);
+    // projects-tab SAF-22 (J15e): class (a) — the settings are the person's
+    // decision; a write that matched no library (removed meanwhile) is
+    // refused, never answered with the settings it did not save.
+    const kept = keptAnswer();
+    const saved = await checkedWrite(answered(supabaseAdmin.from("libraries")
+      .update({ equipment_bridge: cfg }).eq("id", libraryId).eq("org_id", orgId).select("id"), kept));
+    if (kept.error) return bad(kept.error.message, 500);
+    if (!saved.ok) return bad("The equipment-sweep settings were not saved: the library was removed or changed meanwhile. Reload and try again.", 409);
     return NextResponse.json({ ok: true, bridge: cfg });
   }
 

@@ -87,6 +87,8 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { counted, countKept } from "@/lib/checkedWriteCount";
 import { loadPrincipal } from "@/lib/knowledgeAccess";
 import { estimateCostUsd, worstCaseCostUsd, buildAgreementText, AGREEMENT_VERSION } from "@/lib/ai/pricing";
 import {
@@ -618,19 +620,26 @@ export async function POST(req: NextRequest) {
       }
       seen = await readEmbedBuildMarker(libraryId);
     }
-    let { error } = await supabaseAdmin
+    // projects-tab SAF-22 (J15e): class (c) — a library with no chunks (or,
+    // pre-20261121, none embedded) clears none. Asked as a count, never
+    // every chunk id; the whole error still decides the fallback.
+    const cleared = countKept();
+    await checkedWrite(counted(supabaseAdmin
       .from("knowledge_chunks")
-      .update({ embedding: null, embedding_model: null, embed_attempts: 0, embed_error: null, embed_claimed_until: null, embed_retry_after: null })
+      .update({ embedding: null, embedding_model: null, embed_attempts: 0, embed_error: null, embed_claimed_until: null, embed_retry_after: null }, { count: "exact" })
       .eq("org_id", orgId)
-      .eq("library_id", libraryId);
+      .eq("library_id", libraryId), cleared));
+    let error = cleared.error;
     if (error && (error.code === "PGRST204" || error.code === "42703")) {
       // 20261121 not applied: the counters don't exist yet.
-      ({ error } = await supabaseAdmin
+      const legacy = countKept();
+      await checkedWrite(counted(supabaseAdmin
         .from("knowledge_chunks")
-        .update({ embedding: null, embedding_model: null })
+        .update({ embedding: null, embedding_model: null }, { count: "exact" })
         .eq("org_id", orgId)
         .eq("library_id", libraryId)
-        .not("embedding", "is", null));
+        .not("embedding", "is", null), legacy));
+      error = legacy.error;
     }
     if (error) return bad(`Couldn't clear the existing vectors: ${error.message}`, 500);
     const after = await coverage(orgId, libraryId);

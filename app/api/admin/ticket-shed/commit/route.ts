@@ -37,6 +37,10 @@ import {
 } from "@/lib/ticketShed";
 import { isOrgOwnedKey, sharedLiveKeys } from "@/lib/shedKeyGuard";
 import { persistReclaimShortfall } from "@/lib/archiveCatalog";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
+import { eqOrNull } from "@/lib/writeFilters";
+import { counted, countKept } from "@/lib/checkedWriteCount";
 
 export const runtime = "nodejs";
 
@@ -268,19 +272,20 @@ export async function POST(req: NextRequest) {
     // SM-4 / SM-9 (DF-P11): compare-and-set on what this commit read — still
     // terminal, last_modified unchanged (its own leg when null) — so a reopen
     // or a comment landing between the read and here leaves the row untouched.
-    const stampQ = sb
+    // projects-tab SAF-22 (J15e): read through checkedWrite — the matched
+    // row, not a count — with the same answers: an error is named, a stamp
+    // that matched nothing raced and leaves the ticket untouched.
+    const stampKept = keptAnswer();
+    const stamp = await checkedWrite(answered(eqOrNull(sb
       .from("tickets")
-      .update(
-        { comments: [], history: [], metadata: { ...metadata, archive_summary: tombstone }, archived_at: now, archive_id: archiveId },
-        { count: "exact" },
-      )
+      .update({ comments: [], history: [], metadata: { ...metadata, archive_summary: tombstone }, archived_at: now, archive_id: archiveId })
       .eq("id", t.id)
       .eq("org_id", orgId)
       .is("archived_at", null)
-      .in("status", [...TERMINAL_TICKET_STATUSES]);
-    const { error, count } = await (t.last_modified ? stampQ.eq("last_modified", t.last_modified) : stampQ.is("last_modified", null));
-    if (error) { errors.push(`stamp ${t.id}: ${error.message}`); continue; }
-    if ((count ?? 0) === 0) { errors.push(`stamp ${t.id}: raced — left untouched`); continue; }
+      .in("status", [...TERMINAL_TICKET_STATUSES]), "last_modified", t.last_modified)
+      .select("id"), stampKept));
+    if (stampKept.error) { errors.push(`stamp ${t.id}: ${stampKept.error.message}`); continue; }
+    if (!stamp.ok) { errors.push(`stamp ${t.id}: raced — left untouched`); continue; }
     newlyStamped++;
     idsToFree.push(t.id);
     keysByTicket.set(t.id, keysFor(t));
@@ -331,8 +336,11 @@ export async function POST(req: NextRequest) {
 
   for (let i = 0; i < freeIds.length; i += 200) {
     const chunk = freeIds.slice(i, i + 200);
-    const { error } = await sb.from("ticket_comments").delete().in("ticket_id", chunk).eq("org_id", orgId);
-    if (error) errors.push(`comments[${i}]: ${error.message}`);
+    // SAF-22 (J15e): class (c) — tickets with no comment rows delete none.
+    // Asked as a count (the review's note): only the error is read.
+    const kept = countKept();
+    await checkedWrite(counted(sb.from("ticket_comments").delete({ count: "exact" }).in("ticket_id", chunk).eq("org_id", orgId), kept));
+    if (kept.error) errors.push(`comments[${i}]: ${kept.error.message}`);
   }
   const { deleted: keysDeleted, errors: delErrors } = await deleteR2Keys(keysToDelete);
   errors.push(...delErrors);

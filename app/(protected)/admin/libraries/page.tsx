@@ -3,6 +3,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { checkedWrite, CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { useRole } from "@/components/providers/RoleContext";
 import { Settings } from "lucide-react";
 import LibraryWizard from "./LibraryWizard";
@@ -138,11 +140,18 @@ export default function LibraryAdminPage() {
         // admin_access in step with the wizard's own ACL (its upload / admin
         // rules — the lists it wrote to the columns before I-31).
         const editLists = wizardListColumnsFromAcl(config.acl);
-        const { error } = await supabase
+        // projects-tab SAF-22 (J15e): class (a) — the edit is the person's; a
+        // write that matched no row (row-level security, or the library
+        // removed meanwhile) is the typed refusal, and no ownership write or
+        // cached edit follows. A database error is shown as before.
+        const kept = keptAnswer();
+        const saved = await checkedWrite(answered(supabase
           .from("libraries")
           .update({ ...dbConfig, ...editLists, updated_at: now, updated_by: uid })
-          .eq("id", editingLib.id!);
-        if (error) throw error;
+          .eq("id", editingLib.id!)
+          .select("id"), kept));
+        if (kept.error) throw kept.error;
+        if (!saved.ok) throw new Error(CHECKED_WRITE_REFUSED);
 
         // Ownership goes through the single write path (audit row + owner
         // notification), never a bare column write (GAP-12).

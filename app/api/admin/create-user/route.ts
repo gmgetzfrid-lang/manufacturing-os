@@ -7,6 +7,8 @@ import { enforceOrgAccess } from "@/lib/serverAuth";
 import { clearAccessRequestNotices, queueAccessRequestOutcome } from "@/lib/accessRequestOutcome";
 import { pruneRemovedMemberAclIndex, type RpcClient } from "@/lib/memberAclIndexPrune";
 import { memberHoldsAny } from "@/lib/roleHeld";
+import { checkedWrite, isMissingSchemaError } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 
 // Bounded lookup of auth users by email. Only used in the rare path where the
 // auth account already exists (e.g. they signed in with Microsoft first) but
@@ -39,13 +41,17 @@ async function findAuthUsersByEmail(email: string): Promise<string[] | null> {
  *  leaves the card row visible — but logged so it is never invisible. Both
  *  sides store emails normalized (lib/identity.ts / 20261018), so eq matches. */
 async function resolvePendingAccessRequests(orgId: string, email: string, memberUid: string): Promise<void> {
-  const { data, error } = await supabaseAdmin
+  // projects-tab SAF-22 (J15e): class (c) — an address with no pending
+  // request resolves none (zero rows is the ordinary case).
+  const kept = keptAnswer();
+  await checkedWrite(answered(supabaseAdmin
     .from("access_requests")
     .update({ status: "approved" })
     .eq("org_id", orgId)
     .eq("email", email)
     .eq("status", "pending")
-    .select("id, org_name");
+    .select("id, org_name"), kept));
+  const { data, error } = kept;
   if (error) { console.warn(`[create-user] couldn't resolve pending access request for ${email}: ${error.message}`); return; }
   // PROD-2 dw2: the membership IS the approval. When it answered a pending
   // request, the person who asked hears so at the address they gave (now
@@ -459,7 +465,11 @@ export async function POST(req: NextRequest) {
     const headlineBefore = (existingMember.role as string | null) ?? null;
     if (!merged.includes(grantedRole)) merged.push(grantedRole);
     const headline = primaryRole(merged);
-    const { error: updateError } = await supabaseAdmin
+    // projects-tab SAF-22 (J15e): class (a) — the grant is the person's
+    // decision; a write that matched no member row (removed meanwhile) is
+    // refused, and no audit row, profile write or request resolution follows.
+    const kept = keptAnswer();
+    const granted = await checkedWrite(answered(supabaseAdmin
       .from("org_members")
       .update({
         role: headline,
@@ -470,9 +480,13 @@ export async function POST(req: NextRequest) {
         display_name: displayName?.trim() ? displayName : (existingMember.display_name as string | null),
       })
       .eq("org_id", orgId)
-      .eq("uid", userId);
-    if (updateError) {
-      return NextResponse.json({ error: updateError.message }, { status: 500 });
+      .eq("uid", userId)
+      .select("id"), kept));
+    if (kept.error) {
+      return NextResponse.json({ error: kept.error.message }, { status: 500 });
+    }
+    if (!granted.ok) {
+      return NextResponse.json({ error: "The member could not be updated: their membership changed or was removed meanwhile — nothing was changed. Reload and try again." }, { status: 409 });
     }
 
     // ALOG-4 (admin-and-org Round G, P8): a re-add that grants a role or
@@ -582,7 +596,13 @@ export async function POST(req: NextRequest) {
   // the app falls back to [role]. Never blocks user creation. Keyed on
   // (org_id, uid) it can only reach the row inserted above, never an
   // existing member's collection.
-  await supabaseAdmin.from("org_members").update({ roles: [role] }).eq("org_id", orgId).eq("uid", userId);
+  // projects-tab SAF-22 (J15e): class (b) — never blocks the creation; a
+  // refusal or an error other than the pre-migration column is logged.
+  const seedKept = keptAnswer();
+  const seeded = await checkedWrite(answered(supabaseAdmin.from("org_members").update({ roles: [role] }).eq("org_id", orgId).eq("uid", userId).select("id"), seedKept));
+  if (!seeded.ok && !(seedKept.error && isMissingSchemaError(seedKept.error))) {
+    console.warn(`[create-user] the role collection of ${email} was not seeded: ${seedKept.error?.message ?? "no member row matched"}`);
+  }
 
   // Create / update the user profile. A brand-new account also gets this org
   // as its profile default — without it, an admin-created member's first

@@ -1107,7 +1107,12 @@ function AnswerFeedback({ questionId }: { questionId: string }) {
     try {
       const { rateKnowledgeAnswer } = await import("@/lib/knowledge");
       await rateKnowledgeAnswer(questionId, next);
-    } catch { /* best-effort — never interrupt reading the answer */ }
+    } catch {
+      // best-effort — never interrupt reading the answer; but a rating the
+      // server did not keep (refused, or the answer removed — projects-tab
+      // SAF-22, J15e) is not shown as saved: the thumbs go back as they were.
+      setState(state);
+    }
   };
   const btn = (active: boolean) =>
     `p-1.5 rounded-lg border transition-colors ${active

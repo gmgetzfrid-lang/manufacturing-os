@@ -19,6 +19,8 @@
 //   · Ruling 2 — REV-31: a bulk archive's duties (finishBulkArchive) and the
 //     library page's bulk archive (handleBulkArchive, lifted from the page).
 
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -529,7 +531,7 @@ describe("ruling 2 (REV-31) — a bulk archive does what the Archive dialog does
     const documents = ids.map((id) => ({ id, documentNumber: String(docRow(id).document_number), title: id, status: docRow(id).status, currentVersionId: docRow(id).current_version_id }));
     const fn = liftBulkArchive({
       selectedDocIds: new Set(ids), activeOrgId: ORG, library: { orgId: ORG }, uid: ME, userEmail: "dana@x", activeRole: "DocCtrl",
-      supabase, documents, libraryId: LIB, recallsCopyHolders, finishBulkArchive,
+      supabase, checkedWrite, answered, keptAnswer, documents, libraryId: LIB, recallsCopyHolders, finishBulkArchive,
       appPrompt: async (o: Record<string, unknown>) => { st.prompts.push(o); return reason; },
       appAlert: async (o: Record<string, unknown>) => { st.alerts.push(o); },
       setDocuments: () => {}, setSelectedDocIds: (s: Set<string>) => { st.selected = s; },

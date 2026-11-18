@@ -54,6 +54,8 @@ import { createClient } from "@supabase/supabase-js";
 import { getStripe, isStripeConfigured, planFromSubscription } from "@/lib/stripe";
 import { ACCESS_STATUSES, LIVE_STRIPE_STATUSES, PLAN_HOLDING_STRIPE_STATUSES, UNSTARTED_STRIPE_STATUSES, mapStripeStatus } from "@/lib/billing";
 import type Stripe from "stripe";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -423,7 +425,12 @@ async function acquireLock(sb: Db, key: string | null, eventId: string | null):
     if (isMissingTable(error, "stripe_event_locks")) return { ok: true, held: false };
     if (error.code !== "23505") return { ok: false, status: 500, error: `Could not take the Stripe event lock (${error.message}); Stripe will retry.` };
     const lapsed = new Date(Date.now() - LOCK_LEASE_MS).toISOString();
-    const { error: breakErr } = await sb.from("stripe_event_locks").delete().eq("lock_for", key).lt("locked_at", lapsed);
+    // projects-tab SAF-22 (J15e): class (c) — a lock still within its lease
+    // matches nothing (the ordinary wait); only a database error answers 500,
+    // as before. (The table has no id column: the match reads lock_for.)
+    const broken = keptAnswer();
+    await checkedWrite(answered(sb.from("stripe_event_locks").delete().eq("lock_for", key).lt("locked_at", lapsed).select("lock_for"), broken));
+    const breakErr = broken.error;
     if (breakErr) return { ok: false, status: 500, error: `Could not read the Stripe event lock (${breakErr.message}); Stripe will retry.` };
     const pause = step / 2 + Math.random() * (step / 2);
     if (Date.now() + pause > giveUpAt) {
@@ -436,8 +443,13 @@ async function acquireLock(sb: Db, key: string | null, eventId: string | null):
 /** Release only our own lock. A refused release is logged: the lock lapses
  *  after LOCK_LEASE_MS, and the event itself was handled and recorded. */
 async function releaseLock(sb: Db, key: string, eventId: string): Promise<void> {
-  const { error } = await sb.from("stripe_event_locks").delete().eq("lock_for", key).eq("event_id", eventId);
-  if (error) console.error(`[stripe/webhook] the Stripe event lock for ${key} was not released (${error.message}); it lapses after ${LOCK_LEASE_MS / 1000} s.`);
+  // projects-tab SAF-22 (J15e): class (b) — a release that matched no row
+  // (the lease lapsed and another delivery broke it) is logged too, never
+  // read as released; the answer to Stripe is unchanged either way.
+  const kept = keptAnswer();
+  const released = await checkedWrite(answered(sb.from("stripe_event_locks").delete().eq("lock_for", key).eq("event_id", eventId).select("lock_for"), kept));
+  if (kept.error) console.error(`[stripe/webhook] the Stripe event lock for ${key} was not released (${kept.error.message}); it lapses after ${LOCK_LEASE_MS / 1000} s.`);
+  else if (!released.ok) console.warn(`[stripe/webhook] the Stripe event lock for ${key} was no longer this delivery's to release (its lease lapsed and another delivery took it); nothing was released.`);
 }
 
 type LedgerRead =

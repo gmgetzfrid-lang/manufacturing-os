@@ -17,6 +17,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { CUT_OFF_LINE, columnsMissing } from "@/lib/knowledgeAskGuards";
 
 export const runtime = "nodejs";
@@ -52,15 +54,21 @@ export async function POST(req: NextRequest) {
     return bad("A cut-off answer cannot be rated — ask a narrower question for a complete one.", 409);
   }
 
-  const { error: upErr } = await supabaseAdmin
+  // projects-tab SAF-22 (J15e): class (a) — the rating is the person's; a
+  // write that matched no row (the answer removed meanwhile) is refused.
+  const kept = keptAnswer();
+  const rated = await checkedWrite(answered(supabaseAdmin
     .from("knowledge_questions")
     .update({ rating: rating === 0 ? null : rating, rated_at: rating === 0 ? null : new Date().toISOString() })
-    .eq("id", questionId);
+    .eq("id", questionId)
+    .select("id"), kept));
+  const upErr = kept.error;
   if (upErr) {
     if (/rating|rated_at|column/i.test(upErr.message)) {
       return bad("Feedback requires migration 20261013_answer_feedback.sql — run it in Supabase.", 409);
     }
     return bad(upErr.message, 500);
   }
+  if (!rated.ok) return bad("That answer was removed meanwhile, so your rating was not saved.", 409);
   return NextResponse.json({ ok: true });
 }

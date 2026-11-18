@@ -28,6 +28,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeAdminSurface } from "@/lib/adminGate";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 
 export const runtime = "nodejs";
 
@@ -70,11 +72,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `The archive was not discarded: its tickets could not be unlinked (${tErr.message}). Nothing was changed.` }, { status: 500 });
   }
   const ticketsUnlinked = (t as Array<{ id: string }> | null)?.length ?? 0;
-  const { data: d, error: dErr } = await sb
+  // SAF-22 (J15e): class (c) — an archive with no uncommitted revision
+  // unlinks none; the count is what the database returned.
+  const dKept = keptAnswer();
+  await checkedWrite(answered(sb
     .from("document_versions")
     .update({ archive_id: null })
     .eq("org_id", orgId).eq("archive_id", archiveId).is("archived_at", null)
-    .select("id");
+    .select("id"), dKept));
+  const { data: d, error: dErr } = dKept;
   if (dErr) {
     // Tickets already freed are a change: record it before answering (a retry would record 0).
     const auditError = ticketsUnlinked > 0
@@ -105,9 +111,12 @@ export async function POST(req: NextRequest) {
   if (cErr || cdErr) {
     catalogKeptReason = `whether anything was committed under it could not be read (${(cErr ?? cdErr)!.message})`;
   } else if ((committed ?? 0) === 0 && (committedDocs ?? 0) === 0) {
-    const { error: delErr } = await sb.from("archives").delete().eq("org_id", orgId).eq("archive_id", archiveId);
-    if (delErr) catalogKeptReason = `its catalog entry could not be removed (${delErr.message})`;
-    else catalogRemoved = true;
+    // SAF-22 (J15e): the catalog row is said removed only when the delete
+    // matched it; a row already gone (a concurrent Discard) is not claimed.
+    const delKept = keptAnswer();
+    const del = await checkedWrite(answered(sb.from("archives").delete().eq("org_id", orgId).eq("archive_id", archiveId).select("id"), delKept));
+    if (delKept.error) catalogKeptReason = `its catalog entry could not be removed (${delKept.error.message})`;
+    else catalogRemoved = del.ok;
   }
 
   const auditError = await writeCancelRow({ archiveId, ticketsUnlinked, versionsUnlinked, catalogRemoved, ...(catalogKeptReason ? { catalogKeptReason } : {}) });

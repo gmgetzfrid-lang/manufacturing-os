@@ -5,6 +5,8 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+import { checkedWrite } from '@/lib/checkedWrite';
+import { answered, keptAnswer } from '@/lib/checkedWriteAnswer';
 import { uploadTicketAttachment, getSignedUrlForPath, ArchivedFileError } from '@/lib/storage';
 import { useRole } from '@/components/providers/RoleContext';
 import { useToast } from '@/components/providers/ToastProvider';
@@ -1418,11 +1420,13 @@ export default function TicketDetailView() {
       // only its own uid). It is checked now: a refusal, or a write that
       // matched no row, is said instead of passing as read.
       if (uid && t.unreadBy?.includes(uid)) {
-        void supabase.from('tickets').update({ unread_by: t.unreadBy.filter(id => id !== uid) }).eq('id', ticketId).select('id')
-          .then(({ data: hit, error }) => {
+        // projects-tab SAF-22 (J15e): the same answers, read through checkedWrite.
+        const readKept = keptAnswer();
+        void checkedWrite(answered(supabase.from('tickets').update({ unread_by: t.unreadBy.filter(id => id !== uid) }).eq('id', ticketId).select('id'), readKept))
+          .then((w) => {
             if (!alive) return;
-            if (error || !hit || hit.length === 0) {
-              showToast({ type: 'warning', title: 'Not marked as read', message: `This request still shows as unread for you: ${error?.message || 'the update matched no row'}.` });
+            if (!w.ok) {
+              showToast({ type: 'warning', title: 'Not marked as read', message: `This request still shows as unread for you: ${readKept.error?.message || 'the update matched no row'}.` });
             }
           }, () => {});
       }
@@ -1430,11 +1434,15 @@ export default function TicketDetailView() {
       // in-app notifications read so the bell + sidebar bubble actually clears
       // (clearing unread_by alone left the notification rows unread).
       if (uid) {
-        void supabase.from('notifications')
+        // SAF-22 (J15e): class (c) — none unread is the ordinary case; an
+        // error is logged, as before.
+        const bellKept = keptAnswer();
+        void checkedWrite(answered(supabase.from('notifications')
           .update({ read_at: new Date().toISOString() })
           .eq('user_id', uid).eq('resource_id', ticketId).is('read_at', null)
-          .then(({ error }) => {
-            if (error) console.warn('[ticket] notifications for this request were not marked read:', error.message);
+          .select('id'), bellKept))
+          .then(() => {
+            if (bellKept.error) console.warn('[ticket] notifications for this request were not marked read:', bellKept.error.message);
           }, () => {});
       }
       setLoading(false);

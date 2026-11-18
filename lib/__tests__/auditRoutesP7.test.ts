@@ -23,6 +23,8 @@ const state = vi.hoisted(() => ({
   /** `${table}.${op}` → the error that op answers (op: select | insert | update | delete). */
   errors: {} as Record<string, { message: string; code?: string }>,
   calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
+  /** SAF-22 (J15e): when set, a delete's `{ count: "exact" }` answers this (rows taken meanwhile). */
+  deleteCount: null as number | null,
 }));
 
 function chain(table: string) {
@@ -33,8 +35,10 @@ function chain(table: string) {
   const result = () => {
     const err = state.errors[`${table}.${op}`] ?? null;
     if (err) return { data: null, error: err, count: null };
-    if (op === "insert" || op === "delete") return { data: null, error: null, count: null };
-    if (op === "update") return { data: rows().map((r) => ({ id: r.id })), error: null, count: null };
+    if (op === "insert") return { data: null, error: null, count: null };
+    // SAF-22 (J15e): a delete answers its matched rows (`.select("id")`) and,
+    // asked `{ count: "exact" }`, their count — as PostgREST does.
+    if (op === "update" || op === "delete") return { data: rows().map((r) => ({ id: r.id })), error: null, count: op === "delete" ? (state.deleteCount ?? rows().length) : null };
     return head ? { data: null, error: null, count: rows().length } : { data: rows(), error: null, count: rows().length };
   };
   const c: Row = {};
@@ -79,7 +83,7 @@ const post = (path: string, body: Row) => new NextRequest(`http://x${path}`, {
 });
 const audits = () => state.calls.filter((c) => c.table === "audit_logs" && c.method === "insert").map((c) => c.args[0] as Row);
 
-beforeEach(() => { state.actor = null; state.rows = {}; state.errors = {}; state.calls = []; });
+beforeEach(() => { state.actor = null; state.rows = {}; state.errors = {}; state.calls = []; state.deleteCount = null; });
 
 // ── SURF-19 ───────────────────────────────────────────────────────────────
 const BEFORE = ["Admin", "DocCtrl"]; // PURGE_ROLES and SHED_ROLES at base 6503ea7
@@ -253,5 +257,41 @@ describe("ALOG-8 — archive-cancel: checked writes, and a refused audit row is 
     expect(body.catalogRemoved).toBe(false);
     expect(body.catalogKept).toMatch(/could not be removed \(nope\)/);
     expect((audits()[0].details as Row).catalogKeptReason).toMatch(/nope/);
+  });
+});
+
+// ── projects-joint J15e (projects-tab SAF-22): the purge's delete asks for its count ──
+describe("SAF-22 (J15e) — a purge line reports what its delete matched, asked as a count", () => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  const seed = () => {
+    state.rows.notifications = [
+      { id: "n1", org_id: O1, read_at: "2020-01-01", kind: "x", created_at: "2020-01-01" },
+      { id: "n2", org_id: O1, read_at: "2020-01-01", kind: "x", created_at: "2020-01-01" },
+    ];
+  };
+  const purge = async () => {
+    state.actor = { userId: "dc", roles: ["Admin"] };
+    return (await purgeRoute.POST(post("/api/admin/purge", { days: 90, confirm: true, tables: ["notifications"] }))).json() as Promise<{ deleted: Array<{ table: string; rows: number; error?: string }>; totalDeleted: number }>;
+  };
+  it("regression: the delete is sent with { count: \"exact\" } and never asks for its rows; the line reads as before", async () => {
+    seed();
+    const out = await purge();
+    const del = state.calls.find((c) => c.table === "notifications" && c.method === "delete")!;
+    expect(del.args).toEqual([{ count: "exact" }]);
+    expect(state.calls.some((c) => c.table === "notifications" && c.method === "select" && state.calls.indexOf(c) > state.calls.indexOf(del))).toBe(false);
+    expect(out.deleted.find((d) => d.table === "notifications")).toMatchObject({ rows: 2 });
+  });
+  it("rows taken meanwhile (another purge) are not claimed: the line says what this delete removed", async () => {
+    seed();
+    state.deleteCount = 0;
+    const out = await purge();
+    expect(out.deleted.find((d) => d.table === "notifications")).toMatchObject({ rows: 0 });
+    expect(out.deleted.find((d) => d.table === "notifications")!.error).toBeUndefined();
+  });
+  it("a delete the database refused is the line's error, as before", async () => {
+    seed();
+    state.errors["notifications.delete"] = { message: "permission denied for table notifications" };
+    const out = await purge();
+    expect(out.deleted.find((d) => d.table === "notifications")).toMatchObject({ rows: 0, error: "permission denied for table notifications" });
   });
 });

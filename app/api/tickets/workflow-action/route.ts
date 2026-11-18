@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
+import { eqOrNull, withFilters } from "@/lib/writeFilters";
 import { notifyBatchWithReason } from "@/lib/inAppNotifications";
 import { WorkflowEngine, ticketResource, decisiveGrants, currentRoster, slotSignPlan, engineeringGateRequired, ISSUING_APPROVALS, ISSUE_MARK_ACTIONS, ISSUE_AS_IS_APPROVALS, issueReadyFor } from "@/lib/workflow";
 import { loadCapabilityPolicyStrict, policyAllows } from "@/lib/capabilityPolicy";
@@ -1987,24 +1990,28 @@ export async function POST(req: NextRequest) {
     ? (vetted.attachment ? `Added ${vetted.attachment.type} file: ${vetted.attachment.name}` : null)
     : transitionNote;
 
-  let baseQuery = supabaseAdmin
-    .from("tickets")
-    .update(updates)
-    .eq("id", body.ticketId)
-    .eq("status", ticket.status);
-  // EDGE-15: a row with no token compare-and-sets on the null itself — the
-  // first writer stamps it and a concurrent second gets the 409 — instead of
-  // dropping to a status-only check.
-  baseQuery = ticket.lastModified
-    ? baseQuery.eq("last_modified", String(ticket.lastModified))
-    : baseQuery.is("last_modified", null);
-  // GAP-109 (DF-P7): an objection lands only on a window still running — the
-  // cron's close of the same window changes last_modified, and either way
-  // these two keep the first act the only one.
-  if (action.action === "object_consent_window") baseQuery = baseQuery.is("consent_window_expired_at", null).is("consent_window_objected_at", null);
-  let { data: updated, error: updErr } = await baseQuery
-    .select("id")
-    .maybeSingle();
+  // The transition's compare-and-set: on the status and (EDGE-15) the
+  // last_modified as read — a row with no token compare-and-sets on the null
+  // itself, so the first writer stamps it and a concurrent second gets the
+  // 409, instead of dropping to a status-only check. GAP-109 (DF-P7): an
+  // objection lands only on a window still running — the cron's close of
+  // the same window changes last_modified, and either way these two keep
+  // the first act the only one (the first write only, as before).
+  // projects-tab SAF-22 (J15e): one write, read through checkedWrite, with
+  // the filters in the order they were sent; `data` is the matched row (or
+  // null), as `.maybeSingle()` answered.
+  const transitionWrite = async (patch: typeof updates, consentGuard: boolean) => {
+    const kept = keptAnswer();
+    const w = await checkedWrite(answered(withFilters(eqOrNull(supabaseAdmin
+      .from("tickets")
+      .update(patch)
+      .eq("id", body.ticketId)
+      .eq("status", ticket.status), "last_modified", ticket.lastModified ? String(ticket.lastModified) : null),
+    (q) => (consentGuard ? q.is("consent_window_expired_at", null).is("consent_window_objected_at", null) : q))
+      .select("id"), kept));
+    return { data: w.ok ? { id: w.ids[0] } : null, error: kept.error };
+  };
+  let { data: updated, error: updErr } = await transitionWrite(updates, action.action === "object_consent_window");
   // LEAK-9 (DF-P3): before 20261195 is pasted the `outcome` column is not
   // there — the write retries without it (today's path: that request's
   // outcome is not recorded) rather than refusing the close or the cancel.
@@ -2014,17 +2021,7 @@ export async function POST(req: NextRequest) {
     console.warn(`[workflow-action] tickets.outcome is not in the database yet (20261195 not pasted) — ${action.action} on ticket ${body.ticketId} is applied without it`);
     intendedOutcome = (updates.outcome as string | null | undefined) ?? null;
     delete updates.outcome;
-    let noOutcome = supabaseAdmin
-      .from("tickets")
-      .update(updates)
-      .eq("id", body.ticketId)
-      .eq("status", ticket.status);
-    noOutcome = ticket.lastModified
-      ? noOutcome.eq("last_modified", String(ticket.lastModified))
-      : noOutcome.is("last_modified", null);
-    ({ data: updated, error: updErr } = await noOutcome
-      .select("id")
-      .maybeSingle());
+    ({ data: updated, error: updErr } = await transitionWrite(updates, false));
     if (!updErr && updated) outcomeNotStored = true;
   }
   // Pre-migration tolerance: if the deliverable-rev columns (20260827) aren't
@@ -2034,17 +2031,7 @@ export async function POST(req: NextRequest) {
       ("deliverable_rev" in updates || "draft_iteration" in updates)) {
     const { deliverable_rev: _dr, draft_iteration: _di, ...tolerant } = updates;
     void _dr; void _di;
-    let tolerantQuery = supabaseAdmin
-      .from("tickets")
-      .update(tolerant)
-      .eq("id", body.ticketId)
-      .eq("status", ticket.status);
-    tolerantQuery = ticket.lastModified
-      ? tolerantQuery.eq("last_modified", String(ticket.lastModified))
-      : tolerantQuery.is("last_modified", null);
-    ({ data: updated, error: updErr } = await tolerantQuery
-      .select("id")
-      .maybeSingle());
+    ({ data: updated, error: updErr } = await transitionWrite(tolerant, false));
   }
   if (updErr) {
     await recordNotApplied("write_failed", updErr.message);
@@ -2098,11 +2085,15 @@ export async function POST(req: NextRequest) {
       // so nothing here may turn it into a 500.
       const releaseHolds = async (): Promise<{ data: unknown[] | null; error: { message: string } | null }> => {
         try {
-          const { data, error } = await supabaseAdmin
+          // projects-tab SAF-22 (J15e): read through checkedWrite; the rows
+          // returned are the holds THIS close released (below).
+          const kept = keptAnswer();
+          await checkedWrite(answered(supabaseAdmin
             .from("document_holds")
             .update({ released_at: nowIso, released_by: caller.id, released_by_name: callerEmail ?? null,
                       released_reason: reason || `Released on ${newStatus === "CANCELED" ? "cancellation" : "close"} of ticket ${ticket.ticketId ?? body.ticketId}` })
-            .in("id", holds.map((h) => h.id)).is("released_at", null).select("id");
+            .in("id", holds.map((h) => h.id)).is("released_at", null).select("id"), kept));
+          const { data, error } = kept;
           return { data: (data as unknown[] | null) ?? null, error: error ? { message: error.message || "update refused" } : null };
         } catch (e) {
           return { data: null, error: { message: (e as Error)?.message ?? String(e) } };
@@ -2132,11 +2123,38 @@ export async function POST(req: NextRequest) {
           holdsNotReleased: holdIds,
         };
       } else {
+        // SAF-22 (J15e): a hold released meanwhile by someone else (its
+        // `released_at IS NULL` guard matched nothing) was not released by
+        // this close: no HOLD_RELEASED row claims it (its releaser's stands).
+        const releasedIds = new Set(((released ?? []) as Array<{ id?: unknown }>).map((r) => String(r.id)));
+        // SAF-22 review L1: a first attempt that landed but lost its answer
+        // (a transport error, then the retry's guard matches nothing) is this
+        // close's own release — read back, a hold whose release carries this
+        // caller and this close's own stamp (`nowIso`, the same in both
+        // attempts) is counted released by it; one released by anyone else,
+        // or at another moment, never is. A read that fails claims nothing.
+        const unmatched = holds.filter((h) => !releasedIds.has(String(h.id)));
+        if (unmatched.length > 0) {
+          const { data: after, error: afterErr } = await supabaseAdmin
+            .from("document_holds").select("id, released_by, released_at").in("id", unmatched.map((h) => h.id));
+          if (afterErr) {
+            console.warn(`[workflow-action] the holds ${unmatched.map((h) => h.id).join(", ")} could not be re-read after ${auditRow.action} (audit row ${auditRow.id}): ${afterErr.message}; no HOLD_RELEASED row is written for them`);
+          } else {
+            for (const r of (after ?? []) as Array<{ id: unknown; released_by: unknown; released_at: unknown }>) {
+              const at = typeof r.released_at === "string" ? Date.parse(r.released_at) : NaN;
+              if (r.released_by === caller.id && at === Date.parse(nowIso)) releasedIds.add(String(r.id));
+            }
+          }
+        }
         for (const h of holds) {
+          if (!releasedIds.has(String(h.id))) {
+            console.warn(`[workflow-action] hold ${h.id} was already released when ${auditRow.action} (audit row ${auditRow.id}) closed ticket ${body.ticketId}; no HOLD_RELEASED row is written for it`);
+            continue;
+          }
           await supabaseAdmin.from("audit_logs").insert({
             action: "HOLD_RELEASED", resource_type: "document", resource_id: h.document_id, org_id: ticket.orgId,
             user_id: caller.id, user_email: callerEmail ?? null,
-            details: { holdId: h.id, reason: h.reason, releasedReason: reason || null, viaTicketClose: body.ticketId, released: (released ?? []).length },
+            details: { holdId: h.id, reason: h.reason, releasedReason: reason || null, viaTicketClose: body.ticketId, released: releasedIds.size },
           }).then(() => undefined, () => undefined);
         }
       }
@@ -2471,14 +2489,17 @@ export async function POST(req: NextRequest) {
     // two statuses that register an intent.
     if (isReassign && !clearsAll && ticket.assignedDrafterId && ticket.assignedDrafterId !== drafterId) {
       for (const ids of slices) {
-        const retire = await supabaseAdmin
+        // projects-tab SAF-22 (J15e): class (c) — none to retire is ordinary.
+        const retire = keptAnswer();
+        await checkedWrite(answered(supabaseAdmin
           .from("document_intents")
           .delete()
           .in("document_id", ids)
           .eq("ticket_id", body.ticketId)
           .eq("source", "ticket")
-          .eq("user_id", ticket.assignedDrafterId);
-        if (retire?.error) {
+          .eq("user_id", ticket.assignedDrafterId)
+          .select("id"), retire));
+        if (retire.error) {
           console.warn(`[workflow-action] intent bridge: previous drafter's intents not retired for ticket ${body.ticketId} (non-blocking)`, retire.error.message);
         }
       }
@@ -2547,13 +2568,16 @@ export async function POST(req: NextRequest) {
       }
     } else if (clearsAll) {
       for (const ids of slices) {
-        const clear = await supabaseAdmin
+        // SAF-22 (J15e): class (c) — none to clear is ordinary.
+        const clear = keptAnswer();
+        await checkedWrite(answered(supabaseAdmin
           .from("document_intents")
           .delete()
           .in("document_id", ids)
           .eq("ticket_id", body.ticketId)
-          .eq("source", "ticket");
-        if (clear?.error) {
+          .eq("source", "ticket")
+          .select("id"), clear));
+        if (clear.error) {
           console.warn(`[workflow-action] intent bridge: intents not cleared for ticket ${body.ticketId} (non-blocking)`, clear.error.message);
         }
       }
@@ -2786,10 +2810,16 @@ async function fanOut(params: {
     for (const row of (stale ?? []) as Array<{ id: string; user_id?: string | null; metadata: Record<string, unknown> | null }>) {
       if (slaNoticeSurvivesTransition(String(row.metadata?.action ?? ""), exits)) continue;
       if (params.rosterPartial === true && !partialRetire.has(String(row.user_id ?? "")) && row.metadata?.action !== "sign_slot") continue;
-      await supabaseAdmin.from("notifications")
+      // projects-tab SAF-22 (J15e): class (c) — an alert read meanwhile (its
+      // `read_at IS NULL` guard) is not superseded; a failure, silent before,
+      // is logged, and every other alert is still tried.
+      const kept = keptAnswer();
+      await checkedWrite(answered(supabaseAdmin.from("notifications")
         .update({ metadata: { ...(row.metadata ?? {}), superseded_at: supersededAt, superseded_by: action.type } })
         .eq("id", row.id)
-        .is("read_at", null);
+        .is("read_at", null)
+        .select("id"), kept));
+      if (kept.error) console.warn(`[workflow-action] the stale alert ${row.id} on ticket ${ticketId} was not superseded: ${kept.error.message}`);
     }
   } catch (e) {
     console.warn("[workflow-action] superseding stale notifications failed:", e);

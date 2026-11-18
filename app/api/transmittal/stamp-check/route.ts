@@ -37,7 +37,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { evaluateTransmitAuthority, rowToTransmittal } from "@/lib/transmittals";
 import { checkItemsStampableWithFiles } from "@/lib/transmittalStampCheck";
-import { isMissingSchemaError } from "@/lib/checkedWrite";
+import { checkedWrite, isMissingSchemaError } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { userFacingError } from "@/lib/userFacingError";
 
 export const runtime = "nodejs";
@@ -96,13 +97,17 @@ export async function POST(req: NextRequest) {
       ...(check.detail ? { detail: check.detail } : {}),
     })),
   };
-  const { data: wrote, error: recErr } = await supabaseAdmin
+  // projects-tab SAF-22 (J15e): read through checkedWrite, the same answers
+  // (the whole error still decides the pre-migration path).
+  const recKept = keptAnswer();
+  const rec = await checkedWrite(answered(supabaseAdmin
     .from("transmittals")
     .update({ stamp_check: record })
     .eq("id", t.id)
     .eq("status", "draft")
     .eq("updated_at", draftUpdatedAt)
-    .select("id");
+    .select("id"), recKept));
+  const recErr = recKept.error;
   if (recErr) {
     if (isMissingSchemaError(recErr)) {
       // Before 20261199: nothing to record into, and nothing asks for it.
@@ -112,7 +117,7 @@ export async function POST(req: NextRequest) {
     console.warn(`[stamp-check] the verdicts for ${t.number} could not be recorded:`, recErr.message);
     return bad(`The check ran, but its result could not be recorded (${userFacingError(recErr, { context: "stamp-check", clause: true })}). Issue again to re-run it — if you issue anyway, every file goes out on your yes alone, without the portal's refusal to release an unmarked copy.`, 503);
   }
-  if (!Array.isArray(wrote) || wrote.length === 0) {
+  if (!rec.ok) {
     return bad(`${t.number} was saved while its files were being checked — the check was not recorded. Open the draft, check it and issue again.`, 409);
   }
   return NextResponse.json({ items, recorded: true }, noStore);

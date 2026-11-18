@@ -36,6 +36,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { callAiModel, AiCallError, type AiProviderId } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS, ALLOWED_EMBEDDING_PROVIDERS, PROVIDER_BLOCK_MESSAGE, type AiUsage } from "@/lib/ai/pricing";
 import { embedPassages, defaultEmbeddingModel, type EmbeddingProviderId } from "@/lib/ai/embeddings";
@@ -322,10 +324,14 @@ export async function POST(req: NextRequest) {
   if (body.action === "embedding") {
     const ep = String(body.embeddingProvider ?? "").trim();
     if (body.clearEmbedding) {
-      const { error } = await supabaseAdmin.from("ai_connections").update({
+      // projects-tab SAF-22 (J15e): class (c) — no connection row means no
+      // embeddings key to remove; only a database error is said.
+      const kept = keptAnswer();
+      await checkedWrite(answered(supabaseAdmin.from("ai_connections").update({
         embedding_provider: null, embedding_model: null,
         embedding_api_key: null, embedding_key_last4: null,
-      }).eq("org_id", orgId).eq("user_id", auth.userId);
+      }).eq("org_id", orgId).eq("user_id", auth.userId).select("id"), kept));
+      const { error } = kept;
       if (error) return bad(`Couldn't remove the embeddings key: ${error.message}`, 500);
       return NextResponse.json({ ok: true });
     }
@@ -372,13 +378,19 @@ export async function POST(req: NextRequest) {
     // GOV-12: a plaintext key from before encryption was configured is
     // re-sealed the next time its owner saves, new key or not.
     const reseal = !key && !!row.embedding_api_key && !isSealedAiKey(row.embedding_api_key) && aiKeyCryptoConfigured();
-    const { error } = await supabaseAdmin.from("ai_connections").update({
+    // projects-tab SAF-22 (J15e): class (a) — the save is the person's; a
+    // write that matched no row (the connection removed meanwhile) is
+    // refused, and no audit row claims it. A database error (and the
+    // pre-migration column, read from the whole error) answers as before.
+    const kept = keptAnswer();
+    const saved = await checkedWrite(answered(supabaseAdmin.from("ai_connections").update({
       embedding_provider: ep,
       embedding_model: String(body.embeddingModel ?? "").trim() || null,
       ...(key ? { embedding_api_key: sealAiKey(key), embedding_key_last4: key.slice(-4) } : {}),
       ...(reseal ? { embedding_api_key: sealAiKey(row.embedding_api_key as string) } : {}),
       updated_at: new Date().toISOString(),
-    }).eq("id", row.id as string);
+    }).eq("id", row.id as string).select("id"), kept));
+    const { error } = kept;
     if (error) {
       return bad(
         columnMissing(error)
@@ -387,6 +399,7 @@ export async function POST(req: NextRequest) {
         columnMissing(error) ? 424 : 500,
       );
     }
+    if (!saved.ok) return bad(CONNECTION_GONE, 409);
     await supabaseAdmin.from("audit_logs").insert({
       action: "AI_EMBEDDING_KEY_SAVED",
       resource_type: "ai_connection", resource_id: orgId,
@@ -447,10 +460,17 @@ export async function POST(req: NextRequest) {
     created_by_name: auth.name,
     updated_at: new Date().toISOString(),
   };
+  // projects-tab SAF-22 (J15e): class (a) — an update that matched no row
+  // (the connection removed meanwhile) is refused; no audit row claims it.
+  const kept = keptAnswer();
+  const saved = existing
+    ? await checkedWrite(answered(supabaseAdmin.from("ai_connections").update(fields).eq("id", existing.id as string).select("id"), kept))
+    : null;
   const { error } = existing
-    ? await supabaseAdmin.from("ai_connections").update(fields).eq("id", existing.id as string)
+    ? kept
     : await supabaseAdmin.from("ai_connections").insert({ org_id: orgId, user_id: auth.userId, ...fields });
   if (error) return bad(`Couldn't save the connection: ${error.message}`, 500);
+  if (saved && !saved.ok) return bad(CONNECTION_GONE, 409);
 
   await supabaseAdmin.from("audit_logs").insert({
     action: "AI_CONNECTION_SAVED",
@@ -462,6 +482,9 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true, encrypted: aiKeyCryptoConfigured() });
 }
 
+/** SAF-22 (J15e): a save whose connection row went between the read and the write. */
+const CONNECTION_GONE = "Your AI connection was removed meanwhile (another tab, or an admin), so nothing was saved. Reload and save it again.";
+
 export async function DELETE(req: NextRequest) {
   let body: { orgId?: string; scope?: string };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
@@ -472,9 +495,13 @@ export async function DELETE(req: NextRequest) {
   if (body.scope === "org") {
     return bad("Workspace keys are retired — nothing to remove.", 410);
   }
-  const { error } = await supabaseAdmin
+  // projects-tab SAF-22 (J15e): class (c) — removing a connection that is
+  // already gone leaves the state the person asked for; an error is said.
+  const kept = keptAnswer();
+  await checkedWrite(answered(supabaseAdmin
     .from("ai_connections").delete()
-    .eq("org_id", orgId).eq("user_id", auth.userId);
+    .eq("org_id", orgId).eq("user_id", auth.userId).select("id"), kept));
+  const { error } = kept;
   if (error) return bad(`Couldn't remove the connection: ${error.message}`, 500);
   return NextResponse.json({ ok: true });
 }

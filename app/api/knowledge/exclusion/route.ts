@@ -21,6 +21,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
+import { notLandedReason } from "@/lib/checkedWriteReason";
 import { loadPrincipal } from "@/lib/knowledgeAccess";
 
 export const runtime = "nodejs";
@@ -56,9 +59,14 @@ export async function POST(req: NextRequest) {
     .from("documents").select("id").eq("id", documentId).eq("org_id", orgId).maybeSingle();
   if (!doc) return bad("No such document in this workspace", 404);
 
-  const { error: flagError } = await supabaseAdmin
+  // projects-tab SAF-22 (J15e): class (a) — the carve-out is the person's
+  // decision; a write that matched no document (removed meanwhile) is
+  // refused and nothing is purged. The migration check reads the whole error.
+  const flagKept = keptAnswer();
+  const flagged = await checkedWrite(answered(supabaseAdmin
     .from("documents").update({ ai_excluded: excluded })
-    .eq("id", documentId).eq("org_id", orgId);
+    .eq("id", documentId).eq("org_id", orgId).select("id"), flagKept));
+  const flagError = flagKept.error;
   if (flagError) {
     const missing = flagError.code === "42703" || /column/i.test(flagError.message);
     return bad(
@@ -68,6 +76,7 @@ export async function POST(req: NextRequest) {
       missing ? 424 : 500,
     );
   }
+  if (!flagged.ok) return bad("The document was removed meanwhile, so what the AI may read was not changed. Reload and try again.", 409);
 
   if (!excluded) return NextResponse.json({ excluded, purged: 0 });
 
@@ -79,9 +88,15 @@ export async function POST(req: NextRequest) {
     .eq("org_id", orgId).eq("source_document_id", documentId);
   const mirrorIds = (mirrors ?? []).map((m) => m.id as string);
 
+  // SAF-22 (J15e): class (c) — a copy removed meanwhile is not purged by
+  // this call; `purged` counts the copies the delete matched.
+  let purged = 0;
   if (mirrorIds.length > 0) {
-    const { error: purgeError } = await supabaseAdmin
-      .from("knowledge_documents").delete().in("id", mirrorIds);
+    const purgeKept = keptAnswer();
+    const purge = await checkedWrite(answered(supabaseAdmin
+      .from("knowledge_documents").delete().in("id", mirrorIds).select("id"), purgeKept));
+    const purgeError = purgeKept.error;
+    if (purge.ok) purged = purge.ids.length;
     if (purgeError) {
       // The flag is set but the copy is still there — say so rather than
       // reporting success. A boundary reported as enforced when it isn't is
@@ -95,9 +110,15 @@ export async function POST(req: NextRequest) {
 
   // Mentions recorded directly against the CONTROLLED document (rather than
   // against a knowledge mirror) have no cascade to ride — clear them too.
-  await supabaseAdmin.from("entity_mentions").delete()
-    .eq("org_id", orgId).eq("document_id", documentId)
-    .then(() => undefined, () => undefined);
+  // SAF-22 (J15e): class (c) — none to clear is the ordinary case; a
+  // failure (swallowed before) is logged and said as a warning.
+  const mentionsKept = keptAnswer();
+  await checkedWrite(answered(supabaseAdmin.from("entity_mentions").delete()
+    .eq("org_id", orgId).eq("document_id", documentId).select("id"), mentionsKept));
+  if (mentionsKept.error) {
+    console.error(`[knowledge/exclusion] mentions recorded against document ${documentId} were not cleared: ${mentionsKept.error.message}`);
+    return NextResponse.json({ excluded, purged, warning: `The document is held back and its indexed copy removed, but the entity mentions recorded against it could not be cleared: ${notLandedReason(mentionsKept, "exclusion mentions")}` });
+  }
 
-  return NextResponse.json({ excluded, purged: mirrorIds.length });
+  return NextResponse.json({ excluded, purged });
 }
