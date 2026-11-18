@@ -196,6 +196,52 @@ describe("REV-38 — a person who may not save resizes for this view only", () =
     expect(write).toHaveBeenCalledWith({ a: 100, b: 90 });
   });
 
+  it("demoted then re-promoted inside the wait: a change made as a controller is kept and saved; only a column changed while view-only is dropped", async () => {
+    let canSave = true;
+    const write = vi.fn(async (): Promise<ColumnWidthSaveAnswer> => ({ ok: true }));
+    let screen: ColumnWidths = {};
+    const saver = createColumnWidthSaver({ canSave: () => canSave, write, notSaved: () => {}, apply: (u) => { screen = u(screen); }, dragging: () => null });
+    saver.load({ a: 100, b: 100 });
+    saver.change("a", 150); // as a controller
+    canSave = false;
+    saver.change("b", 90); // view-only
+    canSave = true;
+    saver.dropViewOnly();
+    expect(screen).toEqual({ a: 150, b: 100 });
+    await vi.advanceTimersByTimeAsync(WAIT);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(write).toHaveBeenCalledWith({ a: 150, b: 100 });
+  });
+
+  it("a column changed view-only and then changed again as one who may save is kept at the promotion's drop", async () => {
+    let canSave = false;
+    const write = vi.fn(async (): Promise<ColumnWidthSaveAnswer> => ({ ok: true }));
+    let screen: ColumnWidths = {};
+    const saver = createColumnWidthSaver({ canSave: () => canSave, write, notSaved: () => {}, apply: (u) => { screen = u(screen); }, dragging: () => null });
+    saver.load({ a: 100 });
+    saver.change("a", 120);
+    canSave = true;
+    saver.change("a", 150);
+    saver.dropViewOnly();
+    expect(screen).toEqual({ a: 150 });
+    await vi.advanceTimersByTimeAsync(WAIT);
+    expect(write).toHaveBeenCalledWith({ a: 150 });
+  });
+
+  it("demoted then re-promoted with nothing changed while view-only: nothing dropped, and no save of an unchanged map", async () => {
+    let canSave = true;
+    const write = vi.fn(async (): Promise<ColumnWidthSaveAnswer> => ({ ok: true }));
+    let screen: ColumnWidths = {};
+    const saver = createColumnWidthSaver({ canSave: () => canSave, write, notSaved: () => {}, apply: (u) => { screen = u(screen); }, dragging: () => null });
+    saver.load({ a: 100 });
+    saver.change("a", 150);
+    canSave = false; canSave = true;
+    saver.dropViewOnly();
+    await vi.advanceTimersByTimeAsync(WAIT);
+    expect(write).toHaveBeenCalledWith({ a: 150 });
+    expect(screen).toEqual({ a: 150 });
+  });
+
   it("a person who may no longer save when the wait ends sends nothing; their change stays on their screen", async () => {
     let canSave = true;
     const write = vi.fn(async (): Promise<ColumnWidthSaveAnswer> => ({ ok: true }));
@@ -336,6 +382,68 @@ describe("REV-38 — per-column last-writer-wins: the interleavings", () => {
     h.saver.change("c", 50);
     await vi.advanceTimersByTimeAsync(WAIT);
     expect(h.write).toHaveBeenLastCalledWith({ a: 120, b: 300, c: 50 });
+  });
+
+  it("two quick saves with the first one's echo arriving during the second's flight: no jump back on the second's ok, and with its echo missed the next save keeps this tab's saved width (third-pass ruling)", async () => {
+    const held = heldWrites();
+    const h = harness({ canSave: true, answer: held.answer });
+    h.saver.load({ a: 100, b: 100 });
+    h.saver.change("a", 150);
+    await vi.advanceTimersByTimeAsync(WAIT); // A sent
+    h.saver.change("b", 200);
+    await vi.advanceTimersByTimeAsync(WAIT); // B waits behind A
+    held.release(); // A ok
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.write).toHaveBeenLastCalledWith({ a: 150, b: 200 }); // B sent
+    h.saver.remote({ a: 150, b: 100 }); // A's echo, during B's flight
+    expect(h.screen).toEqual({ a: 150, b: 200 });
+    held.release(); // B ok; B's echo never arrives
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.screen).toEqual({ a: 150, b: 200 });
+    h.saver.change("c", 50);
+    await vi.advanceTimersByTimeAsync(WAIT);
+    expect(h.write).toHaveBeenLastCalledWith({ a: 150, b: 200, c: 50 });
+    held.release();
+  });
+
+  it("another controller's map during the flight, then this tab's echo missed: the ok answer lays this tab's column over it — no jump back, and the next save keeps both", async () => {
+    const held = heldWrites();
+    const h = harness({ canSave: true, answer: held.answer });
+    h.saver.load({ a: 100, b: 100 });
+    h.saver.change("a", 150);
+    await vi.advanceTimersByTimeAsync(WAIT);
+    h.saver.remote({ a: 100, b: 300 });
+    held.release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.screen).toEqual({ a: 150, b: 300 });
+    h.saver.remote({ a: 150, b: 300, d: 20 }); // a later map still replaces the stored map
+    expect(h.screen).toEqual({ a: 150, b: 300, d: 20 });
+    h.saver.change("c", 50);
+    await vi.advanceTimersByTimeAsync(WAIT);
+    expect(h.write).toHaveBeenLastCalledWith({ a: 150, b: 300, d: 20, c: 50 });
+    held.release();
+  });
+
+  it("a reset carried by a save whose echo is missed leaves the column out of the stored map", async () => {
+    const h = harness({ canSave: true });
+    h.saver.load({ a: 100, b: 100 });
+    h.saver.change("a", null);
+    await vi.advanceTimersByTimeAsync(WAIT);
+    h.saver.change("c", 50);
+    await vi.advanceTimersByTimeAsync(WAIT);
+    expect(h.write).toHaveBeenLastCalledWith({ b: 100, c: 50 });
+  });
+
+  it("a save whose payload equals the latest known stored map is not sent (it would change only updated_by), and its columns are no longer dirty", async () => {
+    const h = harness({ canSave: true });
+    h.saver.load({ a: 100 });
+    h.saver.change("a", 150);
+    h.saver.change("a", 100); // dragged back inside the wait
+    await vi.advanceTimersByTimeAsync(WAIT);
+    await h.saver.flush();
+    expect(h.write).not.toHaveBeenCalled();
+    h.saver.remote({ a: 130 });
+    expect(h.screen).toEqual({ a: 130 });
   });
 
   it("…the adopted payload is the base of the next save when nothing else arrives", async () => {

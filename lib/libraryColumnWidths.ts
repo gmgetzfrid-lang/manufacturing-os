@@ -25,15 +25,22 @@
 // save (the UPDATE carrying exactly what it sent) clears the dirty columns
 // it carried (unless changed again since) — and so does the save's own ok
 // answer, so a missed echo (realtime reconnecting, a throttled background
-// tab) never leaves a column dirty for good; when no stored map arrived
-// while the save was in flight, its payload becomes the latest known stored
-// map (no jump back). A person who may not save keeps
+// tab) never leaves a column dirty for good. On that ok answer, unless the
+// save's echo already came back, the columns it carried are laid over the
+// latest known stored map (whether or not another map arrived during the
+// flight), so the screen never jumps back and the next save never re-sends
+// an older value of a column this tab saved; a map that arrives later
+// (another controller's later save, or this tab's own echo) replaces the
+// stored map as before. A save whose payload equals the latest known stored
+// map is not sent (it would change nothing but `updated_by`). A person who
+// may not save keeps
 // their own columns dirty for as long as the page is open — their view-only
 // widths survive a controller's save of other columns, and theirs win on
 // the columns they set. When such a person becomes one who may save (the
 // roles finish loading, or a promotion while the page is open), the columns
-// they set view-only are dropped — never sent as the shared width — and the
-// screen is recomposed from the stored map.
+// last changed while they could not save are dropped — never sent as the
+// shared width — and the screen is recomposed from the stored map; a column
+// they changed while they could save is kept (and saved).
 //
 // The limit, stated (DEC-29): the write replaces the whole map. A save by
 // another tab that commits while this tab's save is in flight (after this
@@ -138,8 +145,9 @@ export interface ColumnWidthSaver {
    *  column it held takes any stored width that arrived meanwhile). */
   settle(): void;
   /** This person may now save (they could not before): drop the columns
-   *  they set view-only, so they are never sent as the shared width, and
-   *  recompose the screen from the stored map. */
+   *  last changed while they could not save, so they are never sent as the
+   *  shared width, and recompose the screen from the stored map. A column
+   *  changed while they could save is kept. */
   dropViewOnly(): void;
   /** Send a waiting save now (tab hidden, page hiding, or dispose). */
   flush(): Promise<void>;
@@ -157,12 +165,11 @@ export function createColumnWidthSaver(deps: ColumnWidthSaverDeps): ColumnWidthS
   let timer: ReturnType<typeof setTimeout> | null = null;
   let inFlight = false;
   let again = false;
-  /** Counts the stored maps taken (load / remote), to tell whether one
-   *  arrived while a save was in flight. */
-  let storedSeq = 0;
+  /** Dirty columns last changed while this person could not save. */
+  const viewOnly = new Set<string>();
   let closed = false;
   /** Saves this tab sent whose echo has not come back, in send order. */
-  const sent: Array<{ key: string; carried: Map<string, number | null> }> = [];
+  const sent: Array<{ key: string; carried: Map<string, number | null>; echoed: boolean }> = [];
 
   const show = () => {
     const snapshot = new Map(dirty);
@@ -177,11 +184,19 @@ export function createColumnWidthSaver(deps: ColumnWidthSaverDeps): ColumnWidthS
     if (!deps.canSave()) return;
     // One save at a time, so this tab's saves commit in the order sent.
     if (inFlight) { again = true; return; }
-    inFlight = true;
-    const seqAtSend = storedSeq;
     const carried = new Map(dirty);
     const payload = composeColumnWidths(stored, carried, {}, null);
-    const entry = { key: columnWidthsKey(payload), carried };
+    const key = columnWidthsKey(payload);
+    if (key === columnWidthsKey(stored)) {
+      // Nothing to change in the stored map: no write (it would only touch
+      // updated_by). The carried columns already equal what is stored.
+      for (const [col, v] of carried) {
+        if (dirty.get(col) === v) dirty.delete(col);
+      }
+      return;
+    }
+    inFlight = true;
+    const entry = { key, carried, echoed: false };
     sent.push(entry);
     if (sent.length > ECHO_MEMORY) sent.shift();
     let answer: ColumnWidthSaveAnswer;
@@ -198,13 +213,22 @@ export function createColumnWidthSaver(deps: ColumnWidthSaverDeps): ColumnWidthS
       if (i >= 0) sent.splice(i, 1);
       deps.notSaved(columnWidthNotSavedMessage(answer.reason), closed);
     } else {
-      // Landed: the columns it carried are saved (unless changed again since)
-      // — do not wait for an echo that may never come. With no stored map
-      // taken meanwhile, what it wrote is the latest known stored map.
+      // Landed: the columns it carried are saved — do not wait for an echo
+      // that may never come. Unless its echo already came back (then the
+      // stored map is that echo or newer), lay the carried columns over the
+      // latest known stored map, whatever arrived during the flight; then
+      // clear the dirty entries that still equal what was carried.
+      if (!entry.echoed) {
+        const next = { ...stored };
+        for (const [col, v] of carried) {
+          if (v === null) delete next[col];
+          else next[col] = v;
+        }
+        stored = next;
+      }
       for (const [col, v] of carried) {
         if (dirty.has(col) && dirty.get(col) === v) dirty.delete(col);
       }
-      if (storedSeq === seqAtSend) stored = { ...payload };
       show();
     }
     if (again) { again = false; await send(); }
@@ -218,7 +242,6 @@ export function createColumnWidthSaver(deps: ColumnWidthSaverDeps): ColumnWidthS
 
   return {
     load(next) {
-      storedSeq += 1;
       stored = { ...next };
       show();
     },
@@ -229,11 +252,11 @@ export function createColumnWidthSaver(deps: ColumnWidthSaverDeps): ColumnWidthS
         // This tab's own save (its echo); any earlier entry's echo can no
         // longer come (saves are sent one at a time, so commit in order).
         const [echo] = sent.splice(0, i + 1).slice(-1);
+        echo.echoed = true;
         for (const [col, v] of echo.carried) {
           if (dirty.has(col) && dirty.get(col) === v) dirty.delete(col);
         }
       }
-      storedSeq += 1;
       stored = { ...next };
       show();
     },
@@ -241,14 +264,18 @@ export function createColumnWidthSaver(deps: ColumnWidthSaverDeps): ColumnWidthS
       const current = dirty.has(column) ? dirty.get(column)! : (stored[column] ?? null);
       if (current === width) { show(); return false; }
       dirty.set(column, width);
+      const canSave = deps.canSave();
+      if (canSave) viewOnly.delete(column);
+      else viewOnly.add(column);
       show();
-      if (deps.canSave()) schedule();
+      if (canSave) schedule();
       return true;
     },
     settle() { show(); },
     dropViewOnly() {
-      if (dirty.size === 0) return;
-      dirty.clear();
+      if (viewOnly.size === 0) return;
+      for (const col of viewOnly) dirty.delete(col);
+      viewOnly.clear();
       show();
     },
     async flush() {
