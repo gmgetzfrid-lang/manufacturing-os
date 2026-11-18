@@ -9,7 +9,7 @@ const t = (d: number, h: number) => Date.UTC(2026, 9, d, h + 7);
 const act = (x: Partial<PlanAct> & { id: string }): PlanAct => ({ name: x.id, order: "wo", crew: "Schultz", hours: 4, planHours: 4, cal: "both", preds: [], floor: null, kind: "same", basis: "", waitedForCrew: null, ...x });
 const run = (acts: PlanAct[], changes: PlanChange[] = [], pace = { Schultz: { mh: 4, from: "plan" } }) => {
   const a = applyChanges(acts, changes, tz, times, t(26, 6));
-  return schedule({ acts: a.acts, pre: a.pre, tz, times, pace, toolHours: { day: 10, night: 11 }, headsSet: a.headsSet, jobsCap: a.jobsCap, day1: t(26, 6) });
+  return schedule({ acts: a.acts, pre: a.pre, tz, times, pace, toolHours: { day: 10, night: 11 }, headsSet: a.headsSet, jobsCap: a.jobsCap, crewSize: a.crewSize, day1: t(26, 6) });
 };
 const c = (x: Record<string, unknown>): PlanChange => ({ id: String(x.kind) + Math.random(), said: "", at: 0, ...x } as PlanChange);
 
@@ -143,5 +143,25 @@ describe("12-hour shifts", () => {
   it("round the clock breaks at each shift change", () => {
     const p = run([act({ id: "rc", hours: 18, cal: "both", floor: t(26, 16) })]);
     expect(hoursOf(p.acts[0], p.shifts)).toEqual([2, 12, 4]);
+  });
+});
+
+describe("one crew kept the whole event", () => {
+  // Four 5 h jobs for Schultz on days, all ready at once; at 4 man-hours a plan hour and 10 h on the tools a shift.
+  const jobs = ["a", "b", "c", "d"].map((id) => act({ id, hours: 5, cal: "day" }));
+  it("a crew of 4 on days takes two jobs a shift; the rest move to the next day", () => {
+    const p = run(jobs, [c({ kind: "crew", crew: "Schultz", day: 4, night: null })]);
+    const starts = p.acts.map((a) => a.start).sort((x, y) => x - y);
+    expect(starts.filter((x) => x === t(26, 6)).length).toBe(2);
+    expect(p.crewSize).toEqual({ Schultz: { day: 4, night: null } });
+    for (const i of p.shifts.keys()) expect(p.heads.Schultz?.[i] ?? 0).toBeLessThanOrEqual(4);
+  });
+  it("a bigger crew takes them all at once; a size cleared is no limit", () => {
+    expect(run(jobs, [c({ kind: "crew", crew: "Schultz", day: 8, night: null })]).acts.every((a) => a.start === t(26, 6))).toBe(true);
+    expect(run(jobs, [c({ kind: "crew", crew: "Schultz", day: 4, night: null }), c({ kind: "crew", crew: "Schultz", day: null, night: null })]).acts.every((a) => a.start === t(26, 6))).toBe(true);
+  });
+  it("a job bigger than the crew still gets done, alone in its shift", () => {
+    const p = run([act({ id: "big", hours: 12, cal: "day" })], [c({ kind: "crew", crew: "Schultz", day: 1, night: null })]);
+    expect(p.acts[0].start).toBe(t(26, 6));
   });
 });

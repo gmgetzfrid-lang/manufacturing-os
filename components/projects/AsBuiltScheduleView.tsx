@@ -19,7 +19,7 @@ import type { ShiftRecord } from "@/lib/shiftRecord";
 import type { ProgressLogRow } from "@/lib/progressHistory";
 import { buildAsBuilt, laneSteps, stepBar, type BuiltStep } from "@/lib/asBuiltSchedule";
 import { buildAsBuiltWork, shiftKey, type AsBuiltWork, type WaitRun } from "@/lib/asBuiltWork";
-import { nextPlan, finishLever, dayNumber, shiftParts, type NextPlan, type PlanChange } from "@/lib/nextPlan";
+import { nextPlan, finishLever, dayNumber, shiftParts, sizeCrews, type NextPlan, type PlanChange } from "@/lib/nextPlan";
 import { loadNextPlanSettings, saveNextPlanChanges, type NextPlanSettings } from "@/lib/nextPlanStore";
 import { planLessons, lessonChanges, lessonEffects, toTarget, mostAtOnce, type Lesson } from "@/lib/nextPlanLessons";
 import { msProjectXml, asBuiltTasks, suggestedTasks } from "@/lib/msProject";
@@ -111,7 +111,18 @@ export default function AsBuiltScheduleView(p: Props) {
   const base = useMemo(() => (work ? nextPlan({ built, work, milestones: p.milestones, tz, times, changes: [] }) : null), [work, built, p.milestones, tz, times]);
   const lessons = useMemo(() => (work && base && data ? planLessons({ built, work, milestones: p.milestones, tz, times, notes: data.notes, base, now: Date.now() }) : []), [work, base, data, built, p.milestones, tz, times]);
   const skipped = useMemo(() => new Set(changes.flatMap((c) => (c.kind === "skip" ? [c.lesson] : []))), [changes]);
-  const applied = useMemo(() => [...lessonChanges(lessons, skipped), ...changes.filter((c) => c.kind !== "skip")], [lessons, skipped, changes]);
+  const taught = useMemo(() => [...lessonChanges(lessons, skipped), ...changes.filter((c) => c.kind !== "skip")], [lessons, skipped, changes]);
+  // One crew per contractor kept the whole event, days and nights: the
+  // fewest that keep the finish, unless a person set its size.
+  const sized = useMemo(() => {
+    if (!work) return [];
+    const loose = nextPlan({ built, work, milestones: p.milestones, tz, times, changes: taught });
+    return sizeCrews({ built, work, milestones: p.milestones, tz, times, changes: taught }, loose);
+  }, [work, built, p.milestones, tz, times, taught]);
+  const applied = useMemo(() => {
+    const own = new Set(changes.flatMap((c) => (c.kind === "crew" ? [c.crew] : [])));
+    return [...taught.filter((c) => c.kind !== "crew"), ...sized.filter((x) => !own.has(x.crew)).map((x): PlanChange => ({ id: `kept:${x.crew}`, said: "", at: 0, kind: "crew", crew: x.crew, day: x.day, night: x.night })), ...taught.filter((c) => c.kind === "crew")];
+  }, [taught, sized, changes]);
   const plan = useMemo(() => (work ? nextPlan({ built, work, milestones: p.milestones, tz, times, changes: applied }) : null), [work, built, p.milestones, tz, times, applied]);
 
   const crews = useMemo(() => {
@@ -169,7 +180,7 @@ export default function AsBuiltScheduleView(p: Props) {
       </div>
       {view === "built"
         ? <BuiltView {...p} cols={cols} built={built} work={work} colorOf={colorOf} changes={changes} onAdd={(c) => void saveChanges([...changes, c])} />
-        : <NextView {...p} cols={cols} built={built} work={work} plan={plan} colorOf={colorOf} changes={changes} applied={applied} lessons={lessons} skipped={skipped} settings={data.settings} onChanges={(n) => void saveChanges(n)}
+        : <NextView {...p} cols={cols} built={built} work={work} plan={plan} colorOf={colorOf} changes={changes} applied={applied} sized={sized} lessons={lessons} skipped={skipped} settings={data.settings} onChanges={(n) => void saveChanges(n)}
             onStaffing={(next) => setData({ ...data, settings: { ...data.settings, staffing: next } })} />}
     </div>
     </PxCtx.Provider>
@@ -491,7 +502,7 @@ function PlanFor({ run, stepName, crews, doneBefore, onSave, onCancel }: { run: 
 
 // ── Suggested for next time ──────────────────────────────────────────────
 
-function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBuiltWork; plan: NextPlan; colorOf: (c: string) => string; changes: PlanChange[]; applied: PlanChange[]; lessons: Lesson[]; skipped: Set<string>; settings: NextPlanSettings; onChanges: (c: PlanChange[]) => void; onStaffing: (s: NextPlanSettings["staffing"]) => void }) {
+function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBuiltWork; plan: NextPlan; colorOf: (c: string) => string; changes: PlanChange[]; applied: PlanChange[]; sized: Array<{ crew: string; day: number | null; night: number | null; peak: { day: number; night: number } }>; lessons: Lesson[]; skipped: Set<string>; settings: NextPlanSettings; onChanges: (c: PlanChange[]) => void; onStaffing: (s: NextPlanSettings["staffing"]) => void }) {
   const { tz, times, built, work, plan, changes } = p;
   const PX = React.useContext(PxCtx);
   const { x, width } = useAxis(plan);
@@ -533,13 +544,16 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
   const finishWords = (f: number) => { const d = (plan.finish - f) / 3_600_000; return Math.abs(d) < 0.5 ? "no change to the finish" : `${r1(Math.abs(d))} h ${d > 0 ? "sooner" : "later"}`; };
   const drivingOrders = [...new Set(plan.driving.map((id) => plan.acts.find((a) => a.id === id)?.order).filter(Boolean) as string[])].map((o) => orderName.get(o) ?? o);
 
-  // Hands typed in: one change per crew and shift (the last one wins).
-  const setHeads = (crew: string, shift: number, v: string) => {
-    const rest = changes.filter((c) => !(c.kind === "heads" && c.crew === crew && c.shift === shift));
-    if (v.trim() === "") { p.onChanges(rest); return; }
-    const n = Math.max(0, Math.round(Number(v)));
-    if (!Number.isFinite(n)) return;
-    p.onChanges([...rest, { id: `h${Date.now().toString(36)}${shift}`, said: `${crew} hands`, at: Date.now(), kind: "heads", crew, shift, n }]);
+  // A crew's size kept the whole event (one change per crew; empty: back to the suggestion).
+  const setCrew = (crew: string, kind: "day" | "night", v: string) => {
+    const cur = p.applied.find((c) => c.kind === "crew" && c.crew === crew) as Extract<PlanChange, { kind: "crew" }> | undefined;
+    const rest = changes.filter((c) => !(c.kind === "crew" && c.crew === crew) && !(c.kind === "heads" && c.crew === crew));
+    const n = v.trim() === "" ? null : Math.max(1, Math.round(Number(v)));
+    if (n != null && !Number.isFinite(n)) return;
+    const next = { day: cur?.day ?? null, night: cur?.night ?? null, [kind]: n };
+    const sug = p.sized.find((x) => x.crew === crew);
+    if (sug && next.day === sug.day && next.night === sug.night) { p.onChanges(rest); return; }
+    p.onChanges([...rest, { id: `c${Date.now().toString(36)}`, said: `${crew} crew`, at: Date.now(), kind: "crew", crew, ...next }]);
   };
 
   // Staffing plan read in.
@@ -697,27 +711,47 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
                 </React.Fragment>
               );
             })}
-            <SectionRow4 title="Hands on the tools" sub={`suggested for each crew, day and night${p.canEdit ? "; type a number to set it, and the schedule follows" : ""}. Red: more than this year (its staffing plan, or what was counted).`} width={width} shifts={plan.shifts} />
-            {Object.keys(plan.load).sort((a, b) => plan.load[b].reduce((n, h) => n + h, 0) - plan.load[a].reduce((n, h) => n + h, 0)).map((crew) => {
+            <SectionRow4 title="Crews kept the whole event" sub={`one crew for each contractor, days and nights, hired up front and kept to the end: the fewest that keep the finish, with the work moved into the quieter shifts to fit them${p.canEdit ? ". Type a size to change it; the schedule follows" : ""}. Each shift shows how many of them its work needs; amber: half or more of the crew has nothing to do that shift.`} width={width} shifts={plan.shifts} />
+            {Object.keys(plan.load).filter((c) => c !== "Off site" && c !== "Not set").sort((a, b) => plan.load[b].reduce((n, h) => n + h, 0) - plan.load[a].reduce((n, h) => n + h, 0)).map((crew) => {
               const pace = plan.pace[crew];
+              const kept = plan.crewSize[crew] ?? { day: null, night: null };
+              const sug = p.sized.find((x) => x.crew === crew);
+              const own = changes.some((c) => c.kind === "crew" && c.crew === crew);
+              // This year: its staffing plan (or the count) at its most, days and nights.
+              const year = { day: 0, night: 0 };
+              work.shifts.forEach((w, i) => { const t = thisYear(crew, i); if (t) { const k = w.kind === "night" ? "night" : "day"; year[k] = Math.max(year[k], t.n); } });
+              // On site from its first shift with work to its last.
+              const busy = plan.shifts.map((_, i) => (plan.heads[crew][i] ?? 0) > 0);
+              const first = busy.indexOf(true), last = busy.lastIndexOf(true);
+              const box = (k: "day" | "night") => (
+                <label className="inline-flex items-center gap-1 text-[11.5px] text-[var(--color-text-muted)]">{k === "day" ? "Days" : "Nights"}
+                  <input key={`${crew}${k}${kept[k] ?? ""}`} defaultValue={kept[k] == null ? "" : String(kept[k])} disabled={!p.canEdit} inputMode="numeric" placeholder="-" aria-label={`${crew} kept on ${k === "day" ? "days" : "nights"}`}
+                    onBlur={(e) => { if (e.target.value !== (kept[k] == null ? "" : String(kept[k]))) setCrew(crew, k, e.target.value); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                    className={`w-11 h-6 rounded border text-center text-[12px] font-black p-0 ${own ? "border-[var(--color-accent)] bg-orange-50 dark:bg-orange-950/30" : "border-slate-400 bg-[var(--color-surface)]"} text-[var(--color-text)]`} />
+                </label>
+              );
               return (
-                <tr key={`hd${crew}`}>
-                  <td className={cellAct}><div className="font-bold"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(crew) }} />{crew}</div><div className="text-[11px] text-[var(--color-text-muted)]">{pace ? `${pace.mh} man-hours for each plan hour: ${pace.from}` : "not counted this year: 1 per job going; set it"}</div></td>
-                  <td className={cellN}>{Math.max(0, ...plan.heads[crew].map((h, i) => plan.headsSet[crew][i] ?? h))}<div className="text-[10px] font-normal text-[var(--color-text-muted)]">most</div></td><td className="col-x" /><td className="col-x" />
+                <tr key={`hd${crew}`} data-kept={crew}>
+                  <td className={cellAct}>
+                    <div className="font-bold"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(crew) }} />{crew}</div>
+                    <div className="mt-1 flex flex-wrap gap-2">{box("day")}{(kept.night != null || (sug?.peak.night ?? 0) > 0) && box("night")}</div>
+                    {first >= 0 && <div className="text-[11px] font-semibold text-[var(--color-text)]">On site {dayLabel(plan.shifts[first].start)} {plan.shifts[first].kind} to {dayLabel(plan.shifts[last].start)} {plan.shifts[last].kind}</div>}
+                    <div className="text-[11px] text-[var(--color-text-muted)]">
+                      {own ? (sug ? <>Suggested {sug.day ?? "-"} days{sug.night != null ? `, ${sug.night} nights` : ""}. {p.canEdit && <button type="button" onClick={() => p.onChanges(changes.filter((c) => !(c.kind === "crew" && c.crew === crew)))} className="font-bold text-[var(--color-accent)] hover:underline cursor-pointer">Use it</button>}</> : null) : "The fewest that keep the finish."}
+                      {(year.day || year.night) ? ` This year: ${year.day} days${year.night ? `, ${year.night} nights` : ""} at the most.` : ""}
+                    </div>
+                    <div className="text-[10.5px] text-[var(--color-text-faint)]">{pace ? `${pace.mh} man-hours a plan hour, from ${pace.from}` : "No head counts for it this year: 1 hand a job going"}</div>
+                  </td>
+                  <td className={cellN}>{[kept.day, kept.night].filter((x) => x != null).join(" / ") || "-"}<div className="text-[10px] font-normal text-[var(--color-text-muted)]">kept</div></td><td className="col-x" /><td className="col-x" />
                   <td className="p-0"><div className="relative h-12" style={{ width }}><Grid shifts={plan.shifts} />
-                    {plan.shifts.map((_, i) => {
-                      const sug = plan.heads[crew][i] ?? 0, set = plan.headsSet[crew][i];
-                      const ty = thisYear(crew, i);
-                      if (!sug && set == null && !ty) return null;
-                      const v = set ?? sug;
-                      const over = ty != null && v > ty.n;
+                    {plan.shifts.map((w, i) => {
+                      const need = plan.heads[crew][i] ?? 0;
+                      const k = w.kind === "night" ? "night" : "day";
+                      const size = kept[k];
+                      if (i < first || i > last || (!size && !need)) return null;
+                      const idle = size != null && need * 2 <= size;
                       return (
-                        <span key={i} className="absolute top-1" style={{ left: i * PX + 2, width: PX - 4 }}>
-                          <input key={`${set ?? sug}`} defaultValue={String(v)} disabled={!p.canEdit} inputMode="numeric" aria-label={`${crew} hands, ${dayLabel(plan.shifts[i].start)} ${plan.shifts[i].kind}`}
-                            onBlur={(e) => { if (e.target.value !== String(v)) setHeads(crew, i, e.target.value); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                            className={`w-full h-5 rounded border text-center text-[11px] font-black p-0 ${set != null ? "border-[var(--color-accent)] bg-orange-50 dark:bg-orange-950/30" : over ? "border-red-500 text-red-700 bg-red-50 dark:bg-red-950/30" : "border-slate-400 bg-[var(--color-surface)]"} text-[var(--color-text)]`} />
-                          {ty && <span className="block text-center text-[8.5px] text-[var(--color-text-muted)] leading-tight">{ty.word} {ty.n}</span>}
-                        </span>
+                        <span key={i} title={`${dayLabel(w.start)} ${w.kind}: its work needs ${need}${size != null ? ` of the ${size} kept on ${k === "day" ? "days" : "nights"}` : ""}`} className={`absolute top-2 h-6 rounded border text-center text-[11px] font-black leading-[22px] ${idle ? "bg-amber-50 border-amber-300 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200" : "bg-emerald-50 border-emerald-300 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200"}`} style={{ left: i * PX + 2, width: PX - 4 }}>{need}</span>
                       );
                     })}
                   </div></td>
@@ -755,7 +789,7 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
   const { built, work, plan, tz, times, lessons, skipped } = p;
   const [open, setOpen] = useState<string | null>(null);
   const input = useMemo(() => ({ built, work, milestones: p.milestones, tz, times }), [built, work, p.milestones, tz, times]);
-  const person = useMemo(() => p.changes.filter((c) => c.kind !== "skip"), [p.changes]);
+  const person = useMemo(() => { const mine = new Set(lessons.flatMap((l) => l.changes.map((c) => c.id))); return p.applied.filter((c) => !mine.has(c.id)); }, [p.applied, lessons]);
   const effects = useMemo(() => lessonEffects(input, lessons, skipped, person, plan), [input, lessons, skipped, person, plan]);
   const target = built.planFinish;
   const { orderName } = p;
@@ -858,6 +892,7 @@ function describe(c: PlanChange, orders: Map<string, string>, acts: Map<string, 
     case "split": return `${acts.get(c.actId) ?? acts.get(`${c.actId}:1`)?.replace(/ \(1 of 2\)$/, "") ?? "An activity"} split around: ${c.name}${c.crew ? ` (${c.crew}, ${c.hours} h)` : ""}`;
     case "heads": return `${c.crew}: ${c.n} hands`;
     case "jobs": return `${c.crew}: ${c.n} job${c.n === 1 ? "" : "s"} at a time`;
+    case "crew": return `${c.crew} kept the whole event: ${[c.day != null ? `${c.day} on days` : "", c.night != null ? `${c.night} on nights` : ""].filter(Boolean).join(", ") || "not held"}`;
     case "skip": return "A lesson left out";
     case "set": return `${acts.get(c.actId) ?? "An activity"}: ${c.hours != null ? `${c.hours} h` : "changed"}`;
     case "relink": return `${acts.get(c.actId) ?? "An activity"}: links changed`;
