@@ -4831,7 +4831,7 @@
       "severity": "LOW",
       "status": "OPEN",
       "verification": null,
-      "verification_note": "READ (`supabase/schema.sql:1068`; `supabase/migrations/20261077_dc_roundF_records_rails.sql` `enforce_library_sensitive_columns`, its newest body; `supabase/migrations/20261210_ao_roundG_node_appearance_rail.sql` `enforce_node_appearance_columns`; no migration names `column_widths`, `custom_columns`, `uniqueness_keys` or `home_config` in a policy or trigger)",
+      "verification_note": "READ (`supabase/schema.sql:1068`; every UPDATE trigger on `libraries` at its newest definition — `trg_library_sensitive_columns` (`enforce_library_sensitive_columns`, `20261077`), `trg_libraries_review_control_audit` (`audit_review_control_change`, `20261072`), `trg_node_appearance_columns` (`enforce_node_appearance_columns`, `20261216`), `trg_library_routing_control_guard` (`enforce_routing_control_change`, `20261241`), `trg_libraries_routing_control_audit` (`audit_routing_control_change`, `20261241`); no migration names `column_widths`, `custom_columns`, `uniqueness_keys` or `home_config` in a policy or trigger)",
       "blast_radius": null,
       "related": [
         "REV-38",

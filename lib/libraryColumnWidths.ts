@@ -1,5 +1,6 @@
 // lib/libraryColumnWidths.ts — a library's shared column widths: who saves
-// them, when, and what the live-sync takes (document-control REV-38, DEC-90).
+// them, when, and how a stored width and this tab's own widths combine
+// (document-control REV-38, DEC-90).
 //
 // The widths live where they always have: `libraries.column_widths`, read
 // when the library loads and live-synced from the row's realtime UPDATE. The
@@ -8,21 +9,32 @@
 //   * a CONTROLLER (Admin / DocCtrl by the role collection — the page's
 //     controller tier, `isControllerPrincipal`, which mirrors the database's
 //     `is_org_controller`) saves the shared width, debounced: one save
-//     ~500 ms after the drag ends or the reset double-click, carrying the
-//     widths as they are when it fires, through a checked write. A save
-//     that does not land is said in plain words, and the width stays as
-//     dragged on this screen;
+//     ~500 ms after a drag that changed a width, or a reset of a column that
+//     differed from its default, through a checked write. A save that does
+//     not land is said in plain words, and the width stays as dragged;
 //   * anyone else still resizes, for this view only — nothing is written,
-//     and the handle says so (COLUMN_WIDTH_VIEW_ONLY_TITLE);
-//   * the live-sync never fights the person: nothing is taken while they
-//     drag, while their own save waits or is in flight, and the echo of
-//     their own save (the row's UPDATE carrying the widths they sent) is
-//     not taken back as a jump.
+//     and the handle says so (COLUMN_WIDTH_VIEW_ONLY_TITLE).
 //
-// The controller below is framework-free so it can be tested with fake
-// timers; the page holds one per library and disposes it when the library
-// changes or the page closes (a waiting save is sent then, not dropped).
+// Per-column last-writer-wins (the integrator's ruling at the F6 review).
+// The saver keeps the latest KNOWN STORED map (the load, then every realtime
+// UPDATE — none is dropped) and the columns THIS TAB changed and has not yet
+// seen saved (`dirty`). What the screen shows is the stored map with the
+// dirty columns laid on top, and the column under an active drag left where
+// the drag has it. A save sends the same composition, so it never carries a
+// stale copy of a column this tab did not touch. The echo of this tab's own
+// save (the UPDATE carrying exactly what it sent) clears the dirty columns
+// it carried (unless changed again since). A person who may not save keeps
+// their own columns dirty for as long as the page is open — their view-only
+// widths survive a controller's save of other columns, and theirs win on
+// the columns they set.
+//
+// The limit, stated (DEC-29): the write replaces the whole map. A save by
+// another tab that commits while this tab's save is in flight (after this
+// tab composed its payload) is overwritten on the columns this tab did not
+// touch — a one-round-trip window. Closing it needs a server-side merge
+// (a migration): document-control REV-39.
 
+import { useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkedWrite } from "@/lib/checkedWrite";
 import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
@@ -65,92 +77,271 @@ export function columnWidthsKey(widths: ColumnWidths | null | undefined): string
   return JSON.stringify(Object.keys(w).sort().map((k) => [k, w[k]]));
 }
 
+/** A column this tab set: a width, or `null` for "reset to the default". */
+export type DirtyColumns = ReadonlyMap<string, number | null>;
+
+/** The stored map with this tab's dirty columns on top; the column under an
+ *  active drag (if any) stays as `prev` has it. */
+export function composeColumnWidths(
+  stored: ColumnWidths,
+  dirty: DirtyColumns,
+  prev: ColumnWidths,
+  dragging: string | null,
+): ColumnWidths {
+  const out: ColumnWidths = { ...stored };
+  for (const [k, v] of dirty) {
+    if (v === null) delete out[k];
+    else out[k] = v;
+  }
+  if (dragging) {
+    if (dragging in prev) out[dragging] = prev[dragging];
+    else delete out[dragging];
+  }
+  return out;
+}
+
 export interface ColumnWidthSaverDeps {
-  /** May this person save the shared width? Read when a save is asked for. */
+  /** May this person save the shared width? Read when a change is made. */
   canSave(): boolean;
-  /** The widths on the screen now — read when the save fires. */
-  current(): ColumnWidths;
-  /** The checked write. Never throws; answers landed or the reason. */
+  /** The checked write. Answers landed or the reason. */
   write(widths: ColumnWidths): Promise<ColumnWidthSaveAnswer>;
-  /** Say a save that did not land. `afterClose`: the page or library it was
+  /** Say a save that did not land. `afterClose`: the library or page it was
    *  made on has since been left (the save was sent as it closed). */
   notSaved(message: string, afterClose: boolean): void;
+  /** Put the composed widths on the screen. */
+  apply(update: (prev: ColumnWidths) => ColumnWidths): void;
+  /** The column under an active drag, if any. */
+  dragging(): string | null;
   debounceMs?: number;
 }
 
 export interface ColumnWidthSaver {
-  /** A drag ended or a reset was double-clicked: save the widths in
-   *  ~500 ms (a later ask restarts the wait). Answers false — and asks
-   *  nothing of the database — for a person who may not save. */
-  schedule(): boolean;
-  /** Send a waiting save now (what dispose does). */
+  /** The library's stored widths, from the session cache or a fresh load:
+   *  this tab's dirty columns still win. */
+  load(stored: ColumnWidths): void;
+  /** The row's realtime UPDATE: the latest stored map (never dropped); the
+   *  echo of this tab's own save clears the dirty columns it carried. */
+  remote(next: ColumnWidths): void;
+  /** A drag ended on `width`, or a reset (`null`). Answers false — and
+   *  changes nothing — when the column already has that value. A person who
+   *  may save gets one save ~500 ms after the last change; anyone else's
+   *  change is kept for this view only and nothing is written. */
+  change(column: string, width: number | null): boolean;
+  /** Re-compose the screen (after a press that changed nothing, so the
+   *  column it held takes any stored width that arrived meanwhile). */
+  settle(): void;
+  /** Send a waiting save now (tab hidden, page hiding, or dispose). */
   flush(): Promise<void>;
-  /** Should the live-sync take these widths from the row's UPDATE? */
-  acceptRemote(next: ColumnWidths, resizing: boolean): boolean;
   /** The library or page is being left: a waiting save is sent now. */
   dispose(): void;
 }
 
-/** How many sent widths are remembered to recognise their echo. */
+/** How many sent saves are remembered to recognise their echo. */
 const ECHO_MEMORY = 16;
 
 export function createColumnWidthSaver(deps: ColumnWidthSaverDeps): ColumnWidthSaver {
   const wait = deps.debounceMs ?? COLUMN_WIDTH_SAVE_DEBOUNCE_MS;
+  let stored: ColumnWidths = {};
+  const dirty = new Map<string, number | null>();
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let inFlight = 0;
+  let inFlight = false;
+  let again = false;
   let closed = false;
-  /** Widths this person sent whose echo has not come back yet. */
-  const sent: string[] = [];
+  /** Saves this tab sent whose echo has not come back, in send order. */
+  const sent: Array<{ key: string; carried: Map<string, number | null> }> = [];
 
-  const forgetSent = (key: string) => {
-    const i = sent.indexOf(key);
-    if (i >= 0) sent.splice(i, 1);
+  const show = () => {
+    const snapshot = new Map(dirty);
+    const base = stored;
+    deps.apply((prev) => composeColumnWidths(base, snapshot, prev, deps.dragging()));
   };
 
   async function send(): Promise<void> {
     if (timer !== null) { clearTimeout(timer); timer = null; }
-    const widths = { ...deps.current() };
-    const key = columnWidthsKey(widths);
-    sent.push(key);
+    // One save at a time, so this tab's saves commit in the order sent.
+    if (inFlight) { again = true; return; }
+    inFlight = true;
+    const carried = new Map(dirty);
+    const payload = composeColumnWidths(stored, carried, {}, null);
+    const entry = { key: columnWidthsKey(payload), carried };
+    sent.push(entry);
     if (sent.length > ECHO_MEMORY) sent.shift();
-    inFlight += 1;
     let answer: ColumnWidthSaveAnswer;
     try {
-      answer = await deps.write(widths);
+      answer = await deps.write(payload);
     } catch (e) {
       answer = { ok: false, reason: e instanceof Error ? e.message : String(e) };
-    } finally {
-      inFlight -= 1;
     }
+    inFlight = false;
     if (!answer.ok) {
-      // Nothing landed, so no echo is coming.
-      forgetSent(key);
+      // Nothing landed, so no echo is coming; the columns stay dirty (the
+      // width stays as dragged, and the next save carries it again).
+      const i = sent.indexOf(entry);
+      if (i >= 0) sent.splice(i, 1);
       deps.notSaved(columnWidthNotSavedMessage(answer.reason), closed);
     }
+    if (again) { again = false; await send(); }
+  }
+
+  function schedule() {
+    if (closed) return;
+    if (timer !== null) clearTimeout(timer);
+    timer = setTimeout(() => { timer = null; void send(); }, wait);
   }
 
   return {
-    schedule() {
-      if (closed || !deps.canSave()) return false;
-      if (timer !== null) clearTimeout(timer);
-      timer = setTimeout(() => { timer = null; void send(); }, wait);
+    load(next) {
+      stored = { ...next };
+      show();
+    },
+    remote(next) {
+      const key = columnWidthsKey(next);
+      const i = sent.findIndex((e) => e.key === key);
+      if (i >= 0) {
+        // This tab's own save (its echo); any earlier entry's echo can no
+        // longer come (saves are sent one at a time, so commit in order).
+        const [echo] = sent.splice(0, i + 1).slice(-1);
+        for (const [col, v] of echo.carried) {
+          if (dirty.has(col) && dirty.get(col) === v) dirty.delete(col);
+        }
+      }
+      stored = { ...next };
+      show();
+    },
+    change(column, width) {
+      const current = dirty.has(column) ? dirty.get(column)! : (stored[column] ?? null);
+      if (current === width) { show(); return false; }
+      dirty.set(column, width);
+      show();
+      if (deps.canSave()) schedule();
       return true;
     },
+    settle() { show(); },
     async flush() {
       if (timer === null) return;
       await send();
-    },
-    acceptRemote(next, resizing) {
-      if (resizing) return false;
-      const key = columnWidthsKey(next);
-      if (sent.includes(key)) { forgetSent(key); return false; }
-      if (timer !== null || inFlight > 0) return false;
-      return true;
     },
     dispose() {
       if (closed) return;
       closed = true;
       if (timer !== null) void send();
+    },
+  };
+}
+
+export interface UseLibraryColumnWidthsOptions {
+  libraryId: string | null | undefined;
+  /** The controller tier (who saves the shared width). */
+  canSave: boolean;
+  uid: string | null;
+  client: SupabaseClient;
+  setColWidths: Dispatch<SetStateAction<ColumnWidths>>;
+  /** The column under an active drag, if any (the page's resizingRef). */
+  dragging: () => string | null;
+  notSaved: (message: string, afterClose: boolean) => void;
+}
+
+/** One saver per library. Call it BEFORE the effect that loads the library,
+ *  so the saver exists when the load hands it the stored widths. A waiting
+ *  save is sent when the library changes or the page unmounts, and — best
+ *  effort, the browser may not finish the request — when the tab is hidden
+ *  or the page is being unloaded (pagehide). No leave-page prompt. */
+export function useLibraryColumnWidths(opts: UseLibraryColumnWidthsOptions): MutableRefObject<ColumnWidthSaver | null> {
+  const saverRef = useRef<ColumnWidthSaver | null>(null);
+  const live = useRef(opts);
+  // What the saver reads when it acts — who may save, the uid, the client —
+  // kept current on every render (REV-38 F6 review item 7, pinned).
+  useEffect(() => { live.current = opts; });
+  const { libraryId } = opts;
+  useEffect(() => {
+    if (!libraryId) return;
+    const saver = createColumnWidthSaver({
+      canSave: () => live.current.canSave,
+      write: (widths) => saveLibraryColumnWidths(live.current.client, libraryId, widths, live.current.uid),
+      notSaved: (message, afterClose) => live.current.notSaved(message, afterClose),
+      apply: (update) => live.current.setColWidths(update),
+      dragging: () => live.current.dragging(),
+    });
+    saverRef.current = saver;
+    const onPageHide = () => { void saver.flush(); };
+    const onVisibility = () => { if (document.visibilityState === "hidden") void saver.flush(); };
+    window.addEventListener("pagehide", onPageHide);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("pagehide", onPageHide);
+      document.removeEventListener("visibilitychange", onVisibility);
+      saver.dispose();
+      if (saverRef.current === saver) saverRef.current = null;
+    };
+  }, [libraryId]);
+  return saverRef;
+}
+
+// ── the resize handle's click vs drag ────────────────────────────────────
+
+/** A press that moves less than this is a click, not a drag. */
+export const RESIZE_DRAG_THRESHOLD_PX = 3;
+/** A single click on the handle sorts after this long, unless a second
+ *  click (the reset double-click) follows. */
+export const HANDLE_CLICK_SORT_DELAY_MS = 250;
+
+export interface ResizeHandleGesture {
+  /** The press began at x. */
+  down(x: number): void;
+  /** The pointer is at x: answers whether this press is now a drag. */
+  move(x: number): boolean;
+  /** The press ended: answers whether it was a drag. After a drag the
+   *  header's own click (a drag that ends inside the header) is swallowed. */
+  up(): boolean;
+  /** A click landed on the handle (its `detail` is the click count): with
+   *  no movement it sorts, as a click on the header does — deferred so the
+   *  reset double-click does not sort; after a drag it does nothing. */
+  handleClick(detail: number, sort: () => void): void;
+  /** The header was clicked: true when this click ends a drag (swallow it). */
+  headerClick(): boolean;
+  dispose(): void;
+}
+
+export function createResizeHandleGesture(opts?: { thresholdPx?: number; sortDelayMs?: number }): ResizeHandleGesture {
+  const threshold = opts?.thresholdPx ?? RESIZE_DRAG_THRESHOLD_PX;
+  const delay = opts?.sortDelayMs ?? HANDLE_CLICK_SORT_DELAY_MS;
+  let startX: number | null = null;
+  let moved = false;
+  let swallowHeader = false;
+  let sortTimer: ReturnType<typeof setTimeout> | null = null;
+  let swallowTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearSort = () => { if (sortTimer !== null) { clearTimeout(sortTimer); sortTimer = null; } };
+  return {
+    down(x) { startX = x; moved = false; },
+    move(x) {
+      if (startX !== null && !moved && Math.abs(x - startX) >= threshold) moved = true;
+      return moved;
+    },
+    up() {
+      startX = null;
+      if (moved) {
+        swallowHeader = true;
+        // The click (if any) is dispatched right after the press ends; a
+        // drag that ends outside the header gets none, so do not keep the
+        // swallow for the next real click.
+        if (swallowTimer !== null) clearTimeout(swallowTimer);
+        swallowTimer = setTimeout(() => { swallowHeader = false; swallowTimer = null; }, 0);
+      }
+      return moved;
+    },
+    handleClick(detail, sort) {
+      clearSort();
+      if (moved || detail >= 2) return;
+      sortTimer = setTimeout(() => { sortTimer = null; sort(); }, delay);
+    },
+    headerClick() {
+      if (!swallowHeader) return false;
+      swallowHeader = false;
+      return true;
+    },
+    dispose() {
+      clearSort();
+      if (swallowTimer !== null) { clearTimeout(swallowTimer); swallowTimer = null; }
     },
   };
 }
