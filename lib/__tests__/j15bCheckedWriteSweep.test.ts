@@ -168,10 +168,21 @@ describe("operational scope (lib/operationalGraph.ts)", () => {
     await expect(unlinkDocumentFromAsset("d1", "a1")).rejects.toThrow(CHECKED_WRITE_REFUSED);
     await expect(unlinkDocumentFromProject("p1", "d1")).rejects.toThrow(CHECKED_WRITE_REFUSED);
   });
-  it("the /admin/scope page catches a refused edit or archive: said on its error line in plain words, the edit kept open with what was typed", () => {
+  it("the /admin/scope page catches a refused edit or archive: a refused save is said INSIDE the open edit dialog (its overlay covers the page line), the typed values kept; an archive on the page's line", () => {
     const page = readFileSync("app/(protected)/admin/scope/page.tsx", "utf8");
     const save = page.slice(page.indexOf("const onSaveEdit = async"), page.indexOf("const labelOf ="));
-    expect(save).toMatch(/try \{[\s\S]*updatePlant[\s\S]*updateUnit[\s\S]*updateSystem[\s\S]*\} catch \(e\) \{\s*setError\(userFacingError\(e, \{ context: "admin\/scope save" \}\)\);\s*return;\s*\}\s*setEditing\(null\);/);
+    expect(save).toMatch(/try \{[\s\S]*updatePlant[\s\S]*updateUnit[\s\S]*updateSystem[\s\S]*\} catch \(e\) \{\s*setEditError\(userFacingError\(e, \{ context: "admin\/scope save" \}\)\);\s*return;\s*\}\s*setEditing\(null\);/);
+    expect(save).not.toContain("setError(");
+    // the dialog is handed the error, and cancelling clears it
+    const mount = page.slice(page.indexOf("<EditScopeRowModal"), page.indexOf("/>", page.indexOf("<EditScopeRowModal")));
+    expect(mount).toContain("error={editError}");
+    expect(mount).toContain("onCancel={() => { setEditing(null); setEditError(null); }}");
+    // …and renders it inside its own form, under the fields, while the typed
+    // values stay in the dialog's state (it is not unmounted on a refusal)
+    const modal = page.slice(page.indexOf("function EditScopeRowModal("), page.indexOf("function Field("));
+    const form = modal.slice(modal.indexOf("<form onSubmit={onSubmit}"), modal.indexOf("</form>"));
+    expect(form).toMatch(/\{error && \(\s*<div role="alert" data-edit-error[^>]*>\s*<AlertTriangle[^>]*\/> \{error\}\s*<\/div>\s*\)\}/);
+    expect(form.indexOf("{error && (")).toBeGreaterThan(form.indexOf('label="Description"'));
     const archive = page.slice(page.indexOf("const onArchive = async"), page.indexOf("// ─── Render"));
     expect(archive).toMatch(/try \{[\s\S]*archivePlant[\s\S]*archiveUnit[\s\S]*archiveSystem[\s\S]*\} catch \(e\) \{[\s\S]*setError\(userFacingError\(e, \{ context: "admin\/scope archive" \}\)\);\s*return;\s*\}/);
     // the refusal itself passes through as written; raw driver text never does
