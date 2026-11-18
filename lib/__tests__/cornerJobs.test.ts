@@ -715,7 +715,11 @@ describe("TAX-8 (N7 third review; N9 done-when 3) — a re-formed overlap is a n
     const body = intents.slice(start, intents.indexOf("\n}\n", start));
     // The delete goes through checkedWrite (the checkedWrite census holds
     // lib/intents.ts at its one unchecked site); zero rows is not a failure.
-    const del = body.search(/checkedWrite\(\s*supabase\s*\.from\("document_intents"\)\s*\.delete\(\)/);
+    // (SAF-18 / J15b: the database's answer is kept beside the verdict —
+    // `checkedWrite(answered(supabase…` — so the pre-migration check sees
+    // the full error; the filters, the clear-before-upsert order and the
+    // payload stay pinned below.)
+    const del = body.search(/checkedWrite\(\s*(?:answered\(\s*)?supabase\s*\.from\("document_intents"\)\s*\.delete\(\)/);
     const up = body.search(/\.from\("document_intents"\)\s*\.upsert\(/);
     expect(del).toBeGreaterThan(0);
     expect(up).toBeGreaterThan(del);

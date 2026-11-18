@@ -106,6 +106,15 @@ export function findEditOverlaps(
 let intentSchemaMissing = false;
 export function resetIntentSchemaFlag(): void { intentSchemaMissing = false; }
 
+/** SAF-18 (J15b): a write's answer, read once — the database's own error
+ *  (code AND message) is kept beside checkedWrite's verdict, so the
+ *  pre-migration check sees exactly what the database said (checkedWrite
+ *  keeps only the code, and a proxy that strips it leaves only the message). */
+type DbAnswer = { data: unknown; error: { message: string; code?: string } | null };
+function answered<T extends DbAnswer>(q: PromiseLike<T>, keep: { answer?: T }): PromiseLike<T> {
+  return Promise.resolve(q).then((r) => { keep.answer = r; return r; });
+}
+
 function isMissingIntentSchema(err: unknown): boolean {
   const e = err as { code?: string; message?: string } | null;
   if (!e) return false;
@@ -159,7 +168,8 @@ export async function recordIntent(input: RecordIntentInput): Promise<void> {
     // A live intent is untouched (renewed in place, its start kept). Zero
     // rows is the usual answer (nothing had lapsed): checkedWrite reads it as
     // "refused", which here is not a failure — only a database error is.
-    const cleared = await checkedWrite(
+    const lapsed: { answer?: DbAnswer } = {};
+    const cleared = await checkedWrite(answered(
       supabase
         .from("document_intents")
         .delete()
@@ -169,9 +179,10 @@ export async function recordIntent(input: RecordIntentInput): Promise<void> {
         .eq("source", input.source)
         .lte("expires_at", new Date(now).toISOString())
         .select("id"),
-    );
+      lapsed,
+    ));
     if (!cleared.ok && cleared.code === "db") {
-      if (isMissingIntentSchema({ code: cleared.pgCode })) { intentSchemaMissing = true; return; }
+      if (isMissingIntentSchema(lapsed.answer?.error ?? { code: cleared.pgCode })) { intentSchemaMissing = true; return; }
       console.warn("[intents] a lapsed intent could not be cleared — the renewed one keeps its old start (non-blocking)", cleared.error);
     }
     const { error } = await supabase
@@ -210,14 +221,22 @@ export async function endMyIntents(input: {
 }): Promise<void> {
   if (intentSchemaMissing) return;
   try {
-    let q = supabase
+    // SAF-18 class (c): ending intents that are already gone is a success
+    // (zero rows); a pre-migration database sets the latch as before, and
+    // any other database error is logged — never silent.
+    const ended: { answer?: DbAnswer } = {};
+    const bySource = <Q extends { in(column: string, values: string[]): Q }>(q: Q): Q =>
+      (input.sources?.length ? q.in("source", input.sources) : q);
+    const w = await checkedWrite(answered(bySource(supabase
       .from("document_intents")
       .delete()
       .eq("document_id", input.documentId)
-      .eq("user_id", input.userId);
-    if (input.sources?.length) q = q.in("source", input.sources);
-    const { error } = await q;
-    if (error && isMissingIntentSchema(error)) intentSchemaMissing = true;
+      .eq("user_id", input.userId))
+      .select("id"), ended));
+    if (!w.ok && w.code === "db") {
+      if (isMissingIntentSchema(ended.answer?.error ?? { code: w.pgCode })) intentSchemaMissing = true;
+      else console.warn("[intents] ending intents failed (non-blocking)", ended.answer?.error?.message ?? w.error);
+    }
   } catch { /* non-blocking */ }
 }
 

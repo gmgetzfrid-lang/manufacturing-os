@@ -21,6 +21,15 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadDcLandscape, folderSubtree } from "@/lib/knowledgeAccess";
 import { aiReadability } from "@/lib/aiBoundary";
 import { resetKnowledgeIndex, isMissingColumn } from "@/lib/knowledgeIngest";
+import { checkedWrite } from "@/lib/checkedWrite";
+
+/** SAF-18 (J15b): a write's answer, read once — the database's own error is
+ *  kept beside checkedWrite's verdict, so the pre-migration check and the
+ *  sync's error lines see exactly what the database said. */
+type DbAnswer = { data: unknown; error: { message: string; code?: string } | null };
+function answered<T extends DbAnswer>(q: PromiseLike<T>, keep: { answer?: T }): PromiseLike<T> {
+  return Promise.resolve(q).then((r) => { keep.answer = r; return r; });
+}
 
 export interface SourceSyncSummary {
   added: number;
@@ -124,9 +133,11 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
     // A vanished container keeps its last-known name — that's exactly what
     // the dead-source drift warning shows the user.
     if (fresh && fresh !== source.source_name) {
-      await supabaseAdmin.from("knowledge_sources")
-        .update({ source_name: fresh }).eq("id", source.id)
-        .then(() => undefined, () => undefined);
+      // SAF-18 class (b): bookkeeping — a label that did not land is logged,
+      // never blocks the reconcile, and the next pass tries it again.
+      const label = await checkedWrite(supabaseAdmin.from("knowledge_sources")
+        .update({ source_name: fresh }).eq("id", source.id).select("id"));
+      if (!label.ok) console.warn("[knowledgeSourceSync] a source's display name could not be refreshed (non-blocking)", { sourceId: source.id, reason: label.error });
     }
     // …and the scheduled pass says so too (IRLS-7): source_id is a
     // polymorphic pointer the database cannot enforce, so a deleted library
@@ -283,9 +294,14 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
       // cite a superseded file.
       const existing = existingByDcDoc.get(dcDocId);
       if (existing) {
-        await supabaseAdmin.from("knowledge_documents").delete().eq("id", existing.id as string);
+        // SAF-18 class (c): a mirror already gone (zero rows) is not counted
+        // as removed, and is no failure; a drop that failed is said, and the
+        // library comes round first (ING-14) — never counted as removed.
+        const { data: dropped, error: dropErr } = await supabaseAdmin
+          .from("knowledge_documents").delete().eq("id", existing.id as string).select("id");
         existingByDcDoc.delete(dcDocId);
-        out.removed++;
+        if (dropErr) { out.errors.push(`stale mirror ${displayName(doc)}: ${dropErr.message}`); unsettled = true; }
+        else out.removed += (dropped ?? []).length;
       }
       continue;
     }
@@ -400,20 +416,29 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
   // ── REMOVE mirrors whose controlled doc left the sources ────────────────
   for (const [dcDocId, row] of existingByDcDoc) {
     if (wanted.has(dcDocId)) continue;
-    const { error } = await supabaseAdmin
-      .from("knowledge_documents").delete().eq("id", row.id as string);
-    if (error) out.errors.push(`remove: ${error.message}`);
-    else out.removed++;
+    // SAF-18: counted as removed only when the row went; one already gone is
+    // no failure (zero rows); a failed delete is said, and the library comes
+    // round first (ING-14).
+    const { data: gone, error } = await supabaseAdmin
+      .from("knowledge_documents").delete().eq("id", row.id as string).select("id");
+    if (error) { out.errors.push(`remove: ${error.message}`); unsettled = true; }
+    else out.removed += (gone ?? []).length;
   }
 
   // The rotation cursor (ILIFE-13): this library was reconciled now, by the
   // cron or on demand, so the heartbeat reaches the others first — unless a
-  // rev-up here did not land, in which case it is marked never-synced and
-  // the next run reaches it FIRST. A pre-20261122 database has no column;
+  // rev-up here did not land, or a mirror's drop failed (ING-14), in which
+  // case it is marked never-synced and the next run reaches it FIRST. A pre-20261122 database has no column;
   // the rotation then falls back to a daily offset (syncAllKnowledgeSources).
   {
-    const { error } = await supabaseAdmin.from("knowledge_sources")
-      .update({ last_synced_at: unsettled ? null : new Date().toISOString() }).eq("library_id", libraryId);
+    // SAF-18 class (c): a library whose sources were unlinked meanwhile
+    // stamps nothing (zero rows) — a success; a database error is said, as
+    // before, unless the column is not there yet (pre-20261122).
+    const stamped: { answer?: DbAnswer } = {};
+    const w = await checkedWrite(answered(supabaseAdmin.from("knowledge_sources")
+      .update({ last_synced_at: unsettled ? null : new Date().toISOString() }).eq("library_id", libraryId)
+      .select("id"), stamped));
+    const error = stamped.answer?.error ?? (!w.ok && w.code === "db" ? { message: w.error } : null);
     if (error && !isMissingColumn(error)) out.errors.push(`last synced: ${error.message}`);
   }
 

@@ -33,6 +33,25 @@ import { supabase } from "@/lib/supabase";
 import type { Plant, Unit, PlantSystem } from "@/types/schema";
 import { parseDrawingNumber, explainDrawingNumberMiss, type Codebook, type CodebookEntry } from "@/lib/codebook";
 import { isMissingColumn, pageRows, pageIn } from "@/lib/orgGraph";
+import { checkedWrite, CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
+
+// ── SAF-18 (J15b): every update / delete here is checked ────────────────
+// A write RLS filters to zero rows answers `{ data: [], error: null }` — a
+// success with nothing changed. Each write below asks for its matched rows
+// through checkedWrite; the database's own answer (rows and raw error) is
+// kept beside the verdict (`answered`), so a caller's message and the
+// pre-migration / conflict classification stay exactly what they were.
+type DbAnswer = { data: unknown; error: { message: string; code?: string } | null };
+function answered<T extends DbAnswer>(q: PromiseLike<T>, keep: { answer?: T }): PromiseLike<T> {
+  return Promise.resolve(q).then((r) => { keep.answer = r; return r; });
+}
+/** A person's write (class a): refused → CHECKED_WRITE_REFUSED; a database
+ *  error → its own message, as before. */
+function throwUnlessMatched(w: Awaited<ReturnType<typeof checkedWrite>>, keep: { answer?: DbAnswer }): void {
+  if (w.ok) return;
+  if (w.code === "refused") throw new Error(CHECKED_WRITE_REFUSED);
+  throw new Error(keep.answer?.error?.message ?? w.error);
+}
 
 // ─── Row shapes (snake_case from Postgres) ──────────────────────
 
@@ -144,8 +163,8 @@ export async function updatePlant(id: string, patch: Partial<Pick<Plant, "name" 
   const update: Record<string, unknown> = {
     ...patch, updated_by: updatedBy, updated_at: new Date().toISOString(),
   };
-  const { error } = await supabase.from("plants").update(update).eq("id", id);
-  if (error) throw new Error(error.message);
+  const keep: { answer?: DbAnswer } = {};
+  throwUnlessMatched(await checkedWrite(answered(supabase.from("plants").update(update).eq("id", id).select("id"), keep)), keep);
 }
 
 export async function archivePlant(id: string, updatedBy: string): Promise<void> {
@@ -175,9 +194,11 @@ export async function listUnits(orgId: string, opts?: { plantId?: string; includ
  *  releases an archived unit's code, so the value is read back. */
 export async function setUnitCodebookCode(unitId: string, codebookCode: string | null, updatedBy: string): Promise<void> {
   const code = codebookCode?.trim() || null;
-  const { data, error } = await supabase.from("units")
+  const keep: { answer?: DbAnswer } = {};
+  const w = await checkedWrite(answered(supabase.from("units")
     .update({ codebook_code: code, updated_by: updatedBy, updated_at: new Date().toISOString() })
-    .eq("id", unitId).select("id, codebook_code");
+    .eq("id", unitId).select("id, codebook_code"), keep));
+  const error = keep.answer?.error ?? null;
   if (error) {
     if (error.code === "23505" || /units_org_codebook_code_uniq/.test(error.message)) {
       throw new Error(`Site Codebook unit ${code} is already mapped to another operational unit — unmap it there first.`);
@@ -188,8 +209,9 @@ export async function setUnitCodebookCode(unitId: string, codebookCode: string |
     if (isMissingColumn(error)) throw new Error("The unit-identity migration (20261138) is not applied yet — the mapping cannot be saved.");
     throw new Error(error.message);
   }
-  if (!data || data.length === 0) throw new Error("Not saved — the mapping was refused.");
-  const saved = ((data[0] as { codebook_code?: string | null }).codebook_code ?? null);
+  if (!w.ok) throw new Error(w.code === "refused" ? "Not saved — the mapping was refused." : w.error);
+  const data = keep.answer?.data as Array<{ codebook_code?: string | null }>;
+  const saved = (data[0].codebook_code ?? null);
   if (saved !== code) throw new Error("Not saved — an archived unit holds no Site Codebook unit (restore it first).");
 }
 
@@ -340,8 +362,8 @@ export async function updateUnit(id: string, patch: Partial<Pick<Unit, "name" | 
   const update: Record<string, unknown> = {
     ...patch, updated_by: updatedBy, updated_at: new Date().toISOString(),
   };
-  const { error } = await supabase.from("units").update(update).eq("id", id);
-  if (error) throw new Error(error.message);
+  const keep: { answer?: DbAnswer } = {};
+  throwUnlessMatched(await checkedWrite(answered(supabase.from("units").update(update).eq("id", id).select("id"), keep)), keep);
 }
 
 export async function archiveUnit(id: string, updatedBy: string): Promise<void> {
@@ -378,8 +400,8 @@ export async function updateSystem(id: string, patch: Partial<Pick<PlantSystem, 
   const update: Record<string, unknown> = {
     ...patch, updated_by: updatedBy, updated_at: new Date().toISOString(),
   };
-  const { error } = await supabase.from("systems").update(update).eq("id", id);
-  if (error) throw new Error(error.message);
+  const keep: { answer?: DbAnswer } = {};
+  throwUnlessMatched(await checkedWrite(answered(supabase.from("systems").update(update).eq("id", id).select("id"), keep)), keep);
 }
 
 export async function archiveSystem(id: string, updatedBy: string): Promise<void> {
@@ -854,12 +876,13 @@ export async function linkDocumentToAsset(orgId: string, documentId: string, ass
 }
 
 export async function unlinkDocumentFromAsset(documentId: string, assetId: string): Promise<void> {
-  const { error } = await supabase
+  const keep: { answer?: DbAnswer } = {};
+  throwUnlessMatched(await checkedWrite(answered(supabase
     .from("document_assets")
     .delete()
     .eq("document_id", documentId)
-    .eq("asset_id", assetId);
-  if (error) throw new Error(error.message);
+    .eq("asset_id", assetId)
+    .select("id"), keep)), keep);
 }
 
 export interface ProjectDocumentLink {
@@ -891,10 +914,11 @@ export async function linkDocumentToProject(orgId: string, projectId: string, do
 }
 
 export async function unlinkDocumentFromProject(projectId: string, documentId: string): Promise<void> {
-  const { error } = await supabase
+  const keep: { answer?: DbAnswer } = {};
+  throwUnlessMatched(await checkedWrite(answered(supabase
     .from("project_documents")
     .delete()
     .eq("project_id", projectId)
-    .eq("document_id", documentId);
-  if (error) throw new Error(error.message);
+    .eq("document_id", documentId)
+    .select("id"), keep)), keep);
 }

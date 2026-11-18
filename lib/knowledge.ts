@@ -9,6 +9,7 @@
 // controllers).
 
 import { supabase } from "@/lib/supabase";
+import { checkedWrite, CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
 import { uploadToPath, ArchivedFileError, type UploadProgress } from "@/lib/storage";
 import { MIRROR_SOURCE_RESTRICTED } from "@/lib/knowledgeMirrorAccess";
 import { ALLOWED_PROVIDERS } from "@/lib/ai/pricing";
@@ -359,15 +360,19 @@ export async function createKnowledgeLibrary(input: {
 }
 
 export async function deleteKnowledgeLibrary(id: string): Promise<void> {
-  const { error } = await supabase.from("knowledge_libraries").delete().eq("id", id);
+  // SAF-18 (J15b): a delete RLS filtered to nothing is refused, never "deleted".
+  const { data: gone, error } = await supabase.from("knowledge_libraries").delete().eq("id", id).select("id");
   if (error) throw new Error(error.message);
+  if (!gone || gone.length === 0) throw new Error(CHECKED_WRITE_REFUSED);
 }
 
-/** Save the library's standing AI instructions (controllers; RLS enforces). */
+/** Save the library's standing AI instructions (controllers; RLS enforces —
+ *  a save the policy filters to nothing is refused, never a green save). */
 export async function saveLibraryAiInstructions(libraryId: string, instructions: string): Promise<void> {
-  const { error } = await supabase.from("knowledge_libraries")
-    .update({ ai_instructions: instructions.trim() || null }).eq("id", libraryId);
+  const { data: hit, error } = await supabase.from("knowledge_libraries")
+    .update({ ai_instructions: instructions.trim() || null }).eq("id", libraryId).select("id");
   if (error) throw new Error(error.message);
+  if (!hit || hit.length === 0) throw new Error(CHECKED_WRITE_REFUSED);
 }
 
 /** Save the library's AI feature toggles (controllers; RLS enforces).
@@ -454,9 +459,14 @@ export async function listLibraryLinks(libraryId: string): Promise<KnowledgeLibr
 export async function setLibraryLinks(input: {
   orgId: string; libraryId: string; linkedLibraryIds: string[];
 }): Promise<void> {
-  const { error: delErr } = await supabase
-    .from("knowledge_library_links").delete().eq("library_id", input.libraryId);
-  if (delErr) throw new Error(delErr.message);
+  // SAF-18 class (c): the set is replaced, so a library with no links yet
+  // clears nothing — zero rows is a success; an error still stops the save,
+  // in the database's own words as before.
+  const kept: { error: { message: string } | null } = { error: null };
+  const cleared = await checkedWrite(Promise.resolve(supabase
+    .from("knowledge_library_links").delete().eq("library_id", input.libraryId).select("id"))
+    .then((r) => { kept.error = r.error; return r; }));
+  if (!cleared.ok && cleared.code === "db") throw new Error(kept.error?.message ?? cleared.error);
   if (input.linkedLibraryIds.length === 0) return;
   const { error } = await supabase.from("knowledge_library_links").insert(
     input.linkedLibraryIds.map((linked) => ({
@@ -1223,8 +1233,10 @@ export async function rateKnowledgeAnswer(questionId: string, rating: 1 | -1 | 0
 }
 
 export async function deleteKnowledgeDocument(id: string): Promise<void> {
-  const { error } = await supabase.from("knowledge_documents").delete().eq("id", id);
+  // SAF-18 (J15b): a removal RLS filtered to nothing is refused, never "removed".
+  const { data: gone, error } = await supabase.from("knowledge_documents").delete().eq("id", id).select("id");
   if (error) throw new Error(error.message);
+  if (!gone || gone.length === 0) throw new Error(CHECKED_WRITE_REFUSED);
 }
 
 // ── Ask + history ─────────────────────────────────────────────────────────

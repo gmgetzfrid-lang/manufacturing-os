@@ -11,6 +11,7 @@ import { useToast } from "@/components/providers/ToastProvider";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { MessageSquare, Send, Zap, HelpCircle, FileSignature, CheckCircle2, Loader2, Pencil } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { userFacingError } from "@/lib/userFacingError";
 import {
   type ActivityMessage,
   type ActivityKind,
@@ -221,6 +222,8 @@ export default function ActivityThread({
       await resolveMessage(id, currentUserId);
     } catch (e) {
       console.error(e);
+      // SAF-18 (J15b): a refused or failed resolve is said, in plain words.
+      showToast({ type: "error", title: "Couldn't mark it resolved", message: userFacingError(e, { context: "activity resolve" }) });
     }
   };
 

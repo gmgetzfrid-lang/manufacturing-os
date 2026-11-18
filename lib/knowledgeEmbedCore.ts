@@ -53,6 +53,7 @@ import {
 } from "@/lib/ai/embeddings";
 import { AiCallError } from "@/lib/ai/providerCall";
 import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
+import { checkedWrite } from "@/lib/checkedWrite";
 
 export interface EmbedConnection {
   provider: EmbeddingProviderId;
@@ -200,7 +201,12 @@ export async function embedLibrarySlice(opts: {
 
   /** Give back passages this slice claimed but will not embed — only while
    *  this slice's lease still stands (a lease another driver took since, or
-   *  one a Rebuild cleared, is not ours to clear). */
+   *  one a Rebuild cleared, is not ours to clear). SAF-18 class (c): such a
+   *  give-back matches nothing, which is a success; an unreleased lease just
+   *  expires, so a failed give-back never fails the slice — but it is
+   *  logged, never silent. */
+  const heldTo = <Q extends { eq(column: string, value: string): Q; not(column: string, op: string, value: null): Q }>(q: Q, lease: string): Q =>
+    (lease ? q.eq("embed_claimed_until", lease) : q.not("embed_claimed_until", "is", null));
   const release = async (chunks: ClaimedChunk[]) => {
     if (queue !== "claim" || chunks.length === 0) return;
     const byLease = new Map<string, string[]>();
@@ -209,9 +215,8 @@ export async function embedLibrarySlice(opts: {
       byLease.set(k, [...(byLease.get(k) ?? []), c.id]);
     }
     for (const [lease, ids] of byLease) {
-      const q = supabaseAdmin.from("knowledge_chunks").update({ embed_claimed_until: null }).in("id", ids);
-      await (lease ? q.eq("embed_claimed_until", lease) : q.not("embed_claimed_until", "is", null))
-        .then(() => undefined, () => undefined); // an unreleased lease just expires
+      const w = await checkedWrite(heldTo(supabaseAdmin.from("knowledge_chunks").update({ embed_claimed_until: null }).in("id", ids), lease).select("id"));
+      if (!w.ok && w.code === "db") console.warn("[embed] claimed passages could not be given back — their lease expires instead", { passages: ids.length, reason: w.error });
     }
   };
 
@@ -574,9 +579,16 @@ async function readFeatures(libraryId: string): Promise<{ feats: Record<string, 
   return { feats: { ...((lib?.ai_features as Record<string, unknown> | null) ?? {}) }, error: null };
 }
 
-async function writeFeatures(libraryId: string, feats: Record<string, unknown>): Promise<string | null> {
-  const { error } = await supabaseAdmin.from("knowledge_libraries").update({ ai_features: feats }).eq("id", libraryId);
-  return error ? error.message : null;
+/** SAF-18 (J15b): the write's outcome, checked — a write that matched no
+ *  library (it is gone) is `applied: false`, as the 20261121 function
+ *  answers for no row changed, never a landed write. The error is the
+ *  database's own sentence, as before. */
+async function writeFeatures(libraryId: string, feats: Record<string, unknown>): Promise<MarkerWrite> {
+  const kept: { error: { message: string } | null } = { error: null };
+  const w = await checkedWrite(Promise.resolve(supabaseAdmin.from("knowledge_libraries").update({ ai_features: feats }).eq("id", libraryId).select("id"))
+    .then((r) => { kept.error = r.error; return r; }));
+  if (w.ok) return { error: null, applied: true };
+  return { error: w.code === "db" ? kept.error?.message ?? w.error : null, applied: false };
 }
 
 /** The marker a writer read: a write goes through only while the stored
@@ -637,8 +649,7 @@ async function writeMarker(
   } else {
     delete feats.embedBuild;
   }
-  const writeErr = await writeFeatures(libraryId, feats);
-  return { error: writeErr, applied: !writeErr };
+  return writeFeatures(libraryId, feats);
 }
 
 /** The library's marker now, or the read error (never guessed). */

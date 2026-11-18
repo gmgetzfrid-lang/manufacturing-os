@@ -17,6 +17,7 @@ import {
   type AliasEntry,
 } from "@/lib/mentionIndex";
 import { createHash } from "node:crypto";
+import { checkedWrite } from "@/lib/checkedWrite";
 import { pageTail } from "@/lib/knowledgeText";
 import {
   startMentionRun, finishMentionRun, clearStandingFailure, saveBackfillCursor, clearBackfillCursor,
@@ -94,6 +95,14 @@ export async function loadAliasDictionary(orgId: string): Promise<AliasEntry[]> 
 export function dictionaryFingerprint(dictionary: readonly AliasEntry[]): string {
   const lines = dictionary.map((e) => `${e.assetId}\u0000${e.alias}\u0000${e.origin}`).sort();
   return createHash("sha256").update(lines.join("\n")).digest("hex");
+}
+
+/** SAF-18 (J15b): a write's answer, read once — the database's own error is
+ *  kept beside checkedWrite's verdict, so the failure logged and thrown is
+ *  the database's sentence, as before. */
+type DbAnswer = { data: unknown; error: { message: string; code?: string } | null };
+function answered<T extends DbAnswer>(q: PromiseLike<T>, keep: { answer?: T }): PromiseLike<T> {
+  return Promise.resolve(q).then((r) => { keep.answer = r; return r; });
 }
 
 /** WIRE-2: a mention-index failure is logged where it happens, so a caller
@@ -176,14 +185,17 @@ export async function indexDocumentMentions(
 
   // Replace this document's machine-derived mentions wholesale. Explicit
   // human pins survive — someone decided those, and a re-index is not a
-  // decision.
-  const { error: delErr } = await supabaseAdmin
+  // decision. SAF-18 class (c): a document with no machine mentions yet
+  // clears nothing — zero rows is a success; a database error stops here.
+  const cleared: { answer?: DbAnswer } = {};
+  const del = await checkedWrite(answered(supabaseAdmin
     .from("entity_mentions")
     .delete()
     .eq("org_id", orgId)
     .eq("knowledge_document_id", knowledgeDocumentId)
-    .eq("is_explicit", false);
-  if (delErr) fail(`mention index cleanup: ${delErr.message}`, knowledgeDocumentId);
+    .eq("is_explicit", false)
+    .select("id"), cleared));
+  if (!del.ok && del.code === "db") fail(`mention index cleanup: ${cleared.answer?.error?.message ?? del.error}`, knowledgeDocumentId);
 
   // IRLS-4 / WIRE-2: the conflict target is the PLAIN unique index
   // (asset_id, knowledge_document_id, page) 20261126 creates — the old

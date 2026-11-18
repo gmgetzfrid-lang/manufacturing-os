@@ -56,6 +56,7 @@ import { supabase } from "@/lib/supabase";
 import type { Plant, Unit, PlantSystem } from "@/types/schema";
 import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
 import { translatePostgresError } from "@/lib/inputValidation";
+import { userFacingError } from "@/lib/userFacingError";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Field";
@@ -182,9 +183,18 @@ export default function ScopePage() {
 
   const onSaveEdit = async (patch: { name: string; code: string; description: string }) => {
     if (!editing || !uid) return;
-    if (editing.kind === "plant")  await updatePlant(editing.row.id!,  patch, uid);
-    if (editing.kind === "unit")   await updateUnit(editing.row.id!,   patch, uid);
-    if (editing.kind === "system") await updateSystem(editing.row.id!, patch, uid);
+    setError(null);
+    // SAF-18 (J15b): a refused or failed save is said on the page's error
+    // line, and the edit stays open with what was typed — never an
+    // unhandled rejection, never a closed form that looks saved.
+    try {
+      if (editing.kind === "plant")  await updatePlant(editing.row.id!,  patch, uid);
+      if (editing.kind === "unit")   await updateUnit(editing.row.id!,   patch, uid);
+      if (editing.kind === "system") await updateSystem(editing.row.id!, patch, uid);
+    } catch (e) {
+      setError(userFacingError(e, { context: "admin/scope save" }));
+      return;
+    }
     setEditing(null);
     await refresh();
   };
@@ -228,9 +238,16 @@ export default function ScopePage() {
     if (kind === "unit" && mapped?.code) {
       if (!(await confirmRelease("archive", { id, name: mapped.name }, mapped.code))) return;
     } else if (!(await appConfirm({ message: "Archive this scope node? Documents and equipment that reference it keep their data; the row is hidden from picker UIs.", tone: "danger" }))) return;
-    if (kind === "plant")  await archivePlant(id, uid);
-    if (kind === "unit")   await archiveUnit(id, uid);
-    if (kind === "system") await archiveSystem(id, uid);
+    setError(null);
+    try {
+      if (kind === "plant")  await archivePlant(id, uid);
+      if (kind === "unit")   await archiveUnit(id, uid);
+      if (kind === "system") await archiveSystem(id, uid);
+    } catch (e) {
+      // SAF-18 (J15b): a refused archive is said, never an unhandled rejection.
+      setError(userFacingError(e, { context: "admin/scope archive" }));
+      return;
+    }
     await refresh();
   };
 

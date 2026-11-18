@@ -42,6 +42,7 @@ import { randomUUID } from "node:crypto";
 import { GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite, type CheckedWriteResult } from "@/lib/checkedWrite";
 import { openAiKey } from "@/lib/ai/keyVault";
 import { chunkPageText, splitPageIntoSections, ensurePdfPolyfills, CAPTION_RE,
   sanitizeStorageText, truncateSafe, splitTables, pageLinesFromTextItems, pageTail, carriedTailMarker,
@@ -301,6 +302,30 @@ export const isMissingTable = (e: DbError): boolean =>
   !!e && (e.code === "42P01" || e.code === "PGRST205" ||
     /relation "?[\w.]+"? does not exist|Could not find the table/i.test(e.message ?? ""));
 
+/** SAF-18 (J15b): every update / delete in this engine asks for its matched
+ *  rows through checkedWrite, and the database's own answer — the rows it
+ *  returned and its raw error — is kept beside the verdict (`dbAnswer`), so
+ *  the pre-migration checks above, the collision test and every operator
+ *  message see exactly what the database said. Each site's class is said
+ *  where it is not obvious: most here are class (c) — a clear-before-write,
+ *  a withdrawal or a compare-and-set whose zero-row answer is legitimate —
+ *  and stay successes on zero rows; a database error is never silent. */
+type DbAnswer = { data: unknown; error: { message: string; code?: string } | null };
+interface Kept { answer?: DbAnswer }
+function dbAnswer<T extends DbAnswer>(q: PromiseLike<T>, keep: Kept): PromiseLike<T> {
+  return Promise.resolve(q).then((r) => { keep.answer = r; return r; });
+}
+/** The database's error behind a verdict: its own (code and message) when it
+ *  answered, else the reason checkedWrite gives (a request that never got an
+ *  answer); null for a match or a zero-row answer. */
+function dbError(w: CheckedWriteResult, keep: Kept): DbAnswer["error"] {
+  if (keep.answer?.error) return keep.answer.error;
+  return !w.ok && w.code === "db" ? { message: w.error } : null;
+}
+/** The rows the write returned (`.select(…)`), as answered. */
+const rowsOf = (keep: Kept): Array<Record<string, unknown>> =>
+  (Array.isArray(keep.answer?.data) ? keep.answer.data : []) as Array<Record<string, unknown>>;
+
 export type IngestLease =
   | { kind: "claimed"; row: Record<string, unknown> }
   | { kind: "busy"; row: Record<string, unknown> }
@@ -318,16 +343,20 @@ export async function claimIngestLease(
 ): Promise<IngestLease> {
   const now = new Date(nowMs).toISOString();
   const cutoff = new Date(nowMs - INGEST_LEASE_TTL_MS).toISOString();
-  const { data, error } = await supabaseAdmin.from("knowledge_documents")
+  // Zero rows is an answer here, not a failure: the claim is held, or the
+  // document is gone — read below.
+  const kept: Kept = {};
+  const w = await checkedWrite(dbAnswer(supabaseAdmin.from("knowledge_documents")
     .update({ ingest_claimed_by: driver, ingest_claimed_at: now })
     .eq("id", documentId)
     .or(`ingest_claimed_at.is.null,ingest_claimed_at.lt."${cutoff}"`)
-    .select("*");
+    .select("*"), kept));
+  const error = dbError(w, kept);
   if (error) {
     if (isMissingColumn(error)) return { kind: "unlocked" };
     throw new Error(`ingest claim failed: ${error.message}`);
   }
-  const row = ((data ?? []) as Array<Record<string, unknown>>)[0];
+  const row = rowsOf(kept)[0];
   if (row) return { kind: "claimed", row };
   const { data: held, error: readErr } = await supabaseAdmin
     .from("knowledge_documents").select("*").eq("id", documentId).maybeSingle();
@@ -337,12 +366,16 @@ export async function claimIngestLease(
 }
 
 /** Give a claim back. Only the driver that holds it can release it; a
- *  release that fails is harmless — the TTL frees the document. */
+ *  release that fails is harmless — the TTL frees the document. SAF-18
+ *  class (c): a release that matches nothing (the claim lapsed and another
+ *  driver took it, or the document is gone) leaves nothing of ours to give
+ *  back — true, as before; only a database error answers false. */
 export async function releaseIngestLease(documentId: string, driver: string): Promise<boolean> {
-  const { error } = await supabaseAdmin.from("knowledge_documents")
+  const kept: Kept = {};
+  const w = await checkedWrite(dbAnswer(supabaseAdmin.from("knowledge_documents")
     .update({ ingest_claimed_by: null, ingest_claimed_at: null })
-    .eq("id", documentId).eq("ingest_claimed_by", driver);
-  return !error;
+    .eq("id", documentId).eq("ingest_claimed_by", driver).select("id"), kept));
+  return !dbError(w, kept);
 }
 
 /** A page list, in queue order (duplicates and junk dropped). The order of
@@ -588,8 +621,10 @@ export async function resetKnowledgeIndex(
     // 1. The old sheet's cached traces (rev-up only), while the row still
     //    names the old file.
     if (opts.purgeLineTraces) {
-      const { error: trErr } = await supabaseAdmin
-        .from("knowledge_line_traces").delete().eq("document_id", id);
+      // Class (c): a sheet with no cached traces clears nothing.
+      const tr: Kept = {};
+      const trErr = dbError(await checkedWrite(dbAnswer(supabaseAdmin
+        .from("knowledge_line_traces").delete().eq("document_id", id).select("id"), tr)), tr);
       if (trErr && !isMissingTable(trErr)) {
         out.errors.push(`${id}: line traces: ${trErr.message}`);
         await release();
@@ -606,21 +641,23 @@ export async function resetKnowledgeIndex(
     if (seen) {
       const known = new Set(Object.keys(seen));
       const update = Object.fromEntries(Object.entries(full).filter(([k]) => known.has(k)));
-      let q = supabaseAdmin.from("knowledge_documents").update(update).eq("id", id);
-      if (held) {
-        q = q.eq("ingest_claimed_by", driver);
-      } else {
-        // The row as we saw it — a concurrent sync that already re-pointed it
-        // wins, and this pass leaves it alone.
-        q = q.eq("file_key", String(seen.file_key));
+      /** Under our own claim, the claim; under someone else's, the row as we
+       *  saw it — a concurrent sync that already re-pointed it wins, and this
+       *  pass leaves it alone. */
+      const asHeld = <Q extends { eq: (c: string, v: unknown) => Q; is: (c: string, v: null) => Q }>(q: Q): Q => {
+        if (held) return q.eq("ingest_claimed_by", driver);
+        let o = q.eq("file_key", String(seen.file_key));
         if ("source_version_id" in seen) {
-          q = seen.source_version_id == null ? q.is("source_version_id", null) : q.eq("source_version_id", seen.source_version_id);
+          o = seen.source_version_id == null ? o.is("source_version_id", null) : o.eq("source_version_id", seen.source_version_id);
         }
-      }
-      // …and, on every path, still what the caller read.
-      q = expectOn(q, seen);
-      const { data, error } = await q.select("id");
-      updErr = error; wrote = (data ?? []).length;
+        return o;
+      };
+      // …and, on every path, still what the caller read. Zero rows is the
+      // compare-and-set missing (handled below), never a success.
+      const kept: Kept = {};
+      const w = await checkedWrite(dbAnswer(expectOn(asHeld(supabaseAdmin.from("knowledge_documents").update(update).eq("id", id)), seen)
+        .select("id"), kept));
+      updErr = dbError(w, kept); wrote = rowsOf(kept).length;
     } else {
       // Pre-20261122: no claim, no new counters. Strip what the database
       // does not have yet, newest first.
@@ -632,10 +669,11 @@ export async function resetKnowledgeIndex(
           !INGEST_COLUMNS_20261122.includes(k) && !INGEST_COLUMNS_20261162.includes(k) && !INGEST_COLUMNS_20261186.includes(k) && k !== "vision_pages" && k !== "last_section")),
       ];
       for (const update of ladder) {
-        const { data, error } = await expectOn(supabaseAdmin.from("knowledge_documents")
-          .update(update).eq("id", id), probe).select("id");
-        updErr = error; wrote = (data ?? []).length;
-        if (!error || !isMissingColumn(error)) break;
+        const kept: Kept = {};
+        const w = await checkedWrite(dbAnswer(expectOn(supabaseAdmin.from("knowledge_documents")
+          .update(update).eq("id", id), probe).select("id"), kept));
+        updErr = dbError(w, kept); wrote = rowsOf(kept).length;
+        if (!updErr || !isMissingColumn(updErr)) break;
       }
     }
     if (updErr) { out.errors.push(`${id}: row: ${updErr.message}`); await release(); continue; }
@@ -650,15 +688,17 @@ export async function resetKnowledgeIndex(
 
     // 3. The derived index. Each step checked; a failure is reported and
     //    the next generation's first batch clears what is left.
+    //    Class (c): a document with nothing indexed yet clears nothing.
     const left: string[] = [];
-    const { error: chunkErr } = await supabaseAdmin
-      .from("knowledge_chunks").delete().eq("document_id", id);
+    const ch: Kept = {}, en: Kept = {}, me: Kept = {};
+    const chunkErr = dbError(await checkedWrite(dbAnswer(supabaseAdmin
+      .from("knowledge_chunks").delete().eq("document_id", id).select("id"), ch)), ch);
     if (chunkErr) left.push(`chunks: ${chunkErr.message}`);
-    const { error: entErr } = await supabaseAdmin
-      .from("knowledge_page_entities").delete().eq("document_id", id);
+    const entErr = dbError(await checkedWrite(dbAnswer(supabaseAdmin
+      .from("knowledge_page_entities").delete().eq("document_id", id).select("id"), en)), en);
     if (entErr && !isMissingTable(entErr)) left.push(`page entities: ${entErr.message}`);
-    const { error: menErr } = await supabaseAdmin
-      .from("entity_mentions").delete().eq("knowledge_document_id", id).eq("is_explicit", false);
+    const menErr = dbError(await checkedWrite(dbAnswer(supabaseAdmin
+      .from("entity_mentions").delete().eq("knowledge_document_id", id).eq("is_explicit", false).select("id"), me)), me);
     if (menErr && !isMissingTable(menErr)) left.push(`mentions: ${menErr.message}`);
     await release();
     out.reset.push(id);
@@ -943,18 +983,25 @@ export async function markIngestFailed(
           : fitCause(cause, ERROR_MAX_CHARS),
         ingest_failures: attempt, vision_retry_after: null,
       };
-  const write = (patch: Record<string, unknown>, withCount: boolean) => {
-    let q = supabaseAdmin.from("knowledge_documents").update(patch)
-      .eq("id", doc.id).eq("file_key", read.fileKey).eq("pages_indexed", read.pagesIndexed);
+  /** The compare-and-set's filters past the file and resume point. */
+  const asRead = <Q extends { eq: (c: string, v: unknown) => Q; is: (c: string, v: null) => Q }>(q: Q, withCount: boolean): Q => {
+    let o = q;
     if (read.sourceVersionId !== undefined) {
-      q = read.sourceVersionId === null ? q.is("source_version_id", null) : q.eq("source_version_id", read.sourceVersionId);
+      o = read.sourceVersionId === null ? o.is("source_version_id", null) : o.eq("source_version_id", read.sourceVersionId);
     }
-    if (withCount && read.failures !== undefined) q = q.eq("ingest_failures", read.failures);
-    return q.select("id");
+    if (withCount && read.failures !== undefined) o = o.eq("ingest_failures", read.failures);
+    return o;
   };
-  let { data, error } = await write(update, true);
-  if (error && isMissingColumn(error)) ({ data, error } = await write(legacyUpdate, false));
-  const marked = !error && (data ?? []).length > 0;
+  // Zero rows: the row moved, and was left alone (`marked: false`).
+  const write = async (patch: Record<string, unknown>, withCount: boolean) => {
+    const kept: Kept = {};
+    const w = await checkedWrite(dbAnswer(asRead(supabaseAdmin.from("knowledge_documents").update(patch)
+      .eq("id", doc.id).eq("file_key", read.fileKey).eq("pages_indexed", read.pagesIndexed), withCount).select("id"), kept));
+    return { w, error: dbError(w, kept) };
+  };
+  let { w, error } = await write(update, true);
+  if (error && isMissingColumn(error)) ({ w, error } = await write(legacyUpdate, false));
+  const marked = !error && w.ok;
   return { marked, retryAfter: marked ? retryAfter : null, error: error ? error.message : null };
 }
 
@@ -1026,9 +1073,15 @@ export async function reindexLibraryChunks(
   }
 
   // The library's choice first: a document reset below re-indexes under it.
-  const { error: libErr } = await supabaseAdmin
-    .from("knowledge_libraries").update({ chunk_version: chunker }).eq("id", libraryId);
+  // SAF-18 (J15b): the choice IS the controller's decision — one that matched
+  // no library (deleted since the documents were read) is refused, and no
+  // document is reset under a choice that was never recorded.
+  const lib: Kept = {};
+  const libSaved = await checkedWrite(dbAnswer(supabaseAdmin
+    .from("knowledge_libraries").update({ chunk_version: chunker }).eq("id", libraryId).select("id"), lib));
+  const libErr = dbError(libSaved, lib);
   if (libErr) throw new Error(isMissingColumn(libErr) ? needsMigration : `library: ${libErr.message}`);
+  if (!libSaved.ok) throw new Error(`library: knowledge library ${libraryId} no longer exists (it was deleted), so its chunker was not recorded and nothing was reset.`);
   for (const d of todo) {
     if (opts.deadlineMs && Date.now() >= opts.deadlineMs) break;
     const res = await resetKnowledgeIndex([d.id]);
@@ -1979,8 +2032,14 @@ export async function ingestKnowledgeDocBatch(
       for (const [table, ids] of [["knowledge_chunks", insertedChunkIds], ["knowledge_page_entities", insertedEntityIds]] as const) {
         for (let i = 0; i < ids.length; i += 200) {
           const slice = ids.slice(i, i + 200);
-          let { error } = await supabaseAdmin.from(table).delete().in("id", slice);
-          if (error) ({ error } = await supabaseAdmin.from(table).delete().in("id", slice));
+          // Class (c): rows already gone (a cascade, a full clear) match
+          // nothing — withdrawn all the same.
+          const first: Kept = {};
+          let error = dbError(await checkedWrite(dbAnswer(supabaseAdmin.from(table).delete().in("id", slice).select("id"), first)), first);
+          if (error) {
+            const again: Kept = {};
+            error = dbError(await checkedWrite(dbAnswer(supabaseAdmin.from(table).delete().in("id", slice).select("id"), again)), again);
+          }
           if (error) left.push(`${slice.length} ${table} rows: ${error.message}`);
         }
       }
@@ -2028,6 +2087,10 @@ export async function ingestKnowledgeDocBatch(
       !!e && (e.code === "23505" || e.code === "23503" || /duplicate key|violates foreign key/i.test(e.message ?? ""));
 
     let emptyDelta = emptyPages;
+    /** The page range this batch clears before it rewrites (the retried
+     *  pages, the whole document at a generation's start, or the pages read). */
+    const clearRange = <Q extends { in: (c: string, v: number[]) => Q; gte: (c: string, v: number) => Q; lte: (c: string, v: number) => Q }>(q: Q): Q =>
+      (retryMode ? q.in("page", rewrite) : fullClear ? q : q.gte("page", from + 1).lte("page", reached));
     try {
       if (touched) {
         // Idempotent batch: the processed page range is cleared before it is
@@ -2039,14 +2102,15 @@ export async function ingestKnowledgeDocBatch(
         // of a new index generation, under the claim, clears the document's
         // whole derived index instead: nothing of the last generation (an
         // interrupted reset's leftovers included) outlives it.
-        let del = supabaseAdmin.from("knowledge_chunks").delete().eq("document_id", cur.id);
-        del = retryMode ? del.in("page", rewrite) : fullClear ? del : del.gte("page", from + 1).lte("page", reached);
-        const { data: cleared, error: delErr } = await del.select("page");
+        // Class (c): a range with nothing in it clears nothing.
+        const chunkClear: Kept = {};
+        const delErr = dbError(await checkedWrite(dbAnswer(clearRange(supabaseAdmin.from("knowledge_chunks").delete().eq("document_id", cur.id))
+          .select("page"), chunkClear)), chunkClear);
         if (delErr) throw new Error(`chunk cleanup failed: ${delErr.message}`);
         if (retryMode) {
           // empty_pages follows the page: a retried page that was empty and
           // now holds text leaves the count, and the reverse joins it.
-          const hadBefore = new Set(((cleared ?? []) as Array<{ page: number }>).map((r) => Number(r.page)));
+          const hadBefore = new Set((rowsOf(chunkClear) as Array<{ page: number }>).map((r) => Number(r.page)));
           emptyDelta = 0;
           for (const [p, hasText] of retried) emptyDelta += (hasText ? 0 : 1) - (hadBefore.has(p) ? 0 : 1);
         }
@@ -2126,9 +2190,10 @@ export async function ingestKnowledgeDocBatch(
       // batch before pages_indexed moves (ING-8).
       let entitiesLive = true;
       if (touched) {
-        let del = supabaseAdmin.from("knowledge_page_entities").delete().eq("document_id", cur.id);
-        del = retryMode ? del.in("page", rewrite) : fullClear ? del : del.gte("page", from + 1).lte("page", reached);
-        const { error: delErr } = await del;
+        // Class (c), as the chunk clear.
+        const entityClear: Kept = {};
+        const delErr = dbError(await checkedWrite(dbAnswer(clearRange(supabaseAdmin.from("knowledge_page_entities").delete().eq("document_id", cur.id))
+          .select("id"), entityClear)), entityClear);
         if (delErr) {
           if (isMissingTable(delErr)) entitiesLive = false;
           else throw new Error(`entity cleanup failed: ${delErr.message}`);
@@ -2181,13 +2246,16 @@ export async function ingestKnowledgeDocBatch(
 
       // A document whose new revision has FEWER pages keeps nothing past its
       // last page (ING-3): not text, not tags.
+      // Class (c): nothing past the last page is the usual answer.
       if (!retryMode && touched) {
-        const { error: pruneErr } = await supabaseAdmin.from("knowledge_chunks")
-          .delete().eq("document_id", cur.id).gt("page", pageCount);
+        const prune: Kept = {};
+        const pruneErr = dbError(await checkedWrite(dbAnswer(supabaseAdmin.from("knowledge_chunks")
+          .delete().eq("document_id", cur.id).gt("page", pageCount).select("id"), prune)), prune);
         if (pruneErr) throw new Error(`chunk prune failed: ${pruneErr.message}`);
         if (entitiesLive) {
-          const { error: entPruneErr } = await supabaseAdmin.from("knowledge_page_entities")
-            .delete().eq("document_id", cur.id).gt("page", pageCount);
+          const entPrune: Kept = {};
+          const entPruneErr = dbError(await checkedWrite(dbAnswer(supabaseAdmin.from("knowledge_page_entities")
+            .delete().eq("document_id", cur.id).gt("page", pageCount).select("id"), entPrune)), entPrune);
           if (entPruneErr && !isMissingTable(entPruneErr)) throw new Error(`entity prune failed: ${entPruneErr.message}`);
         }
       }
@@ -2283,12 +2351,14 @@ export async function ingestKnowledgeDocBatch(
       // read by AI vision") is kept the old way. Best-effort: a pre-migration
       // DB (no column) simply doesn't show the count. Under a claim it rides
       // the commit above instead. A generation's first batch starts it over.
+      // SAF-18 class (b): never fails the batch — a count that did not land
+      // (no column, a moved row, an error) is logged, never silent.
       const { data: now } = await supabaseAdmin
         .from("knowledge_documents").select("vision_pages").eq("id", cur.id).maybeSingle();
-      await supabaseAdmin.from("knowledge_documents")
+      const counted = await checkedWrite(supabaseAdmin.from("knowledge_documents")
         .update({ vision_pages: (genStart ? 0 : Number(now?.vision_pages ?? 0)) + visionPages })
-        .eq("id", cur.id).eq("file_key", cur.file_key)
-        .then(() => undefined, () => undefined);
+        .eq("id", cur.id).eq("file_key", cur.file_key).select("id"));
+      if (!counted.ok) console.warn("[knowledgeIngest] the AI-vision page count was not updated (best-effort, pre-20261122)", { documentId: cur.id, reason: counted.error });
     }
 
     return {
@@ -2622,14 +2692,17 @@ export async function drainKnowledgeIngestQueue(opts: {
     // reason shows on the library page), never only in the run's report —
     // and it is the reason of THIS run, whatever the blocker, so a sentence
     // a later run no longer holds (the cap, once it reset) never stays.
-    let q = supabaseAdmin.from("knowledge_documents").update({
+    // Class (c): a stamp another writer moved, or a row claimed since,
+    // matches nothing — left alone, as the compare-and-set intends.
+    const asRead = <Q extends { eq: (c: string, v: unknown) => Q; is: (c: string, v: null) => Q }>(q: Q): Q =>
+      (d.vision_retry_after == null ? q.is("vision_retry_after", null) : q.eq("vision_retry_after", d.vision_retry_after));
+    const stamp: Kept = {};
+    const stampErr = dbError(await checkedWrite(dbAnswer(asRead(supabaseAdmin.from("knowledge_documents").update({
       vision_retry_after: new Date(nowMs).toISOString(),
       error: truncateSafe(reason, ERROR_MAX_CHARS),
     })
       .eq("id", d.id).eq("file_key", d.file_key)
-      .or(`ingest_claimed_at.is.null,ingest_claimed_at.lt."${cutoff}"`);
-    q = d.vision_retry_after == null ? q.is("vision_retry_after", null) : q.eq("vision_retry_after", d.vision_retry_after);
-    const { error: stampErr } = await q;
+      .or(`ingest_claimed_at.is.null,ingest_claimed_at.lt."${cutoff}"`)).select("id"), stamp)), stamp);
     if (stampErr) out.errors.push(`${d.name}: could not move it behind newer work in the queue: ${stampErr.message}`);
   };
 
