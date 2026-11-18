@@ -893,6 +893,7 @@ app/(protected)/layout.tsx:6-25 — import Sidebar from "@/components/navigation
   - Every one of the 55 protected routes is smaller, by 47,184 to 273,029 bytes. The public routes are unchanged, except `/submit/[token]`: +114 bytes (0.015%), one more chunk, from Turbopack regrouping a module it shares (`lib/storage`); no code of that page changed.
   - A page's "own" share grows where it uses a module the shell no longer carries. For example, `/projects/[id]` uses the evidence pack and the search, which now ship in its own chunks instead of everyone's. The total still falls.
   - `/projects/[id]` gzip: 563,418 → 522,624.
+  - *Re-measured after the review fix pass* (its failure handling and toasts add 1,047 bytes to the shell): `/projects/[id]` 1,719,270 (gzip 523,003), protected shell 1,072,056 to 1,075,953, and 611,178 → **612,225 to 616,122** on J12's measure, still below 618,074. Every protected route is 46,137 to 271,982 bytes smaller than base, `/submit/[token]` is still +114, and every route is within its budget. The table above is the build before the fix.
   - On J12's measure (the page entry's `entryJSFiles`), the protected routes' shell is 884,207 (`/projects/[id]`) to ~889,000 (the admin routes, read on a source-mapped build of the base) before and **611,178 to 615,075 after**: below J12's 618,074.
 - **Tests.** Mutation-checked: 20 mutations, 20 killed; in the review fix pass, 12 more over the failure handling and the public default, 12 killed.
   - `lib/__tests__/j18ShellLazyBoundaries.test.ts`, rendered, cold shell each case:
