@@ -105,15 +105,15 @@ describe("the column and uniqueness writes (class a) — discarded before, now s
 });
 
 describe("the column manager's delete and rename (class a)", () => {
-  it("delete: a refused write is said over the manager (appAlert) and nothing after it runs — never thrown (the manager awaits without a catch)", async () => {
+  it("delete: a refused write is said over the manager (appAlert) and answered false (the manager keeps the column in its view, R2) — never thrown", async () => {
     db.refuseWrites.add("libraries");
-    await expect(lift<(k: string) => Promise<void>>("handleDeleteColumn", deps())("a")).resolves.toBeUndefined();
+    await expect(lift<(k: string) => Promise<boolean>>("handleDeleteColumn", deps())("a")).resolves.toBe(false);
     expect(ui.alerts).toEqual([{ message: `The column was not deleted: ${CHECKED_WRITE_REFUSED}`, tone: "danger" }]);
     expect(ui.libSets).toBe(0);
     expect(ui.updateColumns).toEqual([]);
   });
-  it("delete: ordinary path as before", async () => {
-    await lift<(k: string) => Promise<void>>("handleDeleteColumn", deps())("a");
+  it("delete: ordinary path as before (answered true)", async () => {
+    await expect(lift<(k: string) => Promise<boolean>>("handleDeleteColumn", deps())("a")).resolves.toBe(true);
     expect(db.tables.libraries[0].custom_columns).toEqual([]);
     expect(ui.updateColumns).toEqual([[["title"], { scope: "org" }]]);
   });
@@ -212,8 +212,11 @@ describe("the two inline saves, pinned by source", () => {
     const pill = readFileSync(join(process.cwd(), "components/documents/PillCell.tsx"), "utf8");
     expect(pill).toMatch(/try \{\s*\n\s*await onSave\(pills\);\s*\n\s*\} finally \{/);
   });
-  it("the two column-width saves are left as they were (never sent: the builder is never awaited) — SAF-22's recorded residual, APP_RATCHET 2", () => {
-    expect(page.match(/supabase\.from\("libraries"\)\.update\(\{ column_widths: (?:snapshot|next), updated_by: uid \}\)\.eq\("id", library\.id!\);/g)).toHaveLength(2);
+  it("ruling R1: the two never-sent column-width saves are gone (nothing was ever written by them); the page still reads and live-syncs the stored widths (REV-38)", () => {
+    expect(page).not.toMatch(/update\(\{ column_widths/);
+    expect(page).not.toMatch(/saveWidthsTimerRef|colWidthsRef/);
+    expect(page).toMatch(/const widths = data\.column_widths \?\? \{\};\s*\n\s*setColWidths\(widths\);/);
+    expect(page).toMatch(/\?\.column_widths;\s*\n\s*if \(next && !resizingRef\.current\) setColWidths\(next\);/);
   });
 });
 

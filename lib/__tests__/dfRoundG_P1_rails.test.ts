@@ -1341,6 +1341,29 @@ describe("SAF-22 (J15e) — workflow-action and comment follow-on writes, read t
     expect(insertsOf("audit_logs").some((a) => a.action === "HOLD_RELEASED")).toBe(false);
     expect(warn.mock.calls.some((c) => /hold h-1 was already released when TICKET_CLOSE_TICKET/.test(String(c[0])))).toBe(true);
   });
+  it("review L1: a first release that LANDED but lost its answer (the retry's guard then matches nothing) is read back — this close's own release gets its HOLD_RELEASED row", async () => {
+    closing(null);
+    let first = true;
+    state.onCall = (table, method, args) => {
+      if (table === "document_holds" && method === "update" && first) { first = false; Object.assign(state.rows.document_holds[0], args[0] as Record<string, unknown>); }
+    };
+    state.errors["document_holds.update"] = [{ message: "fetch failed" }];
+    const res = await post({ ticketId: "t1", actionType: "close_ticket", holdResolution: { action: "release", reason: "done" } });
+    expect(await res.json()).toEqual({ ok: true, status: "CLOSED" });
+    expect(insertsOf("audit_logs").find((a) => a.action === "HOLD_RELEASED")?.details).toEqual({ holdId: "h-1", reason: "rev in progress", releasedReason: "done", viaTicketClose: "t1", released: 1 });
+  });
+  it("review L1: a hold released by SOMEONE ELSE in the same gap is never claimed by the read-back", async () => {
+    closing(null);
+    let first = true;
+    state.onCall = (table, method, args) => {
+      if (table === "document_holds" && method === "update" && first) { first = false; Object.assign(state.rows.document_holds[0], { ...(args[0] as Record<string, unknown>), released_by: "someone-else" }); }
+    };
+    state.errors["document_holds.update"] = [{ message: "fetch failed" }];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect((await post({ ticketId: "t1", actionType: "close_ticket", holdResolution: { action: "release", reason: "done" } })).status).toBe(200);
+    expect(insertsOf("audit_logs").some((a) => a.action === "HOLD_RELEASED")).toBe(false);
+    warn.mockRestore();
+  });
   it("regression: a hold this close released still gets its HOLD_RELEASED row, byte for byte", async () => {
     closing(null);
     expect((await post({ ticketId: "t1", actionType: "close_ticket", holdResolution: { action: "release", reason: "done" } })).status).toBe(200);

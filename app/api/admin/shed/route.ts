@@ -218,6 +218,7 @@ export async function POST(req: NextRequest) {
   // answer says the database's reason instead of blaming another run.
   const claimedIds = new Set<string>();
   let claimError: { message: string } | null = null;
+  let claimFailed = 0; // SAF-22 review L2: rows in chunks the database refused
   for (let i = 0; i < selectedIds.length; i += 200) {
     const chunk = selectedIds.slice(i, i + 200);
     const kept = keptAnswer();
@@ -226,7 +227,7 @@ export async function POST(req: NextRequest) {
       .update({ archive_id: archiveId })
       .in("id", chunk).eq("org_id", orgId).is("archive_id", null).is("archived_at", null)
       .select("id"), kept));
-    if (kept.error) claimError ??= kept.error;
+    if (kept.error) { claimError ??= kept.error; claimFailed += chunk.length; }
     for (const v of ((kept.data ?? []) as Array<{ id: string }>)) claimedIds.add(v.id);
   }
   if (claimedIds.size === 0) {
@@ -236,6 +237,12 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ error: "Those revisions were just archived by another run." }, { status: 409 });
   }
+  // SAF-22 review L2: some chunks claimed, some refused — the produce goes on
+  // with what it claimed (the same 200), and the refused rows are said: the
+  // log, the catalog note, ARCHIVE.txt and X-Archive-Unclaimed. They stay in
+  // live storage, eligible for the next produce.
+  const claimNote = claimFailed && claimError ? `${claimFailed} could not be claimed (${claimError.message}), left in place` : "";
+  if (claimNote) console.error(`[admin/shed] ${archiveId}: ${claimFailed} selected revision(s) could not be claimed; the archive holds the rest`, claimError?.message);
 
   // Build the space archive: every claimed binary, path-preserved under /files
   // so the in-memory viewer (findInBackup) opens it later by its storage key.
@@ -312,7 +319,8 @@ export async function POST(req: NextRequest) {
     `hash the database recorded at upload (dbSha256). ${unhashed} file(s) had no recorded hash; ` +
     `${hashMismatch} file(s) whose live bytes disagreed with their recorded hash were NOT captured and stay in live storage; ` +
     `${refined.rejectedKeys} row(s) with a storage key outside this workspace were refused; ` +
-    `${refined.sharedSkipped} row(s) whose key a current revision or a knowledge-library copy still names were left in place.\n`);
+    `${refined.sharedSkipped} row(s) whose key a current revision or a knowledge-library copy still names were left in place.\n` +
+    (claimNote ? `${claimFailed} selected revision(s) could not be claimed for this archive (a database error) and stay in live storage; produce again to archive them.\n` : ""));
   const zipBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 
   // Finalize the catalog counts (reserved + versions already claimed above).
@@ -320,6 +328,7 @@ export async function POST(req: NextRequest) {
     missed ? `${missed} unreadable, left in place` : "",
     hashMismatch ? `${hashMismatch} hash mismatch, left in place` : "",
     unhashed ? `${unhashed} without a recorded hash` : "",
+    claimNote,
   ].filter(Boolean);
   // SAF-22 (J15e): class (b) — the catalog's counts are bookkeeping; the
   // archive is produced either way. A refusal or failure is logged.
@@ -344,6 +353,7 @@ export async function POST(req: NextRequest) {
       "X-Archive-Hash-Mismatch": String(hashMismatch),
       "X-Archive-Rejected-Keys": String(refined.rejectedKeys),
       "X-Archive-Shared-Skipped": String(refined.sharedSkipped),
+      ...(claimFailed ? { "X-Archive-Unclaimed": String(claimFailed) } : {}),
     },
   });
 }

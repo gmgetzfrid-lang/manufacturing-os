@@ -151,6 +151,7 @@ export async function POST(req: NextRequest) {
   // nothing": when nothing at all was claimed the answer gives its reason.
   const claimedIds: string[] = [];
   let claimError: { message: string } | null = null;
+  let claimFailed = 0; // SAF-22 review L2: tickets in chunks the database refused
   for (let i = 0; i < selectedIds.length; i += 200) {
     const chunk = selectedIds.slice(i, i + 200);
     const kept = keptAnswer();
@@ -159,7 +160,7 @@ export async function POST(req: NextRequest) {
       .update({ archive_id: archiveId })
       .in("id", chunk).eq("org_id", orgId).is("archive_id", null).is("archived_at", null)
       .select("id"), kept));
-    if (kept.error) claimError ??= kept.error;
+    if (kept.error) { claimError ??= kept.error; claimFailed += chunk.length; }
     for (const r of ((kept.data ?? []) as Array<{ id: string }>)) claimedIds.push(r.id);
   }
   if (claimedIds.length === 0) {
@@ -169,6 +170,10 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ error: "Those tickets were just archived by another run." }, { status: 409 });
   }
+  // SAF-22 review L2: as the space produce — the refused tickets are said
+  // (log, catalog note, ARCHIVE.txt, X-Archive-Unclaimed), the status unchanged.
+  const claimNote = claimFailed && claimError ? `, ${claimFailed} could not be claimed (${claimError.message}), left in place` : "";
+  if (claimNote) console.error(`[admin/ticket-shed] ${archiveId}: ${claimFailed} selected ticket(s) could not be claimed; the archive holds the rest`, claimError?.message);
 
   // Pull the FULL rows (every JSONB blob) and all comment rows for the CLAIMED set.
   const fullRowsById = new Map<string, Record<string, unknown>>();
@@ -281,7 +286,8 @@ export async function POST(req: NextRequest) {
     `${skippedIncomplete ? `, ${skippedIncomplete} ticket(s) skipped (unreadable attachments, left untouched)` : ""}` +
     `${skippedForeignKey ? `, ${skippedForeignKey} ticket(s) skipped (an attachment key outside this workspace — refused, left untouched)` : ""}.\n` +
     `Save this as ${savePath} and keep it — it's the only copy of these ` +
-    `closed tickets' full content (comments, history, attachments) once space is reclaimed.\n`);
+    `closed tickets' full content (comments, history, attachments) once space is reclaimed.\n` +
+    (claimNote ? `${claimFailed} selected ticket(s) could not be claimed for this archive (a database error) and are left untouched; produce again to archive them.\n` : ""));
   const zipBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 
   // Finalize the catalog row with real counts (reserved + rows already claimed above).
@@ -290,7 +296,7 @@ export async function POST(req: NextRequest) {
   const catKept = keptAnswer();
   const catW = await checkedWrite(answered(sb.from("archives").update({
     file_count: bundledFiles, total_bytes: fileBytes,
-    note: `${capturedTickets} closed ticket(s)${skippedIncomplete ? `, ${skippedIncomplete} skipped (unreadable attachments)` : ""}${skippedForeignKey ? `, ${skippedForeignKey} skipped (attachment key outside this workspace)` : ""}`,
+    note: `${capturedTickets} closed ticket(s)${skippedIncomplete ? `, ${skippedIncomplete} skipped (unreadable attachments)` : ""}${skippedForeignKey ? `, ${skippedForeignKey} skipped (attachment key outside this workspace)` : ""}${claimNote}`,
   }).eq("org_id", orgId).eq("archive_id", archiveId).select("id"), catKept));
   if (!catW.ok) console.error(`[admin/ticket-shed] the catalog row of ${archiveId} was not updated with its counts`, catKept.error?.message ?? "no row matched");
 
@@ -306,6 +312,7 @@ export async function POST(req: NextRequest) {
       "X-Archive-Bytes": String(fileBytes),
       "X-Archive-Skipped": String(skippedIncomplete),
       "X-Archive-Rejected-Keys": String(skippedForeignKey),
+      ...(claimFailed ? { "X-Archive-Unclaimed": String(claimFailed) } : {}),
     },
   });
 }

@@ -1740,7 +1740,9 @@ export async function getDrawingIntel(orgId: string, libraryId: string): Promise
  */
 export async function setDocumentAiExclusion(
   orgId: string, documentId: string, excluded: boolean,
-): Promise<{ excluded: boolean; purged: number }> {
+): Promise<{ excluded: boolean; purged: number; warning?: string }> {
+  // `warning` (projects-tab SAF-22): the document is held back and its copy
+  // removed, but a follow-on clean-up did not land — said, never blocking.
   return apiPost("/api/knowledge/exclusion", { orgId, documentId, excluded });
 }
 

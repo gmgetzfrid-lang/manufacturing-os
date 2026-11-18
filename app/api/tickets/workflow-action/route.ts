@@ -2127,6 +2127,25 @@ export async function POST(req: NextRequest) {
         // `released_at IS NULL` guard matched nothing) was not released by
         // this close: no HOLD_RELEASED row claims it (its releaser's stands).
         const releasedIds = new Set(((released ?? []) as Array<{ id?: unknown }>).map((r) => String(r.id)));
+        // SAF-22 review L1: a first attempt that landed but lost its answer
+        // (a transport error, then the retry's guard matches nothing) is this
+        // close's own release — read back, a hold whose release carries this
+        // caller and this close's own stamp (`nowIso`, the same in both
+        // attempts) is counted released by it; one released by anyone else,
+        // or at another moment, never is. A read that fails claims nothing.
+        const unmatched = holds.filter((h) => !releasedIds.has(String(h.id)));
+        if (unmatched.length > 0) {
+          const { data: after, error: afterErr } = await supabaseAdmin
+            .from("document_holds").select("id, released_by, released_at").in("id", unmatched.map((h) => h.id));
+          if (afterErr) {
+            console.warn(`[workflow-action] the holds ${unmatched.map((h) => h.id).join(", ")} could not be re-read after ${auditRow.action} (audit row ${auditRow.id}): ${afterErr.message}; no HOLD_RELEASED row is written for them`);
+          } else {
+            for (const r of (after ?? []) as Array<{ id: unknown; released_by: unknown; released_at: unknown }>) {
+              const at = typeof r.released_at === "string" ? Date.parse(r.released_at) : NaN;
+              if (r.released_by === caller.id && at === Date.parse(nowIso)) releasedIds.add(String(r.id));
+            }
+          }
+        }
         for (const h of holds) {
           if (!releasedIds.has(String(h.id))) {
             console.warn(`[workflow-action] hold ${h.id} was already released when ${auditRow.action} (audit row ${auditRow.id}) closed ticket ${body.ticketId}; no HOLD_RELEASED row is written for it`);
@@ -2135,7 +2154,7 @@ export async function POST(req: NextRequest) {
           await supabaseAdmin.from("audit_logs").insert({
             action: "HOLD_RELEASED", resource_type: "document", resource_id: h.document_id, org_id: ticket.orgId,
             user_id: caller.id, user_email: callerEmail ?? null,
-            details: { holdId: h.id, reason: h.reason, releasedReason: reason || null, viaTicketClose: body.ticketId, released: (released ?? []).length },
+            details: { holdId: h.id, reason: h.reason, releasedReason: reason || null, viaTicketClose: body.ticketId, released: releasedIds.size },
           }).then(() => undefined, () => undefined);
         }
       }

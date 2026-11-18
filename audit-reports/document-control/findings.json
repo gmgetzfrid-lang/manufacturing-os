@@ -15,17 +15,17 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 187,
+    "findings": 188,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 19,
       "HIGH": 56,
       "MEDIUM": 80,
-      "LOW": 32
+      "LOW": 33
     },
     "by_status": {
       "RESOLVED": 170,
-      "OPEN": 12,
+      "OPEN": 13,
       "RESOLVED (as split under `DEC-31`; ruled by the integrator at the P27 merge, 2026-10-20 (`DEC-90`) — the access-control door, a member reading `portal_token` over REST, stays open until `DIST-18` lands)": 1,
       "RESOLVED (2026-10-21, the integrator's fix pass at the P28 merge — ruled by the integrator at the P28 merge, 2026-10-21 (`DEC-90`): done-when 2 landed; the restore hooks beyond the brief's ruling (4) ratified)": 1,
       "RESOLVED by record (pending migrations — `20261257`, `20261259` pasted AFTER `20261219`, and `20261160` for `nudgeAcknowledgment`'s browser re-send — DEC-30)": 1,
@@ -4797,6 +4797,31 @@
       ],
       "refuted": false,
       "summary": "Document Control's script calls retireoverhold('<P-101>', 'split', 'cleanup', now(), NULL, true) on a drawing under a stop-work hold: P-101 is Superseded with no replacement, and its history says \"hold overridden — split\", though no split happened.",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-38",
+      "title": "Library column widths are never saved: a resize or its reset changes only the viewer's screen, though the page reads and live-syncs a stored width",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": null,
+      "verification_note": "READ (`app/(protected)/documents/[libraryId]/page.tsx` at `eff6db91`, the resize handle's pointer-up timer and the reset double-click; `node_modules/@supabase/postgrest-js` `PostgrestBuilder.then` builds and sends the request — a builder that is never awaited sends nothing)",
+      "blast_radius": null,
+      "related": [
+        "SAF-22",
+        "DEC-90"
+      ],
+      "locations": [
+        "app/(protected)/documents/[libraryId]/page.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Document Control widens the Title column of a busy library, reloads the next morning, and finds it narrow again; a colleague never sees the widening either. Nothing is lost and nothing is wrong on the record — the width simply was never kept.",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },

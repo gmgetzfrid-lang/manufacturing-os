@@ -1,6 +1,6 @@
 # 02 · Revisions, publish & supersession
 
-**37 findings** — 2 CRITICAL · 5 HIGH · 14 MEDIUM · 16 LOW. `REV-31` (MEDIUM) opened by document-control Round G (P28 STATUS-DOOR REMAINDERS), 2026-10-20 — Partial at the P28 merge, 2026-10-21; RESOLVED by P31 RETIREMENT DOOR PARITY, 2026-10-21. `REV-32` (LOW) opened by P31, 2026-10-21. `REV-33` (MEDIUM) and `REV-34` (LOW) opened at P31's fix pass, 2026-10-21. `REV-32`, `REV-33` and `REV-34` RESOLVED by P34 STATUS EDITOR RETIREMENT PARITY II, 2026-10-21; `REV-35` (LOW) opened by P34. `REV-36` (MEDIUM) opened by P34's review fix pass 2, 2026-10-21. `REV-35` and `REV-36` RESOLVED by P36 STATUS EDITOR PARITY III, 2026-10-21. `REV-37` (LOW) opened at P36's final fix pass, 2026-10-21 (what `REV-36` (1) and `REV-35` leave unproven); RESOLVED by P37 DOOR B GUARD (its final fix pass, on the integrator's rulings at the P37 merge), 2026-10-21. *(Counts corrected at the P28 integrator fix pass, 2026-10-21, from the findings' Severity lines — the header had read 18 findings · 8 MEDIUM · 3 LOW since before `REV-15`; the README's row read 30.)*
+**38 findings** — 2 CRITICAL · 5 HIGH · 14 MEDIUM · 17 LOW. `REV-31` (MEDIUM) opened by document-control Round G (P28 STATUS-DOOR REMAINDERS), 2026-10-20 — Partial at the P28 merge, 2026-10-21; RESOLVED by P31 RETIREMENT DOOR PARITY, 2026-10-21. `REV-32` (LOW) opened by P31, 2026-10-21. `REV-33` (MEDIUM) and `REV-34` (LOW) opened at P31's fix pass, 2026-10-21. `REV-32`, `REV-33` and `REV-34` RESOLVED by P34 STATUS EDITOR RETIREMENT PARITY II, 2026-10-21; `REV-35` (LOW) opened by P34. `REV-36` (MEDIUM) opened by P34's review fix pass 2, 2026-10-21. `REV-35` and `REV-36` RESOLVED by P36 STATUS EDITOR PARITY III, 2026-10-21. `REV-37` (LOW) opened at P36's final fix pass, 2026-10-21 (what `REV-36` (1) and `REV-35` leave unproven); RESOLVED by P37 DOOR B GUARD (its final fix pass, on the integrator's rulings at the P37 merge), 2026-10-21. `REV-38` (LOW) opened by the integrator's ruling R1 at the projects-joint J15e-app review, 2026-11-18 (library column widths are never saved). *(Counts corrected at the P28 integrator fix pass, 2026-10-21, from the findings' Severity lines — the header had read 18 findings · 8 MEDIUM · 3 LOW since before `REV-15`; the README's row read 30.)*
 
 Every path to a published revision, and which ones skip the guard.
 
@@ -2055,5 +2055,28 @@ Not touched here:
 - Every done-when therefore holds as written or as ratified: the recorded door bound (the park) or ruled (the flip, DEC-90); the evidence rail for `REV_HOLD_OVERRIDDEN` (from the paste; earlier rows the ratified residual, looked over), `REV_HOLD_OVERRIDE_UNDONE` negative-only, `DOC_SPLIT` / `DOC_MERGED` ratified; the Void re-entry ruled sufficient; the lost answer re-read; the 60 s FYI ruled acceptable; the harness and unit tests above.
 
 **Scope / residual (at RESOLVED).** `20261254` pending paste (after row 193; no deploy order). The pre-paste `REV_HOLD_OVERRIDDEN` rows: the integrator's accepted residual, owned at the paste by the operator (inventory row 5, reported to the integrator). Nothing else open.
+
+---
+
+<a id="rev-38"></a>
+## REV-38 · Library column widths are never saved: a resize or its reset changes only the viewer's screen, though the page reads and live-syncs a stored width
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** the document-control integrator (to plan as a feature in a later package) — opened 2026-11-18 by the integrator's ruling R1 at the projects-joint J15e APP AND COMPONENT WRITE SWEEP (batch J15e-app) review, under DEC-31 (`SAF-22`'s remainder: the sweep could not convert a write that was never sent without starting it).
+- **Verification:** READ (`app/(protected)/documents/[libraryId]/page.tsx` at `eff6db91`, the resize handle's pointer-up timer and the reset double-click; `node_modules/@supabase/postgrest-js` `PostgrestBuilder.then` builds and sends the request — a builder that is never awaited sends nothing)
+- **Locations:** `app/(protected)/documents/[libraryId]/page.tsx` — the column-resize state (`colWidths`, read from `libraries.column_widths` when the library loads and live-synced from the `libraries` row's realtime UPDATE), the resize handle's pointer-up and `handleResizeReset`; `libraries.column_widths`
+- **Related:** `SAF-22` (projects-tab `02-safety-compliance.md` — the sweep that found it), `DEC-90` (ruling R1)
+- **Independently verified:** — opened by the integrator from the J15e-app review; not yet challenged.
+
+**Mechanism.** Until J15e-app, the resize handle's pointer-up scheduled `supabase.from("libraries").update({ column_widths: snapshot, updated_by: uid }).eq("id", library.id!)` 600 ms later, and the reset double-click built the same update inline — and neither awaited the builder nor called `.then` on it. supabase-js builds and sends the PostgREST request inside the builder's `then`, so neither update was ever sent: `libraries.column_widths` has never been written from this page, though the page reads it at load ("persisted to libraries.column_widths in Supabase", the old comment said) and subscribes to the row's UPDATEs "so non-admin users see admin resizes without reloading". Under the ruling R1 (no regression: nothing was ever written) the two dead builders were removed at J15e-app (with the timer and the width ref that only they used); what the page reads and live-syncs is unchanged.
+
+**Failure scenario.** Document Control widens the Title column of a busy library, reloads the next morning, and finds it narrow again; a colleague never sees the widening either. Nothing is lost and nothing is wrong on the record — the width simply was never kept.
+
+**Remediation.** A feature, not a fix: decide who may change a SHARED width (the library's controllers only, as `libraries` UPDATE's row-level security already implies; or a per-person width kept apart, e.g. in the viewer's own view settings), then save it through a checked write (`lib/checkedWrite.ts`) that says a refusal, debounced as before.
+
+**Done when.**
+- [ ] A width a person may set is kept (shared for the controllers, or per person — the decision above), and a refused save is said, never shown as kept.
+- [ ] A width the person may not set is not offered as kept (the handle still resizes the screen, and says it is for this view only), with tests both ways.
 
 ---

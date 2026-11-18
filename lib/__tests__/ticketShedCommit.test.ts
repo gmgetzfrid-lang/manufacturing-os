@@ -290,6 +290,9 @@ describe("SM-9 — a comment posted after capture is never wiped unarchived", ()
     const quiet = await commit();
     expect(quiet.res.status).toBe(200);
     expect((quiet.body.errors as string[]).some((e) => /^comments\[/.test(e))).toBe(false);
+    // asked as a count — the same filters in the same order, never every id
+    const del = state.calls.find((c) => c.table === "ticket_comments" && c.ops.some((o) => o.m === "delete"))!;
+    expect(del.ops.map((o) => [o.m, ...o.args.slice(0, 1)])).toEqual([["delete", { count: "exact" }], ["in", "ticket_id"], ["eq", "org_id"]]);
     state.resolve = resolver({ tickets: [captured({})], commentDeleteError: { message: "permission denied for table ticket_comments" } });
     const said = await commit();
     expect(said.body.errors as string[]).toContain("comments[0]: permission denied for table ticket_comments");

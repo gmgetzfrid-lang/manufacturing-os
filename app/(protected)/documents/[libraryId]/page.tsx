@@ -1332,14 +1332,11 @@ export default function LibraryExplorerPage() {
   const [commandOpen, setCommandOpen] = useState(false);
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
 
-  // Column resize state — persisted to libraries.column_widths in Supabase
+  // Column resize state — read from libraries.column_widths (and live-synced
+  // below); this page never writes it: document-control REV-38 (a resize
+  // and its reset are kept for this view only).
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
-  const colWidthsRef = useRef<Record<string, number>>({});
   const resizingRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null);
-  const saveWidthsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Keep colWidthsRef in sync so resize handler can read latest value on mouseup
-  useEffect(() => { colWidthsRef.current = colWidths; }, [colWidths]);
 
   const [activeColumns, setActiveColumns] = useState<string[]>([]);
   const [columnDefs, setColumnDefs] = useState<MetadataFieldDefinition[]>([]);
@@ -3413,8 +3410,8 @@ export default function LibraryExplorerPage() {
     }
   };
 
-  const handleDeleteColumn = async (key: string) => {
-    if (!library || !activeOrgId) return;
+  const handleDeleteColumn = async (key: string): Promise<boolean> => {
+    if (!library || !activeOrgId) return false;
     const updatedCols = (library.customColumns ?? []).filter((c) => c.key !== key);
     // projects-tab SAF-22 (J15e): class (a) — a delete that failed or matched
     // no row (discarded before) is said here, and nothing after it runs.
@@ -3422,13 +3419,14 @@ export default function LibraryExplorerPage() {
     const removed = await checkedWrite(supabase.from("libraries").update({ custom_columns: updatedCols, updated_by: uid }).eq("id", library.id!).select("id"));
     if (!removed.ok) {
       await appAlert({ message: `The column was not deleted: ${removed.error}`, tone: "danger" });
-      return;
+      return false;
     }
     setLibrary((prev) => prev ? { ...prev, customColumns: updatedCols } : prev);
     // Remove from active view columns too — schema act, lands org-wide so
     // the deleted column doesn't linger as an orphan in the org default.
     const nextActive = activeColumns.filter((k) => k !== key);
     await updateColumns(nextActive, { scope: "org" });
+    return true;
   };
 
   // Rename a column's display label. Works for both system columns
@@ -3540,19 +3538,15 @@ export default function LibraryExplorerPage() {
       document.removeEventListener("pointerup", onUp);
       document.removeEventListener("pointercancel", onUp);
       resizingRef.current = null;
-      if (library?.id && uid) {
-        if (saveWidthsTimerRef.current) clearTimeout(saveWidthsTimerRef.current);
-        const snapshot = { ...colWidthsRef.current };
-        saveWidthsTimerRef.current = setTimeout(() => {
-          supabase.from("libraries").update({ column_widths: snapshot, updated_by: uid }).eq("id", library.id!);
-        }, 600);
-      }
+      // projects-tab SAF-22 (J15e, the integrator's ruling R1): the width
+      // save that stood here built an update and never awaited it, so it was
+      // never sent — removed, nothing written before or after (REV-38).
     };
 
     document.addEventListener("pointermove", onMove);
     document.addEventListener("pointerup", onUp);
     document.addEventListener("pointercancel", onUp);
-  }, [colWidths, getDefaultColWidth, library, uid]);
+  }, [colWidths, getDefaultColWidth]);
 
   // Double-click handle to reset a column to its default width
   const handleResizeReset = useCallback((e: React.MouseEvent, colKey: string) => {
@@ -3561,12 +3555,10 @@ export default function LibraryExplorerPage() {
     setColWidths(prev => {
       const next = { ...prev };
       delete next[colKey];
-      if (library?.id && uid) {
-        supabase.from("libraries").update({ column_widths: next, updated_by: uid }).eq("id", library.id!);
-      }
+      // (SAF-22 / REV-38: the never-sent width save removed here too.)
       return next;
     });
-  }, [library, uid]);
+  }, []);
 
   const renderDocCell = (docRecord: DocumentRecord, key: string) => {
     if (key === "title") return docRecord.title || docRecord.name || "Untitled";

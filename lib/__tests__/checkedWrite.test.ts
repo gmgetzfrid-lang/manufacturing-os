@@ -289,15 +289,10 @@ describe("census, widened — every lib file and the Projects surface (GAP-402 r
 const APP_PROJECTS_SURFACE = ["app/api/projects/", "app/api/intake/", "app/(protected)/projects/"];
 const appScope = () => walkTs("app").filter((f) => !APP_PROJECTS_SURFACE.some((p) => f.startsWith(p)));
 /** app/ files still carrying unchecked sites — the count may fall, never
- *  rise. Each is a site that cannot be converted without changing what is
- *  written (DEC-90 ruling 6), recorded on SAF-22 with its owner:
- *  - the library page's two column-width saves build an update and never
- *    await it, so PostgREST is never asked (supabase-js sends a request only
- *    when the builder is awaited): wrapping them would START a write that has
- *    never been sent. */
-const APP_RATCHET: Record<string, number> = {
-  "app/(protected)/documents/[libraryId]/page.tsx": 2,
-};
+ *  rise. Empty: J15e left the library page's two column-width saves (never
+ *  sent — the builder was never awaited) and the integrator's ruling R1
+ *  removed them (nothing was ever written; document-control REV-38). */
+const APP_RATCHET: Record<string, number> = {};
 /** What J15e measured at c3520544 with this rule (106 sites in 43 files). */
 const APP_MEASURED_AT_BASE: Record<string, number> = {
     "app/(protected)/admin/libraries/page.tsx": 1,
@@ -363,6 +358,8 @@ describe("census, widened — app/ outside the Projects surface (SAF-22, J15e)",
     const scope = new Set(appScope());
     for (const f of Object.keys(APP_MEASURED_AT_BASE)) expect(scope.has(f), f).toBe(true);
     for (const f of Object.keys(APP_RATCHET)) expect(f in APP_MEASURED_AT_BASE, f).toBe(true);
+    // ruling R1: app/ is at zero everywhere
+    expect(appScope().filter((f) => unchecked(f).length > 0)).toEqual([]);
     expect(Object.values(APP_MEASURED_AT_BASE).reduce((a, b) => a + b, 0)).toBe(106);
   });
   it("the Projects surface is not counted twice: its app/ files are the ones PROJECTS_UI_CLEAN names or the walk above reads", () => {

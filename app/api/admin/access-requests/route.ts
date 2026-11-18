@@ -77,7 +77,11 @@ export async function POST(req: NextRequest) {
   }
   const declined = kept.data;
   if (!w.ok) {
-    const { data: now } = await supabaseAdmin.from("access_requests").select("status").eq("id", id).maybeSingle();
+    const { data: now, error: nowErr } = await supabaseAdmin.from("access_requests").select("status").eq("id", id).maybeSingle();
+    // SAF-22 review L3: a re-read that fails says so — never "already answered".
+    if (nowErr) {
+      return NextResponse.json({ error: `The request was not declined, and where it stands could not be read (${nowErr.message}). Reload and try again.` }, { status: 500 });
+    }
     if ((now as { status?: string } | null)?.status !== "declined") {
       return NextResponse.json({ error: "This request was already answered (it is no longer pending), so it was not declined. Reload to see where it stands." }, { status: 409 });
     }

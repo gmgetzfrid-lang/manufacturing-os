@@ -20,7 +20,9 @@ export default function ColumnManager(props: {
   columns: ColumnOption[];
   active: string[];
   onChange: (next: string[]) => void;
-  onDeleteColumn?: (key: string) => Promise<void>;
+  /** Resolves `false` when the column was NOT deleted (the handler said why);
+   *  the column then stays in the draft view (projects-tab SAF-22, J15e). */
+  onDeleteColumn?: (key: string) => Promise<boolean | void>;
   onRenameColumn?: (key: string, newLabel: string) => Promise<void>;
   isController?: boolean;
   /** Currently configured uniqueness-tuple field keys. Undefined =
@@ -144,8 +146,9 @@ export default function ColumnManager(props: {
     if (!(await appConfirm({ title: `Delete the "${label}" column?`, message: "This removes the column definition from the library. Existing document values are kept in the database but won't be visible until the column is recreated.", tone: "danger" }))) return;
     setDeleting(key);
     try {
-      await onDeleteColumn(key);
-      setDraft((prev) => prev.filter((k) => k !== key));
+      const deleted = await onDeleteColumn(key);
+      // A refused delete (the handler said it) keeps the column in the view.
+      if (deleted !== false) setDraft((prev) => prev.filter((k) => k !== key));
     } finally {
       setDeleting(null);
     }

@@ -171,6 +171,50 @@ describe("space produce (admin/shed) — the claim, the un-claim, the catalog an
   });
 });
 
+describe("review L2 — a chunk whose claim the database refused while others claimed: said, the status unchanged", () => {
+  it("space produce: 200 with the claimed rows; the refused chunk is logged, in the catalog note, ARCHIVE.txt and X-Archive-Unclaimed", async () => {
+    const names = Array.from({ length: 201 }, (_, i) => `f${i}`);
+    h.db.tables.document_versions = names.map((n, i) => ({ id: `v${i + 1}`, org_id: ORG, file_url: key(n), size: 1, record_id: `d${i + 1}`, archived_at: null, archive_id: null, created_at: "2020-01-01" }));
+    for (const n of names) h.objects[key(n)] = new TextEncoder().encode("x");
+    h.db.beforeUpdate!.document_versions = (next) => { if (next.id === "v201" && next.archive_id) throw { message: "statement timeout" }; return next; };
+    const res = await SHED_PRODUCE(post("/api/admin/shed", { orgId: ORG, confirm: true }));
+    expect(res.status).toBe(200);
+    // the chunk holding v201 was refused whole; the other chunk was claimed and bundled
+    const left = rows("document_versions").filter((v) => v.archive_id === null).length;
+    expect(left).toBeGreaterThan(0);
+    expect(left).toBeLessThan(201);
+    expect(res.headers.get("X-Archive-Files")).toBe(String(201 - left));
+    expect(res.headers.get("X-Archive-Unclaimed")).toBe(String(left));
+    expect(String(rows("archives")[0].note)).toContain(`${left} could not be claimed (statement timeout), left in place`);
+    const zip = await JSZip.loadAsync(new Uint8Array(await res.arrayBuffer()));
+    expect(await zip.files["ARCHIVE.txt"].async("string")).toContain(`${left} selected revision(s) could not be claimed for this archive (a database error) and stay in live storage`);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining(`${left} selected revision(s) could not be claimed; the archive holds the rest`), "statement timeout");
+    expect(rows("document_versions").find((v) => v.id === "v201")!.archive_id).toBeNull();
+  });
+  it("regression: with every chunk claimed there is no X-Archive-Unclaimed and the note is as before", async () => {
+    h.db.tables.document_versions = [{ id: "v1", org_id: ORG, file_url: key("a"), size: 1, record_id: "d1", archived_at: null, archive_id: null, created_at: "2020-01-01" }];
+    h.objects[key("a")] = new TextEncoder().encode("a");
+    const res = await SHED_PRODUCE(post("/api/admin/shed", { orgId: ORG, confirm: true }));
+    expect(res.headers.get("X-Archive-Unclaimed")).toBeNull();
+    expect(rows("archives")[0].note).toBe("1 superseded revision binaries (1 without a recorded hash)");
+  });
+  it("ticket produce: the same — 200, logged, in the note, ARCHIVE.txt and X-Archive-Unclaimed", async () => {
+    h.db.tables.tickets = Array.from({ length: 201 }, (_, i) => ({ id: `t${i + 1}`, org_id: ORG, status: "CLOSED", archive_id: null, archived_at: null, attachments: [], last_modified: "2020-01-01", created_at: "2020-01-01" }));
+    h.db.beforeUpdate!.tickets = (next) => { if (next.id === "t201" && next.archive_id) throw { message: "deadlock detected" }; return next; };
+    const res = await TICKET_PRODUCE(post("/api/admin/ticket-shed", { orgId: ORG, confirm: true }));
+    expect(res.status).toBe(200);
+    const left = rows("tickets").filter((t) => t.archive_id === null).length;
+    expect(left).toBeGreaterThan(0);
+    expect(left).toBeLessThan(201);
+    expect(res.headers.get("X-Archive-Tickets")).toBe(String(201 - left));
+    expect(res.headers.get("X-Archive-Unclaimed")).toBe(String(left));
+    expect(rows("archives")[0].note).toBe(`${201 - left} closed ticket(s), ${left} could not be claimed (deadlock detected), left in place`);
+    const zip = await JSZip.loadAsync(new Uint8Array(await res.arrayBuffer()));
+    expect(await zip.files["ARCHIVE.txt"].async("string")).toContain(`${left} selected ticket(s) could not be claimed for this archive`);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining(`${left} selected ticket(s) could not be claimed`), "deadlock detected");
+  });
+});
+
 describe("ticket produce (admin/ticket-shed) — the claim and the catalog", () => {
   const tkey = `orgs/${ORG}/tickets/KE-1/1_a.pdf`;
   const seed = () => {

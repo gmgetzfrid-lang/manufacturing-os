@@ -16,11 +16,14 @@ const state = vi.hoisted(() => ({
   /** SAF-22 (J15e): false = the decline's guarded UPDATE matches no row (the request is no longer pending). */
   updateMatches: true,
   outcomes: [] as unknown[],
+  /** SAF-22 review L3: the re-read after a zero-row decline fails with this. */
+  rereadError: null as null | { message: string },
 }));
 
 function chain(table: string) {
   let pendingPatch: Record<string, unknown> | null = null;
   let filters: Array<[string, unknown]> = [];
+  let args0: unknown = undefined;
   const c: Record<string, unknown> = {};
   const handler: ProxyHandler<Record<string, unknown>> = {
     get(_t, prop: string) {
@@ -37,8 +40,11 @@ function chain(table: string) {
       }
       return (...args: unknown[]) => {
         if (prop === "update") { pendingPatch = args[0] as Record<string, unknown>; filters = []; }
+        if (prop === "select") args0 = args[0];
         if (prop === "eq") filters.push(args as [string, unknown]);
         if (prop === "maybeSingle") {
+          // the decline's re-read (after its UPDATE matched nothing) selects "status" alone
+          if (table === "access_requests" && state.rereadError && args0 === "status") return Promise.resolve({ data: null, error: state.rereadError });
           const d = table === "access_requests" ? state.request : table === "org_members" ? state.member : null;
           return Promise.resolve({ data: d, error: null });
         }
@@ -81,6 +87,7 @@ beforeEach(() => {
   state.updates = [];
   state.updateMatches = true;
   state.outcomes = [];
+  state.rereadError = null;
 });
 
 describe("POST /api/admin/access-requests", () => {
@@ -144,6 +151,14 @@ describe("SAF-22 (J15e) — a decline that matched no pending row", () => {
     const res = await decline("req1");
     expect(res.status).toBe(409);
     expect((await res.json()).error).toBe("This request was already answered (it is no longer pending), so it was not declined. Reload to see where it stands.");
+    expect(state.outcomes).toEqual([]);
+  });
+  it("review L3: a re-read that fails is a 500 naming it, never '409 already answered'", async () => {
+    state.updateMatches = false;
+    state.rereadError = { message: "statement timeout" };
+    const res = await decline("req1");
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("The request was not declined, and where it stands could not be read (statement timeout). Reload and try again.");
     expect(state.outcomes).toEqual([]);
   });
 });

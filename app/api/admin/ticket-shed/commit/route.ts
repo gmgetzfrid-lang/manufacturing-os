@@ -40,6 +40,7 @@ import { persistReclaimShortfall } from "@/lib/archiveCatalog";
 import { checkedWrite } from "@/lib/checkedWrite";
 import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { eqOrNull } from "@/lib/writeFilters";
+import { counted, countKept } from "@/lib/checkedWriteCount";
 
 export const runtime = "nodejs";
 
@@ -336,8 +337,9 @@ export async function POST(req: NextRequest) {
   for (let i = 0; i < freeIds.length; i += 200) {
     const chunk = freeIds.slice(i, i + 200);
     // SAF-22 (J15e): class (c) — tickets with no comment rows delete none.
-    const kept = keptAnswer();
-    await checkedWrite(answered(sb.from("ticket_comments").delete().in("ticket_id", chunk).eq("org_id", orgId).select("id"), kept));
+    // Asked as a count (the review's note): only the error is read.
+    const kept = countKept();
+    await checkedWrite(counted(sb.from("ticket_comments").delete({ count: "exact" }).in("ticket_id", chunk).eq("org_id", orgId), kept));
     if (kept.error) errors.push(`comments[${i}]: ${kept.error.message}`);
   }
   const { deleted: keysDeleted, errors: delErrors } = await deleteR2Keys(keysToDelete);
