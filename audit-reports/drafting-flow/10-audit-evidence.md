@@ -1,6 +1,6 @@
 # 10 · Audit trail & evidentiary completeness
 
-**14 findings** — 1 CRITICAL · 5 HIGH · 8 MEDIUM.
+**19 findings** — 1 CRITICAL · 6 HIGH · 9 MEDIUM · 3 LOW. *(Recounted 2026-11-18 at F7-EVID12's fix pass, which opened `EVID-17` (HIGH) and `EVID-18` (MEDIUM), and again at its last pass, which opened `EVID-19` (HIGH); the line had read "14 findings — 1 CRITICAL · 5 HIGH · 8 MEDIUM" since before `EVID-13`–`EVID-16`.)*
 
 Judged as a PSM/OSHA auditor would: what could this system prove, and what could it not?
 
@@ -916,7 +916,7 @@ lib/acknowledgments.ts:439-446 —
 ## EVID-12 · The ticket workflow audit row is written after the state change, non-transactionally, with its error discarded, and its details omit the deliverable rev and any artifact identity
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED (2026-11-18, by the integrator's rulings, `DEC-90` — done-when 3 holds as written for every file hashed at attach; its documented exceptions, named in the last ruling below, are closed by ruling with the `FILES_HASHED` follow-up row (or the delete's audit row) as evidence; done-when 1 closed by ruling (a) and done-when 4 ruled out for the serial path, as recorded)
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/tickets/workflow-action/route.ts:163-191`, `app/api/tickets/workflow-action/route.ts:213-223`, `lib/ticketTransitions.ts:247-253`, `types/schema.ts:1038-1047`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the audit insert is a separate, later, unchecked round-trip against a different table (no transaction), and its details carry only from/to/label — no deliverable_rev, no attachment id/hash. Partial mitigation: `historyEntry.action = ... issued Rev ${updates.deliverable_rev}` is written inside the same atomic tickets UPDATE, so the rev survives in the ticket's mutable history JSONB — but not in the immutable audit trail.
@@ -1058,6 +1058,85 @@ Tests: `lib/__tests__/dfRoundG_P5_rosterRoute.test.ts` ("approve_draft_ifc: the 
 - ✓ on every routed sign-off / ruled out on the serial path (4), as recorded (DEC-90 ruling (6) for DF-P6), unchanged.
 
 **Scope / residual.** Stays OPEN on done-when 3's hash only: the serial path's hash on a best-effort follow-up row, and a file that could not be hashed within the bound on either path. *Assigned (2026-11-18, the integrator, DEC-31):* **the integrator**. Either (a) a ruling under DEC-90 that the linked follow-up row, with the recorded reason where a file could not be read in the bound, meets done-when 3, which closes this finding by record with no code change; or (b) a package that hashes each ticket file once at upload so that the approval's own row carries the stored hash (DF-P5's proposal: the next holder of the ticket upload routes).
+
+**Partial (2026-11-18, fleet F7-EVID12 HASH AT ATTACH).** Done-when 3's hash, built under **the integrator's ruling, 2026-11-18, DEC-90**: option (b) of the F1 residual above — fingerprint content at ingest, once, server-side, so the approval's own row carries the stored hash. Reproduced on base `8602377d`: a serial approval's own row named each approved Draft by `{ id, name, url, size, etag }` with no hash; the sha256 was only in the `after()` follow-up row (`app/api/tickets/workflow-action/route.ts:1740-1750`, `:2386-2420` on the base; pinned by `lib/__tests__/dfRoundG_P5_rosterRoute.test.ts` "approve_draft_ifc: today's path reads NO storage before answering …"). No migration.
+
+Landed (`app/api/tickets/workflow-action/route.ts`, `lib/ticketFileHash.ts`, `lib/ticketRoster.ts`, `types/schema.ts`):
+- **Hash at attach.** Every file an action newly attaches (`attach_file`'s file, `submit_final`'s Final, a redline) is hashed from its stored bytes once, after the vetting HEAD: `hashFilesAtAttach` (`lib/ticketFileHash.ts:121`) over `sha256OfStoredObject` / `hashStoredFilesBounded`, started at `route.ts:731-753` and awaited just before the update is built (`:1451-1470`), so it runs beside the rest of the request. Bound: `HASH_LIMITS.attachDeadlineMs` 3 s and `attachByteBudget` 64 MB (`lib/ticketRoster.ts:71-72`), the GetObject aborted at the clock. The route sets no `maxDuration`, so the platform default applies; 3 s on top of the attach's own reads stays inside the most conservative default (10 s), and the clock starts before, so it runs beside, never after, a roster's 8 s bound. The new entry carries `contentHash: { sha256, bytes, etag, seal }` (`types/schema.ts` `TicketAttachment.contentHash`). A file already listed on the ticket keeps the hash its first attach stored and is not read again; a hash the client sends is dropped (`route.ts:392-400`).
+- **Bookkeeping, class (b).** A hash that cannot be taken — over the byte budget, past the deadline, storage that cannot serve the bytes, no sealing key — never refuses, fails or changes the attach: the response and the ticket write are exactly today's (the entry has no `contentHash` key), and only the attaching action's audit row adds why (`sha256Unavailable`, `route.ts:1466-1470`).
+- **Can a key be written again after the attach? Yes.** `app/api/storage/upload-url/route.ts` signs a PUT for any key under the caller's workspace prefix except a published revision's bytes (`PKG-1`'s check), and a signed PUT stays usable for 15 minutes. So the stored hash is bound to what was hashed: the byte count read and the ETag of the GetObject that served those bytes. When that ETag differs from the vetting HEAD's, the bytes changed between check and read, and no hash is stored ("the stored file changed while it was being attached"). Staleness after the attach is shown by the follow-up row (below).
+- **Sealed, because the entry is client-writable today.** `tickets.attachments` is browser-writable until `20261166`'s `ticket_update_guard` is pasted (`MIGRATION-PASTE-ORDER.md` row 130, HOLD). So a stored hash is believed only under an HMAC the route computes over org, ticket row, storage key, sha256, bytes and ETag. The key is `TICKET_FILE_HASH_SECRET`, else the service-role key, the `lib/unsubscribeToken.ts` pattern (`lib/ticketFileHash.ts:59-94`). An unsealed, tampered or moved value (another ticket, another key) is ignored, so it is never carried as server-computed. The seal is never written to an audit row.
+- **The approval's own row.** On today's serial path (`approve_draft_ifc`, `engineer_approve_final`, `approve_minor_correction`) each `approvedDrafts` entry with a sealed stored hash adds `sha256` and `sha256AtAttach: { bytes, etag }` beside today's `{ id, name, url, size, etag }` (`route.ts:1811`). An issue-as-is Final adds its Draft's (`:1530-1536`). A Draft without one is named exactly as before. The approval still reads no storage before it answers.
+- **The follow-up row is kept, unchanged for every file without a stored hash.** `TICKET_<ACTION>_FILES_HASHED` and `filesHashedIn` are written exactly as before, even when every approved file has a stored hash. It is the only read of the bytes at approval time, so it is the check that the attach-time hash still describes what is stored. Dropping it would remove evidence. A file that has a stored hash also gets `matchesStoredHash` (true / false) there (`route.ts:2454-2463`), so a replaced file is visible as stale. The issue-as-is Final in that row states the hash read then, not the stored one.
+- **The attaching action's row** names the file's `sha256` / `sha256AtAttach` (or `sha256Unavailable`) beside today's identity (`route.ts:1797-1806`).
+- **The routed path is unchanged.** The roster already reads and hashes the files when it opens (its own bound, fail-closed), which is a fresher binding than an attach-time hash. Reusing a stored hash safely would need a storage HEAD per file to check the ETag binding, and a stale hash would bind every sign-off's signature to bytes that are no longer stored.
+- **Consumers traced (an added optional field).** Each reads named fields (`url`, `name`, `size`, `type`, `status`, `rev`, `id`) or copies the entry whole: the request page and `TicketArchiveViewer`; `lib/ticketTransitions.ts` (submit spreads the entry, so the hash survives staged → submitted; `issueAsIsFinals` copies it onto the Final, same key and bytes); `lib/ticketHandback.ts`, `ticketDeliverableCopy`, `ticketCopyRequest`, `verifyTicketVerdict`, `storage/resolve`, `tickets/copy`; export / restore and the ticket shed (`lib/dataExport.ts`, `lib/dataRestore.ts`, `lib/ticketShed.ts`, the shed routes, `storageKeyRegistry`, `storageOrphans`, `shedKeyGuard`, which read `url` / `size` only). A restored row keeps its hash, and the seal still verifies only on the same ticket row id and key. `lib/ticketAuditDrain.ts` reads no attachment. The response never carries attachments.
+
+Tests: `lib/__tests__/f7Evid12HashAtAttach.test.ts`, 18 cases.
+- Attach stores the sealed hash and the attach row names it. End to end, attach → submit → approve, the approval's own row carries it with no storage read before answering. A re-attach keeps the first hash. A client's hash is dropped.
+- Bookkeeping: storage that cannot serve, a GetObject that never answers (bounded), over the byte budget, and an ETag changed between check and read each give the same response and the same ticket write as today (pinned field for field), with the reason only on the audit row. A refused attach is unchanged.
+- The approval row carries stored hashes, and the follow-up says `matchesStoredHash: true`; after a re-PUT, `false`. A legacy Draft's approval row and follow-up row are exactly today's (`toEqual`). An unsealed, tampered, moved-ticket or moved-key hash is ignored. Mixed Drafts and issue-as-is are covered.
+- The seal's bindings, no sealing key, and a throwing get.
+- Mutation-checked: twelve mutations (no stamp on the entry; the approval row without the hash; the client's hash kept; the seal unchecked; no `matchesStoredHash`; a hash failure refusing the attach; no ETag binding; an unbounded deadline; the field added to legacy follow-ups; no hash on the issue-as-is Final; no inheritance on re-attach; the attach row without the hash). Each fails the suite. Existing suites unchanged and green, `dfRoundG_P5_rosterRoute`, `dfRoundG_P1_rails` and `dfRoundG_P17_renumberedFilesRoutedWaiting` included.
+
+**Done-when (each read as written against the code).**
+- ✓ (1), ✓ (2) as recorded in the F1-records-cleanup block (unchanged).
+- ✗ (in part) (3). **Holds** on the serial path for every approved Draft attached on or after this deploy whose bytes were hashed within the attach's bound: the approval's own `details` carry `deliverable_rev`, the Draft's id and filename, and a server-computed sha256 of it, bound to the bytes and ETag it was computed from. **Does not hold as written** for:
+  - (a) a Draft attached before this deploy (no stored hash);
+  - (b) a Draft not hashable at attach — over 64 MB, slower than 3 s, storage that could not serve it, its ETag changed during the attach, or no sealing key. (a) and (b) still rely on the best-effort follow-up row, as before;
+  - (c) the stored hash is the attach-time hash. A key can be written again after the attach, and the approval's own row cannot know that without reading storage before it answers, which DF-P5 fix pass 2 removed from the approval. The follow-up row's `matchesStoredHash` says it, after the response, best effort;
+  - (d) on a routed review, unchanged: a file too large or too slow to fingerprint when the roster opened carries `sha256Unavailable`.
+- ✓ on every routed sign-off / ruled out on the serial path (4), unchanged.
+
+**Scope / residual.** Stays OPEN (Partial) on done-when 3 for (a)–(d) above. **Owner (DEC-31): the integrator.**
+- (a), (b) and (d): either a ruling under DEC-90 that, for these files only, the linked follow-up row with its recorded reason meets done-when 3 (option (a) of the F1 residual, narrowed), or a package that hashes the un-hashed Drafts of tickets awaiting approval out of band. That package would write ticket rows compare-and-set; not built here.
+- (c): a proposed NEW finding for the integrator to open (drafting-flow, provisionally `EVID-17`, MEDIUM): a ticket attachment's stored bytes can be replaced in place under the same key. `upload-url` refuses only a published revision's key (`PKG-1`), so the bytes of an approved or issued ticket file can change while every record of it stays. Proposed owner: the next holder of `app/api/storage/upload-url/route.ts` (refuse to sign a PUT for a key a live ticket lists — `PKG-1`'s rule — the shed's `.contains("attachments", …)` read already exists in `lib/ticketShed.ts`). Once that holds, (c) closes, with (a), (b) and (d) left.
+
+**Pending migration:** none.
+
+**Partial (2026-11-18, fleet F7-EVID12 fix pass, after the independent review; and the integrator's ruling on the remainder).** The review found no regression and confirmed: byte-identity on failure, the constant-time seal comparison, no seal in any audit row or response, and every consumer. Line numbers in the block above are as of `a1d70abb`; those below are as of this fix pass.
+- **No read for a file that cannot fit.** The vetting HEAD's byte count rides to the hash (`route.ts:376-378`). A file the HEAD already puts over the 64 MB budget is not read at all: no GetObject and no wait. It is recorded `not hashed (byte budget)` (`lib/ticketFileHash.ts:130`, `:154-160`). **The added wait, said plainly:** a file within 64 MB that storage serves slowly can add up to the 3 s deadline to its attach, less whatever the rest of the request took meanwhile. A file storage serves at ordinary speed adds about nothing.
+- **No read outlives the response.** The handler runs inside one wrapper (`route.ts:418-431`, `POST` → `handleWorkflowAction`). Its `finally` aborts the hash read's signal on every return, including the refusals between the vetting and the await. The signal is joined to the bound's own (`AbortSignal.any`, `lib/ticketFileHash.ts:168-170`), so a refused request leaves no GetObject streaming. On a path that awaited the hash, the abort is a no-op.
+- **No silent downgrade.** A file that carries a stored hash whose seal does not verify is marked `sha256AtAttachUnverified: "seal did not verify"` on the approval row's file identity, and on the as-is Final and the attach row (`lib/ticketFileHash.ts:106-115` `storedHashAuditFields`; `route.ts:1558`, `:1833`). The causes are a sealing key rotated or first set after the file was hashed, or a value someone else wrote. Such a file is never carried as server-computed, and its follow-up row claims no match against it. Operator note: set `TICKET_FILE_HASH_SECRET` before deploy (else the service-role key seals). Rotating that key leaves every earlier seal unverifiable, and the rows say so.
+- **(c) The bytes behind a listed key.** Closed for every member who did not already hold a signed write from before the file was attached, by drafting-flow [`EVID-17`](#evid-17) (RESOLVED, this fix pass): neither signing door signs a write to a key a request lists while its bytes are stored. Two narrower ways remain, opened as [`EVID-18`](#evid-18):
+  - the uploader's own signed PUT URL, minted before the attach and reusable until it expires, at most 15 minutes after it was signed;
+  - a controller deleting the file through `/api/storage/delete` (audited `STORAGE_DELETE`; that route's referenced-elsewhere check skips JSON key columns such as `tickets.attachments`), after which the absent key is signed again (the restore's put-back rule).
+
+  In both, the approval row's hash is the attach-time hash of bytes since replaced. The follow-up row's `matchesStoredHash: false` and the delete's own row are the record of it.
+
+Tests (`lib/__tests__/f7Evid12HashAtAttach.test.ts`, now 19): a file the HEAD puts over budget is never read; a request refused after the read started aborts it (the read's signal is aborted, and the refusal returns well inside the deadline); a stored hash that does not verify (unsealed, tampered, moved ticket, moved key, or a rotated key) is marked `sha256AtAttachUnverified` with no `sha256`, and the follow-up row claims no match. Mutation-checked: four new mutations (no abort on return; no HEAD-size skip; the silent downgrade back; the request's signal not joined to the read) each fail the suite. The first twelve, re-run on this code, each still fail it.
+
+**Ruling (2026-11-18, the integrator, `DEC-90`).** Files attached before this deploy, files outside the attach's bound (over 64 MB, slower than 3 s, a storage error, an ETag changed during the attach, no sealing key), a stored hash whose seal does not verify, and routed files too large or too slow to fingerprint when the roster opened are an **accepted, documented limit**. For them, the linked `TICKET_<ACTION>_FILES_HASHED` follow-up row, with its recorded reason, is the evidence.
+
+**Done-when (each read as written against the code).**
+- ✓ (1), ✓ (2) as recorded.
+- (3) **Holds as written for every file hashed at attach and still holding those bytes**: the approval's own `details` carry `deliverable_rev`, the file's id and filename, and the server-computed sha256 with what it was computed from. For the documented exceptions above it is **closed by the integrator's ruling, 2026-11-18, DEC-90**, with the follow-up row as evidence. **Not covered by the ruling as given:** the two `EVID-18` windows, in which a file hashed at attach has its bytes replaced afterwards. The ruling took (c) as closed by `EVID-17`. `EVID-17` closes it for every member except those two narrower ways. In them the approval row carries the attach-time hash, and the follow-up row says the bytes no longer match.
+- ✓ / ruled (4), unchanged.
+
+**Scope / residual.** Stays **OPEN** on done-when 3 for the two `EVID-18` windows only (DEC-29: the ruling's text names (a), (b) and (d); (c) is not wholly closed). **Owner (DEC-31): the integrator.** Either extend the ruling to those windows (they are detected and recorded: `matchesStoredHash: false`, the delete's audit row), which makes this finding RESOLVED with no code change, or hold it on `EVID-18`.
+
+
+**Ruling (2026-11-18, the integrator, `DEC-90`) — the ruling extended to the two `EVID-18` windows; RESOLVED.** Both windows are detectable after the fact:
+- the uploader's own signed PUT URL, still valid after the attach (until it expires, at most 15 minutes after signing) — the approval's `TICKET_<ACTION>_FILES_HASHED` row says `matchesStoredHash: false`;
+- a controller's audited delete followed by a fresh upload — the delete's own `STORAGE_DELETE` row, and `matchesStoredHash: false`.
+
+The approval row's attach-time hash plus that detection meets done-when 3's evidence purpose. Prevention of both windows is drafting-flow [`EVID-18`](#evid-18), which stays OPEN (MEDIUM) as the hardening finding. Its owner is the next holder of `app/api/storage/upload-url/route.ts` and `app/api/storage/delete/route.ts` (DEC-31).
+
+**Done-when (final, each read as written; DEC-29).**
+- ✓ (1) by the integrator's ruling (a), 2026-11-18 — the status write and its audit row are still two writes; the audit-first refusal plus DF-P8's drain meet its purpose.
+- ✓ (2) as recorded.
+- ✓ (3) Holds as written for every file hashed at attach whose bytes still hold: the approval's own `details` carry `deliverable_rev`, the file's id and filename, and the server-computed sha256 with the bytes and ETag it was computed from. Closed by the integrator's rulings, with the follow-up row (or the delete's row) as the evidence, for every exception, named plainly:
+  1. a file attached before this deploy;
+  2. a file outside the attach's bound — over 64 MB, slower than 3 s, a storage error, its ETag changed during the attach, or no sealing key;
+  3. a stored hash whose seal does not verify (`sha256AtAttachUnverified`);
+  4. a routed file too large or too slow to fingerprint when its roster opened (`sha256Unavailable`);
+  5. bytes replaced after the attach through the uploader's own still-valid signed PUT;
+  6. bytes replaced after the attach by a controller's audited delete and re-upload.
+
+  For 1–4 the approval row names the file and the follow-up row carries the hash or the reason. For 5–6 the approval row carries the attach-time hash, and the follow-up row says the bytes no longer match.
+- ✓ / ruled out (4) — ✓ on every routed sign-off; ruled out for the serial path (DEC-90 ruling (6) for DF-P6).
+
+**Scope / residual.** None for this finding. Prevention of exceptions 5–6 is `EVID-18` (OPEN, hardening, owner above).
 
 ---
 
@@ -1374,3 +1453,102 @@ components/viewers/SecureDocViewer.tsx:83-92 —
 **Ruling (2026-10-21, the integrator at the DF-P11 merge, `DEC-90`).** Done-when 2's remainder — a member who may read the request calling `/api/storage/download-url` or `/api/storage/resolve` directly with an attachment key gets an unstamped, unrecorded URL — is **accepted as a documented exception**. That caller is an authorized reader of exactly that file (both doors refuse everyone else since DF-P11: `ticketKeyGate`, `intakeRedlineKeyGate`); every copy the app itself makes — print, download, preview from the ticket page — goes through `POST /api/tickets/copy` (stamped, recorded before the bytes) or, when that route is briefly unavailable, through the browser path that stamps and records in the tab (DF-P15 ruling). The doors cannot tell a direct call from that ruled browser fallback, so refusing it would break prints and downloads that work today (the user's top rule: no regression). The residual is equivalent to an authorized reader saving the bytes they are entitled to read; controlled-copy evidence is complete for every copy made through the product. No owner remains.
 
 ---
+
+<a id="evid-17"></a>
+
+## EVID-17 · A request's stored file can be replaced in place: the signed-upload doors sign a write to any key of the workspace except a published revision's, so the bytes an approval, an issue and a recorded sha256 name can change with no audit row and no earlier version kept
+
+- **Severity:** HIGH
+- **Status:** RESOLVED (2026-11-18, fleet F7-EVID12 fix pass — see the Resolution)
+- **Assigned:** fleet F7-EVID12 (its fix pass) — opened and assigned by the integrator, 2026-11-18 (DEC-90 / DEC-31), on the independent review of F7-EVID12, which confirmed it.
+- **Verification:** CONFIRMED by the independent review of F7-EVID12 (2026-11-18), and on base `a1d70abb` by this package.
+- **Locations:** `app/api/storage/upload-url/route.ts` (the PKG-1 check refuses only `document_versions` keys), `app/api/storage/multipart/route.ts` (create / complete: no key check at all beyond membership), `lib/storage.ts` (`makeTicketAttachmentPath`: `orgs/<org>/tickets/<n>/<ts>_<name>`)
+- **Independently verified:** ✓ by the F7-EVID12 independent review (2026-11-18).
+
+**Mechanism.** A drafting request's files live under `orgs/<org>/tickets/`. The browser uploads them straight to storage through a signed PUT (`/api/storage/upload-url`), or for 64 MB and up a multipart upload (`/api/storage/multipart`). Both authorize the key by its workspace prefix and the caller's active membership. `upload-url` also refuses a published revision's bytes (`PKG-1`); the multipart route does not check even that. Nothing asks whether a request already lists the key. A signed PUT is good for 15 minutes; a multipart upload can be completed whenever.
+
+**Failure scenario.** A member who knows an issued Final's key (it is on the ticket row every member of the workspace reads) asks `upload-url` for that key and PUTs other bytes. The ticket, its approval and issue rows, the attach row's ETag and sha256 (`EVID-12`) all still name the file; every print and download now serves the new bytes. No audit row records the write, and storage keeps no earlier version.
+
+**Done when.**
+
+- [x] Neither signing door signs a new write — a PUT, a multipart create or a multipart complete — to a key under `orgs/<org>/tickets/` that a request of that workspace lists while its bytes are in storage; the refusal is in plain words
+- [x] A lookup or storage check that cannot be made refuses (503, plain words) — fail closed, as `PKG-1` does
+- [x] Every legitimate writer of ticket keys works exactly as before (pinned)
+
+**Resolution (2026-11-18, fleet F7-EVID12 fix pass).** Reproduced on `a1d70abb`: `upload-url` signed a PUT for a listed, stored ticket key (only `document_versions` was asked), and the multipart route opened and completed an upload to it.
+- `lib/ticketKeyOverwrite.ts` `ticketKeyOverwriteRefusal` (`:54`): for a key under `orgs/<org>/tickets/` (`ticketKeyOrg`, `:41`), asks whether a request of that workspace lists it. This is `lib/ticketShed.ts`'s lookup, `.contains("attachments", [{ url }])` scoped by `org_id`; any request row counts, archived or not, which is stricter than "live". If one does, it asks storage whether the bytes are there (HEAD). Listed and stored is refused, 409: "That file is already attached to a request, so it can't be overwritten. Upload it as a new file instead." A lookup error, or a storage answer other than not-found, is refused, 503: "Couldn't check whether that file is already attached to a request, so the upload was refused. Try again in a moment." A key outside `orgs/<org>/tickets/` reads nothing.
+- `app/api/storage/upload-url/route.ts:112-113` asks it after `PKG-1`'s check, which is unchanged and still first.
+- `app/api/storage/multipart/route.ts:92-93` asks it at **create** and again at **complete** (the moment the bytes land), so an upload opened before the file was attached cannot complete over it. Signing a part and aborting are unchanged; an abort must always work.
+- **Every legitimate writer traced (no regression):**
+  - `lib/storage.ts` `uploadTicketAttachment` (the request page's attach, the new-request page and the check-in panel's staging folder) always mints a fresh timestamped key and signs it before any request lists it. The request is attached only after the upload completes, and the PUT is not retried on the same URL; a retry re-signs a new key.
+  - The backup restore's file put-back (`app/(protected)/admin/restore/page.tsx`, through `upload-url`, after "Restore records") does write keys a restored request lists. It writes only a file the existence probe found NOT live, so the HEAD says not-found and the PUT is signed as before.
+  - The create route's copy from the staging folder (`CopyObject`), the intake portal's redline (`orgs/<org>/project-intake/…`, server `PutObject`), the ticket shed and its restore (server `PutObject`) never pass through these doors.
+  - No writer of a ticket key re-PUTs an already-listed key whose bytes are stored.
+
+Tests: `lib/__tests__/evid17TicketKeyOverwrite.test.ts`, 11 cases.
+- Refused: a listed, stored key (409, nothing signed, the lookup scoped to the workspace); multipart create and complete for it (409, nothing but the check reaches storage); an upload opened before the attach cannot complete after it.
+- Unchanged: a fresh key signed exactly as before (byte-identical response, no storage call); the restore's put-back of a listed but absent file is signed; a key outside the ticket folder makes no lookup; sign and abort ask nothing.
+- Fail closed: a lookup error is 503 (both doors); a storage error is 503. PKG-1 is unchanged and first.
+- Mutation-checked, seven mutations, each failing the suite: the upload-url gate removed; complete not gated; an absent file refused (the restore broken); the lookup failing open; the storage check failing open; sign and abort gated; the lookup not scoped to the workspace. `lib/__tests__/aoRoundGLogoUpload.test.ts`'s Supabase stand-in now answers the new `tickets` read with no rows (a harness addition; no assertion changed).
+
+**Scope (narrowed at F7-EVID12's last pass, DEC-29).** This finding and its fix cover keys under `orgs/<uuid>/tickets/` only (`ticketKeyOrg`). A request row that still lists a legacy key outside the `orgs/` layout gets no protection from this check. Such keys sit behind a wider gap: the signing doors sign a write to ANY key outside `orgs/<uuid>/` for any signed-in user of any workspace. That gap is [`EVID-19`](#evid-19).
+
+**Done-when.** ✓ (1), ✓ (2), ✓ (3) as written above, for keys under `orgs/<uuid>/tickets/`. **Residual (DEC-31):** two narrower ways to replace a listed file's bytes are not closed by a signing door, and are opened as [`EVID-18`](#evid-18): the uploader's own PUT URL signed before the attach, and a controller's audited delete followed by a fresh put-back. **Also found, not this finding's:** the multipart route had no `PKG-1` check either, so a published revision's bytes (a file of 64 MB or more) could be overwritten through it. *Opened by the integrator, 2026-11-18, as document-control [`PKG-15`](../document-control/07-packages.md#pkg-15) (CRITICAL) and RESOLVED in this branch: the same check, at create and complete.*
+
+---
+
+<a id="evid-18"></a>
+
+## EVID-18 · A request's listed file can still be replaced two narrower ways: the uploader's own signed PUT from before the attach, until it expires, and a controller's delete followed by a fresh put-back
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Assigned:** the integrator — opened by fleet F7-EVID12's fix pass, 2026-11-18 (DEC-31), as `EVID-17`'s residual and `EVID-12` done-when 3's last remainder.
+- **Assigned:** the next holder of `app/api/storage/upload-url/route.ts` and `app/api/storage/delete/route.ts` — by the integrator, 2026-11-18 (DEC-31). This is the **hardening** finding: prevention, not evidence. The evidence side is closed by the integrator's ruling on `EVID-12` (`DEC-90`, 2026-11-18): both windows are detected after the fact, and that detection is accepted as done-when 3's evidence. Done-when 3 below (a ruling) is therefore not how this finding closes: it closes on done-whens 1 and 2.
+- **Verification:** CONFIRMED by reading the code on F7-EVID12's fix pass.
+- **Locations:** `app/api/storage/upload-url/route.ts` (`expiresIn: 900`), `lib/storage.ts` (`uploadToPathInner`: sign, then PUT), `app/api/storage/delete/route.ts` (`keysReferencedOutside` skips JSON key columns: `lib/storageKeyRegistry.ts` `plainKeyColumns`)
+- **Independently verified:** — opened 2026-11-18 by F7-EVID12's fix pass; not yet challenged by a second party.
+
+**Mechanism.** (0) *(Added at F7-EVID12's last pass, from the re-review.)* `EVID-17`'s rule signs a write to a listed key whose object is ABSENT, because the backup restore's put-back must work. So ANY member — not only after a controller's delete — can get a signed write for such a key. The ticket shed makes that case common: its commit keeps a shed request's `attachments` on the stub (`app/api/admin/ticket-shed/commit/route.ts:281`, the stamp clears comments, history and metadata, not attachments) while it deletes the binaries (`:103-110`, `deleteR2Keys`). A member can plant bytes under a shed request's key. The shed restore writes the archived bytes back with an unconditional `PutObject` (`app/api/admin/ticket-shed/restore/route.ts:205`), so a plant is overwritten on restore. It survives only where the archive holds no copy of that key. (1) A signed PUT URL is reusable until it expires, 15 minutes after it was signed. The uploader signs it before the file is attached; `EVID-17`'s check passes then, since nothing lists the key yet. The uploader can PUT again after the attach until the URL expires, and no door is asked. (2) `/api/storage/delete` lets a controller (Admin / DocCtrl) delete a stored object. Its "another record still uses this file" check reads plain key columns only, not `tickets.attachments`. Once the object is gone, `EVID-17`'s rule signs a write to the absent key, because that is the backup restore's put-back.
+
+**Failure scenario.** A drafter uploads a Draft, attaches it, and within the URL's remaining minutes PUTs other bytes under the same key. The approval row carries the attach-time sha256 (`EVID-12`), which no longer describes the stored file. Or a controller deletes an issued Final (audited `STORAGE_DELETE`) and uploads other bytes under its key.
+
+**What already records it.** The approval's after-the-response follow-up row reads the bytes again and says `matchesStoredHash: false` (`EVID-12`); a delete writes its own audit row. Detection, not prevention.
+
+**Done when.**
+
+- [ ] A write to a listed ticket key through a URL signed before the attach is impossible or refused (for example a conditional PUT that storage refuses when the key exists, signed into the URL, with the browser path sending the header; or the attach moving the file to a server-minted key no URL names), with every legitimate upload pinned unchanged
+- [ ] `/api/storage/delete` refuses a key a request lists (`lib/ticketShed.ts` `keysOnOtherLiveTickets`), fail closed, with the shed's own frees unchanged
+- [ ] A signed write to a listed but absent key is held to the restore that needs it (for example signed only for the restore surface's caller, or only for a key whose request is not a shed stub), with the backup restore's put-back pinned unchanged
+- [ ] Or the integrator rules both windows an accepted, documented limit (detected and recorded as above), which also closes `EVID-12`
+
+**Owner (DEC-31):** the integrator — a ruling, or a package for the next holder of `app/api/storage/upload-url/route.ts` and `app/api/storage/delete/route.ts`.
+
+---
+
+<a id="evid-19"></a>
+
+## EVID-19 · The signing doors sign a write to ANY key outside `orgs/<uuid>/` for any signed-in user of any workspace — a legacy key a request or record still lists can be overwritten across tenants
+
+- **Severity:** HIGH
+- **Status:** OPEN
+- **Assigned:** the next holder of `app/api/storage/upload-url/route.ts` and `app/api/storage/multipart/route.ts` — by the integrator, 2026-11-18 (DEC-31), at F7-EVID12's last pass (with `EVID-18`).
+- **Verification:** CONFIRMED by reading the code on F7-EVID12's last pass (base `be205317`).
+- **Locations:** `app/api/storage/upload-url/route.ts:40` (`orgMatch`: membership, the subscription gate, the logo and cover rules apply only when the key starts `orgs/<uuid>/`), `app/api/storage/multipart/route.ts` (the same), `lib/userProfiles.ts:200` (`avatars/<uid>/…`, a legitimate key outside `orgs/`)
+- **Independently verified:** — reported by the F7-EVID12 re-review, 2026-11-18, and confirmed here; not yet challenged by a second party. Noted earlier, without an id, in admin-and-org `02-backup-restore.md`'s sound-invariants table ("the untreated non-org-prefixed branch").
+
+**Mechanism.** Both signing doors authorize a key by its prefix. For `orgs/<uuid>/…` they require active membership of that workspace. For any other key they require only a signed-in session. The checks still made are `assertSafeStorageKey`, `PKG-1` / `PKG-15`'s version-key check (a document version's bytes are refused) and `EVID-17`'s, which applies only under `orgs/<uuid>/tickets/`. So a signed-in user of ANY workspace can obtain a signed write for any non-`orgs/` key that is not a version's bytes:
+- a legacy ticket attachment from before the `orgs/` layout that a request still lists;
+- another user's avatar (`avatars/<uid>/…`);
+- any other legacy object the app still serves.
+
+**Failure scenario.** A user of workspace B learns a legacy key that a request of workspace A lists (from a shared export, a screenshot, an old link). They PUT other bytes under it. Workspace A's request now serves them, and no row of either workspace records the write.
+
+**Why not fixed in F7-EVID12.** A one-line refusal of every non-`orgs/` key is not clearly safe: avatars are written outside `orgs/` by design (`avatars/<uid>/`, user-scoped, `lib/userProfiles.ts:200`), and the backup restore's put-back may carry legacy keys (admin-and-org `02-backup-restore.md`). The fix needs an allow-list and a trace of every writer.
+
+**Done when.**
+
+- [ ] Neither signing door signs a write to a key outside `orgs/<uuid>/` except an allow-listed, owner-scoped layout (for example `avatars/<own uid>/` for the caller alone), with the refusal in plain words
+- [ ] A legacy key that a request or a record of a workspace lists is signed only for a member of that workspace, and `EVID-17`'s listed-and-stored refusal applies to it too
+- [ ] Every legitimate writer (avatars, the restore's put-back of legacy keys) is traced and pinned unchanged
+

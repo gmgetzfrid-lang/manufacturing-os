@@ -58,6 +58,18 @@ export const HASH_LIMITS = {
   legacyDeadlineMs: 3_000,
   legacyByteBudget: 64 * 1024 * 1024,
   legacyMaxFiles: 10,
+  // EVID-12 (fleet F7): the attach step's hash (lib/ticketFileHash.ts) — best
+  // effort, the attach never waits longer than this nor fails for it. It runs
+  // beside the rest of the attach request (started after the storage check,
+  // awaited just before the update is built), so it adds at most this much
+  // and usually nothing. The route sets no maxDuration; 3 s on top of the
+  // attach's own reads stays far inside the most conservative platform
+  // default (10 s); its clock starts before, and so runs beside, never after,
+  // the 8 s roster bound of a request that also opens a roster. 64 MB is what
+  // the function can read from storage in that time at ordinary throughput;
+  // a larger file is recorded unhashed.
+  attachDeadlineMs: 3_000,
+  attachByteBudget: 64 * 1024 * 1024,
   rosterDeadlineMs: 8_000,
   rosterByteBudget: HASH_MAX_BYTES,
 };

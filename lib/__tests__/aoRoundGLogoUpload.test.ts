@@ -47,7 +47,9 @@ function chain(table: string) {
   const c: Record<string, unknown> = {};
   const handler: ProxyHandler<Record<string, unknown>> = {
     get(_t, prop: string) {
-      if (prop === "then") return undefined;
+      // drafting-flow EVID-17: the routes now ask whether a request lists a
+      // key under orgs/<org>/tickets/ — none does here (no tickets table).
+      if (prop === "then") return table === "tickets" ? (resolve: (v: unknown) => void) => resolve({ data: [], error: null }) : undefined;
       return (...args: unknown[]) => {
         if (prop === "insert") {
           state.inserts.push({ table, row: args[0] as Record<string, unknown> });

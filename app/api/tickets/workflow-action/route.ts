@@ -14,6 +14,7 @@ import {
   signatureRefusal, writeRosterLedger, writeRosterReopen, isMissingRosterLedger, type FileHash, type SignatureRow,
 } from "@/lib/ticketRoster";
 import { loadPickerMembers } from "@/lib/ticketPickerMembers";
+import { hashFilesAtAttach, verifiedStoredHash, storedHashAuditFields, type AttachHash } from "@/lib/ticketFileHash";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { isSafeStorageKey } from "@/lib/storageKey";
 import { ticketFolder, underFolder, restoredFromNumberHolding, restoreRenumberingConfirmed, renumberedRequestListsKey } from "@/lib/ticketFilePrefix";
@@ -322,7 +323,7 @@ async function vetTicketAttachment(
     ticketRowId: string;
     history: unknown;
   },
-): Promise<{ ok: true; attachment: TicketAttachment; etag: string | null; siblingUnchecked: boolean } | { ok: false; status: number; error: string }> {
+): Promise<{ ok: true; attachment: TicketAttachment; etag: string | null; bytes: number | null; siblingUnchecked: boolean } | { ok: false; status: number; error: string }> {
   const url = typeof a?.url === "string" ? a.url : "";
   const name = typeof a?.name === "string" ? a.name.trim().slice(0, 255) : "";
   const prefix = ticketFolder(ctx.orgId, ctx.ticketNumber);
@@ -355,6 +356,9 @@ async function vetTicketAttachment(
   const alreadyListed = ctx.listed.find((x) => x?.url === url) ?? null;
   let size: string | undefined = alreadyListed?.size ?? undefined;
   let etag: string | null = null;
+  // EVID-12 (fleet F7 fix pass): the byte count storage answered, so a file
+  // already over the attach hash's byte budget is never read for it.
+  let bytes: number | null = null;
   let siblingUnchecked = false;
   if (!alreadyListed) {
     // EDGE-19 done-when 3: the folder may also hold the files of a request
@@ -371,6 +375,8 @@ async function vetTicketAttachment(
     try {
       const head = await r2.send(new HeadObjectCommand({ Bucket: R2_BUCKET, Key: url }));
       size = formatBytes((head as { ContentLength?: number }).ContentLength) ?? size;
+      const len = (head as { ContentLength?: unknown }).ContentLength;
+      bytes = typeof len === "number" && Number.isFinite(len) ? len : null;
       etag = typeof (head as { ETag?: unknown }).ETag === "string" ? ((head as { ETag: string }).ETag).replace(/"/g, "") : null;
     } catch (e) {
       const err = e as { name?: string; $metadata?: { httpStatusCode?: number } };
@@ -389,8 +395,15 @@ async function vetTicketAttachment(
   // twice, and every `?a=` print of the real file then scanned "cannot
   // confirm" and the server copy route refused it. Every attachment already
   // on the ticket keeps its id; nothing here rewrites one.
+  // EVID-12 (fleet F7): a content hash is never the client's — any the
+  // request carried is dropped; a file already listed keeps the hash its
+  // first attach stored (the same key); a new one is hashed by the caller
+  // after vetting (hashFilesAtAttach).
+  const { contentHash: _clientHashClaim, ...claimed } = a as TicketAttachment;
+  void _clientHashClaim;
   const attachment = {
-    ...a,
+    ...claimed,
+    ...(alreadyListed?.contentHash ? { contentHash: alreadyListed.contentHash } : {}),
     id: crypto.randomUUID(),
     name,
     url,
@@ -400,10 +413,25 @@ async function vetTicketAttachment(
     uploadedBy: alreadyListed?.uploadedBy ?? ctx.uploadedBy,
     uploadedAt: alreadyListed?.uploadedAt ?? new Date().toISOString(),
   } as TicketAttachment;
-  return { ok: true, attachment, etag, siblingUnchecked };
+  return { ok: true, attachment, etag, bytes, siblingUnchecked };
 }
 
+/** EVID-12 (fleet F7 fix pass): the handler runs inside this wrapper so the
+ *  attach-time hash read (started after vetting, awaited before the update
+ *  is built) is aborted on EVERY return — the dozens of refusals between the
+ *  two included — and no GetObject streams on after the response. On a path
+ *  that awaited the hash, the abort is a no-op. One mechanism, not one edit
+ *  per return. */
 export async function POST(req: NextRequest) {
+  const attachHashAbort = new AbortController();
+  try {
+    return await handleWorkflowAction(req, attachHashAbort.signal);
+  } finally {
+    attachHashAbort.abort();
+  }
+}
+
+async function handleWorkflowAction(req: NextRequest, attachHashAbort: AbortSignal) {
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -702,6 +730,7 @@ export async function POST(req: NextRequest) {
   // Final, and who uploaded it, when, its size and status are stamped here.
   const vetted: { attachment?: TicketAttachment; finalAttachment?: TicketAttachment; redlineAttachment?: TicketAttachment } = {};
   const vettedEtags: Record<string, string | null> = {};
+  const vettedBytes: Record<string, number | null> = {};
   // EDGE-19 (DF-P17 final fix pass): the renumbered-request check could not
   // run for a vetted file — recorded on this action's audit row.
   let renumberedSiblingUnchecked = false;
@@ -719,8 +748,32 @@ export async function POST(req: NextRequest) {
     if (!res.ok) return NextResponse.json({ error: res.error }, { status: res.status });
     vetted[slot] = res.attachment;
     vettedEtags[slot] = res.etag;
+    vettedBytes[slot] = res.bytes;
     if (res.siblingUnchecked) renumberedSiblingUnchecked = true;
   }
+  // EVID-12 (fleet F7, DEC-90 option (b)): each file this action newly
+  // attaches is fingerprinted ONCE, here, from its stored bytes — started now
+  // and awaited just before the update is built, so it runs beside the rest
+  // of the request (HASH_LIMITS.attachDeadlineMs / attachByteBudget). Best
+  // effort: it never refuses, fails or changes the attach; a file it could
+  // not hash is stored without one, and the action's audit row says why.
+  const attachHashCtx = { orgId: ticket.orgId, ticketRowId: body.ticketId };
+  const attachHashKeys = (Object.values(vetted) as TicketAttachment[])
+    .filter((x) => !!x?.url && !x.contentHash && !(ticket.attachments ?? []).some((b) => b?.url === x.url))
+    .map((x) => x.url);
+  const attachVetted = new Map<string, { etag: string | null; bytes: number | null }>();
+  for (const slot of Object.keys(vetted) as Array<keyof typeof vetted>) {
+    const url = vetted[slot]?.url;
+    if (url) attachVetted.set(url, { etag: vettedEtags[slot] ?? null, bytes: vettedBytes[slot] ?? null });
+  }
+  const attachHashing: Promise<Map<string, AttachHash>> = attachHashKeys.length === 0
+    ? Promise.resolve(new Map())
+    : hashFilesAtAttach(
+      attachHashKeys,
+      async (k, signal) => (await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: k }), { abortSignal: signal })) as never,
+      { deadlineMs: HASH_LIMITS.attachDeadlineMs, byteBudget: HASH_LIMITS.attachByteBudget },
+      attachHashCtx, attachVetted, attachHashAbort,
+    ).catch(() => new Map<string, AttachHash>());
 
   // Referenced people must be active members of the same org — and a picked
   // "engineer" must actually hold an engineer role (headline or additive).
@@ -1418,6 +1471,26 @@ export async function POST(req: NextRequest) {
   }
   if (vetted.finalAttachment?.url) hashKeys.unshift(vetted.finalAttachment.url);
   const filesHashedAction = `TICKET_${action.action.toUpperCase()}_FILES_HASHED`;
+  // EVID-12 (fleet F7): the attach-time hashes (started after vetting). A
+  // hashed file's entry carries its sealed hash; one not hashed carries
+  // nothing new (the entry is exactly today's) and the reason rides only the
+  // audit row (`attachHashReason`).
+  const attachHashes = await attachHashing;
+  const attachHashReason: Record<string, string> = {};
+  for (const slot of Object.keys(vetted) as Array<keyof typeof vetted>) {
+    const v = vetted[slot];
+    const h = v?.url ? attachHashes.get(v.url) : undefined;
+    if (!v || !h) continue;
+    if (h.ok) vetted[slot] = { ...v, contentHash: h.hash };
+    else attachHashReason[slot] = h.reason;
+  }
+  /** What an attaching action's row says of the file's hash: the stored one
+   *  (verified), or why there is none for a file hashed in this request. */
+  const attachHashFields = (slot: keyof typeof vetted): Record<string, unknown> => {
+    const stored = storedHashAuditFields(vetted[slot], attachHashCtx);
+    if (Object.keys(stored).length > 0) return stored;
+    return attachHashReason[slot] ? { sha256Unavailable: attachHashReason[slot] } : {};
+  };
 
   const input: TransitionInput = {
     actionType: action.action,
@@ -1479,7 +1552,11 @@ export async function POST(req: NextRequest) {
     .map((a) => {
       const bound = rosterSign?.roster.files.find((f) => f.id === a.issuedFromDraftId);
       const base = { id: a.id ?? null, name: a.name ?? null, url: a.url ?? null, rev: a.rev ?? null, issuedFromDraftId: a.issuedFromDraftId };
-      return bound ? { ...base, sha256: bound.sha256, ...(bound.sha256 ? {} : { sha256Unavailable: bound.unhashed ?? "not hashed" }) } : base;
+      if (bound) return { ...base, sha256: bound.sha256, ...(bound.sha256 ? {} : { sha256Unavailable: bound.unhashed ?? "not hashed" }) };
+      // EVID-12 (fleet F7): on today's path, the issued Draft's stored hash
+      // (same key, same bytes) when it has a sealed one.
+      const draft = (ticket.attachments ?? []).find((d) => d.id === a.issuedFromDraftId);
+      return { ...base, ...storedHashAuditFields(draft, attachHashCtx) };
     });
   // SM-12: self-assignment names the caller from their membership too
   // (computeTransition would derive it from the email's local part).
@@ -1740,13 +1817,21 @@ export async function POST(req: NextRequest) {
       from: ticket.status, to: newStatus, label: action.label, authority,
       deliverable_rev: (updates.deliverable_rev as string | null | undefined) ?? ticket.deliverableRev ?? null,
       // WF-9 / WF-18: the audit row names WHAT was attached or WHO now drafts.
+      // EVID-12 (fleet F7): each identity also carries the sha256 stored at
+      // attach (`sha256`, `sha256AtAttach`: the bytes read, their ETag) when
+      // there is a sealed one, or — for a file this action attached and could
+      // not hash — `sha256Unavailable`; nothing else in it changes.
       ...(vetted.attachment
-        ? { attachment: { ...fileIdentity(vetted.attachment, vettedEtags.attachment), type: vetted.attachment.type } }
+        ? { attachment: { ...fileIdentity(vetted.attachment, vettedEtags.attachment), type: vetted.attachment.type, ...attachHashFields("attachment") } }
         : {}),
-      ...(vetted.finalAttachment ? { finalAttachment: fileIdentity(vetted.finalAttachment, vettedEtags.finalAttachment) } : {}),
-      ...(vetted.redlineAttachment ? { redlineAttachment: fileIdentity(vetted.redlineAttachment, vettedEtags.redlineAttachment) } : {}),
+      ...(vetted.finalAttachment ? { finalAttachment: { ...fileIdentity(vetted.finalAttachment, vettedEtags.finalAttachment), ...attachHashFields("finalAttachment") } } : {}),
+      ...(vetted.redlineAttachment ? { redlineAttachment: { ...fileIdentity(vetted.redlineAttachment, vettedEtags.redlineAttachment), ...attachHashFields("redlineAttachment") } } : {}),
+      // EVID-12 (fleet F7): the approval's OWN row carries each approved
+      // Draft's stored sha256 when it has a sealed one; a Draft without one
+      // (attached before this, or not hashable in the attach's bound) is
+      // named exactly as before and hashed in the follow-up row.
       ...(APPROVING_ACTIONS.has(action.action)
-        ? { approvedDrafts: (ticket.attachments ?? []).filter((a) => a?.type === "Draft" && a.status === "submitted").map((a) => fileIdentity(a, null)) }
+        ? { approvedDrafts: (ticket.attachments ?? []).filter((a) => a?.type === "Draft" && a.status === "submitted").map((a) => ({ ...fileIdentity(a, null), ...storedHashAuditFields(a, attachHashCtx) })) }
         : {}),
       ...(hashKeys.length > 0 ? { filesHashedIn: filesHashedAction } : {}),
       // EVID-12 (DF-P5 fix pass 2): the sign-off that COMPLETES a roster is
@@ -2389,6 +2474,15 @@ export async function POST(req: NextRequest) {
           const fileHashes = await hashStoredFiles(hashKeys, { deadlineMs: HASH_LIMITS.legacyDeadlineMs, byteBudget: HASH_LIMITS.legacyByteBudget });
           const hashOf = (a: TicketAttachment): FileHash => (a.url ? fileHashes.get(a.url) : undefined)
             ?? { ok: false, transient: false, reason: APPROVING_ACTIONS.has(action.action) ? "not hashed (not the revision being approved)" : "not a storage key" };
+          // EVID-12 (fleet F7): a file with a sealed attach-time hash is
+          // read again here, so this row says whether the bytes still match
+          // what was hashed at attach (a key can be written again) — the
+          // field is added only for such a file, so a file with no stored
+          // hash is recorded exactly as before.
+          const matchFields = (a: TicketAttachment | undefined, h: FileHash | undefined): Record<string, unknown> => {
+            const stored = a ? verifiedStoredHash(a, attachHashCtx) : null;
+            return stored && h?.ok ? { matchesStoredHash: h.sha256 === stored.sha256 } : {};
+          };
           const err = await insertAuditRowOnce({
             id: crypto.randomUUID(),
             action: filesHashedAction,
@@ -2401,13 +2495,20 @@ export async function POST(req: NextRequest) {
             details: {
               approval: approvalRowId,
               deliverable_rev: rev,
-              ...(finalAtt ? { finalAttachment: hashedIdentity(finalAtt, finalEtag, hashOf(finalAtt)) } : {}),
-              ...(approvedDrafts.length > 0 ? { approvedDrafts: approvedDrafts.map((a) => hashedIdentity(a, null, hashOf(a))) } : {}),
+              ...(finalAtt ? { finalAttachment: { ...hashedIdentity(finalAtt, finalEtag, hashOf(finalAtt)), ...matchFields(finalAtt, hashOf(finalAtt)) } } : {}),
+              ...(approvedDrafts.length > 0 ? { approvedDrafts: approvedDrafts.map((a) => ({ ...hashedIdentity(a, null, hashOf(a)), ...matchFields(a, hashOf(a)) })) } : {}),
               ...(asIs.length > 0 ? {
                 issuedAsIsFinals: asIs.map((f) => {
                   const d = approvedDrafts.find((x) => x.id === f.issuedFromDraftId);
                   const h = d ? hashOf(d) : undefined;
-                  return { ...f, sha256: h?.ok ? h.sha256 : null, ...(h && !h.ok ? { sha256Unavailable: h.reason } : {}) };
+                  // the approval's row carried what was stored on `f` (the
+                  // hash and its binding, or that its seal did not verify);
+                  // this row states only the hash read now and whether it
+                  // matches — all three stored-side fields are left out, so
+                  // every as-is Final here has the same shape
+                  const { sha256: _stored, sha256AtAttach: _boundTo, sha256AtAttachUnverified: _unverified, ...named } = f as typeof f & { sha256?: unknown; sha256AtAttach?: unknown; sha256AtAttachUnverified?: unknown };
+                  void _stored; void _boundTo; void _unverified;
+                  return { ...named, sha256: h?.ok ? h.sha256 : null, ...(h && !h.ok ? { sha256Unavailable: h.reason } : {}), ...matchFields(d, h) };
                 }),
               } : {}),
             },

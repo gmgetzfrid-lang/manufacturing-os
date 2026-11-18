@@ -20,6 +20,8 @@ import {
 } from "@/lib/storageKey";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { enforceOrgAccess } from "@/lib/serverAuth";
+import { ticketKeyOverwriteRefusal, r2Head } from "@/lib/ticketKeyOverwrite";
+import { versionKeyWriteRefusal } from "@/lib/versionKeyWriteGate";
 
 export const runtime = "nodejs";
 
@@ -75,6 +77,20 @@ export async function POST(req: NextRequest) {
   if (nodeImage && action === "create") {
     const problem = nodeImageUploadProblem(body.contentType);
     if (problem) return bad(problem.error, problem.status);
+  }
+  // drafting-flow EVID-17: as upload-url — a request's stored file is never
+  // overwritten. Asked when an upload opens and again when it completes (the
+  // moment the bytes land), so an upload opened before the file was attached
+  // cannot replace it afterwards. Signing a part and aborting are unchanged.
+  // document-control PKG-15: upload-url's PKG-1 check, the same helper,
+  // words and codes — a document version's bytes (a file of 64 MB or more
+  // comes this way) are never overwritten. Asked at create and at complete
+  // (when the bytes land), first, as upload-url asks it first.
+  if (action === "create" || action === "complete") {
+    const versionRefusal = await versionKeyWriteRefusal(supabaseAdmin, path);
+    if (versionRefusal) return bad(versionRefusal.error, versionRefusal.status);
+    const refusal = await ticketKeyOverwriteRefusal(supabaseAdmin, r2Head(r2 as never, R2_BUCKET), path);
+    if (refusal) return bad(refusal.error, refusal.status);
   }
 
   try {
