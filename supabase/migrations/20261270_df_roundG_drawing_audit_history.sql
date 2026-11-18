@@ -31,19 +31,29 @@
 --      writers stamp audited_at on every write, and the route writes a
 --      still-waiting provisional row again on every record, so a plain
 --      row-changed test would copy the whole row on every re-record. The
---      history keeps a row only when the verdict changed: any column but
---      audited_at (status, source, document, key), or audit_details with
---      its bookkeeping removed — by and byName (who pressed record),
---      coverage (the index fingerprints the verdict was computed from) and
---      set.sheets (the sheet list, carried only by the first row of a run).
+--      history keeps a row only when the verdict changed:
+--        * any column but id, audited_at and audit_details — the whole row
+--          as jsonb, less those three, so a column added later is compared
+--          with no change here (status, source, document, key); or
+--        * audit_details with its bookkeeping removed by
+--          drawing_audit_verdict_details(jsonb): by and byName (who pressed
+--          record) and set.sheets (the sheet list, carried only by the
+--          first row of a run; an older run finds its list by set.digest).
 --      Everything else in audit_details is compared: the seven findings
---      lists, provisional and waitingFindings, note, the set scope (count,
---      digest, truncated, seriesNotJudged), knowledgeDocumentId, libraryId,
---      and any key a later writer adds. An identical re-record (measured on
---      the route: only audited_at differs) keeps nothing; the current row
---      still carries the newest audited_at.
+--      lists, provisional and waitingFindings, note, coverage (the index
+--      fingerprints the verdict was computed from: it changes only when an
+--      input changed, so a pass against one index and a pass against the
+--      next are two verdicts — the integrator's second review ruling), the
+--      set scope (count, digest, truncated, seriesNotJudged),
+--      knowledgeDocumentId, libraryId, and any key a later writer adds.
+--      The helper NEVER raises: it strips only when audit_details is an
+--      object (and set.sheets only when set is an object); any other shape
+--      (a scalar, an array, a set that is an array) is compared whole, so a
+--      write of an odd row is never refused by the history. An identical
+--      re-record (measured on the route: only audited_at differs) keeps
+--      nothing; the current row still carries the newest audited_at.
 --      lib/drawingAuditLog.ts VERDICT_BOOKKEEPING_DETAILS names the same
---      keys (pinned equal by test).
+--      paths (pinned equal by test).
 --      Reading it: the SAME predicate as drawing_audit_logs_read (an active
 --      member of the org) — never wider; the final SELECT compares the two
 --      policy expressions. Writing it: nobody — INSERT, UPDATE, DELETE and
@@ -244,14 +254,41 @@ REVOKE ALL ON FUNCTION public.drawing_audit_logs_record_history() FROM PUBLIC, a
 COMMENT ON FUNCTION public.drawing_audit_logs_record_history() IS
   'EVID-14 (20261270): appends the replaced or removed drawing_audit_logs row to drawing_audit_log_history in the same statement. SECURITY DEFINER (search_path pinned, EXECUTE revoked from every client role — DRLS-16): the history has no write grant or policy for any client.';
 
+-- What of audit_details is the verdict: the details less the bookkeeping
+-- (by, byName, set.sheets). Never raises: any shape but an object is
+-- returned whole, and set.sheets is removed only from a set that is an
+-- object. IMMUTABLE, search_path pinned; the trigger condition below calls
+-- it in the writing session, so authenticated (the SURF-7 controller path)
+-- and service_role (the two server writers) keep EXECUTE; PUBLIC and anon
+-- do not (anon has no write path on drawing_audit_logs).
+CREATE OR REPLACE FUNCTION public.drawing_audit_verdict_details(p_details jsonb)
+RETURNS jsonb
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+SECURITY INVOKER
+SET search_path = public
+AS $$
+  SELECT CASE
+           WHEN jsonb_typeof(p_details) IS DISTINCT FROM 'object' THEN p_details
+           WHEN jsonb_typeof(p_details -> 'set') = 'object'
+             THEN jsonb_set(p_details - '{by,byName}'::text[], '{set}', (p_details -> 'set') - 'sheets')
+           ELSE p_details - '{by,byName}'::text[]
+         END
+$$;
+REVOKE ALL ON FUNCTION public.drawing_audit_verdict_details(jsonb) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.drawing_audit_verdict_details(jsonb) TO authenticated, service_role;
+COMMENT ON FUNCTION public.drawing_audit_verdict_details(jsonb) IS
+  'EVID-14 (20261270): the verdict in a drawing_audit_logs.audit_details, less its bookkeeping (by, byName, set.sheets). Never raises; any shape but an object is returned whole. Used by the history trigger condition.';
+
 DROP TRIGGER IF EXISTS trg_drawing_audit_logs_history_update ON drawing_audit_logs;
 CREATE TRIGGER trg_drawing_audit_logs_history_update
   AFTER UPDATE ON drawing_audit_logs
   FOR EACH ROW
-  WHEN ((OLD.org_id, OLD.library_id, OLD.document_id, OLD.sheet_number, OLD.revision_code, OLD.status, OLD.source)
-          IS DISTINCT FROM (NEW.org_id, NEW.library_id, NEW.document_id, NEW.sheet_number, NEW.revision_code, NEW.status, NEW.source)
-        OR ((OLD.audit_details - '{by,byName,coverage}'::text[]) #- '{set,sheets}'::text[])
-          IS DISTINCT FROM ((NEW.audit_details - '{by,byName,coverage}'::text[]) #- '{set,sheets}'::text[]))
+  WHEN ((to_jsonb(OLD) - '{id,audited_at,audit_details}'::text[])
+          IS DISTINCT FROM (to_jsonb(NEW) - '{id,audited_at,audit_details}'::text[])
+        OR public.drawing_audit_verdict_details(OLD.audit_details)
+          IS DISTINCT FROM public.drawing_audit_verdict_details(NEW.audit_details))
   EXECUTE FUNCTION public.drawing_audit_logs_record_history();
 
 DROP TRIGGER IF EXISTS trg_drawing_audit_logs_history_delete ON drawing_audit_logs;
@@ -314,22 +351,30 @@ SELECT 0, 'drawing_audit_logs_stamp_source(): SECURITY INVOKER, search_path pinn
        AND NOT has_function_privilege('authenticated', 'public.drawing_audit_logs_stamp_source()', 'EXECUTE'),
        NULL
 UNION ALL
-SELECT 0, 'the three triggers are bound to drawing_audit_logs: source stamp (BEFORE INSERT OR UPDATE), history on an UPDATE that changes the verdict (every column but audited_at; audit_details without by, byName, coverage, set.sheets), history on DELETE',
+SELECT 0, 'the three triggers are bound to drawing_audit_logs: source stamp (BEFORE INSERT OR UPDATE), history on an UPDATE that changes the verdict (the row as jsonb less id, audited_at, audit_details; audit_details through drawing_audit_verdict_details), history on DELETE',
        (SELECT COUNT(*) = 3 FROM pg_trigger t
          WHERE t.tgrelid = 'public.drawing_audit_logs'::regclass AND NOT t.tgisinternal AND t.tgenabled = 'O'
            AND t.tgname IN ('trg_drawing_audit_logs_stamp_source', 'trg_drawing_audit_logs_history_update', 'trg_drawing_audit_logs_history_delete'))
        AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = 'public.drawing_audit_logs'::regclass
                      AND t.tgname = 'trg_drawing_audit_logs_history_update'
                      AND pg_get_triggerdef(t.oid) LIKE '%AFTER UPDATE ON public.drawing_audit_logs FOR EACH ROW WHEN %'
-                     AND pg_get_triggerdef(t.oid) LIKE '%(old.org_id IS DISTINCT FROM new.org_id)%'
-                     AND pg_get_triggerdef(t.oid) LIKE '%(old.library_id IS DISTINCT FROM new.library_id)%'
-                     AND pg_get_triggerdef(t.oid) LIKE '%(old.document_id IS DISTINCT FROM new.document_id)%'
-                     AND pg_get_triggerdef(t.oid) LIKE '%(old.sheet_number IS DISTINCT FROM new.sheet_number)%'
-                     AND pg_get_triggerdef(t.oid) LIKE '%(old.revision_code IS DISTINCT FROM new.revision_code)%'
-                     AND pg_get_triggerdef(t.oid) LIKE '%(old.status IS DISTINCT FROM new.status)%'
-                     AND pg_get_triggerdef(t.oid) LIKE '%(old.source IS DISTINCT FROM new.source)%'
-                     AND pg_get_triggerdef(t.oid) LIKE '%((old.audit_details - %{by,byName,coverage}%::text[]) #- %{set,sheets}%::text[]) IS DISTINCT FROM ((new.audit_details - %{by,byName,coverage}%::text[]) #- %{set,sheets}%::text[])%'
-                     AND pg_get_triggerdef(t.oid) NOT LIKE '%audited_at%'),
+                     AND pg_get_triggerdef(t.oid) LIKE '%(to_jsonb(old.*) - %{id,audited_at,audit_details}%::text[]) IS DISTINCT FROM (to_jsonb(new.*) - %{id,audited_at,audit_details}%::text[])%'
+                     AND pg_get_triggerdef(t.oid) LIKE '%OR (drawing_audit_verdict_details(old.audit_details) IS DISTINCT FROM drawing_audit_verdict_details(new.audit_details))%'),
+       NULL
+UNION ALL
+SELECT 0, 'drawing_audit_verdict_details(jsonb): IMMUTABLE, SECURITY INVOKER, search_path pinned, strips only by, byName and set.sheets (coverage kept), never raises on a scalar, an array or an array set; EXECUTE for authenticated and service_role, not anon',
+       EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
+                WHERE ns.nspname = 'public' AND p.proname = 'drawing_audit_verdict_details'
+                  AND pg_get_function_identity_arguments(p.oid) = 'p_details jsonb'
+                  AND p.provolatile = 'i' AND NOT p.prosecdef AND 'search_path=public' = ANY (p.proconfig))
+       AND public.drawing_audit_verdict_details('{"by":"a","byName":"A","coverage":{"k":"1"},"note":"n","set":{"digest":"d","sheets":["S"]}}'::jsonb)
+           = '{"coverage":{"k":"1"},"note":"n","set":{"digest":"d"}}'::jsonb
+       AND public.drawing_audit_verdict_details('"x"'::jsonb) = '"x"'::jsonb
+       AND public.drawing_audit_verdict_details('[1,2]'::jsonb) = '[1,2]'::jsonb
+       AND public.drawing_audit_verdict_details('{"by":"a","set":[1]}'::jsonb) = '{"set":[1]}'::jsonb
+       AND has_function_privilege('authenticated', 'public.drawing_audit_verdict_details(jsonb)', 'EXECUTE')
+       AND has_function_privilege('service_role', 'public.drawing_audit_verdict_details(jsonb)', 'EXECUTE')
+       AND NOT has_function_privilege('anon', 'public.drawing_audit_verdict_details(jsonb)', 'EXECUTE'),
        NULL
 UNION ALL
 SELECT 0, 'drawing_audit_logs unchanged: its key UNIQUE (org_id, library_id, sheet_number, revision_code) NULLS NOT DISTINCT, and exactly its three policies (member SELECT, controller INSERT / UPDATE; no DELETE)',

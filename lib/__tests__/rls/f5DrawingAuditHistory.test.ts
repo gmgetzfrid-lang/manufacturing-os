@@ -12,7 +12,7 @@
 //   EVID-14 done-when 1 / 4: every verdict a write replaces (or a delete
 //   removes) is kept whole in drawing_audit_log_history — a same-severity
 //   re-record keeps the earlier findings; a re-record that changes nothing of
-//   substance (audited_at, who recorded, coverage, the run's sheet list —
+//   substance (audited_at, who recorded, the run's sheet list —
 //   VERDICT_BOOKKEEPING_DETAILS) keeps nothing (the F5 review ruling).
 //   EVID-14 done-when 2: source — engine / orchestrator as the server names
 //   them, a value outside the three refused, a signed-in session's direct
@@ -57,16 +57,24 @@ interface Verdict {
   doc?: string | null;
   /** More audit_details keys, as the writers send them. */
   extra?: Record<string, unknown>;
+  /** audit_details as this JSON instead (any shape: a scalar, an array). */
+  raw?: string;
 }
 
 /** The upsert as PostgREST sends the drawing route's / the tool's write:
  *  ON CONFLICT on the 20261124 key, every column of the payload set. */
-function upsert(v: Verdict): string {
-  const details = JSON.stringify({ brokenConnectors: v.findings, by: "harness", ...v.extra });
-  const cols = ["org_id", "library_id", "document_id", "sheet_number", "revision_code", "status", "audited_at", "audit_details", ...(v.source !== undefined ? ["source"] : [])];
+/** One upsert of every row given, as PostgREST sends a batch (one
+ *  statement: a row refused refuses the whole batch). */
+function upsert(...rows: Verdict[]): string {
+  const withSource = rows[0].source !== undefined;
+  const cols = ["org_id", "library_id", "document_id", "sheet_number", "revision_code", "status", "audited_at", "audit_details", ...(withSource ? ["source"] : [])];
   const lit = (x: string | null | undefined) => (x == null ? "NULL" : `'${x}'`);
-  const vals = [lit(v.org), lit(v.lib), lit(v.doc ?? null), lit(v.sheet), lit(v.rev), lit(v.status), `'${v.at}'`, `$j$${details}$j$::jsonb`, ...(v.source !== undefined ? [lit(v.source)] : [])];
-  return `INSERT INTO drawing_audit_logs (${cols.join(", ")}) VALUES (${vals.join(", ")})
+  const tuple = (v: Verdict) => {
+    const details = v.raw ?? JSON.stringify({ brokenConnectors: v.findings, by: "harness", ...v.extra });
+    const vals = [lit(v.org), lit(v.lib), lit(v.doc ?? null), lit(v.sheet), lit(v.rev), lit(v.status), `'${v.at}'`, `$j$${details}$j$::jsonb`, ...(withSource ? [lit(v.source)] : [])];
+    return `(${vals.join(", ")})`;
+  };
+  return `INSERT INTO drawing_audit_logs (${cols.join(", ")}) VALUES ${rows.map(tuple).join(", ")}
           ON CONFLICT (org_id, library_id, sheet_number, revision_code)
           DO UPDATE SET ${cols.map((c) => `${c} = EXCLUDED.${c}`).join(", ")}`;
 }
@@ -127,7 +135,7 @@ describe.skipIf(skip !== null)("F5 / EVID-14 — every replaced drawing audit ve
     const first = paste(copyOf(mosDb().report!.checkpoints["20261270"], "first"));
     const again = paste(db);
     for (const p of [first, again]) {
-      expect(p.probes.length).toBe(8);
+      expect(p.probes.length).toBe(9);
       expect(p.probes.filter((l) => l.endsWith("|f|"))).toEqual([]);
       expect(p.inventory.length).toBe(6); // five BEFORE counts + one AFTER count
       for (const l of p.inventory) expect(l).toMatch(/\|\|\d+$/);
@@ -166,18 +174,75 @@ describe.skipIf(skip !== null)("F5 / EVID-14 — every replaced drawing audit ve
       ...over,
     });
 
-    it("an identical re-record — new audited_at, another recorder, a new coverage fingerprint, no sheet list on this run — keeps no history row; the current row takes the new audited_at", () => {
+    it("an identical re-record — new audited_at, another recorder, no sheet list on this run — keeps no history row; the current row takes the new audited_at", () => {
       const sheet = sheetN();
       const first = routeRow(sheet);
       expect(asCaller(db, SERVICE, upsert(first))).toEqual({ ok: true, rows: 1 });
       const again = routeRow(sheet, {
         at: "2026-11-09T00:00:00Z",
-        extra: { ...first.extra, by: "someone-else", byName: "Someone Else", coverage: { "k-1": "0000aaaa+a141618a" }, set: { count: 3, digest: "61fc8843", truncated: false, seriesNotJudged: ["030-PID"] } },
+        extra: { ...first.extra, by: "someone-else", byName: "Someone Else", set: { count: 3, digest: "61fc8843", truncated: false, seriesNotJudged: ["030-PID"] } },
       });
       expect(asCaller(db, SERVICE, upsert(again))).toEqual({ ok: true, rows: 1 });
       expect(asCaller(db, SERVICE, upsert(again))).toEqual({ ok: true, rows: 1 }); // and byte-identical
       expect(kept(sheet)).toBe("0");
       expect(one(db, `SELECT to_char(audited_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') FROM drawing_audit_logs WHERE org_id = '${orgId}' AND sheet_number = '${sheet}'`)).toBe("2026-11-09");
+    });
+
+    it("a coverage-only change (the same findings computed against a new index) keeps ONE row: the earlier verdict and the index it was computed from (the second review ruling)", () => {
+      const sheet = sheetN();
+      const first = routeRow(sheet);
+      asCaller(db, SERVICE, upsert(first));
+      expect(asCaller(db, SERVICE, upsert({ ...first, at: "2026-11-02T00:00:00Z", extra: { ...first.extra, coverage: { "k-1": "0000aaaa+a141618a" } } }))).toEqual({ ok: true, rows: 1 });
+      expect(one(db, `SELECT count(*) || '|' || string_agg(audit_details #>> '{coverage,k-1}', ',') FROM drawing_audit_log_history WHERE org_id = '${orgId}' AND sheet_number = '${sheet}'`)).toBe("1|7de1b6c1+a141618a");
+    });
+
+    it("never raises on an odd audit_details: set as an array, details as a scalar or an array — each write lands; a shape change keeps a row, the same odd shape again keeps none", () => {
+      const sheet = sheetN();
+      const v = routeRow(sheet);
+      asCaller(db, SERVICE, upsert(v));
+      const steps: Array<[string, string, string]> = [
+        ["set as an array", JSON.stringify({ brokenConnectors: ["x"], by: "a", set: ["S-1", "S-2"] }), "1"],
+        ["the same, recorder changed", JSON.stringify({ brokenConnectors: ["x"], by: "b", set: ["S-1", "S-2"] }), "1"],
+        ["details as a scalar", JSON.stringify("just a note"), "2"],
+        ["the same scalar again", JSON.stringify("just a note"), "2"],
+        ["details as an array", JSON.stringify([1, 2]), "3"],
+        ["the same array again", JSON.stringify([1, 2]), "3"],
+        ["back to an object", JSON.stringify({ brokenConnectors: [], by: "a" }), "4"],
+      ];
+      steps.forEach(([what, raw, rows], i) => {
+        expect(asCaller(db, SERVICE, upsert({ ...v, raw, at: `2026-11-1${i}T00:00:00Z` })), what).toEqual({ ok: true, rows: 1 });
+        expect(one(db, `SELECT audit_details = $j$${raw}$j$::jsonb FROM drawing_audit_logs WHERE org_id = '${orgId}' AND sheet_number = '${sheet}'`), what).toBe("t");
+        expect(kept(sheet), what).toBe(rows);
+      });
+    });
+
+    it("a batched upsert with one odd row (details an array) and one with set as an array still writes every row", () => {
+      const [a, b, c] = [sheetN(), sheetN(), sheetN()];
+      expect(asCaller(db, SERVICE, upsert(routeRow(a), routeRow(b), routeRow(c)))).toEqual({ ok: true, rows: 3 });
+      const batch = [
+        routeRow(a, { findings: ["OPC-9"], at: "2026-11-02T00:00:00Z" }),
+        routeRow(b, { raw: JSON.stringify(["odd"]), at: "2026-11-02T00:00:00Z" }),
+        routeRow(c, { raw: JSON.stringify({ brokenConnectors: [], set: [1] }), at: "2026-11-02T00:00:00Z" }),
+      ];
+      expect(asCaller(db, SERVICE, upsert(...batch))).toEqual({ ok: true, rows: 3 });
+      expect(one(db, `SELECT string_agg(sheet_number || ':' || to_char(audited_at AT TIME ZONE 'UTC', 'MM-DD'), ',' ORDER BY sheet_number) FROM drawing_audit_logs WHERE org_id = '${orgId}' AND sheet_number IN ('${a}', '${b}', '${c}')`))
+        .toBe(`${a}:11-02,${b}:11-02,${c}:11-02`);
+      expect([a, b, c].map(kept)).toEqual(["1", "1", "1"]);
+      expect(asCaller(db, SERVICE, upsert(...batch.map((r) => ({ ...r, at: "2026-11-03T00:00:00Z" }))))).toEqual({ ok: true, rows: 3 });
+      expect([a, b, c].map(kept)).toEqual(["1", "1", "1"]);
+    });
+
+    it("every column of drawing_audit_logs (the live catalog) has its column in the history, and a change to any column but id, audited_at and audit_details keeps a row with no list to maintain", () => {
+      const live = one(db, `SELECT string_agg(column_name, ',' ORDER BY column_name) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'drawing_audit_logs'`).split(",");
+      const hist = one(db, `SELECT string_agg(column_name, ',' ORDER BY column_name) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'drawing_audit_log_history'`).split(",");
+      for (const col of live) expect(hist, col).toContain(col === "id" ? "log_id" : col);
+      const sheet = sheetN();
+      asCaller(db, SERVICE, upsert(routeRow(sheet)));
+      // a column the upsert never changes (its conflict key): changed directly
+      expect(asCaller(db, SERVICE, `UPDATE drawing_audit_logs SET library_id = '${randomUUID()}' WHERE org_id = '${orgId}' AND sheet_number = '${sheet}'`)).toEqual({ ok: true, rows: 1 });
+      expect(kept(sheet)).toBe("1");
+      expect(asCaller(db, SERVICE, `UPDATE drawing_audit_logs SET audited_at = now() WHERE org_id = '${orgId}' AND sheet_number = '${sheet}'`)).toEqual({ ok: true, rows: 1 });
+      expect(kept(sheet)).toBe("1");
     });
 
     it("a provisional row written again with nothing new (the route's still-waiting rewrite) keeps none", () => {

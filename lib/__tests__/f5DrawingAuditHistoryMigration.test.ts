@@ -93,20 +93,6 @@ describe("20261270 — one paste: prerequisite, inventory, transaction, one resu
     ]);
   });
 
-  it("history only on a change of substance: the UPDATE condition compares every column but id and audited_at, and audit_details without exactly VERDICT_BOOKKEEPING_DETAILS", () => {
-    const when = squash(/CREATE TRIGGER trg_drawing_audit_logs_history_update\s+AFTER UPDATE ON drawing_audit_logs\s+FOR EACH ROW\s+WHEN ([\s\S]*?)\s+EXECUTE FUNCTION public\.drawing_audit_logs_record_history\(\);/.exec(code)![1]);
-    const cols = ["org_id", "library_id", "document_id", "sheet_number", "revision_code", "status", "source"];
-    expect(when).toContain(`(${cols.map((c) => `OLD.${c}`).join(", ")}) IS DISTINCT FROM (${cols.map((c) => `NEW.${c}`).join(", ")})`);
-    expect(when).not.toMatch(/audited_at|OLD\.\*|OLD\.id\b/);
-    const top = VERDICT_BOOKKEEPING_DETAILS.filter((k) => !k.includes("."));
-    const nested = VERDICT_BOOKKEEPING_DETAILS.filter((k) => k.includes(".")).map((k) => k.split("."));
-    expect(nested).toEqual([["set", "sheets"]]); // one nested path: #- takes one
-    const stripped = (side: string) => `((${side}.audit_details - '{${top.join(",")}}'::text[]) #- '{${nested[0].join(",")}}'::text[])`;
-    expect(when).toContain(`OR ${stripped("OLD")} IS DISTINCT FROM ${stripped("NEW")}`);
-    // the columns compared are every column the table has, but id and audited_at (pinned below against the CREATE TABLE)
-    expect([...cols, "id", "audit_details", "audited_at"].sort()).toEqual(["id", "org_id", "document_id", "sheet_number", "revision_code", "status", "audit_details", "audited_at", "library_id", "source"].sort());
-  });
-
   it("the history is read with the NEWEST drawing_audit_logs_read expression, table name swapped — never wider; no write policy; every write grant revoked", () => {
     const newest = newestPolicyUsing("drawing_audit_logs_read", "drawing_audit_logs", FILE);
     const mine = newestPolicyUsing("drawing_audit_log_history_read", "drawing_audit_log_history", "99999999");
@@ -115,7 +101,8 @@ describe("20261270 — one paste: prerequisite, inventory, transaction, one resu
     const policies = [...code.matchAll(/CREATE POLICY (\w+) ON (\w+) FOR (\w+)/g)].map((m) => `${m[1]}|${m[2]}|${m[3]}`);
     expect(policies).toEqual(["drawing_audit_log_history_read|drawing_audit_log_history|SELECT"]);
     expect(squash(code)).toContain("REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON drawing_audit_log_history FROM anon, authenticated, service_role;");
-    expect(code).not.toMatch(/GRANT\s+(ALL|INSERT|UPDATE|DELETE|SELECT|EXECUTE)/);
+    // the one grant in the file: EXECUTE on the pure helper the trigger condition calls in the writing session
+    expect(squash(code).match(/GRANT [^;]+;/g)).toEqual(["GRANT EXECUTE ON FUNCTION public.drawing_audit_verdict_details(jsonb) TO authenticated, service_role;"]);
   });
 
   it("DRLS-16: the one SECURITY DEFINER pins search_path and revokes EXECUTE from every client role; the stamp function is SECURITY INVOKER", () => {
@@ -128,20 +115,48 @@ describe("20261270 — one paste: prerequisite, inventory, transaction, one resu
     expect(read("lib/__tests__/rls/definerDecisions.ts")).toMatch(/"drawing_audit_logs_record_history\(\)"/);
   });
 
-  it("the history keeps the replaced row whole: every column drawing_audit_logs has (20260929 + 20261124 + this file) is copied from OLD", () => {
-    const fnBody = code.slice(code.indexOf("FUNCTION public.drawing_audit_logs_record_history()"), code.indexOf("REVOKE ALL ON FUNCTION public.drawing_audit_logs_record_history()"));
-    const values = squash(fnBody.slice(fnBody.indexOf("VALUES")));
-    for (const col of ["id", "org_id", "library_id", "document_id", "sheet_number", "revision_code", "status", "source", "audit_details", "audited_at"]) {
-      expect(values).toContain(`OLD.${col}`);
+  it("history only on a change of substance: the whole row as jsonb less id, audited_at and audit_details (a later column is compared automatically), and audit_details through the helper, which strips exactly VERDICT_BOOKKEEPING_DETAILS", () => {
+    const when = squash(/CREATE TRIGGER trg_drawing_audit_logs_history_update\s+AFTER UPDATE ON drawing_audit_logs\s+FOR EACH ROW\s+WHEN ([\s\S]*?)\s+EXECUTE FUNCTION public\.drawing_audit_logs_record_history\(\);/.exec(code)![1]);
+    expect(when).toBe("((to_jsonb(OLD) - '{id,audited_at,audit_details}'::text[]) IS DISTINCT FROM (to_jsonb(NEW) - '{id,audited_at,audit_details}'::text[]) "
+      + "OR public.drawing_audit_verdict_details(OLD.audit_details) IS DISTINCT FROM public.drawing_audit_verdict_details(NEW.audit_details))");
+    const helper = squash(code.slice(code.indexOf("CREATE OR REPLACE FUNCTION public.drawing_audit_verdict_details(p_details jsonb)"), code.indexOf("REVOKE ALL ON FUNCTION public.drawing_audit_verdict_details(jsonb)")));
+    expect(helper).toContain("IMMUTABLE PARALLEL SAFE SECURITY INVOKER SET search_path = public");
+    const top = VERDICT_BOOKKEEPING_DETAILS.filter((k) => !k.includes("."));
+    const nested = VERDICT_BOOKKEEPING_DETAILS.filter((k) => k.includes(".")).map((k) => k.split("."));
+    expect(top).toEqual(["by", "byName"]);
+    expect(nested).toEqual([["set", "sheets"]]);
+    expect(VERDICT_BOOKKEEPING_DETAILS).not.toContain("coverage"); // the second review ruling: coverage is evidence
+    // never raises: strips only from an object, and set.sheets only from an object set; any other shape whole
+    expect(helper).toContain(`WHEN jsonb_typeof(p_details) IS DISTINCT FROM 'object' THEN p_details`);
+    expect(helper).toContain(`WHEN jsonb_typeof(p_details -> '${nested[0][0]}') = 'object' THEN jsonb_set(p_details - '{${top.join(",")}}'::text[], '{${nested[0][0]}}', (p_details -> '${nested[0][0]}') - '${nested[0][1]}')`);
+    expect(helper).toContain(`ELSE p_details - '{${top.join(",")}}'::text[] END`);
+    expect((helper.match(/'\{[^}]*\}'::text\[\]/g) ?? [])).toEqual([`'{${top.join(",")}}'::text[]`, `'{${top.join(",")}}'::text[]`]);
+    expect(code).toContain("REVOKE ALL ON FUNCTION public.drawing_audit_verdict_details(jsonb) FROM PUBLIC, anon;");
+    expect(code).toContain("GRANT EXECUTE ON FUNCTION public.drawing_audit_verdict_details(jsonb) TO authenticated, service_role;");
+  });
+
+  it("the history keeps the replaced row whole: every column drawing_audit_logs has — derived at test time from its CREATE TABLE and every ADD COLUMN in the sequence — is copied from OLD into a column of the history", () => {
+    const files = readdirSync(MIG).filter((f) => /^\d{8}.*\.sql$/.test(f)).sort();
+    const cols: string[] = [];
+    for (const f of files) {
+      const body = stripSqlComments(readFileSync(join(MIG, f), "utf8"));
+      const at = body.indexOf("CREATE TABLE IF NOT EXISTS drawing_audit_logs (");
+      if (at >= 0) {
+        const def = body.slice(at + "CREATE TABLE IF NOT EXISTS drawing_audit_logs (".length);
+        cols.push(...def.slice(0, def.indexOf(");")).split("\n").map((l) => l.trim().split(/\s+/)[0]).filter((c) => /^[a-z_]+$/.test(c)));
+      }
+      for (const m of body.matchAll(/ALTER TABLE (?:public\.)?drawing_audit_logs ADD COLUMN (?:IF NOT EXISTS )?(\w+)/g)) cols.push(m[1]);
     }
-    // and the table's own columns in 20260929 are exactly those, plus library_id (20261124) and source (here)
-    const created = stripSqlComments(readFileSync(join(MIG, "20260929_mention_engine.sql"), "utf8"));
-    const def = created.slice(created.indexOf("CREATE TABLE IF NOT EXISTS drawing_audit_logs ("));
-    const cols = def.slice(def.indexOf("(") + 1, def.indexOf(");")).split("\n").map((l) => l.trim().split(/\s+/)[0]).filter((c) => /^[a-z_]+$/.test(c));
-    expect(cols).toEqual(["id", "org_id", "document_id", "sheet_number", "revision_code", "status", "audit_details", "audited_at"]);
-    const later = readdirSync(MIG).filter((f) => /^\d{8}.*\.sql$/.test(f) && f !== FILE)
-      .filter((f) => /ALTER TABLE (public\.)?drawing_audit_logs ADD COLUMN/.test(stripSqlComments(readFileSync(join(MIG, f), "utf8"))));
-    expect(later).toEqual(["20261124_intel_roundG_drawing_audit_scope.sql"]);
+    expect(cols).toContain("library_id");
+    expect(cols).toContain("source");
+    const fnBody = code.slice(code.indexOf("FUNCTION public.drawing_audit_logs_record_history()"), code.indexOf("REVOKE ALL ON FUNCTION public.drawing_audit_logs_record_history()"));
+    const insert = squash(fnBody.slice(fnBody.indexOf("INSERT INTO drawing_audit_log_history")));
+    const values = insert.slice(insert.indexOf("VALUES"));
+    const table = squash(code.slice(code.indexOf("CREATE TABLE IF NOT EXISTS drawing_audit_log_history ("), code.indexOf("CREATE INDEX IF NOT EXISTS drawing_audit_log_history_key_idx")));
+    for (const col of new Set(cols)) {
+      expect(values, col).toContain(`OLD.${col}`);
+      expect(table, col).toMatch(new RegExp(`[(,] ${col === "id" ? "log_id" : col} `));
+    }
   });
 });
 
