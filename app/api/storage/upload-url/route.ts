@@ -9,6 +9,7 @@ import {
 } from "@/lib/storageKey";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { enforceOrgAccess } from "@/lib/serverAuth";
+import { ticketKeyOverwriteRefusal, r2Head } from "@/lib/ticketKeyOverwrite";
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -119,6 +120,14 @@ export async function POST(req: NextRequest) {
       );
     }
   }
+
+  // drafting-flow EVID-17: a request's stored file (a key under
+  // orgs/<org>/tickets/ that a request lists, whose bytes are in storage) is
+  // never re-signed — the approval, the issue and the attach row's sha256
+  // name those bytes. A fresh upload key, and the restore's put-back of a
+  // file that is not in storage, are signed exactly as before. Fail closed.
+  const ticketRefusal = await ticketKeyOverwriteRefusal(supabaseAdmin, r2Head(r2 as never, R2_BUCKET), path);
+  if (ticketRefusal) return NextResponse.json({ error: ticketRefusal.error }, { status: ticketRefusal.status });
 
   if (logo && orgMatch) {
     // ORG-5: a logo upload is recorded, naming the actor, before it is signed

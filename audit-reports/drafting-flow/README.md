@@ -28,7 +28,7 @@ use it without being taught.
 
 ## Findings
 
-**158 findings** — 9 CRITICAL, 47 HIGH, 67 MEDIUM, 35 LOW — plus **14 gap specs**, all
+**160 findings** — 9 CRITICAL, 48 HIGH, 68 MEDIUM, 35 LOW — plus **14 gap specs**, all
 buildable.
 
 Two passes. **`01`–`05`** are the design read: review tiering, friction, wiring,
@@ -46,7 +46,7 @@ completeness critic, every finding put through an adversarial refutation pass.
 | 07 | [Persistence & RLS](./07-persistence-and-rls.md) | 8 | What the database actually permits, and which writes fail silently |
 | 08 | [Routing & attention](./08-routing-and-attention.md) | 14 | Who is told what, and what goes quiet; `ROUTE-13` (LOW) opened by DF-P14's review fix pass, 2026-10-14, and `ROUTE-14` (LOW, RESOLVED) recorded at DF-P14's integrator fix pass, 2026-10-20 (both counted there) |
 | 09 | [Authority surfaces](./09-authority-surfaces.md) | 15 | Every door into a ticket, including the public verify endpoint — `AUTHZ-15` (LOW) opened at the admin-and-org P9 second review fix, 2026-10-07 (the count was corrected at the integrator's P9 fix pass) |
-| 10 | [Audit & evidence](./10-audit-evidence.md) | 16 | What this system could prove to a PSM auditor, and what it could not; `EVID-15`, `EVID-16` (LOW) opened by DF-P10, 2026-10-13 |
+| 10 | [Audit & evidence](./10-audit-evidence.md) | 18 | What this system could prove to a PSM auditor, and what it could not; `EVID-15`, `EVID-16` (LOW) opened by DF-P10, 2026-10-13; `EVID-17` (HIGH, RESOLVED) and `EVID-18` (MEDIUM) opened by fleet F7-EVID12's fix pass, 2026-11-18 |
 | 11 | [Document handoff](./11-document-handoff.md) | 13 | Where the request flow meets the controlled document, and the as-built path |
 | 12 | [Projects boundary](./12-projects-boundary.md) | 14 | The bidirectional-portal question, answered from the schema up — `PROJ-14` (LOW) opened and resolved by projects-joint J21, 2026-10-22 |
 | 13 | [Edges & invariants](./13-edges-and-invariants.md) | 20 | The completeness critic, plus what is sound and must not break. **Verified by hand** — record at the top of the file; `EDGE-16` (MEDIUM) opened by DF-P4's fix pass, 2026-10-13 (counted at DF-P4's fourth fix pass); recounted at the DF-P17 merge, 2026-10-21 — the three findings opened after that count (`EDGE-18` to `EDGE-20`) had not been counted here |

@@ -17,21 +17,22 @@
     "audit-reports/drafting-flow/13-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 158,
+    "findings": 160,
     "gaps": 16,
     "by_severity": {
       "CRITICAL": 9,
-      "HIGH": 47,
-      "MEDIUM": 67,
+      "HIGH": 48,
+      "MEDIUM": 68,
       "LOW": 35
     },
     "by_status": {
       "RESOLVED": 127,
       "RESOLVED (2026-10-13, DF-P4 — PASTE pending: `20261208`, after `20261195` and after the DF-P2 app deploy; until it is pasted a member's hand-written PostgREST insert can still choose `requester_name`)": 1,
       "RESOLVED (2026-10-13 — done-when 2's `CLOSED` reading ratified by the integrator at DF-P10's review fix pass 6: \"a closed row with no issued label answers cannot confirm\"; the forged-line residual below is owned by drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS)": 1,
-      "OPEN": 7,
+      "OPEN": 8,
       "RESOLVED (2026-10-13, by the integrator at the admin-and-org P8 merge — done-when 2 superseded by `DEC-103`; PASTE pending: `20261195`, paste guide row 153)": 1,
       "RESOLVED *(2026-10-14, admin-and-org Round G P13 — the dead-letter outbox and its drain, pending the `20261219` paste; see the Resolution at the end)*": 1,
+      "RESOLVED (2026-11-18, fleet F7-EVID12 fix pass — see the Resolution)": 1,
       "RESOLVED (2026-10-21, by the integrator's ruling at the DF-P6 merge, `DEC-90` — the unconfigured seed's requester pick accepted as a documented exception; see the ruling at the end of this finding)": 1,
       "REFUTED": 4,
       "RESOLVED (pending `20261239`)": 1,
@@ -797,6 +798,31 @@
       ],
       "refuted": false,
       "summary": "A concrete, already-present instance: activateAlternate is called from the daily cron with actorId: null (lib/reviewControl.ts:558), and its audit call passes userId: input.actorId ?? \"\" (lib/reviewControl.ts:386). auditlogs.userid is UUID (supabase/schema.sql:777), so the empty string is invalid input syntax (22P02) and the INSERT fails. logAuditAction swallows it, .catch(() => {}) at the call si",
+      "area": "drafting-flow",
+      "report": "audit-reports/drafting-flow/10-audit-evidence.md"
+    },
+    {
+      "id": "EVID-17",
+      "title": "A request's stored file can be replaced in place: the signed-upload doors sign a write to any key of the workspace except a published revision's, so the bytes an approval, an issue and a recorded sha256 name can change with no audit row and no earlier version kept",
+      "severity": "HIGH",
+      "status": "RESOLVED (2026-11-18, fleet F7-EVID12 fix pass — see the Resolution)",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by the independent review of F7-EVID12 (2026-11-18), and on base `a1d70abb` by this package.",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/storage/upload-url/route.ts",
+        "app/api/storage/multipart/route.ts",
+        "lib/storage.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial-independent",
+      "challenges": [
+        "adversarial",
+        "adversarial-independent"
+      ],
+      "refuted": false,
+      "summary": "A member who knows an issued Final's key (it is on the ticket row every member of the workspace reads) asks upload-url for that key and PUTs other bytes. The ticket, its approval and issue rows, the attach row's ETag and sha256 (EVID-12) all still name the file; every print and download now serves the new bytes. No audit row records the write, and storage keeps no earlier version.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/10-audit-evidence.md"
     },
@@ -2304,6 +2330,31 @@
       ],
       "refuted": false,
       "summary": "The OPC reference audit records P-101-02 at Rev C as brokenconnectors with the specific defect list in auditdetails. Someone asks the orchestrator assistant to 'mark P-101-02 rev C as reviewed and passed'; the tool upserts status 'passed' with auditdetails: { note: \"\", by: <uid> }. The original finding — that a connector on a live P&ID leads nowhere — is gone, with no prior-value record anywhere, ",
+      "area": "drafting-flow",
+      "report": "audit-reports/drafting-flow/10-audit-evidence.md"
+    },
+    {
+      "id": "EVID-18",
+      "title": "A request's listed file can still be replaced two narrower ways: the uploader's own signed PUT from before the attach, until it expires, and a controller's delete followed by a fresh put-back",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading the code on F7-EVID12's fix pass.",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/storage/upload-url/route.ts",
+        "lib/storage.ts",
+        "app/api/storage/delete/route.ts",
+        "lib/storageKeyRegistry.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A drafter uploads a Draft, attaches it, and within the URL's remaining minutes PUTs other bytes under the same key. The approval row carries the attach-time sha256 (EVID-12), which no longer describes the stored file. Or a controller deletes an issued Final (audited STORAGEDELETE) and uploads other bytes under its key.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/10-audit-evidence.md"
     },
