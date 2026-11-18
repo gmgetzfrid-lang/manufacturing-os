@@ -20,6 +20,8 @@ import JSZip from "jszip";
 import { S3Client, PutObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { createHash, randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer, type KeptAnswer } from "@/lib/checkedWriteAnswer";
 import { runOrgExport, recordExportUndelivered, DataExportEnvelope } from "@/lib/dataExport";
 import { EXPORT_OMITTED_COLUMNS } from "@/lib/exportTables";
 import { decryptSecret, hmacSign } from "@/lib/serverCrypto";
@@ -251,17 +253,34 @@ export async function closeSucceededRun(
   patch: Record<string, unknown>,
   outcome: RetentionOutcome | undefined,
 ): Promise<{ error: RunWriteError; retention: "written" | "none" | "unrecorded" | "close-failed" }> {
+  // SAF-21 (b): the run row records an export that has left — each write is
+  // checked, and one that matched no row (the run row went meanwhile) comes
+  // back as `error` (RUN_ROW_UNMATCHED), never as a closed run. The callers
+  // name it ("run row not updated: …") as they name a refused one.
   const cols = retentionRunColumns(outcome);
   if (!cols) {
-    const { error } = await admin.from("export_runs").update(patch).eq("id", runId);
-    return { error: error as RunWriteError, retention: "none" };
+    const kept = keptAnswer();
+    const w = await checkedWrite(answered(admin.from("export_runs").update(patch).eq("id", runId).select("id"), kept));
+    return { error: runWriteError(kept, w.ok), retention: "none" };
   }
-  const first = await admin.from("export_runs").update({ ...patch, ...cols }).eq("id", runId);
-  if (!first.error) return { error: null, retention: "written" };
-  if (!isMissingRetentionColumn(first.error)) return { error: first.error as RunWriteError, retention: "close-failed" };
+  const firstKept = keptAnswer();
+  const first = await checkedWrite(answered(admin.from("export_runs").update({ ...patch, ...cols }).eq("id", runId).select("id"), firstKept));
+  if (!firstKept.error) return first.ok ? { error: null, retention: "written" } : { error: runWriteError(firstKept, false), retention: "close-failed" };
+  if (!isMissingRetentionColumn(firstKept.error)) return { error: firstKept.error as RunWriteError, retention: "close-failed" };
   console.warn(`[data-export] run ${runId}: export_runs has no retention columns yet (paste ${RETENTION_COLUMNS_MIGRATION}); its purge counts stay in its diagnostics`);
-  const { error } = await admin.from("export_runs").update(patch).eq("id", runId);
-  return { error: error as RunWriteError, retention: "unrecorded" };
+  const kept = keptAnswer();
+  const w = await checkedWrite(answered(admin.from("export_runs").update(patch).eq("id", runId).select("id"), kept));
+  return { error: runWriteError(kept, w.ok), retention: "unrecorded" };
+}
+
+/** SAF-21: a run-row close that matched no row (the run row went meanwhile). */
+export const RUN_ROW_UNMATCHED = "the run row was not found (it may have been removed meanwhile), so this run is not recorded on it";
+
+/** The close's error as the callers read it: the database's own (whole), or
+ *  RUN_ROW_UNMATCHED for a write that matched nothing; null once a row matched. */
+function runWriteError(kept: KeptAnswer, matched: boolean): RunWriteError {
+  if (kept.error) return kept.error as RunWriteError;
+  return matched ? null : { message: RUN_ROW_UNMATCHED };
 }
 
 type DeliveryMode =

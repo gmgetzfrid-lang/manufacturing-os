@@ -99,6 +99,8 @@ import { ticketReviewRouting } from "@/lib/routingControl";
 import { currentRoster, ticketResource, engineeringGateRequired, ISSUE_AS_IS_NOTE } from "@/lib/workflow";
 import { isDeclaredLikeInKind, declarationSignatureStands, type DeclarationSignatureRow } from "@/lib/reviewModel";
 import { heldRoles } from "@/lib/roleHeld";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { flaggedRequestTypes } from "@/lib/requestTypes";
 import { parseExaminationScopeConfig, applicableRequirements, scopeGateOutcome, type ScopeGateOutcome } from "@/lib/examinationScope";
 import { requestHoldStop } from "@/lib/requestHoldStop";
@@ -339,6 +341,11 @@ export async function openConsentWindow(db: Db, input: {
   }
 }
 
+/** The compare-and-set's bind: last_modified still the one read (or still null). */
+function boundToLastModified<Q extends { eq(column: string, value: string): Q; is(column: string, value: null): Q }>(q: Q, lastModified: string | null): Q {
+  return lastModified ? q.eq("last_modified", lastModified) : q.is("last_modified", null);
+}
+
 /**
  * DEC-90 ruling (4) (DF-P7 final fix pass — scale): mark a review's `open`
  * consent plan `opened` once its window is open on that same roster, so the
@@ -362,10 +369,13 @@ export async function markConsentPlanOpened(db: Db, input: { ticketId: string; r
     const plan = roster?.consentPlan;
     if (!roster || roster.id !== input.rosterId || !plan || plan.kind !== "open") return null;
     const opened: TicketConsentPlan = { ...plan, kind: "opened" };
-    let q = db.from("tickets").update({ metadata: { ...meta, review_roster: { ...roster, consentPlan: opened } } })
-      .eq("id", input.ticketId).eq("consent_window_roster", input.rosterId);
-    q = row.last_modified ? q.eq("last_modified", row.last_modified) : q.is("last_modified", null);
-    const { error: uErr } = await q.select("id");
+    // SAF-21 (c): the compare-and-set reads its matched rows; none matched
+    // means a write raced it — the plan stays `open` and the next run re-marks
+    // it (null, as before). A database error is answered, as before.
+    const kept = keptAnswer();
+    await checkedWrite(answered(boundToLastModified(db.from("tickets").update({ metadata: { ...meta, review_roster: { ...roster, consentPlan: opened } } })
+      .eq("id", input.ticketId).eq("consent_window_roster", input.rosterId), row.last_modified ?? null).select("id"), kept));
+    const uErr = kept.error;
     return uErr ? (uErr.message || "the mark was refused") : null;
   } catch (e) {
     return (e as Error)?.message ?? String(e);
@@ -1292,7 +1302,10 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     if (complete && String(newStatus) === "FINAL_DRAFT") {
       const sheetIds = parseSourceDocuments(ticket.metadata).map((d) => d.id);
       for (let i = 0; i < sheetIds.length; i += SOURCE_READ_CAP) {
-        const { error: iErr } = await sb.from("document_intents").delete().in("document_id", sheetIds.slice(i, i + SOURCE_READ_CAP)).eq("ticket_id", ticketId).eq("source", "ticket");
+        // SAF-21 (c): no intent to clear is a success; an error is said, as before.
+        const cleared = keptAnswer();
+        await checkedWrite(answered(sb.from("document_intents").delete().in("document_id", sheetIds.slice(i, i + SOURCE_READ_CAP)).eq("ticket_id", ticketId).eq("source", "ticket").select("id"), cleared));
+        const iErr = cleared.error;
         if (iErr) { say(`ticket ${ticketId}: the request issued, but its document intents were not cleared (they lapse at their expiry): ${iErr.message}`); break; }
       }
     }

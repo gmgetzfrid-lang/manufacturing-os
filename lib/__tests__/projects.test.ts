@@ -283,6 +283,20 @@ describe("PM-4 dw4 — the sweep releases checkouts stranded on a closed project
     expect(notes[0]).toMatchObject({ user_id: "ann", title: "Your project checkout was released", kind: "checkout_auto_released" }); // N9 (PROD-13): its own kind
   });
 
+  it("SAF-21 (c): a sweep whose sessions were all checked in meanwhile matches no row — nothing released, no notice; a database error still throws", async () => {
+    const { supabase } = await import("@/lib/supabase");
+    const longAgo = new Date(Date.now() - CLOSED_PROJECT_SWEEP_MS - 60_000).toISOString();
+    state.queue["checkout_sessions.select"] = [{ data: [] }, { data: [{ id: "s1", project_id: "p-old" }] }];
+    state.rows.projects = [{ id: "p-old", status: "cancelled", cancelled_at: longAgo, updated_at: longAgo }];
+    state.queue["checkout_sessions.update"] = [{ data: [] }];
+    expect(await autoReleaseExpiredAdHoc(null, { client: supabase as never })).toBe(0);
+    expect(writesTo("checkout_sessions", "update")).toHaveLength(1);
+    expect(writesTo("notifications", "insert")).toHaveLength(0);
+    state.queue["checkout_sessions.select"] = [{ data: [] }, { data: [{ id: "s1", project_id: "p-old" }] }];
+    state.queue["checkout_sessions.update"] = [{ error: { message: "permission denied for table checkout_sessions", code: "42501" } }];
+    await expect(autoReleaseExpiredAdHoc(null, { client: supabase as never })).rejects.toThrow(/^Expired checkouts were NOT released: /);
+  });
+
   it("the window runs from the CLOSURE, not updated_at: a later edit to a closed project does not restart it; an archive reads its closing feed row", async () => {
     const { supabase } = await import("@/lib/supabase");
     const longAgo = new Date(Date.now() - CLOSED_PROJECT_SWEEP_MS - 60_000).toISOString();

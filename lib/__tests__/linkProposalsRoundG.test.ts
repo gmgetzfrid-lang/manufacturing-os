@@ -494,6 +494,23 @@ describe("LNK-6 — a match that never returns switches its skill off with the r
     expect(run.notes.join(" ")).toMatch(/without finishing and was stopped — the skill was switched off/);
     expect(pending().filter((r) => String(r.proposer).startsWith("rule:"))).toHaveLength(0);
   }, 20_000);
+  it("SAF-21 (b): the switch-off reads its matched row — one that matched no row (the skill went meanwhile) is said as not switched off; the ordinary path is unchanged", async () => {
+    setup("\\bWO-\\d{5}\\b", "Repairs per WO-10023 completed.");
+    const stuck: SkillMatcherFactory = () => ({
+      match: async () => ({ found: [], terminated: { index: 0, ms: 900 }, skipped: [], budgetSpent: false, error: null }),
+      close: async () => {},
+    } as unknown as ReturnType<SkillMatcherFactory>);
+    db.ref.refuseWrites.add("link_rules");
+    const refused = await runLinkProposers(admin(), ORG, { matcher: stuck });
+    expect(t("link_rules").find((r) => r.id === "r1")!.enabled).toBe(true);
+    expect(refused.notes.join(" ")).toMatch(/“Work orders”: one match never finished and was stopped; it could not be switched off \(the skill was not found — it may have been deleted meanwhile\)\./);
+    expect(refused.notes.join(" ")).not.toMatch(/the skill was switched off/);
+    db.ref.refuseWrites.delete("link_rules");
+    const landed = await runLinkProposers(admin(), ORG, { matcher: stuck });
+    expect(t("link_rules").find((r) => r.id === "r1")!).toMatchObject({ enabled: false, disabled_reason: expect.stringMatching(/one match ran for 900 ms/) });
+    expect(landed.disabledSkills).toEqual(["Work orders"]);
+    expect(landed.notes.join(" ")).toMatch(/“Work orders”: one match ran for 900 ms on one page without finishing and was stopped — the skill was switched off\./);
+  });
   it("fix pass 2: a soft overrun (one slow page) skips that document for the skill, keeps the skill on and says so", async () => {
     setup("\\bWO-\\d{5}\\b", "Repairs per WO-10023 completed.");
     const soft: SkillMatcherFactory = () => ({

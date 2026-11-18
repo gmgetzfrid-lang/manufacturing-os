@@ -91,7 +91,8 @@ function deleteResolver(opts: { docs: Array<Record<string, unknown>>; reclocks: 
     if (table === "documents") {
       const upd = argOf(ops, "update")?.[0] as Record<string, unknown> | undefined;
       if (upd && "collection_id" in upd) return { data: opts.docs, error: null };
-      if (upd) { opts.reclocks.push({ id: filter(ops, "eq", "id"), ...upd }); return { data: null, error: null }; }
+      // SAF-21: a re-clock reads back its matched row, as PostgREST answers it.
+      if (upd) { opts.reclocks.push({ id: filter(ops, "eq", "id"), ...upd }); return { data: [{ id: filter(ops, "eq", "id") }], error: null }; }
       return { data: opts.docs, error: null };
     }
     return { data: [], error: null };
@@ -170,7 +171,8 @@ describe("trash restore — RET-10 returns the stepped-up documents and re-clock
           return { data: [doc("d1", { retention_until: null, disposition_state: null }), doc("d2", { retention_until: null, disposition_state: null })], error: null };
         }
         reclocks.push({ id: filter(ops, "eq", "id"), ...upd });
-        return { data: null, error: null };
+        // SAF-21: a re-clock reads back its matched row, as PostgREST answers it.
+        return { data: [{ id: filter(ops, "eq", "id") }], error: null };
       }
       return { data: [], error: null };
     };

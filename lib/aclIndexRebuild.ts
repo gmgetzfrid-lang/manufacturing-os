@@ -32,6 +32,8 @@
 // remains the source of truth between cycles).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { buildAclIndexFromChain } from "@/lib/acl";
 import type { AccessControl, AclIndex } from "@/types/schema";
 
@@ -160,9 +162,12 @@ export async function rebuildAclIndexes(
     const folderById = new Map<string, FolderRow>(folderRows.map((f) => [f.id, f]));
 
     const write = async (table: "libraries" | "collections" | "documents" | "document_sets", id: string, next: AclIndex | null): Promise<boolean> => {
-      const { error } = await sb.from(table).update({ acl_index: next }).eq("id", id);
-      if (error) { note(`${table} ${id}: write failed — ${error.message}`); return false; }
-      return true;
+      // SAF-21 (c): a row deleted since it was read matches no row — it needs
+      // no index and is not counted rebuilt; a database error is noted, as before.
+      const kept = keptAnswer();
+      const w = await checkedWrite(answered(sb.from(table).update({ acl_index: next }).eq("id", id).select("id"), kept));
+      if (kept.error) { note(`${table} ${id}: write failed — ${kept.error.message}`); return false; }
+      return w.ok;
     };
 
     // A folder's ancestor chain: library ACL, then each ancestor folder ACL in

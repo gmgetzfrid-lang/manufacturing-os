@@ -16,6 +16,7 @@ import { auditActorNote } from "@/lib/auditActions";
 import { notify, notifyMany, notifyBatchChecked } from "@/lib/inAppNotifications";
 import { checkedWrite, type CheckedWriteFailure } from "@/lib/checkedWrite";
 import { answered, type Kept } from "@/lib/checkedWriteKeep";
+import { answered as answeredWhole, keptAnswer } from "@/lib/checkedWriteAnswer";
 import {
   ensureActiveEpisode,
   postEpisodeSystemMessage,
@@ -2110,23 +2111,29 @@ async function sweepSessions(
     released_reason: o.reason,
   };
   const RETURNING = "id, document_id, org_id, user_id, library_id";
-  const sweep = db
+  // DCK-7: RETURNING — the rows the UPDATE actually changed drive everything below.
+  // SAF-21 (c): a sweep that matches no row (each session was checked in or
+  // released meanwhile) releases nothing and answers 0, as before; the
+  // database's own error is kept whole for the pre-migration test.
+  const kept = keptAnswer();
+  await checkedWrite(answeredWhole(db
     .from("checkout_sessions")
     .update({ ...basePayload, outcome: "auto_released" })
     .in("id", ids)
     .eq("status", "active")
     // LIFE-14: a session that already carries a human verdict keeps it —
     // the sweep must never overwrite evidence with 'auto_released'.
-    .is("outcome", null);
-  // DCK-7: RETURNING — the rows the UPDATE actually changed drive everything below.
-  let { data: swept, error: sweepErr } = await sweep.select(RETURNING);
-  if (sweepErr) {
+    .is("outcome", null)
+    .select(RETURNING), kept));
+  if (kept.error) {
     const { isMissingOutcomeSchema } = await import("@/lib/checkoutEpisodes");
-    if (isMissingOutcomeSchema(sweepErr)) {
-      ({ data: swept, error: sweepErr } = await db
-        .from("checkout_sessions").update(basePayload).in("id", ids).eq("status", "active").select(RETURNING));
+    if (isMissingOutcomeSchema(kept.error)) {
+      await checkedWrite(answeredWhole(db
+        .from("checkout_sessions").update(basePayload).in("id", ids).eq("status", "active").select(RETURNING), kept));
     }
   }
+  const swept = kept.data;
+  const sweepErr = kept.error;
   if (sweepErr) throw new Error(`Expired checkouts were NOT released: ${userFacingError(sweepErr, { context: "projects" })}`);
   const released = ((swept ?? []) as SweptSession[]);
   if (released.length === 0) return 0;

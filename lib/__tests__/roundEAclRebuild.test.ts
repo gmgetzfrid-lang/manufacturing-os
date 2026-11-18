@@ -32,7 +32,9 @@ function chain(table: string) {
           if (pendingPatch && args[0] === "id") {
             const patch = pendingPatch; pendingPatch = null;
             state.updates.push({ table, id: String(args[1]), patch });
-            return Promise.resolve({ error: null });
+            // SAF-21: the write reads back its matched row (`.select("id")`), as PostgREST answers it.
+            const answer = { data: [{ id: String(args[1]) }], error: null };
+            return Object.assign(Promise.resolve(answer), { select: () => Promise.resolve(answer) });
           }
           preds.push((r) => r[args[0] as string] === args[1]);
         }

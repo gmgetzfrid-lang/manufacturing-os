@@ -166,7 +166,8 @@ function shedResolver(opts: {
     if (table === "archives") {
       if (argOf(ops, "update")) {
         opts.archiveUpdates?.push(argOf(ops, "update")![0] as Record<string, unknown>);
-        return opts.archiveUpdateError ? { data: null, error: opts.archiveUpdateError } : { data: [], error: null };
+        // SAF-21: the catalog write reads back its matched row, as PostgREST answers it.
+        return opts.archiveUpdateError ? { data: null, error: opts.archiveUpdateError } : { data: [{ id: "arc-row" }], error: null };
       }
       if (argOf(ops, "maybeSingle")) return { data: { note: "saved" }, error: null };
       return { data: [], error: null };
@@ -432,7 +433,8 @@ function ticketResolver(opts: {
     if (table === "archives") {
       if (argOf(ops, "update")) {
         opts.archiveUpdates?.push(argOf(ops, "update")![0] as Record<string, unknown>);
-        return opts.archiveUpdateError ? { data: null, error: opts.archiveUpdateError } : { data: [], error: null };
+        // SAF-21: the catalog write reads back its matched row, as PostgREST answers it.
+        return opts.archiveUpdateError ? { data: null, error: opts.archiveUpdateError } : { data: [{ id: "arc-row" }], error: null };
       }
       if (argOf(ops, "maybeSingle")) return { data: { note: "saved" }, error: null };
       return { data: [], error: null };

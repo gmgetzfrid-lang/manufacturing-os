@@ -15,6 +15,8 @@
 // single invocation approaches the platform's function timeout.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { extractDrawingRefs } from "@/lib/drawingText";
 import { normalizeTag, tagKey } from "@/lib/codebook";
 import {
@@ -602,15 +604,20 @@ export async function runLinkProposers(
           // a skill off, with the reason on the skill itself, and said here.
           // Its partial output is not queued.
           const reason = `Switched off by the engine: one match ran for ${res.terminated.ms} ms on one page of indexed text without finishing and was stopped. Simplify the pattern, then switch it back on.`;
-          let { error: offErr } = await admin.from("link_rules")
+          // SAF-21 (b): the engine's own switch-off, checked — a write that
+          // matched no row (the skill was deleted meanwhile) is said as a
+          // refused one is, never as switched off.
+          const off = keptAnswer();
+          let offW = await checkedWrite(answered(admin.from("link_rules")
             .update({ enabled: false, disabled_reason: reason })
-            .eq("id", rule.id).eq("org_id", orgId);
-          if (offErr && (offErr.code === "PGRST204" || offErr.code === "42703")) {
+            .eq("id", rule.id).eq("org_id", orgId).select("id"), off));
+          if (off.error && (off.error.code === "PGRST204" || off.error.code === "42703")) {
             // Before 20261125 there is no disabled_reason column: switch it off
             // all the same; the reason is in this run's notes.
-            ({ error: offErr } = await admin.from("link_rules")
-              .update({ enabled: false }).eq("id", rule.id).eq("org_id", orgId));
+            offW = await checkedWrite(answered(admin.from("link_rules")
+              .update({ enabled: false }).eq("id", rule.id).eq("org_id", orgId).select("id"), off));
           }
+          const offErr = off.error ?? (offW.ok ? null : { message: "the skill was not found — it may have been deleted meanwhile" });
           disabledSkills.push(rule.name);
           notes.push(offErr
             ? `Skill “${rule.name}”: one match never finished and was stopped; it could not be switched off (${offErr.message}).`

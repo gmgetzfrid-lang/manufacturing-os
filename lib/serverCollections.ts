@@ -8,6 +8,8 @@
 // server operation that touches the branch.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer, type KeptAnswer } from "@/lib/checkedWriteAnswer";
 import { buildAclIndexFromChain } from "@/lib/acl";
 import type { AccessControl } from "@/types/schema";
 
@@ -72,32 +74,40 @@ export function subtreeIds(tree: CollectionTree, rootIds: string[], cap = 5000):
   return out;
 }
 
+/** SAF-21 (c): one row's rewrite, read back. A folder or document deleted
+ *  since the tree was read matches no row — it needs no rewrite and is not
+ *  counted; a database error fails the chunk loudly, as before. */
+type Rewrite = { kept: KeptAnswer; matched: boolean };
+const firstFailure = (results: Rewrite[]) => results.find((r) => r.kept.error)?.kept.error ?? null;
+
 /** Rewrite path/path_names/path_ids for every node in the given subtrees.
- *  Chunked; fails loudly on the first write error. */
+ *  Chunked; fails loudly on the first write error. Answers how many rows
+ *  were rewritten (on the ordinary path, every node of the subtrees). */
 export async function rebuildSubtreePaths(
   admin: SupabaseClient,
   tree: CollectionTree,
   rootIds: string[],
 ): Promise<number> {
   const ids = subtreeIds(tree, rootIds);
+  let rewritten = 0;
   for (let i = 0; i < ids.length; i += 25) {
     const chunk = ids.slice(i, i + 25);
-    const results = await Promise.all(chunk.map((id) => {
+    const results = await Promise.all(chunk.map(async (id): Promise<Rewrite> => {
+      const kept = keptAnswer();
       const row = tree.byId.get(id);
-      if (!row) return Promise.resolve({ error: null });
+      if (!row) return { kept, matched: false };
       const anc = ancestryOf(tree, id);
       const pathNames = [...anc.names, row.name];
-      return admin.from("collections")
+      const w = await checkedWrite(answered(admin.from("collections")
         .update({ path: pathNames, path_names: pathNames, path_ids: anc.ids })
-        .eq("id", id);
+        .eq("id", id).select("id"), kept));
+      return { kept, matched: w.ok };
     }));
-    const failed = results.find((r) => (r as { error: { message: string } | null }).error);
-    if (failed) {
-      const err = (failed as { error: { message: string } }).error;
-      throw new Error(`Couldn't rewrite subtree paths: ${err.message}`);
-    }
+    const err = firstFailure(results);
+    if (err) throw new Error(`Couldn't rewrite subtree paths: ${err.message}`);
+    rewritten += results.filter((r) => r.matched).length;
   }
-  return ids.length;
+  return rewritten;
 }
 
 /** DOCACL-4: the ACL chain a folder's index is built from — library ACL,
@@ -129,14 +139,16 @@ export async function rebuildSubtreeAclIndex(
   let folders = 0, documents = 0;
   for (let i = 0; i < ids.length; i += 25) {
     const chunk = ids.slice(i, i + 25);
-    const results = await Promise.all(chunk.map((id) => {
-      if (!tree.byId.get(id)) return Promise.resolve({ error: null });
+    const results = await Promise.all(chunk.map(async (id): Promise<Rewrite> => {
+      const kept = keptAnswer();
+      if (!tree.byId.get(id)) return { kept, matched: false };
       const next = buildAclIndexFromChain(folderAclChain(tree, libraryAcl, id), nowMs);
-      return admin.from("collections").update({ acl_index: next }).eq("id", id);
+      const w = await checkedWrite(answered(admin.from("collections").update({ acl_index: next }).eq("id", id).select("id"), kept));
+      return { kept, matched: w.ok };
     }));
-    const failed = results.find((r) => (r as { error: { message: string } | null }).error);
-    if (failed) throw new Error(`Couldn't rewrite subtree acl_index: ${(failed as { error: { message: string } }).error.message}`);
-    folders += chunk.length;
+    const err = firstFailure(results);
+    if (err) throw new Error(`Couldn't rewrite subtree acl_index: ${err.message}`);
+    folders += results.filter((r) => r.matched).length;
   }
   for (let i = 0; i < ids.length; i += 200) {
     const { data, error } = await admin.from("documents").select("id, collection_id, acl").in("collection_id", ids.slice(i, i + 200)).limit(5000);
@@ -144,13 +156,15 @@ export async function rebuildSubtreeAclIndex(
     const docs = (data ?? []) as Array<{ id: string; collection_id: string; acl: AccessControl | null }>;
     for (let j = 0; j < docs.length; j += 25) {
       const chunk = docs.slice(j, j + 25);
-      const results = await Promise.all(chunk.map((d) => {
+      const results = await Promise.all(chunk.map(async (d): Promise<Rewrite> => {
+        const kept = keptAnswer();
         const next = buildAclIndexFromChain([...folderAclChain(tree, libraryAcl, d.collection_id), d.acl ?? undefined], nowMs);
-        return admin.from("documents").update({ acl_index: next }).eq("id", d.id);
+        const w = await checkedWrite(answered(admin.from("documents").update({ acl_index: next }).eq("id", d.id).select("id"), kept));
+        return { kept, matched: w.ok };
       }));
-      const failed = results.find((r) => (r as { error: { message: string } | null }).error);
-      if (failed) throw new Error(`Couldn't rewrite document acl_index: ${(failed as { error: { message: string } }).error.message}`);
-      documents += chunk.length;
+      const err = firstFailure(results);
+      if (err) throw new Error(`Couldn't rewrite document acl_index: ${err.message}`);
+      documents += results.filter((r) => r.matched).length;
     }
   }
   return { folders, documents };

@@ -220,6 +220,18 @@ describe("DF-P22 follow-up — a released grantor's 'review opened' alert is ret
     expect(s.writes).toHaveLength(1);
     expect(s.writes.every((w) => !("read_at" in w))).toBe(true);
   });
+  it("SAF-21 (c): an alert the person read between the read and the write matches no row — it is retired by the read, so no failure is named and nothing is marked", async () => {
+    const { s, client } = db();
+    const base = (client as unknown as { from: () => Record<string, (...a: unknown[]) => unknown> }).from;
+    const racing = { from: () => {
+      const q = base();
+      const update = q.update;
+      q.update = (...a: unknown[]) => { s.rows.find((r) => r.id === "n-open")!.read_at = "2026-10-22T07:59:00Z"; return update(...a); };
+      return q;
+    } } as never;
+    expect(await retireReleasedAlerts(racing, { ticketId: T, orgId: "o-1", released: ["g-1"], at: "2026-10-22T08:00:00.000Z" })).toBeNull();
+    expect(s.rows.find((r) => r.id === "n-open")!.metadata).not.toHaveProperty("superseded_at");
+  });
   it("nobody released → no read, no write; a failed read is a note, never a throw", async () => {
     const { s, client } = db();
     expect(await retireReleasedAlerts(client, { ticketId: T, orgId: "o-1", released: [], at: "x" })).toBeNull();
