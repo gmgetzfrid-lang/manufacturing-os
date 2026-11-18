@@ -874,4 +874,10 @@ lib/checkoutEpisodes.ts:525-533 — closeEpisode runs even when the guarded docu
 
 **Scope / residual (P37 final fix pass).** OPEN only for (d), the operator's look-over counts (owner above, unchanged). `20261254` pending paste (after row 193; no deploy order). For the integrator at merge (not edited here): the `20261254` row in `MIGRATION-PASTE-ORDER.md` — after `20261253` (row 193); no deploy order; **11 probes + 7 inventory rows** (row 5 the operator's look-over for `REV-37`, owner the operator at the `20261254` paste, reported to the integrator); **never re-paste `20261253`, `20261252`, `20261245`, `20261214`, `20261193`, `20261185`, `20261184`, `20261182`, `20261174`, `20261165`, `20261164`, `20261159`, `20261151`, `20261144`, `20261139`, `20261105` or any earlier guard / finalize / intake-door migration after it**. No `lib/schemaExpectations.ts` probe; no new table, no new notification kind; three new audit actions, all registered: `PENDING_SUBMISSION_RETIRE_REQUESTED`, `PENDING_SUBMISSION_RETIRED`, `INTAKE_DOOR_SUBMITTED` (one more audit row per door submission). Recorded residual of (b′): a door-shaped submission filed BEFORE the paste whose route record was lost cannot be told from a hand-written row and stays refused over a checkout (the ruling; inventory rows 1–2 count them; the holder checks in, or Document Control retires it).
 
+*Assigned (2026-11-18, the integrator, DEC-31):* **the user** — remainder (d) only, the look-over counts:
+- At the `20261252` paste (`MIGRATION-PASTE-ORDER.md` row 192, HOLD behind row 191; deploy the P35 app with or before it): send back its 5 inventory counts and the counts from the header's query-2 look-over.
+- At the `20261254` paste (row 196, HOLD behind row 193; no deploy order): send back its 7 inventory rows. Rows 1–2 and the row-5 look-over are each expected to be 0.
+
+The integrator records the counts here and closes `DCK-18` by record. This line replaces the P35 line in the header as the current owner.
+
 ---

@@ -803,6 +803,8 @@ What landed:
 
 **Scope / residual.** Stays OPEN for done-when 1 only — the `20261200` inventory comparison. Owner: the integrator at the `20261200` paste (`DEC-30`): when the inventory rows show `milestones` published and every other `postgres_changes` table present, the record closes by pointer to that comparison. The Broadcast's residual (save timing visible to someone who knows the topic) is `RT-13`, not this finding's. No migration in this package.
 
+*Assigned (2026-11-18, the integrator, DEC-31):* **the user**, then the integrator. The user pastes `20261200` (`MIGRATION-PASTE-ORDER.md` row 160, PASTE; after `20261148`; either order with the N4 deploy) and sends back its result set: the two probes and the inventory rows (the publication's table count, and whether `milestones` / `table_views` are in it). The integrator then compares those rows with every `postgres_changes` subscription (done-when 1) and closes `RT-12` by pointer. This line replaces the N11 line in the header as the current owner.
+
 ---
 
 <a id="rt-13"></a>
@@ -836,5 +838,7 @@ What landed:
 3. **Shipping half is the alternative** — announcing on both topics keeps the public one, which is the residual itself.
 
 Nothing was changed for this finding: no client code, no migration (`20261269` unused). The residual stays as recorded above — timing only, no content, at most about one re-read per window per listener (`RT-12`'s coalescing pins in `lib/__tests__/tableViewsBroadcast.test.ts`, unchanged). **Owner:** the integrator to assign — a package with access to a Supabase project running Realtime (staging) to observe (a) and (b), and with the ruling in 2. The design that package can start from: the listener joins the private topic and, on a refused join, removes it and joins the public one (today's path); the announcer sends on the private channel only when this tab's private join of that topic succeeded (the same migration adds the read and the write policy, so a read-authorised join implies the write), else on the public one; the policy (`realtime.messages`, `extension = 'broadcast'`, SELECT and INSERT to `authenticated`) parses the topic (`table-view-tv_user_<org>_<uid>_<lib>_<folder>` / `table-view-tv_org_<org>_org_<lib>_<folder>`) rather than reading the row, so a delete's announcement is still authorised; the migration is guarded on `to_regclass('realtime.messages')`.
+
+*Corrected (2026-11-18, the integrator, DEC-31):* the **Owner.** paragraph above ("notifications N13 (the Assigned line above) …") is stale. N13 recorded the private channel as not built (the block above). The latest Assigned line names **notifications N20 PRIVATE TABLE-VIEW CHANNEL** (new, user-held: it needs a staging Supabase project running Realtime — `audit-reports/fleet-plans/notifications.json` `userHeld.N20`). Until N20 lands, the residual is accepted as recorded: timing only, no content, at most about one read per window per listener.
 
 ---

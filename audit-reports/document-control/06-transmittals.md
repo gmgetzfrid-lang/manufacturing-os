@@ -979,6 +979,8 @@ Tests: `lib/__tests__/transmittalPortalRoute.test.ts`:
 
 So done-when 1 reads ✓ in code. The literal first limb ("whatever its size") is still not claimed: a PDF over 64 MiB is warned at issue, not stamped. Until the paste, (b) holds in the file only (DEC-29, DEC-30). No code changed for `TRX-15` in this pass.
 
+*Assigned (2026-11-18, the integrator, DEC-31):* **the user** — done-when 2's real-device check (`userHeld.TRX-15`). Do one hidden-frame portal download on iOS Safari and one on Firefox; each covers the `&nav=1` save and the visible "Download didn't start?" fallback link. Report the result back. Done-when 1's remainder is `TRX-17`'s (RESOLVED in code). Its database half (b) is live once `20261199` is pasted (`MIGRATION-PASTE-ORDER.md` row 154, HOLD), as P24 recorded above. This line replaces the P22 line in the header as the current owner.
+
 ---
 
 <a id="trx-16"></a>

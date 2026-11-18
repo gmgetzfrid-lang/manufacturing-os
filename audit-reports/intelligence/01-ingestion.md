@@ -554,6 +554,8 @@ Each case was mutation-checked: removing the facts line fails five cases, and ke
 - Pending migrations: `20261122_intel_roundG_ingest_integrity.sql` (its pending state is recorded above) for the failed-page count, and `supabase/migrations/20261186_intel_roundG_keyless_text_only.sql` for the keyless count. Each limb runs as before without its file.
 - The count is per document, not per page. The facts say how many pages and on how many sheets, not which. The library row lists the failed pages by number (I-02b); the keyless pages are counted only. A page list would need a page array, and DEC-58 as ruled asks for a marker.
 
+*Assigned (2026-11-18, the integrator, DEC-31):* **the user** — paste `20261186` (`MIGRATION-PASTE-ORDER.md` row 136, PASTE; either order with the deploy) after `20261122` (row 90, PASTE, pending — the ingest claim the count is kept under, and this record's failed-page count). Send back its result set (two probes, two counts). The integrator sets RESOLVED on the paste-back. This line replaces the I-22 line in the header as the current owner.
+
 ---
 
 <a id="ing-7"></a>
@@ -1234,6 +1236,8 @@ Tests:
 - `lib/knowledge.ts` (I-16's) is not edited. Its `mapDocument` does not carry the column, so the page reads it beside the list. At merge, the integrator (or the next owner of `lib/knowledge.ts`) may fold a `keylessTextPages` field into `KnowledgeDocument` and drop the second read.
 - Probe for `lib/schemaExpectations.ts` (not edited, at the brief's instruction): `{ table: "knowledge_documents", column: "vision_keyless_pages", migration: "20261186_intel_roundG_keyless_text_only.sql", feature: "Knowledge ingest — pages indexed from their text layer only because no AI key was available (the library row's marker, the ask route's DRAWING FACTS)" }`.
 - The app-shell indicator (`components/providers/KnowledgeIndexIndicator.tsx`, another package's) does not show the count. The library page is the surface the brief names.
+
+*Assigned (2026-11-18, the integrator, DEC-31):* **the user** — paste `20261186` (`MIGRATION-PASTE-ORDER.md` row 136, PASTE; either order with the deploy) after `20261122` (row 90, PASTE, pending). Send back its result set (two probes, two counts). The integrator sets RESOLVED on the paste-back. This line replaces the I-22 line in the header as the current owner.
 
 ---
 
