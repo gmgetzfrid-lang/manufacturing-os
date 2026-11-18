@@ -23,9 +23,9 @@
       "LOW": 13
     },
     "by_status": {
-      "RESOLVED": 143,
+      "RESOLVED": 144,
       "REFUTED": 2,
-      "OPEN": 7,
+      "OPEN": 6,
       "RESOLVED (2026-10-14, by the integrator's ruling at the J20 integrator fix pass — done-when 1 met as narrowed under DEC-90: the pending pointer, the trusted promote and the redline accepted as documented exceptions; PASTE pending: `20261214`, after `20261184` and `20261205`)": 1
     }
   },
@@ -3270,7 +3270,7 @@
       "id": "SAF-21",
       "title": "37 update / delete sites that write through a client handed in as a parameter discard a zero-row result, and the census cannot see them",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by the client-parameter rule of `lib/__tests__/j15aCheckedWriteCensus.test.ts` run over `lib/`, at the J15a head; re-run by J15a's independent reviewer with the same per-file counts; not exercised against a live database)",
       "blast_radius": "audit integrity / silent failure",

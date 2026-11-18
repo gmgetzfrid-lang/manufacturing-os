@@ -175,6 +175,49 @@ describe("SAF-21 — the Bridge's apply (a / b / c)", () => {
   });
 });
 
+/** A database before 20261171: the ledger has no dismissed / sources /
+ *  applied_columns columns (a write naming one is PGRST204), and the n-th
+ *  ledger write — the retry without them — finds the proposal gone. */
+function preLedgerColumnsAndGoneOn(nth: number): SupabaseClient {
+  for (const r of db.tables.document_equipment_suggestions) for (const c of ["dismissed", "sources", "applied_columns"]) delete r[c];
+  db.beforeUpdate = { document_equipment_suggestions: (next, old) => {
+    if (["dismissed", "sources", "applied_columns"].some((c) => c in next && !(c in old))) throw { code: "PGRST204", message: "Could not find the 'dismissed' column of 'document_equipment_suggestions' in the schema cache" };
+    return next;
+  } };
+  let n = 0;
+  return hooked((t, m) => { if (t === "document_equipment_suggestions" && m === "update" && ++n === nth) db.tables.document_equipment_suggestions = []; });
+}
+
+describe("SAF-21 — the Bridge's pre-20261171 retries read their matched rows too", () => {
+  it("(b) the apply's ledger retry that matched no row says LEDGER_ROW_GONE", async () => {
+    seed();
+    await computeForDocument(fake(), "o1", "d1");
+    const r = await applyForDocument(preLedgerColumnsAndGoneOn(2), { orgId: "o1", documentId: "d1", userId: "u1" });
+    expect(r.ledgerError).toBe(LEDGER_ROW_GONE);
+  });
+  it("(a) the dismissal's retry that matched no row is refused — nothing removed, no audit row", async () => {
+    await applied();
+    await expect(dismissForDocument(preLedgerColumnsAndGoneOn(2), { orgId: "o1", documentId: "d1", userId: "u1", tags: ["P-7"] }))
+      .rejects.toThrow(`The dismissal could not be saved: ${PROPOSAL_GONE}`);
+    expect(relations().some((x) => x.tag_text === "P-7")).toBe(true);
+    expect(audit("EQUIPMENT_BRIDGE_DISMISSED")).toHaveLength(0);
+  });
+  it("(c) a person-tagged pair whose drawing row was adopted meanwhile is not converted, counted or recorded; the ordinary conversion is", async () => {
+    await applied();
+    db.tables.documents[0].asset_tags = [{ tag: "e 22" }, { tag: "V-101" }];
+    const racing = hooked((t, m, args) => {
+      if (t === "document_assets" && m === "update" && (args[0] as Row).source === "jsonb_sync" && (args[0] as Row).tag_text === "e 22") relations().find((x) => x.asset_id === "a-e22")!.source = "manual";
+    });
+    const d = await dismissForDocument(racing, { orgId: "o1", documentId: "d1", userId: "u1", tags: ["E-22", "V-101"] });
+    expect(d).toMatchObject({ relationsRemoved: 1, keptAsPersonsLink: 1 });
+    expect(relations().find((x) => x.asset_id === "a-e22")).toMatchObject({ source: "manual" });
+    expect(relations().find((x) => x.asset_id === "a-v101")).toMatchObject({ source: "jsonb_sync", tag_text: "V-101" });
+    const details = audit("EQUIPMENT_BRIDGE_RELATION_REMOVED")[0].details as { removed: Array<{ tag: string }>; keptAsPersonsLink: Array<{ tag: string }> };
+    expect(details.removed.map((r) => r.tag)).toEqual(["V-101"]);
+    expect(details.keptAsPersonsLink.map((r) => r.tag)).toEqual(["V-101"]);
+  });
+});
+
 describe("SAF-21 — the Bridge's review acts (a: the person's decision)", () => {
   it("Dismiss: a proposal that went meanwhile is refused — nothing removed, no audit row", async () => {
     await applied();
@@ -285,6 +328,9 @@ describe("SAF-21 — lib/serverCollections.ts: a folder or document deleted sinc
     expect(await rebuildSubtreeAclIndex(fake(), treeOf(rows), null, ["f1"], Date.now())).toEqual({ folders: 3, documents: 2 });
     db.refuseWrites.add("documents");
     expect(await rebuildSubtreeAclIndex(fake(), treeOf(rows), null, ["f1"], Date.now())).toEqual({ folders: 3, documents: 0 });
+    db.refuseWrites.add("collections");
+    expect(await rebuildSubtreeAclIndex(fake(), treeOf(rows), null, ["f1"], Date.now())).toEqual({ folders: 0, documents: 0 });
+    db.refuseWrites.clear();
     db.beforeUpdate = { collections: () => { throw { code: "42501", message: "permission denied" }; } };
     await expect(rebuildSubtreeAclIndex(fake(), treeOf(rows), null, ["f1"], Date.now())).rejects.toThrow("Couldn't rewrite subtree acl_index: permission denied");
   });
@@ -325,6 +371,11 @@ describe("SAF-21 — closeSucceededRun: a run row that matched no write comes ba
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       expect(await closeSucceededRun(fake(), "run1", { status: "succeeded" }, outcome)).toEqual({ error: null, retention: "unrecorded" });
+      // …and the retry without them matched no row (the run row went between the two writes)
+      db.tables.export_runs = [{ id: "run1", status: "running" }];
+      let n = 0;
+      const gone = hooked((t, m) => { if (t === "export_runs" && m === "update" && ++n === 2) db.tables.export_runs = []; });
+      expect(await closeSucceededRun(gone, "run1", { status: "succeeded" }, outcome)).toEqual({ error: { message: RUN_ROW_UNMATCHED }, retention: "unrecorded" });
     } finally { warn.mockRestore(); }
   });
 });

@@ -135,7 +135,7 @@ vi.mock("@/lib/checkoutEpisodes", () => ({
   ensureActiveEpisode: vi.fn(async () => null),
   postEpisodeSystemMessage: vi.fn(async () => undefined),
   reconcileDocumentCheckoutState: vi.fn(async () => undefined),
-  isMissingOutcomeSchema: () => false,
+  isMissingOutcomeSchema: vi.fn(() => false),
 }));
 
 import {
@@ -295,6 +295,13 @@ describe("PM-4 dw4 — the sweep releases checkouts stranded on a closed project
     state.queue["checkout_sessions.select"] = [{ data: [] }, { data: [{ id: "s1", project_id: "p-old" }] }];
     state.queue["checkout_sessions.update"] = [{ error: { message: "permission denied for table checkout_sessions", code: "42501" } }];
     await expect(autoReleaseExpiredAdHoc(null, { client: supabase as never })).rejects.toThrow(/^Expired checkouts were NOT released: /);
+    // before the outcome columns: the retry without them reads its matched rows too — none matched, nothing released
+    state.queue["checkout_sessions.select"] = [{ data: [] }, { data: [{ id: "s1", project_id: "p-old" }] }];
+    state.queue["checkout_sessions.update"] = [{ error: { message: 'column "outcome" of relation "checkout_sessions" does not exist', code: "42703" } }, { data: [] }];
+    const { isMissingOutcomeSchema } = await import("@/lib/checkoutEpisodes");
+    vi.mocked(isMissingOutcomeSchema).mockReturnValueOnce(true);
+    expect(await autoReleaseExpiredAdHoc(null, { client: supabase as never })).toBe(0);
+    expect(writesTo("notifications", "insert")).toHaveLength(0);
   });
 
   it("the window runs from the CLOSURE, not updated_at: a later edit to a closed project does not restart it; an archive reads its closing feed row", async () => {
