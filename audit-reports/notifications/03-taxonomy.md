@@ -511,7 +511,7 @@ The `notifyMany` write is unchanged. Tests: `lib/__tests__/cornerJobs.test.ts` "
 ## TAX-9 · In-app notifications have no preference gate, no throttle and no cap - `inapp_enabled` is stored but read by nothing, and a cron burst produces an unbounded toast stack
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260723_notifications_unify.sql:86`, `lib/notify/dispatch.ts:89-103`, `lib/inAppNotifications.ts:79-98`, `components/providers/ToastProvider.tsx:40-49`, `components/ui/CornerDock.tsx:25`, `app/(protected)/settings/notifications/page.tsx:7-9`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Every leg verified: no in-app preference gate, no throttle, no toast cap, and the dock cannot scroll or clip a tall stack. NotificationListener.tsx:80-100 fires one showToast per realtime INSERT with no coalescing, so an N-row cron burst does produce N stacked cards.
@@ -562,6 +562,22 @@ Tests: `lib/__tests__/notificationListener.test.ts` "40 rows in a burst: the fir
 *Third review fix (2026-10-02, N3): two limbs above changed. (1) The pop-up switch's read: a read that rejects or stalls now keeps the last value a read returned and fails open only when nothing has been read (`RT-10`'s note) — a known "off" no longer flips back on after a stalled tab-return read. (2) "A repeat joins its card" now means a repeat of the same **statement** — kind, resource and words (`notificationCoalesceKey`, `NotificationListener.tsx:94`): two differently worded rows about one resource (a newer status, a second message) are two cards and count toward the two-card budget, where the second review's per-actor key merged them into one card in the first row's words (`RT-11` / `OS-4`). Neither changes this finding's status. Verified after the third review fix: `npx tsc --noEmit` exit 0; `npx eslint` on the 19 changed code and test files of the branch `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 407 files, 8522 passed, 7 expected-fail. `next build` is the integrator's.*
 
 **Integrator ratification (2026-10-08, at the N3 SURFACES merge, under `DEC-90`).** (a) Done-when 1: `DEC-74` §7's reading is **ratified** — a bell row is never suppressible (the durable trace of an obligation); the in-app preference governs the pop-up only, and `inapp_enabled` stays deprecated-and-kept (a dropped column cannot be restored). Done-when 1 is met on that reading. (b) Done-when 4: the 2 + 1 burst shape (two cards per 6 s window, then one summary) is **accepted** as meeting "one summary toast" — a row cannot know it opens a burst without holding every toast for the window, and two cards plus a summary is the bounded shape. The summary card's click-through to the center is the one remaining limb: **owner notifications N13 LAYERS SWEEP** (the next holder of `components/providers/ToastProvider.tsx`; the bell and the dock's "+N more" doorway are the routes meanwhile). The finding stays OPEN (Partial) on that limb only.
+
+**Resolution (2026-11-18, notifications N13 LAYERS SWEEP — done-when 4's last limb).** Reproduced first on `b138efc7`: the burst summary card ("N more notifications", `components/providers/NotificationListener.tsx` `burstSummary`) had no way to open the center — `ToastProvider`'s toast had no action slot.
+
+What landed:
+- **An action slot on a toast** (`components/providers/ToastProvider.tsx`): `showToast({ …, action: { label, onClick } })` renders one button under the message; clicking it runs `onClick` and dismisses the card. Not part of the coalesce key. A toast without one renders exactly as before (Dismiss only).
+- **The summaries open the center.** The listener's toaster takes the layout's opener (`createNotificationToaster({ …, openCenter })`; the protected layout passes `useNotificationCenter().open` as `<NotificationListener onOpenCenter={openCenter} />`). The burst summary carries "Open notifications" (the center on All); the action summary ("N more actions need you") carries "Open actions" (the center on Action). A single row's toast and a window holding one extra row are unchanged.
+
+Tests: `lib/__tests__/n13ToastSummaryAndMerge.test.ts` "TAX-9 — the burst summary card opens the Notification Center" (rendered through the real dock: five FYI rows → two cards, then the summary's "Open notifications" opens the center on All and dismisses the card; five action rows → "Open actions" opens it on Action; no opener → the summary is exactly as before; the toaster attaches the action to the summaries only). Mutation-checked: the slot not rendered, and the action not attached, each fail.
+
+**Done-when.**
+- ✓ (ratified, `DEC-74` §7 — unchanged.)
+- ✓ (N7 — unchanged.)
+- ✓ (N7 — unchanged.)
+- ✓ `NotificationListener` does not toast a burst one card per row; batched inserts produce one summary toast (the 2 + 1 shape, ratified) and the summary opens the Notification Center.
+
+**Scope / residual.** None for this finding. `inapp_enabled` stays deprecated-and-kept (`DEC-74`; drafting-flow `EDGE-14`'s Resolution, with this package, corrects the dispatcher's docblock). No migration.
 
 ---
 
@@ -881,7 +897,7 @@ app/api/cron/maintenance/route.ts:370-372 -- `// Manual distribution-ack request
 ## TAX-14 · Three floating-signal corners and four z-layers; BackupIndicator (z-300) covers the offline/update pills (z-200) in the same bottom-left corner, and two separate surfaces both announce "a new version is available" in different words
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N7 CORNER (dw1, dw2 — the fleet plan); dw3 → `TAX-15` (after public-surfaces PKG-1); dw4 → notifications N13 LAYERS SWEEP (new) — by the integrator, 2026-10-02, at the N7 merge (DEC-31; fleet plan `audit-reports/fleet-plans/notifications.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `components/ui/CornerDock.tsx:3-13`, `components/providers/BackupIndicator.tsx:27`, `components/pwa/ServiceWorkerManager.tsx:74-88`, `components/projects/UndoToastHost.tsx:21`, `components/system/UpdatePill.tsx:41-48`, `app/(protected)/layout.tsx`
@@ -933,6 +949,23 @@ Bottom-right now holds the corner dock alone, bottom-left ServiceWorkerManager's
 
 *2026-10-02 (notifications Round G, N3 SURFACES): done-when 3 is met by [`TAX-15`](#tax-15)'s Resolution — `components/system/UpdatePill.tsx` owns "a newer build exists", fed by the build-id poll and the service worker's waiting worker, in one wording, top-centre, one prompt at a time, through the one `loadLatestBuild` path. The bottom-left now holds `ServiceWorkerManager`'s offline pill alone. This finding stays OPEN on done-when 4 only (notifications N13 LAYERS SWEEP).*
 
+**Resolution (2026-11-18, notifications N13 LAYERS SWEEP — done-when 4).** Reproduced first on `b138efc7`: `lib/zLayers.ts` listed 43 numbers and named 12 layers; 296 z literals in 142 files (277 class literals in code, six numeric `zIndex` sites, the rest comments) carried their own number.
+
+What landed:
+- **The module owns every number.** `Z` names every layer in use — one band per number, named for what sits in it (`raised` 10, `pagePopover` 50, `drawer` 60, `libraryModal` 90, `modal` 100, `workflowModal` 200, `confirmOverModal` 210, `overlay` 300, `sharedModal` 400, `policyModal` 520, `commandPalette` 600, `dialog` 700, …), with each band's members in its doc comment; the corner contract's named layers keep their names and numbers. Nothing was renumbered (`DEC-85`). `ZC` spells each band's Tailwind class once, in the module, where Tailwind's source scan finds it (a class built from a number at runtime would never be emitted). `Z_SCALE` is derived from `Z`. A stylesheet cannot import the module, so `STYLESHEET_LAYERS` names `app/globals.css`'s one `z-index` (the print cover, `print`).
+- **Every call site reads it.** The 277 class literals in 136 files read `ZC.<band>` (a codemod over the TypeScript AST: the class at the same place in the same string, so the rendered class string is byte-identical — except three arbitrary spellings normalised to the scale class with the same number: `z-[10]` → `z-10` in `app/(protected)/documents/page.tsx`, `z-[50]` → `z-50` in `FullScreenViewer` and `AdvancedRedlineEditor`). The six numeric sites read `Z` (`Modal`'s default `Z.sharedModal`, `DialogHost`'s `Z.dialog`, `DashboardGrid`'s four, and `NotificationCenter`'s `CENTER_PANEL_Z_AT_REST`).
+- **The stylesheet is the same.** The app's stylesheet compiled through `@tailwindcss/postcss` before and after is identical except the two arbitrary rules no class uses any more (`.z-\[10\]`, `.z-\[50\]`) — every class a component renders still has its rule, with the same number.
+
+Tests: `lib/__tests__/zLayersOwnership.test.ts` — "no z class, z-index or zIndex number in app/, components/, hooks/ or lib/ outside lib/zLayers.ts" (the AST of every code file: string and template literals, `zIndex` style properties, props and defaults; comments may name a layer), "a stylesheet's z-index is a layer STYLESHEET_LAYERS names, at that layer's number", "each ZC class is the Tailwind spelling of its Z number", "Tailwind emits every ZC class from lib/zLayers.ts itself, with its number — and the app's stylesheet scans lib/" (a compile restricted to the module's source), and a fixture self-check; `lib/__tests__/n13OverlaysRendered.test.ts` (the rendered pass: four real overlays' class strings equal those of `b138efc7`); `lib/__tests__/cornerDock.test.ts` (unchanged scale tests green; three source pins follow the moved numbers). Mutation-checked: a literal class put back, a numeric `zIndex` put back, a `ZC` class misspelt and the print rule's number changed each fail.
+
+**Done-when.**
+- ✓ (on the ratified reading, `DEC-85` item 1 — unchanged.)
+- ✓ `BackupIndicator` moves into `CornerPortal` (unchanged).
+- ✓ One component owns "a newer build exists" — met by `TAX-15`'s Resolution (done-when 2's fallback limb landed with this package).
+- ✓ A single `Z` constant module owns every overlay layer number: every z-index in app/, components/, hooks/ and lib/ reads `lib/zLayers.ts`, and the scan test refuses a literal.
+
+**Scope / residual.** Comments still name layers by number (they are not read by the browser; the scan ignores them). No migration.
+
 ---
 
 <a id="tax-15"></a>
@@ -940,7 +973,7 @@ Bottom-right now holds the corner dock alone, bottom-left ServiceWorkerManager's
 ## TAX-15 · Two surfaces still announce "a newer build exists", in two different words — the remainder of TAX-14
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** to be worked after public-surfaces PKG-1 merges, because it owns `components/pwa/ServiceWorkerManager.tsx`. Opened 2026-10-01 by notifications Round G N7 CORNER: the DEC-31 remainder of `TAX-14` done-when 3.
 - **Assigned:** notifications N3 SURFACES — by the integrator, 2026-10-02, at the N7 merge (public-surfaces PKG-1, which owned `components/pwa/ServiceWorkerManager.tsx`, has merged).
 - **Verification:** CONFIRMED (read on `b9cdfdc`)
@@ -988,6 +1021,22 @@ Remaining step: move the in-flight counters that `hasUploadsInFlight()` reads (a
 - ✓ A test pins that only one surface renders when both signals are true.
 
 **Scope / residual.** Stays OPEN on done-when 2's fallback limb (owner: the integrator, as above). Not observed across a real deploy. `public/sw.js:70`'s comment is handed to its owner. No migration.
+
+**Resolution (2026-11-18, notifications N13 LAYERS SWEEP — done-when 2's fallback limb).** Reproduced first on `b138efc7`: `UpdatePromptFallback` (`components/pwa/ServiceWorkerManager.tsx:81-92`) reloaded through `loadLatestBuildInThisTab` with no question over an upload in flight; only the browser's generic leave-page prompt asked.
+
+What landed (the Partial block's step, as written):
+- **The leaf module.** The upload counters (`inFlight`, `transfers`), the cooldown, the listeners and the leave-page guard moved, unchanged, from `lib/uploadActivity.ts` into `lib/uploadInFlight.ts`, which imports nothing. `lib/uploadActivity.ts` re-exports every name (one module instance holds the state whichever path a caller imports) and keeps the one thing that needs the Supabase client: releasing the guard on `SIGNED_OUT`.
+- **The fallback asks.** `confirmReloadFromFallback()` (`ServiceWorkerManager.tsx`): no upload — go, as before; an upload on the wire — `window.confirm` in UpdatePill's words (`RELOAD_DURING_UPLOAD_QUESTION`, now in the leaf `components/pwa/swUpdate.ts`, which `confirmReloadDuringUploads` reads too — one wording), then `loadLatestBuildInThisTab` on OK with the leave-page guard released (not asked twice), nothing on Cancel. A confirm that throws (dialogs blocked) answers "wait": the upload is never stopped without a yes. `window.confirm` because the app's dialog host is in the chunk that failed to load.
+- **Nothing heavy joins the root bundle.** `ServiceWorkerManager` imports `lib/uploadInFlight` (no imports) and still never `lib/uploadActivity` or the Supabase client.
+
+Tests: `lib/__tests__/updatePromptChunkFailure.test.ts` "TAX-15 (N13) — the fallback asks before reloading over an upload" (the chunk 404s, an upload is on the wire: Wait → no SKIP_WAITING and the guard holds; OK → the worker is activated and the guard released; no upload → no question, as before; a throwing confirm answers Wait); `lib/__tests__/n13UploadLeafModule.test.ts` (the leaf imports nothing; `lib/uploadActivity`'s names are the leaf's functions — one state; `ServiceWorkerManager` reads the leaf only). Every earlier case in `updatePrompt.test.ts`, `updatePromptChunkFailure.test.ts`, `uploadActivity.test.ts` and `sw.test.ts` is unchanged and green. Mutation-checked: the question removed, and the release removed, each fails.
+
+**Done-when.**
+- ✓ One component owns "a newer build exists" (unchanged; the fallback is the named second renderer, `DEC-94` item 8).
+- ✓ Its reload path is the one `loadLatestBuild` path and asks before reloading over an upload in flight — on the UpdatePill path (`confirmReloadDuringUploads`, the app dialog) and now on the fallback path (`confirmReloadFromFallback`, the browser's confirm in the same words).
+- ✓ A test pins that only one surface renders when both signals are true (unchanged).
+
+**Scope / residual.** The fallback's question is the browser's own confirm (OK / Cancel), not the app's dialog with "Reload anyway" / "Wait" — the words are the same, the buttons the browser's. Not observed across a real deploy (jsdom; the chunk failure is a throwing module factory, as before). `TAX-14` done-when 3 rests on this record. No migration.
 
 ---
 
@@ -1124,5 +1173,7 @@ The scratch cluster was deleted afterwards. Re-run at the fix pass on a throwawa
 - [ ] Whatever stays a separate act says so in its wording, so no surface calls the same act by two names.
 
 **Owner.** notifications N13 (the Assigned line above) — after N12's `GAP-206` merges. Document-control holds `DistributionRecall` / `lib/staleCopies.ts`, intelligence holds `lib/orchestrator/tools.ts`, the overlap banner is notifications': N13 edits them only when no package holding them is in flight.
+
+**Not built (2026-11-18, notifications N13 LAYERS SWEEP).** Both done-whens wait on `GAP-206`'s one "Nudge" component and kind (notifications N12 NUDGES), which is held by the user and NOT merged at `b138efc7` (`app/api/tickets/nudge/route.ts` does not exist there). Deciding now whether the overlap heads-up, the recall's nudge and the orchestrator's `notify_personnel` adopt it, or are recorded as different acts, would decide against a component and kind that do not exist yet — the record's own order ("decided once, after `GAP-206` lands"). Nothing was changed for this finding (the integrator's ruling 2 at the N13 launch, `DEC-90`; `DEC-31`). Stays OPEN. **Owner:** unchanged — notifications N13's plan entry keeps it, to run once `GAP-206` merges (the integrator re-launches it or assigns it to that package's successor); document-control (`DistributionRecall`, `lib/staleCopies.ts`) and intelligence (`lib/orchestrator/tools.ts`) hold two of the three files.
 
 ---
