@@ -108,11 +108,11 @@ const isLineTerminator = (c: number) => c === 0x0a || c === 0x0d || c === 0x2028
 const WS = /\s/;
 const isWs = (ch: string) => WS.test(ch);
 
-/** str.match(/<table[\s\S]*?>[\s\S]*?<\/table>/gi). */
-function matchTables(str: string): string[] {
+/** str.match(/<table[\s\S]*?>[\s\S]*?<\/table>/gi) — its first `limit` matches. */
+function matchTables(str: string, limit = Infinity): string[] {
   const out: string[] = [];
   let pos = 0;
-  for (;;) {
+  while (out.length < limit) {
     const start = indexOfCI(str, "<table", pos);
     if (start === -1) return out;
     const gt = str.indexOf(">", start + 6);
@@ -122,6 +122,7 @@ function matchTables(str: string): string[] {
     out.push(str.slice(start, close + 8));
     pos = close + 8;
   }
+  return out;
 }
 
 /** str.replace(/<!--.*?-->/g, "") — `.` stops at a line terminator. */
@@ -275,12 +276,18 @@ interface Merge { s: { r: number; c: number }; e: { r: number; c: number } }
 
 export const MERGE_LOOP_REFUSAL = "That spreadsheet's table merges a cell into itself (a merged cell with a column span of 0 or less), so it cannot be read. Save it as .xlsx or .csv and try again.";
 export const MERGE_BUDGET_REFUSAL = "That spreadsheet's table has too many overlapping merged cells to read. Save it as .xlsx or .csv and try again.";
+export const COLUMN_LIMIT_REFUSAL = "That spreadsheet's table reaches past column XFD or row 1,048,576 (Excel's limits), so it cannot be read. Save it as .xlsx or .csv and try again.";
+/** Excel's last column (XFD) and row, 0-based. */
+const LAST_COL = 16_383;
+const LAST_ROW = 1_048_575;
+/** The most worksheets 0.18.5's book_append_sheet allowed (0xFFFF). */
+const MAX_SHEETS = 0xffff;
 
 /** html_to_sheet. The merge walk keeps 0.18.5's rule — repeatedly, the FIRST
  *  merge (in creation order) whose start column is C and whose rows cover R
  *  sends C past it — but looks only at merges starting in column C and drops
  *  the ones whose rows ended (R never decreases), instead of rescanning all. */
-function htmlToSheet(chunk: string, sheetRows: number, typeCell: LegacyCellTyper): XLSX.WorkSheet {
+function htmlToSheet(chunk: string, sheetRows: number, typeCell: LegacyCellTyper, walk: { budget: number }): XLSX.WorkSheet {
   const ws: XLSX.WorkSheet = {};
   const str = stripOneLineComments(chunk);
   const i0 = indexOfCI(str, "<table", 0);
@@ -291,7 +298,6 @@ function htmlToSheet(chunk: string, sheetRows: number, typeCell: LegacyCellTyper
   let C = 0;
   const range = { s: { r: 10000000, c: 10000000 }, e: { r: 0, c: 0 } };
   const merges: Merge[] = [];
-  let walkBudget = 1_000_000 + 4 * chunk.length;
   // Per start column, the merges in creation order and the index of the first
   // one whose rows have not ended (R never decreases, so an ended merge can
   // never cover again). Creation rows never decrease either, so once the
@@ -319,10 +325,11 @@ function htmlToSheet(chunk: string, sheetRows: number, typeCell: LegacyCellTyper
       // 0.18.5 (and 0.20.3) loop here forever when a walk revisits a merge
       // (a merged cell with colspan 0 or below sends C back to itself), and
       // spend time quadratic in the merges when many rowspans stack up; both
-      // are refused instead of hanging the request.
+      // are refused instead of hanging the request (the step budget is one
+      // per file, shared by all its tables).
       for (let mg = coverAt(C, R), steps = 0; mg; mg = coverAt(C, R)) {
         if (++steps > merges.length) throw new Error(MERGE_LOOP_REFUSAL);
-        if (--walkBudget < 0) throw new Error(MERGE_BUDGET_REFUSAL);
+        if (--walk.budget < 0) throw new Error(MERGE_BUDGET_REFUSAL);
         C = mg.e.c + 1;
       }
       const tag = parseCellTag(cell.slice(0, cell.indexOf(">")));
@@ -337,6 +344,11 @@ function htmlToSheet(chunk: string, sheetRows: number, typeCell: LegacyCellTyper
       const markedText = (tag.t || tag["data-t"] || "") === "s";
       if (!m.length) { C += CS; continue; }
       m = htmlDecode(m);
+      // A cell past Excel's last column / row (only a runaway colspan gets
+      // there) would make every row of the sheet that wide downstream —
+      // seconds and gigabytes for a few bytes of markup; 0.18.5 and 0.20.3
+      // both built it. Refused.
+      if (C > LAST_COL || R > LAST_ROW) throw new Error(COLUMN_LIMIT_REFUSAL);
       if (range.s.r > R) range.s.r = R;
       if (range.e.r < R) range.e.r = R;
       if (range.s.c > C) range.s.c = C;
@@ -357,13 +369,19 @@ function htmlToSheet(chunk: string, sheetRows: number, typeCell: LegacyCellTyper
 export function legacyHtmlWorkbook(bytes: Uint8Array, sheetRows: number, typeCell: LegacyCellTyper): XLSX.WorkBook | null {
   const str = legacyXmlString(bytes);
   if (str === null || !isLegacyHtml(str)) return null;
-  const tables = matchTables(str);
+  // 0.18.5 refused the 65,536th table ("Too many worksheets"), after reading
+  // it; no table past that one can matter, so none is collected.
+  const tables = matchTables(str, MAX_SHEETS + 1);
   if (tables.length === 0) throw new Error("Invalid HTML: could not find <table>");
   const wb: XLSX.WorkBook = { SheetNames: [], Sheets: {} };
+  // One merge-step budget for the whole file, however many tables it holds.
+  const walk = { budget: 1_000_000 + 4 * str.length };
   tables.forEach((chunk, idx) => {
+    const ws = htmlToSheet(chunk, sheetRows, typeCell, walk);
+    if (tables.length > 1 && wb.SheetNames.length >= MAX_SHEETS) throw new Error("Too many worksheets");
     const name = "Sheet" + (idx + 1);
     wb.SheetNames.push(name);
-    wb.Sheets[name] = htmlToSheet(chunk, sheetRows, typeCell);
+    wb.Sheets[name] = ws;
   });
   return wb;
 }

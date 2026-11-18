@@ -219,6 +219,44 @@ function keepErrorText(ws: XLSX.WorkSheet): void {
   }
 }
 
+/** Most cells (rows × columns of the used range) a sheet is read into rows
+ *  with: the whole read window (SHEET_ROW_WINDOW, 10,016 rows) × 200 columns. Reading builds every row to the full
+ *  width of the range, at about 3 µs and 400 bytes per cell (measured: 2M
+ *  cells ≈ 6 s and 0.8 GB peak; 5M ≈ 17 s and 1.6 GB), so a range a few bytes
+ *  can declare (a runaway colspan, a CSV line of commas, an xlsx dimension
+ *  to XFD) must not reach it. A range past the budget is first trimmed to the
+ *  cells actually present (its trailing empty rows and columns read as
+ *  nothing); only a sheet whose real data spans more is refused. */
+export const MAX_SHEET_CELLS = SHEET_ROW_WINDOW * 200;
+
+/** The range sheet_to_json reads: undefined (the sheet's own) when within
+ *  MAX_SHEET_CELLS — exactly as before — else the used range's end trimmed
+ *  to the last row and column holding a cell; refused if still over. */
+function readRange(ws: XLSX.WorkSheet, sheetName: string): string | undefined {
+  const ref = ws["!ref"];
+  if (typeof ref !== "string" || !ref) return undefined;
+  let r: XLSX.Range;
+  try { r = XLSX.utils.decode_range(ref); } catch { return undefined; }
+  const cellsIn = (eR: number, eC: number) => (eR - r.s.r + 1) * (eC - r.s.c + 1);
+  // An empty HTML table's range is reversed (start past end): nothing to read.
+  if (!(r.e.r >= r.s.r && r.e.c >= r.s.c) || !(cellsIn(r.e.r, r.e.c) > MAX_SHEET_CELLS)) return undefined;
+  let lastR = r.s.r;
+  let lastC = r.s.c;
+  for (const key of Object.keys(ws)) {
+    if (key.charAt(0) === "!") continue;
+    const at = XLSX.utils.decode_cell(key);
+    if (at.r < r.s.r || at.r > r.e.r || at.c < r.s.c || at.c > r.e.c) continue;
+    if (at.r > lastR) lastR = at.r;
+    if (at.c > lastC) lastC = at.c;
+  }
+  if (cellsIn(lastR, lastC) > MAX_SHEET_CELLS) {
+    throw new Error(
+      `Sheet "${sheetName}" spans ${(lastR - r.s.r + 1).toLocaleString("en-US")} rows × ${(lastC - r.s.c + 1).toLocaleString("en-US")} columns; the generator reads at most ${MAX_SHEET_CELLS.toLocaleString("en-US")} cells per sheet. Delete unused columns or split it into smaller workbooks.`,
+    );
+  }
+  return XLSX.utils.encode_range({ s: r.s, e: { r: lastR, c: lastC } });
+}
+
 /** Rows spanned by an A1-style range string; 0 when absent or unparseable. */
 function rangeRows(ref: unknown): number {
   if (typeof ref !== "string" || !ref) return 0;
@@ -270,11 +308,12 @@ export function parseWorkbook(bytes: Uint8Array | Buffer, sheet?: string): Sheet
       `Sheet "${sheetName}" runs to row ${seenRows.toLocaleString("en-US")} or beyond; the generator reads at most ${MAX_SHEET_ROWS.toLocaleString("en-US")} data rows per sheet. Remove the trailing rows or split it into smaller workbooks.`,
     );
   }
-  const matrix = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, blankrows: false, defval: "", UTC: openDocument });
+  const range = readRange(ws, sheetName);
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, blankrows: false, defval: "", UTC: openDocument, ...(range ? { range } : {}) });
   // The same rows keyed by column letter: SheetJS applies its one blank-row
   // rule to both reads and stamps each keyed row with its 0-based sheet row
   // (__rowNum__, non-enumerable) — which array rows do not carry.
-  const stamped = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { header: "A", blankrows: false, defval: "", UTC: openDocument });
+  const stamped = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { header: "A", blankrows: false, defval: "", UTC: openDocument, ...(range ? { range } : {}) });
   const sheetRowOf = (i: number): number | null => {
     if (stamped.length !== matrix.length) return null;
     const n = (stamped[i] as { __rowNum__?: unknown } | undefined)?.__rowNum__;

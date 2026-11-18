@@ -17,7 +17,7 @@
 import { describe, it, expect } from "vitest";
 import * as XLSX from "xlsx";
 import { parseWorkbook } from "@/lib/xlsxData";
-import { legacyHtmlScans, MERGE_LOOP_REFUSAL, MERGE_BUDGET_REFUSAL } from "@/lib/xlsxLegacyHtml";
+import { legacyHtmlScans, MERGE_LOOP_REFUSAL, MERGE_BUDGET_REFUSAL, COLUMN_LIMIT_REFUSAL } from "@/lib/xlsxLegacyHtml";
 
 const inZone = <T,>(zone: string, fn: () => T): T => {
   const tz = process.env.TZ;
@@ -133,8 +133,35 @@ describe("XEDGE-12 — the HTML reader never hangs", () => {
   it("a merged cell spanning 0 columns, which 0.18.5 and 0.20.3 loop on forever, is refused", () => {
     const loop = "<table><tr><td colspan=0 rowspan=2>x</td></tr><tr><td>z</td></tr></table>";
     expect(() => parseWorkbook(Buffer.from(loop))).toThrow(MERGE_LOOP_REFUSAL);
-    const stacked = "<table><tr>" + "<td rowspan=9999>x</td>".repeat(60_000) + "</tr>" + "<tr><td>y</td></tr>".repeat(9_000) + "</table>";
+    const stacked = "<table><tr>" + "<td rowspan=9999>x</td>".repeat(16_000) + "</tr>" + "<tr><td>y</td></tr>".repeat(500) + "</table>";
     expect(() => parseWorkbook(Buffer.from(stacked))).toThrow(MERGE_BUDGET_REFUSAL);
+  }, 60_000);
+
+  it("a runaway colspan past Excel's last column is refused at once (0.18.5 and 0.20.3 built every row that wide)", () => {
+    const tiny = Buffer.from("<table><tr><td colspan=1000000>a</td><td>b</td></tr></table>");
+    const thousandRows = Buffer.from("<table>" + "<tr><td colspan=100000>a</td><td>b</td></tr>".repeat(1000) + "</table>");
+    for (const bytes of [tiny, thousandRows]) {
+      const started = Date.now();
+      expect(() => parseWorkbook(bytes)).toThrow(COLUMN_LIMIT_REFUSAL);
+      expect(Date.now() - started).toBeLessThan(2000);
+    }
+    // Column XFD itself is still a column.
+    expect(rows("<table><tr><td>Tag</td><td colspan=16382>x</td><td>Last</td></tr><tr><td>P-1</td></tr></table>")[0].Tag).toBe("P-1");
+  });
+
+  it("the merge-step budget is one per file: many tables each under it cannot add up past it", () => {
+    const table = "<table><tr>" + "<td rowspan=9999>x</td>".repeat(1000) + "</tr>" + "<tr><td>y</td></tr>".repeat(1000) + "</table>";
+    expect(() => parseWorkbook(Buffer.from("<html>" + table))).not.toThrow();
+    expect(() => parseWorkbook(Buffer.from("<html>" + table.repeat(30)))).toThrow(MERGE_BUDGET_REFUSAL);
+  }, 60_000);
+
+  it("65,535 tables read as 65,535 sheets; the 65,536th is refused, as 0.18.5 refused it", () => {
+    const one = "<table><tr><td>x</td></tr></table>";
+    expect(parseWorkbook(Buffer.from("<html>" + one.repeat(65_535))).sheetNames).toHaveLength(65_535);
+    expect(() => parseWorkbook(Buffer.from("<html>" + one.repeat(65_536)))).toThrow("Too many worksheets");
+    const started = Date.now();
+    expect(() => parseWorkbook(Buffer.from("<html>" + one.repeat(700_000)))).toThrow("Too many worksheets");
+    expect(Date.now() - started).toBeLessThan(10_000);
   }, 60_000);
 
   it("10 MB of hostile markup reads in linear time", () => {

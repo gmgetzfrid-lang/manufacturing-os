@@ -26,7 +26,7 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import * as XLSX from "xlsx";
-import { parseWorkbook } from "@/lib/xlsxData";
+import { parseWorkbook, MAX_SHEET_CELLS } from "@/lib/xlsxData";
 
 const root = resolve(__dirname, "../..");
 const fixture = (name: string) => readFileSync(resolve(__dirname, "fixtures/xlsx", name));
@@ -233,6 +233,38 @@ describe("XEDGE-12 — a binary workbook's string cells stay strings", () => {
     for (const bookType of ["xlsx", "xls", "xlsb"] as const) {
       expect(values(XLSX.write(wb, { type: "buffer", bookType }) as Buffer)).toEqual(looks);
     }
+  }));
+});
+
+describe("XEDGE-12 — a sheet's used range is read within a cell budget", () => {
+  it("a range a few bytes declare is trimmed to the cells present: an xlsx dimension to XFD, a CSV line of commas", () => inZone("UTC", () => {
+    const ws = XLSX.utils.aoa_to_sheet([["Tag", "Desc", "Qty"], ["P-1", "pump", 1], ["P-2", "valve", 2]]);
+    ws["!ref"] = "A1:XFD200"; // 3.3M cells declared, 9 present
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "S");
+    const bytes = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer; // the writer walks the range; not timed
+    let started = Date.now();
+    const out = parseWorkbook(bytes);
+    expect(out.headers).toEqual(["Tag", "Desc", "Qty"]);
+    expect(out.rows).toEqual([{ Tag: "P-1", Desc: "pump", Qty: "1" }, { Tag: "P-2", Desc: "valve", Qty: "2" }]);
+    expect(Date.now() - started).toBeLessThan(3000);
+    started = Date.now();
+    const commas = parseWorkbook(Buffer.from("Tag,Desc\n" + "a" + ",".repeat(1_000_000) + "\n" + "x,y\n".repeat(1000)));
+    expect(commas.headers).toEqual(["Tag", "Desc"]);
+    expect(commas.rows).toHaveLength(1001);
+    expect(Date.now() - started).toBeLessThan(3000);
+  }), 60_000);
+
+  it("real data spanning more than MAX_SHEET_CELLS is refused in plain words; a range within it reads exactly as before", () => inZone("UTC", () => {
+    const far = Buffer.from("Tag,Desc\n" + "a" + ",".repeat(1_000_000) + "b\n" + "x,y\n".repeat(1000));
+    expect(MAX_SHEET_CELLS).toBe(2_003_200); // the 10,016-row read window × 200 columns
+    expect(() => parseWorkbook(far)).toThrow(/spans 1,002 rows × 1,000,001 columns; the generator reads at most 2,003,200 cells per sheet/);
+    // Within the budget nothing is trimmed: an A1:Z5 dimension still reads 26 columns, as 0.18.5 read it.
+    const ws = XLSX.utils.aoa_to_sheet([["Tag", "Desc", "Qty"], ["P-1", "pump", 1]]);
+    ws["!ref"] = "A1:Z5";
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "S");
+    expect(parseWorkbook(XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer).headers).toHaveLength(26);
   }));
 });
 
