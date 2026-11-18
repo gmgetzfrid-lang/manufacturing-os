@@ -22,14 +22,13 @@
 // Invalid Date that refused the whole file. Every one of those reads worked
 // a person's way before, so text-typed cells are re-typed here from the text
 // SheetJS keeps for them (`cell.w`) with the 0.18.5 rules
-// (`legacyTextCell`), so a text cell reads as it did before the move — with
-// one exception, ruled under DEC-90: in an HTML table that marks some cells
-// `t="s"` / `data-t="s"` and not others (`htmlMayMarkText` reads only the
-// cell tags), a cell 0.20.3 left as text keeps its text, so an UNMARKED cell
-// there whose text only 0.18.5 read as a date ("15-Mar-2026") stays as typed
-// — nothing is lost, and real exporters mark every cell or none. Cells a
-// binary workbook (xlsx / xls / xlsb) types are SheetJS 0.20.3's own (Excel's
-// calendar for serials before 1900-03-01, ruled under DEC-90); an
+// (`legacyTextCell`), so a text cell reads as it did before the move. An
+// HTML table is read by a port of 0.18.5's own HTML reader
+// (lib/xlsxLegacyHtml.ts): 0.20.3 also segments those tables differently and
+// cannot report 0.18.5's per-cell `t="s"` / `data-t="s"` text mark, so only
+// the reader itself reproduces them exactly. Cells a binary workbook (xlsx /
+// xls / xlsb) types are SheetJS 0.20.3's own (Excel's calendar for serials
+// before 1900-03-01, ruled under DEC-90); an
 // OpenDocument sheet keeps 0.18.5's error text and calendar dates (below).
 //
 // The row cap REFUSES, never truncates: the draft action reports
@@ -41,6 +40,7 @@
 
 import * as XLSX from "xlsx";
 import { cellToText } from "@/lib/outputTemplateText";
+import { legacyHtmlWorkbook } from "@/lib/xlsxLegacyHtml";
 
 export interface SheetData {
   sheetName: string;
@@ -194,46 +194,16 @@ function textFamily(wb: XLSX.WorkBook, bytes: Uint8Array): "dsv" | "html" | null
   return "dsv";
 }
 
-/** A text mark among one cell tag's attributes: `t` or `data-t` (any case,
- *  any namespace prefix such as `x:t`, an `_suffix` 0.18.5's tag parser cut
- *  off) set to a value starting "s". Broader than 0.18.5's exact `"s"` — a
- *  false hit only keeps a cell's typed text. Every quantifier is a bounded or
- *  single-class run, so a test costs time linear in the tag. */
-const CELL_TEXT_MARK = /(?:^|[\s"'/?:]|data-)t(?:_[^\s=>"'/?:]{0,64})?\s*=\s*["']?s/i;
-
-/** Whether an HTML table marks any cell as text: some `<td …>` / `<th …>`
- *  open tag carries `t="s"` / `data-t="s"` (SheetJS's own HTML export marks
- *  every cell; LibreOffice's and Excel's mark none). 0.18.5 kept a marked
- *  cell as its text, but the mark is gone by the time cells are re-typed, so
- *  a table that marks any cell keeps every cell 0.20.3 left as text. Only cell
- *  tags are read — text such as "Weight = Steel" never counts — tag by tag:
- *  each open tag runs to its first ">" (as 0.18.5 read it) and the scan
- *  resumes past it, so every character is read a bounded number of times. */
-export function htmlMayMarkText(bytes: Uint8Array): boolean {
-  const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const text = buf[0] === 0xff && buf[1] === 0xfe ? buf.subarray(2).toString("utf16le") : buf.toString("latin1");
-  const open = /<t[dh]/gi;
-  for (let m = open.exec(text); m !== null; m = open.exec(text)) {
-    const end = text.indexOf(">", m.index + 3);
-    if (CELL_TEXT_MARK.test(text.slice(m.index + 3, end === -1 ? text.length : end))) return true;
-    if (end === -1) return false;
-    open.lastIndex = end + 1;
-  }
-  return false;
-}
-
 /** Re-type every text cell of `ws` with the 0.18.5 rules, from the text
  *  SheetJS keeps for it. A CRLF inside a quoted CSV field reads as LF, as
- *  0.18.5 (which normalised line ends before splitting) read it. With
- *  `keepStrings` (an HTML table that may mark cells `t="s"`), a non-blank
- *  cell 0.20.3 itself left a string keeps its text: a marked cell is one of
- *  them, and 0.18.5 kept every marked cell as text. */
-function retypeTextCells(ws: XLSX.WorkSheet, family: "dsv" | "html", keepStrings = false): void {
+ *  0.18.5 (which normalised line ends before splitting) read it. (An HTML
+ *  table 0.18.5 would have read is read by lib/xlsxLegacyHtml.ts instead;
+ *  "html" here is only a table 0.20.3 alone takes for HTML.) */
+function retypeTextCells(ws: XLSX.WorkSheet, family: "dsv" | "html"): void {
   for (const key of Object.keys(ws)) {
     if (key.charAt(0) === "!") continue;
     const cell = ws[key] as XLSX.CellObject | undefined;
     if (!cell || typeof cell.w !== "string" || cell.w.length === 0) continue;
-    if (keepStrings && cell.t === "s" && cell.w.trim().length > 0) continue;
     const text = family === "dsv" ? cell.w.replace(/\r\n/g, "\n") : cell.w;
     ws[key] = legacyTextCell(text, family);
   }
@@ -263,7 +233,12 @@ export function parseWorkbook(bytes: Uint8Array | Buffer, sheet?: string): Sheet
       `That spreadsheet is ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MB; the limit is ${MAX_WORKBOOK_BYTES / 1024 / 1024} MB. Split it or remove embedded images.`,
     );
   }
-  const wb = withPrototypeGuard(() => XLSX.read(bytes, {
+  // An HTML table 0.18.5 would have read is read by its own reader, ported
+  // (lib/xlsxLegacyHtml.ts): segmentation, per-cell text marks and typing
+  // exactly as before. Everything else is read by the vendored 0.20.3.
+  const legacyHtml = withPrototypeGuard(() => legacyHtmlWorkbook(bytes, SHEET_ROW_WINDOW, (text, markedText) =>
+    markedText ? { t: "s", v: text } : legacyTextCell(text, "html")));
+  const wb = legacyHtml ?? withPrototypeGuard(() => XLSX.read(bytes, {
     type: "buffer",
     cellDates: true,
     // Bound the work per sheet: header scan window + the data cap + 1.
@@ -278,8 +253,8 @@ export function parseWorkbook(bytes: Uint8Array | Buffer, sheet?: string): Sheet
   if (!sheetName) return { sheetName: "", headers: [], rows: [], sheetNames };
 
   const ws = wb.Sheets[sheetName];
-  const family = textFamily(wb, bytes);
-  if (family) retypeTextCells(ws, family, family === "html" && htmlMayMarkText(bytes));
+  const family = legacyHtml ? null : textFamily(wb, bytes);
+  if (family) retypeTextCells(ws, family);
   // An OpenDocument sheet (.ods / flat .fods): 0.18.5 kept a formula's error
   // ("#DIV/0!", "#N/A") as its text and read a date as the calendar date the
   // file states; 0.20.3 makes the error a blank error cell and shifts the
