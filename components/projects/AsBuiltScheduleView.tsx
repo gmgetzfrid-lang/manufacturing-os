@@ -10,7 +10,7 @@
 // in), the crew load and the hands it needs. lib/asBuiltWork, lib/nextPlan.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Send, Undo2, Check, X, Download, Printer, CalendarClock, ChevronRight, ChevronsDownUp, ChevronsUpDown } from "lucide-react";
+import { Loader2, Send, Undo2, Check, X, Download, Printer, CalendarClock, ChevronRight, ChevronsDownUp, ChevronsUpDown, Maximize2, Minimize2, CalendarDays } from "lucide-react";
 import type { Milestone, MilestoneNote } from "@/types/schema";
 import type { CancelledJob } from "@/lib/cancelledJobs";
 import type { ProjectPhase } from "@/lib/projectPhases";
@@ -31,7 +31,9 @@ import { loadManpowerSettings, companyOf as companyOfCrew, type ManpowerSettings
 import { fmtInTz } from "@/lib/scheduleTz";
 import { supabase } from "@/lib/supabase";
 
-const PX = 34;
+/** Width of one shift on the chart: fitted to the space it has (see the
+ *  view), between 14 and 56 px. */
+const PxCtx = React.createContext(34);
 const PALETTE = ["#2563eb", "#059669", "#7c3aed", "#64748b", "#0891b2", "#db2777", "#b45309", "#475569", "#0d9488", "#9333ea"];
 const r1 = (n: number) => Math.round(n * 10) / 10;
 
@@ -49,6 +51,8 @@ interface Props {
   userName?: string | null;
   onExcel?: () => void;
   onPrint?: () => void;
+  /** Show the dates and counts columns (set by the view's toolbar). */
+  cols?: boolean;
 }
 
 export default function AsBuiltScheduleView(p: Props) {
@@ -57,6 +61,23 @@ export default function AsBuiltScheduleView(p: Props) {
   const [data, setData] = useState<{ log: ProgressLogRow[]; notes: MilestoneNote[]; records: Map<string, ShiftRecord>; mp: ManpowerSettings; settings: NextPlanSettings } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [cols, setCols] = useState(false);
+  const [full, setFull] = useState(false);
+  // The view's own box (shown once the job is read): its width sets the chart's.
+  const [box, setBox] = useState<HTMLDivElement | null>(null);
+  const [boxW, setBoxW] = useState(0);
+  useEffect(() => {
+    if (!box || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([e]) => setBoxW(Math.round(e.contentRect.width)));
+    ro.observe(box);
+    return () => ro.disconnect();
+  }, [box]);
+  useEffect(() => {
+    if (!full) return;
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape") setFull(false); };
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [full]);
 
   const built = useMemo(() => buildAsBuilt({ milestones: p.milestones, childrenByParent: p.childrenByParent, cancelled: p.cancelled, phases: p.phases, tz }), [p.milestones, p.childrenByParent, p.cancelled, p.phases, tz]);
   const stepIds = useMemo(() => built.orders.flatMap((o) => o.steps.map((s) => s.id)), [built]);
@@ -94,12 +115,18 @@ export default function AsBuiltScheduleView(p: Props) {
     try { await saveNextPlanChanges(p.projectId, scope, next); setMsg(null); } catch (e) { setMsg((e as Error).message); }
   }, [data, scope, p.projectId]);
 
+  // One shift's width: the whole job across the space the chart has.
+  const nShifts = view === "built" ? work?.shifts.length ?? 0 : plan?.shifts.length ?? 0;
+  const left = boxW >= 640 ? 290 : 170;
+  const px = nShifts && boxW ? Math.max(14, Math.min(56, Math.floor((boxW - left - (cols ? 350 : 0) - 6) / nShifts))) : 34;
+
   if (err) return <div className="rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/30 p-3 text-[13px] text-rose-800 dark:text-rose-200">{err}</div>;
   if (!data || !work || !plan) return <div className="py-10 text-center text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline mr-1" /> Reading the job shift by shift…</div>;
   if (!built.orders.length) return <div className="py-8 text-center text-[13px] text-[var(--color-text-muted)]">No schedule here yet.</div>;
 
   return (
-    <div className="space-y-3 min-w-0">
+    <PxCtx.Provider value={px}>
+    <div ref={setBox} className={full ? "fixed inset-0 z-[300] overflow-auto bg-[var(--color-bg,#f8fafc)] p-3 sm:p-5 space-y-3" : "space-y-3 min-w-0"}>
       <div className="flex flex-wrap items-center gap-2">
         <div role="tablist" aria-label="Schedule" className="inline-flex rounded-lg border border-slate-400 overflow-hidden">
           {([["built", "As-built"], ["next", "Suggested for next time"]] as const).map(([k, label]) => (
@@ -107,15 +134,18 @@ export default function AsBuiltScheduleView(p: Props) {
               className={`px-3 py-1.5 text-[13px] font-bold cursor-pointer ${view === k ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>{label}</button>
           ))}
         </div>
+        <button type="button" onClick={() => setFull(!full)} className={btnQuiet}>{full ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />} {full ? "Close full screen" : "Full screen"}</button>
+        <button type="button" aria-pressed={cols} onClick={() => setCols(!cols)} className={btnQuiet}><CalendarDays className="w-4 h-4" /> {cols ? "Hide dates" : "Show dates"}</button>
         {p.onExcel && <button type="button" onClick={p.onExcel} className={btnQuiet}><Download className="w-4 h-4" /> Excel</button>}
         {p.onPrint && <button type="button" onClick={p.onPrint} className={btnQuiet}><Printer className="w-4 h-4" /> Print</button>}
         {msg && <span role="status" className="text-[12px] font-semibold text-rose-700 dark:text-rose-400">{msg}</span>}
       </div>
       {view === "built"
-        ? <BuiltView {...p} built={built} work={work} colorOf={colorOf} changes={changes} onAdd={(c) => void saveChanges([...changes, c])} />
-        : <NextView {...p} built={built} work={work} plan={plan} colorOf={colorOf} changes={changes} settings={data.settings} onChanges={(n) => void saveChanges(n)}
+        ? <BuiltView {...p} cols={cols} built={built} work={work} colorOf={colorOf} changes={changes} onAdd={(c) => void saveChanges([...changes, c])} />
+        : <NextView {...p} cols={cols} built={built} work={work} plan={plan} colorOf={colorOf} changes={changes} settings={data.settings} onChanges={(n) => void saveChanges(n)}
             onStaffing={(next) => setData({ ...data, settings: { ...data.settings, staffing: next } })} />}
     </div>
+    </PxCtx.Provider>
   );
 }
 
@@ -125,6 +155,7 @@ const btnPri = "inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-acce
 // ── Shared timeline bits ─────────────────────────────────────────────────
 
 function useAxis(work: { shifts: Array<{ start: number; end: number; kind: string; dayKey: string }> }) {
+  const PX = React.useContext(PxCtx);
   const shifts = work.shifts;
   const x = (t: number) => {
     if (!shifts.length) return 0;
@@ -139,14 +170,15 @@ function useAxis(work: { shifts: Array<{ start: number; end: number; kind: strin
 }
 
 function Header({ shifts, tz, dayLabel }: { shifts: Array<{ start: number; kind: string }>; tz: string; dayLabel?: (t: number) => string }) {
+  const PX = React.useContext(PxCtx);
   const out: React.ReactNode[] = [];
   for (let i = 0; i < shifts.length; i++) {
     const s = shifts[i];
     if (s.kind !== "day" && i !== 0) continue;
     const span = s.kind === "day" ? 2 : 1;
     out.push(
-      <div key={i} className="absolute top-0 border-l border-[var(--color-border)] pl-1 text-[10.5px] text-[var(--color-text-muted)] leading-tight" style={{ left: i * PX, width: span * PX }}>
-        <b className="text-[var(--color-text)]">{dayLabel ? dayLabel(s.start) : fmtInTz(s.start, tz, { weekday: "short" })}</b> {dayLabel ? fmtInTz(s.start, tz, { weekday: "short" }) : fmtInTz(s.start, tz, { month: "short", day: "numeric" })}
+      <div key={i} className="absolute top-0 border-l border-[var(--color-border)] pl-1 text-[10.5px] text-[var(--color-text-muted)] leading-tight whitespace-nowrap overflow-hidden" style={{ left: i * PX, width: span * PX }}>
+        <b className="text-[var(--color-text)]">{dayLabel ? dayLabel(s.start) : PX < 20 ? fmtInTz(s.start, tz, { day: "numeric" }) : PX < 26 ? fmtInTz(s.start, tz, { month: "numeric", day: "numeric" }) : fmtInTz(s.start, tz, { weekday: "short" })}</b> {PX < 26 ? "" : dayLabel ? fmtInTz(s.start, tz, { weekday: "short" }) : fmtInTz(s.start, tz, { month: "short", day: "numeric" })}
         <div className="flex mt-0.5">{span === 2 ? <><span className="flex-1 text-center">D</span><span className="flex-1 text-center">N</span></> : <span className="flex-1 text-center">{s.kind === "night" ? "N" : "D"}</span>}</div>
       </div>,
     );
@@ -155,6 +187,7 @@ function Header({ shifts, tz, dayLabel }: { shifts: Array<{ start: number; kind:
 }
 
 function Grid({ shifts }: { shifts: Array<{ kind: string }> }) {
+  const PX = React.useContext(PxCtx);
   return <>{shifts.map((s, i) => <i key={i} aria-hidden className={`absolute top-0 bottom-0 ${s.kind === "night" ? "border-l border-dashed border-[var(--color-border)] bg-slate-500/[0.03]" : "border-l border-[var(--color-border)]"}`} style={{ left: i * PX, width: PX }} />)}</>;
 }
 
@@ -212,13 +245,14 @@ function OrderName({ open, onToggle, children }: { open: boolean; onToggle: () =
 }
 
 const cellAct = "sticky left-0 z-[2] bg-[var(--color-surface)] border-r border-[var(--color-border)] align-top px-2 py-1.5 w-[170px] min-w-[170px] max-w-[170px] sm:w-[290px] sm:min-w-[290px] sm:max-w-[290px]";
-const cellDt = "align-top px-2 py-1.5 text-[11px] whitespace-nowrap text-[var(--color-text)]";
-const cellN = "align-top px-1.5 py-1.5 text-center font-bold text-[12.5px] min-w-[44px]";
+const cellDt = "col-x align-top px-2 py-1.5 text-[11px] whitespace-nowrap text-[var(--color-text)]";
+const cellN = "col-x align-top px-1.5 py-1.5 text-center font-bold text-[12.5px] min-w-[44px]";
 
 // ── As-built ─────────────────────────────────────────────────────────────
 
 function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBuiltWork; colorOf: (c: string) => string; changes: PlanChange[]; onAdd: (c: PlanChange) => void }) {
   const { tz, built, work } = p;
+  const PX = React.useContext(PxCtx);
   const { x, width } = useAxis(work);
   const keys = work.shifts.map(shiftKey);
   const idx = new Map(keys.map((k, i) => [k, i]));
@@ -253,13 +287,13 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
       <Legend items={[[{ background: "#2563eb" }, "A step, start to finish (on a step's own line: each shift it was worked)"], [ORDER_WAIT, "Work order open, nothing logged that shift"], [WAIT, "Activity in progress, nothing logged"], [READY, "Ready, not started"], [{ background: "#cbd5e1", height: 4 }, "Plan"], [{ borderLeft: "2px solid #dc2626", width: 2 }, "Planned finish"]]} />
       <div className="text-[11.5px] text-[var(--color-text-muted)]">Night shifts count as waiting only for work that ran on nights (its crew worked that work order on two or more nights). Day work sitting overnight is not waiting.</div>
       <FoldAll open={open.size} total={orders.length} onAll={(all) => setOpen(all ? new Set(orders.map((o) => o.key)) : new Set())} />
-      <div className="overflow-auto max-h-[75vh] rounded-xl border border-[var(--color-border)]">
-        <table className="border-separate border-spacing-0 w-max text-[12px]">
+      <div className="overflow-auto max-h-[75vh] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+        <table className={`border-separate border-spacing-0 w-max text-[12px] ${p.cols ? "" : "[&_.col-x]:hidden"}`}>
           <thead className="sticky top-0 z-[4] bg-[var(--color-surface-2)]">
             <tr className="text-[11px] text-[var(--color-text-muted)] text-left">
               <th className={`${cellAct} !bg-[var(--color-surface-2)] z-[5]`}>Activity</th>
-              <th className="px-2 font-semibold">Planned</th><th className="px-2 font-semibold">Actual</th>
-              <th className="px-1 font-semibold text-center">Shifts<br />worked</th><th className="px-1 font-semibold text-center">Shifts<br />waited</th>
+              <th className="col-x px-2 font-semibold">Planned</th><th className="col-x px-2 font-semibold">Actual</th>
+              <th className="col-x px-1 font-semibold text-center">Shifts<br />worked</th><th className="col-x px-1 font-semibold text-center">Shifts<br />waited</th>
               <th className="p-0"><Header shifts={work.shifts} tz={tz} /></th>
             </tr>
           </thead>
@@ -279,7 +313,7 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
                       <OrderName open={isOpen} onToggle={() => flip(o.key)}>
                         <div className="font-black text-[12.5px] text-[var(--color-text)]">{o.name}</div>
                         {o.foundOn && <div className="text-[11px] font-semibold text-orange-800 dark:text-orange-300">Found on {o.foundOn}</div>}
-                        <div className="text-[11px] text-[var(--color-text-muted)]">{o.wo ? `${o.wo} · ` : ""}{o.steps.length} step{o.steps.length === 1 ? "" : "s"}{o.steps.some((s) => !s.inPlan) ? ` · ${o.steps.filter((s) => !s.inPlan).length} added` : ""}</div>
+                        <div className="text-[11px] text-[var(--color-text-muted)]">{o.wo ? `${o.wo} · ` : ""}{o.steps.length} step{o.steps.length === 1 ? "" : "s"}{o.steps.some((s) => !s.inPlan) ? ` · ${o.steps.filter((s) => !s.inPlan).length} added` : ""}{!p.cols && ow ? <> · {ow.worked} shift{ow.worked === 1 ? "" : "s"} worked{ow.waited ? <> · <b className="whitespace-nowrap font-semibold text-amber-700 dark:text-amber-400">{ow.waited} waited</b></> : null}</> : null}</div>
                       </OrderName>
                     </td>
                     <td className={cellDt}>{when(o.planStart, tz)}<br />{when(o.planFinish, tz)}</td>
@@ -302,7 +336,7 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
                       <tr key={s.id}>
                         <td className={cellAct}>
                           <div className="font-bold text-[var(--color-text)]">{s.name}{!s.inPlan && <span className="ml-1 rounded bg-orange-100 dark:bg-orange-900/40 px-1 text-[10px] font-black text-orange-900 dark:text-orange-200">Added</span>}</div>
-                          <div className="text-[11px] text-[var(--color-text-muted)]"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(w.crew) }} />{w.crew} · plan {r1(s.plannedH)} h</div>
+                          <div className="text-[11px] text-[var(--color-text-muted)]"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(w.crew) }} />{w.crew} · plan {r1(s.plannedH)} h{!p.cols ? ` · ${s.elapsedH != null ? `took ${s.elapsedH} h` : s.status === "done" ? "start not recorded" : s.status === "not_started" ? "not started" : "still going"}` : ""}</div>
                           {w.ready && <div className="text-[11px] text-blue-700 dark:text-blue-300">Ready {when(w.ready.at, tz)}, waited {w.ready.shifts.length} shift{w.ready.shifts.length === 1 ? "" : "s"} to start: {w.ready.busyOn.length ? `${w.crew} was on ${[...new Set(w.ready.busyOn.map((b) => b.split(" - ")[0]))].join(", ")}` : `${w.crew} logged nothing those shifts`}</div>}
                           {w.waits.map((r, i) => (
                             <div key={i} className="text-[11px] text-amber-800 dark:text-amber-300">
@@ -334,7 +368,7 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
             {work.crews.map((c) => (
               <tr key={c.crew}>
                 <td className={cellAct}><div className="font-bold"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(c.crew) }} />{c.crew}</div><div className="text-[11px] text-[var(--color-text-muted)]">most moved in a shift: {c.mostMoved}</div></td>
-                <td /><td /><td className={cellN}>{Object.values(c.byShift).filter((x) => x.moved).length}</td><td />
+                <td className="col-x" /><td className="col-x" /><td className={cellN}>{Object.values(c.byShift).filter((x) => x.moved).length}</td><td className="col-x" />
                 <td className="p-0 relative"><div className="relative h-11" style={{ width }}>
                   <Grid shifts={work.shifts} />
                   {keys.map((k, i) => { const b = c.byShift[k]; const hands = b?.counted?.direct ?? b?.counted?.total; return b && (b.moved || hands) ? (
@@ -355,7 +389,7 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
                     {say("low") && <div className="text-[11px] text-amber-800 dark:text-amber-300">More hands than work logged: {say("low")}</div>}
                     {say("high") && <div className="text-[11px] text-blue-700 dark:text-blue-300">Stretched: {say("high")}</div>}
                   </td>
-                  <td /><td /><td /><td />
+                  <td className="col-x" /><td className="col-x" /><td className="col-x" /><td className="col-x" />
                   <td className="p-0 relative"><div className="relative h-11" style={{ width }}>
                     <Grid shifts={work.shifts} />
                     {keys.map((k, i) => { const b = c.byShift[k]; if (!b || !(b.counted || b.planned)) return null; const hands = b.planned?.direct ?? b.counted?.direct ?? b.counted?.total; const tone = b.verdict === "low" ? "bg-amber-100 border-amber-400 text-amber-900" : b.verdict === "high" ? "bg-blue-100 border-blue-300 text-blue-900" : "bg-emerald-100 border-emerald-300 text-emerald-900";
@@ -390,7 +424,7 @@ function SectionRow({ title, sub, width, shifts }: { title: string; sub: string;
   return (
     <tr className="bg-indigo-50 dark:bg-indigo-950/30">
       <td className={`${cellAct} !bg-indigo-50 dark:!bg-indigo-950/30`}><div className="font-black">{title}</div><div className="text-[11px] text-[var(--color-text-muted)]">{sub}</div></td>
-      <td /><td /><td /><td />
+      <td className="col-x" /><td className="col-x" /><td className="col-x" /><td className="col-x" />
       <td className="p-0"><div className="relative h-full min-h-[40px]" style={{ width }}><Grid shifts={shifts} /></div></td>
     </tr>
   );
@@ -432,6 +466,7 @@ function PlanFor({ run, stepName, crews, doneBefore, onSave, onCancel }: { run: 
 
 function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBuiltWork; plan: NextPlan; colorOf: (c: string) => string; changes: PlanChange[]; settings: NextPlanSettings; onChanges: (c: PlanChange[]) => void; onStaffing: (s: NextPlanSettings["staffing"]) => void }) {
   const { tz, times, built, work, plan, changes } = p;
+  const PX = React.useContext(PxCtx);
   const { x, width } = useAxis(plan);
   const dayOf = (t: number) => dayNumber(plan, t, tz);
   const dayLabel = (t: number) => `Day ${dayOf(t)}`;
@@ -571,12 +606,12 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
       <Legend items={[[{ background: "#2563eb" }, "Crew's work: each piece of a work order's bar is one activity"], [{ background: "#fff", boxShadow: "0 0 0 1.5px #ea580c" }, "Not in this year's plan"], [{ background: "#fee2e2", boxShadow: "0 0 0 1.5px #dc2626" }, "Sets the finish"], [{ borderLeft: "2px solid #dc2626", width: 2 }, "This year's planned finish"], [{ borderLeft: "2px dashed #2563eb", width: 2 }, "Suggested finish"]]} />
 
       <FoldAll open={open.size} total={orders.length} onAll={(all) => setOpen(all ? new Set(orders.map(([k]) => k)) : new Set())} />
-      <div className="overflow-auto max-h-[75vh] rounded-xl border border-[var(--color-border)]">
-        <table className="border-separate border-spacing-0 w-max text-[12px]">
+      <div className="overflow-auto max-h-[75vh] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+        <table className={`border-separate border-spacing-0 w-max text-[12px] ${p.cols ? "" : "[&_.col-x]:hidden"}`}>
           <thead className="sticky top-0 z-[4] bg-[var(--color-surface-2)]">
             <tr className="text-[11px] text-[var(--color-text-muted)] text-left">
               <th className={`${cellAct} !bg-[var(--color-surface-2)] z-[5]`}>Activity</th>
-              <th className="px-1 font-semibold text-center">Hours</th><th className="px-2 font-semibold">Start</th><th className="px-2 font-semibold">Finish</th>
+              <th className="col-x px-1 font-semibold text-center">Hours</th><th className="col-x px-2 font-semibold">Start</th><th className="col-x px-2 font-semibold">Finish</th>
               <th className="p-0"><Header shifts={plan.shifts} tz={tz} dayLabel={dayLabel} /></th>
             </tr>
           </thead>
@@ -603,7 +638,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
                       <OrderName open={isOpen} onToggle={() => flip(key)}>
                         <div className="font-black text-[12.5px]">{orderName.get(key) ?? key}{crit && <span className="ml-1 rounded bg-rose-100 px-1 text-[10px] font-black text-rose-900">Sets the finish</span>}</div>
                         {bo?.foundOn && <div className="text-[11px] font-semibold text-orange-800 dark:text-orange-300">Found on {bo.foundOn}</div>}
-                        <div className="text-[11px] text-[var(--color-text-muted)]">{acts.length} activit{acts.length === 1 ? "y" : "ies"}{changed ? ` · ${changed} changed` : ""}</div>
+                        <div className="text-[11px] text-[var(--color-text-muted)]">{acts.length} activit{acts.length === 1 ? "y" : "ies"} · {r1(acts.reduce((n, a) => n + a.hours, 0))} h{changed ? ` · ${changed} changed` : ""}</div>
                       </OrderName>
                     </td>
                     <td className={cellN}>{r1(acts.reduce((n, a) => n + a.hours, 0))}</td><td className={cellDt}>{at(s0)}</td><td className={cellDt}>{at(s1)}</td>
@@ -616,7 +651,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
                       <tr key={a.id} className={isCrit ? "[&>td:first-child]:shadow-[inset_3px_0_0_#dc2626]" : ""}>
                         <td className={`${cellAct} ${isCrit ? "!bg-rose-50 dark:!bg-rose-950/20" : ""}`}>
                           <div className="font-bold">{a.name}{k && <span className={`ml-1 rounded px-1 text-[10px] font-black ${k[1]}`}>{k[0]}</span>}{a.heldForCrew && <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-black text-amber-900">Waits for hands</span>}</div>
-                          <div className="text-[11px] text-[var(--color-text-muted)]"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(a.crew) }} />{a.crew} · {a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}</div>
+                          <div className="text-[11px] text-[var(--color-text-muted)]"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(a.crew) }} />{a.crew} · {r1(a.hours)} h · {a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}</div>
                           {a.basis && a.kind !== "found" && <div className="text-[11px] text-blue-800 dark:text-blue-300">{a.basis}</div>}
                           {a.waitedForCrew && <div className="text-[11px] text-blue-700 dark:text-blue-300">This year it waited {a.waitedForCrew.shifts} shift{a.waitedForCrew.shifts === 1 ? "" : "s"} for {a.waitedForCrew.crew}{a.waitedForCrew.busyOn.length ? ` (on ${[...new Set(a.waitedForCrew.busyOn.map((b) => b.split(" - ")[0]))].join(", ")})` : ""}. Check {a.waitedForCrew.crew}&apos;s hands below.</div>}
                         </td>
@@ -635,7 +670,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
               return (
                 <tr key={`hd${crew}`}>
                   <td className={cellAct}><div className="font-bold"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(crew) }} />{crew}</div><div className="text-[11px] text-[var(--color-text-muted)]">{pace ? `${pace.mh} man-hours for each plan hour: ${pace.from}` : "not counted this year: 1 per job going; set it"}</div></td>
-                  <td className={cellN}>{Math.max(0, ...plan.heads[crew].map((h, i) => plan.headsSet[crew][i] ?? h))}<div className="text-[10px] font-normal text-[var(--color-text-muted)]">most</div></td><td /><td />
+                  <td className={cellN}>{Math.max(0, ...plan.heads[crew].map((h, i) => plan.headsSet[crew][i] ?? h))}<div className="text-[10px] font-normal text-[var(--color-text-muted)]">most</div></td><td className="col-x" /><td className="col-x" />
                   <td className="p-0"><div className="relative h-12" style={{ width }}><Grid shifts={plan.shifts} />
                     {plan.shifts.map((_, i) => {
                       const sug = plan.heads[crew][i] ?? 0, set = plan.headsSet[crew][i];
@@ -662,7 +697,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
               return (
                 <tr key={`ld${crew}`}>
                   <td className={cellAct}><div className="font-bold"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(crew) }} />{crew}</div><div className="text-[11px] text-[var(--color-text-muted)]">{Math.round(l.reduce((n, h) => n + h, 0))} h scheduled · this year at most {most} job{most === 1 ? "" : "s"} moving in a shift</div></td>
-                  <td className={cellN}>{Math.round(l.reduce((n, h) => n + h, 0))}</td><td /><td />
+                  <td className={cellN}>{Math.round(l.reduce((n, h) => n + h, 0))}</td><td className="col-x" /><td className="col-x" />
                   <td className="p-0"><div className="relative h-10" style={{ width }}><Grid shifts={plan.shifts} />
                     {l.map((h, i) => h > 0.05 && <span key={i} title={`${Math.round(h)} h of work, ${plan.jobs[crew][i]} going`} className="absolute top-2 h-6 rounded text-white text-center text-[11px] font-black leading-6" style={{ left: i * PX + 2, width: PX - 4, background: p.colorOf(crew), opacity: 0.45 + 0.55 * Math.min(1, h / 36), outline: plan.jobs[crew][i] > most ? "2px solid #dc2626" : undefined, outlineOffset: 1 }}>{Math.round(h)}</span>)}
                   </div></td>
@@ -683,7 +718,7 @@ function SectionRow4({ title, sub, width, shifts }: { title: string; sub: string
   return (
     <tr className="bg-indigo-50 dark:bg-indigo-950/30">
       <td className={`${cellAct} !bg-indigo-50 dark:!bg-indigo-950/30`}><div className="font-black">{title}</div><div className="text-[11px] text-[var(--color-text-muted)]">{sub}</div></td>
-      <td /><td /><td />
+      <td className="col-x" /><td className="col-x" /><td className="col-x" />
       <td className="p-0"><div className="relative h-full min-h-[40px]" style={{ width }}><Grid shifts={shifts} /></div></td>
     </tr>
   );
