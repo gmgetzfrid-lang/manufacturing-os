@@ -622,6 +622,13 @@ export const CALLABLE_DEFINERS: readonly DefinerDecision[] = [
     evidence: ["IF v_created_by IS DISTINCT FROM auth.uid() THEN RAISE EXCEPTION 'revup_rollback_orphan: not your version to roll back';", "WHERE org_id = v_org AND uid = auth.uid() AND status = 'active' ) THEN RAISE EXCEPTION 'revup_rollback_orphan: not an active member of this org';"],
   },
   {
+    signature: "save_library_column_widths(uuid,jsonb,text[])",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: false },
+    reason: "PUBLIC, anon and service_role revoked by 20261271_dc_rev38_column_widths_merge.sql; authenticated keeps EXECUTE. With no session it raises; otherwise it acts only for an ACTIVE controller (is_org_controller) of the library's own workspace — another workspace's controller and an unknown library get the same refusal — and only on the library's column_widths (one merge statement, the input validated first). Named by the app: lib/libraryColumnWidths.ts (document-control REV-38 / REV-39).",
+    evidence: ["IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Sign in to save the column widths of a library.' USING ERRCODE = '42501';", "SELECT l.org_id INTO v_org FROM libraries l WHERE l.id = p_library; IF v_org IS NULL OR NOT is_org_controller(v_org) THEN"],
+  },
+  {
     signature: "set_project_baseline(uuid,uuid)",
     decision: "signed-in",
     execute: { anon: false, authenticated: true, service_role: true },

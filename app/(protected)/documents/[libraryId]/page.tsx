@@ -8,7 +8,7 @@ import { supabase } from "@/lib/supabase";
 import { checkedWrite, CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
 import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { notLandedReason } from "@/lib/checkedWriteReason";
-import { COLUMN_WIDTH_VIEW_ONLY_TITLE, createResizeHandleGesture, useLibraryColumnWidths } from "@/lib/libraryColumnWidths";
+import { COLUMN_WIDTH_MAX, COLUMN_WIDTH_MIN, COLUMN_WIDTH_VIEW_ONLY_TITLE, createResizeHandleGesture, readLibraryColumnWidths, revOf, useLibraryColumnWidths, widthsOf } from "@/lib/libraryColumnWidths";
 import { stateStyle, documentState } from "@/lib/stateColors";
 import { useRole } from "@/components/providers/RoleContext";
 import { holdsReadOnlyRole } from "@/lib/roleHeld";
@@ -1345,10 +1345,10 @@ export default function LibraryExplorerPage() {
   // every other library-layout write on this page is offered to. The same
   // answer as isControllerPrincipal(principal) below (a principal exists
   // exactly while activeRole is known, with this role collection). The
-  // database does not hold the shared width to controllers
-  // (libraries_org_access admits any active member's UPDATE and no UPDATE
-  // trigger judges column_widths): document-control REV-39. Anyone else
-  // resizes for this view only, and nothing is written.
+  // database holds it to the same tier once 20261271 is pasted
+  // (save_library_column_widths and the layout rail, document-control
+  // REV-39); before that, libraries_org_access admits any active member's
+  // UPDATE. Anyone else resizes for this view only, and nothing is written.
   const canSaveColumnWidths = activeRole !== null && isControllerPrincipal({ role: activeRole, roles });
   // Declared BEFORE the load effect below, so the saver exists when the load
   // hands it the stored widths (this tab's unsaved columns win over them).
@@ -1649,8 +1649,9 @@ export default function LibraryExplorerPage() {
           const parsed = JSON.parse(cached) as { library: LibraryConfig; colWidths: Record<string, number> };
           if (parsed?.library?.id === libraryId) {
             setLibrary(parsed.library);
-            // REV-38: through the saver — this tab's unsaved columns win.
-            if (widthSaverRef.current) widthSaverRef.current.load(parsed.colWidths ?? {});
+            // REV-38: through the saver — this tab's unsaved columns win; the
+            // cache carries no version, so it never replaces a versioned map.
+            if (widthSaverRef.current) widthSaverRef.current.load(widthsOf(parsed.colWidths), null);
             else setColWidths(parsed.colWidths ?? {});
             setLoadingLibrary(false);
             primedFromCache = true;
@@ -1687,9 +1688,18 @@ export default function LibraryExplorerPage() {
         const fresh: LibraryConfig = libraryConfigFromRow(data);
         setLibrary(fresh);
         const widths = data.column_widths ?? {};
-        // REV-38: a fresh load never wipes a resize made from the cached view.
-        if (widthSaverRef.current) widthSaverRef.current.load(widths);
+        // REV-38: a fresh load never wipes a resize made from the cached view;
+        // its version (20261271), read beside it, orders it against every
+        // other map this tab learns — a load older than the map held (a late
+        // load after this tab's own save, or after a newer realtime row) is
+        // ignored. Before the paste there is no version (read as null).
+        if (widthSaverRef.current) widthSaverRef.current.load(widthsOf(widths), revOf((data as { column_widths_rev?: unknown }).column_widths_rev));
         else setColWidths(widths);
+        if (revOf((data as { column_widths_rev?: unknown }).column_widths_rev) === null) {
+          void readLibraryColumnWidths(supabase, libraryId).then((v) => {
+            if (alive && v) widthSaverRef.current?.load(v.widths, v.rev);
+          });
+        }
         if (typeof window !== "undefined") {
           try {
             window.sessionStorage.setItem(cacheKey, JSON.stringify({ library: fresh, colWidths: widths }));
@@ -1715,12 +1725,13 @@ export default function LibraryExplorerPage() {
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "libraries", filter: `id=eq.${libraryId}` },
         (payload) => {
-          const next = (payload.new as { column_widths?: Record<string, number> } | null)?.column_widths;
-          // REV-38: every stored map is taken (per-column last-writer-wins):
-          // this tab's unsaved columns and the column under its drag stay;
-          // the echo of its own save clears what that save carried.
+          const row = payload.new as { column_widths?: Record<string, number>; column_widths_rev?: unknown } | null;
+          const next = row?.column_widths;
+          // REV-38: the row's map, ordered by its version (20261271): an
+          // older one is ignored; this tab's unsaved columns and the column
+          // under its drag stay.
           if (!next) return;
-          if (widthSaverRef.current) widthSaverRef.current.remote(next);
+          if (widthSaverRef.current) widthSaverRef.current.remote(widthsOf(next), revOf(row?.column_widths_rev));
           else if (!resizingRef.current) setColWidths(next);
         }
       )
@@ -3576,7 +3587,7 @@ export default function LibraryExplorerPage() {
       const current = resizingRef.current;
       if (!current) return;
       if (!resizeGesture.move(ev.clientX)) return;
-      const newWidth = Math.max(50, Math.round(current.startWidth + ev.clientX - current.startX));
+      const newWidth = Math.min(COLUMN_WIDTH_MAX, Math.max(COLUMN_WIDTH_MIN, Math.round(current.startWidth + ev.clientX - current.startX)));
       lastWidth = newWidth;
       setColWidths(prev => ({ ...prev, [current.key]: newWidth }));
     };

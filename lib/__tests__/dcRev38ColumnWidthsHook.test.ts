@@ -23,18 +23,17 @@ import {
 
 const WAIT = COLUMN_WIDTH_SAVE_DEBOUNCE_MS;
 
-function fakeClient(answer: () => { data: unknown; error: unknown } = () => ({ data: [{ id: "x" }], error: null })) {
+/** A client whose save_library_column_widths RPC records each save (the
+ *  library and the columns it sets) and answers the committed map and a
+ *  version — or what `answer` gives. */
+function fakeClient(answer?: () => { data: unknown; error: unknown }) {
   const writes: Array<{ id: unknown; widths: unknown }> = [];
+  let rev = 0;
   const sb = {
-    from() {
-      let patch: { column_widths?: unknown } = {};
-      let id: unknown;
-      const b = {
-        update(p: { column_widths?: unknown }) { patch = p; return b; },
-        eq(_c: string, v: unknown) { id = v; return b; },
-        select() { writes.push({ id, widths: patch.column_widths }); return Promise.resolve(answer()); },
-      };
-      return b;
+    rpc(_fn: string, args: { p_library: string; p_set: Record<string, number> }) {
+      writes.push({ id: args.p_library, widths: args.p_set });
+      rev += 1;
+      return Promise.resolve(answer ? answer() : { data: [{ column_widths: args.p_set, column_widths_rev: rev }], error: null });
     },
   } as unknown as SupabaseClient;
   return { sb, writes };
@@ -109,7 +108,7 @@ describe("useLibraryColumnWidths — the saver reads the current render", () => 
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(writes).toEqual([{ id: "lib-1", widths: { a: 150 } }]);
     expect(seen.saver.current).not.toBe(first);
-    await act(async () => { seen.saver.current!.load({}); seen.saver.current!.change("c", 70); });
+    await act(async () => { seen.saver.current!.load({}, 0); seen.saver.current!.change("c", 70); });
     await act(async () => { await vi.advanceTimersByTimeAsync(WAIT); });
     expect(writes[1]).toEqual({ id: "lib-2", widths: { c: 70 } });
   });

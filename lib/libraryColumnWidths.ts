@@ -1,52 +1,52 @@
 // lib/libraryColumnWidths.ts — a library's shared column widths: who saves
-// them, when, and how a stored width and this tab's own widths combine
-// (document-control REV-38, DEC-90).
+// them, when, and how the stored widths and this tab's own widths combine
+// (document-control REV-38 / REV-39, DEC-90).
 //
 // The widths live where they always have: `libraries.column_widths`, read
 // when the library loads and live-synced from the row's realtime UPDATE. The
 // library page never wrote them (the two saves that stood there were never
 // sent — projects-tab SAF-22, ruling R1). Now:
-//   * a CONTROLLER (Admin / DocCtrl by the role collection — the page's
-//     controller tier, `isControllerPrincipal`, which mirrors the database's
-//     `is_org_controller`) saves the shared width, debounced: one save
-//     ~500 ms after a drag that changed a width, or a reset of a column that
-//     differed from its default, through a checked write. A save that does
-//     not land is said in plain words, and the width stays as dragged;
+//   * a CONTROLLER (Admin / DocCtrl by the role collection, mirroring the
+//     database's `is_org_controller`) saves the shared width, debounced: one
+//     save ~500 ms after a drag that changed a width, or a reset of a column
+//     that differed from its default. A save that does not land is said in
+//     plain words, and the width stays as dragged;
 //   * anyone else still resizes, for this view only — nothing is written,
 //     and the handle says so (COLUMN_WIDTH_VIEW_ONLY_TITLE).
 //
-// Per-column last-writer-wins (the integrator's ruling at the F6 review).
-// The saver keeps the latest KNOWN STORED map (the load, then every realtime
-// UPDATE — none is dropped) and the columns THIS TAB changed and has not yet
-// seen saved (`dirty`). What the screen shows is the stored map with the
-// dirty columns laid on top, and the column under an active drag left where
-// the drag has it. A save sends the same composition, so it never carries a
-// stale copy of a column this tab did not touch. The echo of this tab's own
-// save (the UPDATE carrying exactly what it sent) clears the dirty columns
-// it carried (unless changed again since) — and so does the save's own ok
-// answer, so a missed echo (realtime reconnecting, a throttled background
-// tab) never leaves a column dirty for good. On that ok answer, unless the
-// save's echo already came back, the columns it carried are laid over the
-// latest known stored map (whether or not another map arrived during the
-// flight), so the screen never jumps back and the next save never re-sends
-// an older value of a column this tab saved; a map that arrives later
-// (another controller's later save, or this tab's own echo) replaces the
-// stored map as before. A save whose payload equals the latest known stored
-// map is not sent (it would change nothing but `updated_by`). A person who
-// may not save keeps
-// their own columns dirty for as long as the page is open — their view-only
-// widths survive a controller's save of other columns, and theirs win on
-// the columns they set. When such a person becomes one who may save (the
-// roles finish loading, or a promotion while the page is open), the columns
-// last changed while they could not save are dropped — never sent as the
-// shared width — and the screen is recomposed from the stored map; a column
-// they changed while they could save is kept (and saved).
+// An ORDERED stored map (the integrator's ruling at the F6 stress review).
+// Since 20261271 every map this tab learns carries the row's server-owned
+// version, `column_widths_rev` (+1 on every change of column_widths): the
+// load, the realtime row and the save's own answer. The saver holds the
+// latest stored map and replaces it only with a map whose version is not
+// older (a late load, a late echo are ignored). It also holds the columns
+// THIS TAB changed and has not yet seen stored (`dirty`); after any change of
+// the stored map every dirty entry that the stored map now shows is cleared.
+// The screen is the stored map with the dirty columns on top, and the column
+// under an active drag stays where the drag has it. A save sends ONLY this
+// tab's changed and reset columns, and save_library_column_widths merges
+// them per column on the server, in one statement, answering the committed
+// map and its version — so a save never carries a stale copy of a column it
+// did not touch, and no echo has to be recognised. A save that answers ok
+// clears the columns it sent (unless changed again since) even when its
+// answer is older than a map already held. Saves go one at a time.
 //
-// The limit, stated (DEC-29): the write replaces the whole map. A save by
-// another tab that commits while this tab's save is in flight (after this
-// tab composed its payload) is overwritten on the columns this tab did not
-// touch — a one-round-trip window. Closing it needs a server-side merge
-// (a migration): document-control REV-39.
+// Before 20261271 is pasted (the function answers PGRST202 / 42883, the
+// column 42703 / PGRST204): no version exists, so every map is taken as it
+// arrives (today's order), and the save falls back to the whole-map checked
+// write — but it re-reads the row's column_widths just before writing and
+// sends that map with this tab's columns on top, and takes the committed row
+// it reads back. The one thing only the version can fix stays, before the
+// paste only: a map read or answered earlier but delivered later (a late
+// fresh load) can replace a newer one until the next map arrives.
+//
+// A person who may not save keeps their own columns as view-only dirty
+// entries while the page is open: their widths survive a controller's save
+// of other columns, and theirs win on the columns they set. When they become
+// one who may save (the roles finish loading, or a promotion), the columns
+// last changed while they could not save are dropped — never sent — and the
+// screen is recomposed; a column they changed while they could save is kept
+// and a save is scheduled for it.
 
 import { useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -55,34 +55,100 @@ import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { notLandedReason } from "@/lib/checkedWriteReason";
 
 export const COLUMN_WIDTH_SAVE_DEBOUNCE_MS = 500;
+/** The bounds a drag is clamped to — the same the database function holds a saved width to (20261271). */
+export const COLUMN_WIDTH_MIN = 50;
+export const COLUMN_WIDTH_MAX = 5000;
 
 /** The handle's title for a person whose widths are not saved. */
 export const COLUMN_WIDTH_VIEW_ONLY_TITLE = "Column width applies to this view only";
 
 export type ColumnWidths = Record<string, number>;
+/** A stored map's version (`libraries.column_widths_rev`); null before 20261271. */
+export type ColumnWidthsRev = number | null;
 
-/** What a width save answered: landed, or the reason it did not (worded as
+/** What this tab sends: the columns it changed, and the columns it reset to their default. */
+export interface ColumnWidthChanges { set: ColumnWidths; reset: string[] }
+
+/** What a width save answered: landed (with the committed map, and its
+ *  version when the database has one), or the reason it did not (worded as
  *  a reason — lib/checkedWriteReason — never "nothing was changed", since the
  *  width on this screen did change). */
-export type ColumnWidthSaveAnswer = { ok: true } | { ok: false; reason: string };
+export type ColumnWidthSaveAnswer =
+  | { ok: true; widths: ColumnWidths | null; rev: ColumnWidthsRev }
+  | { ok: false; reason: string };
 
 /** What the page says when a save did not land. */
 export function columnWidthNotSavedMessage(reason: string): string {
   return `The column width was not saved for everyone — it still applies to this view: ${reason}`;
 }
 
-/** Save the library's shared widths: a checked write that reads its matched
- *  row back (`.select("id")`), so a refusal — zero rows — is never taken for
- *  a save. Never throws; a write that did not land answers its reason. */
+/** A version as PostgREST or the realtime row carries it (a bigint may come as a string). */
+export function revOf(v: unknown): ColumnWidthsRev {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && /^\d+$/.test(v)) return Number(v);
+  return null;
+}
+
+/** A stored column_widths value as a map: only number entries; anything else is no widths. */
+export function widthsOf(v: unknown): ColumnWidths {
+  const out: ColumnWidths = {};
+  if (!v || typeof v !== "object" || Array.isArray(v)) return out;
+  for (const [k, w] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof w === "number" && Number.isFinite(w)) out[k] = w;
+  }
+  return out;
+}
+
+/** A map with the changes on top (a reset removes the key). */
+export function applyColumnWidthChanges(base: ColumnWidths, changes: ColumnWidthChanges): ColumnWidths {
+  const out: ColumnWidths = { ...base, ...changes.set };
+  for (const k of changes.reset) delete out[k];
+  return out;
+}
+
+/** The answers that mean 20261271 is not pasted (or the API has not reloaded its schema). */
+const BEFORE_MERGE_CODES = new Set(["PGRST202", "42883", "42703", "PGRST204"]);
+
+/** The stored widths with their version, or null when the version cannot be
+ *  read (before 20261271, or the read failed): the caller keeps the
+ *  unversioned map it already has. */
+export async function readLibraryColumnWidths(sb: SupabaseClient, libraryId: string): Promise<{ widths: ColumnWidths; rev: number } | null> {
+  const { data, error } = await sb.from("libraries").select("column_widths, column_widths_rev").eq("id", libraryId).maybeSingle();
+  if (error || !data) return null;
+  const row = data as { column_widths?: unknown; column_widths_rev?: unknown };
+  const rev = revOf(row.column_widths_rev);
+  return rev === null ? null : { widths: widthsOf(row.column_widths), rev };
+}
+
+/** Save this tab's changed / reset columns. Through save_library_column_widths
+ *  (20261271: a per-column merge on the server, held to a controller, the
+ *  committed map and version answered); before the paste, a re-read of the
+ *  row's column_widths and the whole-map checked write (`.select("id,
+ *  column_widths")`) of that map with the changes on top. Never throws. */
 export async function saveLibraryColumnWidths(
   sb: SupabaseClient,
   libraryId: string,
-  widths: ColumnWidths,
+  changes: ColumnWidthChanges,
   uid: string | null,
 ): Promise<ColumnWidthSaveAnswer> {
   const kept = keptAnswer();
-  const saved = await checkedWrite(answered(sb.from("libraries").update({ column_widths: widths, updated_by: uid }).eq("id", libraryId).select("id"), kept));
-  return saved.ok ? { ok: true } : { ok: false, reason: notLandedReason(kept, "library column widths") };
+  const merged = await checkedWrite(answered(sb.rpc("save_library_column_widths", { p_library: libraryId, p_set: changes.set, p_reset: changes.reset }), kept));
+  if (merged.ok) {
+    const row = (Array.isArray(kept.data) ? kept.data[0] : kept.data) as { column_widths?: unknown; column_widths_rev?: unknown } | undefined;
+    return { ok: true, widths: row ? widthsOf(row.column_widths) : null, rev: row ? revOf(row.column_widths_rev) : null };
+  }
+  if (!kept.error || !BEFORE_MERGE_CODES.has(String(kept.error.code ?? ""))) {
+    return { ok: false, reason: notLandedReason(kept, "library column widths") };
+  }
+  // Before 20261271: the whole map, re-read just before the write.
+  const fresh = await sb.from("libraries").select("column_widths").eq("id", libraryId).maybeSingle();
+  if (fresh.error || !fresh.data) return { ok: false, reason: notLandedReason({ error: fresh.error ?? null }, "library column widths") };
+  const payload = applyColumnWidthChanges(widthsOf((fresh.data as { column_widths?: unknown }).column_widths), changes);
+  const wrote = keptAnswer();
+  const saved = await checkedWrite(answered(sb.from("libraries").update({ column_widths: payload, updated_by: uid }).eq("id", libraryId).select("id, column_widths"), wrote));
+  if (!saved.ok) return { ok: false, reason: notLandedReason(wrote, "library column widths") };
+  const row = (Array.isArray(wrote.data) ? wrote.data[0] : wrote.data) as { column_widths?: unknown } | undefined;
+  return { ok: true, widths: row ? widthsOf(row.column_widths) : payload, rev: null };
 }
 
 /** The same widths in any key order give the same key. */
@@ -94,8 +160,8 @@ export function columnWidthsKey(widths: ColumnWidths | null | undefined): string
 /** A column this tab set: a width, or `null` for "reset to the default". */
 export type DirtyColumns = ReadonlyMap<string, number | null>;
 
-/** The stored map with this tab's dirty columns on top; the column under an
- *  active drag (if any) stays as `prev` has it. */
+/** The stored map with this tab's dirty columns on top (null removes); the
+ *  column under an active drag (if any) stays as `prev` has it. */
 export function composeColumnWidths(
   stored: ColumnWidths,
   dirty: DirtyColumns,
@@ -115,10 +181,10 @@ export function composeColumnWidths(
 }
 
 export interface ColumnWidthSaverDeps {
-  /** May this person save the shared width? Read when a change is made. */
+  /** May this person save the shared width? Read when a change is made and when a save would be sent. */
   canSave(): boolean;
-  /** The checked write. Answers landed or the reason. */
-  write(widths: ColumnWidths): Promise<ColumnWidthSaveAnswer>;
+  /** Send this tab's changed / reset columns. */
+  save(changes: ColumnWidthChanges): Promise<ColumnWidthSaveAnswer>;
   /** Say a save that did not land. `afterClose`: the library or page it was
    *  made on has since been left (the save was sent as it closed). */
   notSaved(message: string, afterClose: boolean): void;
@@ -130,12 +196,12 @@ export interface ColumnWidthSaverDeps {
 }
 
 export interface ColumnWidthSaver {
-  /** The library's stored widths, from the session cache or a fresh load:
-   *  this tab's dirty columns still win. */
-  load(stored: ColumnWidths): void;
-  /** The row's realtime UPDATE: the latest stored map (never dropped); the
-   *  echo of this tab's own save clears the dirty columns it carried. */
-  remote(next: ColumnWidths): void;
+  /** A stored map from the session cache or a load, with its version (null:
+   *  none). Taken unless it is older than the map held (an unversioned map is
+   *  not taken once a version is held). Answers whether it was taken. */
+  load(widths: ColumnWidths, rev: ColumnWidthsRev): boolean;
+  /** The row's realtime UPDATE: the same rule as load. */
+  remote(widths: ColumnWidths, rev: ColumnWidthsRev): boolean;
   /** A drag ended on `width`, or a reset (`null`). Answers false — and
    *  changes nothing — when the column already has that value. A person who
    *  may save gets one save ~500 ms after the last change; anyone else's
@@ -144,92 +210,96 @@ export interface ColumnWidthSaver {
   /** Re-compose the screen (after a press that changed nothing, so the
    *  column it held takes any stored width that arrived meanwhile). */
   settle(): void;
-  /** This person may now save (they could not before): drop the columns
-   *  last changed while they could not save, so they are never sent as the
-   *  shared width, and recompose the screen from the stored map. A column
-   *  changed while they could save is kept. */
-  dropViewOnly(): void;
-  /** Send a waiting save now (tab hidden, page hiding, or dispose). */
+  /** This person may now save (they could not before): drop the columns last
+   *  changed while they could not save (never sent), recompose the screen,
+   *  and schedule a save of any column they changed while they could. */
+  promoted(): void;
+  /** Send this tab's unsaved columns now, when there are any (the tab
+   *  hidden, the page hiding). */
   flush(): Promise<void>;
-  /** The library or page is being left: a waiting save is sent now. */
+  /** The library or page is being left: unsaved columns are sent now. */
   dispose(): void;
 }
-
-/** How many sent saves are remembered to recognise their echo. */
-const ECHO_MEMORY = 16;
 
 export function createColumnWidthSaver(deps: ColumnWidthSaverDeps): ColumnWidthSaver {
   const wait = deps.debounceMs ?? COLUMN_WIDTH_SAVE_DEBOUNCE_MS;
   let stored: ColumnWidths = {};
+  let storedRev: ColumnWidthsRev = null;
   const dirty = new Map<string, number | null>();
+  /** Dirty columns last changed while this person could not save. */
+  const viewOnly = new Set<string>();
+  /** The columns of the save in flight. */
+  let sending = new Set<string>();
   let timer: ReturnType<typeof setTimeout> | null = null;
   let inFlight = false;
   let again = false;
-  /** Dirty columns last changed while this person could not save. */
-  const viewOnly = new Set<string>();
   let closed = false;
-  /** Saves this tab sent whose echo has not come back, in send order. */
-  const sent: Array<{ key: string; carried: Map<string, number | null>; echoed: boolean }> = [];
 
+  const valueOf = (col: string): number | null => (Object.prototype.hasOwnProperty.call(stored, col) ? stored[col] : null);
   const show = () => {
     const snapshot = new Map(dirty);
     const base = stored;
     deps.apply((prev) => composeColumnWidths(base, snapshot, prev, deps.dragging()));
   };
+  const forget = (col: string) => { dirty.delete(col); viewOnly.delete(col); };
+
+  /** Take a stored map unless it is older than the one held; then clear
+   *  every dirty column it shows. */
+  function accept(widths: ColumnWidths, rev: ColumnWidthsRev): boolean {
+    if (storedRev !== null && (rev === null || rev < storedRev)) return false;
+    stored = { ...widths };
+    if (rev !== null) storedRev = rev;
+    for (const [col, v] of [...dirty]) {
+      if (valueOf(col) === v) forget(col);
+    }
+    show();
+    return true;
+  }
+
+  /** This tab's columns to send (never a view-only one), or null when none. */
+  function pending(): ColumnWidthChanges | null {
+    const set: ColumnWidths = {};
+    const reset: string[] = [];
+    for (const [col, v] of dirty) {
+      if (viewOnly.has(col)) continue;
+      if (v === null) reset.push(col);
+      else set[col] = v;
+    }
+    return Object.keys(set).length > 0 || reset.length > 0 ? { set, reset } : null;
+  }
 
   async function send(): Promise<void> {
     if (timer !== null) { clearTimeout(timer); timer = null; }
     // A person who may no longer save sends nothing (their change stays on
-    // their screen, view-only).
+    // their screen; a promotion schedules it again).
     if (!deps.canSave()) return;
-    // One save at a time, so this tab's saves commit in the order sent.
+    // One save at a time.
     if (inFlight) { again = true; return; }
-    const carried = new Map(dirty);
-    const payload = composeColumnWidths(stored, carried, {}, null);
-    const key = columnWidthsKey(payload);
-    if (key === columnWidthsKey(stored)) {
-      // Nothing to change in the stored map: no write (it would only touch
-      // updated_by). The carried columns already equal what is stored.
-      for (const [col, v] of carried) {
-        if (dirty.get(col) === v) dirty.delete(col);
-      }
-      return;
-    }
+    const changes = pending();
+    if (!changes) return;
     inFlight = true;
-    const entry = { key, carried, echoed: false };
-    sent.push(entry);
-    if (sent.length > ECHO_MEMORY) sent.shift();
+    sending = new Set([...Object.keys(changes.set), ...changes.reset]);
     let answer: ColumnWidthSaveAnswer;
     try {
-      answer = await deps.write(payload);
+      answer = await deps.save(changes);
     } catch (e) {
       answer = { ok: false, reason: e instanceof Error ? e.message : String(e) };
     }
     inFlight = false;
-    if (!answer.ok) {
-      // Nothing landed, so no echo is coming; the columns stay dirty (the
-      // width stays as dragged, and the next save carries it again).
-      const i = sent.indexOf(entry);
-      if (i >= 0) sent.splice(i, 1);
-      deps.notSaved(columnWidthNotSavedMessage(answer.reason), closed);
+    sending = new Set();
+    if (answer.ok) {
+      // Landed: the columns it sent are saved (unless changed again since),
+      // whatever the order its answer arrives in.
+      for (const [col, v] of Object.entries(changes.set)) if (!viewOnly.has(col) && dirty.get(col) === v) forget(col);
+      for (const col of changes.reset) if (!viewOnly.has(col) && dirty.has(col) && dirty.get(col) === null) forget(col);
+      // Its answer is one more versioned map (ignored when older than the
+      // map held); the screen is recomposed either way.
+      if (!answer.widths || !accept(answer.widths, answer.rev)) show();
     } else {
-      // Landed: the columns it carried are saved — do not wait for an echo
-      // that may never come. Unless its echo already came back (then the
-      // stored map is that echo or newer), lay the carried columns over the
-      // latest known stored map, whatever arrived during the flight; then
-      // clear the dirty entries that still equal what was carried.
-      if (!entry.echoed) {
-        const next = { ...stored };
-        for (const [col, v] of carried) {
-          if (v === null) delete next[col];
-          else next[col] = v;
-        }
-        stored = next;
-      }
-      for (const [col, v] of carried) {
-        if (dirty.has(col) && dirty.get(col) === v) dirty.delete(col);
-      }
-      show();
+      // Nothing landed (or the answer was lost): the columns stay dirty —
+      // the width stays as dragged, and a later map that shows the value, or
+      // the next save, settles it.
+      deps.notSaved(columnWidthNotSavedMessage(answer.reason), closed);
     }
     if (again) { again = false; await send(); }
   }
@@ -241,51 +311,43 @@ export function createColumnWidthSaver(deps: ColumnWidthSaverDeps): ColumnWidthS
   }
 
   return {
-    load(next) {
-      stored = { ...next };
-      show();
-    },
-    remote(next) {
-      const key = columnWidthsKey(next);
-      const i = sent.findIndex((e) => e.key === key);
-      if (i >= 0) {
-        // This tab's own save (its echo); any earlier entry's echo can no
-        // longer come (saves are sent one at a time, so commit in order).
-        const [echo] = sent.splice(0, i + 1).slice(-1);
-        echo.echoed = true;
-        for (const [col, v] of echo.carried) {
-          if (dirty.has(col) && dirty.get(col) === v) dirty.delete(col);
-        }
-      }
-      stored = { ...next };
-      show();
-    },
+    load(widths, rev) { return accept(widths, rev); },
+    remote(widths, rev) { return accept(widths, rev); },
     change(column, width) {
-      const current = dirty.has(column) ? dirty.get(column)! : (stored[column] ?? null);
+      const current = dirty.has(column) ? dirty.get(column)! : valueOf(column);
       if (current === width) { show(); return false; }
-      dirty.set(column, width);
       const canSave = deps.canSave();
-      if (canSave) viewOnly.delete(column);
-      else viewOnly.add(column);
+      if (valueOf(column) === width && !sending.has(column)) {
+        // Back to what is stored (and no save of this column is in flight).
+        forget(column);
+      } else {
+        dirty.set(column, width);
+        if (canSave) viewOnly.delete(column);
+        else viewOnly.add(column);
+      }
       show();
       if (canSave) schedule();
       return true;
     },
     settle() { show(); },
-    dropViewOnly() {
-      if (viewOnly.size === 0) return;
-      for (const col of viewOnly) dirty.delete(col);
-      viewOnly.clear();
-      show();
+    promoted() {
+      if (viewOnly.size > 0) {
+        for (const col of viewOnly) dirty.delete(col);
+        viewOnly.clear();
+        show();
+      }
+      if (pending()) schedule();
     },
     async flush() {
-      if (timer === null) return;
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+      if (!pending()) return;
       await send();
     },
     dispose() {
       if (closed) return;
       closed = true;
-      if (timer !== null) void send();
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+      if (pending()) void send();
     },
   };
 }
@@ -303,21 +365,21 @@ export interface UseLibraryColumnWidthsOptions {
 }
 
 /** One saver per library. Call it BEFORE the effect that loads the library,
- *  so the saver exists when the load hands it the stored widths. A waiting
- *  save is sent when the library changes or the page unmounts, and — best
- *  effort, the browser may not finish the request — when the tab is hidden
- *  or the page is being unloaded (pagehide). No leave-page prompt. */
+ *  so the saver exists when the load hands it the stored widths. Unsaved
+ *  columns are sent when the library changes or the page unmounts, and —
+ *  best effort, the browser may not finish the request — when the tab is
+ *  hidden or the page is being unloaded (pagehide). No leave-page prompt. */
 export function useLibraryColumnWidths(opts: UseLibraryColumnWidthsOptions): MutableRefObject<ColumnWidthSaver | null> {
   const saverRef = useRef<ColumnWidthSaver | null>(null);
   const live = useRef(opts);
   // What the saver reads when it acts — who may save, the uid, the client —
-  // kept current on every render (REV-38 F6 review item 7, pinned).
+  // kept current on every render (pinned).
   const couldSave = useRef(opts.canSave);
   useEffect(() => {
     live.current = opts;
-    // REV-38 (F6 second review, item 4): view-only columns are never sent —
-    // dropped once, when this person becomes one who may save.
-    if (!couldSave.current && opts.canSave) saverRef.current?.dropViewOnly();
+    // Becoming one who may save: view-only columns are never sent; the
+    // columns changed as one who may save are scheduled.
+    if (!couldSave.current && opts.canSave) saverRef.current?.promoted();
     couldSave.current = opts.canSave;
   });
   const { libraryId } = opts;
@@ -325,7 +387,7 @@ export function useLibraryColumnWidths(opts: UseLibraryColumnWidthsOptions): Mut
     if (!libraryId) return;
     const saver = createColumnWidthSaver({
       canSave: () => live.current.canSave,
-      write: (widths) => saveLibraryColumnWidths(live.current.client, libraryId, widths, live.current.uid),
+      save: (changes) => saveLibraryColumnWidths(live.current.client, libraryId, changes, live.current.uid),
       notSaved: (message, afterClose) => live.current.notSaved(message, afterClose),
       apply: (update) => live.current.setColWidths(update),
       dragging: () => live.current.dragging(),
