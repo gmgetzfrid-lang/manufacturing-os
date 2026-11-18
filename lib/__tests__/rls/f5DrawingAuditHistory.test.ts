@@ -11,7 +11,9 @@
 //   sends today's write.
 //   EVID-14 done-when 1 / 4: every verdict a write replaces (or a delete
 //   removes) is kept whole in drawing_audit_log_history — a same-severity
-//   re-record keeps the earlier findings; an unchanged write keeps nothing.
+//   re-record keeps the earlier findings; a re-record that changes nothing of
+//   substance (audited_at, who recorded, coverage, the run's sheet list —
+//   VERDICT_BOOKKEEPING_DETAILS) keeps nothing (the F5 review ruling).
 //   EVID-14 done-when 2: source — engine / orchestrator as the server names
 //   them, a value outside the three refused, a signed-in session's direct
 //   write stamped human whatever it claims.
@@ -53,12 +55,14 @@ interface Verdict {
   at: string;
   source?: string | null;
   doc?: string | null;
+  /** More audit_details keys, as the writers send them. */
+  extra?: Record<string, unknown>;
 }
 
 /** The upsert as PostgREST sends the drawing route's / the tool's write:
  *  ON CONFLICT on the 20261124 key, every column of the payload set. */
 function upsert(v: Verdict): string {
-  const details = JSON.stringify({ brokenConnectors: v.findings, by: "harness" });
+  const details = JSON.stringify({ brokenConnectors: v.findings, by: "harness", ...v.extra });
   const cols = ["org_id", "library_id", "document_id", "sheet_number", "revision_code", "status", "audited_at", "audit_details", ...(v.source !== undefined ? ["source"] : [])];
   const lit = (x: string | null | undefined) => (x == null ? "NULL" : `'${x}'`);
   const vals = [lit(v.org), lit(v.lib), lit(v.doc ?? null), lit(v.sheet), lit(v.rev), lit(v.status), `'${v.at}'`, `$j$${details}$j$::jsonb`, ...(v.source !== undefined ? [lit(v.source)] : [])];
@@ -147,11 +151,65 @@ describe.skipIf(skip !== null)("F5 / EVID-14 — every replaced drawing audit ve
       .toBe('flagged|["unread page 2"]|orchestrator');
   });
 
-  it("an unchanged write (every column the same) keeps no history row", () => {
-    const v = { org: orgId, lib, sheet: "P-101-04", rev: "B", status: "passed", findings: [], at: "2026-11-05T00:00:00Z", source: "engine" };
-    asCaller(db, SERVICE, upsert(v));
-    expect(asCaller(db, SERVICE, upsert(v))).toEqual({ ok: true, rows: 1 });
-    expect(one(db, `SELECT count(*) FROM drawing_audit_log_history WHERE org_id = '${orgId}' AND sheet_number = 'P-101-04'`)).toBe("0");
+  // The F5 review ruling: a history row only for a change of substance.
+  describe("what counts as a change: only the verdict, never its timestamp or bookkeeping", () => {
+    const sheetN = (() => { let n = 0; return () => `P-400-${String(++n).padStart(2, "0")}`; })();
+    const kept = (sheet: string) => one(db, `SELECT count(*) FROM drawing_audit_log_history WHERE org_id = '${orgId}' AND sheet_number = '${sheet}'`);
+    // a row as the route writes it: findings, scope, coverage, the run's sheet list on its first row
+    const routeRow = (sheet: string, over: Partial<Verdict> = {}): Verdict => ({
+      org: orgId, lib, sheet, rev: "C", status: "flagged", findings: ["OPC-3 unpaired"], at: "2026-11-01T00:00:00Z", source: "engine",
+      extra: {
+        missingReferences: [], knowledgeDocumentId: "k-1", libraryId: lib,
+        set: { count: 3, digest: "61fc8843", truncated: false, seriesNotJudged: ["030-PID"], sheets: ["A", "B", "C"] },
+        coverage: { "k-1": "7de1b6c1+a141618a" },
+      },
+      ...over,
+    });
+
+    it("an identical re-record — new audited_at, another recorder, a new coverage fingerprint, no sheet list on this run — keeps no history row; the current row takes the new audited_at", () => {
+      const sheet = sheetN();
+      const first = routeRow(sheet);
+      expect(asCaller(db, SERVICE, upsert(first))).toEqual({ ok: true, rows: 1 });
+      const again = routeRow(sheet, {
+        at: "2026-11-09T00:00:00Z",
+        extra: { ...first.extra, by: "someone-else", byName: "Someone Else", coverage: { "k-1": "0000aaaa+a141618a" }, set: { count: 3, digest: "61fc8843", truncated: false, seriesNotJudged: ["030-PID"] } },
+      });
+      expect(asCaller(db, SERVICE, upsert(again))).toEqual({ ok: true, rows: 1 });
+      expect(asCaller(db, SERVICE, upsert(again))).toEqual({ ok: true, rows: 1 }); // and byte-identical
+      expect(kept(sheet)).toBe("0");
+      expect(one(db, `SELECT to_char(audited_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') FROM drawing_audit_logs WHERE org_id = '${orgId}' AND sheet_number = '${sheet}'`)).toBe("2026-11-09");
+    });
+
+    it("a provisional row written again with nothing new (the route's still-waiting rewrite) keeps none", () => {
+      const sheet = sheetN();
+      const waiting = { provisional: { waitingOn: ["030-PID-0201.pdf (page(s) 2 never read)"], settledStatus: "passed" }, waitingFindings: { brokenConnectors: [0] } };
+      const v = routeRow(sheet, { extra: { ...routeRow(sheet).extra, ...waiting } });
+      asCaller(db, SERVICE, upsert(v));
+      for (const at of ["2026-11-02T00:00:00Z", "2026-11-03T00:00:00Z"]) asCaller(db, SERVICE, upsert({ ...v, at }));
+      expect(kept(sheet)).toBe("0");
+      // …and once it settles (marker dropped), the provisional verdict is kept
+      asCaller(db, SERVICE, upsert({ ...v, at: "2026-11-04T00:00:00Z", extra: routeRow(sheet).extra }));
+      expect(one(db, `SELECT count(*) || '|' || string_agg(audit_details #>> '{provisional,settledStatus}', ',') FROM drawing_audit_log_history WHERE org_id = '${orgId}' AND sheet_number = '${sheet}'`)).toBe("1|passed");
+    });
+
+    it("changed findings → one row; a status change → one row; a source change → one row; a note → one row; a changed scope (seriesNotJudged) → one row", () => {
+      const sheet = sheetN();
+      const base = routeRow(sheet);
+      asCaller(db, SERVICE, upsert(base));
+      const steps: Array<[string, Verdict]> = [
+        ["findings", { ...base, findings: ["OPC-3 unpaired", "OPC-4 one-way"], at: "2026-11-02T00:00:00Z" }],
+        ["status", { ...base, findings: ["OPC-3 unpaired", "OPC-4 one-way"], status: "broken_connectors", at: "2026-11-03T00:00:00Z" }],
+        ["source", { ...base, findings: ["OPC-3 unpaired", "OPC-4 one-way"], status: "broken_connectors", source: "orchestrator", at: "2026-11-04T00:00:00Z" }],
+        ["note", { ...base, findings: ["OPC-3 unpaired", "OPC-4 one-way"], status: "broken_connectors", source: "orchestrator", at: "2026-11-05T00:00:00Z", extra: { ...base.extra, note: "confirmed on the walkdown" } }],
+        ["scope", { ...base, findings: ["OPC-3 unpaired", "OPC-4 one-way"], status: "broken_connectors", source: "orchestrator", at: "2026-11-06T00:00:00Z", extra: { ...base.extra, note: "confirmed on the walkdown", set: { count: 3, digest: "61fc8843", truncated: false, seriesNotJudged: [], sheets: ["A", "B", "C"] } } }],
+      ];
+      steps.forEach(([what, v], i) => {
+        expect(asCaller(db, SERVICE, upsert(v)), what).toEqual({ ok: true, rows: 1 });
+        expect(kept(sheet), what).toBe(String(i + 1));
+      });
+      expect(one(db, `SELECT string_agg(status || ':' || source, ',' ORDER BY audited_at) FROM drawing_audit_log_history WHERE org_id = '${orgId}' AND sheet_number = '${sheet}'`))
+        .toBe("flagged:engine,flagged:engine,broken_connectors:engine,broken_connectors:orchestrator,broken_connectors:orchestrator");
+    });
   });
 
   it("done-when 2: source — the server names engine or orchestrator; a value outside the three is refused (23514); a signed-in controller's direct write is stamped human whatever it claims", () => {

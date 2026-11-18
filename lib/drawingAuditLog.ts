@@ -54,6 +54,16 @@ export function wouldLowerSeverity(stored: string | null | undefined, next: Audi
  *  does anything for the history. */
 export type AuditSource = "engine" | "orchestrator" | "human";
 
+/** The bookkeeping in a verdict row's audit_details that a re-record may
+ *  change without changing the verdict: who pressed record (`by`,
+ *  `byName`), the index fingerprints it was computed from (`coverage`), and
+ *  the set's sheet list, which only the first row of a run carries
+ *  (`set.sheets`). 20261270's history trigger keeps a row only when the
+ *  verdict changed — any column but audited_at, or audit_details without
+ *  these paths (the same list, pinned equal by
+ *  lib/__tests__/f5DrawingAuditHistoryMigration.test.ts). */
+export const VERDICT_BOOKKEEPING_DETAILS: readonly string[] = ["by", "byName", "coverage", "set.sheets"];
+
 type WriteError = { code?: string | null; message?: string | null } | null;
 
 /** A database without 20261270 has no `source` column: PostgREST answers

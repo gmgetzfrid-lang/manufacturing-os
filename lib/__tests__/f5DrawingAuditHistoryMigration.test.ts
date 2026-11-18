@@ -22,7 +22,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { isMissingSourceColumn, writeWithSourceFallback } from "@/lib/drawingAuditLog";
+import { isMissingSourceColumn, writeWithSourceFallback, VERDICT_BOOKKEEPING_DETAILS } from "@/lib/drawingAuditLog";
 
 const root = process.cwd();
 const MIG = join(root, "supabase", "migrations");
@@ -91,7 +91,20 @@ describe("20261270 — one paste: prerequisite, inventory, transaction, one resu
       "trg_drawing_audit_logs_history_update|AFTER UPDATE|drawing_audit_logs",
       "trg_drawing_audit_logs_history_delete|AFTER DELETE|drawing_audit_logs",
     ]);
-    expect(squash(code)).toContain("FOR EACH ROW WHEN (OLD.* IS DISTINCT FROM NEW.*) EXECUTE FUNCTION public.drawing_audit_logs_record_history();");
+  });
+
+  it("history only on a change of substance: the UPDATE condition compares every column but id and audited_at, and audit_details without exactly VERDICT_BOOKKEEPING_DETAILS", () => {
+    const when = squash(/CREATE TRIGGER trg_drawing_audit_logs_history_update\s+AFTER UPDATE ON drawing_audit_logs\s+FOR EACH ROW\s+WHEN ([\s\S]*?)\s+EXECUTE FUNCTION public\.drawing_audit_logs_record_history\(\);/.exec(code)![1]);
+    const cols = ["org_id", "library_id", "document_id", "sheet_number", "revision_code", "status", "source"];
+    expect(when).toContain(`(${cols.map((c) => `OLD.${c}`).join(", ")}) IS DISTINCT FROM (${cols.map((c) => `NEW.${c}`).join(", ")})`);
+    expect(when).not.toMatch(/audited_at|OLD\.\*|OLD\.id\b/);
+    const top = VERDICT_BOOKKEEPING_DETAILS.filter((k) => !k.includes("."));
+    const nested = VERDICT_BOOKKEEPING_DETAILS.filter((k) => k.includes(".")).map((k) => k.split("."));
+    expect(nested).toEqual([["set", "sheets"]]); // one nested path: #- takes one
+    const stripped = (side: string) => `((${side}.audit_details - '{${top.join(",")}}'::text[]) #- '{${nested[0].join(",")}}'::text[])`;
+    expect(when).toContain(`OR ${stripped("OLD")} IS DISTINCT FROM ${stripped("NEW")}`);
+    // the columns compared are every column the table has, but id and audited_at (pinned below against the CREATE TABLE)
+    expect([...cols, "id", "audit_details", "audited_at"].sort()).toEqual(["id", "org_id", "document_id", "sheet_number", "revision_code", "status", "audit_details", "audited_at", "library_id", "source"].sort());
   });
 
   it("the history is read with the NEWEST drawing_audit_logs_read expression, table name swapped — never wider; no write policy; every write grant revoked", () => {

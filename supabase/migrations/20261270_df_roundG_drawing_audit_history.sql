@@ -13,8 +13,9 @@
 -- verdict it replaced. Nor did the row say who produced it.
 --
 --   1. THE HISTORY. drawing_audit_log_history: one row per verdict a write
---      REPLACED (an UPDATE that changed the row — the upsert conflict path) or
---      a delete REMOVED (a document delete cascades to its verdicts), holding
+--      REPLACED (an UPDATE that changed the VERDICT — the upsert conflict
+--      path) or a delete REMOVED (a document delete cascades to its
+--      verdicts), holding
 --      the replaced row whole (status, source, findings in audit_details,
 --      audited_at, its key), what replaced it (status, source), when, and the
 --      signed-in uid of the writer when there is one. Written ONLY by the
@@ -25,6 +26,24 @@
 --      log_id or document_id: the history outlives the row and its document.
 --      org_id cascades with the workspace: deleting a workspace deletes its
 --      history, and its cascading verdict deletes write none.
+--      WHAT COUNTS AS A CHANGE (the integrator's ruling at the F5 review: an
+--      audit history records changes of substance, not timestamps). Both
+--      writers stamp audited_at on every write, and the route writes a
+--      still-waiting provisional row again on every record, so a plain
+--      row-changed test would copy the whole row on every re-record. The
+--      history keeps a row only when the verdict changed: any column but
+--      audited_at (status, source, document, key), or audit_details with
+--      its bookkeeping removed — by and byName (who pressed record),
+--      coverage (the index fingerprints the verdict was computed from) and
+--      set.sheets (the sheet list, carried only by the first row of a run).
+--      Everything else in audit_details is compared: the seven findings
+--      lists, provisional and waitingFindings, note, the set scope (count,
+--      digest, truncated, seriesNotJudged), knowledgeDocumentId, libraryId,
+--      and any key a later writer adds. An identical re-record (measured on
+--      the route: only audited_at differs) keeps nothing; the current row
+--      still carries the newest audited_at.
+--      lib/drawingAuditLog.ts VERDICT_BOOKKEEPING_DETAILS names the same
+--      keys (pinned equal by test).
 --      Reading it: the SAME predicate as drawing_audit_logs_read (an active
 --      member of the org) — never wider; the final SELECT compares the two
 --      policy expressions. Writing it: nobody — INSERT, UPDATE, DELETE and
@@ -53,9 +72,17 @@
 --   * App deployed, not pasted: each writer tries its write with source; the
 --     database answers 42703 / PGRST204 (no such column, nothing written) and
 --     the writer sends the write it sends today, byte-identical. No history.
---   * Pasted, app not yet deployed: the writers send no source (rows they
---     write keep NULL, or the source a newer write left); the history is kept
---     from the paste on, whatever the app version.
+--   * Pasted, app not yet deployed — or deployed, but before PostgREST
+--     reloads its schema cache (it answers PGRST204 and the writer sends the
+--     write without source): an upsert that omits source leaves the source
+--     already on the row in place, so a row re-recorded then can carry an
+--     earlier writer's label (NULL on a row first written before the paste).
+--     The history is kept from the paste on, whatever the app version.
+--   * source is the writer of the row's LAST write: log_audit_completion
+--     merges the stored audit_details into an org-wide row it re-records
+--     (a 20261124-backfilled library row whose mirror is gone keeps its
+--     findings), so that row says orchestrator while some of its findings
+--     came from the engine. The history keeps the row as it was before.
 -- Re-runnable: IF NOT EXISTS / CREATE OR REPLACE / DROP ... IF EXISTS; the
 -- REVOKEs are idempotent.
 -- Single paste: prerequisite check → temp-table inventory (counts only) →
@@ -221,7 +248,10 @@ DROP TRIGGER IF EXISTS trg_drawing_audit_logs_history_update ON drawing_audit_lo
 CREATE TRIGGER trg_drawing_audit_logs_history_update
   AFTER UPDATE ON drawing_audit_logs
   FOR EACH ROW
-  WHEN (OLD.* IS DISTINCT FROM NEW.*)
+  WHEN ((OLD.org_id, OLD.library_id, OLD.document_id, OLD.sheet_number, OLD.revision_code, OLD.status, OLD.source)
+          IS DISTINCT FROM (NEW.org_id, NEW.library_id, NEW.document_id, NEW.sheet_number, NEW.revision_code, NEW.status, NEW.source)
+        OR ((OLD.audit_details - '{by,byName,coverage}'::text[]) #- '{set,sheets}'::text[])
+          IS DISTINCT FROM ((NEW.audit_details - '{by,byName,coverage}'::text[]) #- '{set,sheets}'::text[]))
   EXECUTE FUNCTION public.drawing_audit_logs_record_history();
 
 DROP TRIGGER IF EXISTS trg_drawing_audit_logs_history_delete ON drawing_audit_logs;
@@ -284,13 +314,22 @@ SELECT 0, 'drawing_audit_logs_stamp_source(): SECURITY INVOKER, search_path pinn
        AND NOT has_function_privilege('authenticated', 'public.drawing_audit_logs_stamp_source()', 'EXECUTE'),
        NULL
 UNION ALL
-SELECT 0, 'the three triggers are bound to drawing_audit_logs: source stamp (BEFORE INSERT OR UPDATE), history on a changing UPDATE, history on DELETE',
+SELECT 0, 'the three triggers are bound to drawing_audit_logs: source stamp (BEFORE INSERT OR UPDATE), history on an UPDATE that changes the verdict (every column but audited_at; audit_details without by, byName, coverage, set.sheets), history on DELETE',
        (SELECT COUNT(*) = 3 FROM pg_trigger t
          WHERE t.tgrelid = 'public.drawing_audit_logs'::regclass AND NOT t.tgisinternal AND t.tgenabled = 'O'
            AND t.tgname IN ('trg_drawing_audit_logs_stamp_source', 'trg_drawing_audit_logs_history_update', 'trg_drawing_audit_logs_history_delete'))
        AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = 'public.drawing_audit_logs'::regclass
                      AND t.tgname = 'trg_drawing_audit_logs_history_update'
-                     AND pg_get_triggerdef(t.oid) LIKE '%AFTER UPDATE%WHEN ((old.* IS DISTINCT FROM new.*))%'),
+                     AND pg_get_triggerdef(t.oid) LIKE '%AFTER UPDATE ON public.drawing_audit_logs FOR EACH ROW WHEN %'
+                     AND pg_get_triggerdef(t.oid) LIKE '%(old.org_id IS DISTINCT FROM new.org_id)%'
+                     AND pg_get_triggerdef(t.oid) LIKE '%(old.library_id IS DISTINCT FROM new.library_id)%'
+                     AND pg_get_triggerdef(t.oid) LIKE '%(old.document_id IS DISTINCT FROM new.document_id)%'
+                     AND pg_get_triggerdef(t.oid) LIKE '%(old.sheet_number IS DISTINCT FROM new.sheet_number)%'
+                     AND pg_get_triggerdef(t.oid) LIKE '%(old.revision_code IS DISTINCT FROM new.revision_code)%'
+                     AND pg_get_triggerdef(t.oid) LIKE '%(old.status IS DISTINCT FROM new.status)%'
+                     AND pg_get_triggerdef(t.oid) LIKE '%(old.source IS DISTINCT FROM new.source)%'
+                     AND pg_get_triggerdef(t.oid) LIKE '%((old.audit_details - %{by,byName,coverage}%::text[]) #- %{set,sheets}%::text[]) IS DISTINCT FROM ((new.audit_details - %{by,byName,coverage}%::text[]) #- %{set,sheets}%::text[])%'
+                     AND pg_get_triggerdef(t.oid) NOT LIKE '%audited_at%'),
        NULL
 UNION ALL
 SELECT 0, 'drawing_audit_logs unchanged: its key UNIQUE (org_id, library_id, sheet_number, revision_code) NULLS NOT DISTINCT, and exactly its three policies (member SELECT, controller INSERT / UPDATE; no DELETE)',
