@@ -23,9 +23,9 @@
       "LOW": 13
     },
     "by_status": {
-      "RESOLVED": 141,
+      "RESOLVED": 142,
       "REFUTED": 2,
-      "OPEN": 8,
+      "OPEN": 7,
       "RESOLVED (2026-10-14, by the integrator's ruling at the J20 integrator fix pass — done-when 1 met as narrowed under DEC-90: the pending pointer, the trusted promote and the redline accepted as documented exceptions; PASTE pending: `20261214`, after `20261184` and `20261205`)": 1
     }
   },
@@ -3784,7 +3784,7 @@
       "id": "A11Y-16",
       "title": "The project page's own write buttons, outside its Members tab, still carry no decision floor",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": null,
       "verification_note": "READ (each site read at J14's HEAD; sizes from the class strings, not measured)",
       "blast_radius": "accessibility / mobile",

@@ -812,7 +812,7 @@ Clusters of decisions are spaced 8 px (`gap-2` / `ml-2`), up from 4-6 px.
 *Numbered A11Y-16 on this branch (opened by projects-joint J14 PROJECTS FOLLOW-UPS as `A11Y-15`'s remainder, per `DEC-31`). If the number collides at merge the integrator renumbers.*
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J15 CHECKED-WRITE SWEEP. It runs last and per file, after identity-and-session IS-P1's edit of `app/(protected)/projects/[id]/page.tsx` has merged, and its pass over that page's write handlers is where these class strings ride. Proposed by projects-joint J14 PROJECTS FOLLOW-UPS, 2026-10-07, in its review's fix pass (DEC-31). The integrator confirms or re-assigns at the J14 merge.
 - **Assigned:** projects-joint J15 CHECKED-WRITE SWEEP (its per-file pass over the project page) — by the integrator, 2026-10-07 (J14 merge; fleet plan `projects-joint.json`).
 - **Assigned:** projects-joint J15 CHECKED-WRITE SWEEP (restated at the J19 merge: J19 carried it in its plan entry and left it to J15's per-file pass over the project page) — by the integrator, 2026-10-13 (at the J19 merge, DEC-31; fleet plan `projects-joint.json`).
@@ -835,6 +835,16 @@ Clusters of decisions are spaced 8 px (`gap-2` / `ml-2`), up from 4-6 px.
 **Done when.**
 - Every button that starts a write in `app/(protected)/projects/[id]/page.tsx` carries `DECISION_TARGET`.
 - The census reads the whole page, so a new write button there without the floor fails.
+
+**Resolution (2026-11-18, projects Round G).** Package projects-joint J15c CHECKED-WRITE SWEEP, in its pass over `app/(protected)/projects/[id]/page.tsx`, brought the page's remaining write buttons under the shared floor (`${DECISION_TARGET}`: 24 px, and 44 px on a coarse pointer). Every handler, label and disabled state is unchanged; only class strings moved.
+- `ActionButton`'s one `<button>` carries the floor. That covers every use: Pause, Complete, Cancel, Resume, Archive, Reopen, Delete, and the header's Export CSV, Edit, Evidence pack, Report and Lessons learned.
+- The lessons-learned editor's "Save to project", the status transition's Confirm and the Activity tab's "Post comment" carry it too.
+- The two lifecycle clusters (active: Pause / Complete / Cancel; paused: Resume / Cancel) are spaced 8 px (`gap-2`, from `gap-1`). The lessons and transition footers were already `gap-2`, and are pinned.
+- Tests: `lib/__tests__/j10bDecisionTargets.test.ts` "A11Y-16 (J15c) —". It is an inverted census over the page whole. Every `<button>` must carry the floor unless it is a tab (`role="tab"`, the tab strip's one button) or its whole click is on the read-only list `READ_ONLY_16`: Back to projects, the error banner's dismiss, the lessons editor's and the transition's Cancel (each asks, then discards local state only) and opening a responsibility's editor. The test also checks that the list has no dead entry, that a write appended to a read-only handler takes it off the list, the 8 px clusters, and the handler and disabled-state pins. Run against `32b9a0e`'s page, the census, cluster and pin cases fail.
+
+**Done-when.**
+1. ✓ Every button that starts a write in `app/(protected)/projects/[id]/page.tsx` carries `DECISION_TARGET`.
+2. ✓ The census reads the whole page (tabs and the pinned read-only list excepted), so a new write button there without the floor fails.
 
 ---
 
@@ -894,4 +904,4 @@ Clusters of decisions are spaced 8 px (`gap-2` / `ml-2`), up from 4-6 px.
 | A11Y-13 | MEDIUM | RESOLVED |
 | A11Y-14 | MEDIUM | RESOLVED |
 | A11Y-15 | LOW | RESOLVED |
-| A11Y-16 | LOW | OPEN |
+| A11Y-16 | LOW | RESOLVED |
