@@ -1207,6 +1207,8 @@ Tests — `lib/__tests__/prjRoundGJ11Migrations.test.ts`: "no other migration re
 
 **Scope / residual.** Nothing owed in code. Owner of the status: the operator's paste-back of `20261215` (its candidates row) and then the integrator, who resolves this finding by record together with `SEC-24` — at once if the row reads 0, else after the put-back. Residual 1 stands as recorded (the inventory counts its rows). Pending migrations: `20261157` (HOLD), `20261198` (after `20261179`), `20261215` (after `20261198`).
 
+*Assigned (2026-11-18, the integrator, DEC-31):* **the user** — the same paste-back as `SEC-24`. Paste `20261215` (`MIGRATION-PASTE-ORDER.md` row 168, HOLD) after rows 152 (`20261198`) and 128 (`20261157`), each at its own gate, and send back the candidates row (and, if it is not 0, the put-back counts). The integrator then resolves `SEC-21` with `SEC-24` by record (exceptions (i) and (ii) ruled at the J19 merge; residuals 2 and 4 accepted at J14). This line replaces the J20 line in the header as the current owner.
+
 ---
 
 ## SEC-22 · Only the contractor door's new documents and quotes run under row-level security; its submission, pointer and promote run under a bound identity, and its housekeeping writes still run as the service role
@@ -1345,6 +1347,8 @@ The same INSERT, in a transaction that first drops `document_versions_insert_int
 
 **Scope / residual.** Stays OPEN for done-when 1 (the paste-back and one reported upload — operator, with the REV-19 paste). `SEC-22` (a)'s switch of the door's submission to `intake_door` under its own policies can follow once pasted; that role would then need EXECUTE on `document_has_versions` (not granted here: `intake_door` may not exist where `20261184` is not pasted, and granting it now would widen nothing that runs) — `SEC-22`'s owner. The fold into `20261205` (the one migration number this package holds) means SEC-23's paste waits on the REV-19 limb's deploy order; the integrator may split §2 into its own number at merge (it has no dependency on §1).
 
+*Assigned (2026-11-18, the integrator, DEC-31):* **the user** — document-control P23 is merged (`eba3aecf`); done-when 1 is the operator's. Deploy the app carrying P23, then paste `20261205` (`MIGRATION-PASTE-ORDER.md` row 157, HOLD: deploy first, then paste). Run the smoke check (one metadata-editor issue saves, `REV-19`'s). Send back the result set: its first inventory row records the live policy text. Then upload one revision from a library page as Document Control and report whether it saved. The integrator then closes `SEC-23` by record with `REV-19`. This line replaces the P23 line in the header as the current owner.
+
 ---
 
 ## SEC-24 · Milestones a document-only re-import already moved off their project before J19 stay off it, and a re-import onto that project then fails on them
@@ -1394,6 +1398,8 @@ The same INSERT, in a transaction that first drops `document_versions_insert_int
 - ✓ A test pins the repair path, and a scratch run shows a stranded row restored and re-imported (S0–S12).
 
 **Scope / residual.** Owner of the status: the operator's paste-back. Operator step: paste 20261215 and read its inventory; if the candidates are not 0, run the dry run and the put-back per group as the file's header shows, and send back the counts. This finding (and `SEC-21` with it) resolves by record when the candidates row reads 0, or after the put-back. Nothing in the app calls the function (no screen ever produced the rows). Not done, and not owed: telling an always-document-only row from a moved one without the operator (nothing in the row says which).
+
+*Assigned (2026-11-18, the integrator, DEC-31):* **the user** — paste `20261215` (`MIGRATION-PASTE-ORDER.md` row 168, HOLD) after rows 152 (`20261198`) and 128 (`20261157`), each pasted at its own gate as those rows say. Send back the candidates row. If it is not 0, also send back the counts of the per-group dry run and put-back that the file's header describes. The integrator then resolves `SEC-24` and `SEC-21` by record. This line replaces the J20 line in the header as the current owner.
 
 ---
 

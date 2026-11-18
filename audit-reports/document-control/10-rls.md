@@ -711,6 +711,19 @@ schema.sql:144 `current_version_id UUID,` — the column immediately follows `st
 
 **Scope / residual.** Stays OPEN for the operator: deploy the app carrying IS-P1, then paste `supabase/migrations/20261149_dc_roundF_document_evidence_delete_guard.sql` (DEC-30; `MIGRATION-PASTE-ORDER.md` row 114 already names this prerequisite). Then RESOLVED with no further code.
 
+*Corrected (2026-11-18, the integrator, DEC-29 / DEC-31):* two corrections to the lines above; nothing is rewritten.
+1. The "ratify DEC-79 or its stricter reading" part of the second Assigned line is done. DEC-79 reading (a) was ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90 A1).
+2. The remainder rides **both** pastes, not `20261149` alone as the Scope lines above say:
+   - Done-when 1 and 3 (P3's pointer rails, the dangling-pointer inventory, the refused revision delete) hold in no database until `20261131` is pasted (`MIGRATION-PASTE-ORDER.md` row 98, HOLD). It is pasted after the app carrying document-control P12's `DRLS-15` / `DRLS-17` is deployed (P12 merged, `564720da`), and after `20261130` (row 97).
+   - Done-when 2 (P14's document-delete half) holds once `20261149` is pasted (row 114, HOLD). It is pasted after the app carrying identity-and-session IS-P1's checked bulk delete is deployed (IS-P1 merged, `c537602b`).
+
+*Assigned (2026-11-18, the integrator, DEC-31):* **the user** (`userHeld.DRLS-14`):
+- Deploy the apps carrying P12 and IS-P1.
+- Paste `20261130` (row 97), then `20261131` (row 98), and send back its result set, the inventory rows included.
+- Paste `20261149` (row 114) and send back its rows.
+
+The integrator closes `DRLS-14` by record when both paste-backs are in.
+
 ---
 
 <a id="drls-15"></a>

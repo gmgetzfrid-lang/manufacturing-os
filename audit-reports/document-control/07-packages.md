@@ -704,6 +704,16 @@ lib/docPack.ts:40-50 — the signature takes `documentIds: string[]` with no cap
 
 **Integrator note (2026-10-07, DEC-90 A4).** *Ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90): 150 sheets / 1000 pages / 150 MB, refused with a split offered and no override (bounding memory on a field device — OWASP unrestricted resource consumption); the device-aware option (`navigator.deviceMemory` is Chromium-only, so it fails open on iPad Safari and Firefox) and the amber leave-out (a field pack missing a sheet) are rejected; the operator reads `20261143`'s MEASURE rows, splits any package over the budget, then sets `NEXT_PUBLIC_FIELD_PACK_BUDGET=on`.* Status stays OPEN: done-when 1 is met only once a deployment runs with the switch on ("Not met until … the operator sets the variable", above), so under DEC-29 it is ticked on the operator's confirmation, not on this decision. What remains, all operator steps (`userHeld.PKG-12`): read `20261143`'s MEASURE rows at its paste; have the owner of any package or asset tag over the budget split it first; then set `NEXT_PUBLIC_FIELD_PACK_BUDGET=on` and rebuild (on Vercel in the project's environment; on a Docker self-host in `.env` or as a build argument). No code is owed.
 
+*Corrected (2026-11-18, the integrator, DEC-29 / DEC-31):* the "ratify `DEC-70` §2 (or change the three constants)" part of the Assigned line in the header is done. The budget was ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90 A4).
+
+*Assigned (2026-11-18, the integrator, DEC-31):* **the user** — what remains is all operator steps (`userHeld.PKG-12`):
+1. Paste `20261143` (`MIGRATION-PASTE-ORDER.md` row 108, HOLD: with the P8 app deploy or just after, never before).
+2. Read its MEASURE rows and send them back.
+3. Split any package or asset tag the rows count over the budget.
+4. Set `NEXT_PUBLIC_FIELD_PACK_BUDGET=on` and rebuild. The variable is inlined at build time; on a Docker self-host it is the build arg.
+
+The integrator ticks done-when 1 on the operator's confirmation and closes `PKG-12`.
+
 ---
 
 <a id="pkg-13"></a>

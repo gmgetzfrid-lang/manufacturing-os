@@ -466,6 +466,8 @@ components/navigation/Sidebar.tsx:508 (the ONLY meaningful pulse, and it means a
 - [ ] The animation distinguishes action-required from FYI, so it does not collide with the sidebar red-badge semantics at Sidebar.tsx:508
 - [ ] A prefers-reduced-motion guard exists for the spin/pulse/count-up
 
+*Assigned (2026-11-18, the integrator, DEC-31):* **notifications N12 NUDGES** — already in N12's findings in `audit-reports/fleet-plans/notifications.json`. Its scope there: the bell animation as a time-boxed spin on a count increase, telling action-required from FYI, and a prefers-reduced-motion guard. N12 is held at the integrator's direction pending the user's go-ahead (that plan's `userHeld.N12`; `notifications/03-taxonomy.md:1177`).
+
 ---
 
 <a id="os-6"></a>
@@ -582,6 +584,8 @@ app/(protected)/scratchpad/page.tsx:3 —
 
 **Scope / residual.** Stays OPEN for done-when 1 and 3: record RESOLVED when N12's nudge kind lands with a badged (or ratified bell-only) section and its bell icon.
 
+*Assigned (2026-11-18, the integrator, DEC-31):* **notifications N12 NUDGES** — done-when 1 and 3, as the Scope above says: the nudge's kind lands with a badged (or ratified bell-only) section and its bell icon. Added to N12's findings in `audit-reports/fleet-plans/notifications.json`. N12 is held at the integrator's direction pending the user's go-ahead (that plan's `userHeld.N12`; `notifications/03-taxonomy.md:1177`).
+
 ---
 
 <a id="os-8"></a>
@@ -622,6 +626,14 @@ lib/eSignatures.ts:67 (proves last_sign_in_at is reachable, and what it actually
 - [ ] The login nudge fires only when max(notifications.created_at) > that timestamp, not merely when unread > 0
 - [ ] Dismissing the nudge stamps the timestamp so the same nudge cannot reappear on the next login
 - [ ] The nudge does not fire on RoleContext's SIGNED_IN re-emits (tab return, token refresh) — see components/providers/RoleContext.tsx:300-306, which documents that SIGNED_IN fires on all of those
+
+*Assigned (2026-11-18, the integrator, DEC-31):* **notifications N12 NUDGES** — already in N12's findings in `audit-reports/fleet-plans/notifications.json`. Its scope there:
+- the seen stamp, `notification_preferences.notifications_seen_at`;
+- the login nudge only when `max(created_at)` is later than that stamp;
+- the dismissal stamp;
+- no nudge on `SIGNED_IN` re-emits.
+
+N12 is held at the integrator's direction pending the user's go-ahead (that plan's `userHeld.N12`; `notifications/03-taxonomy.md:1177`).
 
 ---
 
