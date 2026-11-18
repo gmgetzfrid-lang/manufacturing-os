@@ -16,6 +16,10 @@ import { supabase } from "@/lib/supabase";
 import { notifyCompliance as notify } from "@/lib/complianceNotify";
 import { loadScanRetryPlan, noteComplianceScan } from "@/lib/complianceNotify";
 import { logAuditAction } from "@/lib/audit";
+// SAF-18 (J15a): a database error reaching the screen is worded (REL-3) —
+// the WRITE form where nothing landed, the REASON form after a landed write.
+import { describeWriteError } from "@/lib/checkedWrite";
+import { userFacingError } from "@/lib/userFacingError";
 import { effectiveOwnerForDocument, getOrgControllers, isEffectiveOwnerOfDocument } from "@/lib/ownership";
 import { resolveActorPrincipal } from "@/lib/principal";
 import { isControllerPrincipal } from "@/lib/permissions";
@@ -70,6 +74,20 @@ interface DocForRetention {
  *  policy and basis date. A disposed record is left as-is. RET-5: both writes
  *  are CHECKED — a refused re-clock throws instead of leaving a stale deadline
  *  that reads as current. */
+/** SAF-18 (J15a): a re-clock that did not land — the reason alone (REASON
+ *  form, never "nothing was changed": a caller may lead with what DID land,
+ *  as setRetentionPolicy does). */
+export class RetentionReclockError extends Error {
+  readonly reason: string;
+  readonly cleared: boolean;
+  constructor(cleared: boolean, reason: string) {
+    super(`Retention clock was NOT ${cleared ? "cleared" : "updated"}: ${reason}`);
+    this.name = "RetentionReclockError";
+    this.cleared = cleared;
+    this.reason = reason;
+  }
+}
+
 export async function recomputeRetention(documentId: string): Promise<void> {
   const { data, error: readErr } = await supabase.from("documents")
     .select("id, retention_policy, collection_id, library_id, created_at, updated_at, effective_date, disposition_state")
@@ -82,9 +100,12 @@ export async function recomputeRetention(documentId: string): Promise<void> {
   const policy = await effectiveRetentionPolicyForDocument({
     retentionPolicy: doc.retention_policy, collectionId: doc.collection_id, libraryId: doc.library_id,
   });
+  // SAF-18 (J15a): RET-5's checked writes read their matched row too — a
+  // re-clock that matched none is refused, never a stale deadline.
   if (!policy) {
-    const { error } = await supabase.from("documents").update({ retention_until: null, disposition_state: null }).eq("id", doc.id);
-    if (error) throw new Error(`Retention clock was NOT cleared: ${error.message}`);
+    const { data: cleared, error } = await supabase.from("documents").update({ retention_until: null, disposition_state: null }).eq("id", doc.id).select("id");
+    if (error) throw new RetentionReclockError(true, userFacingError(error, { embed: true, context: "recomputeRetention" }));
+    if (!cleared || cleared.length === 0) throw new RetentionReclockError(true, "the write was refused.");
     return;
   }
   const basis = policy.basis ?? "created";
@@ -94,8 +115,9 @@ export async function recomputeRetention(documentId: string): Promise<void> {
     : /* issued | superseded */ (doc.updated_at || doc.created_at);
   const until = computeRetentionUntil(basisISO, policy);
   const state = until && until <= todayISO() ? "eligible" : "active";
-  const { error } = await supabase.from("documents").update({ retention_until: until, disposition_state: state }).eq("id", doc.id);
-  if (error) throw new Error(`Retention clock was NOT updated: ${error.message}`);
+  const { data: reclocked, error } = await supabase.from("documents").update({ retention_until: until, disposition_state: state }).eq("id", doc.id).select("id");
+  if (error) throw new RetentionReclockError(false, userFacingError(error, { embed: true, context: "recomputeRetention" }));
+  if (!reclocked || reclocked.length === 0) throw new RetentionReclockError(false, "the write was refused.");
 }
 
 /** Set (or clear) the retention policy at a level, then recompute the covered
@@ -116,18 +138,51 @@ export async function setRetentionPolicy(input: {
     .update({ retention_policy: input.policy })
     .eq("id", input.id)
     .select("id");
-  if (polErr) throw new Error(polErr.message);
+  // SAF-18 (J15a): the database's error is worded at the throw (the
+  // retention panels show it); its code still decides nothing else here.
+  if (polErr) throw new Error(describeWriteError(polErr));
   if (!polRows || polRows.length === 0) {
     throw new Error(`Retention policy was NOT saved — you don't have authority over this ${input.level}.`);
   }
   await logEvent(input.orgId, { scopeType: input.level, scopeId: input.id, documentId: input.level === "document" ? input.id : null, action: "retention_set", detail: input.policy ?? undefined, actorId: input.actorId, actorName: input.actorName });
 
-  if (input.level === "document") { await recomputeRetention(input.id); return; }
+  if (input.level === "document") {
+    // SAF-18 (J15a): the policy row has landed and retention_set is logged —
+    // a re-clock that did not land leads with that, as the library-level
+    // sentence below does (never "nothing was changed").
+    try { await recomputeRetention(input.id); }
+    catch (e) {
+      if (e instanceof RetentionReclockError) {
+        throw new Error(`The retention policy was saved, but its retention clock was NOT ${e.cleared ? "cleared" : "updated"}: ${e.reason}`);
+      }
+      throw e;
+    }
+    return;
+  }
   const col = input.level === "library" ? "library_id" : "collection_id";
   const { data } = await supabase.from("documents").select("id").eq(col, input.id);
   const ids = ((data ?? []) as Array<Record<string, unknown>>).map((r) => r.id as string);
+  // SAF-18 (J15a, the integrator's ruling): every batch is sent, as before
+  // RET-5's checked re-clock could refuse — one document refused (a
+  // per-document deny under documents_deny_write_guard) never stops the
+  // others. The documents not re-clocked are collected and said once, after
+  // all batches, in one plain sentence (their reasons go to the console).
+  const notReclocked: string[] = [];
   for (let i = 0; i < ids.length; i += 25) {
-    await Promise.all(ids.slice(i, i + 25).map((id) => recomputeRetention(id)));
+    const batch = ids.slice(i, i + 25);
+    const settled = await Promise.allSettled(batch.map((id) => recomputeRetention(id)));
+    settled.forEach((r, j) => {
+      if (r.status === "rejected") {
+        notReclocked.push(batch[j]);
+        console.warn(`[retention] ${batch[j]} was not re-clocked: ${(r.reason as Error)?.message ?? String(r.reason)}`);
+      }
+    });
+  }
+  if (notReclocked.length) {
+    throw new Error(
+      `The retention policy was saved, but ${notReclocked.length} of ${ids.length} document(s) it covers could not be re-clocked — ` +
+      "they keep their previous retention deadline. Save the policy again to retry; if it persists, ask Document Control (you may not be allowed to change those documents).",
+    );
   }
 }
 
@@ -352,8 +407,10 @@ export async function scanRetention(orgId: string, opts?: { renudgeDays?: number
     const priorStamp = (d.retention_notified_at as string | null) ?? null;
     // RET-5: a refused flag write must not be notified as "eligible" — the
     // record would read as pending review while the row still says nothing.
-    const { error: flagErr } = await supabase.from("documents").update({ disposition_state: "eligible", retention_notified_at: new Date().toISOString() }).eq("id", docId);
+    // SAF-18 (J15a): a flag that matched no row is refused the same way.
+    const { data: flagged, error: flagErr } = await supabase.from("documents").update({ disposition_state: "eligible", retention_notified_at: new Date().toISOString() }).eq("id", docId).select("id");
     if (flagErr) { failures.push(`${docId}: ${flagErr.message}`); continue; }
+    if (!flagged || flagged.length === 0) { failures.push(`${docId}: the write was refused`); continue; }
     const policy = resolveEffectiveRetentionPolicy(
       (d.retention_policy as RetentionPolicy | null) ?? null,
       d.collection_id ? colPol.get(d.collection_id as string) ?? null : null,

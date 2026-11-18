@@ -2,6 +2,9 @@
 // Supabase implementation — replaces Firestore version
 
 import { supabase } from "@/lib/supabase";
+// SAF-18 (J15a): the reset reads its matched row.
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import type { ExplorerViewConfig, TableViewConfig, ViewColumn } from "@/types/schema";
 
 const TABLE = "table_views";
@@ -294,8 +297,11 @@ export async function deleteTableView(params: {
   collectionId?: string;
 }) {
   const id = tableViewId(params);
-  const { error } = await supabase.from(TABLE).delete().eq("id", id);
-  if (error) throw new Error(error.message);
+  // SAF-18 class (c): a scope with no saved view (already reset) matches no
+  // row — a success; the database's error throws in its own words, as before.
+  const kept = keptAnswer();
+  await checkedWrite(answered(supabase.from(TABLE).delete().eq("id", id).select("id"), kept));
+  if (kept.error) throw new Error(kept.error.message);
   void announceTableViewChange(id);
 }
 

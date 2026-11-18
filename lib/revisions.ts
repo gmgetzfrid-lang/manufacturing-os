@@ -44,7 +44,9 @@ import { onDocumentIssued } from "@/lib/reviewCycles";
 import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { recomputeRetention } from "@/lib/retention";
 import { assertNotOnHold } from "@/lib/holdGate";
-import { isMissingSchemaError } from "@/lib/checkedWrite";
+import { isMissingSchemaError, checkedWrite } from "@/lib/checkedWrite";
+// SAF-18 (J15a): every update/delete here reads its matched rows.
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { isControlledIssueStatus, isRetiredStatus, isIssueTransition, RETIRED_NOT_ISSUED_STAMP, WORK_IN_PROGRESS_STATUSES } from "@/lib/issueStatus";
 import { isUnguardedEntryIntoForce } from "@/lib/documentStatusOptions";
 import { IN_FORCE_STATUSES } from "@/lib/verifyVerdict";
@@ -769,12 +771,16 @@ export async function revokeLiveSharesForDocument(documentId: string, actorUserI
   let error: string | null = null;
   const auditFailures: string[] = [];
   try {
-    const { data, error: revokeErr } = await supabase
+    // SAF-18 class (c): a document with no live link matches no row — a
+    // success (revoked: 0); the rows it did revoke are each audited.
+    const kept = keptAnswer();
+    await checkedWrite(answered(supabase
       .from("document_shares")
       .update({ revoked_at: new Date().toISOString(), revoked_by: actorUserId })
       .eq("document_id", documentId)
       .is("revoked_at", null)
-      .select("id, org_id");
+      .select("id, org_id"), kept));
+    const { data, error: revokeErr } = kept;
     if (revokeErr) {
       error = revokeErr.message;
     } else {
@@ -1746,23 +1752,31 @@ export async function submitForReview(input: RevUpInput): Promise<{ versionId: s
   // COMPARE-AND-SET on the pending pointer we read above: a double-click (or
   // two publishers racing) must not create two live drafts each with a full
   // reviewer roster. The loser's insert is superseded immediately.
-  let pointerQuery = supabase.from("documents")
-    .update({ pending_version_id: insertedRow.id, updated_at: now, updated_by: actorUserId })
-    .eq("id", doc.id);
-  pointerQuery = existingPendingId
-    ? pointerQuery.eq("pending_version_id", existingPendingId)
-    : pointerQuery.is("pending_version_id", null);
-  const { data: pointerRows, error: pointerErr } = await pointerQuery.select("id");
+  // (SAF-18: the compare half is applied in the same statement as the write
+  // and its read-back — the same filters, in the same order, as before.)
+  const { data: pointerRows, error: pointerErr } = await ((q) => (existingPendingId
+    ? q.eq("pending_version_id", existingPendingId)
+    : q.is("pending_version_id", null)))(
+    supabase.from("documents")
+      .update({ pending_version_id: insertedRow.id, updated_at: now, updated_by: actorUserId })
+      .eq("id", doc.id),
+  ).select("id");
   if (pointerErr) throw new Error(pointerErr.message);
   if (((pointerRows as unknown[]) ?? []).length === 0) {
     // Someone else won the race — retire our just-inserted draft and stop.
-    await supabase.from("document_versions").update({ superseded_at: now }).eq("id", insertedRow.id);
+    // SAF-18 class (b): the loser's retire is clean-up; one that did not land
+    // is said (the refusal below stands either way).
+    const retired = await checkedWrite(supabase.from("document_versions").update({ superseded_at: now }).eq("id", insertedRow.id).select("id"));
+    if (!retired.ok) console.warn(`[revisions] the losing submission's draft ${insertedRow.id as string} could not be retired: ${retired.error}`);
     throw new Error("Another submission for review just landed on this document — refresh to see it.");
   }
 
   // Resubmit: supersede the prior draft + void its sign-offs (re-review needed).
   if (existingPendingId && existingPendingId !== insertedRow.id) {
-    await supabase.from("document_versions").update({ superseded_at: now }).eq("id", existingPendingId);
+    // SAF-18 class (b): bookkeeping after the submission landed — a prior
+    // draft that could not be retired is said, never fails the submission.
+    const superseded = await checkedWrite(supabase.from("document_versions").update({ superseded_at: now }).eq("id", existingPendingId).select("id"));
+    if (!superseded.ok) console.warn(`[revisions] the resubmission landed, but the prior draft ${existingPendingId} could not be retired: ${superseded.error}`);
     await invalidateDraftSignoffs({ orgId, documentId: doc.id, libraryId, oldVersionId: existingPendingId, newRevisionLabel: draftLabel });
   }
 
@@ -1968,24 +1982,34 @@ export async function correctRevisionLabel(input: CorrectRevLabelInput):
 
   // Keep the parent document's label in step when the corrected rev is current.
   let syncedCurrent = false;
+  let syncFailure: string | null = null;
   if (isCurrent) {
-    const { error: docErr } = await supabase
+    // SAF-18 (J15a): a sync that matched no row is a failure too — the
+    // document would keep the old label beside the corrected revision. The
+    // correction itself LANDED (the version row above), so its record is
+    // written either way (the integrator's ruling): REV_LABEL_CORRECTED with
+    // syncedCurrent false and the sync's failure, then the failure is thrown.
+    const { data: synced, error: docErr } = await supabase
       .from("documents")
       .update({ rev: check.label, revision: check.label, updated_at: new Date().toISOString(), updated_by: actorUserId })
-      .eq("id", doc.id);
-    if (docErr) {
-      throw new Error(`The revision was corrected, but the document row failed to sync: ${docErr.message}. Re-run the correction or fix the document label via Metadata.`);
-    }
-    syncedCurrent = true;
+      .eq("id", doc.id)
+      .select("id");
+    if (docErr || !synced || synced.length === 0) syncFailure = docErr?.message ?? "the write was refused";
+    else syncedCurrent = true;
   }
 
   await logRevisionEvent({
     orgId, documentId: doc.id, versionId, userId: actorUserId,
     userEmail: actorEmail ?? "", userRole: actorRole ?? "",
     type: "REV_LABEL_CORRECTED",
-    details: { oldLabel, newLabel: check.label, reason: input.reason?.trim() || null, syncedCurrent },
+    details: syncFailure === null
+      ? { oldLabel, newLabel: check.label, reason: input.reason?.trim() || null, syncedCurrent }
+      : { oldLabel, newLabel: check.label, reason: input.reason?.trim() || null, syncedCurrent, syncFailure },
   });
 
+  if (syncFailure !== null) {
+    throw new Error(`The revision was corrected, but the document row failed to sync: ${syncFailure}. Re-run the correction or fix the document label via Metadata.`);
+  }
   return { oldLabel, newLabel: check.label, syncedCurrent };
 }
 
@@ -3882,9 +3906,13 @@ async function undoFailedSupersede(opts: {
   }
   let leftover = 0;
   if (failure.outcome !== "refused" && opts.addedPairs.length > 0) {
-    const { error: delErr } = await supabase
+    // SAF-18 class (c): matching no row is legitimate (none landed); the
+    // read below decides what is left, as before.
+    const delKept = keptAnswer();
+    await checkedWrite(answered(supabase
       .from("document_supersessions").delete()
-      .eq("superseded_doc_id", docId).in("replacement_doc_id", opts.addedPairs);
+      .eq("superseded_doc_id", docId).in("replacement_doc_id", opts.addedPairs).select("id"), delKept));
+    const delErr = delKept.error;
     const { data: left, error: leftErr } = await supabase
       .from("document_supersessions").select("replacement_doc_id")
       .eq("superseded_doc_id", docId).in("replacement_doc_id", opts.addedPairs);

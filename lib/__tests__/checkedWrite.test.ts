@@ -172,17 +172,17 @@ const CLEAN_LIB = [
     // J15c (SAF-18, 2026-11-18): the projects and admin lib files.
     "lib/milestones.ts", "lib/projects.ts", "lib/projectReport.ts", "lib/companies.ts",
     "lib/teams.ts", "lib/accessRecert.ts",
+    // J15a (SAF-18, 2026-11-18): the document-control and library files.
+    "lib/acknowledgments.ts", "lib/assets.ts", "lib/branches.ts", "lib/checkoutEpisodes.ts",
+    "lib/collections.ts", "lib/docClass.ts", "lib/documentLifecycle/common.ts", "lib/documentLifecycle/renumber.ts",
+    "lib/documentLifecycle/reverse.ts", "lib/documentLifecycle/split.ts", "lib/documentOrigin.ts", "lib/documentShares.ts",
+    "lib/effectiveDate.ts", "lib/favorites.ts", "lib/holds.ts", "lib/libraryCollections.ts",
+    "lib/libraryViews.ts", "lib/markupRequests.ts", "lib/markups.ts", "lib/retention.ts",
+    "lib/reviewControl.ts", "lib/reviewCycles.ts", "lib/revisions.ts", "lib/watches.ts",
+    "lib/tableViews.ts", "lib/transmittals.ts", "lib/unitCodeDecode.ts",
 ];
 /** lib files still carrying unchecked sites (SAF-18): the count may fall, never rise. */
-const LIB_RATCHET: Record<string, number> = {
-    "lib/acknowledgments.ts": 7, "lib/assets.ts": 2, "lib/branches.ts": 1, "lib/checkoutEpisodes.ts": 6,
-    "lib/collections.ts": 6, "lib/docClass.ts": 1, "lib/documentLifecycle/common.ts": 2,
-    "lib/documentLifecycle/renumber.ts": 1, "lib/documentLifecycle/reverse.ts": 1, "lib/documentLifecycle/split.ts": 1,
-    "lib/documentOrigin.ts": 1, "lib/documentShares.ts": 1, "lib/effectiveDate.ts": 4, "lib/favorites.ts": 1,
-    "lib/holds.ts": 2, "lib/libraryCollections.ts": 6, "lib/libraryViews.ts": 4, "lib/markupRequests.ts": 1,
-    "lib/markups.ts": 1, "lib/retention.ts": 3, "lib/reviewControl.ts": 9, "lib/reviewCycles.ts": 5, "lib/revisions.ts": 6,
-    "lib/watches.ts": 1, "lib/tableViews.ts": 1, "lib/transmittals.ts": 1, "lib/unitCodeDecode.ts": 1,
-};
+const LIB_RATCHET: Record<string, number> = {};
 /** Files packages running BESIDE this one (projects Round G wave of
  *  2026-10-01) are editing: the census does not judge them until their
  *  package merges, so a raw write they add fails their own review, not this

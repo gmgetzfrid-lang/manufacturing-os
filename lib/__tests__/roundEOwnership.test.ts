@@ -428,6 +428,7 @@ describe("OWN-19 — renumber takes publish authority at the mutator (same popul
   });
   it("a controller (by the role collection) renumbers and the DOC_RENUMBERED event follows", async () => {
     db.tables.org_members = [{ org_id: "o1", uid: "u1", status: "active", role: "Manager", roles: ["Manager", "DocCtrl"] }];
+    db.updateResults = [{ data: [{ id: "d1" }], error: null }]; // SAF-18 (J15a): the renumber reads back its matched row, as PostgREST answers
     await renumberDocument({ doc, newDocumentNumber: " P-101 ", reason: "typo", orgId: "o1", actorUserId: "u1" });
     const upd = db.writes.find((w) => w.table === "documents" && w.method === "update")!.args[0] as Record<string, unknown>;
     expect(upd.document_number).toBe("P-101");
@@ -462,6 +463,7 @@ describe("OWN-19 — split / merge targets are born owned by the actor, so the r
     expect(db.writes.some((w) => w.table === "documents" && w.method === "update")).toBe(true);
   });
   it("archiveRolledBackDoc is the client-session UPDATE the guard's owner arm admits for the stamped owner", async () => {
+    db.updateResults = [{ data: [{ id: "new-lib" }], error: null }]; // SAF-18 (J15a): the park reads back its matched row, as PostgREST answers
     await archiveRolledBackDoc("new-lib", actor);
     const upd = db.writes.find((w) => w.table === "documents" && w.method === "update")!.args[0] as Record<string, unknown>;
     expect(upd.status).toBe("Archived");

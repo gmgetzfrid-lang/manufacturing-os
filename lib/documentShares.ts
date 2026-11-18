@@ -35,6 +35,9 @@
 
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
+// SAF-18 (J15a): the revoke reads its matched row through checkedWrite.
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { assertNotOnHold, isHoldBlockedError } from "@/lib/holdGate";
 import { SHARE_DEFAULT_DAYS, SHARE_MAX_DAYS, resolveServedVersion, shareExpiryFor, shareStatusRefusal } from "@/lib/shareRules";
 
@@ -357,11 +360,15 @@ export async function revokeShareLink(id: string, actorUserId: string): Promise<
   // Only a LIVE row is touched (.is revoked_at null): 20261080 refuses any
   // change to revoked_at once set, so a double click, a stale modal or a
   // second controller revoking concurrently would otherwise hit the guard.
-  const { data, error } = await supabase.from("document_shares").update({
+  // (SAF-18: the write reads its matched row through checkedWrite; the
+  // database's error is thrown as it was, and zero rows takes the path below.)
+  const kept = keptAnswer();
+  const revoked = await checkedWrite(answered(supabase.from("document_shares").update({
     revoked_at: new Date().toISOString(),
     revoked_by: actorUserId,
-  }).eq("id", id).is("revoked_at", null).select("id, org_id, document_id");
-  if (error) throw error;
+  }).eq("id", id).is("revoked_at", null).select("id, org_id, document_id"), kept));
+  if (kept.error) throw kept.error;
+  const data = revoked.ok ? (kept.data as Array<{ org_id?: string; document_id?: string }>) : null;
   if (!data || data.length === 0) {
     // Zero rows: already revoked (the outcome asked for — a no-op, and no
     // second audit row), or the policy refused the caller.

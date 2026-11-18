@@ -14,16 +14,16 @@
     "audit-reports/projects-tab/10-accessibility-mobile.md"
   ],
   "totals": {
-    "findings": 152,
+    "findings": 153,
     "gaps": 10,
     "by_severity": {
       "CRITICAL": 17,
       "HIGH": 53,
-      "MEDIUM": 69,
+      "MEDIUM": 70,
       "LOW": 13
     },
     "by_status": {
-      "RESOLVED": 142,
+      "RESOLVED": 143,
       "REFUTED": 2,
       "OPEN": 7,
       "RESOLVED (2026-10-14, by the integrator's ruling at the J20 integrator fix pass — done-when 1 met as narrowed under DEC-90: the pending pointer, the trusted promote and the redline accepted as documented exceptions; PASTE pending: `20261214`, after `20261184` and `20261205`)": 1
@@ -3228,7 +3228,7 @@
       "id": "SAF-18",
       "title": "Outside the quality and money paths, 177 update / delete sites still discard a zero-row result",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by the census in `lib/__tests__/checkedWrite.test.ts`, at `2af813b` + J12; not exercised against a live database)",
       "blast_radius": "audit integrity / silent failure",
@@ -3263,6 +3263,45 @@
       ],
       "refuted": false,
       "summary": "A member whose role lost a write permission edits a milestone, a collection or a review assignment; the policy filters the UPDATE to zero rows; the screen says it saved, and — where an audit row follows — the trail records a change that did not happen (SAF-3's shape).",
+      "area": "projects-tab",
+      "report": "audit-reports/projects-tab/02-safety-compliance.md"
+    },
+    {
+      "id": "SAF-21",
+      "title": "37 update / delete sites that write through a client handed in as a parameter discard a zero-row result, and the census cannot see them",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by the client-parameter rule of `lib/__tests__/j15aCheckedWriteCensus.test.ts` run over `lib/`, at the J15a head; re-run by J15a's independent reviewer with the same per-file counts; not exercised against a live database)",
+      "blast_radius": "audit integrity / silent failure",
+      "related": [
+        "SAF-18",
+        "GAP-402",
+        "DEC-31"
+      ],
+      "locations": [
+        "lib/equipmentBridgeServer.ts",
+        "lib/serverCollections.ts",
+        "lib/exportRunner.ts",
+        "lib/auditOutboxDrain.ts",
+        "lib/projects.ts",
+        "lib/linkProposerServer.ts",
+        "lib/dataRestore.ts",
+        "lib/consentWindowScan.ts",
+        "lib/ticketSla.ts",
+        "lib/ticketPreauthorizationApply.ts",
+        "lib/serverRetention.ts",
+        "lib/intakeStaging.ts",
+        "lib/archiveCatalog.ts",
+        "lib/aclIndexRebuild.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A drain, sweep or bridge step updates a row another writer already moved (or a policy filtered); the step reads only { error }, records its work as done, and the next run never retries it.",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
     },

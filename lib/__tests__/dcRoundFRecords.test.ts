@@ -130,7 +130,8 @@ describe("RET-5 — checked writes in lib/retention.ts", () => {
     state.resolve = (table, ops) => {
       if (table === "documents" && argOf(ops, "update")) {
         const id = ops.find((o) => o.m === "eq" && o.args[0] === "id")?.args[1];
-        return id === "bad" ? { data: null, error: { message: "refused" } } : { data: null, error: null };
+        // (SAF-18, J15a: a landed flag answers its matched row, as PostgREST does)
+        return id === "bad" ? { data: null, error: { message: "refused" } } : { data: [{ id }], error: null };
       }
       if (table === "documents") return { data: [
         { id: "ok", library_id: "l1", collection_id: "c1", document_number: "P-101", retention_until: "2020-01-01", retention_policy: null, owner_user_id: null, owner_name: null },
@@ -220,7 +221,8 @@ describe("DRLS-4 — the review-certification insert is checked", () => {
   it("markReviewed throws when the event insert is refused", async () => {
     state.resolve = (table, ops) => {
       if (table === "document_review_events") return { data: null, error: { message: "null value in column \"org_id\"" } };
-      if (table === "documents" && argOf(ops, "update")) return { data: null, error: null };
+      // (SAF-18, J15a: the review mark answers its matched row, as PostgREST does)
+      if (table === "documents" && argOf(ops, "update")) return { data: [{ id: "d1" }], error: null };
       if (table === "documents") return { data: { id: "d1", library_id: "l1", collection_id: null, review_policy: null, last_reviewed_at: null, updated_at: null, created_at: "2026-01-01T00:00:00Z" }, error: null };
       if (table === "libraries") return { data: { review_policy: null }, error: null };
       return { data: [], error: null };

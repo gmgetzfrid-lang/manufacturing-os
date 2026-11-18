@@ -7,6 +7,9 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
+// SAF-18 (J15a): the unfavourite reads its matched rows.
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 
 export async function listFavoriteDocIds(orgId: string, userId: string): Promise<string[]> {
   const { data, error } = await supabase
@@ -28,12 +31,18 @@ export async function favoriteDoc(orgId: string, userId: string, documentId: str
 }
 
 export async function unfavoriteDoc(userId: string, documentId: string): Promise<void> {
-  const { error } = await supabase
+  // SAF-18 class (c): not a favourite (already removed) matches no row — a
+  // success; the database's error throws in its own words, as before.
+  // (document_favorites has no id column — its key is (user_id,
+  // document_id) — so the delete reads back document_id.)
+  const kept = keptAnswer();
+  await checkedWrite(answered(supabase
     .from("document_favorites")
     .delete()
     .eq("user_id", userId)
-    .eq("document_id", documentId);
-  if (error) throw new Error(error.message);
+    .eq("document_id", documentId)
+    .select("document_id"), kept));
+  if (kept.error) throw new Error(kept.error.message);
 }
 
 export function useFavorites(orgId: string | null | undefined, userId: string | null | undefined) {

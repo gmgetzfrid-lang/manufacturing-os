@@ -97,6 +97,9 @@
 
 import { supabase } from "@/lib/supabase";
 import { logRevisionEvent, logAuditAction } from "@/lib/audit";
+// SAF-18 (J15a): the lineage delete reads its matched rows.
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { resolveActorPrincipal } from "@/lib/principal";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { resolveCanControlLibrary } from "@/lib/documentGuards";
@@ -725,11 +728,16 @@ async function deleteLineage(filter: { supersededIds: string[]; replacementIds: 
       if (reErr) throw new Error(`${gone.length} supersession link(s) were removed and could not be re-inserted (${reErr.message}): ${gone.map((r) => `${r.superseded_doc_id} → ${r.replacement_doc_id}`).join(", ")}`);
     },
   });
-  const { error } = await supabase
+  // SAF-18 class (c): matching no row is legitimate; the read below decides
+  // what is left, as before (the database's own words kept).
+  const delKept = keptAnswer();
+  await checkedWrite(answered(supabase
     .from("document_supersessions")
     .delete()
     .in("superseded_doc_id", filter.supersededIds)
-    .in("replacement_doc_id", filter.replacementIds);
+    .in("replacement_doc_id", filter.replacementIds)
+    .select("id"), delKept));
+  const error = delKept.error;
   const { data: left, error: leftErr } = await supabase
     .from("document_supersessions").select("id")
     .in("superseded_doc_id", filter.supersededIds)

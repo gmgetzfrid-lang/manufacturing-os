@@ -128,9 +128,13 @@ export async function applyWrites(
   let firstError: string | null = null;
   for (let w = 0; w < chunks.length; w += WRITE_WAVE) {
     const wave = chunks.slice(w, w + WRITE_WAVE);
-    const results = await Promise.all(wave.map(({ patch, ids, guard, returning }) => guard(
-      (supabaseAdmin.from(table).update(patch) as unknown as Narrowable).eq("org_id", orgId).in("id", ids),
-    ).select(returning ?? "id")));
+    // SAF-18 class (c): each chunk reads its matched rows and counts them
+    // against its ids below — a row that no longer matches the plan is
+    // `changed` (legitimate), an error is `refused` with its message.
+    const results = await Promise.all(wave.map(({ patch, ids, guard, returning }) => {
+      const scoped = guard((supabaseAdmin.from(table).update(patch) as unknown as Narrowable).eq("org_id", orgId).in("id", ids));
+      return returning ? scoped.select(returning) : scoped.select("id");
+    }));
     results.forEach(({ data, error }, i) => {
       const n = wave[i].ids.length;
       if (error) { refused += n; firstError ??= error.message; return; }

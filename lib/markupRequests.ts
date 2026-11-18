@@ -9,6 +9,9 @@
 import { supabase } from "@/lib/supabase";
 import { writeActivity } from "@/lib/projects";
 import { logAuditAction } from "@/lib/audit";
+// SAF-18 (J15a): the resolution reads its matched row through checkedWrite.
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import type { MarkupRequest, MarkupRequestStatus, Timestamp } from "@/types/schema";
 import { postMarkupRef } from "@/lib/activityThread";
 import { emit } from "@/lib/notify/dispatch";
@@ -141,7 +144,8 @@ export type ResolveMarkupRequestInput = {
 
 export async function resolveMarkupRequest(input: ResolveMarkupRequestInput): Promise<void> {
   const now = new Date().toISOString();
-  const { data: updated, error } = await supabase
+  const kept = keptAnswer();
+  const resolved = await checkedWrite(answered(supabase
     .from("markup_requests")
     .update({
       status: input.status,
@@ -151,7 +155,9 @@ export async function resolveMarkupRequest(input: ResolveMarkupRequestInput): Pr
     })
     .eq("id", input.markupRequestId)
     .select("document_id, requested_by_user_id, requested_from_user_id")
-    .maybeSingle();
+    .maybeSingle(), kept));
+  const error = kept.error;
+  const updated = resolved.ok ? kept.data : null;
   if (error) throw new Error(error.message);
   // A refused update (RLS) returns no row — never report "shared" for it.
   if (!updated) throw new Error("The markup request could not be updated (not found or not permitted).");

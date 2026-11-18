@@ -8,6 +8,8 @@
 // asset rows by normalized tag.
 
 import { supabase } from "@/lib/supabase";
+// SAF-18 (J15a): every update/delete here reads its matched rows.
+import { CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
 import type { WhiteboardState } from "@/types/schema";
 import { tagKey } from "@/lib/codebook";
 
@@ -465,8 +467,11 @@ export async function updatePhoto(id: string, patch: Partial<Pick<AssetPhoto, "c
     update.status_marked_by = markedBy;
     update.status_marked_at = new Date().toISOString();
   }
-  const { error } = await supabase.from("asset_photos").update(update).eq("id", id);
+  // SAF-18 class (a): a mark that matched no row throws the typed refusal
+  // (the registry page says it) — never a photo shown as marked.
+  const { data: marked, error } = await supabase.from("asset_photos").update(update).eq("id", id).select("id");
   if (error) throw new Error(error.message);
+  if (!marked || marked.length === 0) throw new Error(`The photo was not updated. ${CHECKED_WRITE_REFUSED}`);
 }
 
 export async function deletePhoto(id: string): Promise<void> {
@@ -551,8 +556,12 @@ export async function linkAssetFile(input: {
 }
 
 export async function unlinkAssetFile(id: string): Promise<void> {
-  const { error } = await supabase.from("asset_files").delete().eq("id", id);
+  // SAF-18 class (a): an unlink that matched no row throws the typed refusal
+  // — never a link shown as removed. (Its caller, FileReferenceModal's
+  // handleUnlink, is J15c's to wrap.)
+  const { data: unlinked, error } = await supabase.from("asset_files").delete().eq("id", id).select("id");
   if (error) throw new Error(error.message);
+  if (!unlinked || unlinked.length === 0) throw new Error(`The file was not unlinked. ${CHECKED_WRITE_REFUSED}`);
   invalidateAssetFileCache();
 }
 

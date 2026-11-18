@@ -14,6 +14,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { logRevisionEvent } from "@/lib/audit";
+import { CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
 import { resolveActorPrincipal } from "@/lib/principal";
 import { resolveCanControlLibrary } from "@/lib/documentGuards";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
@@ -53,15 +54,19 @@ export async function renumberDocument(input: RenumberInput): Promise<{ unitCode
 
   const now = new Date().toISOString();
 
-  const { error } = await supabase
+  // SAF-18 class (a): a renumber that matched no row did not happen — no
+  // DOC_RENUMBERED row claims it, and the modal says so.
+  const { data: renumbered, error } = await supabase
     .from("documents")
     .update({
       document_number: newDocumentNumber.trim(),
       updated_at: now,
       updated_by: actorUserId,
     })
-    .eq("id", doc.id);
+    .eq("id", doc.id)
+    .select("id");
   if (error) throw new Error(error.message);
+  if (!renumbered || renumbered.length === 0) throw new Error(`The document was not renumbered. ${CHECKED_WRITE_REFUSED}`);
 
   await logRevisionEvent({
     orgId, documentId: doc.id, versionId: "",

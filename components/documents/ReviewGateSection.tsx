@@ -216,6 +216,11 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
     if (!doc.id) return;
     setBusy(true);
     try { await activateAlternate({ orgId, documentId: doc.id, libraryId: doc.libraryId, signoffId, actorId: uid }); await load(); }
+    catch (e) {
+      // SAF-18 (J15a): an activation the database refused (or that failed)
+      // is said — the alternate stays on standby.
+      await appAlert({ message: (e as Error)?.message || "The alternate could not be activated.", tone: "danger" });
+    }
     finally { setBusy(false); }
   };
   const viewDraft = async () => {

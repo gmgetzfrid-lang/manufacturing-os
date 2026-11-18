@@ -77,7 +77,8 @@ describe("LIFE-8 — sharing markups claims only what the system can back", () =
     const m = src("lib/markupRequests.ts");
     // notifications N8 (PROD-14) widened the returned columns to the request's
     // two parties, whom the answer notifies; the write is still checked
-    expect(m).toMatch(/\.select\("document_id(?:, requested_by_user_id, requested_from_user_id)?"\)\s*\n\s*\.maybeSingle\(\);/);
+    // (SAF-18, J15a: the same read-back, now through checkedWrite — `answered` keeps the row)
+    expect(m).toMatch(/\.select\("document_id(?:, requested_by_user_id, requested_from_user_id)?"\)\s*\n\s*\.maybeSingle\(\)(?:, kept\)\))?;/);
     expect(m).toMatch(/if \(!updated\) throw new Error\(/);
     expect(m).toMatch(/if \(input\.status === "shared" && [\s\S]*?postMarkupRef\(\{/);
     expect(src("app/(protected)/inbox/page.tsx")).not.toMatch(/The requester can see your markups are available\./);

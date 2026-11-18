@@ -2366,7 +2366,8 @@ export default function LibraryExplorerPage() {
       setRenameValue("");
     } catch (e) {
       console.error(e);
-      setError("Failed to rename folder.");
+      // SAF-18 (J15a): a refused rename says why (the typed refusal).
+      setError(e instanceof Error && e.message ? e.message : "Failed to rename folder.");
     }
   };
 
@@ -2414,7 +2415,8 @@ export default function LibraryExplorerPage() {
       nudgeKnowledgeSources(activeOrgId!, libraryId);
     } catch (e) {
       console.error(e);
-      setError("Couldn't reorder that folder.");
+      // SAF-18 (J15a): a refused position says why (the typed refusal).
+      setError(e instanceof Error && e.message ? `Couldn't reorder that folder: ${e.message}` : "Couldn't reorder that folder.");
     }
   };
 

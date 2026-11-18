@@ -9,6 +9,9 @@
 // source of truth for anything here.
 
 import { supabase } from "@/lib/supabase";
+// SAF-18 (J15a): the clear reads its matched rows.
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 
 export interface DocumentMarkup {
   id: string;
@@ -97,8 +100,12 @@ export async function saveMyMarkup(input: {
 }): Promise<DocumentMarkup | null> {
   const pages = markedPages(input.pageStates);
   if (pages.length === 0) {
-    const { error } = await supabase.from("document_markups").delete()
-      .eq("document_id", input.documentId).eq("version_id", input.versionId).eq("user_id", input.uid);
+    // SAF-18 class (c): nothing stored to clear matches no row — a success;
+    // the database's error keeps its pre-migration classification (whole).
+    const kept = keptAnswer();
+    await checkedWrite(answered(supabase.from("document_markups").delete()
+      .eq("document_id", input.documentId).eq("version_id", input.versionId).eq("user_id", input.uid).select("id"), kept));
+    const error = kept.error;
     if (error && !isMissingMarkupSchema(error)) throw new Error(error.message);
     return null;
   }

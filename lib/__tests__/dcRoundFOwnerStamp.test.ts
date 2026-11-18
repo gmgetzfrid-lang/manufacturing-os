@@ -558,4 +558,42 @@ describe("3. submitForReview resolves the policy from the stored document, not t
         : [["rev1", "person:rev1", "none"]]);
     }
   });
+
+  // SAF-18 (J15a): the submission's compare-and-set, its loser's retire and a
+  // resubmission's prior-draft retire read their matched rows.
+  it("SAF-18: the pointer CAS matching no row is the race refusal, as before; a loser's draft that could not be retired is said (class b), the refusal stands", async () => {
+    const cached = seedSubmit(DOC_PLAIN, DOC_PLAIN);
+    state.uid = "pub1";
+    state.db.refuseWrites.add("documents"); // the pointer write matches no row
+    state.db.beforeUpdate!.document_versions = () => { throw { code: "42501", message: "permission denied for table document_versions" }; };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await expect(submit(cached)).rejects.toThrow("Another submission for review just landed on this document — refresh to see it.");
+      expect(warn.mock.calls.some((c) => /the losing submission's draft .* could not be retired/.test(String(c[0])))).toBe(true);
+    } finally { warn.mockRestore(); }
+    expect(T("document_review_signoffs")).toEqual([]);
+  });
+  it("SAF-18: a resubmission retires the prior draft exactly as before; one that could not be retired is said (class b), the resubmission stands", async () => {
+    const cached = seedSubmit(DOC_PLAIN, DOC_PLAIN);
+    T("document_versions").push({ id: "v2A", org_id: "o1", record_id: "d1", revision_label: "2A", superseded_at: null });
+    T("documents")[0].pending_version_id = "v2A";
+    state.uid = "pub1";
+    const out = await submit(cached);
+    expect(out.revisionLabel).toBe("2B");
+    expect(T("document_versions").find((v) => v.id === "v2A")?.superseded_at).toBeTruthy();
+    expect(T("documents")[0].pending_version_id).toBe(out.versionId);
+    // …and a retire that did not land
+    state.db = newFakeDb(); state.db.unique.document_review_signoffs = [["document_version_id", "reviewer_user_id"]]; bindStamp();
+    const again = seedSubmit(DOC_PLAIN, DOC_PLAIN);
+    T("document_versions").push({ id: "v2A", org_id: "o1", record_id: "d1", revision_label: "2A", superseded_at: null });
+    T("documents")[0].pending_version_id = "v2A";
+    state.db.beforeUpdate!.document_versions = (next, old) => { if (old.id === "v2A") throw { code: "42501", message: "permission denied" }; return next; };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const r = await submit(again);
+      expect(r.revisionLabel).toBe("2B");
+      expect(warn.mock.calls.some((c) => /the resubmission landed, but the prior draft v2A could not be retired/.test(String(c[0])))).toBe(true);
+    } finally { warn.mockRestore(); }
+    expect(T("documents")[0].pending_version_id).toBe(T("document_versions").at(-1)!.id);
+  });
 });

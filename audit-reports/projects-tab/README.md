@@ -25,9 +25,9 @@ before and after.
 |---|---|
 | CRITICAL | 17 |
 | HIGH | 53 |
-| MEDIUM | 69 |
+| MEDIUM | 70 |
 | LOW | 13 |
-| **Total** | **152** |
+| **Total** | **153** |
 
 Two findings here (`BID-5`, `UX-2`) carry `Status: REFUTED` — an independent pass
 disproved them. They are kept with the reason rather than deleted (`DEC-41`);
@@ -79,7 +79,7 @@ Work these in order. The numbering reflects priority, not just grouping —
 | # | Report | Findings | CRIT | Progress |
 |---|---|---|---|---|
 | 01 | [Security & access](./01-security-access.md) | 24 | 4 | 20 / 24 |
-| 02 | [Safety, compliance & the record](./02-safety-compliance.md) | 20 | 3 | 18 / 20 |
+| 02 | [Safety, compliance & the record](./02-safety-compliance.md) | 21 | 3 | 19 / 21 |
 | 03 | [Money & the ledger](./03-money-ledger.md) | 14 | 0 | 14 / 14 |
 | 04 | [Bid tabulation & the award decision](./04-bid-tabulation.md) | 12 | 2 | 12 / 12 |
 | 05 | [Charts & the printed RFQ](./05-charts-and-rfq.md) | 8 | 0 | 8 / 8 |

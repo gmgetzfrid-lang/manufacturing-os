@@ -8,6 +8,8 @@
 // version row, and document_supersessions captures the lineage.
 
 import { supabase } from "@/lib/supabase";
+// SAF-18 (J15a): the set touch reads its matched row.
+import { checkedWrite } from "@/lib/checkedWrite";
 import {
   authorizePublish, notifyHolderOfRetirement, resolveCreationReviewGate, canPutFirstRevisionInContainer,
   recallOnRetirement, recallsCopyHolders,
@@ -295,10 +297,14 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
     // Source still exists in the set (as Superseded) and we added N new.
     // We touch updated_at to signal change; the SetManager UI is the
     // authority for the actual sheet_count re-computation.
-    await supabase
+    // SAF-18 class (b): the touch is bookkeeping after the split landed — one
+    // that did not land is said, never fails the split.
+    const touched = await checkedWrite(supabase
       .from("document_sets")
       .update({ updated_at: new Date().toISOString() })
-      .eq("id", source.setId);
+      .eq("id", source.setId)
+      .select("id"));
+    if (!touched.ok) console.warn(`[split] the set ${source.setId} was not touched after the split: ${touched.error}`);
   }
 
   await notifyHolderOfRetirement({

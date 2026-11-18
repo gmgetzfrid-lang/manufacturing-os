@@ -10,6 +10,7 @@ import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import OriginBadge from "@/components/documents/OriginBadge";
 import { setDocumentOrigin } from "@/lib/documentOrigin";
+import { appAlert } from "@/components/providers/DialogProvider";
 import type { DocumentRecord } from "@/types/schema";
 
 export default function OriginSection({ doc, orgId, canManage }: {
@@ -47,6 +48,10 @@ export default function OriginSection({ doc, orgId, canManage }: {
     try {
       await setDocumentOrigin({ documentId: doc.id, orgId, actorId: uid, origin, externalSource: source, externalReference: reference, externalEdition: edition, externalUrl: url });
       setEditing(false); await load();
+    } catch (e) {
+      // SAF-18 (J15a): an origin the database refused (or that failed) is
+      // said; the editor stays open with what was typed.
+      await appAlert({ message: (e as Error)?.message || "The document's origin could not be saved.", tone: "danger" });
     } finally { setBusy(false); }
   };
 

@@ -724,12 +724,13 @@ describe("DIST-19 (merge-time fix pass) — the nag's cooldown read of the recor
 describe("DIST-19 — pins", () => {
   const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
   it("notified_at is written exactly as before: the same statement, under the same every-notice-landed condition, in both scans", () => {
+    // (SAF-18, J15a: the same statement under the same condition, now reading
+    // back its matched row through checkedWrite — a stamp that did not land is
+    // logged, never fails the scan.)
     expect(read("lib/reviewControl.ts")).toContain(`      if (landed.every(Boolean)) {
-        await supabase.from("document_review_signoffs").update({ notified_at: new Date().toISOString() }).eq("id", r.id as string);
-      }`);
+        const stamped = await checkedWrite(supabase.from("document_review_signoffs").update({ notified_at: new Date().toISOString() }).eq("id", r.id as string).select("id"));`);
     expect(read("lib/acknowledgments.ts")).toContain(`    if (landed.every(Boolean)) {
-      await supabase.from("document_acknowledgments").update({ notified_at: new Date().toISOString() }).eq("id", r.id as string);
-    }`);
+      const stamped = await checkedWrite(supabase.from("document_acknowledgments").update({ notified_at: new Date().toISOString() }).eq("id", r.id as string).select("id"));`);
   });
   it("the manual activation's audit row is exactly as before (no cause)", () => {
     expect(read("lib/reviewControl.ts")).toContain("details: input.cause ? { signoffId: input.signoffId, cause: input.cause } : { signoffId: input.signoffId }");

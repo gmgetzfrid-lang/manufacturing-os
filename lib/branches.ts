@@ -19,6 +19,9 @@
 import { supabase } from "@/lib/supabase";
 import { emit } from "@/lib/notify/dispatch";
 import { logAuditAction } from "@/lib/audit";
+// SAF-18 (J15a): the resolution reads its matched row through checkedWrite.
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 
 export interface RevisionBranch {
   id: string;
@@ -177,7 +180,8 @@ export async function resolveBranch(input: {
 }): Promise<void> {
   if (!input.note.trim()) throw new Error("A resolution note is required");
   const now = new Date().toISOString();
-  const { data, error } = await supabase
+  const kept = keptAnswer();
+  const resolved = await checkedWrite(answered(supabase
     .from("revision_branches")
     .update({
       resolved_at: now,
@@ -189,7 +193,9 @@ export async function resolveBranch(input: {
     .eq("id", input.branchId)
     .is("resolved_at", null) // CAS: only resolve a still-open branch
     .select("*")
-    .maybeSingle();
+    .maybeSingle(), kept));
+  const error = kept.error;
+  const data = resolved.ok ? kept.data : null;
   if (error) {
     // DRLS-9 (20261139): the UPDATE's WITH CHECK admits 'merged' only when a
     // later revision is the document's current one. Its other rules — the

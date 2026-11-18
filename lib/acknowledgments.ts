@@ -23,6 +23,9 @@ import { loadScanRetryPlan } from "@/lib/complianceNotify";
 // do not: the cron only prunes, DEC-108 §6).
 import { pushAfterBellRows, type PushSendInput, type PushSender } from "@/lib/notify/dispatch";
 import { logAuditAction } from "@/lib/audit";
+// SAF-18 (J15a): every update here reads its matched rows (lib/checkedWrite.ts).
+import { checkedWrite, CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { recordSignature, type SigningCredential } from "@/lib/eSignatures";
 import { resolveEffectiveOwner, effectiveOwnerForDocument, getOrgControllers, teamSupervisorMap } from "@/lib/ownership";
 import type { AckPolicy } from "@/types/schema";
@@ -387,10 +390,14 @@ export async function recomputeDocumentAck(input: {
   const nowIso = new Date().toISOString();
 
   // Always void still-pending rows that belong to an OLDER revision.
+  // SAF-18 class (c): no stale row to void is the usual answer (zero rows is
+  // a success); the database's error is said, in its own words, as before.
   if (versionId) {
-    const { error: voidErr } = await supabase.from("document_acknowledgments")
+    const kept = keptAnswer();
+    await checkedWrite(answered(supabase.from("document_acknowledgments")
       .update({ status: "void", updated_at: nowIso })
-      .eq("document_id", doc.id).eq("status", "pending").not("document_version_id", "eq", versionId);
+      .eq("document_id", doc.id).eq("status", "pending").not("document_version_id", "eq", versionId).select("id"), kept));
+    const voidErr = kept.error;
     if (voidErr) {
       console.warn("[acks] voiding stale-revision ack rows failed (may need the 20260830 policy migration):", voidErr.message);
       input.writeErrors?.push(`the acknowledgment rows of an older revision could not be voided (${voidErr.message})`);
@@ -403,8 +410,10 @@ export async function recomputeDocumentAck(input: {
 
   // No policy (or opted out) → void any remaining pending rows and stop.
   if (!policy || !policy.enabled) {
-    const voided = await supabase.from("document_acknowledgments").update({ status: "void", updated_at: nowIso }).eq("document_id", doc.id).eq("status", "pending");
-    const voidAllErr = (voided as { error?: { message?: string } | null } | undefined)?.error;
+    // SAF-18 class (c): nothing pending is a success; an error is said.
+    const kept = keptAnswer();
+    await checkedWrite(answered(supabase.from("document_acknowledgments").update({ status: "void", updated_at: nowIso }).eq("document_id", doc.id).eq("status", "pending").select("id"), kept));
+    const voidAllErr = kept.error;
     if (voidAllErr) input.writeErrors?.push(`the pending acknowledgment rows could not be voided (${voidAllErr.message ?? "the write was refused"})`);
     return;
   }
@@ -553,14 +562,13 @@ export async function recordAcknowledgment(input: {
   // row voided by a newer revision, a row that is not the signer's) is a
   // hard error to the signer — never the "Signed" the e-signature alone
   // would have shown while the roster stayed pending.
-  let q = supabase.from("document_acknowledgments").update(patch)
-    .eq("assignee_user_id", input.signerUserId).eq("status", "pending");
-  if (input.rosterId) q = q.eq("id", input.rosterId);
-  else {
-    q = q.eq("document_id", input.documentId);
-    if (input.documentVersionId) q = q.eq("document_version_id", input.documentVersionId);
-  }
-  const { data: rosterRows, error: rosterErr } = await q.select("id");
+  // (SAF-18: the scope is applied in the same statement as the write and
+  // its read-back — the same filters, in the same order, as before.)
+  const { data: rosterRows, error: rosterErr } = await ((q) => (input.rosterId ? q.eq("id", input.rosterId)
+    : input.documentVersionId ? q.eq("document_id", input.documentId).eq("document_version_id", input.documentVersionId)
+    : q.eq("document_id", input.documentId)))(
+    supabase.from("document_acknowledgments").update(patch).eq("assignee_user_id", input.signerUserId).eq("status", "pending"),
+  ).select("id");
   if (rosterErr) {
     throw new Error(`Your signature was recorded, but your acknowledgment could not be marked on the roster (${rosterErr.message}). Tell Document Control — the roster still shows you as pending.`);
   }
@@ -601,9 +609,13 @@ export async function waiveAcknowledgment(input: {
   orgId: string; rosterId: string; documentId: string; reason: string; actorId: string; actorName?: string | null;
 }): Promise<void> {
   const nowIso = new Date().toISOString();
-  await supabase.from("document_acknowledgments")
+  // SAF-18 class (a): the waiver IS the decision — a write that failed or
+  // matched no row throws (said by AckSection), and no ACK_WAIVED row or
+  // completion notice claims it happened.
+  const waived = await checkedWrite(supabase.from("document_acknowledgments")
     .update({ status: "waived", waived_by: input.actorId, waived_reason: input.reason, updated_at: nowIso })
-    .eq("id", input.rosterId);
+    .eq("id", input.rosterId).select("id"));
+  if (!waived.ok) throw new Error(waived.code === "refused" ? `The acknowledgment was not waived. ${CHECKED_WRITE_REFUSED}` : waived.error);
   await logAuditAction({
     action: "ACK_WAIVED", resourceType: "document", resourceId: input.documentId,
     orgId: input.orgId, userId: input.actorId, details: { rosterId: input.rosterId, reason: input.reason },
@@ -630,7 +642,10 @@ export async function nudgeAcknowledgment(input: { orgId: string; rosterId: stri
   });
   // OS-14: the re-sent request is pushed once its bell row landed
   if (landed === true) await pushLandedRows({ orgId: input.orgId, kind: "ack_requested", resourceId: r.document_id as string, recipients: [r.assignee_user_id as string] });
-  await supabase.from("document_acknowledgments").update({ notified_at: new Date().toISOString() }).eq("id", input.rosterId);
+  // SAF-18 class (b): the re-send's watermark is bookkeeping — the reminder
+  // already went; a stamp that did not land is said, never fails the re-send.
+  const stamped = await checkedWrite(supabase.from("document_acknowledgments").update({ notified_at: new Date().toISOString() }).eq("id", input.rosterId).select("id"));
+  if (!stamped.ok) console.warn(`[ack] the re-send was sent, but its watermark (notified_at) was not stamped: ${stamped.error}`);
   // DIST-20 (P39): the manual re-send, once it landed, is a reminded row
   // (details.manual) on the notice record — the overwritten notified_at above
   // is no longer the only trace; after it, never failing the re-send
@@ -838,8 +853,11 @@ export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: n
 
     // DELIV-7 dw1: the cooldown is stamped only when every notice landed —
     // a dead-lettered one is sent again on the next run, to its recipient only.
+    // SAF-18 class (b): a stamp that did not land is said (the row is
+    // reminded again next run), never fails the scan.
     if (landed.every(Boolean)) {
-      await supabase.from("document_acknowledgments").update({ notified_at: new Date().toISOString() }).eq("id", r.id as string);
+      const stamped = await checkedWrite(supabase.from("document_acknowledgments").update({ notified_at: new Date().toISOString() }).eq("id", r.id as string).select("id"));
+      if (!stamped.ok) console.warn(`[ack] scan: the reminder watermark of roster row ${r.id as string} was not stamped: ${stamped.error}`);
     }
     // DIST-19 (P38): every notice that landed is a row on the record — after
     // the stamp, which is written exactly as before; a failed write never

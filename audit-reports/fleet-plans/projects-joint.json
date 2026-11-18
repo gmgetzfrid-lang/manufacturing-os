@@ -1265,7 +1265,41 @@
    "sequencingNotes": [
     "Added by the integrator at the DF-P8 merge, 2026-10-21 (DEC-31)."
    ]
-  }
+  },
+ {
+  "name": "J15d CLIENT-PARAMETER WRITE SWEEP — the update / delete sites that write through a client handed in as a parameter (db, sb, admin, client) read their matched rows, and the shared census sees them (SAF-21)",
+  "findings": {
+   "projects-tab": [
+    "SAF-21 (opened by the integrator 2026-11-18 at the J15a merge, DEC-31: 37 unchecked client-parameter write sites in 14 lib files that the SAF-18 census never counted)"
+   ]
+  },
+  "files": [
+   "lib/equipmentBridgeServer.ts",
+   "lib/serverCollections.ts",
+   "lib/exportRunner.ts",
+   "lib/auditOutboxDrain.ts",
+   "lib/projects.ts",
+   "lib/linkProposerServer.ts",
+   "lib/dataRestore.ts",
+   "lib/consentWindowScan.ts",
+   "lib/ticketSla.ts",
+   "lib/ticketPreauthorizationApply.ts",
+   "lib/serverRetention.ts",
+   "lib/intakeStaging.ts",
+   "lib/archiveCatalog.ts",
+   "lib/aclIndexRebuild.ts",
+   "their callers (ruling 3 of the J15 brief)",
+   "lib/__tests__/checkedWrite.test.ts (fold the client-parameter rule of lib/__tests__/j15aCheckedWriteCensus.test.ts into the shared census)"
+  ],
+  "migrationsLikely": 0,
+  "when": "after J15a/b/c merged (all three merged 2026-11-18); disjoint from N13's overlay files",
+  "dependsOn": [
+   "J15a merged (it built the client-parameter census rule)"
+  ],
+  "sequencingNotes": "Added by the integrator 2026-11-18 at the J15a merge (DEC-90: the J15 rulings (a)/(b)/(c) apply unchanged).",
+  "decisionsNeeded": [],
+  "alreadyResolvedElsewhere": []
+ }
  ],
  "ownershipRule": "Where the two briefs disagree on a shared file, projects-and-cost's proposal applies: libs / API routes / migrations follow the projects-and-cost brief, components / pages follow the projects-tab brief; the schedule engine (lib/milestones.ts, criticalPath.ts, executionReport.ts) follows projects-tab's P6b brief with PC-4's rollup semantics folded in.",
  "runOrder": [

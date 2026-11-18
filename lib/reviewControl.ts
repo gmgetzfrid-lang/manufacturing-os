@@ -25,6 +25,9 @@ import { loadScanRetryPlan } from "@/lib/complianceNotify";
 // reminders do not: the cron only prunes, DEC-108 §6).
 import { pushAfterBellRows, type PushSendInput } from "@/lib/notify/dispatch";
 import { logAuditAction } from "@/lib/audit";
+// SAF-18 (J15a): every update here reads its matched rows (lib/checkedWrite.ts).
+import { checkedWrite, CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 // drafting-flow EVID-8 done-when 3 (projects-joint J21): the timeout
 // activation's audit row is written verified — kept in the EVID-6 outbox
 // (DEC-109) when both attempts fail.
@@ -419,13 +422,27 @@ function isMissingColumn(err: { code?: string; message?: string } | null | undef
  *  and the completion guard is never left inert over a live pointer. */
 async function withdrawStrandedSubmission(input: { documentId: string; versionId: string; nowIso: string }): Promise<string[]> {
   const problems: string[] = [];
-  const { error: ptrErr } = await supabase.from("documents")
+  // SAF-18: the compare-and-set matching no row is legitimate only when the
+  // pointer no longer names this draft (re-read, as afterZeroRowPromote
+  // does); a pointer still on it was refused — said, never "withdrawn".
+  const ptrKept = keptAnswer();
+  const released = await checkedWrite(answered(supabase.from("documents")
     .update({ pending_version_id: null, updated_at: input.nowIso })
-    .eq("id", input.documentId).eq("pending_version_id", input.versionId);
+    .eq("id", input.documentId).eq("pending_version_id", input.versionId).select("id"), ptrKept));
+  const ptrErr = ptrKept.error;
   if (ptrErr) problems.push(`the pending pointer could not be released (${ptrErr.message})`);
-  const { error: verErr } = await supabase.from("document_versions")
-    .update({ superseded_at: input.nowIso }).eq("id", input.versionId);
+  else if (!released.ok) {
+    const { data: again, error: againErr } = await supabase.from("documents").select("pending_version_id").eq("id", input.documentId).maybeSingle();
+    if (againErr) problems.push(`the pending pointer's release matched no row and could not be confirmed (${againErr.message})`);
+    else if ((again?.pending_version_id as string | null | undefined) === input.versionId) problems.push("the pending pointer could not be released (the write was refused)");
+  }
+  // SAF-18: retiring the draft matching no row leaves it live — said.
+  const verKept = keptAnswer();
+  const retired = await checkedWrite(answered(supabase.from("document_versions")
+    .update({ superseded_at: input.nowIso }).eq("id", input.versionId).select("id"), verKept));
+  const verErr = verKept.error;
   if (verErr) problems.push(`the draft could not be retired (${verErr.message})`);
+  else if (!retired.ok) problems.push("the draft could not be retired (the write was refused)");
   return problems;
 }
 
@@ -658,12 +675,21 @@ export async function invalidateDraftSignoffs(input: {
   const { data } = await supabase.from("document_review_signoffs")
     .select("id, reviewer_user_id, status").eq("document_id", input.documentId).eq("document_version_id", input.oldVersionId).eq("status", "signed");
   const signed = (data ?? []) as Array<Record<string, unknown>>;
-  const { error: invErr } = await supabase.from("document_review_signoffs")
+  // SAF-18 class (c): a draft with no open sign-off matches no row — a
+  // success. But only a signer whose row the void actually matched is told
+  // their sign-off was voided: a void that failed or was refused tells
+  // nobody it happened (DEC-29).
+  const invKept = keptAnswer();
+  const inv = await checkedWrite(answered(supabase.from("document_review_signoffs")
     .update({ status: "invalidated", updated_at: new Date().toISOString() })
-    .eq("document_id", input.documentId).eq("document_version_id", input.oldVersionId).in("status", ["pending", "signed"]);
+    .eq("document_id", input.documentId).eq("document_version_id", input.oldVersionId).in("status", ["pending", "signed"]).select("id"), invKept));
+  const invErr = invKept.error;
   if (invErr) console.warn("[reviewControl] invalidating prior draft's sign-offs failed (may need the 20260830 policy migration):", invErr.message);
+  const voided = new Set(inv.ok ? inv.ids : []);
+  const unvoided = signed.filter((r) => !voided.has(r.id as string));
+  if (unvoided.length && !invErr) console.warn(`[reviewControl] ${unvoided.length} signed sign-off(s) of the prior draft were not voided (the write was refused) — their signers were not told`);
   const link = `/documents/${input.libraryId}?doc=${input.documentId}`;
-  await Promise.all(signed.map((r) =>
+  await Promise.all(signed.filter((r) => voided.has(r.id as string)).map((r) =>
     notify({
       orgId: input.orgId, userId: r.reviewer_user_id as string, kind: "review_invalidated",
       title: `Re-review needed: ${input.newRevisionLabel}`,
@@ -937,10 +963,20 @@ export async function activateAlternate(input: {
   orgId: string; documentId: string; libraryId: string; signoffId: string; actorId?: string | null;
   cause?: { reason: "review_timeout"; timeoutDays: number; ageDays: number; documentVersionId: string | null };
 }): Promise<{ reviewerUserId: string; revisionLabel: string | null; noticeLanded: boolean; notificationId: string | null; auditRecorded: boolean } | null> {
-  const { data } = await supabase.from("document_review_signoffs")
+  // SAF-18 class (a): the activation IS the decision. A write that matched
+  // no row or failed activates nobody and records nothing; the manual
+  // action (no `cause`) throws so ReviewGateSection says it, the scan's
+  // timeout activation answers null as before (a failed one is logged).
+  const actKept = keptAnswer();
+  const act = await checkedWrite(answered(supabase.from("document_review_signoffs")
     .update({ activated: true, notified_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-    .eq("id", input.signoffId).select("reviewer_user_id, revision_label").maybeSingle();
-  if (!data) return null;
+    .eq("id", input.signoffId).select("reviewer_user_id, revision_label").maybeSingle(), actKept));
+  const data = act.ok ? (actKept.data as Record<string, unknown> | null) : null;
+  if (!data) {
+    if (!input.cause) throw new Error(!act.ok && act.code === "db" ? act.error : `The alternate was not activated. ${CHECKED_WRITE_REFUSED}`);
+    if (!act.ok && act.code === "db") console.warn(`[reviewControl] scan: the timed-out alternate ${input.signoffId} could not be activated: ${act.error}`);
+    return null;
+  }
   const bellId = newBellId();
   const noticeLanded = await notify({
     id: bellId,
@@ -1145,9 +1181,12 @@ export async function finalizeReviewedRevision(input: {
     pendingId, previousVersionId, baseRev, draftLabel: (ver?.revision_label as string | null) ?? null,
   });
   {
-    const { error: voidErr } = await supabase.from("document_review_signoffs")
+    // SAF-18 class (c): no standby row left matches no row — a success.
+    const voidKept = keptAnswer();
+    await checkedWrite(answered(supabase.from("document_review_signoffs")
       .update({ status: "void", updated_at: nowIso })
-      .eq("document_version_id", pendingId).eq("status", "pending");
+      .eq("document_version_id", pendingId).eq("status", "pending").select("id"), voidKept));
+    const voidErr = voidKept.error;
     if (voidErr) console.warn("[reviewControl] closing out standby sign-off rows failed (may need the 20260830 policy migration):", voidErr.message);
   }
 
@@ -1155,11 +1194,18 @@ export async function finalizeReviewedRevision(input: {
   // signed reviewer roster itself) so it never lands in the unverified queue,
   // and the finalizing actor's edit intent re-anchors to the new revision —
   // same as a direct publish.
-  await supabase.from("document_versions")
+  // SAF-18 class (c): provenance already declared matches no row — a
+  // success; a pre-migration column stays quiet as before (classified on
+  // the whole error), any other database error is said, never silent.
+  const provKept = keptAnswer();
+  const prov = await checkedWrite(answered(supabase.from("document_versions")
     .update({ provenance: "declared" })
     .eq("id", pendingId)
     .is("provenance", null)
-    .then(() => {}, () => { /* pre-migration column */ });
+    .select("id"), provKept));
+  if (!prov.ok && prov.code === "db" && !(provKept.error && isMissingColumn(provKept.error, "provenance"))) {
+    console.warn(`[reviewControl] the promoted draft's provenance could not be declared: ${provKept.error?.message ?? prov.error}`);
+  }
   if (input.actorId) {
     try {
       const { recordIntent } = await import("@/lib/intents");
@@ -1409,12 +1455,14 @@ async function promoteThreeStep(p: {
   // notification and roster rebuild). The base half (REV-5) makes the
   // expected-base check atomic with the write.
   const { documentId, pendingId, previousVersionId, baseRev, nowIso } = p;
-  let promoteQuery = supabase.from("documents")
-    .update({ current_version_id: pendingId, rev: baseRev, revision: baseRev, status: "Issued", pending_version_id: null, updated_at: nowIso, updated_by: p.actorId })
-    .eq("id", documentId)
-    .eq("pending_version_id", pendingId);
-  promoteQuery = previousVersionId ? promoteQuery.eq("current_version_id", previousVersionId) : promoteQuery.is("current_version_id", null);
-  const { data: promoted, error: docErr } = await promoteQuery.select("id");
+  // (SAF-18: the base half is applied in the same statement as the write
+  // and its read-back — the same filters, in the same order, as before.)
+  const { data: promoted, error: docErr } = await ((q) => (previousVersionId ? q.eq("current_version_id", previousVersionId) : q.is("current_version_id", null)))(
+    supabase.from("documents")
+      .update({ current_version_id: pendingId, rev: baseRev, revision: baseRev, status: "Issued", pending_version_id: null, updated_at: nowIso, updated_by: p.actorId })
+      .eq("id", documentId)
+      .eq("pending_version_id", pendingId),
+  ).select("id");
   if (docErr) return { published: false, reason: docErr.message };
   if (!promoted || promoted.length === 0) {
     // Zero rows: either a concurrent finalizer already promoted this exact
@@ -1443,10 +1491,12 @@ async function promoteThreeStep(p: {
     );
   }
   if (previousVersionId) {
-    const { error: supErr } = await supabase.from("document_versions")
+    // SAF-18 class (a): a supersede that matched no row is a failure too —
+    // the prior revision still reads current beside the new one.
+    const { data: superseded, error: supErr } = await supabase.from("document_versions")
       .update({ superseded_at: nowIso }).eq("id", previousVersionId).select("id");
-    if (supErr) {
-      throw new Error(`The new revision is published, but the prior revision could not be marked superseded: ${supErr.message}`);
+    if (supErr || !superseded || superseded.length === 0) {
+      throw new Error(`The new revision is published, but the prior revision could not be marked superseded: ${supErr?.message ?? "the write was refused"}`);
     }
   }
   return null;
@@ -1568,8 +1618,11 @@ export async function scanReviews(orgId: string, opts?: { cooldownDays?: number 
       }
       // DELIV-7 dw1: stamped only when every notice landed (a lost one is
       // sent again on the next run, to its recipient only).
+      // SAF-18 class (b): a stamp that did not land is said (the row is
+      // reminded again next run), never fails the scan.
       if (landed.every(Boolean)) {
-        await supabase.from("document_review_signoffs").update({ notified_at: new Date().toISOString() }).eq("id", r.id as string);
+        const stamped = await checkedWrite(supabase.from("document_review_signoffs").update({ notified_at: new Date().toISOString() }).eq("id", r.id as string).select("id"));
+        if (!stamped.ok) console.warn(`[reviewControl] scan: the reminder watermark of sign-off ${r.id as string} was not stamped: ${stamped.error}`);
       }
       // DIST-19 (P38): every notice that landed is a row on the record — after
       // the stamp, which is written exactly as before; a failed write never

@@ -8,6 +8,9 @@
 import { supabase } from "@/lib/supabase";
 import { uploadToPath, makeLibraryStoragePath } from "@/lib/storage";
 import { logRevisionEvent, logHoldEvent, logAuditAction } from "@/lib/audit";
+// SAF-18 (J15a): every update/delete here reads its matched rows.
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { OTHER_HOLD_REASON, holdReasonLabel, openHoldKey } from "@/lib/holds";
 import {
   voidPendingDraftAfterPublish,
@@ -109,7 +112,10 @@ export async function withCompensation<T>(
  */
 export async function archiveRolledBackDoc(docId: string, actor: ActorContext): Promise<void> {
   const now = new Date().toISOString();
-  const { error } = await supabase
+  // SAF-18 class (a): a park that matched no row left the half-made document
+  // live — the rollback names it as a failed cleanup step instead of
+  // reporting "no partial changes were kept".
+  const { data: parked, error } = await supabase
     .from("documents")
     .update({
       status: "Archived",
@@ -118,8 +124,10 @@ export async function archiveRolledBackDoc(docId: string, actor: ActorContext): 
       updated_by: actor.actorUserId,
       supersession_reason: "Rolled back — lifecycle operation failed before completion",
     })
-    .eq("id", docId);
+    .eq("id", docId)
+    .select("id");
   if (error) throw new Error(error.message);
+  if (!parked || parked.length === 0) throw new Error(`document ${docId} could not be archived (the write was refused) — it is still live`);
 }
 
 /** REV-36 (document-control P36 review fix): the compensation for a
@@ -305,11 +313,16 @@ export async function restoreSupersededSource(
     }
   }
   if (replacementDocIds.length > 0) {
-    const { error: delErr } = await supabase
+    // SAF-18 class (c): matching no row is legitimate (none landed); the
+    // read below decides what is left, as before.
+    const delKept = keptAnswer();
+    await checkedWrite(answered(supabase
       .from("document_supersessions")
       .delete()
       .eq("superseded_doc_id", sourceDocId)
-      .in("replacement_doc_id", replacementDocIds);
+      .in("replacement_doc_id", replacementDocIds)
+      .select("id"), delKept));
+    const delErr = delKept.error;
     const { data: left, error: leftErr } = await supabase
       .from("document_supersessions").select("replacement_doc_id")
       .eq("superseded_doc_id", sourceDocId).in("replacement_doc_id", replacementDocIds);

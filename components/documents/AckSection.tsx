@@ -109,6 +109,11 @@ export default function AckSection({ doc, orgId, canManage }: {
     if (reason == null) return;
     setBusy(true);
     try { await waiveAcknowledgment({ orgId, rosterId, documentId: doc.id!, reason: reason.trim() || "waived", actorId: uid ?? "", actorName: userEmail }); await load(); }
+    catch (e) {
+      // SAF-18 (J15a): a waiver the database refused (or that failed) is said
+      // — the roster still shows the assignee as pending.
+      await appAlert({ message: (e as Error)?.message || "The acknowledgment could not be waived.", tone: "danger" });
+    }
     finally { setBusy(false); }
   };
 

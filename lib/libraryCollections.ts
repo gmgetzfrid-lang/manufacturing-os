@@ -4,6 +4,9 @@
 import { supabase } from "@/lib/supabase";
 import { buildAclIndex, buildAclIndexFromChain } from "@/lib/acl";
 import { logAuditAction } from "@/lib/audit";
+// SAF-18 (J15a): every update here reads its matched rows (lib/checkedWrite.ts).
+import { checkedWrite, CHECKED_WRITE_REFUSED, describeWriteError } from "@/lib/checkedWrite";
+import { answered, keptAnswer, reorderNotSaved } from "@/lib/checkedWriteAnswer";
 import { notify } from "@/lib/inAppNotifications";
 import { getOrgControllers } from "@/lib/ownership";
 import { resolveActorPrincipal } from "@/lib/principal";
@@ -259,17 +262,25 @@ export async function updateCollectionAppearance(
     updated_by: updatedBy ?? null,
   };
   if (pageConfig !== undefined) patch.page_config = pageConfig;
-  const { error } = await supabase.from(TABLE).update(patch).eq("id", collectionId);
-  if (error) throw new Error(error.message);
+  // SAF-18 class (a): a save that matched no row throws the typed refusal
+  // (the customize modal says it and stays open).
+  // (The database's error is worded here — the modal shows it — REL-3.)
+  const { data: saved, error } = await supabase.from(TABLE).update(patch).eq("id", collectionId).select("id");
+  if (error) throw new Error(`The folder's appearance was not saved. ${describeWriteError(error)}`);
+  if (!saved || saved.length === 0) throw new Error(`The folder's appearance was not saved. ${CHECKED_WRITE_REFUSED}`);
 }
 
 /** Save a folder's customizable web-part home. */
 export async function updateCollectionHomeConfig(collectionId: string, config: LibraryHomeConfig): Promise<void> {
-  const { error } = await supabase
+  // SAF-18 class (a): a save that matched no row throws the typed refusal
+  // (the home board says it and stays in its editor).
+  const { data: saved, error } = await supabase
     .from(TABLE)
     .update({ home_config: config, updated_at: new Date().toISOString() })
-    .eq("id", collectionId);
-  if (error) throw new Error(error.message);
+    .eq("id", collectionId)
+    .select("id");
+  if (error) throw new Error(`The folder's home was not saved. ${describeWriteError(error)}`);
+  if (!saved || saved.length === 0) throw new Error(`The folder's home was not saved. ${CHECKED_WRITE_REFUSED}`);
 }
 
 export async function updateFolder(
@@ -282,8 +293,10 @@ export async function updateFolder(
   if (patch.columnOverrides !== undefined) update.column_overrides = patch.columnOverrides;
   if (patch.name !== undefined) update.name = patch.name;
 
-  const { error } = await supabase.from(TABLE).update(update).eq("id", collectionId);
-  if (error) throw new Error(error.message);
+  // SAF-18 class (a): a write that matched no row throws the typed refusal.
+  const { data: saved, error } = await supabase.from(TABLE).update(update).eq("id", collectionId).select("id");
+  if (error) throw new Error(`The folder was not updated. ${describeWriteError(error)}`);
+  if (!saved || saved.length === 0) throw new Error(`The folder was not updated. ${CHECKED_WRITE_REFUSED}`);
 }
 
 export async function renameFolderAndDescendants(collectionId: string, newNameRaw: string) {
@@ -300,7 +313,12 @@ export async function renameFolderAndDescendants(collectionId: string, newNameRa
   const parentPath = oldPath.slice(0, -1);
   const newPath = [...parentPath, newName];
 
-  await supabase.from(TABLE).update({ name: newName, path: newPath, path_names: newPath }).eq("id", collectionId);
+  // SAF-18 class (a): the rename IS the decision. One that failed or matched
+  // no row throws (the library page says it) and its descendants' paths are
+  // NOT rewritten — before J15a a refused rename still rewrote them under a
+  // name the folder never took.
+  const renamed = await checkedWrite(supabase.from(TABLE).update({ name: newName, path: newPath, path_names: newPath }).eq("id", collectionId).select("id"));
+  if (!renamed.ok) throw new Error(renamed.code === "refused" ? `The folder was not renamed. ${CHECKED_WRITE_REFUSED}` : renamed.error);
 
   // Find descendants
   const { data: descendants } = await supabase
@@ -310,6 +328,11 @@ export async function renameFolderAndDescendants(collectionId: string, newNameRa
 
   if (!descendants?.length) return;
 
+  // SAF-18 class (b): each descendant's path is bookkeeping after the rename
+  // landed — every one is still written, as before; any that did not land
+  // are said once (the rename stands; a move or the next rename re-derives
+  // them).
+  const stale: string[] = [];
   for (const item of descendants as Array<{ id: string; path_names: string[]; path_ids: string[] }>) {
     const childPath = item.path_names ?? [];
     const isPrefix =
@@ -318,8 +341,10 @@ export async function renameFolderAndDescendants(collectionId: string, newNameRa
     if (!isPrefix) continue;
 
     const updated = [...newPath, ...childPath.slice(oldPath.length)];
-    await supabase.from(TABLE).update({ path: updated, path_names: updated }).eq("id", item.id);
+    const moved = await checkedWrite(supabase.from(TABLE).update({ path: updated, path_names: updated }).eq("id", item.id).select("id"));
+    if (!moved.ok) stale.push(item.id);
   }
+  if (stale.length) console.warn(`[libraryCollections] the folder was renamed, but ${stale.length} descendant folder path(s) were not updated: ${stale.join(", ")}`);
 }
 
 // Folder moves are SERVER-SIDE ONLY (moveFolderServer above → POST
@@ -330,11 +355,21 @@ export async function renameFolderAndDescendants(collectionId: string, newNameRa
 
 /** Persist a manual order for SIBLING folders (same parent). Index in the
  *  array becomes sort_order. Best-effort per row — one failed write must
- *  not scramble the rest. */
+ *  not scramble the rest. SAF-18 (J15a, class (a)): every write is still
+ *  issued; one that failed or matched no row is said once they have all
+ *  answered (the library page shows it), never a silent success. */
 export async function reorderFolders(orderedIds: string[]): Promise<void> {
-  await Promise.all(orderedIds.map((id, i) =>
-    supabase.from(TABLE).update({ sort_order: i }).eq("id", id)
-      .then(() => undefined, () => undefined)));
+  // (Each answer is kept so a database error is said in its own reason.)
+  const kept = orderedIds.map(() => keptAnswer());
+  const answers = await Promise.all(orderedIds.map((id, i) =>
+    checkedWrite(answered(supabase.from(TABLE).update({ sort_order: i }).eq("id", id).select("id"), kept[i]))));
+  const missed = answers.filter((w) => !w.ok);
+  if (missed.length) {
+    // Never "nothing was changed": the other positions (and a drag's move
+    // across parents, before this call) may already have landed.
+    const dbError = answers.map((w, i) => (!w.ok && w.code === "db" ? kept[i].error : null)).find((e) => e) ?? null;
+    throw new Error(reorderNotSaved(missed.length, orderedIds.length, "folder position(s)", dbError));
+  }
 }
 
 /** Server-side folder move (subtree re-parent + denorm path rebuild).

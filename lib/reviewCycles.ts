@@ -13,6 +13,9 @@
 
 import { supabase } from "@/lib/supabase";
 import { normalizeRoles } from "@/lib/roleCapabilities";
+// SAF-18 (J15a): every update here reads its matched rows (lib/checkedWrite.ts).
+import { checkedWrite, CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 // DELIV-16 / DELIV-7 dw1 (notifications N14): the bell notices here carry
 // document-control obligations — notify(), retried and dead-lettered when
 // it does not land (lib/complianceNotify.ts).
@@ -276,8 +279,9 @@ export async function loadFieldVerification(doc: {
 /** Recompute and persist a single document's next_review_date from its effective
  *  policy and basis date. Returns the new date (or null when no cycle applies).
  *  REV-15: `writeErrors`, when given, collects the next_review_date write's
- *  error (the write is otherwise unchecked, as it always was); without it the
- *  behaviour is unchanged. */
+ *  error. SAF-18 (J15a): the write reads its matched row, so one that matched
+ *  none is a problem too, and every problem is logged — with or without the
+ *  sink, which changes nothing but itself. */
 export async function recomputeDocument(documentId: string, writeErrors?: string[]): Promise<string | null> {
   const { data: doc } = await supabase
     .from("documents")
@@ -292,9 +296,16 @@ export async function recomputeDocument(documentId: string, writeErrors?: string
   });
   const basis = (doc.last_reviewed_at as string) || (doc.updated_at as string) || (doc.created_at as string) || new Date().toISOString();
   const next = computeNextReviewDate(basis, eff);
-  const saved = await supabase.from("documents").update({ next_review_date: next }).eq("id", documentId);
-  const saveErr = (saved as { error?: { message?: string } | null } | undefined)?.error;
-  if (saveErr) writeErrors?.push(`the next review date could not be saved (${saveErr.message ?? "the write was refused"})`);
+  // SAF-18 class (b): the clock write is bookkeeping after the act; one that
+  // failed OR matched no row is logged (and collected, when asked) — never a
+  // silent success. The database's own words are kept, as before.
+  const kept = keptAnswer();
+  const saved = await checkedWrite(answered(supabase.from("documents").update({ next_review_date: next }).eq("id", documentId).select("id"), kept));
+  if (!saved.ok) {
+    const problem = `the next review date could not be saved (${kept.error?.message ?? "the write was refused"})`;
+    console.warn(`[reviewCycles] ${problem}`);
+    writeErrors?.push(problem);
+  }
   return next;
 }
 
@@ -315,15 +326,17 @@ export async function markReviewed(input: {
   // the nag watermark still happens, so the outcome is on the record without
   // buying a broken document another full cycle of looking "current".
   const certifies = (input.outcome ?? "no_change") !== "needs_revision";
-  if (certifies) {
-    await supabase.from("documents")
+  // SAF-18 class (a): the review mark IS the person's decision — one that
+  // failed or matched no row throws (ReviewSection says it), and no
+  // certification event claims it happened.
+  const marked = certifies
+    ? await checkedWrite(supabase.from("documents")
       .update({ last_reviewed_at: now, last_reviewed_by: input.userId, review_notified_at: null })
-      .eq("id", input.documentId);
-  } else {
-    await supabase.from("documents")
+      .eq("id", input.documentId).select("id"))
+    : await checkedWrite(supabase.from("documents")
       .update({ last_reviewed_by: input.userId, review_notified_at: null })
-      .eq("id", input.documentId);
-  }
+      .eq("id", input.documentId).select("id"));
+  if (!marked.ok) throw new Error(marked.code === "refused" ? `The review was not recorded. ${CHECKED_WRITE_REFUSED}` : marked.error);
   const next = await recomputeDocument(input.documentId);
   await insertReviewEvent({
     org_id: input.orgId ?? null,
@@ -356,19 +369,26 @@ async function insertReviewEvent(row: Record<string, unknown>): Promise<void> {
  *  cannot be written (DRLS-4).
  *  REV-15: `writeErrors`, when given, collects the error of each of the two
  *  clock writes this function does NOT throw on — the reset of the review
- *  basis (last_reviewed_at) and the next_review_date; without it the
- *  behaviour is unchanged (those two errors go unreported, as they always
- *  did). */
+ *  basis (last_reviewed_at) and the next_review_date. SAF-18 (J15a): each
+ *  write reads its matched row, so one that matched none is a problem too,
+ *  and every problem is logged — with or without the sink, which changes
+ *  nothing but itself (never a silent success). */
 export async function onDocumentIssued(input: {
   orgId?: string | null; documentId: string; userId?: string | null; userName?: string | null;
   writeErrors?: string[];
 }): Promise<void> {
   const now = new Date().toISOString();
-  const reset = await supabase.from("documents")
+  // SAF-18 class (b): a reset that failed OR matched no row is logged (and
+  // collected, when asked) — the issue itself stands.
+  const kept = keptAnswer();
+  const reset = await checkedWrite(answered(supabase.from("documents")
     .update({ last_reviewed_at: now, last_reviewed_by: input.userId ?? null, review_notified_at: null })
-    .eq("id", input.documentId);
-  const resetErr = (reset as { error?: { message?: string } | null } | undefined)?.error;
-  if (resetErr) input.writeErrors?.push(`the review clock could not be reset to this issue (${resetErr.message ?? "the write was refused"})`);
+    .eq("id", input.documentId).select("id"), kept));
+  if (!reset.ok) {
+    const problem = `the review clock could not be reset to this issue (${kept.error?.message ?? "the write was refused"})`;
+    console.warn(`[reviewCycles] ${problem}`);
+    input.writeErrors?.push(problem);
+  }
   const next = await recomputeDocument(input.documentId, input.writeErrors);
   if (next) {
     await insertReviewEvent({
@@ -553,8 +573,11 @@ export async function scanAndNotifyReviews(orgId: string, opts?: { leadDays?: nu
 
     // DELIV-7 dw1: stamped only when every notice landed (a lost one is sent
     // again on the next run, to its recipient only).
+    // SAF-18 class (b): a stamp that did not land is said (the document is
+    // nudged again next run), never fails the scan.
     if (landed.every(Boolean)) {
-      await supabase.from("documents").update({ review_notified_at: new Date().toISOString() }).eq("id", doc.id);
+      const stamped = await checkedWrite(supabase.from("documents").update({ review_notified_at: new Date().toISOString() }).eq("id", doc.id).select("id"));
+      if (!stamped.ok) console.warn(`[reviewCycles] scan: the review-due watermark of ${doc.id} was not stamped: ${stamped.error}`);
     }
     notified++;
   }

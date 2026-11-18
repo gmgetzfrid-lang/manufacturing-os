@@ -12,6 +12,8 @@
 // notification fan-out helpers to find who to notify on an event.
 
 import { supabase } from "@/lib/supabase";
+// SAF-18 (J15a): the unwatch reads its matched rows.
+import { checkedWrite } from "@/lib/checkedWrite";
 
 export type WatchResourceType = "document" | "project" | "asset" | "library";
 
@@ -58,11 +60,16 @@ export async function unwatch(input: {
   resourceType: WatchResourceType;
   resourceId: string;
 }): Promise<void> {
-  await supabase.from("subscriptions")
+  // SAF-18 class (c): not following (already unwatched) matches no row — a
+  // success. A database error is no longer silent: it throws, and
+  // WatchButton keeps showing "Following" instead of a false "Follow".
+  const removed = await checkedWrite(supabase.from("subscriptions")
     .delete()
     .eq("user_id", input.userId)
     .eq("resource_type", input.resourceType)
-    .eq("resource_id", input.resourceId);
+    .eq("resource_id", input.resourceId)
+    .select("id"));
+  if (!removed.ok && removed.code === "db") throw new Error(removed.error);
 }
 
 export async function listFollowerIds(
