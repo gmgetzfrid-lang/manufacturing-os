@@ -103,7 +103,7 @@ import { ticketCopyPlan, recordTicketCopy, copyDeclarationFacts, type TicketCopy
 import { declarationSignatureStands, type DeclarationSignatureRow } from "@/lib/reviewModel";
 import { TICKET_ATTACHMENT_ID_RE } from "@/lib/verifyTicketVerdict";
 import { isStagedKeyOf } from "@/lib/ticketCreate";
-import { ticketFolder, underFolder, restoredFromNumber, restoreRenumberingConfirmed } from "@/lib/ticketFilePrefix";
+import { ticketFolder, underFolder, restoredFromNumberHolding, restoreRenumberingConfirmed } from "@/lib/ticketFilePrefix";
 import type { TicketAttachment } from "@/types/schema";
 
 export const runtime = "nodejs";
@@ -320,7 +320,8 @@ export async function POST(req: NextRequest) {
   // request with no such line is tested exactly as before, with no read.
   let underOriginal = false;
   if (key && t.ticket_id && isSafeStorageKey(key) && !underTicket && !staged) {
-    const from = restoredFromNumber({ ticketNumber: t.ticket_id, history: t.history });
+    // EDGE-20: every restore line is tried — the one whose folder holds the key.
+    const from = restoredFromNumberHolding({ ticketNumber: t.ticket_id, history: t.history }, t.org_id, key);
     if (from && underFolder(key, ticketFolder(t.org_id, from))) {
       const confirmed = await restoreRenumberingConfirmed(supabaseAdmin, { orgId: t.org_id, ticketRowId: t.id, from, to: t.ticket_id });
       if (confirmed === "unknown") return json({ error: "Couldn't confirm where this request's files are stored — try again in a moment" }, 503);

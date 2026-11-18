@@ -855,7 +855,8 @@
         "drafting-flow DF-P20 merged (serial on the ticket files)"
       ],
       "sequencingNotes": [
-        "Added by the integrator at the DF-P17 merge, 2026-10-21 (DEC-31). Waits on the guard pastes; until then the audit-row binding stands (fail-safe: today's answer)."
+        "Added by the integrator at the DF-P17 merge, 2026-10-21 (DEC-31). Waits on the guard pastes; until then the audit-row binding stands (fail-safe: today's answer).",
+        "2026-11-18 (fleet F3-member-gate-and-restore): the review nit (try every matching restore line) is done — lib/ticketFilePrefix.ts restoredFromNumbers / restoredFromNumberHolding, asked by the workflow route, the copy route and lib/ticketCopyRequest.ts; EDGE-20 Partial. Rebase on it; both done-when criteria remain here."
       ]
     },
     {

@@ -163,7 +163,7 @@ import { POST as copyPost } from "@/app/api/tickets/copy/route";
 import { TICKET_RENUMBERED } from "@/lib/dataRestore";
 import {
   RESTORE_RENUMBERED_NOTE_CODE, RESTORE_HISTORY_USER, ticketFolder, underFolder, restoredFromNumber, restoredFromFolder,
-  restoreRenumberingConfirmed, renumberedRequestListsKey,
+  restoreRenumberingConfirmed, renumberedRequestListsKey, restoredFromNumbers, restoredFromNumberHolding,
 } from "@/lib/ticketFilePrefix";
 import { ticketFileCopyPath } from "@/lib/ticketCopyRequest";
 import { holdersFor, explainNoActions, rosterHolderUids, RESTORE_RENUMBERED_HISTORY_ACTION } from "@/lib/ticketAttention";
@@ -692,6 +692,107 @@ describe("EDGE-19 — the restore's rows through the server copy route (POST /ap
     const res = await copy({ ticketId: B1, attachmentId: own.id, channel: "download", acknowledged: true, acceptUnstamped: true });
     expect(res.status).toBe(200);
     expect(auditReads()).toHaveLength(0);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// EDGE-20 — the DF-P17 merge's review nit (fleet F3, DEC-90): every matching
+// restore line is tried, so a newer line naming the current number (a forged
+// one, where ticket_update_guard is unpasted, or a re-run) no longer shadows
+// the real original number. Admission still needs the restore's own audit row
+// for the exact pair; a request with ONE restore line answers as before.
+// ═════════════════════════════════════════════════════════════════════════════
+describe("EDGE-20 (nit) — every restore line naming the current number is tried, not only the newest", () => {
+  const FORGED = "KE-DDRT-26-0666";
+  const withForged = (history: unknown, forged = restoreLine(FORGED, "__NEW__")) =>
+    (Array.isArray(history) ? history : []).concat([forged]);
+  const forgedFor = (to: string) => restoreLine(FORGED, to);
+
+  it("restoredFromNumbers: every line's original number, newest first, distinct, plain, never the current number; restoredFromNumberHolding picks the one whose folder holds the key", () => {
+    const cur = "DDRT-26-0123";
+    const h = [restoreLine(OLD, cur), restoreLine(FORGED, cur), restoreLine(OLD, cur), restoreLine("a/b", cur), restoreLine(cur, cur), restoreLine("KE-9", "DDRT-26-0999"), restoreLine("KE-8", cur, { user: "eve@x.io" })];
+    expect(restoredFromNumbers({ ticketNumber: cur, history: h })).toEqual([OLD, FORGED]);
+    expect(restoredFromNumberHolding({ ticketNumber: cur, history: h }, ORG, `${OLD_FOLDER}final.pdf`)).toBe(OLD);
+    expect(restoredFromNumberHolding({ ticketNumber: cur, history: h }, ORG, `orgs/${ORG}/tickets/${FORGED}/x.pdf`)).toBe(FORGED);
+    expect(restoredFromNumberHolding({ ticketNumber: cur, history: h }, ORG, `orgs/${ORG}/tickets/KE-9/x.pdf`)).toBeNull();
+    expect(restoredFromNumberHolding({ ticketNumber: cur, history: h }, "o2", `${OLD_FOLDER}final.pdf`)).toBeNull();
+    expect(restoredFromNumberHolding({ ticketNumber: cur, history: h }, ORG, OLD_FOLDER)).toBeNull(); // the folder itself is no file
+    for (const history of [undefined, null, [], "x", [{ action: "Created", user: "a@x.io", date: LM }]]) {
+      expect(restoredFromNumbers({ ticketNumber: cur, history })).toEqual([]);
+      expect(restoredFromNumberHolding({ ticketNumber: cur, history }, ORG, `${OLD_FOLDER}final.pdf`)).toBeNull();
+    }
+    expect(restoredFromNumbers({ ticketNumber: "", history: h })).toEqual([]);
+    // the newest line whose number is unsafe no longer hides an older, plain one
+    expect(restoredFromNumber({ ticketNumber: cur, history: [restoreLine(OLD, cur), restoreLine("..", cur)] })).toBeNull(); // the mirror's single-line reader, unchanged
+    expect(restoredFromNumberHolding({ ticketNumber: cur, history: [restoreLine(OLD, cur), restoreLine("..", cur)] }, ORG, `${OLD_FOLDER}final.pdf`)).toBe(OLD);
+  });
+
+  it("NO REGRESSION — with ONE restore line (or none) the holding reader answers exactly what restoredFromNumber + the folder test answered, for every key shape", () => {
+    const cur = "DDRT-26-0123";
+    const keys = [`${OLD_FOLDER}final.pdf`, OLD_FOLDER, `orgs/${ORG}/tickets/${cur}/a.pdf`, `orgs/o2/tickets/${OLD}/a.pdf`, `orgs/${ORG}/tickets/${OLD}x/a.pdf`, "", `orgs/${ORG}/tickets/KE-1/a.pdf`];
+    const histories: unknown[] = [undefined, [], [restoreLine(OLD, cur)], [restoreLine(OLD, "DDRT-26-0999")], [restoreLine("..", cur)], [restoreLine(OLD, cur, { user: "eve@x.io" })], [restoreLine(cur, cur)], [{ action: "Created", user: "a@x.io", date: LM }, restoreLine(OLD, cur)]];
+    for (const history of histories) {
+      for (const key of keys) {
+        const was = restoredFromNumber({ ticketNumber: cur, history });
+        const before = was && underFolder(key, ticketFolder(ORG, was)) ? was : null;
+        expect(restoredFromNumberHolding({ ticketNumber: cur, history }, ORG, key), `${key} ${JSON.stringify(history)}`).toBe(before);
+      }
+    }
+  });
+
+  it("reproduced: a newer line naming the current number shadowed the real one — the workflow route now admits the listed Final (one audit check, the real pair), as before the forged line", async () => {
+    const r = await restoreTwoCarriers();
+    const final = (r.b2.attachments as TicketAttachment[])[0];
+    seed(r, { b2: { history: withForged(r.b2.history, forgedFor(r.NEW)) } });
+    state.user = { id: "d-1" };
+    const res = await workflow({ ticketId: B2, actionType: "submit_final", finalAttachment: final });
+    expect(res.status, JSON.stringify(await res.clone().json())).toBe(200);
+    // the same two audit reads as a request with one line: only the pair whose folder holds the key is asked
+    expect(auditReads()).toHaveLength(2);
+    const asked = state.calls.filter((c) => c.table === "audit_logs" && c.method === "contains").map((c) => JSON.parse(String(c.args[1])).cleared[0].renumbered);
+    expect(asked.every((p: { from: string }) => p.from === OLD)).toBe(true);
+  });
+
+  it("reproduced: the copy route issues the listed Final, and the page's mirror sends it to the server path", async () => {
+    const r = await restoreTwoCarriers();
+    const final = (r.b2.attachments as TicketAttachment[])[0];
+    const history = withForged(r.b2.history, forgedFor(r.NEW));
+    seed(r, { b2: { history } });
+    state.user = { id: "d-1", email: "d-1@x.io" };
+    state.objects[final.url] = await pdfBytes();
+    const res = await copy({ ticketId: B2, attachmentId: final.id, channel: "download", acknowledged: true, acceptUnstamped: true });
+    expect(res.status, res.status === 200 ? "" : JSON.stringify(await res.clone().json())).toBe(200);
+    expect(ticketFileCopyPath({ id: final.id, url: final.url }, {
+      ticketRowId: B2, orgId: ORG, ticketNumber: r.NEW, requesterId: "req-1", attachments: r.b2.attachments as TicketAttachment[], history,
+    })).toEqual({ kind: "server" });
+  });
+
+  it("never wider: the forged line's own folder is still refused without an audit row for ITS pair; with no audit row at all the real file is refused as before; an unreadable trail is still a 503", async () => {
+    const r = await restoreTwoCarriers();
+    const final = (r.b2.attachments as TicketAttachment[])[0];
+    const forgedKey = `orgs/${ORG}/tickets/${FORGED}/plant.pdf`;
+    const forgedFile = { id: "aaaaaaaa-0000-4000-8000-0000000000f1", name: "plant.pdf", url: forgedKey, type: "Final", status: "submitted", uploadedBy: "d-1@x.io" };
+    const history = withForged(r.b2.history, forgedFor(r.NEW));
+    // a listed file under the forged number's folder: the audit row names OLD -> NEW only
+    seed(r, { b2: { history, attachments: [...(r.b2.attachments as TicketAttachment[]), forgedFile] } });
+    state.user = { id: "d-1" };
+    const forged = await workflow({ ticketId: B2, actionType: "submit_final", finalAttachment: forgedFile });
+    expect(forged.status).toBe(400);
+    expect((await forged.json()).error).toMatch(/not stored under this request/);
+    expect(ticketWrites()).toHaveLength(0);
+    // no audit row: the real file too, as today
+    seed(r, { b2: { history } });
+    state.rows.audit_logs = [];
+    state.calls = [];
+    const none = await workflow({ ticketId: B2, actionType: "submit_final", finalAttachment: final });
+    expect(none.status).toBe(400);
+    expect(ticketWrites()).toHaveLength(0);
+    // unreadable
+    seed(r, { b2: { history } });
+    state.errors["audit_logs.select"] = [{ message: "timeout" }];
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const down = await workflow({ ticketId: B2, actionType: "submit_final", finalAttachment: final });
+    expect(down.status).toBe(503);
   });
 });
 

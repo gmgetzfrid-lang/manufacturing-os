@@ -84,7 +84,7 @@ import type { TicketAttachment } from "@/types/schema";
 import { TICKET_ATTACHMENT_ID_RE } from "@/lib/verifyTicketVerdict";
 import { isStagedKeyOf } from "@/lib/ticketCreate";
 import { isSafeStorageKey } from "@/lib/storageKey";
-import { ticketFolder, underFolder, restoredFromFolder } from "@/lib/ticketFilePrefix";
+import { ticketFolder, underFolder, restoredFromNumberHolding } from "@/lib/ticketFilePrefix";
 
 export type TicketCopyRequestChannel = "print" | "download" | "view";
 
@@ -129,7 +129,8 @@ export interface TicketCopyContext {
   /** drafting-flow EDGE-19 (DF-P17): the ticket's history — a request the
    *  restore renumbered keeps its files under its ORIGINAL number's folder,
    *  read from the restore's own history line (lib/ticketFilePrefix.ts
-   *  restoredFromFolder). Absent: the request's own number's folder only. */
+   *  restoredFromNumberHolding — every restore line, EDGE-20). Absent: the
+   *  request's own number's folder only. */
   history?: unknown;
 }
 
@@ -151,8 +152,9 @@ export function ticketFileCopyPath(file: Pick<TicketAttachment, "id" | "url">, c
   // original number's folder of a request the restore renumbered — the
   // route's own rule, which confirms the number against the restore's audit
   // row; a refusal there takes the browser path, as before.
-  const original = !!org && !!number && !underTicket && !staged ? restoredFromFolder({ orgId: org, ticketNumber: number, history: ctx.history }) : null;
-  const underOriginal = !!original && underFolder(key, original);
+  // EDGE-20: every restore line is tried — the one whose folder holds the key.
+  const originalNumber = !!org && !!number && !underTicket && !staged ? restoredFromNumberHolding({ ticketNumber: number, history: ctx.history }, org, key) : null;
+  const underOriginal = !!originalNumber && underFolder(key, ticketFolder(org, originalNumber));
   if (!key || !isSafeStorageKey(key) || !(underTicket || staged || underOriginal)) return { kind: "browser", reason: "outside_request" };
   return { kind: "server" };
 }

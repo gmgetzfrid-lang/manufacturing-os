@@ -126,6 +126,54 @@ export function restoredFromNumber(ticket: { ticketNumber: string | null | undef
   return null;
 }
 
+/**
+ * drafting-flow EDGE-20 (the DF-P17 merge's review nit; fleet F3, DEC-90):
+ * EVERY number this request was issued before a restore renumbered it — one
+ * per restore line (the same line shape restoredFromNumber reads) whose
+ * "restored as" number is the request's CURRENT number, newest first, each
+ * distinct, each a plain folder segment other than the current number. A
+ * newer line (a re-run, or, where ticket_update_guard is unpasted, a line a
+ * member appended) no longer hides an older one. Pure.
+ */
+export function restoredFromNumbers(ticket: { ticketNumber: string | null | undefined; history: unknown }): string[] {
+  const current = typeof ticket.ticketNumber === "string" ? ticket.ticketNumber : "";
+  if (!current) return [];
+  const history = Array.isArray(ticket.history) ? ticket.history : [];
+  const out: string[] = [];
+  for (let i = history.length - 1; i >= 0; i--) {
+    const h = history[i] as { action?: unknown; user?: unknown; details?: unknown } | null | undefined;
+    if (!h || typeof h !== "object" || h.action !== RESTORE_RENUMBERED_HISTORY_ACTION || h.user !== RESTORE_HISTORY_USER) continue;
+    if (typeof h.details !== "string") continue;
+    const m = RESTORE_LINE_RE.exec(h.details);
+    if (!m || m[2] !== current) continue;
+    const from = m[1];
+    if (plainNumber(from) && from !== current && !out.includes(from)) out.push(from);
+  }
+  return out;
+}
+
+/**
+ * EDGE-20: the original number, among restoredFromNumbers, whose folder in
+ * workspace `orgId` holds `key` — or null. A number is a plain segment (no
+ * slash), so at most one folder can hold a key: trying every restore line is
+ * asking about that one, and the server's audit check
+ * (restoreRenumberingConfirmed) still decides it for that exact pair. With a
+ * single restore line it answers what restoredFromNumber and the folder test
+ * answered (pinned). Pure.
+ */
+export function restoredFromNumberHolding(
+  ticket: { ticketNumber: string | null | undefined; history: unknown },
+  orgId: string | null | undefined,
+  key: string,
+): string | null {
+  const org = typeof orgId === "string" ? orgId : "";
+  if (!org || !key) return null;
+  for (const from of restoredFromNumbers(ticket)) {
+    if (underFolder(key, ticketFolder(org, from))) return from;
+  }
+  return null;
+}
+
 /** The original number's folder of a renumbered request (see
  *  restoredFromNumber), or null. Pure. */
 export function restoredFromFolder(ticket: { orgId: string | null | undefined; ticketNumber: string | null | undefined; history: unknown }): string | null {
