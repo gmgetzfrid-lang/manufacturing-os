@@ -23,10 +23,17 @@
 // the drag has it. A save sends the same composition, so it never carries a
 // stale copy of a column this tab did not touch. The echo of this tab's own
 // save (the UPDATE carrying exactly what it sent) clears the dirty columns
-// it carried (unless changed again since). A person who may not save keeps
+// it carried (unless changed again since) — and so does the save's own ok
+// answer, so a missed echo (realtime reconnecting, a throttled background
+// tab) never leaves a column dirty for good; when no stored map arrived
+// while the save was in flight, its payload becomes the latest known stored
+// map (no jump back). A person who may not save keeps
 // their own columns dirty for as long as the page is open — their view-only
 // widths survive a controller's save of other columns, and theirs win on
-// the columns they set.
+// the columns they set. When such a person becomes one who may save (the
+// roles finish loading, or a promotion while the page is open), the columns
+// they set view-only are dropped — never sent as the shared width — and the
+// screen is recomposed from the stored map.
 //
 // The limit, stated (DEC-29): the write replaces the whole map. A save by
 // another tab that commits while this tab's save is in flight (after this
@@ -130,6 +137,10 @@ export interface ColumnWidthSaver {
   /** Re-compose the screen (after a press that changed nothing, so the
    *  column it held takes any stored width that arrived meanwhile). */
   settle(): void;
+  /** This person may now save (they could not before): drop the columns
+   *  they set view-only, so they are never sent as the shared width, and
+   *  recompose the screen from the stored map. */
+  dropViewOnly(): void;
   /** Send a waiting save now (tab hidden, page hiding, or dispose). */
   flush(): Promise<void>;
   /** The library or page is being left: a waiting save is sent now. */
@@ -146,6 +157,9 @@ export function createColumnWidthSaver(deps: ColumnWidthSaverDeps): ColumnWidthS
   let timer: ReturnType<typeof setTimeout> | null = null;
   let inFlight = false;
   let again = false;
+  /** Counts the stored maps taken (load / remote), to tell whether one
+   *  arrived while a save was in flight. */
+  let storedSeq = 0;
   let closed = false;
   /** Saves this tab sent whose echo has not come back, in send order. */
   const sent: Array<{ key: string; carried: Map<string, number | null> }> = [];
@@ -158,9 +172,13 @@ export function createColumnWidthSaver(deps: ColumnWidthSaverDeps): ColumnWidthS
 
   async function send(): Promise<void> {
     if (timer !== null) { clearTimeout(timer); timer = null; }
+    // A person who may no longer save sends nothing (their change stays on
+    // their screen, view-only).
+    if (!deps.canSave()) return;
     // One save at a time, so this tab's saves commit in the order sent.
     if (inFlight) { again = true; return; }
     inFlight = true;
+    const seqAtSend = storedSeq;
     const carried = new Map(dirty);
     const payload = composeColumnWidths(stored, carried, {}, null);
     const entry = { key: columnWidthsKey(payload), carried };
@@ -179,6 +197,15 @@ export function createColumnWidthSaver(deps: ColumnWidthSaverDeps): ColumnWidthS
       const i = sent.indexOf(entry);
       if (i >= 0) sent.splice(i, 1);
       deps.notSaved(columnWidthNotSavedMessage(answer.reason), closed);
+    } else {
+      // Landed: the columns it carried are saved (unless changed again since)
+      // — do not wait for an echo that may never come. With no stored map
+      // taken meanwhile, what it wrote is the latest known stored map.
+      for (const [col, v] of carried) {
+        if (dirty.has(col) && dirty.get(col) === v) dirty.delete(col);
+      }
+      if (storedSeq === seqAtSend) stored = { ...payload };
+      show();
     }
     if (again) { again = false; await send(); }
   }
@@ -191,6 +218,7 @@ export function createColumnWidthSaver(deps: ColumnWidthSaverDeps): ColumnWidthS
 
   return {
     load(next) {
+      storedSeq += 1;
       stored = { ...next };
       show();
     },
@@ -205,6 +233,7 @@ export function createColumnWidthSaver(deps: ColumnWidthSaverDeps): ColumnWidthS
           if (dirty.has(col) && dirty.get(col) === v) dirty.delete(col);
         }
       }
+      storedSeq += 1;
       stored = { ...next };
       show();
     },
@@ -217,6 +246,11 @@ export function createColumnWidthSaver(deps: ColumnWidthSaverDeps): ColumnWidthS
       return true;
     },
     settle() { show(); },
+    dropViewOnly() {
+      if (dirty.size === 0) return;
+      dirty.clear();
+      show();
+    },
     async flush() {
       if (timer === null) return;
       await send();
@@ -251,7 +285,14 @@ export function useLibraryColumnWidths(opts: UseLibraryColumnWidthsOptions): Mut
   const live = useRef(opts);
   // What the saver reads when it acts — who may save, the uid, the client —
   // kept current on every render (REV-38 F6 review item 7, pinned).
-  useEffect(() => { live.current = opts; });
+  const couldSave = useRef(opts.canSave);
+  useEffect(() => {
+    live.current = opts;
+    // REV-38 (F6 second review, item 4): view-only columns are never sent —
+    // dropped once, when this person becomes one who may save.
+    if (!couldSave.current && opts.canSave) saverRef.current?.dropViewOnly();
+    couldSave.current = opts.canSave;
+  });
   const { libraryId } = opts;
   useEffect(() => {
     if (!libraryId) return;
@@ -281,10 +322,14 @@ export function useLibraryColumnWidths(opts: UseLibraryColumnWidthsOptions): Mut
 
 /** A press that moves less than this is a click, not a drag. */
 export const RESIZE_DRAG_THRESHOLD_PX = 3;
-/** A single click on the handle sorts after this long, unless a second
- *  click (the reset double-click) follows. */
-export const HANDLE_CLICK_SORT_DELAY_MS = 250;
 
+/** A press on the resize handle: a drag (it moved past the threshold) or
+ *  not. What a click on the handle does is the page's, per group, each as
+ *  on the base (F6 second review, item 2): for a person who may save, a
+ *  click does nothing and a double-click resets; for anyone else (who had
+ *  no handle, so the whole header sorted) the click goes on to the header
+ *  and sorts at once, and there is no double-click reset. A real drag never
+ *  sorts for anyone: the header click that ends it is swallowed, once. */
 export interface ResizeHandleGesture {
   /** The press began at x. */
   down(x: number): void;
@@ -293,24 +338,17 @@ export interface ResizeHandleGesture {
   /** The press ended: answers whether it was a drag. After a drag the
    *  header's own click (a drag that ends inside the header) is swallowed. */
   up(): boolean;
-  /** A click landed on the handle (its `detail` is the click count): with
-   *  no movement it sorts, as a click on the header does — deferred so the
-   *  reset double-click does not sort; after a drag it does nothing. */
-  handleClick(detail: number, sort: () => void): void;
   /** The header was clicked: true when this click ends a drag (swallow it). */
   headerClick(): boolean;
   dispose(): void;
 }
 
-export function createResizeHandleGesture(opts?: { thresholdPx?: number; sortDelayMs?: number }): ResizeHandleGesture {
+export function createResizeHandleGesture(opts?: { thresholdPx?: number }): ResizeHandleGesture {
   const threshold = opts?.thresholdPx ?? RESIZE_DRAG_THRESHOLD_PX;
-  const delay = opts?.sortDelayMs ?? HANDLE_CLICK_SORT_DELAY_MS;
   let startX: number | null = null;
   let moved = false;
   let swallowHeader = false;
-  let sortTimer: ReturnType<typeof setTimeout> | null = null;
   let swallowTimer: ReturnType<typeof setTimeout> | null = null;
-  const clearSort = () => { if (sortTimer !== null) { clearTimeout(sortTimer); sortTimer = null; } };
   return {
     down(x) { startX = x; moved = false; },
     move(x) {
@@ -329,18 +367,12 @@ export function createResizeHandleGesture(opts?: { thresholdPx?: number; sortDel
       }
       return moved;
     },
-    handleClick(detail, sort) {
-      clearSort();
-      if (moved || detail >= 2) return;
-      sortTimer = setTimeout(() => { sortTimer = null; sort(); }, delay);
-    },
     headerClick() {
       if (!swallowHeader) return false;
       swallowHeader = false;
       return true;
     },
     dispose() {
-      clearSort();
       if (swallowTimer !== null) { clearTimeout(swallowTimer); swallowTimer = null; }
     },
   };

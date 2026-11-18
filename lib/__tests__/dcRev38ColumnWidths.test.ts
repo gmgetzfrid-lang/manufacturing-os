@@ -8,7 +8,9 @@
 // ruling at the F6 review): every stored map is taken, this tab's unsaved
 // columns and the column under its drag stay, a save sends the latest known
 // stored map with this tab's columns on top, and the echo of its own save
-// clears what that save carried. The handle: a click sorts, a drag never.
+// clears what that save carried — as does the save's own ok answer (a missed
+// echo never leaves a column dirty for good). The handle: a click does what
+// it did on the base for each group; a drag never sorts.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -17,7 +19,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   COLUMN_WIDTH_SAVE_DEBOUNCE_MS,
   COLUMN_WIDTH_VIEW_ONLY_TITLE,
-  HANDLE_CLICK_SORT_DELAY_MS,
   RESIZE_DRAG_THRESHOLD_PX,
   columnWidthNotSavedMessage,
   columnWidthsKey,
@@ -178,6 +179,36 @@ describe("REV-38 — a controller's width is saved, debounced and checked", () =
 });
 
 describe("REV-38 — a person who may not save resizes for this view only", () => {
+  it("on becoming one who may save, the columns set view-only are dropped (never sent) and the screen is recomposed from the stored map", async () => {
+    let canSave = false;
+    const write = vi.fn(async (): Promise<ColumnWidthSaveAnswer> => ({ ok: true }));
+    let screen: ColumnWidths = {};
+    const saver = createColumnWidthSaver({ canSave: () => canSave, write, notSaved: () => {}, apply: (u) => { screen = u(screen); }, dragging: () => null });
+    saver.load({ a: 100, b: 100 });
+    saver.change("a", 400);
+    expect(screen).toEqual({ a: 400, b: 100 });
+    canSave = true;
+    saver.dropViewOnly();
+    expect(screen).toEqual({ a: 100, b: 100 });
+    saver.change("b", 90);
+    await vi.advanceTimersByTimeAsync(WAIT);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(write).toHaveBeenCalledWith({ a: 100, b: 90 });
+  });
+
+  it("a person who may no longer save when the wait ends sends nothing; their change stays on their screen", async () => {
+    let canSave = true;
+    const write = vi.fn(async (): Promise<ColumnWidthSaveAnswer> => ({ ok: true }));
+    let screen: ColumnWidths = {};
+    const saver = createColumnWidthSaver({ canSave: () => canSave, write, notSaved: () => {}, apply: (u) => { screen = u(screen); }, dragging: () => null });
+    saver.change("a", 400);
+    canSave = false;
+    await vi.advanceTimersByTimeAsync(WAIT);
+    await saver.flush();
+    expect(write).not.toHaveBeenCalled();
+    expect(screen).toEqual({ a: 400 });
+  });
+
   it("no write is attempted, after a drag or a reset, however long they wait or when they leave", async () => {
     const h = harness({ canSave: false });
     h.saver.load({ title: 150, rev: 60 });
@@ -279,8 +310,9 @@ describe("REV-38 — per-column last-writer-wins: the interleavings", () => {
     expect(h.screen).toEqual({ a: 140 });
   });
 
-  it("the echo of this tab's own save is not a jump, and clears what it carried: a later save by someone else on that column is taken", async () => {
-    const h = harness({ canSave: true });
+  it("the echo of this tab's own save is not a jump, and clears what it carried (before the write even answers): a later save by someone else on that column is taken", async () => {
+    const held = heldWrites();
+    const h = harness({ canSave: true, answer: held.answer });
     h.saver.load({ a: 100, b: 100 });
     h.saver.change("a", 150);
     await vi.advanceTimersByTimeAsync(WAIT);
@@ -288,6 +320,46 @@ describe("REV-38 — per-column last-writer-wins: the interleavings", () => {
     expect(h.screen).toEqual({ a: 150, b: 100 });
     h.saver.remote({ a: 999, b: 100 });
     expect(h.screen).toEqual({ a: 999, b: 100 });
+    held.release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.screen).toEqual({ a: 999, b: 100 }); // the ok answer does not take it back
+  });
+
+  it("a MISSED echo (realtime reconnecting, a throttled tab): the ok answer clears what the save carried and adopts its payload — no jump back, and other controllers' later widths are not overwritten", async () => {
+    const h = harness({ canSave: true });
+    h.saver.load({ a: 100, b: 100 });
+    h.saver.change("a", 150);
+    await vi.advanceTimersByTimeAsync(WAIT); // landed; its echo never arrives
+    expect(h.screen).toEqual({ a: 150, b: 100 });
+    h.saver.remote({ a: 120, b: 300 }); // another controller's later save
+    expect(h.screen).toEqual({ a: 120, b: 300 });
+    h.saver.change("c", 50);
+    await vi.advanceTimersByTimeAsync(WAIT);
+    expect(h.write).toHaveBeenLastCalledWith({ a: 120, b: 300, c: 50 });
+  });
+
+  it("…the adopted payload is the base of the next save when nothing else arrives", async () => {
+    const h = harness({ canSave: true });
+    h.saver.load({ a: 100 });
+    h.saver.change("a", 150);
+    await vi.advanceTimersByTimeAsync(WAIT);
+    h.saver.settle();
+    expect(h.screen).toEqual({ a: 150 });
+    h.saver.change("b", 70);
+    await vi.advanceTimersByTimeAsync(WAIT);
+    expect(h.write).toHaveBeenLastCalledWith({ a: 150, b: 70 });
+  });
+
+  it("…but a stored map that arrived while the save was in flight is not replaced by the payload", async () => {
+    const held = heldWrites();
+    const h = harness({ canSave: true, answer: held.answer });
+    h.saver.load({ a: 100, b: 100 });
+    h.saver.change("a", 150);
+    await vi.advanceTimersByTimeAsync(WAIT);
+    h.saver.remote({ a: 150, b: 300 }); // newer, already carrying this tab's a
+    held.release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.screen).toEqual({ a: 150, b: 300 });
   });
 
   it("an echo does not clear a column changed again since it was sent", async () => {
@@ -372,39 +444,20 @@ describe("REV-38 — saveLibraryColumnWidths is a checked write", () => {
   });
 });
 
-describe("REV-38 — the handle: a click sorts, a drag never does", () => {
-  it("a press with no movement, then a click on the handle, sorts once after the double-click window", async () => {
+describe("REV-38 — the handle: a press is a drag or not; a drag never sorts", () => {
+  it("a press that does not move past the threshold is not a drag, and the header click after it is not swallowed (anyone else's click sorts at once)", () => {
     const g = createResizeHandleGesture();
-    const sort = vi.fn();
     g.down(100);
     expect(g.move(100 + RESIZE_DRAG_THRESHOLD_PX - 1)).toBe(false);
     expect(g.up()).toBe(false);
-    g.handleClick(1, sort);
-    expect(sort).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(HANDLE_CLICK_SORT_DELAY_MS);
-    expect(sort).toHaveBeenCalledTimes(1);
-    expect(g.headerClick()).toBe(false); // a header click after a click sorts as before
+    expect(g.headerClick()).toBe(false);
   });
 
-  it("the reset double-click does not sort", async () => {
+  it("a drag that ends in the header has that click swallowed, once", () => {
     const g = createResizeHandleGesture();
-    const sort = vi.fn();
-    g.down(100); g.up(); g.handleClick(1, sort);
-    g.down(100); g.up(); g.handleClick(2, sort);
-    await vi.advanceTimersByTimeAsync(HANDLE_CLICK_SORT_DELAY_MS * 2);
-    expect(sort).not.toHaveBeenCalled();
-  });
-
-  it("a drag that ends on the handle does not sort; one that ends elsewhere in the header has its header click swallowed, once", async () => {
-    const g = createResizeHandleGesture();
-    const sort = vi.fn();
     g.down(100);
     expect(g.move(100 + RESIZE_DRAG_THRESHOLD_PX)).toBe(true);
     expect(g.up()).toBe(true);
-    g.handleClick(1, sort);
-    await vi.advanceTimersByTimeAsync(HANDLE_CLICK_SORT_DELAY_MS);
-    expect(sort).not.toHaveBeenCalled();
-    g.down(100); g.move(160); g.up();
     expect(g.headerClick()).toBe(true);
     expect(g.headerClick()).toBe(false);
   });
@@ -414,6 +467,15 @@ describe("REV-38 — the handle: a click sorts, a drag never does", () => {
     g.down(100); g.move(200); g.up();
     await vi.advanceTimersByTimeAsync(1);
     expect(g.headerClick()).toBe(false);
+  });
+
+  it("no sort timer anywhere: the gesture neither sorts nor schedules a sort, and the page has no delayed sort", () => {
+    const lib = readFileSync(join(process.cwd(), "lib/libraryColumnWidths.ts"), "utf8");
+    const gesture = lib.slice(lib.indexOf("export function createResizeHandleGesture"));
+    expect(gesture).not.toMatch(/sort/i);
+    expect(lib).not.toMatch(/HANDLE_CLICK_SORT_DELAY_MS|handleClick/);
+    const page = readFileSync(join(process.cwd(), "app/(protected)/documents/[libraryId]/page.tsx"), "utf8");
+    expect(page).not.toMatch(/resizeGesture\.handleClick/);
   });
 });
 
@@ -456,12 +518,15 @@ describe("REV-38 — the library page wiring", () => {
     expect(sync).toContain("else if (!resizingRef.current) setColWidths(next);");
   });
 
-  it("the handle is offered to everyone, says 'applies to this view only' to a person whose width is not saved, and a click on it sorts while a drag's header click is swallowed", () => {
+  it("the handle is offered to everyone and says 'applies to this view only' to a person whose width is not saved; each group's click is as on the base; a drag's header click is swallowed", () => {
     const handle = between("{/* Right-edge resize handle", "</th>");
     expect(handle).not.toMatch(/\{isController && \(/);
     expect(handle).toContain("onPointerDown={(e) => handleResizeStart(e, colKey)}");
-    expect(handle).toMatch(/title=\{canSaveColumnWidths[\s\S]*COLUMN_WIDTH_VIEW_ONLY_TITLE/);
-    expect(handle).toMatch(/resizeGesture\.handleClick\(e\.detail, \(\) => handleSort\(colKey\)\);/);
+    expect(handle).toMatch(/title=\{canSaveColumnWidths[\s\S]*COLUMN_WIDTH_VIEW_ONLY_TITLE\} · drag to resize`\}/);
+    // a person who may save: a click stops here (nothing), a double-click resets
+    expect(handle).toContain("onDoubleClick={canSaveColumnWidths ? (e) => handleResizeReset(e, colKey) : undefined}");
+    // anyone else: no click handler (it goes on to the header and sorts at once), no double-click reset
+    expect(handle).toContain("onClick={canSaveColumnWidths ? (e) => e.stopPropagation() : undefined}");
     expect(handle).toContain("touchAction: \"none\"");
     expect(COLUMN_WIDTH_VIEW_ONLY_TITLE).toBe("Column width applies to this view only");
     const th = between("key={colKey}\n                                className={`relative px-2", "<div className=\"flex items-center gap-1 min-w-0 pr-2\">");

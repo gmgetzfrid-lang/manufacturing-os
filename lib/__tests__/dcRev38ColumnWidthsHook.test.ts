@@ -80,9 +80,12 @@ describe("useLibraryColumnWidths — the saver reads the current render", () => 
     expect(writes).toEqual([]);
     expect(seen.screen).toEqual({ a: 150 }); // still resized for this view
     await render({ libraryId: "lib-1", canSave: true, client: sb });
+    // F6 second review item 4: the column set view-only is dropped on
+    // becoming one who may save — the screen recomposed, never sent
+    expect(seen.screen).toEqual({});
     await act(async () => { seen.saver.current!.change("b", 90); });
     await act(async () => { await vi.advanceTimersByTimeAsync(WAIT); });
-    expect(writes).toEqual([{ id: "lib-1", widths: { a: 150, b: 90 } }]);
+    expect(writes).toEqual([{ id: "lib-1", widths: { b: 90 } }]);
   });
 
   it("a render for the same library keeps the saver and its wait (no early write)", async () => {

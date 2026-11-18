@@ -1366,8 +1366,10 @@ export default function LibraryExplorerPage() {
       else setError(message);
     },
   });
-  // The handle: a press that does not move is a click on the header (it
-  // sorts, as before); a real drag never sorts.
+  // The handle: a press past the threshold is a drag, which never sorts.
+  // A click on it does what it did on the base, per group (REV-38): nothing
+  // for a person who may save (their double-click resets); for anyone else,
+  // who had no handle, it is a click on the header — it sorts at once.
   const [resizeGesture] = useState(createResizeHandleGesture);
   useEffect(() => () => resizeGesture.dispose(), [resizeGesture]);
 
@@ -4870,23 +4872,22 @@ export default function LibraryExplorerPage() {
                                 {/* Right-edge resize handle — everyone (REV-38): a
                                     controller's width is saved for the library; anyone
                                     else's applies to this view only, and the title says so.
-                                    A click with no movement sorts, as a click on the header
-                                    does (after the double-click window, so the reset
-                                    double-click does not sort); a drag never sorts.
+                                    A click with no movement does what it did on the base: for
+                                    a person who may save, nothing (stopped here; a
+                                    double-click resets); for anyone else, who had no handle,
+                                    it goes on to the header and sorts at once, and there is no
+                                    double-click reset. A real drag never sorts.
                                     touchAction none keeps a touch drag on the 10 px handle a
                                     resize, not a scroll (a swipe that starts on it does not
                                     scroll the table).
                                     Always-visible vertical bar with a wide hit zone. Brightens on hover. */}
                                 <div
                                   onPointerDown={(e) => handleResizeStart(e, colKey)}
-                                  onDoubleClick={(e) => handleResizeReset(e, colKey)}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    resizeGesture.handleClick(e.detail, () => handleSort(colKey));
-                                  }}
+                                  onDoubleClick={canSaveColumnWidths ? (e) => handleResizeReset(e, colKey) : undefined}
+                                  onClick={canSaveColumnWidths ? (e) => e.stopPropagation() : undefined}
                                   title={canSaveColumnWidths
                                     ? (isResized ? "Drag to resize · double-click to reset" : "Drag to resize column")
-                                    : `${COLUMN_WIDTH_VIEW_ONLY_TITLE} · ${isResized ? "drag to resize · double-click to reset" : "drag to resize"}`}
+                                    : `${COLUMN_WIDTH_VIEW_ONLY_TITLE} · drag to resize`}
                                   style={{ touchAction: "none" }}
                                   className={`absolute top-0 right-0 h-full w-2.5 cursor-col-resize flex items-center justify-center group/grip ${ZC.raised} hover:bg-blue-100/60`}
                                 >
