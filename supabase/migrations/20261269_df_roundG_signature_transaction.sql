@@ -64,6 +64,7 @@
 --     not at all ("Nothing was signed" — the signer signs again).
 -- PASTE / DEPLOY ORDER: either order is safe; RECOMMENDED deploy first, then
 -- paste. Paste AFTER 20261050 (the ceremony), 20261070 (the review guard),
+-- 20261159 (the review sign-off owner stamp),
 -- 20261219 (the audit outbox) and 20261242 (the ticket roster ledger the
 -- reconciliation reads) — the first statement refuses, changing nothing,
 -- without them. Independent of every other pending migration; re-creates no
@@ -89,6 +90,9 @@ BEGIN
      OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_review_signoff_guard' AND NOT tgisinternal)
      OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_document_ack_guard' AND NOT tgisinternal) THEN
     RAISE EXCEPTION '20261269 needs 20261047 and 20261070 (the roster guards) pasted first; nothing was changed.';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_review_signoff_owner_stamp' AND NOT tgisinternal) THEN
+    RAISE EXCEPTION '20261269 needs 20261159 (the review sign-off owner stamp) pasted first; nothing was changed.';
   END IF;
   IF to_regclass('public.audit_dead_letters') IS NULL THEN
     RAISE EXCEPTION '20261269 needs 20261219 (the audit outbox) pasted first; nothing was changed.';
@@ -118,9 +122,11 @@ SELECT 5, 'reconciliation (before apply): e-signatures with no ESIGNATURE_CAPTUR
        (SELECT COUNT(*) FROM (SELECT s.org_id, s.id FROM e_signatures s
  WHERE NOT EXISTS (SELECT 1 FROM audit_logs a
                     WHERE a.action = 'ESIGNATURE_CAPTURED' AND a.org_id = s.org_id
-                      AND (a.details ->> 'signatureId' = s.id::text
-                           OR (NOT (a.details ? 'signatureId') AND lower(a.resource_id) = s.resource_id::text
-                               AND a.user_id = s.signer_user_id AND a.details ->> 'intent' = s.intent)))
+                      AND a.details ->> 'signatureId' = s.id::text)
+   AND NOT EXISTS (SELECT 1 FROM audit_logs a
+                    WHERE a.action = 'ESIGNATURE_CAPTURED' AND a.org_id = s.org_id
+                      AND NOT (a.details ? 'signatureId') AND lower(a.resource_id) = s.resource_id::text
+                      AND a.user_id = s.signer_user_id AND a.details ->> 'intent' = s.intent)
    AND NOT EXISTS (SELECT 1 FROM audit_dead_letters d
                     WHERE d.action = 'ESIGNATURE_CAPTURED' AND d.org_id = s.org_id
                       AND d.entry -> 'row' -> 'details' ->> 'signatureId' = s.id::text)
@@ -148,19 +154,19 @@ SELECT 8, 'reconciliation (before apply): ticket review slots satisfied by a sig
  WHERE t.status = 'satisfied' AND t.signature_id IS NOT NULL
    AND NOT EXISTS (SELECT 1 FROM e_signatures s WHERE s.id = t.signature_id AND s.org_id = t.org_id)) q)::text
 UNION ALL
-SELECT 9, 'reconciliation (before apply): read-and-understood signatures whose signer is on that revision roster but whose roster row does not carry them',
+SELECT 9, 'reconciliation (before apply): read-and-understood signatures whose signer is on that document roster (any revision) but that no roster row carries',
        (SELECT COUNT(*) FROM (SELECT s.org_id, s.id FROM e_signatures s
- WHERE s.intent = 'Acknowledged' AND s.resource_type = 'document' AND s.document_version_id IS NOT NULL
+ WHERE s.intent = 'Acknowledged' AND s.resource_type = 'document'
    AND EXISTS (SELECT 1 FROM document_acknowledgments r
-                WHERE r.document_id = s.resource_id AND r.document_version_id = s.document_version_id
-                  AND r.assignee_user_id = s.signer_user_id)
+                WHERE r.document_id = s.resource_id AND r.assignee_user_id = s.signer_user_id)
    AND NOT EXISTS (SELECT 1 FROM document_acknowledgments r WHERE r.signature_id = s.id)) q)::text
 UNION ALL
-SELECT 10, 'reconciliation (before apply): review signatures whose signer is on that draft roster but whose sign-off row does not carry them',
+SELECT 10, 'reconciliation (before apply): review signatures whose signer is on that document review roster (any draft) but that no sign-off row carries',
        (SELECT COUNT(*) FROM (SELECT s.org_id, s.id FROM e_signatures s
+  JOIN document_versions v ON v.id = s.document_version_id
  WHERE s.intent = 'Reviewed' AND s.resource_type = 'document_version'
    AND EXISTS (SELECT 1 FROM document_review_signoffs r
-                WHERE r.document_version_id = s.document_version_id AND r.reviewer_user_id = s.signer_user_id)
+                WHERE r.document_id = v.record_id AND r.reviewer_user_id = s.signer_user_id)
    AND NOT EXISTS (SELECT 1 FROM document_review_signoffs r WHERE r.signature_id = s.id)) q)::text;
 
 BEGIN;
@@ -216,9 +222,16 @@ BEGIN
       FROM jsonb_populate_record(NULL::audit_logs, v_audit) r;
   EXCEPTION WHEN OTHERS THEN
     v_audit_err := SQLERRM;
-    INSERT INTO audit_dead_letters (org_id, action, entry, error, source, reported_by)
-    VALUES (v_sig.org_id, 'ESIGNATURE_CAPTURED', jsonb_build_object('row', v_audit, 'reporter', NULL),
-            left(v_audit_err, 2000), 'server', NULL);
+    BEGIN
+      INSERT INTO audit_dead_letters (org_id, action, entry, error, source, reported_by)
+      VALUES (v_sig.org_id, 'ESIGNATURE_CAPTURED', jsonb_build_object('row', v_audit, 'reporter', NULL),
+              left(v_audit_err, 2000), 'server', NULL);
+    EXCEPTION WHEN OTHERS THEN
+      -- Neither the mirror nor the outbox: nothing is kept (the signer reads
+      -- this sentence; the two refusals go to the detail for diagnosis).
+      RAISE EXCEPTION 'The audit trail could not record this signature, so it was not kept. Try again; if it keeps happening, tell your administrator.'
+        USING ERRCODE = 'P0001', DETAIL = left('mirror: ' || v_audit_err || ' / outbox: ' || SQLERRM, 2000);
+    END;
   END;
 
   -- c. the roster row the signature authorises, written AS THE SIGNER (the
@@ -318,9 +331,11 @@ SELECT 3, 1, 'reconciliation (after): e-signatures with no ESIGNATURE_CAPTURED t
        (SELECT COUNT(*) FROM (SELECT s.org_id, s.id FROM e_signatures s
  WHERE NOT EXISTS (SELECT 1 FROM audit_logs a
                     WHERE a.action = 'ESIGNATURE_CAPTURED' AND a.org_id = s.org_id
-                      AND (a.details ->> 'signatureId' = s.id::text
-                           OR (NOT (a.details ? 'signatureId') AND lower(a.resource_id) = s.resource_id::text
-                               AND a.user_id = s.signer_user_id AND a.details ->> 'intent' = s.intent)))
+                      AND a.details ->> 'signatureId' = s.id::text)
+   AND NOT EXISTS (SELECT 1 FROM audit_logs a
+                    WHERE a.action = 'ESIGNATURE_CAPTURED' AND a.org_id = s.org_id
+                      AND NOT (a.details ? 'signatureId') AND lower(a.resource_id) = s.resource_id::text
+                      AND a.user_id = s.signer_user_id AND a.details ->> 'intent' = s.intent)
    AND NOT EXISTS (SELECT 1 FROM audit_dead_letters d
                     WHERE d.action = 'ESIGNATURE_CAPTURED' AND d.org_id = s.org_id
                       AND d.entry -> 'row' -> 'details' ->> 'signatureId' = s.id::text)
@@ -348,19 +363,19 @@ SELECT 3, 4, 'reconciliation (after): ticket review slots satisfied by a signatu
  WHERE t.status = 'satisfied' AND t.signature_id IS NOT NULL
    AND NOT EXISTS (SELECT 1 FROM e_signatures s WHERE s.id = t.signature_id AND s.org_id = t.org_id)) q)::text
 UNION ALL
-SELECT 3, 5, 'reconciliation (after): read-and-understood signatures whose signer is on that revision roster but whose roster row does not carry them', NULL,
+SELECT 3, 5, 'reconciliation (after): read-and-understood signatures whose signer is on that document roster (any revision) but that no roster row carries', NULL,
        (SELECT COUNT(*) FROM (SELECT s.org_id, s.id FROM e_signatures s
- WHERE s.intent = 'Acknowledged' AND s.resource_type = 'document' AND s.document_version_id IS NOT NULL
+ WHERE s.intent = 'Acknowledged' AND s.resource_type = 'document'
    AND EXISTS (SELECT 1 FROM document_acknowledgments r
-                WHERE r.document_id = s.resource_id AND r.document_version_id = s.document_version_id
-                  AND r.assignee_user_id = s.signer_user_id)
+                WHERE r.document_id = s.resource_id AND r.assignee_user_id = s.signer_user_id)
    AND NOT EXISTS (SELECT 1 FROM document_acknowledgments r WHERE r.signature_id = s.id)) q)::text
 UNION ALL
-SELECT 3, 6, 'reconciliation (after): review signatures whose signer is on that draft roster but whose sign-off row does not carry them', NULL,
+SELECT 3, 6, 'reconciliation (after): review signatures whose signer is on that document review roster (any draft) but that no sign-off row carries', NULL,
        (SELECT COUNT(*) FROM (SELECT s.org_id, s.id FROM e_signatures s
+  JOIN document_versions v ON v.id = s.document_version_id
  WHERE s.intent = 'Reviewed' AND s.resource_type = 'document_version'
    AND EXISTS (SELECT 1 FROM document_review_signoffs r
-                WHERE r.document_version_id = s.document_version_id AND r.reviewer_user_id = s.signer_user_id)
+                WHERE r.document_id = v.record_id AND r.reviewer_user_id = s.signer_user_id)
    AND NOT EXISTS (SELECT 1 FROM document_review_signoffs r WHERE r.signature_id = s.id)) q)::text
 ) AS final_rows
 ORDER BY sec, ord;

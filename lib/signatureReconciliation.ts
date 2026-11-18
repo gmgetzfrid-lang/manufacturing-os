@@ -17,16 +17,24 @@
 //     signature is missing or is not the signer's own for that row (the
 //     database guards' own binding: org, signer, revision);
 //   * a read-and-understood or review signature whose signer is on that
-//     revision's roster but whose roster row does not carry it — EVID-11's
-//     failure scenario (the signature landed, the roster stayed pending).
+//     DOCUMENT's roster (any revision / any draft — a versionless signature
+//     and one paired with a row on another revision included) but that no
+//     roster row carries — EVID-11's failure scenario (the signature landed,
+//     the roster stayed pending).
 // NOT an orphan, by design: a free-standing signature on a record (the
 // Formal approvals panel, the command palette) and a ticket signature
 // presented as a credential to a server route (a declaration, a
 // pre-authorization, a slot sign-off) — no roster row is written for those
 // by the signing act; they are reconciled against the audit trail only.
+// (A free-standing Acknowledged signature by someone who also holds a roster
+// row on that document IS reported: the database cannot tell it from a
+// failed roster write, so it is named for a person to judge.)
 //
 // Each statement selects (org_id, id) so a caller can scope it to one
-// workspace. No apostrophe inside any literal (DEC-30 paste rule).
+// workspace, and joins only on equality keys (no OR inside a correlated
+// subquery — the trail check is two NOT EXISTS, one per match, so the planner
+// hashes or merges on them instead of comparing every signature with every
+// mirror of its workspace). No apostrophe inside any literal (DEC-30).
 
 export interface SignatureOrphanCheck {
   key: string;
@@ -43,9 +51,11 @@ export const SIGNATURE_ORPHAN_CHECKS: readonly SignatureOrphanCheck[] = [
     sql: `SELECT s.org_id, s.id FROM e_signatures s
  WHERE NOT EXISTS (SELECT 1 FROM audit_logs a
                     WHERE a.action = 'ESIGNATURE_CAPTURED' AND a.org_id = s.org_id
-                      AND (a.details ->> 'signatureId' = s.id::text
-                           OR (NOT (a.details ? 'signatureId') AND lower(a.resource_id) = s.resource_id::text
-                               AND a.user_id = s.signer_user_id AND a.details ->> 'intent' = s.intent)))
+                      AND a.details ->> 'signatureId' = s.id::text)
+   AND NOT EXISTS (SELECT 1 FROM audit_logs a
+                    WHERE a.action = 'ESIGNATURE_CAPTURED' AND a.org_id = s.org_id
+                      AND NOT (a.details ? 'signatureId') AND lower(a.resource_id) = s.resource_id::text
+                      AND a.user_id = s.signer_user_id AND a.details ->> 'intent' = s.intent)
    AND NOT EXISTS (SELECT 1 FROM audit_dead_letters d
                     WHERE d.action = 'ESIGNATURE_CAPTURED' AND d.org_id = s.org_id
                       AND d.entry -> 'row' -> 'details' ->> 'signatureId' = s.id::text)
@@ -81,21 +91,21 @@ export const SIGNATURE_ORPHAN_CHECKS: readonly SignatureOrphanCheck[] = [
   },
   {
     key: "acknowledgment_signature_without_roster_row",
-    label: "read-and-understood signatures whose signer is on that revision roster but whose roster row does not carry them",
+    label: "read-and-understood signatures whose signer is on that document roster (any revision) but that no roster row carries",
     sql: `SELECT s.org_id, s.id FROM e_signatures s
- WHERE s.intent = 'Acknowledged' AND s.resource_type = 'document' AND s.document_version_id IS NOT NULL
+ WHERE s.intent = 'Acknowledged' AND s.resource_type = 'document'
    AND EXISTS (SELECT 1 FROM document_acknowledgments r
-                WHERE r.document_id = s.resource_id AND r.document_version_id = s.document_version_id
-                  AND r.assignee_user_id = s.signer_user_id)
+                WHERE r.document_id = s.resource_id AND r.assignee_user_id = s.signer_user_id)
    AND NOT EXISTS (SELECT 1 FROM document_acknowledgments r WHERE r.signature_id = s.id)`,
   },
   {
     key: "review_signature_without_signoff_row",
-    label: "review signatures whose signer is on that draft roster but whose sign-off row does not carry them",
+    label: "review signatures whose signer is on that document review roster (any draft) but that no sign-off row carries",
     sql: `SELECT s.org_id, s.id FROM e_signatures s
+  JOIN document_versions v ON v.id = s.document_version_id
  WHERE s.intent = 'Reviewed' AND s.resource_type = 'document_version'
    AND EXISTS (SELECT 1 FROM document_review_signoffs r
-                WHERE r.document_version_id = s.document_version_id AND r.reviewer_user_id = s.signer_user_id)
+                WHERE r.document_id = v.record_id AND r.reviewer_user_id = s.signer_user_id)
    AND NOT EXISTS (SELECT 1 FROM document_review_signoffs r WHERE r.signature_id = s.id)`,
   },
 ];

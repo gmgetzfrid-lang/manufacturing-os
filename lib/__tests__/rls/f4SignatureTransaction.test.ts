@@ -76,6 +76,21 @@ function routeRows(o: { org: string; type: string; resource: string; version: st
   return { signature, audit };
 }
 
+/** The trail check as first written (one NOT EXISTS with an OR inside) — kept
+ *  here only to prove the index-friendly rewrite answers the same. */
+const OLD_TRAIL = `SELECT s.org_id, s.id FROM e_signatures s
+ WHERE NOT EXISTS (SELECT 1 FROM audit_logs a
+                    WHERE a.action = 'ESIGNATURE_CAPTURED' AND a.org_id = s.org_id
+                      AND (a.details ->> 'signatureId' = s.id::text
+                           OR (NOT (a.details ? 'signatureId') AND lower(a.resource_id) = s.resource_id::text
+                               AND a.user_id = s.signer_user_id AND a.details ->> 'intent' = s.intent)))
+   AND NOT EXISTS (SELECT 1 FROM audit_dead_letters d
+                    WHERE d.action = 'ESIGNATURE_CAPTURED' AND d.org_id = s.org_id
+                      AND d.entry -> 'row' -> 'details' ->> 'signatureId' = s.id::text)
+   AND NOT EXISTS (SELECT 1 FROM audit_logs a
+                    WHERE a.action = 'AUDIT_DEAD_LETTER' AND a.org_id = s.org_id
+                      AND a.details -> 'lost' -> 'details' ->> 'signatureId' = s.id::text)`;
+
 const SIG_COLS = "org_id, resource_type, resource_id, document_version_id, content_hash, intent, statement, signer_user_id, signer_name, signer_role, signer_email, signature_image, user_agent, signed_at, reauth_method, reauth_at, metadata";
 const AUDIT_COLS = "action, resource_id, resource_type, org_id, user_id, user_email, user_role, details";
 
@@ -299,7 +314,11 @@ describe.skipIf(skip !== null)("EVID-11 (F4): the signature, its audit mirror an
     try {
       const r = asCaller(db, SERVICE, rpcSql(bad as unknown as ReturnType<typeof routeRows>, null, PAIRED));
       expect(r.ok).toBe(false);
-      if (!r.ok) expect(r.code).toBe("42501");
+      // a sentence for the signer (P0001, passed through by the route); the two refusals in the detail
+      if (!r.ok) {
+        expect(r.code).toBe("P0001");
+        expect(r.message).toMatch(/^The audit trail could not record this signature, so it was not kept\. Try again; if it keeps happening, tell your administrator\./);
+      }
     } finally {
       admin(db, "GRANT INSERT ON audit_dead_letters TO service_role;");
     }
@@ -344,9 +363,9 @@ describe.skipIf(skip !== null)("EVID-11 (F4): the signature, its audit mirror an
   });
 
   it("the reconciliation finds every kind of orphan, and nothing else", () => {
-    const o = seedOrg(db, { ann: { role: "Viewer" }, rex: { role: "Engineer-1" } });
+    const o = seedOrg(db, { ann: { role: "Viewer" }, rex: { role: "Engineer-1" }, cy: { role: "Viewer" }, dee: { role: "Viewer" }, eve: { role: "Engineer-2" }, fay: { role: "Viewer" } });
     const org = o.orgId;
-    const d = randomUUID(); const v = randomUUID(); const l = randomUUID(); const t = randomUUID();
+    const d = randomUUID(); const v = randomUUID(); const v2 = randomUUID(); const l = randomUUID(); const t = randomUUID();
     const sig = (who: SeededMember, intent: string, type: string, resource: string, version: string | null) => {
       const id = randomUUID();
       admin(db, `INSERT INTO e_signatures (id, org_id, resource_type, resource_id, document_version_id, intent, statement, signer_user_id, signer_name) VALUES ('${id}', '${org}', '${type}', '${resource}', ${version ? `'${version}'` : "NULL"}, '${intent}', 's', '${who.uid}', 'n')`);
@@ -357,6 +376,7 @@ describe.skipIf(skip !== null)("EVID-11 (F4): the signature, its audit mirror an
       `INSERT INTO libraries (id, org_id, name, type) VALUES ('${l}', '${org}', 'L', 'documents')`,
       `INSERT INTO documents (id, org_id, library_id, name, title, document_number, rev, status) VALUES ('${d}', '${org}', '${l}', 'q.pdf', 'Q', 'Q-1', '0', 'Draft')`,
       `INSERT INTO document_versions (id, org_id, record_id, revision_label, file_url, created_by) VALUES ('${v}', '${org}', '${d}', '1A', 'x/q.pdf', '${o.m.ann.uid}')`,
+      `INSERT INTO document_versions (id, org_id, record_id, revision_label, file_url, created_by) VALUES ('${v2}', '${org}', '${d}', '1B', 'x/q2.pdf', '${o.m.ann.uid}')`,
       `INSERT INTO tickets (id, org_id, ticket_id, title, request_type, status, requester_id, history) VALUES ('${t}', '${org}', 'KE-F4-1', 'Gasket', 'Revision', 'PENDING_REVIEW', '${o.m.ann.uid}', '[]'::jsonb)`,
     ].join(";\n") + ";");
     // healthy: a legacy mirror (no signatureId — matched by resource, signer and intent), a recovered dead letter
@@ -382,15 +402,62 @@ describe.skipIf(skip !== null)("EVID-11 (F4): the signature, its audit mirror an
     // orphan 6: ann reviewed (signature + mirror) while her sign-off row stayed pending
     const annRev = sig(o.m.ann, "Reviewed", "document_version", v, v); mirror(annRev, o.m.ann);
     admin(db, `INSERT INTO document_review_signoffs (org_id, document_id, document_version_id, reviewer_user_id, slot, activated, status) VALUES ('${org}', '${d}', '${v}', '${o.m.ann.uid}', 'primary', true, 'pending')`);
+    // the two blind spots the first wording of check 5 had (review fix), and the same shape for check 6:
+    // 5a. an Acknowledged signature with no version, by a signer on the roster, that no row carries
+    const cyAck = sig(o.m.cy, "Acknowledged", "document", d, null); mirror(cyAck, o.m.cy);
+    admin(db, `INSERT INTO document_acknowledgments (org_id, document_id, document_version_id, assignee_user_id, status) VALUES ('${org}', '${d}', '${v}', '${o.m.cy.uid}', 'pending')`);
+    // 5b. a signature on revision 1B whose signer's pending row is on 1A (the guard refused the pairing pre-paste)
+    const deeAck = sig(o.m.dee, "Acknowledged", "document", d, v2); mirror(deeAck, o.m.dee);
+    admin(db, `INSERT INTO document_acknowledgments (org_id, document_id, document_version_id, assignee_user_id, status) VALUES ('${org}', '${d}', '${v}', '${o.m.dee.uid}', 'pending')`);
+    // 6b. a review signature on draft 1B whose signer's sign-off row is on draft 1A
+    const eveRev = sig(o.m.eve, "Reviewed", "document_version", v2, v2); mirror(eveRev, o.m.eve);
+    admin(db, `INSERT INTO document_review_signoffs (org_id, document_id, document_version_id, reviewer_user_id, slot, activated, status) VALUES ('${org}', '${d}', '${v}', '${o.m.eve.uid}', 'primary', true, 'pending')`);
+    // healthy: a carried acknowledgment and a carried sign-off are never orphans
+    const fayAck = sig(o.m.fay, "Acknowledged", "document", d, v); mirror(fayAck, o.m.fay);
+    admin(db, `INSERT INTO document_acknowledgments (org_id, document_id, document_version_id, assignee_user_id, status, signature_id, acknowledged_at) VALUES ('${org}', '${d}', '${v}', '${o.m.fay.uid}', 'acknowledged', '${fayAck}', now())`);
+    const fayRev = sig(o.m.fay, "Reviewed", "document_version", v2, v2); mirror(fayRev, o.m.fay);
+    admin(db, `INSERT INTO document_review_signoffs (org_id, document_id, document_version_id, reviewer_user_id, slot, activated, status, signature_id, signed_at) VALUES ('${org}', '${d}', '${v2}', '${o.m.fay.uid}', 'primary', true, 'signed', '${fayRev}', now())`);
     void legacy; void recovered;
+    const sorted = (ids: string[]) => [...ids].sort();
     expect(orphans(org)).toEqual({
       signature_without_audit_trail: [silent],
       acknowledged_roster_without_its_signature: [ackBad],
       signed_review_row_without_its_signature: [revBad],
       satisfied_ticket_slot_without_its_signature: [slotBad],
-      acknowledgment_signature_without_roster_row: [rexAck],
-      review_signature_without_signoff_row: [annRev],
+      acknowledgment_signature_without_roster_row: sorted([rexAck, cyAck, deeAck]),
+      review_signature_without_signoff_row: sorted([annRev, eveRev]),
     });
+    // the index-friendly trail check answers exactly what the first one did
+    expect(admin(db, `SELECT q.id FROM (${OLD_TRAIL}) q WHERE q.org_id = '${org}' ORDER BY q.id`).split("\n").filter(Boolean)).toEqual([silent]);
+  });
+
+  it("the trail check is index-friendly: no per-workspace nested comparison, and the same answer as before (3,000 signatures)", () => {
+    const vol = `${db}_vol`;
+    admin("postgres", `DROP DATABASE IF EXISTS ${vol}`);
+    admin("postgres", `CREATE DATABASE ${vol} TEMPLATE ${REPLAY_DB}`);
+    try {
+      const o = seedOrg(vol, { a: { role: "Viewer" } });
+      const N = 3000;
+      admin(vol, `INSERT INTO e_signatures (org_id, resource_type, resource_id, intent, statement, signer_user_id, signer_name)
+                    SELECT '${o.orgId}', 'ticket', gen_random_uuid(), 'Witnessed', 's', '${o.m.a.uid}', 'n' FROM generate_series(1, ${N});
+                  INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, details)
+                    SELECT 'ESIGNATURE_CAPTURED', s.resource_id::text, 'ticket', s.org_id, s.signer_user_id, jsonb_build_object('signatureId', s.id::text, 'intent', s.intent)
+                      FROM e_signatures s WHERE s.org_id = '${o.orgId}' AND random() < 0.9;
+                  INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, details)
+                    SELECT 'ESIGNATURE_CAPTURED', upper(s.resource_id::text), 'ticket', s.org_id, s.signer_user_id, jsonb_build_object('intent', s.intent)
+                      FROM e_signatures s WHERE s.org_id = '${o.orgId}' AND random() < 0.05;
+                  ANALYZE e_signatures; ANALYZE audit_logs; ANALYZE audit_dead_letters;`);
+      const trail = SIGNATURE_ORPHAN_CHECKS.find((c) => c.key === "signature_without_audit_trail")!.sql;
+      const removed = (sql: string) => [...admin(vol, `EXPLAIN ANALYZE SELECT COUNT(*) FROM (${sql}) q`).matchAll(/Rows Removed by Join Filter: (\d+)/g)].reduce((n, x) => n + Number(x[1]), 0);
+      // the first wording compared every signature with every mirror of its workspace (≈ N × N); this one compares none per row
+      expect(removed(OLD_TRAIL)).toBeGreaterThan(N * N / 4);
+      expect(removed(trail)).toBeLessThan(N);
+      const diff = (a: string, b: string) => admin(vol, `SELECT COUNT(*) FROM ((${a}) EXCEPT (${b})) x`);
+      expect([diff(OLD_TRAIL, trail), diff(trail, OLD_TRAIL)]).toEqual(["0", "0"]);
+      expect(Number(admin(vol, `SELECT COUNT(*) FROM (${trail}) q`))).toBeGreaterThan(0);
+    } finally {
+      admin("postgres", `DROP DATABASE IF EXISTS ${vol}`);
+    }
   });
 
   it("the migration holds each reconciliation statement verbatim (before and after the change)", () => {

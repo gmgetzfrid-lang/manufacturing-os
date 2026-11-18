@@ -72,8 +72,10 @@ const post = (body: unknown) => sign(new NextRequest("http://x/api/signatures/si
   method: "POST", headers: { authorization: "Bearer t", "content-type": "application/json", "user-agent": "vitest" }, body: JSON.stringify(body),
 }));
 const reauth = { method: "password", password: "hunter2" };
-const ack = { orgId: "o1", resourceType: "document", resourceId: "d1", documentVersionId: "v1", intent: "Acknowledged", statement: "Read and understood", reauth, pair: { kind: "acknowledgment", rosterId: "a1" } };
-const review = { orgId: "o1", resourceType: "document_version", resourceId: "v1", documentVersionId: "v1", intent: "Reviewed", statement: "Reviewed", reauth, pair: { kind: "review_signoff", signoffId: "so1" } };
+const ROSTER = "aaaaaaaa-0000-4000-8000-000000000001";
+const SIGNOFF = "bbbbbbbb-0000-4000-8000-000000000002";
+const ack = { orgId: "o1", resourceType: "document", resourceId: "d1", documentVersionId: "v1", intent: "Acknowledged", statement: "Read and understood", reauth, pair: { kind: "acknowledgment", rosterId: ROSTER } };
+const review = { orgId: "o1", resourceType: "document_version", resourceId: "v1", documentVersionId: "v1", intent: "Reviewed", statement: "Reviewed", reauth, pair: { kind: "review_signoff", signoffId: SIGNOFF } };
 const ticket = { orgId: "o1", resourceType: "ticket", resourceId: "t1", intent: "Reviewed", statement: "Reviewed", reauth };
 const inserts = (t: string) => state.calls.filter((c) => c.table === t && c.method === "insert").map((c) => c.args[0] as Record<string, unknown>);
 const SIG_ROW = { id: "sig1", org_id: "o1", signer_user_id: "u1", signed_at: "2026-11-18T10:00:00+00:00" };
@@ -128,6 +130,18 @@ describe("before the paste (PGRST202 / 42883): today's path, byte for byte", () 
       expect(inserts("audit_dead_letters")).toEqual([]);
     });
   }
+  it("the fallback is said in the server log, PGRST202 told apart from 42883 (a function the body calls may be the missing one)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      state.rpc = { data: null, error: { code: "PGRST202", message: "Could not find the function" } };
+      await post(ticket);
+      state.rpc = { data: null, error: { code: "42883", message: "function auth.uid() does not exist" } };
+      await post(ticket);
+      const lines = warn.mock.calls.map((c) => String(c[0]));
+      expect(lines[0]).toMatch(/pre-paste path: record_signature_transaction is not in the schema \(PGRST202/);
+      expect(lines[1]).toMatch(/pre-paste path: a function is missing \(42883: function auth\.uid\(\) does not exist\)/);
+    } finally { warn.mockRestore(); }
+  });
   it("a refused mirror: today's warning, and (DEC-109) the row kept in the outbox as it was meant", async () => {
     state.errors.audit_logs = { message: "audit refused" };
     const res = await post(ticket);
@@ -142,10 +156,10 @@ describe("before the paste (PGRST202 / 42883): today's path, byte for byte", () 
 
 describe("after the paste: one transaction", () => {
   it("one call, no direct insert; the RPC's row is the answer, with `paired` when it wrote the roster row", async () => {
-    state.rpc = { data: { signature: SIG_ROW, paired: { kind: "acknowledgment", rosterIds: ["a1"] }, auditError: null }, error: null };
+    state.rpc = { data: { signature: SIG_ROW, paired: { kind: "acknowledgment", rosterIds: [ROSTER] }, auditError: null }, error: null };
     const res = await post(ack);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ signature: SIG_ROW, paired: { kind: "acknowledgment", rosterIds: ["a1"] } });
+    expect(await res.json()).toEqual({ signature: SIG_ROW, paired: { kind: "acknowledgment", rosterIds: [ROSTER] } });
     expect(state.calls.filter((c) => c.method === "insert" || c.method === "update")).toEqual([]);
   });
   it("an unpaired signature answers exactly today's shape", async () => {
@@ -172,8 +186,29 @@ describe("after the paste: one transaction", () => {
     const g = await post(review);
     expect(g.status).toBe(409);
     expect(((await g.json()) as { error: string }).error).toBe("You authored this revision, so you can't sign it as its reviewer. Nothing was signed.");
-    state.rpc = { data: null, error: { code: "42501", message: "permission denied" } };
-    expect((await post(ticket)).status).toBe(500);
+    state.rpc = { data: null, error: { code: "42501", message: "permission denied for function record_signature_transaction" } };
+    const p = await post(ticket);
+    expect(p.status).toBe(500);
+    expect(((await p.json()) as { error: string }).error).toBe("Nothing was signed. You don't have permission to do this.");
+    expect(state.calls.filter((c) => c.method === "insert")).toEqual([]);
+  });
+  it("the mirror and the outbox both refused: the signer reads plain language, never driver text", async () => {
+    state.rpc = { data: null, error: { code: "P0001", message: "The audit trail could not record this signature, so it was not kept. Try again; if it keeps happening, tell your administrator." } };
+    const res = await post(ack);
+    expect(res.status).toBe(500);
+    expect(((await res.json()) as { error: string }).error).toBe("Nothing was signed. The audit trail could not record this signature, so it was not kept. Try again; if it keeps happening, tell your administrator.");
+    state.rpc = { data: null, error: { code: "23514", message: 'new row for relation "e_signatures" violates check constraint "x"' } };
+    const c = await post(ticket);
+    expect(((await c.json()) as { error: string }).error).toBe("That value isn't allowed here. Nothing was signed.");
+    expect(state.calls.filter((x) => x.method === "insert")).toEqual([]);
+  });
+  it("a roster id that is not a uuid is refused in plain language before anything is written", async () => {
+    for (const body of [{ ...ack, pair: { kind: "acknowledgment", rosterId: "a1" } }, { ...review, pair: { kind: "review_signoff", signoffId: "so1; drop" } }]) {
+      const res = await post(body);
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe("Your roster row could not be identified — reload and sign again. Nothing was signed.");
+    }
+    expect(state.rpcCalls).toEqual([]);
     expect(state.calls.filter((c) => c.method === "insert")).toEqual([]);
   });
   it("an answer with no row is a 500, never a second write through the fallback", async () => {

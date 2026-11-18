@@ -40,6 +40,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { heldRoles } from "@/lib/roleHeld";
+import { userFacingError } from "@/lib/userFacingError";
 
 export const runtime = "nodejs";
 
@@ -67,6 +68,7 @@ const PAIR_NO_ROW: Record<Pair["kind"], string> = {
 };
 
 const bad = (error: string, status: number) => NextResponse.json({ error }, { status });
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 
 export async function POST(req: NextRequest) {
@@ -91,12 +93,16 @@ export async function POST(req: NextRequest) {
   let pair: Pair | null = null;
   if (body.pair != null) {
     const kind = str(body.pair.kind);
+    const rosterId = str(body.pair.rosterId), signoffId = str(body.pair.signoffId);
     if (kind === "acknowledgment" && intent === "Acknowledged" && resourceType === "document") {
-      pair = { kind, rosterId: str(body.pair.rosterId) };
-    } else if (kind === "review_signoff" && intent === "Reviewed" && resourceType === "document_version" && str(body.pair.signoffId)) {
-      pair = { kind, signoffId: str(body.pair.signoffId) as string };
+      pair = { kind, rosterId };
+    } else if (kind === "review_signoff" && intent === "Reviewed" && resourceType === "document_version" && signoffId) {
+      pair = { kind, signoffId };
     } else {
       return bad("That roster row cannot be signed with this signature", 400);
+    }
+    if ((rosterId && !UUID.test(rosterId)) || (signoffId && !UUID.test(signoffId))) {
+      return bad("Your roster row could not be identified — reload and sign again. Nothing was signed.", 400);
     }
   }
 
@@ -191,12 +197,21 @@ export async function POST(req: NextRequest) {
       ...(t.auditError ? { warning: `Signed, but the audit row failed: ${t.auditError}` } : {}),
     });
   }
-  if (txErr && txErr.code !== "PGRST202" && txErr.code !== "42883") {
-    // The transaction wrote nothing: say so, in the words the signer can act on.
+  if (txErr.code !== "PGRST202" && txErr.code !== "42883") {
+    // The transaction wrote nothing: say so, in the words the signer can act
+    // on — a guard's or the function's own sentence as written, any driver
+    // text replaced (userFacingError logs the raw detail).
     if (pair && txErr.code === "P0002") return bad(PAIR_NO_ROW[pair.kind], 409);
-    if (txErr.code === "23514") return bad(`${txErr.message} Nothing was signed.`, 409);
-    return bad(txErr.message || "Failed to record signature", 500);
+    if (txErr.code === "23514") return bad(`${userFacingError(txErr, { context: "signatures/sign", clause: true })}. Nothing was signed.`, 409);
+    console.error("[signatures/sign] record_signature_transaction refused:", { code: txErr.code ?? null, message: txErr.message ?? null });
+    return bad(`Nothing was signed. ${userFacingError(txErr, { context: "signatures/sign", embed: true })}`, 500);
   }
+  // Said in the server log, never silent: PGRST202 is the function not in the
+  // schema (20261269 not pasted); 42883 is a function missing — possibly one
+  // the body calls.
+  console.warn(`[signatures/sign] taking the pre-paste path: ${txErr.code === "PGRST202"
+    ? "record_signature_transaction is not in the schema (PGRST202 — 20261269 not pasted)"
+    : `a function is missing (42883: ${txErr.message ?? ""})`}`);
 
   // ── Before 20261269 (PGRST202 / 42883): today's path, byte for byte ───────
   const { data: row, error: insErr } = await supabaseAdmin
