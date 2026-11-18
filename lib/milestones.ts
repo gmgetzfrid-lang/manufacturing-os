@@ -26,9 +26,37 @@ import { shiftForStart, shiftAfterMove } from "@/lib/scheduleFilter";
 import { SCHEDULE_IMPORT_LIMITS } from "@/lib/scheduleParsers";
 import { emit } from "@/lib/notify/dispatch";
 import { projectVisibleAmong } from "@/lib/notify/recipients";
+import { checkedWrite, type CheckedWriteFailure, type CheckedWriteResult } from "@/lib/checkedWrite";
+import { answered, firstRow, type Kept } from "@/lib/checkedWriteKeep";
 import type {
   Milestone, MilestoneStatus, MilestoneSource, MilestoneNote, MilestoneAttributes,
 } from "@/types/schema";
+
+// ─── Checked writes (projects-joint J15c, SAF-18; DEC-90) ────────
+// Every update / delete here routes through lib/checkedWrite.ts: a write
+// RLS filters to zero rows is a refusal (CHECKED_WRITE_REFUSED), never a
+// success, and nothing (a note, an audit row, a notice) follows it. The
+// raw answer is kept beside the verdict (lib/checkedWriteKeep.ts), so a
+// database error keeps the sentence this file showed before and the
+// missing-column fallbacks still read the full error (DEC-90 rulings 3, 4).
+
+/** A failed checked write in words: the database's own sentence (as this
+ *  file gave it before) for an error, CHECKED_WRITE_REFUSED for zero rows. */
+function failureText(w: CheckedWriteFailure, kept: Kept): string {
+  return w.code === "db" && kept.r?.error ? userFacingError(kept.r.error, { context: "milestones" }) : w.error;
+}
+/** One row of a many-row act (an import, a grouping, a baseline) the
+ *  database did not change: other rows may have landed, so the refusal is
+ *  said for that row — never "Nothing was changed" over the whole act. */
+const ROW_NOT_CHANGED = "not changed (you may not be allowed to, or someone else changed it first)";
+function rowFailureText(w: CheckedWriteFailure, kept: Kept): string {
+  return w.code === "refused" ? ROW_NOT_CHANGED : failureText(w, kept);
+}
+/** The row a person's checked edit saved (`.select("*")`), or its failure thrown. */
+function savedRow(w: CheckedWriteResult, kept: Kept): MilestoneRow {
+  if (!w.ok) throw new Error(failureText(w, kept));
+  return firstRow<MilestoneRow>(kept);
+}
 
 interface MilestoneRow {
   id: string;
@@ -559,9 +587,9 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
     if (next !== priorShift) update.shift = next;
   }
 
-  const { data, error } = await supabase.from("milestones").update(update).eq("id", input.id).select("*").single();
-  if (error || !data) throw new Error(error ? userFacingError(error, { context: "milestones" }) : "Failed to update milestone");
-  const m = rowToMilestone(data as MilestoneRow);
+  const kept: Kept = {};
+  const w = await checkedWrite(answered(supabase.from("milestones").update(update).eq("id", input.id).select("*"), kept));
+  const m = rowToMilestone(savedRow(w, kept));
 
   // Breadcrumb: record a reschedule on the task's own activity trail
   // when the finish date actually moved (so "what changed" shows moves,
@@ -916,9 +944,9 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
     update.completed_by_name = null;
   }
 
-  const { data, error } = await supabase.from("milestones").update(update).eq("id", input.id).select("*").single();
-  if (error || !data) throw new Error(error ? userFacingError(error, { context: "milestones" }) : "Failed to update milestone status");
-  const m = rowToMilestone(data as MilestoneRow);
+  const kept: Kept = {};
+  const w = await checkedWrite(answered(supabase.from("milestones").update(update).eq("id", input.id).select("*"), kept));
+  const m = rowToMilestone(savedRow(w, kept));
 
   // Breadcrumb note for the task's own activity log.
   await addMilestoneNote({
@@ -1025,9 +1053,9 @@ export async function setMilestoneProgress(input: SetMilestoneProgressInput): Pr
     if (pct > 0 && !existingStart) update.actual_start_at = now;
   }
 
-  const { data, error } = await supabase.from("milestones").update(update).eq("id", input.id).select("*").single();
-  if (error || !data) throw new Error(error ? userFacingError(error, { context: "milestones" }) : "Failed to update milestone progress");
-  const m = rowToMilestone(data as MilestoneRow);
+  const kept: Kept = {};
+  const w = await checkedWrite(answered(supabase.from("milestones").update(update).eq("id", input.id).select("*"), kept));
+  const m = rowToMilestone(savedRow(w, kept));
 
   await addMilestoneNote({
     orgId: m.orgId,
@@ -1506,12 +1534,13 @@ export async function importGhostMilestones(input: ImportGhostMilestonesInput): 
         else q = q.is("project_id", null).is("document_id", null);
         const { data: existing } = await q.maybeSingle();
         if (existing) {
-          const { error } = await supabase.from("milestones").update({
+          const kept: Kept = {};
+          const w = await checkedWrite(answered(supabase.from("milestones").update({
             name, description, weight: isNaN(weight) ? 1 : weight,
             planned_at: plannedIso, updated_at: new Date().toISOString(),
             updated_by: input.createdBy,
-          }).eq("id", (existing as { id: string }).id);
-          if (error) { result.errors.push(`Row ${i+1}: ${userFacingError(error, { context: "milestones" })}`); }
+          }).eq("id", (existing as { id: string }).id).select("id"), kept));
+          if (!w.ok) { result.errors.push(`Row ${i+1}: ${rowFailureText(w, kept)}`); }
           else result.updated++;
           continue;
         }
@@ -2214,16 +2243,20 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
     }
     // Not a schema problem: isolate per row.
     for (const p of chunk) {
-      const one = mode === "insert"
-        ? await supabase.from("milestones").insert(insertPayload(p)).select("id").maybeSingle()
-        : await supabase.from("milestones").update(updateFields(p)).eq("id", p.id!).select("id").maybeSingle();
+      if (mode !== "insert") {
+        // A matched row that comes back empty was refused — never counted updated.
+        const kept: Kept = {};
+        const w = await checkedWrite(answered(supabase.from("milestones").update(updateFields(p)).eq("id", p.id!).select("id"), kept));
+        if (!w.ok) { result.errors.push(`${rowLabel(p)}: ${rowFailureText(w, kept)}`); continue; }
+        result.updated++;
+        continue;
+      }
+      const one = await supabase.from("milestones").insert(insertPayload(p)).select("id").maybeSingle();
       if (one.error) { result.errors.push(`${rowLabel(p)}: ${userFacingError(one.error, { context: "milestones" })}`); continue; }
-      if (mode === "insert") {
-        result.inserted++;
-        const id = (one.data as { id: string } | null)?.id ?? null;
-        p.id = id;
-        if (id && p.row.externalRef) refToId.set(p.row.externalRef, id);
-      } else result.updated++;
+      result.inserted++;
+      const id = (one.data as { id: string } | null)?.id ?? null;
+      p.id = id;
+      if (id && p.row.externalRef) refToId.set(p.row.externalRef, id);
     }
   }
 
@@ -2295,13 +2328,15 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
     const chunk = structure.slice(i, i + STRUCTURE_CONCURRENCY);
     await Promise.all(chunk.map(async (u) => {
       const fields: Record<string, unknown> = lacks("20260715") ? { parent_id: u.parent_id } : { parent_id: u.parent_id, depends_on: u.depends_on };
-      let res = await supabase.from("milestones").update(fields).eq("id", u.id);
-      const refused = res.error ? refusedColumn(res.error.message) : null;
-      if (res.error && !lacks("20260715") && looksLikeUnknownColumn(res.error.message) && (refused === null || schemaSetForColumn(refused) === "20260715")) {
+      const kept: Kept = {};
+      let w = await checkedWrite(answered(supabase.from("milestones").update(fields).eq("id", u.id).select("id"), kept));
+      const err = kept.r?.error ?? null;
+      const refused = err ? refusedColumn(err.message) : null;
+      if (err && !lacks("20260715") && looksLikeUnknownColumn(err.message) && (refused === null || schemaSetForColumn(refused) === "20260715")) {
         missing.add("20260715"); // 20260715 not applied — keep the hierarchy, drop the links
-        res = await supabase.from("milestones").update({ parent_id: u.parent_id }).eq("id", u.id);
+        w = await checkedWrite(answered(supabase.from("milestones").update({ parent_id: u.parent_id }).eq("id", u.id).select("id"), kept));
       }
-      if (res.error) result.errors.push(`Structure for ${u.id}: ${userFacingError(res.error, { context: "milestones" })}`);
+      if (!w.ok) result.errors.push(`Structure for ${u.id}: ${rowFailureText(w, kept)}`);
     }));
     input.onProgress?.({ done: Math.min(i + chunk.length, structure.length), total: structure.length, phase: "structure" });
   }
@@ -2419,11 +2454,13 @@ export async function rebaseSchedule(input: RebaseScheduleInput): Promise<Rebase
     // Optimistic lock: only shift if the row hasn't been edited since we read
     // it, so a concurrent change isn't silently overwritten and counted as a
     // success. A zero-row result = someone else touched it → skip + report.
-    let q = supabase.from("milestones").update(patch).eq("id", raw.id);
-    if (raw.updated_at) q = q.eq("updated_at", raw.updated_at);
-    const { data: updatedRow, error } = await q.select("id").maybeSingle();
-    if (error) errors.push(`${raw.id.slice(0, 8)}: ${userFacingError(error, { context: "milestones" })}`);
-    else if (!updatedRow) skipped++;
+    const kept: Kept = {};
+    const w = await checkedWrite(answered((raw.updated_at
+      ? supabase.from("milestones").update(patch).eq("id", raw.id).eq("updated_at", raw.updated_at)
+      : supabase.from("milestones").update(patch).eq("id", raw.id)
+    ).select("id"), kept));
+    if (!w.ok && w.code === "db") errors.push(`${raw.id.slice(0, 8)}: ${failureText(w, kept)}`);
+    else if (!w.ok) skipped++;
     else {
       shifted++;
       if (slippedPastBaseline(beforeFinish, patch.planned_at as string | undefined, raw.baseline_finish_at)) {
@@ -2432,7 +2469,8 @@ export async function rebaseSchedule(input: RebaseScheduleInput): Promise<Rebase
     }
   }
   if (skipped > 0) {
-    errors.push(`${skipped} task${skipped === 1 ? "" : "s"} were edited by someone else during the rebase and were left unchanged — re-check those dates.`);
+    // A zero-row match is someone else's edit (the lock above) or a refusal.
+    errors.push(`${skipped} task${skipped === 1 ? "" : "s"} were left unchanged — someone else edited ${skipped === 1 ? "it" : "them"} during the rebase, or you can't change ${skipped === 1 ? "it" : "them"}. Re-check those dates.`);
   }
 
   await logAuditAction({
@@ -2661,15 +2699,17 @@ export async function groupTasksUnderParent(input: GroupTasksInput): Promise<Gro
   let updated = 0;
   for (const cid of input.childIds) {
     if (cid === parentId) continue; // the target itself, if selected, stays where it is
-    const { error } = await supabase
+    const kept: Kept = {};
+    const w = await checkedWrite(answered(supabase
       .from("milestones")
       .update({
         parent_id: parentId,
         updated_at: new Date().toISOString(),
         updated_by: input.actorUserId,
       })
-      .eq("id", cid);
-    if (error) errors.push(`${cid.slice(0,8)}: ${userFacingError(error, { context: "milestones" })}`);
+      .eq("id", cid)
+      .select("id"), kept));
+    if (!w.ok) errors.push(`${cid.slice(0,8)}: ${rowFailureText(w, kept)}`);
     else updated++;
   }
 
@@ -2713,15 +2753,17 @@ export async function setTaskDuration(input: {
   // calendar arithmetic on a UTC instant, so a 3-day task ending 2 Nov started
   // 30 Oct 23:00Z in America/Los_Angeles — a 4-day bar.
   const newStartIso = startForDuration(finish.toISOString(), input.days);
-  const { error: updErr } = await supabase
+  const kept: Kept = {};
+  const w = await checkedWrite(answered(supabase
     .from("milestones")
     .update({
       planned_start_at: newStartIso,
       updated_at: new Date().toISOString(),
       updated_by: input.actorUserId,
     })
-    .eq("id", input.id);
-  if (updErr) return { ok: false, error: userFacingError(updErr, { context: "milestones" }) };
+    .eq("id", input.id)
+    .select("id"), kept));
+  if (!w.ok) return { ok: false, error: failureText(w, kept) };
 
   // Re-envelope ancestors so a parent/summary bar still covers this leaf.
   // (Drag edits reflow via computeTreeMove; a direct duration set didn't,
@@ -2749,14 +2791,18 @@ export async function setTaskDuration(input: {
             locked: isImportedMilestone({ source: m.source ?? null }),
           }));
         const changes = reflowAllAncestors(nodes);
-        await Promise.all(changes.map((c) =>
-          supabase.from("milestones").update({
+        // DEC-90 class (b): the envelope follows the leaf's committed edit —
+        // it never fails the call, and an ancestor it could not move is
+        // logged, never taken as moved.
+        await Promise.all(changes.map(async (c) => {
+          const w = await checkedWrite(supabase.from("milestones").update({
             planned_start_at: c.plannedStartAt,
             planned_at: c.plannedAt,
             updated_at: new Date().toISOString(),
             updated_by: input.actorUserId,
-          }).eq("id", c.id),
-        ));
+          }).eq("id", c.id).select("id"));
+          if (!w.ok) console.warn(`[milestones] summary ${c.id} was not re-enveloped after a duration change: ${w.error}`);
+        }));
       }
     } catch { /* envelope reflow is best-effort */ }
   }
@@ -2811,13 +2857,15 @@ export async function setBaseline(input: {
   let count = 0;
   const errors: string[] = [];
   await Promise.all((rows as Array<{ id: string; planned_at: string; planned_start_at: string | null }>).map(async (r) => {
-    const { error: e } = await supabase.from("milestones").update({
+    const kept: Kept = {};
+    const w = await checkedWrite(answered(supabase.from("milestones").update({
       baseline_start_at: r.planned_start_at ?? r.planned_at,
       baseline_finish_at: r.planned_at,
       baseline_set_at: now,
       baseline_set_by: input.actorUserId,
-    }).eq("id", r.id);
-    if (e) errors.push(userFacingError(e, { context: "milestones" })); else count++;
+    }).eq("id", r.id).select("id"), kept));
+    // (other rows may have landed — a refusal is said for this row)
+    if (!w.ok) errors.push(w.code === "refused" ? `a task was ${ROW_NOT_CHANGED}` : failureText(w, kept)); else count++;
   }));
 
   await logAuditAction({

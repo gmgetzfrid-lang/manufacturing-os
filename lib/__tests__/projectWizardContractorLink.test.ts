@@ -31,13 +31,17 @@ const wiz = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/supabase", () => {
-  // every write resolves; a project_parties insert is recorded
+  // every write resolves; a project_parties insert is recorded. An UPDATE
+  // answers its matched row, as PostgREST does to .select("id") (J15c: the
+  // wizard's project write is checked — an empty answer is a refusal).
   const make = (table: string): Record<string, unknown> => {
     const chain: Record<string, unknown> = {};
+    let updating = false;
     const handler: ProxyHandler<Record<string, unknown>> = {
       get(_t, prop: string) {
-        if (prop === "then") return (resolve: (v: unknown) => void) => resolve({ data: [], error: null });
+        if (prop === "then") return (resolve: (v: unknown) => void) => resolve({ data: updating ? [{ id: "p-new" }] : [], error: null });
         return (...args: unknown[]) => {
+          if (prop === "update") updating = true;
           if (prop === "insert") wiz.inserts.push({ table, rows: args[0] as Array<Record<string, unknown>> });
           return new Proxy(chain, handler);
         };

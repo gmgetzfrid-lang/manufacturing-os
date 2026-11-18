@@ -45,6 +45,9 @@ vi.mock("@/lib/supabase", () => {
     const single = methods.includes("maybeSingle") || methods.includes("single");
     if (methods[0] === "update" || methods[0] === "insert") {
       s.writes.push({ table, method: methods[0], args: args[0] });
+      // An UPDATE answers its matched row, as PostgREST does to `.select("id")`
+      // (J15c: the panel's writes are checked — an empty answer is a refusal).
+      if (methods[0] === "update") return { data: [{ id: table === "document_versions" ? "v2" : `${table}-1` }], error: null };
       return { data: table === "document_versions" ? [{ id: "v2" }] : null, error: null };
     }
     s.reads.push(table);

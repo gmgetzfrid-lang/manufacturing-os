@@ -3614,3 +3614,59 @@ describe("BILL-10 — the intake door and the subscription switch", () => {
     expect(db.r2Puts).toHaveLength(2);
   });
 });
+
+// projects-joint J15c CHECKED-WRITE SWEEP (projects-tab SAF-18): the route's
+// own bookkeeping writes read their matched rows (lib/checkedWrite.ts). A
+// stamp or a withdraw that matched no row is logged as failed — never taken
+// as written, never a change to the contractor's answer (DEC-90 class b).
+describe("SAF-18 (J15c) — the route's bookkeeping writes are checked", () => {
+  it("a provenance stamp that matched no row is logged as failed; the publish answers as before", async () => {
+    seed();
+    db.rpc.publish_revision = (a) => {
+      // the version the contract made is not visible to the stamp's UPDATE
+      const d = (db.tables.documents ?? []).find((x) => x.id === a.p_doc);
+      if (d) Object.assign(d, { current_version_id: "v-pub", rev: (a.p_version as Row).revision_label, status: "Issued" });
+      return { data: { status: "published", version: { id: "v-pub" } }, error: null };
+    };
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await upload({ docId: D1, revLabel: "C" });
+    expect((await res.json()).status).toBe("published");
+    expect(spy.mock.calls.map((c) => String(c[0]))).toContainEqual(expect.stringMatching(/provenance stamp failed on v-pub: Nothing was changed — you don't have permission to do this, or someone else changed it first\. Reload and try again\.$/));
+    spy.mockRestore();
+  });
+
+  it("REGRESSION: a provenance stamp that lands logs nothing", async () => {
+    seed();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await upload({ docId: D1, revLabel: "C" });
+    expect(spy.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("provenance stamp failed"))).toEqual([]);
+    spy.mockRestore();
+  });
+
+  it("a withdraw that matched no row is logged as not resolved — the contractor's 409 is as before", async () => {
+    seed({
+      doc: { pending_version_id: "v-pend" },
+      versions: [
+        { id: "v-cur", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "approved", created_at: "2026-09-01T00:00:00Z" },
+        { id: "v-pend", org_id: ORG, record_id: D1, intake_link_id: LINK, review_state: "in_review", created_at: "2026-09-20T00:00:00Z" },
+      ],
+    });
+    db.errors["documents.update"] = [{ message: "could not serialize access" }];
+    // the withdraw's UPDATE matches nothing (the new version is out of its reach)
+    const origPush = db.writes.push.bind(db.writes);
+    db.writes.push = (w) => {
+      if (w.table === "document_versions" && w.method === "update" && (w.args[0] as Row).review_state === "superseded"
+        && !w.filters.some(([, c, v]) => c === "id" && v === "v-pend")) {
+        const id = w.filters.find(([, c]) => c === "id")?.[2];
+        db.tables.document_versions = db.tables.document_versions.filter((v) => v.id !== id);
+      }
+      return origPush(w);
+    };
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await upload({ docId: D1, revLabel: "C" });
+    db.writes.push = origPush;
+    expect(res.status).toBe(409);
+    expect(spy.mock.calls.map((c) => String(c[0]))).toContainEqual(expect.stringMatching(/withdrawn submission \S+ not resolved: Nothing was changed — /));
+    spy.mockRestore();
+  });
+});

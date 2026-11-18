@@ -18,6 +18,16 @@
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
 import { userFacingError, userFacingReadError } from "@/lib/userFacingError";
+import { checkedWrite, type CheckedWriteFailure } from "@/lib/checkedWrite";
+import { answered, firstRow, type Kept } from "@/lib/checkedWriteKeep";
+
+/** projects-joint J15c (SAF-18, DEC-90 class a): every company edit here is
+ *  a person's decision — a write that matched no row is refused in words
+ *  (CHECKED_WRITE_REFUSED) and audits nothing; a database error keeps the
+ *  sentence this file gave before. */
+function failureText(w: CheckedWriteFailure, kept: Kept, context: string): string {
+  return w.code === "db" && kept.r?.error ? userFacingError(kept.r.error, { context }) : w.error;
+}
 import {
   computeCompanyScorecard,
   type CompanyEvidence,
@@ -186,15 +196,16 @@ export async function saveCompany(input: {
     notes: input.notes?.trim() || null,
   };
   if (input.id) {
-    const { data, error } = await supabase
+    const kept: Kept = {};
+    const w = await checkedWrite(answered(supabase
       .from("companies").update({ ...row, updated_at: new Date().toISOString(), updated_by: input.actorId })
-      .eq("id", input.id).select("*").single();
-    if (error) throw new Error(userFacingError(error, { context: "saveCompany" }));
+      .eq("id", input.id).select("*"), kept));
+    if (!w.ok) throw new Error(failureText(w, kept, "saveCompany"));
     await logAuditAction({
       action: "COMPANY_UPDATED", resourceType: "company", resourceId: input.id,
       orgId: input.orgId, userId: input.actorId, details: { name: row.name },
     });
-    return rowToCompany(data as Record<string, unknown>);
+    return rowToCompany(firstRow<Record<string, unknown>>(kept));
   }
   const { data, error } = await supabase
     .from("companies").insert({ ...row, created_by: input.actorId }).select("*").single();
@@ -292,17 +303,19 @@ export async function confirmQualityManual(input: {
     updated_at: new Date().toISOString(),
     updated_by: input.actorId,
   };
-  let { error } = await supabase.from("companies").update(patch)
-    .eq("id", input.companyId).eq("org_id", input.orgId);
+  const kept: Kept = {};
+  let w = await checkedWrite(answered(supabase.from("companies").update(patch)
+    .eq("id", input.companyId).eq("org_id", input.orgId).select("id"), kept));
+  const error = kept.r?.error ?? null;
   if (error && (error.code === "PGRST204" || error.code === "42703")) {
     // Pre-migration tolerance: the read-extent columns land in 20261096.
     // The extent still travels in the audit row below.
     delete patch.quality_manual_pages_read;
     delete patch.quality_manual_pages_total;
-    ({ error } = await supabase.from("companies").update(patch)
-      .eq("id", input.companyId).eq("org_id", input.orgId));
+    w = await checkedWrite(answered(supabase.from("companies").update(patch)
+      .eq("id", input.companyId).eq("org_id", input.orgId).select("id"), kept));
   }
-  if (error) throw new Error(userFacingError(error, { context: "confirmQualityManual" }));
+  if (!w.ok) throw new Error(failureText(w, kept, "confirmQualityManual"));
   await logAuditAction({
     action: "COMPANY_QM_CONFIRMED", resourceType: "company", resourceId: input.companyId,
     orgId: input.orgId, userId: input.actorId,

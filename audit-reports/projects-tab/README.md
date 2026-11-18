@@ -87,7 +87,7 @@ Work these in order. The numbering reflects priority, not just grouping —
 | 07 | [Truth in the interface](./07-interface-truth.md) | 17 | 1 | 16 / 17 |
 | 08 | [Reliability & failure modes](./08-reliability.md) | 11 | 0 | 11 / 11 |
 | 09 | [Performance & scale](./09-performance-scale.md) | 12 | 0 | 9 / 12 |
-| 10 | [Accessibility, mobile & dark mode](./10-accessibility-mobile.md) | 16 | 2 | 15 / 16 |
+| 10 | [Accessibility, mobile & dark mode](./10-accessibility-mobile.md) | 16 | 2 | 16 / 16 |
 | — | [Upload door — recommended controls](./11-upload-door-controls.md) | design note | — | — |
 
 Report `11` is not a findings list. It is the control set requested for the

@@ -169,17 +169,19 @@ const CLEAN_LIB = [
     "lib/knowledgeIngest.ts", "lib/knowledge.ts", "lib/knowledgeEmbedCore.ts", "lib/knowledgeSourceSync.ts", "lib/operationalGraph.ts",
     "lib/processFlows.ts", "lib/plotPlans.ts", "lib/aiInstructions.ts", "lib/ai/usageServer.ts", "lib/intents.ts",
     "lib/mentionIndexer.ts", "lib/whiteboard.ts", "lib/notes.ts", "lib/activityThread.ts", "lib/inAppNotifications.ts",
+    // J15c (SAF-18, 2026-11-18): the projects and admin lib files.
+    "lib/milestones.ts", "lib/projects.ts", "lib/projectReport.ts", "lib/companies.ts",
+    "lib/teams.ts", "lib/accessRecert.ts",
 ];
 /** lib files still carrying unchecked sites (SAF-18): the count may fall, never rise. */
 const LIB_RATCHET: Record<string, number> = {
-    "lib/accessRecert.ts": 1, "lib/acknowledgments.ts": 7, "lib/assets.ts": 2, "lib/branches.ts": 1,
-    "lib/checkoutEpisodes.ts": 6, "lib/collections.ts": 6, "lib/companies.ts": 3, "lib/docClass.ts": 1,
-    "lib/documentLifecycle/common.ts": 2, "lib/documentLifecycle/renumber.ts": 1, "lib/documentLifecycle/reverse.ts": 1,
-    "lib/documentLifecycle/split.ts": 1, "lib/documentOrigin.ts": 1, "lib/documentShares.ts": 1, "lib/effectiveDate.ts": 4,
-    "lib/favorites.ts": 1, "lib/holds.ts": 2, "lib/libraryCollections.ts": 6, "lib/libraryViews.ts": 4,
-    "lib/markupRequests.ts": 1, "lib/markups.ts": 1, "lib/milestones.ts": 12, "lib/projectReport.ts": 1,
-    "lib/projects.ts": 8, "lib/retention.ts": 3, "lib/reviewControl.ts": 9, "lib/reviewCycles.ts": 5, "lib/revisions.ts": 6,
-    "lib/watches.ts": 1, "lib/tableViews.ts": 1, "lib/teams.ts": 3, "lib/transmittals.ts": 1, "lib/unitCodeDecode.ts": 1,
+    "lib/acknowledgments.ts": 7, "lib/assets.ts": 2, "lib/branches.ts": 1, "lib/checkoutEpisodes.ts": 6,
+    "lib/collections.ts": 6, "lib/docClass.ts": 1, "lib/documentLifecycle/common.ts": 2,
+    "lib/documentLifecycle/renumber.ts": 1, "lib/documentLifecycle/reverse.ts": 1, "lib/documentLifecycle/split.ts": 1,
+    "lib/documentOrigin.ts": 1, "lib/documentShares.ts": 1, "lib/effectiveDate.ts": 4, "lib/favorites.ts": 1,
+    "lib/holds.ts": 2, "lib/libraryCollections.ts": 6, "lib/libraryViews.ts": 4, "lib/markupRequests.ts": 1,
+    "lib/markups.ts": 1, "lib/retention.ts": 3, "lib/reviewControl.ts": 9, "lib/reviewCycles.ts": 5, "lib/revisions.ts": 6,
+    "lib/watches.ts": 1, "lib/tableViews.ts": 1, "lib/transmittals.ts": 1, "lib/unitCodeDecode.ts": 1,
 };
 /** Files packages running BESIDE this one (projects Round G wave of
  *  2026-10-01) are editing: the census does not judge them until their
@@ -194,12 +196,11 @@ const judged = (f: string) => !(f in IN_FLIGHT);
 /** The Projects surface outside lib (components/projects, the project and intake routes). */
 const PROJECTS_UI_CLEAN = [
     "components/projects/ProjectDocumentsCard.tsx", "components/projects/cost/QuotesPanel.tsx",
+    // J15c (SAF-18, 2026-11-18): the Projects surface.
+    "components/projects/EditProjectModal.tsx", "components/projects/IntakePanel.tsx", "components/projects/ProjectWizard.tsx", "components/projects/cost/ChangeOrdersPanel.tsx",
+    "app/api/intake/upload/route.ts", "app/api/projects/cost-docs/route.ts",
 ];
-const PROJECTS_UI_RATCHET: Record<string, number> = {
-    "components/projects/EditProjectModal.tsx": 1, "components/projects/IntakePanel.tsx": 5,
-    "components/projects/ProjectWizard.tsx": 1, "components/projects/cost/ChangeOrdersPanel.tsx": 1,
-    "app/api/intake/upload/route.ts": 10, "app/api/projects/cost-docs/route.ts": 1,
-};
+const PROJECTS_UI_RATCHET: Record<string, number> = {};
 
 describe("census, widened — every lib file and the Projects surface (GAP-402 remainder → SAF-18)", () => {
   it("the clean files stay clean", () => {

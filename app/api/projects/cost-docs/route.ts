@@ -24,6 +24,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, type Kept } from "@/lib/checkedWriteKeep";
 import { governedAiCall, GovernedCallError } from "@/lib/ai/governedCall";
 import { extractJsonBlock } from "@/lib/orchestrator/protocol";
 import { renderKnowledgePages } from "@/lib/knowledgePageRender";
@@ -240,22 +242,28 @@ export async function POST(req: NextRequest) {
   // started from — still `parsed`, still no extraction, the same total — so
   // an award, a second read or a corrected total meanwhile is never
   // overwritten.
-  const save = () => {
-    const base = supabaseAdmin.from("cost_documents").update(patch)
-      .eq("id", costDocId).eq("org_id", orgId);
+  const stillAsRead = <Q extends { eq(column: string, value: unknown): Q; is(column: string, value: null): Q }>(base: Q): Q => {
     const q = besideTypedTotal ? base.eq("status", "parsed").is("parsed", null) : base.eq("status", "draft");
-    return (startedTotal == null ? q.is("total_amount", null) : q.eq("total_amount", startedTotal)).select("id");
+    return startedTotal == null ? q.is("total_amount", null) : q.eq("total_amount", startedTotal);
   };
-  let { data: saved, error: updErr } = await save();
+  // Checked (SAF-18): the verdict comes from lib/checkedWrite; the raw error
+  // is kept for the pre-migration retry and the message below.
+  const save = async () => {
+    const kept: Kept = {};
+    const w = await checkedWrite(answered(stillAsRead(supabaseAdmin.from("cost_documents").update(patch)
+      .eq("id", costDocId).eq("org_id", orgId)).select("id"), kept));
+    return { w, updErr: kept.r?.error ?? null };
+  };
+  let { w: saved, updErr } = await save();
   if (updErr && (updErr.code === "PGRST204" || updErr.code === "42703")) {
     // Pre-migration tolerance: pages_total / pages_read land in 20261096.
     // The extent still travels in the response and the audit row.
     delete patch.pages_total;
     delete patch.pages_read;
-    ({ data: saved, error: updErr } = await save());
+    ({ w: saved, updErr } = await save());
   }
-  if (updErr) return bad(`The read succeeded but saving it failed: ${updErr.message}`, 500);
-  if (!saved || (saved as unknown[]).length === 0) {
+  if (!saved.ok && saved.code === "db") return bad(`The read succeeded but saving it failed: ${updErr?.message ?? saved.error}`, 500);
+  if (!saved.ok) {
     return bad(besideTypedTotal
       ? "This document was decided, read, or its total changed while it was being read — nothing was changed. Refresh to see the latest."
       : "This document was decided, or its total typed by hand, while it was being read — nothing was changed. Refresh to see the latest.", 409);

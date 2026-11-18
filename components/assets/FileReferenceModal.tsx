@@ -25,6 +25,7 @@ import {
 } from "@/lib/assets";
 import DocumentLinkPicker from "@/components/documents/DocumentLinkPicker";
 import { appAlert } from "@/components/providers/DialogProvider";
+import { userFacingCaughtError } from "@/lib/userFacingError";
 
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
@@ -148,7 +149,13 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
     setAsset(a);
     await loadFiles();
   };
-  const handleUnlink = async (id: string) => { await unlinkAssetFile(id); await loadFiles(); };
+  // An unlink the database refused (or an error) is said, never an unhandled
+  // rejection; the list is re-read either way, so it shows what is linked.
+  const handleUnlink = async (id: string) => {
+    try { await unlinkAssetFile(id); }
+    catch (e) { await appAlert({ message: `The drawing was not unlinked: ${userFacingCaughtError(e, { context: "FileReferenceModal" })}`, tone: "danger" }); }
+    await loadFiles();
+  };
 
   // Print every linked drawing as ONE stamped (uncontrolled) PDF — the file-stack
   // counterpart to the collection book's "Print all".
@@ -161,6 +168,10 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
   // the print tab is open and the record written, the print is settled with
   // exactly the sheets in the PDF (fired, never awaited); when nothing left
   // (no page, the tab blocked, a failure) the whole print is voided.
+  // EVID-15 (projects-joint J15c): the distribution record's insert is
+  // awaited and its { error } read; a refused or failed record never blocks
+  // the copy — it is logged and said AFTER it (the tab open, the settle
+  // sent), in MultiDocViewer's words (EGR-6, DEC-44's member-writer rule).
   const printAll = async () => {
     const docs = files.map((f) => f.document).filter(Boolean) as LinkedDocument[];
     if (docs.length === 0 || printing) return;
@@ -213,14 +224,32 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
         return;
       }
       w.addEventListener("load", () => setTimeout(() => w.print(), 250));
+      let unrecorded = 0;
       try {
         if (userId) {
           const rows = docs.map((d) => ({ org_id: orgId, document_id: d.id, version_id: d.current_version_id ?? null, user_id: userId, user_email: email ?? null, created_at: now.toISOString(), expires_at: expiresAt.toISOString(), watermark_policy_id: null }));
-          try { await supabase.from("download_audits").insert(rows); } catch (e) { console.error(e); }
+          try {
+            const { error } = await supabase.from("download_audits").insert(rows);
+            if (error) {
+              console.error("[download_audits] REFUSED — these linked drawings are missing from the distribution record:", error.message);
+              unrecorded = rows.length;
+            }
+          } catch (e) {
+            console.error("[download_audits] insert failed — these linked drawings are missing from the distribution record:", e);
+            unrecorded = rows.length;
+          }
         }
       } finally {
         // PS-P9: the print tab is open — every sheet not in the PDF is voided.
         settleTokens(printed);
+      }
+      // EVID-15: said after the copy left, never awaited (the print goes on).
+      if (unrecorded > 0) {
+        void appAlert({
+          message: `The drawings were sent to print, but ${unrecorded} sheet${unrecorded === 1 ? " is" : "s are"} NOT on the distribution record (the record write was refused), `
+            + "so they will not be recalled if the drawings change. Tell Document Control.",
+          tone: "danger",
+        });
       }
     } finally {
       // PS-P9: nothing left (no page, a failure before the tab) — void the print.

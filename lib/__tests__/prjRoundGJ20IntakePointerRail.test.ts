@@ -128,7 +128,8 @@ describe("projects-tab SEC-22 limb (c) (J20) — the Intake tab says the intake 
 
   it("regression: a first set the rail admits creates the link exactly as before", async () => {
     db.byOp["projects.select"] = { data: { intake_library_id: null, intake_collection_id: null }, error: null };
-    db.byOp["projects.update"] = { data: null, error: null };
+    // the UPDATE answers its matched row, as PostgREST does to .select("id") (J15c: checked)
+    db.byOp["projects.update"] = { data: [{ id: "p1" }], error: null };
     db.byOp["project_intake_links.insert"] = { data: { id: "link-9" }, error: null };
     db.byOp["audit_logs.insert"] = { data: null, error: null };
     await render();

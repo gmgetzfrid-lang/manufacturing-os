@@ -425,7 +425,8 @@ describe("limb (c) — the rail on the intake pointers", () => {
   });
   it("regression: the Intake tab writes the library only while it is unset — a first set the rail never refuses for a library of the workspace", () => {
     const panel = readFileSync(join(root, "components/projects/IntakePanel.tsx"), "utf8");
-    expect(panel).toContain('if (!intakeLibraryId) {\n        const { error: libErr } = await supabase.from("projects").update({ intake_library_id: lib }).eq("id", projectId);');
+    // (J15c, SAF-18: the same write, read through checkedWrite)
+    expect(panel).toContain('if (!intakeLibraryId) {\n        const kept: Kept = {};\n        const w = await checkedWrite(answered(supabase.from("projects").update({ intake_library_id: lib }).eq("id", projectId).select("id"), kept));');
     // the move limb needs a SET pointer (v_old_lib IS NOT NULL)
     expect(r()).toContain("AND ((v_old_lib IS NOT NULL AND NEW.intake_library_id IS DISTINCT FROM v_old_lib)");
   });

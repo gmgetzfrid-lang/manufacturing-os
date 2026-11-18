@@ -132,6 +132,8 @@
 
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, type Kept } from "@/lib/checkedWriteKeep";
 import { afterResponsePush } from "@/lib/push/afterResponsePush";
 import { afterResponseNoticeRecord } from "@/lib/noticeRecordAfterResponse";
 import { PutObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
@@ -644,22 +646,29 @@ async function ensureIntakeFolder(input: {
     .select("id").single();
   if (colErr || !col) return { error: `intake folder insert: ${colErr?.message ?? "no row"}` };
   const colId = String((col as { id: string }).id);
-  const claim = supabaseAdmin
-    .from("projects").update({ intake_collection_id: colId })
-    .eq("id", input.projectId);
-  const { data: claimed, error: claimErr } = await (stale
-    ? claim.eq("intake_collection_id", stale)
-    : claim.is("intake_collection_id", null)
-  ).select("id");
-  if (claimErr) {
-    await supabaseAdmin.from("collections").delete().eq("id", colId);
-    return { error: `intake folder pointer write: ${claimErr.message}` };
+  // The claim is a compare-and-set (checked, SAF-18): a match is ours; no
+  // match is another first submission's claim, settled below.
+  const claimKept: Kept = {};
+  const pointer = { intake_collection_id: colId };
+  const claim = await checkedWrite(answered((stale
+    ? supabaseAdmin.from("projects").update(pointer).eq("id", input.projectId).eq("intake_collection_id", stale)
+    : supabaseAdmin.from("projects").update(pointer).eq("id", input.projectId).is("intake_collection_id", null)
+  ).select("id"), claimKept));
+  // The folder clean-ups below are DEC-90 class (c): this request made the
+  // folder, so a delete that matches nothing has nothing left to remove; a
+  // database error is logged, never silent (SAF-18).
+  if (!claim.ok && claim.code === "db") {
+    const kept: Kept = {};
+    const drop = await checkedWrite(answered(supabaseAdmin.from("collections").delete().eq("id", colId).select("id"), kept));
+    if (!drop.ok && drop.code === "db") console.error(`[intake/upload] unused intake folder ${colId} could not be removed: ${kept.r?.error?.message ?? drop.error}`);
+    return { error: `intake folder pointer write: ${claimKept.r?.error?.message ?? claim.error}` };
   }
-  if ((claimed as unknown[] | null)?.length) return { id: colId };
+  if (claim.ok) return { id: colId };
   // Another first submission claimed the pointer between our read and
   // write — drop the folder we made and file into theirs.
-  const { error: dropErr } = await supabaseAdmin.from("collections").delete().eq("id", colId);
-  if (dropErr) console.error(`[intake/upload] duplicate intake folder ${colId} could not be removed: ${dropErr.message}`);
+  const dropKept: Kept = {};
+  const dropped = await checkedWrite(answered(supabaseAdmin.from("collections").delete().eq("id", colId).select("id"), dropKept));
+  if (!dropped.ok && dropped.code === "db") console.error(`[intake/upload] duplicate intake folder ${colId} could not be removed: ${dropKept.r?.error?.message ?? dropped.error}`);
   const { data: again, error: againErr } = await supabaseAdmin
     .from("projects").select("intake_collection_id").eq("id", input.projectId).maybeSingle();
   const winner = (again as { intake_collection_id?: string | null } | null)?.intake_collection_id ?? null;
@@ -792,23 +801,26 @@ async function retireDisplacedFirst(input: { displacedId: string; nowIso: string
   const viaDb = await housekeepRetried(input.door, "retire", { doc: input.documentId, version: input.displacedId, at: input.nowIso });
   if (viaDb.kind === "ok") return Number(viaDb.data ?? 0) > 0 ? "retired" : "decided";
   if (viaDb.kind === "error") return { error: `displaced submission retire: ${viaDb.error.message ?? viaDb.error.code ?? "refused"}`, refused: viaDb.error };
+  // Checked (SAF-18), DEC-90 class (c): a compare-and-set that matches no
+  // row is the draft a reviewer decided meanwhile ("decided"), never an error.
   const attempt = async () => {
-    let r = await supabaseAdmin.from("document_versions")
+    const kept: Kept = {};
+    let w = await checkedWrite(answered(supabaseAdmin.from("document_versions")
       .update({ review_state: "superseded", superseded_at: input.nowIso })
       .eq("id", input.displacedId).eq("review_state", "in_review").is("superseded_at", null)
-      .select("id");
-    if (r.error && String(r.error.code ?? "") === "23514") {
-      r = await supabaseAdmin.from("document_versions")
+      .select("id"), kept));
+    if (!w.ok && w.code === "db" && String(kept.r?.error?.code ?? "") === "23514") {
+      w = await checkedWrite(answered(supabaseAdmin.from("document_versions")
         .update({ superseded_at: input.nowIso })
         .eq("id", input.displacedId).eq("review_state", "in_review").is("superseded_at", null)
-        .select("id");
+        .select("id"), kept));
     }
-    return r;
+    return { w, message: kept.r?.error?.message ?? (w.ok ? "" : w.error) };
   };
   let r = await attempt();
-  if (r.error) r = await attempt();
-  if (r.error) return { error: `displaced submission retire: ${r.error.message}` };
-  return ((r.data as unknown[] | null)?.length ?? 0) > 0 ? "retired" : "decided";
+  if (!r.w.ok && r.w.code === "db") r = await attempt();
+  if (!r.w.ok && r.w.code === "db") return { error: `displaced submission retire: ${r.message}` };
+  return r.w.ok ? "retired" : "decided";
 }
 
 /** Undo retireDisplacedFirst when the replacement did not land (its insert
@@ -829,13 +841,18 @@ async function restoreDisplaced(ref: string, input: {
   // failure, as below; a refusal is recorded below exactly as a failed
   // restore is, and never retried as the service role.
   const viaDb = await housekeepRetried(input.door, "restore", { doc: input.documentId, version: input.displacedId, at: input.nowIso });
-  const attempt = async () => {
-    const a = await supabaseAdmin.from("document_versions")
-      .update({ superseded_at: null }).eq("id", input.displacedId).eq("superseded_at", input.nowIso);
-    if (a.error) return a.error;
-    const b = await supabaseAdmin.from("document_versions")
-      .update({ review_state: "in_review" }).eq("id", input.displacedId).eq("review_state", "superseded");
-    return b.error;
+  // Checked (SAF-18), DEC-90 class (c): each compare-and-set may match no
+  // row (a reviewer's decision meanwhile keeps its state) — only a database
+  // error is a failed restore.
+  const attempt = async (): Promise<{ message: string } | null> => {
+    const kept: Kept = {};
+    const a = await checkedWrite(answered(supabaseAdmin.from("document_versions")
+      .update({ superseded_at: null }).eq("id", input.displacedId).eq("superseded_at", input.nowIso).select("id"), kept));
+    if (!a.ok && a.code === "db") return { message: kept.r?.error?.message ?? a.error };
+    const b = await checkedWrite(answered(supabaseAdmin.from("document_versions")
+      .update({ review_state: "in_review" }).eq("id", input.displacedId).eq("review_state", "superseded").select("id"), kept));
+    if (!b.ok && b.code === "db") return { message: kept.r?.error?.message ?? b.error };
+    return null;
   };
   let err: { message: string } | null = null;
   if (viaDb.kind === "ok") return;
@@ -1432,18 +1449,23 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
     }
     let current = ticket as { attachments?: unknown; history?: unknown; last_modified?: string | null; archived_at?: string | null };
     for (let attempt = 0; attempt < 2 && !attached; attempt++) {
-      let cas = supabaseAdmin.from("tickets").update({
+      const patch = {
         attachments: [...((current.attachments as unknown[] | null) ?? []), attachment],
         history: [...((current.history as unknown[] | null) ?? []), historyEntry],
         last_modified: nowIso,
-      }).eq("id", ticketId).eq("org_id", orgId).is("archived_at", null);
-      cas = current.last_modified ? cas.eq("last_modified", current.last_modified) : cas.is("last_modified", null);
-      const { data: casRows, error: updErr } = await cas.select("id");
-      if (updErr) {
+      };
+      // Checked (SAF-18): a compare-and-set that matched no row lost the race
+      // (or the ticket was archived) — re-read and try again, below.
+      const kept: Kept = {};
+      const cas = await checkedWrite(answered((current.last_modified
+        ? supabaseAdmin.from("tickets").update(patch).eq("id", ticketId).eq("org_id", orgId).is("archived_at", null).eq("last_modified", current.last_modified)
+        : supabaseAdmin.from("tickets").update(patch).eq("id", ticketId).eq("org_id", orgId).is("archived_at", null).is("last_modified", null)
+      ).select("id"), kept));
+      if (!cas.ok && cas.code === "db") {
         await deleteObject(ref, key);
-        return fail("Couldn't attach the redline — try again shortly.", 500, `ticket update: ${updErr.message}`);
+        return fail("Couldn't attach the redline — try again shortly.", 500, `ticket update: ${kept.r?.error?.message ?? cas.error}`);
       }
-      if (((casRows as unknown[] | null) ?? []).length > 0) { attached = true; break; }
+      if (cas.ok) { attached = true; break; }
       const { data: fresh, error: reErr } = await supabaseAdmin.from("tickets")
         .select("attachments, history, last_modified, archived_at").eq("id", ticketId).eq("org_id", orgId).maybeSingle();
       if (reErr || !fresh) break;
@@ -1768,7 +1790,13 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
       const viaDb = await housekeepVia(housekeeping, "discard", { doc: createdDocId });
       let dropErr: { message?: string } | null = null;
       if (viaDb.kind === "error") dropErr = { message: `${viaDb.error.code ?? ""} ${viaDb.error.message ?? ""}`.trim() };
-      else if (viaDb.kind === "absent") ({ error: dropErr } = await supabaseAdmin.from("documents").delete().eq("id", createdDocId).eq("org_id", orgId));
+      else if (viaDb.kind === "absent") {
+        // DEC-90 class (c): a delete that matches nothing has nothing left
+        // to remove; only a database error is logged as a failed one.
+        const kept: Kept = {};
+        const drop = await checkedWrite(answered(supabaseAdmin.from("documents").delete().eq("id", createdDocId).eq("org_id", orgId).select("id"), kept));
+        if (!drop.ok && drop.code === "db") dropErr = { message: kept.r?.error?.message ?? drop.error };
+      }
       if (dropErr) console.error(`[intake/upload] ref=${ref} unused document ${createdDocId} could not be removed: ${dropErr.message}`);
       createdDocId = null;
     }
@@ -1893,11 +1921,15 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
       let wErr: { message?: string; code?: string } | null = null;
       if (viaDb.kind === "error") wErr = { message: `${viaDb.error.code ?? ""} ${viaDb.error.message ?? ""}`.trim() };
       else if (viaDb.kind === "absent") {
-        ({ error: wErr } = await supabaseAdmin.from("document_versions")
-          .update({ review_state: "superseded", superseded_at: nowIso }).eq("id", versionId));
-        if (wErr && String(wErr.code ?? "") === "23514") {
-          ({ error: wErr } = await supabaseAdmin.from("document_versions").update({ superseded_at: nowIso }).eq("id", versionId));
+        // Checked (SAF-18), DEC-90 class (b): a withdraw that matched no row
+        // did not resolve the version — logged below like a failed write.
+        const kept: Kept = {};
+        let w = await checkedWrite(answered(supabaseAdmin.from("document_versions")
+          .update({ review_state: "superseded", superseded_at: nowIso }).eq("id", versionId).select("id"), kept));
+        if (!w.ok && w.code === "db" && String(kept.r?.error?.code ?? "") === "23514") {
+          w = await checkedWrite(answered(supabaseAdmin.from("document_versions").update({ superseded_at: nowIso }).eq("id", versionId).select("id"), kept));
         }
+        if (!w.ok) wErr = { message: kept.r?.error?.message ?? w.error, code: kept.r?.error?.code ?? undefined };
       }
       if (wErr) console.error(`[intake/upload] ref=${ref} withdrawn submission ${versionId} not resolved: ${wErr.message}`);
     }
@@ -1911,8 +1943,11 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
     // provenance so the portal register and the review queue see it (the
     // door's promote already did, in the publish's own transaction — J16).
     if (!provenanceStamped) {
-      const { error: stampErr } = await supabaseAdmin.from("document_versions").update({ intake_link_id: linkId }).eq("id", versionId);
-      if (stampErr) console.error(`[intake/upload] ref=${ref} provenance stamp failed on ${versionId}: ${stampErr.message}`);
+      // Checked (SAF-18), DEC-90 class (b): a stamp that matched no row is
+      // logged as failed, never taken as stamped.
+      const kept: Kept = {};
+      const stamp = await checkedWrite(answered(supabaseAdmin.from("document_versions").update({ intake_link_id: linkId }).eq("id", versionId).select("id"), kept));
+      if (!stamp.ok) console.error(`[intake/upload] ref=${ref} provenance stamp failed on ${versionId}: ${kept.r?.error?.message ?? stamp.error}`);
     }
     // No pending submission is displaced here: a trusted link with its own
     // submission still awaiting review never auto-publishes (INTK-1 dw3) —

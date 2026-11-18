@@ -14,6 +14,8 @@ import {
   GitPullRequestArrow, Plus, Loader2, Check, X as XIcon, AlertTriangle, Undo2, UserRound,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, type Kept } from "@/lib/checkedWriteKeep";
 import { userFacingError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 import { fmtMoney, type CostAccount, type CostParty, type Actor } from "@/lib/costs";
 import {
@@ -75,9 +77,12 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
         message: `Approve ${co.coNumber} for ${fmtMoney(co.amount)}? This posts the money to "${postsTo}" immediately.`,
       }))) return;
       if (!co.costAccountId && accountId) {
-        const { error } = await supabase.from("change_orders").update({ cost_account_id: accountId })
-          .eq("id", co.id).eq("status", "proposed");
-        if (error) { setErr(userFacingError(error)); return; }
+        // Checked (SAF-18): an assignment that matched no row (decided
+        // meanwhile, or refused) stops the approval here, in words.
+        const kept: Kept = {};
+        const w = await checkedWrite(answered(supabase.from("change_orders").update({ cost_account_id: accountId })
+          .eq("id", co.id).eq("status", "proposed").select("id"), kept));
+        if (!w.ok) { setErr(w.code === "db" && kept.r?.error ? userFacingError(kept.r.error) : w.error); return; }
         target = { ...co, costAccountId: accountId };
       }
     }

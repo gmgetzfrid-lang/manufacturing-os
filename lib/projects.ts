@@ -14,6 +14,8 @@ import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { logAuditAction } from "@/lib/audit";
 import { auditActorNote } from "@/lib/auditActions";
 import { notify, notifyMany, notifyBatchChecked } from "@/lib/inAppNotifications";
+import { checkedWrite, type CheckedWriteFailure } from "@/lib/checkedWrite";
+import { answered, type Kept } from "@/lib/checkedWriteKeep";
 import {
   ensureActiveEpisode,
   postEpisodeSystemMessage,
@@ -231,6 +233,18 @@ export async function writeActivityChecked(input: WriteActivityInput): Promise<v
  *  thrown AFTER everything else the change owes (audit, notices) is done. */
 function savedButNotRecorded(what: string, activityError: string): Error {
   return new Error(`${what} — saved, but the project feed row was not written: ${activityError.replace(/^The project activity row was not written: /, "")}`);
+}
+
+/** projects-joint J15c (SAF-18): the words for a follow-on write that
+ *  matched no row after part of the act had already landed — never
+ *  "Nothing was changed", which would contradict what did. */
+const NOT_APPLIED = "the database did not change it (you may not be allowed to, or someone else changed it first)";
+
+/** projects-joint J15c (SAF-18, DEC-90): a failed checked write in words —
+ *  the database's own sentence, as this file gave it before, for an error;
+ *  CHECKED_WRITE_REFUSED for a write that matched no row. */
+function failureText(w: CheckedWriteFailure, kept: Kept, opts: { embed?: boolean } = {}): string {
+  return w.code === "db" && kept.r?.error ? userFacingError(kept.r.error, { context: "projects", ...opts }) : w.error;
 }
 
 // ─── LIST PROJECTS ───────────────────────────────────────────────────────
@@ -765,26 +779,35 @@ export async function releaseAllCheckoutsForProject(params: {
   };
   type EndedRow = { id: string; document_id: string; user_id: string; user_name: string | null };
   const endSessions = async (ids: string[]): Promise<{ ended: EndedRow[]; error: { message: string; code?: string } | null }> => {
-    const run = (payload: Record<string, unknown>) =>
-      supabase
+    // Checked (SAF-18): the rows that come back are the sessions ended — the
+    // only rows audit rows and the outcome are built from. A matched-nothing
+    // verdict is not an error here; each caller below says what it means.
+    const run = async (payload: Record<string, unknown>) => {
+      const kept: Kept = {};
+      const w = await checkedWrite(answered(supabase
         .from("checkout_sessions")
         .update(payload)
         .in("id", ids)
         .eq("status", "active")
-        .select("id, document_id, user_id, user_name");
+        .select("id, document_id, user_id, user_name"), kept));
+      const error = kept.r?.error ?? (!w.ok && w.code === "db" ? { message: w.error } : null);
+      return { data: w.ok ? kept.r?.data : [], error };
+    };
     let { data, error } = await run({ ...basePayload, outcome: "auto_released", outcome_note: params.reason });
     if (error) {
       const { isMissingOutcomeSchema } = await import("@/lib/checkoutEpisodes");
       // Pre-20261012 environment: record the check-in without the register columns.
       if (isMissingOutcomeSchema(error)) ({ data, error } = await run(basePayload));
     }
-    return { ended: ((data ?? []) as EndedRow[]), error: error ? { message: error.message, code: (error as { code?: string }).code } : null };
+    return { ended: ((data ?? []) as EndedRow[]), error: error ? { message: error.message, code: (error as { code?: string | null }).code ?? undefined } : null };
   };
 
   const endedRows: EndedRow[] = [];
   const stillHeld: StillHeldCheckout[] = [];
 
   // The actor's own sessions: one statement — the guard never refuses these.
+  // DEC-90 class (c): fewer rows than asked is a session that was checked in
+  // meanwhile (the status predicate) — only what came back is reported ended.
   const own = rows.filter((r) => String(r.user_id) === String(params.actorUserId));
   // In batches of IN_FILTER_CHUNK ids: a longer `.in("id", …)` list can
   // exceed the API gateway's URL limit.
@@ -798,6 +821,16 @@ export async function releaseAllCheckoutsForProject(params: {
     const res = await endSessions([r.id]);
     if (res.error) {
       stillHeld.push({ sessionId: r.id, documentId: r.document_id, userId: r.user_id, userName: r.user_name, reason: userFacingError(res.error, { context: "projects" }) });
+      continue;
+    }
+    // SAF-18: a release that matched no row did not end the session. The
+    // session is read again: one its holder checked in meanwhile (no longer
+    // active) is no error (DEC-90 class c) and is left out; one still active,
+    // or one that cannot be read, is reported held — never dropped.
+    if (res.ended.length === 0) {
+      const { data: now, error: nowErr } = await supabase.from("checkout_sessions").select("status").eq("id", r.id).maybeSingle();
+      if (!nowErr && now && (now as { status?: string | null }).status !== "active") continue;
+      stillHeld.push({ sessionId: r.id, documentId: r.document_id, userId: r.user_id, userName: r.user_name, reason: `The release was not applied: ${NOT_APPLIED}.` });
       continue;
     }
     endedRows.push(...res.ended);
@@ -1052,11 +1085,13 @@ export async function attachCheckoutToProject(input: {
   actorUserId: string;
   actorEmail?: string;
 }): Promise<void> {
-  const { error } = await supabase
+  const kept: Kept = {};
+  const w = await checkedWrite(answered(supabase
     .from("checkout_sessions")
     .update({ project_id: input.projectId })
-    .eq("id", input.checkoutSessionId);
-  if (error) throw new Error(userFacingError(error, { context: "projects" }));
+    .eq("id", input.checkoutSessionId)
+    .select("id"), kept));
+  if (!w.ok) throw new Error(failureText(w, kept));
   const activityError = await writeActivity({
     projectId: input.projectId,
     orgId: input.orgId,
@@ -1117,9 +1152,10 @@ export async function addMember(input: {
 }
 
 /**
- * Remove a member from a project. Idempotent — removing someone who
- * isn't a member is a no-op. Owner of the project cannot remove
+ * Remove a member from a project. Owner of the project cannot remove
  * themselves; callers must transfer ownership first (separate flow).
+ * Checked (SAF-18): a delete that matched no row — refused, or the member
+ * already gone — is said, and writes no feed row, audit row or notice.
  */
 export async function removeMember(input: {
   projectId: string;
@@ -1136,12 +1172,14 @@ export async function removeMember(input: {
   if (proj.ownerUserId === input.userId) {
     throw new Error("Can't remove the project owner. Transfer ownership first.");
   }
-  const { error } = await supabase
+  const kept: Kept = {};
+  const w = await checkedWrite(answered(supabase
     .from("project_members")
     .delete()
     .eq("project_id", input.projectId)
-    .eq("user_id", input.userId);
-  if (error) throw new Error(userFacingError(error, { context: "projects" }));
+    .eq("user_id", input.userId)
+    .select("id"), kept));
+  if (!w.ok) throw new Error(failureText(w, kept));
   const activityError = await writeActivity({
     projectId: input.projectId,
     orgId: input.orgId,
@@ -1311,7 +1349,7 @@ export async function deleteProject(input: {
   projectId: string; actorUserId: string; actorEmail?: string; actorRole?: string;
   /** Required by the database when the project carries cost / quality records. */
   reason?: string;
-}): Promise<{ counts: Record<string, unknown> | null }> {
+}): Promise<{ counts: Record<string, unknown> | null; warning?: string }> {
   const p = await assertCanManageProject(input.projectId, input.actorUserId);
   const { data, error } = await supabase.rpc("delete_project_record", {
     p_project: input.projectId,
@@ -1334,7 +1372,7 @@ export async function deleteProject(input: {
 async function legacyDeleteRecordlessProject(
   p: ManagedProject,
   input: { projectId: string; actorUserId: string; actorEmail?: string; actorRole?: string },
-): Promise<{ counts: Record<string, unknown> | null }> {
+): Promise<{ counts: Record<string, unknown> | null; warning?: string }> {
   const counts = await countProjectRecords(input.projectId);
   const regulated = regulatedRecordTotal(counts);
   if (regulated === null || regulated > 0) {
@@ -1354,16 +1392,33 @@ async function legacyDeleteRecordlessProject(
   }
   // milestones.project_id is ON DELETE SET NULL — the schedule goes with the project.
   let scheduleError: string | null = null;
+  // Checked (SAF-18): every task read above must come back from the DELETE.
+  // The project's deletion has LANDED by now, so a shortfall (the delete
+  // guard filtered tasks out) is recorded and returned as a warning the page
+  // shows after it leaves the deleted project — never thrown over a delete
+  // that happened. A database error throws, as before.
+  let scheduleShortfall: string | null = null;
   if (milestoneIds.length > 0) {
-    const { error: mdErr } = await supabase.from("milestones").delete().in("id", milestoneIds);
-    if (mdErr) scheduleError = userFacingError(mdErr, { context: "projects", embed: true });
+    const kept: Kept = {};
+    const w = await checkedWrite(answered(supabase.from("milestones").delete().in("id", milestoneIds).select("id"), kept));
+    if (!w.ok && w.code === "db") scheduleError = failureText(w, kept, { embed: true });
+    else {
+      const removed = w.ok ? w.ids.length : 0;
+      if (removed < milestoneIds.length) scheduleShortfall = `the database removed ${removed} of ${milestoneIds.length} (you may not be allowed to delete them, or someone else changed them first)`;
+    }
   }
   await logAuditAction({
     action: "PROJECT_DELETED", resourceId: input.projectId, resourceType: "project",
     orgId: p.orgId, userId: input.actorUserId, userEmail: input.actorEmail, userRole: input.actorRole,
-    details: { name: p.name, counts, path: "pre-20261103", ...(scheduleError ? { scheduleError } : {}) },
+    details: { name: p.name, counts, path: "pre-20261103", ...((scheduleError ?? scheduleShortfall) ? { scheduleError: scheduleError ?? scheduleShortfall } : {}) },
   });
   if (scheduleError) throw new Error(`The project was deleted, but its ${milestoneIds.length} schedule task(s) were not: ${scheduleError}`);
+  if (scheduleShortfall) {
+    return {
+      counts: counts as unknown as Record<string, unknown>,
+      warning: `The project was deleted, but not all of its ${milestoneIds.length} schedule task(s) were: ${scheduleShortfall}. The tasks left no longer belong to a project — ask an Admin or Document Control to remove them.`,
+    };
+  }
   return { counts: counts as unknown as Record<string, unknown> };
 }
 
@@ -1424,9 +1479,18 @@ async function legacyTransferOwnership(
   }, { onConflict: "project_id,user_id" });
   if (upErr) throw new Error(`Ownership moved, but the roster was not updated: ${userFacingError(upErr, { context: "projects", embed: true })}`);
   if (String(p.ownerUserId) !== String(input.newOwnerUserId)) {
-    const { error: dErr } = await supabase.from("project_members").update({ role: "collaborator" })
-      .eq("project_id", input.projectId).eq("user_id", p.ownerUserId).eq("role", "owner");
-    if (dErr) throw new Error(`Ownership moved, but the previous owner's roster row was not updated: ${userFacingError(dErr, { context: "projects", embed: true })}`);
+    const kept: Kept = {};
+    const w = await checkedWrite(answered(supabase.from("project_members").update({ role: "collaborator" })
+      .eq("project_id", input.projectId).eq("user_id", p.ownerUserId).eq("role", "owner").select("id"), kept));
+    if (!w.ok && w.code === "db") throw new Error(`Ownership moved, but the previous owner's roster row was not updated: ${failureText(w, kept, { embed: true })}`);
+    if (!w.ok) {
+      // Zero rows: a previous owner with no 'owner' roster row is the no-op
+      // (nothing to demote); one whose row still says 'owner' was refused.
+      const { data: still, error: stillErr } = await supabase.from("project_members").select("id")
+        .eq("project_id", input.projectId).eq("user_id", p.ownerUserId).eq("role", "owner").maybeSingle();
+      if (stillErr) throw new Error(`Ownership moved, but whether the previous owner's roster row was updated could not be checked: ${userFacingReadError(stillErr, "projects")}`);
+      if (still) throw new Error(`Ownership moved, but the previous owner's roster row was not updated: ${NOT_APPLIED}. Reload the project to check its team.`);
+    }
   }
   const activityError = await writeActivity({
     projectId: input.projectId, orgId: p.orgId, userId: input.actorUserId, userName: input.actorEmail,
@@ -1458,9 +1522,10 @@ export async function updateMember(input: {
   if (input.role !== undefined) patch.role = input.role;
   if (input.responsibility !== undefined) patch.responsibility = input.responsibility?.trim() || null;
   if (Object.keys(patch).length === 0) return;
-  const { error } = await supabase.from("project_members").update(patch)
-    .eq("project_id", input.projectId).eq("user_id", input.userId);
-  if (error) throw new Error(userFacingError(error, { context: "projects" }));
+  const kept: Kept = {};
+  const w = await checkedWrite(answered(supabase.from("project_members").update(patch)
+    .eq("project_id", input.projectId).eq("user_id", input.userId).select("id"), kept));
+  if (!w.ok) throw new Error(failureText(w, kept));
 }
 
 // ─── AUDIENCE FAN-OUT ────────────────────────────────────────────────────
@@ -1534,8 +1599,10 @@ export async function updateProjectMeta(input: {
   if (input.patch.targetCompletionDate !== undefined) update.target_completion_date = input.patch.targetCompletionDate || null;
   if (input.patch.visibility !== undefined) update.visibility = input.patch.visibility;
   if (input.patch.linkedTicketId !== undefined) update.linked_ticket_id = input.patch.linkedTicketId || null;
-  const { error } = await supabase.from("projects").update(update).eq("id", input.projectId);
-  if (error) throw new Error(userFacingError(error, { context: "projects" }));
+  // Checked (SAF-18): a refused edit writes no feed row and no PROJECT_UPDATED.
+  const kept: Kept = {};
+  const w = await checkedWrite(answered(supabase.from("projects").update(update).eq("id", input.projectId).select("id"), kept));
+  if (!w.ok) throw new Error(failureText(w, kept));
 
   const activityError = await writeActivity({
     projectId: input.projectId, orgId: proj.orgId,
@@ -1784,16 +1851,19 @@ export async function bulkCheckoutToProject(input: BulkCheckoutInput): Promise<B
       continue;
     }
 
-    // Update the documents pointer (best-effort)
+    // Update the documents pointer (best-effort). DEC-90 class (b): the
+    // session row above is the checkout; a pointer the database refused is
+    // logged, never taken as written, and never fails the checkout.
     const newCollaborators = Array.from(new Set([...(doc.activeCollaborators ?? []), userName]));
-    await supabase.from("documents").update({
+    const pointer = await checkedWrite(supabase.from("documents").update({
       checked_out_by: input.actorUserId,
       checked_out_by_name: userName,
       checked_out_at: now,
       checkout_note: input.purpose || null,
       current_lock_id: lockId,
       active_collaborators: newCollaborators,
-    }).eq("id", doc.id);
+    }).eq("id", doc.id).select("id"));
+    if (!pointer.ok) console.warn(`[bulkCheckout] the checkout pointer on document ${doc.id} was not written: ${pointer.error}`);
 
     // Open the episode's visible record in the thread.
     await postEpisodeSystemMessage({

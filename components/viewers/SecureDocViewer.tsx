@@ -80,16 +80,27 @@ export default function SecureDocViewer({
     // known (SESS-6, DEC-91 §1: activeRole is null until membership
     // resolves) — never a placeholder role on an audit row. logFileView
     // takes the role as a required string, so the row is written here.
-    logAuditAction({
-      action: 'VIEW',
-      resourceId: documentId,
-      resourceType: 'document',
-      orgId,
-      userId: uid,
-      userEmail: userEmail || 'unknown',
-      userRole: activeRole ?? undefined,
-      details: { fileName: title },
-    }).catch(e => console.error("Audit log failed", e));
+    // EVID-15 (projects-joint J15c): in its own task, so the document never
+    // waits on it; awaited there and its outcome read — a refused row
+    // ({ ok: false }) is logged as refused and a throw as failed, never a
+    // silent success.
+    void (async () => {
+      try {
+        const viewed = await logAuditAction({
+          action: 'VIEW',
+          resourceId: documentId,
+          resourceType: 'document',
+          orgId,
+          userId: uid,
+          userEmail: userEmail || 'unknown',
+          userRole: activeRole ?? undefined,
+          details: { fileName: title },
+        });
+        if (!viewed.ok) console.error("[audit] VIEW row REFUSED — this view is missing from the document's audit trail:", viewed.error);
+      } catch (e) {
+        console.error("[audit] VIEW row failed — this view is missing from the document's audit trail:", e);
+      }
+    })();
 
     // View intent (fire-and-forget) — the ambient work-in-progress layer.
     void recordIntent({

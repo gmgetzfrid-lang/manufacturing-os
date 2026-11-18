@@ -5,6 +5,8 @@
 
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, type Kept } from "@/lib/checkedWriteKeep";
 
 export interface Team {
   id: string;
@@ -199,8 +201,12 @@ export async function deleteTeam(teamId: string, ctx?: { orgId?: string | null; 
   if (ctx?.orgId) {
     const { data: libs } = await supabase.from("libraries").select("id, name").eq("org_id", ctx.orgId).eq("owner_team_id", teamId);
     for (const l of ((libs ?? []) as Array<{ id: string; name: string }>)) {
-      const { error: clrErr } = await supabase.from("libraries").update({ owner_team_id: null }).eq("id", l.id);
-      if (clrErr) throw new Error(`Team not deleted: library "${l.name}" is still owned by it and could not be released (${clrErr.message}).`);
+      // Checked (SAF-18): a release that matched no row stops the delete, and
+      // no OWNER_TEAM_CLEARED row claims it.
+      const kept: Kept = {};
+      const w = await checkedWrite(answered(supabase.from("libraries").update({ owner_team_id: null }).eq("id", l.id).select("id"), kept));
+      // (a library released before it stays released — so no "Nothing was changed" here)
+      if (!w.ok) throw new Error(`Team not deleted: library "${l.name}" is still owned by it and could not be released (${kept.r?.error?.message ?? (w.code === "refused" ? "the database did not change it — you may not be allowed to, or someone else changed it first" : w.error.replace(/\.$/, ""))}).`);
       await logAuditAction({
         action: "OWNER_TEAM_CLEARED", resourceType: "library", resourceId: l.id,
         orgId: ctx.orgId, userId: ctx.actorId ?? "unknown", userEmail: ctx.actorEmail ?? undefined,
@@ -208,8 +214,11 @@ export async function deleteTeam(teamId: string, ctx?: { orgId?: string | null; 
       }).catch(() => {});
     }
   }
-  const { error } = await supabase.from("teams").delete().eq("id", teamId);
-  if (error) throw error;
+  const kept: Kept = {};
+  const gone = await checkedWrite(answered(supabase.from("teams").delete().eq("id", teamId).select("id"), kept));
+  if (!gone.ok && kept.r?.error) throw kept.r.error;
+  // A delete that matched no row: refused, or the team is already gone — no TEAM_DELETED row.
+  if (!gone.ok) throw new Error(`Team not deleted: ${gone.error}`);
   if (ctx?.orgId) {
     await logAuditAction({
       action: "TEAM_DELETED", resourceType: "team", resourceId: teamId,
@@ -241,9 +250,11 @@ export async function addTeamMember(input: { teamId: string; uid: string; orgId:
 
 export async function removeTeamMember(teamId: string, uid: string, ctx?: TeamActorCtx): Promise<void> {
   // Checked delete: zero rows means refused or already gone — say so.
-  const { data, error } = await supabase.from("team_members").delete().eq("team_id", teamId).eq("uid", uid).select("uid");
-  if (error) throw error;
-  if (!data || data.length === 0) throw new Error("The member could not be removed from the team (not found or not permitted).");
+  // (team_members has no id column: its key is (team_id, uid).)
+  const kept: Kept = {};
+  const w = await checkedWrite(answered(supabase.from("team_members").delete().eq("team_id", teamId).eq("uid", uid).select("uid"), kept));
+  if (!w.ok && kept.r?.error) throw kept.r.error;
+  if (!w.ok) throw new Error("The member could not be removed from the team (not found or not permitted).");
   if (ctx) {
     await logAuditAction({
       action: "TEAM_MEMBER_REMOVED", resourceType: "team", resourceId: teamId, orgId: ctx.orgId,

@@ -33,6 +33,8 @@ import {
   FilePlus2, Search, RotateCcw,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { checkedWrite, type CheckedWriteFailure } from "@/lib/checkedWrite";
+import { answered, type Kept } from "@/lib/checkedWriteKeep";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { DECISION_TARGET } from "@/components/projects/decisionTarget";
 import {
@@ -50,6 +52,13 @@ import { notifyIntakeOutcome } from "@/lib/intakeOutcomeNotice";
 import { useRole } from "@/components/providers/RoleContext";
 import HeldSourceNotice from "@/components/documents/lifecycle/HeldSourceNotice";
 import type { ReviewControl } from "@/types/schema";
+
+/** projects-joint J15c (SAF-18, DEC-90): a failed checked write in words —
+ *  the database's own sentence, as this panel gave it before, for an error;
+ *  CHECKED_WRITE_REFUSED for a write that matched no row. */
+function failureText(w: CheckedWriteFailure, kept: Kept, opts?: Parameters<typeof userFacingError>[1]): string {
+  return w.code === "db" && kept.r?.error ? userFacingError(kept.r.error, opts) : w.error;
+}
 
 // SEC-5: the date picker works in the user's LOCAL calendar (the expiry
 // is that day's end, local time — intakeExpiryFor). A UTC date is a day
@@ -251,8 +260,9 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     setBusy("create"); setMsg(null);
     try {
       if (!intakeLibraryId) {
-        const { error: libErr } = await supabase.from("projects").update({ intake_library_id: lib }).eq("id", projectId);
-        if (libErr) throw new Error(`Couldn't set the intake library: ${userFacingError(libErr)}`);
+        const kept: Kept = {};
+        const w = await checkedWrite(answered(supabase.from("projects").update({ intake_library_id: lib }).eq("id", projectId).select("id"), kept));
+        if (!w.ok) throw new Error(`Couldn't set the intake library: ${failureText(w, kept)}`);
       }
       // SEC-19: the database stores only the token's SHA-256 (20261141) — this
       // is the one moment the address exists in full; it is shown below once.
@@ -366,9 +376,11 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
   const updateAssigned = async (l: IntakeLink, ids: string[], addedLabel?: string) => {
     setBusy(l.id); setMsg(null);
     try {
-      const { error } = await supabase.from("project_intake_links")
-        .update({ assigned_doc_ids: ids }).eq("id", l.id);
-      if (error) throw new Error(userFacingError(error, { context: "intake assignment" }));
+      // Checked (SAF-18): a refused assignment says so and audits nothing.
+      const kept: Kept = {};
+      const w = await checkedWrite(answered(supabase.from("project_intake_links")
+        .update({ assigned_doc_ids: ids }).eq("id", l.id).select("id"), kept));
+      if (!w.ok) throw new Error(failureText(w, kept, { context: "intake assignment" }));
       await supabase.from("audit_logs").insert({
         action: "INTAKE_ASSIGNMENT_CHANGED",
         resource_type: "project_intake_link", resource_id: l.id,
@@ -559,26 +571,38 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       }
       if (vErr) throw new Error(`Couldn't reject: ${userFacingError(vErr)}`);
       if (!vRows || vRows.length === 0) throw new Error("Couldn't reject: the write was refused.");
-      const { error: dErr } = await supabase.from("documents")
-        .update({ pending_version_id: null, updated_at: new Date().toISOString() }).eq("id", p.docId);
-      if (dErr) throw new Error(`Couldn't clear the pending revision: ${userFacingError(dErr)}`);
+      const dKept: Kept = {};
+      const dw = await checkedWrite(answered(supabase.from("documents")
+        .update({ pending_version_id: null, updated_at: new Date().toISOString() }).eq("id", p.docId).select("id"), dKept));
+      if (!dw.ok && dw.code === "db") throw new Error(`Couldn't clear the pending revision: ${failureText(dw, dKept)}`);
+      // The rejection above has LANDED (the version is 'rejected', and a retry
+      // would be refused). A pointer clear that matched no row — a per-document
+      // write deny (documents_deny_write_guard) that the version write is not
+      // under — is a follow-on that did not happen: it is said, and the
+      // rejection is still completed — sign-offs closed, INTAKE_REJECTED
+      // (naming the uncleared pointer), the company told (SAF-18, J15c review).
+      const pointerCleared = dw.ok;
       // RG-10: close out any sign-off rows on the rejected draft, so the daily
       // scan and the reviewers' inboxes stop chasing a draft nothing points at.
-      // Zero rows is the normal case (an intake draft has no roster).
-      const { error: voidErr } = await supabase.from("document_review_signoffs")
+      // Zero rows is the normal case (an intake draft has no roster) — DEC-90
+      // class (c): only a database error stops here.
+      const vKept: Kept = {};
+      const vw = await checkedWrite(answered(supabase.from("document_review_signoffs")
         .update({ status: "void", updated_at: new Date().toISOString() })
-        .eq("document_version_id", p.pendingVersionId).in("status", ["pending", "signed"]);
-      if (voidErr) throw new Error(`The submission was rejected, but its review sign-offs could not be closed out: ${userFacingError(voidErr, { embed: true })}`);
+        .eq("document_version_id", p.pendingVersionId).in("status", ["pending", "signed"]).select("id"), vKept));
+      if (!vw.ok && vw.code === "db") throw new Error(`The submission was rejected, but its review sign-offs could not be closed out: ${failureText(vw, vKept, { embed: true })}`);
       const { error: auditErr } = await supabase.from("audit_logs").insert({
         action: "INTAKE_REJECTED",
         resource_type: "document", resource_id: p.docId,
         org_id: orgId, user_id: uid, user_email: userEmail ?? null,
-        details: { projectId, versionId: p.pendingVersionId, revLabel: p.revLabel, company: p.company, reason: reason.trim() },
+        details: { projectId, versionId: p.pendingVersionId, revLabel: p.revLabel, company: p.company, reason: reason.trim(), ...(pointerCleared ? {} : { pendingPointerCleared: false }) },
       });
-      const shown = auditErr
+      const shown = !pointerCleared
+        ? `${p.label} Rev ${p.revLabel ?? ""} rejected, but its pending pointer could not be cleared: the database did not change the document (you may not be allowed to edit it, or someone else changed it first) — ask Document Control to clear it. The company sees the rejection, with your reason, on their portal.${auditErr ? ` Its audit record also failed: ${userFacingError(auditErr, { embed: true })}` : ""}`
+        : auditErr
         ? `${p.label} Rev ${p.revLabel ?? ""} rejected, but its audit record failed: ${userFacingError(auditErr, { embed: true })}`
         : `${p.label} Rev ${p.revLabel ?? ""} rejected — the company sees it as not accepted, with your reason, on their portal.`;
-      setMsg(shown, auditErr ? "error" : "success");
+      setMsg(shown, auditErr || !pointerCleared ? "error" : "success");
       // SAF-9: the rejection landed — the server emails the link's contact
       // the outcome and the reason it reads from the version, without
       // holding up the message or the refresh.

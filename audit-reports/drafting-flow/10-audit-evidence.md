@@ -395,6 +395,8 @@ components/viewers/SecureDocViewer.tsx:52-59 —
 
 *Cross-note (2026-10-20, drafting-flow Round G, DF-P15 DELIVERABLE PAGE WIRING): stays OPEN, by pointer — its closing conditions do not hold yet.* `EVID-16` is RESOLVED (DF-P15: the ticket page now prints, downloads and previews through `POST /api/tickets/copy`, which records in the request that issues the bytes). *(Corrected at the DF-P15 third fix pass, on review: `EVID-16` is back to OPEN — the page's own path is server-side, but `/api/storage/download-url` and `/api/storage/resolve` still sign a ticket file's key for any member; owner of that remainder drafting-flow DF-P11 (proposed). `EVID-5` therefore also waits on `EVID-16`.)* Still unmet: projects-joint [`EVID-15`](#evid-15) is OPEN (owner J15 CHECKED-WRITE SWEEP — the two viewer sites of done-when 3), and `20261068` is not pasted (`MIGRATION-PASTE-ORDER.md` row 64, PASTE pending — done-when 2's database half). Owner of the pointer close unchanged: the package that lands the last of those two (the integrator records it at that merge). Done-when 1 now holds for the ticket copy (server route, page wired); the other doors it names are document-control's and the share route's, already server-side.
 
+*Cross-note (2026-11-18, projects-joint J15c CHECKED-WRITE SWEEP): stays OPEN, by pointer — one closing condition still fails.* The pointer close is assigned to J15. Of its three conditions, two hold: projects-joint [`EVID-15`](#evid-15) is RESOLVED (J15c, today: done-when 3's two viewer sites are checked), and [`EVID-16`](#evid-16) is RESOLVED (its remainder ruled at the DF-P11 merge, 2026-10-21). The third fails: `20261068` is not recorded as pasted. `MIGRATION-PASTE-ORDER.md` row 64 still reads PASTE, pending, *"not applied"*, so done-when 2's database half (the append-only policy split) does not hold yet. Owner of the close: the integrator, at the `20261068` paste-back (DEC-31). It closes then, by pointer, with no further code change.
+
 ---
 
 <a id="evid-6"></a>
@@ -1168,6 +1170,8 @@ lib/drawingAuditLog.ts:141-148 (no audited_at emitted) —
 
 **Scope / residual.** Done-whens 1, 2 (the source column) and 4 → intelligence (the drawing-audit owner): an append-only history (or a superseded-rows table) and a source column. Not built here (`DEC-31`).
 
+*Cross-note (2026-11-18, projects-joint J15c CHECKED-WRITE SWEEP; DEC-29): stays OPEN, owner unchanged (intelligence, the drawing-audit owner).* The J15 plan entry (`audit-reports/fleet-plans/projects-joint.json`) carries an "EVID-14" pointer. It describes the copy record and VIEW row written by `components/assets/FileReferenceModal.tsx` and `components/viewers/SecureDocViewer.tsx`. Those are [`EVID-15`](#evid-15)'s sites, not this finding's subject, which is the `drawing_audit_logs` upsert with no history or source column. J15c resolved `EVID-15` and changed nothing here.
+
 ---
 
 <a id="evid-15"></a>
@@ -1175,7 +1179,7 @@ lib/drawingAuditLog.ts:141-148 (no audited_at emitted) —
 ## EVID-15 · Two viewer copy / view records still discard their outcome — the linked-drawings print never reads the insert's `{ error }`, and the secure viewer's VIEW row is fired un-awaited
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED (2026-11-18, projects-joint J15c CHECKED-WRITE SWEEP — every done-when holds as written)
 - **Assigned:** projects-joint J15 CHECKED-WRITE SWEEP (`components/assets/FileReferenceModal.tsx` and `components/viewers/SecureDocViewer.tsx`) — by the integrator, 2026-10-13 (DF-P10 review fix pass 6, DEC-31); opened by drafting-flow Round G DF-P10 from `EVID-5` done-when 3.
 - **Verification:** CONFIRMED on `596d34e` and on DF-P10's branch (neither file is changed by it).
 - **Locations:** `components/assets/FileReferenceModal.tsx:189`, `components/viewers/SecureDocViewer.tsx:83-92`
@@ -1200,6 +1204,17 @@ components/viewers/SecureDocViewer.tsx:83-92 —
 - [ ] `FileReferenceModal`'s print reads the insert's `{ error }` and says a refusal in words after the copy (DEC-44's member-writer rule: a refused record never blocks the copy, it is said)
 - [ ] `SecureDocViewer`'s VIEW row is awaited and its result checked (logged as refused, never a silent success)
 - [ ] A test pins both sites (no un-checked insert, no fire-and-forget audit row)
+
+**Resolution (2026-11-18, projects Round G).** Package projects-joint J15c CHECKED-WRITE SWEEP. Reproduced on `32b9a0e`: the print's `try { await supabase.from("download_audits").insert(rows); } catch (e) { console.error(e); }` (`FileReferenceModal.tsx:189`) discards `{ error }`, and the viewer's `logAuditAction({ action: 'VIEW', … }).catch(…)` (`SecureDocViewer.tsx:83-92`) ignores a resolved `{ ok: false }`.
+- `components/assets/FileReferenceModal.tsx` `printAll`: the insert is awaited where it was, after the print tab opened (`:232`), and its `{ error }` is read. A refused insert is logged as `[download_audits] REFUSED — …` and a thrown one as `… insert failed — …`. The copy is never blocked. The refusal is said AFTER it: the tab is already open, and the PS-P9 settle has already been sent. The alert is not awaited (`:248`). Its wording is MultiDocViewer's (EGR-6): "The drawings were sent to print, but N sheets are NOT on the distribution record (the record write was refused), so they will not be recalled if the drawings change. Tell Document Control." This is DEC-44's member-writer rule. Nothing else about the print changed: what is written, when, and the order (mint, stamp, tab, record, settle).
+- `components/viewers/SecureDocViewer.tsx`: the VIEW row runs in its own task (`:87`), so the document never waits on it. There it is awaited (`:89`). An `{ ok: false }` is logged as `[audit] VIEW row REFUSED — …`, and a throw as `[audit] VIEW row failed — …` (`:101`). The row's fields are unchanged; `sessSixRoleNull`'s pin passes (SESS-6, the role omitted while none is known).
+- The same pass catches `FileReferenceModal`'s unlink (`handleUnlink`, `:154`). Before, an unlink error was an unhandled rejection; it is now said in the modal's alert, and the list is re-read either way. `lib/assets.ts` `unlinkAssetFile` is J15a's: there a refused unlink throws.
+- Tests: `lib/__tests__/psP9PrintAllTokens.test.ts` "EVID-15 —" (rendered): a refused record and a thrown one, each said after the copy and the settle; an alert that never closes leaves the print done; a record that lands says nothing; an unlink the database refused. `lib/__tests__/j15cSecureViewerViewRow.test.ts` (rendered): refused, thrown and landed VIEW rows; a VIEW write that never answers while the file still loads; the row's fields. The refusal cases fail against `32b9a0e`'s two files.
+
+**Done-when.**
+1. ✓ `FileReferenceModal`'s print reads the insert's `{ error }` and says a refusal in words after the copy.
+2. ✓ `SecureDocViewer`'s VIEW row is awaited and its result checked, and a refusal is logged as refused.
+3. ✓ Tests pin both sites, rendered (above).
 
 ---
 

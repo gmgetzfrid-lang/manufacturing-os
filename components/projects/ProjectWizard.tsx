@@ -22,6 +22,8 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { userFacingError, classifyDbError, userFacingCaughtError } from "@/lib/userFacingError";
 import { createProject } from "@/lib/projects";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, type Kept } from "@/lib/checkedWriteKeep";
 import { seedTurnoverItems } from "@/lib/turnover";
 import { checkPartyCompanyLink } from "@/lib/costs";
 import { listCompanies, type Company } from "@/lib/companies";
@@ -185,8 +187,12 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
   };
   const writeDeps = (projectId: string): WizardWriteDeps => ({
     updateProject: async (patch) => {
-      const { error } = await supabase.from("projects").update(patch).eq("id", projectId);
-      return { error: error ? wizardWriteError(error) : null };
+      // Checked (SAF-18): a write that matched no row is a failed step, shown
+      // and retried like an error — never a silent success.
+      const kept: Kept = {};
+      const w = await checkedWrite(answered(supabase.from("projects").update(patch).eq("id", projectId).select("id"), kept));
+      if (w.ok) return { error: null };
+      return { error: w.code === "db" && kept.r?.error ? wizardWriteError(kept.r.error) : { message: w.error, code: null } };
     },
     insertRows: async (table, rows) => {
       const { error } = await supabase.from(table).insert(rows);

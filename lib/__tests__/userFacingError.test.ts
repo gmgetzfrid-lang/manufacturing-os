@@ -255,7 +255,9 @@ describe("REL-3 (fix pass) — a read is worded as a read, and a partial success
     expect(projects).toContain('return error ? `The project activity row was not written: ${userFacingError(error, { context: "projects", embed: true })}` : null;');
     expect(projects).toContain('return `The project activity row was not written: ${userFacingCaughtError(e, { context: "projects", embed: true })}`;');
     expect(projects).toContain("NOT released: ${userFacingError(res.error, { context: \"projects\", embed: true })}");
-    expect(projects).toContain('scheduleError = userFacingError(mdErr, { context: "projects", embed: true });');
+    // (J15c, SAF-18: the schedule delete is checked; its database error keeps the embedded reason)
+    expect(projects).toContain('if (!w.ok && w.code === "db") scheduleError = failureText(w, kept, { embed: true });');
+    expect(projects).toContain('userFacingError(kept.r.error, { context: "projects", ...opts })');
     // the paged reads are reads
     expect(projects).toContain('if (error) throw new Error(`${label}: ${userFacingReadError(error, "projects")}`);');
     const ms = at("lib/milestones.ts");
@@ -454,7 +456,8 @@ describe("REL-3 — the Projects and Companies libraries route through it", () =
 
   it("the cited leaks are closed: the edit dialog's second write and the stale-checkout release translate the driver's text", () => {
     const edit = readFileSync(join(process.cwd(), "components/projects/EditProjectModal.tsx"), "utf8");
-    expect(edit).toContain('were not: ${userFacingError(extErr, { context: "EditProjectModal", embed: true }).replace(/\\.$/, "")}. Save changes retries just those.');
+    // (J15c, SAF-18: the second write is checked — a refusal is said in words that do not deny the first write)
+    expect(edit).toContain('were not: ${(w.code === "db" && extErr ? userFacingError(extErr, { context: "EditProjectModal", embed: true }) : "the database did not change them (you may not be allowed to, or someone else changed the project first)").replace(/\\.$/, "")}. Save changes retries just those.');
     expect(edit).not.toContain("${extErr.message}");
     const banner = readFileSync(join(process.cwd(), "components/projects/StaleCheckoutBanner.tsx"), "utf8");
     expect(banner).toContain("Couldn't release ${row.docNumber || \"the checkout\"}: ${userFacingCaughtError(e, { context: \"StaleCheckoutBanner release\" })}");
