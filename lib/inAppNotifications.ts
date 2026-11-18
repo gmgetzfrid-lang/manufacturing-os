@@ -6,6 +6,7 @@
 // delivery — many actions write to both.
 
 import { supabase } from "@/lib/supabase";
+import { checkedWrite } from "@/lib/checkedWrite";
 
 // Every kind is classified — section, action, compliance, icon, group — in
 // lib/notificationKinds.ts KIND_META; a kind added here without an entry there
@@ -457,10 +458,14 @@ export async function markManyRead(ids: string[]): Promise<void> {
  *  workspaces would clear the bell for all of them at once. Throws on a
  *  refusal. */
 export async function markAllRead(orgId?: string | null): Promise<void> {
-  let q = supabase.from("notifications").update({ read_at: new Date().toISOString() }).is("read_at", null);
-  if (orgId) q = q.eq("org_id", orgId);
-  const { error } = await q;
-  if (error) throw markReadRefused(error);
+  const inWorkspace = <Q extends { eq(column: string, value: string): Q }>(q: Q): Q => (orgId ? q.eq("org_id", orgId) : q);
+  // SAF-18 class (c): nothing unread is the usual answer — zero rows is a
+  // success here, and only the database's error (in its own words, as
+  // before) is a refusal.
+  const kept: { error: { message?: string } | null } = { error: null };
+  const w = await checkedWrite(Promise.resolve(inWorkspace(supabase.from("notifications").update({ read_at: new Date().toISOString() }).is("read_at", null)).select("id"))
+    .then((r) => { kept.error = r.error; return r; }));
+  if (!w.ok && w.code === "db") throw markReadRefused(kept.error ?? { message: w.error });
 }
 
 function rowToNotification(r: Record<string, unknown>): NotificationRow {

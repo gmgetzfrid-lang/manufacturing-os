@@ -315,7 +315,9 @@ describe("IRLS-14 (I-23) — a rebuild from the map", () => {
       last_failed_error: "The build failed: the database could not be reached.",
       backfill_cursor: "k2", backfill_documents: 2, backfill_state: "failed",
     });
-    expect(Date.parse(runRow().last_failed_at as string)).toBeGreaterThan(Date.parse(runRow().backfill_started_at as string));
+    // Same-millisecond stamps are possible on a fast run: "after" is >= on a
+    // millisecond clock (the strict > failed intermittently under load).
+    expect(Date.parse(runRow().last_failed_at as string)).toBeGreaterThanOrEqual(Date.parse(runRow().backfill_started_at as string));
     // Press 3 continues from k2 and reads to the end: the listing failure is superseded.
     db.hooks = [];
     db.ops = [];

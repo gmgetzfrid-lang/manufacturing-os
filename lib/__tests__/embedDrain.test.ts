@@ -367,6 +367,34 @@ describe("SEM-7 — two drivers at once take disjoint passages", () => {
     expect(out.error).toBeNull();
     expect(chunks().every((c) => c.embed_claimed_until === null && c.embed_attempts === 0)).toBe(true);
   });
+  it("SAF-18 (J15b): a give-back that fails is logged — never silent — and the slice answers exactly as before (the lease just expires)", async () => {
+    provider.mode = "429";
+    admin.state.tables.knowledge_chunks = [chunk(1), chunk(2)];
+    admin.state.failWrites.knowledge_chunks = { code: "57014", message: "canceling statement due to statement timeout" };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const out = await slice();
+      expect(out.rateLimited).toBe(true);
+      expect(out.error).toBeNull();
+      expect(chunks().every((c) => typeof c.embed_claimed_until === "string")).toBe(true);   // still leased: it expires
+      expect(warn).toHaveBeenCalledWith("[embed] claimed passages could not be given back — their lease expires instead", expect.objectContaining({ passages: 2 }));
+    } finally { vi.restoreAllMocks(); }
+  });
+  it("SAF-18 (J15b): a give-back whose lease another driver took since matches nothing — a quiet no-op, their lease stands", async () => {
+    provider.mode = "429";
+    admin.state.tables.knowledge_chunks = [chunk(1)];
+    const theirs = new Date(Date.now() + 90_000).toISOString();
+    provider.during = () => { chunks()[0].embed_claimed_until = theirs; provider.during = null; };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const out = await slice();
+      expect(out.rateLimited).toBe(true);
+      expect(out.error).toBeNull();
+      expect(chunks()[0].embed_claimed_until).toBe(theirs);
+      expect(warn).not.toHaveBeenCalled();
+    } finally { vi.restoreAllMocks(); }
+  });
   it("the write-back is conditional (a passage another driver already embedded is not counted twice) and held to this slice's lease", () => {
     const core = repo("lib/knowledgeEmbedCore.ts");
     expect(core).toContain('return queue === "claim" ? heldBy(q.is("embedding", null), c).select("id") : q;');
@@ -374,7 +402,9 @@ describe("SEM-7 — two drivers at once take disjoint passages", () => {
     expect(core).toContain('(c.embed_claimed_until ? q.eq("embed_claimed_until", c.embed_claimed_until) : q.not("embed_claimed_until", "is", null));');
     // the refusal and the give-back are held to it too
     expect(core).toContain('const { data, error } = await heldBy(supabaseAdmin.from("knowledge_chunks")');
-    expect(core).toContain('await (lease ? q.eq("embed_claimed_until", lease) : q.not("embed_claimed_until", "is", null))');
+    // SAF-18 / J15b: the give-back is checked (checkedWrite) and held to the same lease
+    expect(core).toContain('(lease ? q.eq("embed_claimed_until", lease) : q.not("embed_claimed_until", "is", null));');
+    expect(core).toContain('const w = await checkedWrite(heldTo(supabaseAdmin.from("knowledge_chunks").update({ embed_claimed_until: null }).in("id", ids), lease).select("id"));');
   });
   it("the claim returns its lease instant, and the slice carries it", async () => {
     admin.state.tables.knowledge_chunks = [chunk(1)];

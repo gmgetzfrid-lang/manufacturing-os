@@ -28,6 +28,7 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { estimateCostUsd, type AiUsage } from "@/lib/ai/pricing";
 import { GovernedCallError } from "@/lib/ai/gateError";
+import { checkedWrite } from "@/lib/checkedWrite";
 
 export const DEFAULT_MONTHLY_CAP_USD = 10;
 
@@ -461,17 +462,19 @@ export async function reserveWithinCap(input: {
  *  Answers whether the row now carries the figures: a caller folding another
  *  call's reservation into this row gives that reservation back only after
  *  the write, and only when it landed (GOV-13), so the call's spend is never
- *  on the ledger nowhere. */
+ *  on the ledger nowhere. SAF-18 (J15b): a settle that matched no row (the
+ *  reservation is gone) answers false too — no row carries the figures, so
+ *  a folded reservation stands (over-counted, never under). */
 export async function settleUsage(id: string, input: { model: string; usage: AiUsage; ok: boolean }): Promise<boolean> {
   try {
-    const res = await supabaseAdmin.from("ai_usage_events").update({
+    const w = await checkedWrite(supabaseAdmin.from("ai_usage_events").update({
       model: input.model,
       input_tokens: Math.max(0, input.usage.inputTokens),
       output_tokens: Math.max(0, input.usage.outputTokens),
       est_cost_usd: estimateCostUsd(input.model, input.usage),
       ok: input.ok,
-    }).eq("id", id);
-    return !res?.error;
+    }).eq("id", id).select("id"));
+    return w.ok;
   } catch {
     return false; // the reservation stands
   }
@@ -499,15 +502,20 @@ export async function holdUsage(id: string, input: { model: string; usage: AiUsa
 }
 
 /** Drop a reservation for a call that was never made. If the delete fails
- *  the row is zeroed instead, so a refused call never stays counted. */
+ *  the row is zeroed instead, so a refused call never stays counted.
+ *  SAF-18 class (c): a delete that matched no row means the reservation is
+ *  already gone — nothing stays counted, so that is a success (no zeroing
+ *  write follows, as before). A zeroing write that fails or matches nothing
+ *  is logged, never silent. */
 export async function releaseUsage(id: string): Promise<void> {
   try {
-    const { error } = await supabaseAdmin.from("ai_usage_events").delete().eq("id", id);
-    if (!error) return;
+    const gone = await checkedWrite(supabaseAdmin.from("ai_usage_events").delete().eq("id", id).select("id"));
+    if (gone.ok || gone.code === "refused") return;
   } catch { /* fall through */ }
   try {
-    await supabaseAdmin.from("ai_usage_events").update({
+    const zeroed = await checkedWrite(supabaseAdmin.from("ai_usage_events").update({
       ok: false, input_tokens: 0, output_tokens: 0, est_cost_usd: 0,
-    }).eq("id", id);
+    }).eq("id", id).select("id"));
+    if (!zeroed.ok) console.warn("[usage] a reservation could not be released or zeroed — it may stay counted", { id, reason: zeroed.error });
   } catch { /* nothing more to do */ }
 }

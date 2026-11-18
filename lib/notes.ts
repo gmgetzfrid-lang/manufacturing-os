@@ -15,6 +15,16 @@
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
 import { csvCell } from "@/lib/csvSafe";
+import { checkedWrite, CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
+
+// SAF-18 (J15b): every note update / delete asks for its matched rows
+// through checkedWrite. The database's own answer (rows and raw error) is
+// kept beside the verdict, so a caller's message stays the database's
+// sentence where it was, and a refused resolve or delete writes no audit row.
+type DbAnswer = { data: unknown; error: { message: string; code?: string } | null };
+function answered<T extends DbAnswer>(q: PromiseLike<T>, keep: { answer?: T }): PromiseLike<T> {
+  return Promise.resolve(q).then((r) => { keep.answer = r; return r; });
+}
 
 export interface Note {
   id: string;
@@ -1422,11 +1432,14 @@ export async function updateNoteTaskMeta(
   taskMeta: Record<string, TaskMeta>,
   updatedBy: string,
 ): Promise<boolean> {
-  const { error } = await supabase
+  // SAF-18 class (b): bookkeeping — never thrown; a write that matched no
+  // note answers false, as an error always did, never true.
+  const w = await checkedWrite(supabase
     .from("notes")
     .update({ task_meta: taskMeta, updated_at: new Date().toISOString(), updated_by: updatedBy })
-    .eq("id", id);
-  return !error;
+    .eq("id", id)
+    .select("id"));
+  return w.ok;
 }
 
 /**
@@ -1506,14 +1519,14 @@ export async function updateNoteBody(input: UpdateNoteInput): Promise<Note> {
     const migrated = migrateTaskMeta(input.prevBody, input.body, input.taskMeta);
     if (migrated) patch.task_meta = migrated;
   }
-  const { data, error } = await supabase
+  const keep: { answer?: DbAnswer } = {};
+  const w = await checkedWrite(answered(supabase
     .from("notes")
     .update(patch)
     .eq("id", input.id)
-    .select("*")
-    .single();
-  if (error || !data) throw new Error(error?.message ?? "Failed to update note");
-  return rowToNote(data as NoteRow);
+    .select("*"), keep));
+  if (!w.ok) throw new Error(w.code === "refused" ? CHECKED_WRITE_REFUSED : keep.answer?.error?.message ?? w.error);
+  return rowToNote((keep.answer!.data as NoteRow[])[0]);
 }
 
 export interface SetResolvedInput {
@@ -1526,19 +1539,22 @@ export interface SetResolvedInput {
 
 export async function setNoteResolved(input: SetResolvedInput): Promise<Note> {
   const now = new Date().toISOString();
-  const { data, error } = await supabase
+  const keep: { answer?: DbAnswer } = {};
+  const patch = {
+    resolved: input.resolved,
+    resolved_at: input.resolved ? now : null,
+    resolved_by: input.resolved ? input.actorUserId : null,
+    updated_at: now,
+    updated_by: input.actorUserId,
+  };
+  const w = await checkedWrite(answered(supabase
     .from("notes")
-    .update({
-      resolved: input.resolved,
-      resolved_at: input.resolved ? now : null,
-      resolved_by: input.resolved ? input.actorUserId : null,
-      updated_at: now,
-      updated_by: input.actorUserId,
-    })
+    .update(patch)
     .eq("id", input.id)
-    .select("*")
-    .single();
-  if (error || !data) throw new Error(error?.message ?? "Failed to update note");
+    .select("*"), keep));
+  // A resolve that matched no note is refused: no audit row claims it.
+  if (!w.ok) throw new Error(w.code === "refused" ? CHECKED_WRITE_REFUSED : keep.answer?.error?.message ?? w.error);
+  const data = (keep.answer!.data as NoteRow[])[0];
 
   await logAuditAction({
     action: input.resolved ? "NOTE_RESOLVED" : "NOTE_REOPENED",
@@ -1554,8 +1570,11 @@ export async function setNoteResolved(input: SetResolvedInput): Promise<Note> {
 }
 
 export async function deleteNote(id: string, actorUserId: string, orgId: string): Promise<void> {
-  const { error } = await supabase.from("notes").delete().eq("id", id);
-  if (error) throw new Error(error.message);
+  const keep: { answer?: DbAnswer } = {};
+  const w = await checkedWrite(answered(supabase.from("notes").delete().eq("id", id).select("id"), keep));
+  // A delete RLS filtered to nothing is refused — and NOTE_DELETED is never
+  // written for a note that is still there.
+  if (!w.ok) throw new Error(w.code === "refused" ? CHECKED_WRITE_REFUSED : keep.answer?.error?.message ?? w.error);
   await logAuditAction({
     action: "NOTE_DELETED",
     resourceId: id, resourceType: "note", orgId, userId: actorUserId,

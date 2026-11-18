@@ -1,6 +1,6 @@
 # 01 · Ingestion — from PDF to chunks
 
-**13 findings** — 3 HIGH · 8 MEDIUM · 2 LOW. *(Corrected 2026-10-01 at the I-02b integration, which opened `ING-13`: the line read "12 findings — 4 HIGH · 8 MEDIUM", the severities before the verification pass.)*
+**14 findings** — 3 HIGH · 8 MEDIUM · 3 LOW. *(Corrected 2026-10-01 at the I-02b integration, which opened `ING-13`: the line read "12 findings — 4 HIGH · 8 MEDIUM", the severities before the verification pass.)* *(2026-11-18: `ING-14` (LOW) opened and resolved by projects-joint J15b CHECKED-WRITE SWEEP; the line read "13 findings — 3 HIGH · 8 MEDIUM · 2 LOW".)*
 
 What the pipeline does to a page, and what it loses on the way.
 
@@ -1234,5 +1234,52 @@ Tests:
 - `lib/knowledge.ts` (I-16's) is not edited. Its `mapDocument` does not carry the column, so the page reads it beside the list. At merge, the integrator (or the next owner of `lib/knowledge.ts`) may fold a `keylessTextPages` field into `KnowledgeDocument` and drop the second read.
 - Probe for `lib/schemaExpectations.ts` (not edited, at the brief's instruction): `{ table: "knowledge_documents", column: "vision_keyless_pages", migration: "20261186_intel_roundG_keyless_text_only.sql", feature: "Knowledge ingest — pages indexed from their text layer only because no AI key was available (the library row's marker, the ask route's DRAWING FACTS)" }`.
 - The app-shell indicator (`components/providers/KnowledgeIndexIndicator.tsx`, another package's) does not show the count. The library page is the surface the brief names.
+
+---
+
+<a id="ing-14"></a>
+
+## ING-14 · A source sync whose stale-mirror drop or REMOVE delete failed still stamped the library as synced, so the rotation reached it last, not first
+
+- **Severity:** LOW
+- **Status:** RESOLVED
+- **Verification:** CONFIRMED (read at `32b9a0e`, and reproduced through the real sync and the in-memory database by the tests below: before the fix, a refused drop left `last_synced_at` stamped)
+- **Locations:** `lib/knowledgeSourceSync.ts:293-306`, `lib/knowledgeSourceSync.ts:415-426`, `lib/knowledgeSourceSync.ts:428-444`
+- **Related:** `ILIFE-13`, `ING-3`, `SAF-18`, `DEC-90`
+- **Independently verified:** — (`author`: opened 2026-11-18 by projects-joint J15b CHECKED-WRITE SWEEP, at the integrator's ruling in its brief; not yet challenged)
+
+**Mechanism.** `syncKnowledgeLibrarySources` drops a mirror in two places: the stale-mirror drop (the controlled document's current revision is no longer an ingestable PDF) and the REMOVE pass (the document left its sources). At `32b9a0e` the stale-mirror drop discarded its result entirely, and the REMOVE delete reported an error but nothing more. Neither set `unsettled`. So the rotation stamp (ILIFE-13) wrote `last_synced_at` = now for a library whose mirror of a superseded file, or of a document that left the sources, was still there. The stale-mirror drop also counted the mirror as removed whatever its answer, and the REMOVE delete counted one that matched nothing.
+
+**Failure scenario.** A controlled P&ID is re-issued as a native CAD file. Its PDF mirror's drop fails (a statement timeout). The library is stamped as synced, so the heartbeat reaches every other library before this one again. Meanwhile the mirror of the superseded revision stays retrievable. The sync's summary said `removed: 1`.
+
+**Why LOW.** The next pass over the library repeats the drop, and the ask route judges every mirror's document at query time. The gap is in how soon the next pass comes and in what the summary says, not in a wrong answer.
+
+**Done when.**
+
+- [ ] A failed stale-mirror drop or REMOVE delete leaves the library never-synced (`last_synced_at` null), so the next run reaches it first. A drop that lands, or matches nothing, stamps as before.
+- [ ] A mirror is counted removed only when its row went.
+- [ ] Tests cover the refused, landed and zero-row cases for both deletes.
+
+**Resolution (2026-11-18, projects-joint J15b CHECKED-WRITE SWEEP).** The integrator's ruling (fail-safe), as built:
+
+- **The flag.** Both deletes now use the census's count-checked shape (`.select("id")` and the row count). A failed delete sets `unsettled = true` beside its error, so the rotation stamp writes `last_synced_at` null and the next run reaches the library first (`lib/knowledgeSourceSync.ts:303`, `:424`).
+- **The error.** The stale-mirror drop's error is now said (`stale mirror <name>: <the database's sentence>`). It used to be dropped.
+- **The count.** `removed` counts the rows that actually went.
+- **Unchanged.** A drop that lands, or matches nothing, stamps as before. What is deleted, and in what order, is unchanged. This is SAF-18 class (c): zero rows is legitimate, a database error is never silent.
+
+Tests: `lib/__tests__/j15bKnowledgeCheckedWrites.test.ts`, "ING-14 — a stale-mirror drop (SAF-18 class (c))" and "ING-14 — the REMOVE delete":
+- A refused stale-mirror drop: the row is still there, the error is said, nothing is counted, and `last_synced_at` is null.
+- Landed and zero-row drops: stamped.
+- A refused REMOVE delete: null.
+- Landed and zero-row REMOVE deletes: stamped.
+
+Each was mutation-checked. Removing either `unsettled = true` fails its refused case, and counting a zero-row drop fails its zero-row case.
+
+**Done-when.**
+- ✓ A failed stale-mirror drop or REMOVE delete leaves the library never-synced. A landed or zero-row one stamps.
+- ✓ A mirror is counted removed only when its row went.
+- ✓ Tests cover the refused, landed and zero-row cases for both.
+
+**Scope / residual.** None in this file. The sync's other bookkeeping writes are recorded under `SAF-18`'s J15b Partial (`projects-tab/02-safety-compliance.md`): the display-name refresh (logged) and the rotation stamp (class (c)).
 
 ---

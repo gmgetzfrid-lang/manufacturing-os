@@ -13,6 +13,7 @@
 //   equipment — drawing transcription / equipment extraction
 
 import { supabase } from "@/lib/supabase";
+import { CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
 
 export type AiInstructionScope = "global" | "knowledge" | "codebook" | "equipment";
 
@@ -71,17 +72,24 @@ export async function saveAiInstruction(
     sort: input.sort ?? 0,
     updated_at: new Date().toISOString(),
   };
-  const { error } = input.id
-    ? await supabase.from("org_ai_instructions").update(row).eq("id", input.id)
-    : await supabase.from("org_ai_instructions").insert({
-        ...row, created_by: userId, created_by_name: userName ?? null,
-      });
+  if (input.id) {
+    // SAF-18 (J15b): an edit (or an enable/disable) that matched no row —
+    // no permission, or the instruction was deleted — is refused, never saved.
+    const { data: hit, error } = await supabase.from("org_ai_instructions").update(row).eq("id", input.id).select("id");
+    if (error) throw new Error(error.message);
+    if (!hit || hit.length === 0) throw new Error(CHECKED_WRITE_REFUSED);
+    return;
+  }
+  const { error } = await supabase.from("org_ai_instructions").insert({
+    ...row, created_by: userId, created_by_name: userName ?? null,
+  });
   if (error) throw new Error(error.message);
 }
 
 export async function deleteAiInstruction(id: string): Promise<void> {
-  const { error } = await supabase.from("org_ai_instructions").delete().eq("id", id);
+  const { data: gone, error } = await supabase.from("org_ai_instructions").delete().eq("id", id).select("id");
   if (error) throw new Error(error.message);
+  if (!gone || gone.length === 0) throw new Error(CHECKED_WRITE_REFUSED);
 }
 
 /** Count of instructions active for a scope (its own + global, enabled

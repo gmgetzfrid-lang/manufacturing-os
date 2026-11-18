@@ -1008,6 +1008,98 @@ project history for the document will be hidden.
 
 *J12 fix pass 7 (2026-10-02): the projects-tab README's row for this report did not count this finding. It read "17 | 3 | 15 / 17"; it now reads "18 | 3 | 16 / 18". The 18 findings are SAF-1 to SAF-18 (three CRITICAL), and two are open: SAF-9 and this one. SAF-7's progress-table row is corrected above.*
 
+**Partial (2026-11-18, projects-joint J15b CHECKED-WRITE SWEEP — the intelligence / knowledge / notes batch; SAF-18 stays OPEN).** Under the integrator's J15 rulings (DEC-90). Every unchecked `.update(` / `.delete(` in the batch's files now asks for its matched rows: through `lib/checkedWrite.ts`, or the census's count-checked shape (`.select("id")` and a row count). Every success path writes byte-identically: the same rows, the same audit rows, in the same order, with the same return shape. On a refused or failed path the follow-on writes listed under *Real defects* below are no longer made (an audit row or a "removed" count after a write that did not land), and the caller is told: a refusal where there was a silent success, or the typed refusal where PostgREST's single-row text (PGRST116) was shown.
+
+*Census, unchecked sites before → after* (this file's `writeSites` / `unchecked()`, at `32b9a0e` and after):
+
+| File | Before | After |
+|---|---|---|
+| `lib/knowledgeIngest.ts` | 17 | 0 |
+| `lib/operationalGraph.ts` | 6 | 0 |
+| `lib/knowledge.ts` | 4 | 0 |
+| `lib/knowledgeSourceSync.ts` | 4 | 0 |
+| `lib/notes.ts` | 4 | 0 |
+| `lib/ai/usageServer.ts` | 3 | 0 |
+| `lib/knowledgeEmbedCore.ts` | 2 | 0 |
+| `lib/plotPlans.ts` | 2 | 0 |
+| `lib/aiInstructions.ts` | 2 | 0 |
+| `lib/intents.ts` | 1 | 0 |
+| `lib/mentionIndexer.ts` | 1 | 0 |
+| `lib/whiteboard.ts` | 1 | 0 |
+| `lib/activityThread.ts` | 1 | 0 |
+| `lib/inAppNotifications.ts` | 1 | 0 |
+| `lib/processFlows.ts` | 0 | 0 |
+
+That is 49 → 0. `lib/processFlows.ts` is closed by record: it has been clean since intelligence I-09. `decideFlow` (`lib/processFlows.ts:207`) and `deleteFlow` (`:220`) are count-checked, although `LIB_RATCHET` still lists the file at 2. The census numbers in `lib/__tests__/checkedWrite.test.ts` are not edited here; the integrator lowers them, and moves these files to `CLEAN_LIB`, at the merge.
+
+*Classes* (DEC-90 ruling 2):
+- **(a) The write is the person's decision.** Zero rows is `CHECKED_WRITE_REFUSED`, thrown to the caller, with no audit row after it.
+  - `saveMarkers` / `deletePlotPlan` (`lib/plotPlans.ts`).
+  - `setEquipmentState` (`lib/whiteboard.ts`): no `EQUIPMENT_STATE_CHANGED`.
+  - `saveAiInstruction` (the edit branch; the insert is unchanged) / `deleteAiInstruction`.
+  - `deleteKnowledgeLibrary`, `saveLibraryAiInstructions`, `deleteKnowledgeDocument` (`lib/knowledge.ts`).
+  - `updatePlant` / `updateUnit` / `updateSystem` (and the archives that call them), `unlinkDocumentFromAsset` / `unlinkDocumentFromProject`, and `setUnitCodebookCode`, which keeps every message it gave, its refusal included (`lib/operationalGraph.ts`).
+  - `updateNoteBody`, `setNoteResolved` and `deleteNote` (`lib/notes.ts`): no `NOTE_RESOLVED` / `NOTE_DELETED`.
+  - `resolveMessage` (`lib/activityThread.ts`).
+  - `reindexLibraryChunks`' library choice (`lib/knowledgeIngest.ts:1084`).
+- **(b) Bookkeeping.** It never blocks the act. The outcome is checked, and a miss is answered or logged, never reported as success.
+  - `updateNoteTaskMeta` answers false.
+  - `settleUsage` answers false on zero rows.
+  - The legacy `writeFeatures` marker write (`lib/knowledgeEmbedCore.ts`) answers `applied: false`, as 20261121's function does for no row changed.
+  - The source sync's display-name refresh is logged.
+  - The pre-20261122 AI-vision page count in `ingestKnowledgeDocBatch` is logged.
+- **(c) Zero rows is legitimate.** It stays a success; a database error is never silent.
+  - The ingest claim (busy / gone) and its release.
+  - The reset's line-trace purge, its row compare-and-set (a miss is `busy`, as before) and its derived-index deletes.
+  - `markIngestFailed`'s compare-and-set.
+  - The batch's withdrawal, its range clears and its prunes.
+  - The drain's `fileBehind` stamp.
+  - `setLibraryLinks`' clear.
+  - The source sync's stale-mirror drop and REMOVE delete. These two use the census's count-checked shape, not `checkedWrite`. A mirror is counted removed only when its row went.
+  - The sync's `last_synced_at` stamp.
+  - `releaseUsage`'s delete. A zero-row answer writes nothing more, as before; a zeroing write that also fails is logged.
+  - The embed slice's give-back (logged).
+  - The mention pass's machine-mention clear.
+  - `recordIntent`'s lapsed-row clear and `endMyIntents`. Any other error is now logged.
+  - `markAllRead`.
+- **Rule 4.** The database's raw error is kept beside each verdict: `dbAnswer` in `lib/knowledgeIngest.ts`, and `answered()` in `lib/notes.ts`, `lib/operationalGraph.ts`, `lib/mentionIndexer.ts`, `lib/knowledgeSourceSync.ts` and `lib/intents.ts`. So every `isMissing*` check sees the full error, code and message, and every message for a database error is the database's own sentence, as before. A zero-row answer is now said where it used to pass silently (or as PGRST116's text) — that sentence is new.
+  - `lib/intents.ts` passed `{ code: pgCode }` alone at the lapsed-row clear. It now passes the whole error at both sites (`:185`, `:237`). An error with no code whose message names the missing `document_intents` relation sets the latch, logs nothing and makes no further calls.
+
+*Real defects found and fixed:*
+- A refused whiteboard flip wrote `EQUIPMENT_STATE_CHANGED`, and a refused note delete wrote `NOTE_DELETED`. A refused note resolve already failed before its audit row, but with PostgREST's single-row text; it now reads as the typed refusal.
+- The source sync counted a mirror as removed when its delete failed or matched nothing (ING-14 for the fail-safe stamp).
+- `/admin/scope` edits and archives threw unhandled rejections.
+
+*Hardening, not defects (corrected 2026-11-18 at the J15b review; DEC-29 — the first draft listed both as defects):*
+- `reindexLibraryChunks`' library choice now refuses a zero-row match, naming the library. On the real schema this guards nothing that could go wrong: the update runs as the service role, `knowledge_documents.library_id` is `ON DELETE CASCADE` (`supabase/migrations/20260911_knowledge_ai.sql:60`), so a library deleted mid-request takes its documents with it, and each reset's `claimIngestLease` answers `gone` — base reset nothing either. What changed is the answer: the ingest route's re-index now answers 500 with the refusal (its `failed()`), where base answered 200 with nothing reset, for a library deleted mid-request.
+- `settleUsage` now answers false for a reservation row that is gone, so the GOV-13 fold (`visionCallMeter`'s `onUsage`) keeps the folded reservation (over-counted, never under). Only `releaseUsage` deletes `ai_usage_events` rows, and the fold settles a row it has not released, so this is defensive.
+
+*Callers changed:*
+- `app/(protected)/admin/scope/page.tsx`, through `lib/userFacingError`: a refused or failed save is shown on the edit dialog's own error line (`role="alert"`), and the dialog stays open with what was typed — the page's error line sits behind the dialog's overlay, so a refusal there was invisible until the dialog was cancelled (fixed at the J15b review); cancelling clears it. `onArchive`, whose confirmation has closed before the write, shows a refusal on the page's existing error line.
+- `components/documents/ActivityThread.tsx`: `markResolved` shows a refusal as a plain-language toast; it used to go only to `console.error`.
+- Every other caller already caught and showed the thrown message: the knowledge library page, `LibraryAiModal`, the plot-plan pages, `/admin/ai-instructions`, `QuickNoteComposer`, and the ingest route's `failed()` for the re-index.
+
+*Tests:*
+- `lib/__tests__/j15bKnowledgeCheckedWrites.test.ts`, the real engine over `lib/__tests__/knowledgeFakeDb.ts`:
+  - ING-14: refused, landed and zero-row cases for the stale-mirror drop and the REMOVE delete.
+  - The sync's bookkeeping.
+  - The re-index refusal and its success path.
+  - The claim and its release, and `markIngestFailed`.
+  - The reset's deletes.
+  - The mention clear.
+  - The real `settleUsage` / `releaseUsage`.
+- `lib/__tests__/j15bCheckedWriteSweep.test.ts`: every browser-side site above. Zero rows refused or quiet as classed; the database's words kept; success writes and audit rows unchanged. It also covers the intents latch at both sites, and source pins on the two callers (the scope page's: the save's refusal goes to the dialog, the dialog is handed it and renders it inside its form under the fields, cancelling clears it; mutation-checked — sending it to the page line, not handing it over, not rendering it, or closing the dialog on a refusal each fails).
+- `lib/__tests__/embedDrain.test.ts`: two give-back cases.
+- Mutation-checked: reverting each fix (the two `unsettled` flags, the removed count, the re-index refusal, `settleUsage`'s verdict, `releaseUsage`'s zero-row return, the whiteboard and note refusals, both intents sites, `markAllRead`'s class, the scope page's `return`, `resolveMessage`'s refusal, the give-back log) fails its test.
+- Existing tests widened (rule 7):
+  - `embedDrain.test.ts`: the SEM-7 give-back pin now matches the checked shape, held to the same lease.
+  - `cornerJobs.test.ts`: the TAX-8 / N9 pin now accepts `checkedWrite(answered(supabase…`. Its filters, the clear-before-upsert order and the payload are still pinned.
+
+*Residuals (DEC-31):*
+- The re-index's intent row: `app/api/knowledge/ingest/route.ts` writes `KNOWLEDGE_LIBRARY_REINDEXED` (≈`:588`) before `reindexLibraryChunks` runs, so a re-index refused for a library deleted mid-request still has its intent on record. This predates this branch (the route records the intent before anything is reset, by design). Owner: the intelligence integrator.
+- The class (c) deletes now return their matched ids, so a document-wide chunk clear returns one id per chunk. This is a larger response, with no change to what is deleted.
+- SAF-18 itself stays OPEN for J15a, J15c and any file outside the three batches. Owner: projects-joint J15 (the integrator, at its merge).
+
 ---
 
 ## SAF-19 · A contractor's submission approved from the document's review surface tells the contractor nothing

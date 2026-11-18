@@ -12,6 +12,7 @@ import { supabase } from "@/lib/supabase";
 import { notifyMany, type NotificationKind } from "@/lib/inAppNotifications";
 import { getActiveEpisode, isMissingEpisodeSchema } from "@/lib/checkoutEpisodes";
 import { discoveringAmong } from "@/lib/notify/recipients";
+import { CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
 
 export type ActivityKind =
   | "chat"
@@ -268,11 +269,15 @@ export async function listActivity(
 }
 
 export async function resolveMessage(messageId: string, userId: string): Promise<void> {
-  const { error } = await supabase
+  const { data: hit, error } = await supabase
     .from("checkout_messages")
     .update({ resolved_at: new Date().toISOString(), resolved_by_user_id: userId })
-    .eq("id", messageId);
+    .eq("id", messageId)
+    .select("id");
   if (error) throw error;
+  // SAF-18 (J15b): marking resolved IS the person's act — a write that
+  // matched no message (no permission, or it is gone) is refused, never done.
+  if (!hit || hit.length === 0) throw new Error(CHECKED_WRITE_REFUSED);
 }
 
 // ─── Convenience wrappers per kind ──────────────────────────────────

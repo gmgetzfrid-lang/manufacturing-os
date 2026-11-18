@@ -7,6 +7,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { uploadToPath, getSignedUrlForPath } from "@/lib/storage";
+import { CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
 import type { PlotPlan, PlotPlanMarker } from "@/types/schema";
 
 function rowToPlotPlan(r: Record<string, unknown>): PlotPlan {
@@ -96,16 +97,21 @@ export async function saveMarkers(input: {
   markers: PlotPlanMarker[];
   actorUserId: string;
 }): Promise<void> {
-  const { error } = await supabase
+  // SAF-18 (J15b): the save IS the person's decision — a save that matched
+  // no row (no permission, or the plan is gone) is refused, never "Saved".
+  const { data: hit, error } = await supabase
     .from("plot_plans")
     .update({ markers: input.markers, updated_at: new Date().toISOString(), updated_by: input.actorUserId })
-    .eq("id", input.id);
+    .eq("id", input.id)
+    .select("id");
   if (error) throw new Error(error.message);
+  if (!hit || hit.length === 0) throw new Error(CHECKED_WRITE_REFUSED);
 }
 
 export async function deletePlotPlan(id: string): Promise<void> {
-  const { error } = await supabase.from("plot_plans").delete().eq("id", id);
+  const { data: gone, error } = await supabase.from("plot_plans").delete().eq("id", id).select("id");
   if (error) throw new Error(error.message);
+  if (!gone || gone.length === 0) throw new Error(CHECKED_WRITE_REFUSED);
 }
 
 /** Presign the background image path for display. */

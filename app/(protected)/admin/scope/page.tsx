@@ -56,6 +56,7 @@ import { supabase } from "@/lib/supabase";
 import type { Plant, Unit, PlantSystem } from "@/types/schema";
 import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
 import { translatePostgresError } from "@/lib/inputValidation";
+import { userFacingError } from "@/lib/userFacingError";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Field";
@@ -84,6 +85,9 @@ export default function ScopePage() {
   const [expandedUnits, setExpandedUnits] = useState<Set<string>>(new Set());
   const [addingChildOf, setAddingChildOf] = useState<{ kind: "root" | "plant" | "unit"; parentId?: string } | null>(null);
   const [editing, setEditing] = useState<EditTarget>(null);
+  /** A refused or failed edit, said INSIDE the open edit dialog (its overlay
+   *  covers the page's error line) — SAF-18 (J15b). */
+  const [editError, setEditError] = useState<string | null>(null);
   const [book, setBook] = useState<Codebook>(EMPTY_CODEBOOK);
   /** The codebook's unit list could not be read whole — said, never a short list presented as the codebook. */
   const [bookError, setBookError] = useState<string | null>(null);
@@ -182,9 +186,19 @@ export default function ScopePage() {
 
   const onSaveEdit = async (patch: { name: string; code: string; description: string }) => {
     if (!editing || !uid) return;
-    if (editing.kind === "plant")  await updatePlant(editing.row.id!,  patch, uid);
-    if (editing.kind === "unit")   await updateUnit(editing.row.id!,   patch, uid);
-    if (editing.kind === "system") await updateSystem(editing.row.id!, patch, uid);
+    setEditError(null);
+    // SAF-18 (J15b): a refused or failed save is said on the edit dialog's
+    // own error line, and the dialog stays open with what was typed — never
+    // an unhandled rejection, never a closed form that looks saved, never a
+    // line hidden behind the dialog's overlay.
+    try {
+      if (editing.kind === "plant")  await updatePlant(editing.row.id!,  patch, uid);
+      if (editing.kind === "unit")   await updateUnit(editing.row.id!,   patch, uid);
+      if (editing.kind === "system") await updateSystem(editing.row.id!, patch, uid);
+    } catch (e) {
+      setEditError(userFacingError(e, { context: "admin/scope save" }));
+      return;
+    }
     setEditing(null);
     await refresh();
   };
@@ -228,9 +242,16 @@ export default function ScopePage() {
     if (kind === "unit" && mapped?.code) {
       if (!(await confirmRelease("archive", { id, name: mapped.name }, mapped.code))) return;
     } else if (!(await appConfirm({ message: "Archive this scope node? Documents and equipment that reference it keep their data; the row is hidden from picker UIs.", tone: "danger" }))) return;
-    if (kind === "plant")  await archivePlant(id, uid);
-    if (kind === "unit")   await archiveUnit(id, uid);
-    if (kind === "system") await archiveSystem(id, uid);
+    setError(null);
+    try {
+      if (kind === "plant")  await archivePlant(id, uid);
+      if (kind === "unit")   await archiveUnit(id, uid);
+      if (kind === "system") await archiveSystem(id, uid);
+    } catch (e) {
+      // SAF-18 (J15b): a refused archive is said, never an unhandled rejection.
+      setError(userFacingError(e, { context: "admin/scope archive" }));
+      return;
+    }
     await refresh();
   };
 
@@ -442,7 +463,8 @@ export default function ScopePage() {
       {editing && (
         <EditScopeRowModal
           target={editing}
-          onCancel={() => setEditing(null)}
+          error={editError}
+          onCancel={() => { setEditing(null); setEditError(null); }}
           onSave={onSaveEdit}
         />
       )}
@@ -769,9 +791,11 @@ function NewScopeRowForm({
 // ─── Edit modal ─────────────────────────────────────────────────
 
 function EditScopeRowModal({
-  target, onCancel, onSave,
+  target, error, onCancel, onSave,
 }: {
   target: NonNullable<EditTarget>;
+  /** Why the last save did not land (shown in the dialog, the typed values kept). */
+  error: string | null;
   onCancel: () => void;
   onSave: (patch: { name: string; code: string; description: string }) => void | Promise<void>;
 }) {
@@ -803,6 +827,11 @@ function EditScopeRowModal({
           <Field label="Code"><Input value={code} onChange={(e) => setCode(e.target.value)} className="font-mono" /></Field>
           <Field label="Description"><Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} /></Field>
         </div>
+        {error && (
+          <div role="alert" data-edit-error className="flex items-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {error}
+          </div>
+        )}
         <div className="flex items-center justify-end gap-2 pt-2">
           <button type="button" onClick={onCancel} className="text-sm px-3 py-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors">Cancel</button>
           <Button type="submit" disabled={!name.trim() || submitting}>

@@ -6,6 +6,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
+import { CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
 import type { WhiteboardState } from "@/types/schema";
 
 export const WHITEBOARD_STATES: WhiteboardState[] = [
@@ -52,11 +53,15 @@ export async function setEquipmentState(input: {
   actorRole?: string;
   previousState?: WhiteboardState;
 }): Promise<void> {
-  const { error } = await supabase
+  const { data: hit, error } = await supabase
     .from("assets")
     .update({ whiteboard_state: input.newState, updated_at: new Date().toISOString(), updated_by: input.actorUserId })
-    .eq("id", input.assetId);
+    .eq("id", input.assetId)
+    .select("id");
   if (error) throw new Error(error.message);
+  // SAF-18 (J15b): a flip that matched no asset (no permission, or the asset
+  // is gone) is refused — and no audit row claims the state changed.
+  if (!hit || hit.length === 0) throw new Error(CHECKED_WRITE_REFUSED);
 
   await logAuditAction({
     orgId: input.orgId,

@@ -25,16 +25,16 @@
     "audit-reports/intelligence/21-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 277,
+    "findings": 278,
     "gaps": 16,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 59,
       "MEDIUM": 152,
-      "LOW": 57
+      "LOW": 58
     },
     "by_status": {
-      "RESOLVED": 250,
+      "RESOLVED": 251,
       "OPEN": 18,
       "RESOLVED (2026-10-14, by the integrator's ruling at the I-17 integrator fix pass — done-when 3 met as narrowed under DEC-90; PASTE pending: `20261128`, unchanged — until it is pasted the live registry keeps 20261045's overlays and DELETE stays with the writer tier)": 1,
       "RESOLVED (pending migration) (2026-10-22, intelligence I-34, closed at the merge by the integrator's rulings under `DEC-90` — done-when 1's EXISTS shape accepted; PASTE pending: `20261261`, HOLD behind `20261131`, and only once no lineage row names a document in another workspace)": 1,
@@ -6830,6 +6830,35 @@
       ],
       "refuted": false,
       "summary": "A controller renames equipment-list.xlsx to equipment-list.pdf (or drags a file whose browser-reported MIME is empty) to get a master equipment list into a knowledge library — exactly the workflow the owner describes in question 5. The upload succeeds, the row is created, R2 holds a bogus object forever (see the previous finding), and the only feedback is 'Indexing failed: Invalid PDF structure.' ",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/01-ingestion.md"
+    },
+    {
+      "id": "ING-14",
+      "title": "A source sync whose stale-mirror drop or REMOVE delete failed still stamped the library as synced, so the rotation reached it last, not first",
+      "severity": "LOW",
+      "status": "RESOLVED",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (read at `32b9a0e`, and reproduced through the real sync and the in-memory database by the tests below: before the fix, a refused drop left `last_synced_at` stamped)",
+      "blast_radius": null,
+      "related": [
+        "ILIFE-13",
+        "ING-3",
+        "SAF-18",
+        "DEC-90"
+      ],
+      "locations": [
+        "lib/knowledgeSourceSync.ts:293-306",
+        "lib/knowledgeSourceSync.ts:415-426",
+        "lib/knowledgeSourceSync.ts:428-444"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A controlled P&ID is re-issued as a native CAD file. Its PDF mirror's drop fails (a statement timeout). The library is stamped as synced, so the heartbeat reaches every other library before this one again. Meanwhile the mirror of the superseded revision stays retrievable. The sync's summary said removed: 1.",
       "area": "intelligence",
       "report": "audit-reports/intelligence/01-ingestion.md"
     },

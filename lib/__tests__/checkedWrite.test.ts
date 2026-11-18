@@ -165,21 +165,21 @@ const CLEAN_LIB = [
     "lib/codebook.ts", "lib/costDocs.ts", "lib/costs.ts", "lib/distributionAcks.ts", "lib/documentLifecycle/merge.ts",
     "lib/linkProposals.ts", "lib/linkRules.ts", "lib/orchestrator/proposals.ts", "lib/ownership.ts", "lib/relatedResources.ts",
     "lib/transitionIn.ts", "lib/turnover.ts", "lib/workPackages.ts",
+    // J15b (SAF-18, 2026-11-18): the intelligence, knowledge, notes and notification files.
+    "lib/knowledgeIngest.ts", "lib/knowledge.ts", "lib/knowledgeEmbedCore.ts", "lib/knowledgeSourceSync.ts", "lib/operationalGraph.ts",
+    "lib/processFlows.ts", "lib/plotPlans.ts", "lib/aiInstructions.ts", "lib/ai/usageServer.ts", "lib/intents.ts",
+    "lib/mentionIndexer.ts", "lib/whiteboard.ts", "lib/notes.ts", "lib/activityThread.ts", "lib/inAppNotifications.ts",
 ];
 /** lib files still carrying unchecked sites (SAF-18): the count may fall, never rise. */
 const LIB_RATCHET: Record<string, number> = {
-    "lib/accessRecert.ts": 1, "lib/acknowledgments.ts": 7, "lib/activityThread.ts": 1, "lib/ai/usageServer.ts": 3,
-    "lib/aiInstructions.ts": 2, "lib/assets.ts": 2, "lib/branches.ts": 1, "lib/checkoutEpisodes.ts": 6, "lib/collections.ts": 6,
-    "lib/companies.ts": 3, "lib/docClass.ts": 1, "lib/documentLifecycle/common.ts": 2, "lib/documentLifecycle/renumber.ts": 1,
-    "lib/documentLifecycle/reverse.ts": 1, "lib/documentLifecycle/split.ts": 1, "lib/documentOrigin.ts": 1,
-    "lib/documentShares.ts": 1, "lib/effectiveDate.ts": 4, "lib/favorites.ts": 1, "lib/holds.ts": 2,
-    "lib/inAppNotifications.ts": 1, "lib/intents.ts": 1, "lib/knowledge.ts": 4, "lib/knowledgeEmbedCore.ts": 2,
-    "lib/knowledgeIngest.ts": 17, "lib/knowledgeSourceSync.ts": 4, "lib/libraryCollections.ts": 6, "lib/libraryViews.ts": 4,
-    "lib/markupRequests.ts": 1, "lib/markups.ts": 1, "lib/mentionIndexer.ts": 1, "lib/milestones.ts": 12, "lib/notes.ts": 4,
-    "lib/operationalGraph.ts": 6, "lib/plotPlans.ts": 2, "lib/processFlows.ts": 2, "lib/projectReport.ts": 1,
+    "lib/accessRecert.ts": 1, "lib/acknowledgments.ts": 7, "lib/assets.ts": 2, "lib/branches.ts": 1,
+    "lib/checkoutEpisodes.ts": 6, "lib/collections.ts": 6, "lib/companies.ts": 3, "lib/docClass.ts": 1,
+    "lib/documentLifecycle/common.ts": 2, "lib/documentLifecycle/renumber.ts": 1, "lib/documentLifecycle/reverse.ts": 1,
+    "lib/documentLifecycle/split.ts": 1, "lib/documentOrigin.ts": 1, "lib/documentShares.ts": 1, "lib/effectiveDate.ts": 4,
+    "lib/favorites.ts": 1, "lib/holds.ts": 2, "lib/libraryCollections.ts": 6, "lib/libraryViews.ts": 4,
+    "lib/markupRequests.ts": 1, "lib/markups.ts": 1, "lib/milestones.ts": 12, "lib/projectReport.ts": 1,
     "lib/projects.ts": 8, "lib/retention.ts": 3, "lib/reviewControl.ts": 9, "lib/reviewCycles.ts": 5, "lib/revisions.ts": 6,
     "lib/watches.ts": 1, "lib/tableViews.ts": 1, "lib/teams.ts": 3, "lib/transmittals.ts": 1, "lib/unitCodeDecode.ts": 1,
-    "lib/whiteboard.ts": 1,
 };
 /** Files packages running BESIDE this one (projects Round G wave of
  *  2026-10-01) are editing: the census does not judge them until their
