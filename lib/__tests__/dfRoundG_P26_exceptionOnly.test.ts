@@ -6,7 +6,7 @@
 // openRoster), completion over a rule-satisfied slot, and the DEC-12 floor
 // in its three homes never counting one.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import {
   isExceptionOnlySlot, planExceptionRule, applyExceptionRule, ruleSatisfiedSlots, exceptionsOnRecord, reopenRuleSatisfied,
   waitsOnLiveSecondPerson, exceptionRuleAtOpen, exceptionOnlyReady, readWaiverOnRecord, readSourceMoved, ruleOpenNote, ruleReopenNote,
@@ -25,6 +25,12 @@ import type { Role, Ticket, TicketReviewRoster, TicketReviewSlot, TicketStatus }
 
 const T = { requesterId: "req", assignedDrafterId: "d-1" } as Pick<Ticket, "requesterId" | "assignedDrafterId">;
 const NOW = Date.parse("2026-10-22T08:00:00Z");
+// The rosters below open on 2026-10-22 and some slots' alternate windows are
+// a day long; helpers that take no clock (isActionRequired, getActions without
+// ctx.now) read Date.now(). Pin the wall clock to the fixtures' day so the
+// outcomes do not drift with the calendar (they failed once the day passed).
+beforeAll(() => { vi.useFakeTimers({ toFake: ["Date"], now: NOW }); });
+afterAll(() => { vi.useRealTimers(); });
 const slot = (over: Partial<TicketReviewSlot> & { kind: string }): TicketReviewSlot => ({
   id: `r:${over.kind}`, label: over.kind.toUpperCase(), mode: "blocking", primaries: [], alternates: [], overriders: [], independentOf: [],
   timeoutDays: null, fallback: false, status: "open", ...over,
