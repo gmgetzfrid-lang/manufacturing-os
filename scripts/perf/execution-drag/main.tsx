@@ -8,7 +8,14 @@ import type { Milestone } from "@/types/schema";
 // 400 rows: 20 phases of 19 leaf tasks each (380 leaves + 20 summaries),
 // spread over a year, a third of the leaves chained finish-to-start.
 const day = 86_400_000;
-const t0 = Date.UTC(2026, 9, 1);
+// The schedule starts six days before today (UTC), as it did on the day the
+// harness was committed (2026-10-07 against a 2026-10-01 start). The board
+// centres its viewport on today, so a fixed start date scrolls the early
+// bars — the one the drag presses among them — off the left edge as the
+// calendar moves on, and the drag then presses nothing (projects-joint J18
+// found every drag run of 2026-11-18 moved its bar 0 px).
+const now = new Date();
+const t0 = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) - 6 * day;
 const iso = (ms: number) => new Date(ms).toISOString();
 const rows: Milestone[] = [];
 for (let p = 0; p < 20; p++) {

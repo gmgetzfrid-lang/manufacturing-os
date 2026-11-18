@@ -9,7 +9,9 @@ The deterministic evidence is the counted test in
 ## What it does
 
 - `main.tsx` renders `components/projects/ExecutionView.tsx` alone, with 400
-  stubbed rows: 20 phases of 19 tasks, a third of them chained.
+  stubbed rows: 20 phases of 19 tasks, a third of them chained. The schedule
+  starts six days before today (UTC): the board centres on today, so a fixed
+  start date would scroll the pressed bar off-screen as the calendar moves on.
 - `stubs/` stand in for `lib/supabase` and for `next/dynamic`, `next/link` and
   `next/navigation`.
 - `vite.config.mjs` bundles the board with the app's own code (`@/`).
@@ -46,7 +48,9 @@ each run's `uptime`. `node summarize.mjs <dir>` prints the totals again.
 
 ## Reading it
 
-Run on a quiet host. The load average is saved next to each run, and a loaded
+Run on a quiet host. A drag run whose bar did not move (`barMovedPx` 0)
+measured no drag: `measure.mjs` records it as an error, and the totals'
+`errors` column must be 0. The load average is saved next to each run, and a loaded
 host shows dropped frames in the control too. Done-when 1 holds at 4× when
 the drag's frames over 25 ms are not above its own no-drag control's, over
 six or more runs, with no long task the control does not also show. Record

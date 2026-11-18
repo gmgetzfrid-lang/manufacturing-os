@@ -23,9 +23,9 @@
       "LOW": 13
     },
     "by_status": {
-      "RESOLVED": 144,
+      "RESOLVED": 146,
       "REFUTED": 2,
-      "OPEN": 7,
+      "OPEN": 5,
       "RESOLVED (2026-10-14, by the integrator's ruling at the J20 integrator fix pass — done-when 1 met as narrowed under DEC-90: the pending pointer, the trusted promote and the redline accepted as documented exceptions; PASTE pending: `20261214`, after `20261184` and `20261205`)": 1
     }
   },
@@ -2668,7 +2668,7 @@
       "id": "PERF-5",
       "title": "The execution board renders eight hundred components into a viewport showing fifteen",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (structure); node counts estimated",
       "blast_radius": "performance",
@@ -3978,7 +3978,7 @@
       "id": "PERF-12",
       "title": "The app-wide shell ships ~618 KB of JavaScript to every route",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED from PERF-9's measured bundle numbers",
       "blast_radius": null,

@@ -302,7 +302,7 @@ the loop the suppression prevents.
 ## PERF-5 · The execution board renders eight hundred components into a viewport showing fifteen
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Assigned:** projects-joint J18 APP SHELL BUDGET (the 4x CPU measurement with `scripts/perf/execution-drag/`, on a quiet host) — by the integrator, 2026-10-07 (J14 merge; fleet plan `projects-joint.json`).
 - **Assigned:** projects-joint J14 PROJECTS FOLLOW-UPS — the remainder (done-when 1 on a slow CPU: the drag's per-day-offset re-render in `components/projects/ExecutionView.tsx`; remediation 4, the dependency picker) — by the integrator, 2026-10-07, at the J12 merge (DEC-31).
@@ -399,6 +399,27 @@ The calendar view is the one safe surface — it caps at 4 chips per day with
 - ✓ The board's DOM node count is proportional to what is visible (unchanged: 24 rows and 22 bars for 400 tasks in the harness).
 
 **Scope / residual.** OPEN for done-when 1 at 4× only: a measurement, with no code owed (the remainder's Assigned line, above). Re-run `scripts/perf/execution-drag/run-ab.sh` (six or more runs against the no-drag control; with `BEFORE_ROOT`, alternating with the board before the change), as its `README.md` says, on a quiet host, or time a deployed build. If the drag's frames over 25 ms are not above the control's, done-when 1 holds and PERF-5 closes. If they still are, the record names what the profile shows. The `MIN_PX_PER_DAY = 30` floor that keeps "Fit" from fitting a two-year schedule is not a done-when and stays as recorded above. It is named for the integrator; this package did not verify it as a defect, so it opens no finding (`DEC-29`).
+
+**Resolution (2026-11-18, projects-joint J18 APP SHELL BUDGET — the measurement).** Done-when 1 at 4× was measured with the committed harness on a quiet host, and holds. No board code changed.
+
+- **The harness was measuring no drag.** The first eight runs (load average 0.5 to 1.1) moved the dragged bar 0 px in every drag run, so they timed a second control. The data in `scripts/perf/execution-drag/main.tsx` started on a fixed date, 2026-10-01, and the board centres its viewport on today (`ExecutionView.tsx` "Center the viewport on today"). By 2026-11-18 the pressed bar (the fourth) sat at x = −395, off the left edge, and the mouse pressed nothing. On 2026-10-07, when the harness was committed, today was six days in and the bar was on screen. The board is not at fault: it was never pressed.
+- **The fix, to the harness only.** The schedule now starts six days before today (UTC), as on the day the harness was committed. `measure.mjs` records a drag run whose bar did not move as an error, so the totals' `errors` column says so instead of reporting a second control. Its `README.md` says both.
+- **The runs.** Eight runs of `scripts/perf/execution-drag/run-ab.sh` (`RUNS=8`), each a 120-step drag of 360 px against the same sweep without a press, at 1× and at 4× CPU (CDP `Emulation.setCPUThrottlingRate`). The browser was headless Chrome for Testing 157.0.8103.78 through Playwright 1.63 (`PLAYWRIGHT_MODULE` pointing at the machine's existing copy; nothing installed). The host had 4 CPUs, a load average of 0.18 to 0.74 across the runs (saved beside each), and no other fleet job running. Every drag run moved its bar 360 px, and no run had a page error. DOM: 22 bars and 24 outline rows drawn for 400 rows.
+
+| 8 runs each | frames over 25 ms | over 50 ms | long tasks | worst frame | errors |
+|---|---|---|---|---|---|
+| 1× control | 0 | 0 | 0 | 16.8 ms | 0 |
+| 1× drag | 0 | 0 | 0 | 16.8 ms | 0 |
+| 4× control | 2 | 0 | 0 | 33.3 ms | 0 |
+| 4× drag | 0 | 0 | 0 | 16.8 ms | 0 |
+
+  The 95th-percentile frame was 16.7 to 16.8 ms in every run.
+
+**Done-when.**
+- ✓ Dragging a task on a 400-row schedule does not drop frames. At 1× there are no frames over 25 ms and no long task. At 4× the drag shows no frame over 25 ms (its no-drag control shows 2) and no long task, in eight runs each. That is the test this record set: "If the drag's frames over 25 ms are not above the control's, done-when 1 holds and PERF-5 closes".
+- ✓ The board's DOM node count is proportional to what is visible: 22 bars and 24 outline rows for 400 rows, unchanged.
+
+**Scope / residual.** As before, this was measured headless, on a standalone bundle of the board with stubbed data and stubbed `next/*` (the committed harness), not on a deployed build against live data. Remediation 4 (the searchable picker) landed in J14. The `MIN_PX_PER_DAY = 30` floor is not a done-when and stays as recorded (named for the integrator; no finding, `DEC-29`). The harness fix is in the commit that carries this block; the J18 code commit is `70d5db75`.
 
 ---
 
@@ -803,7 +824,7 @@ that, not after.
 ## PERF-12 · The app-wide shell ships ~618 KB of JavaScript to every route
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J18 APP SHELL BUDGET — by the integrator, 2026-10-07 (DEC-31; DEC-90; fleet plan `audit-reports/fleet-plans/projects-joint.json`, J18).
 - **Verification:** CONFIRMED from PERF-9's measured bundle numbers
 - **Locations:**
@@ -825,8 +846,71 @@ app/(protected)/layout.tsx:6-25 — import Sidebar from "@/components/navigation
 
 **Done when.**
 
-- [ ] A total-route JavaScript budget (the shell plus the route's own chunks) is stated and checked from a built manifest, at least for `/projects/[id]`, so a change that pushes a route over it is caught
-- [ ] The shell's imports that a route does not need on first paint are split or lazy (`next/dynamic`, or an import on use — for example the command palette, the relationship-graph host, the signature-capture host and the background indicators), and the shell's measured share of every route falls below ~618 KB
+- [x] A total-route JavaScript budget (the shell plus the route's own chunks) is stated and checked from a built manifest, at least for `/projects/[id]`, so a change that pushes a route over it is caught
+- [x] The shell's imports that a route does not need on first paint are split or lazy (`next/dynamic`, or an import on use — for example the command palette, the relationship-graph host, the signature-capture host and the background indicators), and the shell's measured share of every route falls below ~618 KB
+
+**Resolution (2026-11-18, projects-joint J18 APP SHELL BUDGET).** A total-route budget is checked from the built manifests, in CI after the production build, and the shell's on-use imports are split out: the protected routes' shell falls 1,344,038 → 1,071,009 bytes on the full first-load measure and 884,207 → 611,178 bytes on the measure J12 used.
+
+- **The measure, reproduced.** *Corrected (J18, DEC-29):* the Mechanism above counts `rootMainFiles` inside the ~618 KB. J12's commit `329ba592`, rebuilt here, gives 1,044,351 bytes for `/projects/[id]` when the page entry's `entryJSFiles` alone are summed, and 1,504,182 when `rootMainFiles` (410,839 bytes, the framework) and every other entry of the manifest are added. So J12's 1,092,416 (and its ~618 KB shell) is the page entry's own list, without `rootMainFiles`. (The rebuild is ~48 KB under J12's figure because the toolchain in `node_modules` has moved since.) This record now states both measures.
+- **The budget** (`scripts/perf/route-js-budget/`). `check.mjs` reads `.next/build-manifest.json` and every `page_client-reference-manifest.js`. It counts a route's first-load JavaScript as `rootMainFiles` plus every chunk of every `entryJSFiles` entry (root and group layouts, error / loading / not-found boundaries, the page), each chunk once. The page's own chunks are the ones no other entry and no root main file lists; the rest is the shell. A server-component page with no entry is all shell. Chunks behind `import()` or `next/dynamic` are not in either list and do not count. `budgets.json` holds a budget for nine routes (`/projects/[id]` 1,770,000; `/documents/[libraryId]`, `/requests/[id]`, `/admin/assets`, `/dashboard`, `/inbox`, `/projects`, `/`, `/verify/[docId]`), a default for every other route (1,371,000), and a shell ceiling for every route (1,108,000). Each is the measured after-number plus 3%, rounded up to the next 1,000. Over budget exits 1, and no build exits 2. The command is `npm run build && npm run perf:budget`. CI runs it as the step after "Production build" (`.github/workflows/ci.yml`). It needs no network.
+  - Checked against the base build, the same budgets fail: exit 1, 96 failures.
+  - `lib/__tests__/j18RouteJsBudget.test.ts` pins the arithmetic on a fixture shaped like `.next` (no build): parsing, naming, the union of chunks, own vs shell, a server page, a missing size, each failure kind, and the command's exit codes.
+- **What moved out of the shell** (the import boundary only; every listener stays where it was and mounts at the same moment). Each module below is fetched when the browser is first idle after the page is up (`requestIdleCallback`), or at its first use, whichever comes first. Once fetched it renders in the same commit, with no fallback frame (`lib/lazyModule.ts`, which reads the loaded module through `useSyncExternalStore`, not `React.lazy`). A failed fetch is not kept: the next use tries again.
+  - **The command palette.** `components/navigation/GlobalCommandPaletteHost.tsx`, mounted by the protected layout in the palette's place, owns the open state and the one window keydown listener: Cmd+K / Ctrl+K toggles, `/` opens when no field has focus, `?` opens to the shortcuts, and Escape closes. The rules are the palette's own, moved unchanged (`paletteKeyAction`). The palette (`GlobalCommandPalette.tsx`, now controlled by the host, with no listener of its own) and what it imports load on use: the search, the evidence pack (with `versionApproval`, `reviewControl` and `notify/dispatch` behind it) and the feature atlas. A press before the palette has arrived is kept, never dropped: the palette opens as soon as it lands, focused, as that press asked (empty, or on the shortcuts for `?`). The header's search button and the cockpit's QuickLaunch dispatch the same Cmd+K, so they reach the host. Keys typed in the few milliseconds before a cold palette lands are not captured, and on base keys typed before its input took focus were not captured either.
+  - **The relationship map.** `RelationshipGraphHost` keeps its `open-relationship-graph` listener. `RelationshipGraph` and its search load on use.
+  - **The signature ceremony.** `SignatureCaptureHost` keeps its `request-signature` listener. `SignatureCeremony` and `lib/eSignatures` (`recordSignature`) load on use, and the recorded fields are unchanged.
+  - **The knowledge indicator's engine.** `KnowledgeIndexIndicator` stays in the shell: its drain, its poll and its upload listener start at mount as before. The indexing engine (`lib/knowledge.ts`, with `assistantScreen`) is fetched only by a controller's tab, at the first pass, alongside the queue read. It is the same module instance the library page uses, so `isIngestActive` still sees that page's loop. A failed fetch ends the pass as an empty queue would, and the next poll retries.
+  - **The sidebar's logo modal.** `LogoUploadModal` loads on use. It is preloaded on idle only for someone who can edit the branding.
+  - **The feed's age format.** `AttentionFeed` (inside the notification center) imported `formatAgo` from `CommandDeck`, which pulled the whole Command Deck and `DailyBrief` into every route. `formatAgo` now lives in `lib/formatAgo.ts`, and `CommandDeck` re-exports the same function.
+- **Left eager, and why.** Each of these is read on first render, subscribes or listens at mount, or is drawn on first paint:
+  - `ThemeProvider` and the pre-paint scripts (the theme context is read on first render);
+  - `ServiceWorkerManager` (registers at mount);
+  - `ToastProvider`, `RoleProvider`, `OrgBrandingProvider`, `SubscriptionProvider`, `AttentionProvider` and `NotificationCenterProvider` (contexts read on first render; the attention feed subscribes at mount);
+  - `NotificationListener` (realtime at mount);
+  - `UploadIndicator`, `BackupIndicator` and `UpdatePill` (store and worker listeners at mount; `clientBackup` is the store `BackupIndicator` subscribes to);
+  - `CornerDock` and `CentreDock` (every widget portals into them at mount);
+  - `DialogHost` (`appConfirm` / `appAlert` need it mounted);
+  - `Sidebar`, `TopBar`, `TrialBanner`, `SubscriptionGate`, `WorkspaceRelocationBanner` and `BackToGraphChip` (first paint).
+  - The notification center's panel stays eager. It is mounted at rest (closed, `inert`, translated off-screen so it slides in), it consumes the attention feed, and its suites open it in the same act. Lazy, a cold first open would show the skeleton and lose the slide-in. Its separable part (`AttentionFeed`, ~9 KB) stays, and the ~17 KB the feed dragged in is gone (above).
+- **Measured** (`next build` with placeholder env, run in scratch copies whose `node_modules` is a hard-linked copy; bytes of client JavaScript, the full first-load measure; base `4f93574b`):
+
+| route | before | after | change | shell | own |
+|---|---|---|---|---|---|
+| `/projects/[id]` | 1,845,302 | 1,718,223 | −127,079 | 1,344,038 → 1,071,009 | 501,264 → 647,214 |
+| `/documents/[libraryId]` | 3,395,432 | 3,348,248 | −47,184 | 1,344,038 → 1,071,009 | 2,051,394 → 2,277,239 |
+| `/requests/[id]` | 2,381,841 | 2,247,769 | −134,072 | 1,344,038 → 1,071,009 | 1,037,803 → 1,176,760 |
+| `/dashboard` | 1,610,878 | 1,462,208 | −148,670 | 1,344,038 → 1,071,009 | 266,840 → 391,199 |
+| `/inbox` | 1,559,127 | 1,410,459 | −148,668 | 1,344,038 → 1,071,009 | 215,089 → 339,450 |
+| `/projects` | 1,547,956 | 1,318,508 | −229,448 | 1,344,038 → 1,071,009 | 203,918 → 247,499 |
+| `/documents` | 1,398,491 | 1,153,863 | −244,628 | 1,344,038 → 1,071,009 | 54,453 → 82,854 |
+| `/admin/users` | 1,378,242 | 1,118,727 | −259,515 | 1,347,935 → 1,074,906 | 30,307 → 43,821 |
+| `/` | 715,547 | 715,547 | 0 | 473,381 → 473,381 | 242,166 → 242,166 |
+| `/submit/[token]` | 743,053 | 743,167 | +114 | 473,381 → 473,381 | 269,672 → 269,786 |
+
+  - Every one of the 55 protected routes is smaller, by 47,184 to 273,029 bytes. The public routes are unchanged, except `/submit/[token]`: +114 bytes (0.015%), one more chunk, from Turbopack regrouping a module it shares (`lib/storage`); no code of that page changed.
+  - A page's "own" share grows where it uses a module the shell no longer carries. For example, `/projects/[id]` uses the evidence pack and the search, which now ship in its own chunks instead of everyone's. The total still falls.
+  - `/projects/[id]` gzip: 563,418 → 522,624.
+  - On J12's measure (the page entry's `entryJSFiles`), the protected routes' shell is 884,207 (`/projects/[id]`) to ~889,000 (the admin routes, read on a source-mapped build of the base) before and **611,178 to 615,075 after**: below J12's 618,074.
+- **Tests.** Mutation-checked: 20 mutations, 20 killed.
+  - `lib/__tests__/j18ShellLazyBoundaries.test.ts`, rendered, cold shell each case:
+    - The palette: Ctrl+K before the palette was fetched opens it, focused, and the browser's own Ctrl+K is prevented. `?` opens to the shortcuts. `/` and `?` in a field are left alone. Escape closes; Cmd+K toggles. The header's synthetic Cmd+K opens it, and a quick-nav pick routes. The idle preload fetches it unasked, and the next press renders in the same act. The shortcut rules case by case. Server-rendered, it draws nothing.
+    - The map: opened before fetched, close, reopen in the same act; an event with no id fetches nothing.
+    - The ceremony: opened before fetched, signed with the same recorded fields (`reauth: null`, the membership display name), "Signed", `signature-recorded`; the next request opens in the same act.
+    - `lazyModule`: one fetch, a failure retried, no empty frame.
+    - A census: no static import from either layout reaches a module now loaded on use, with negative controls. The layout still mounts each host and indicator, and only the host listens for keydown.
+  - `lib/__tests__/j18KnowledgeEngineOnUse.test.ts`: a non-controller never fetches the engine; a controller's first pass fetches it and indexes; a failed fetch ends the pass quietly and the next poll retries.
+  - `lib/__tests__/j18SidebarLogoModal.test.ts`, the real Sidebar: the first click opens the modal before it was fetched; an editor's tab preloads it on idle, and one that cannot edit never does.
+  - The existing suites over these surfaces pass unchanged, among them `knowledgeIndexIndicator` (now through the on-use engine), `notificationCenterScope`, `attentionRollup`, `cornerDock`, `cornerJobs`, `sessSixRoleNull`, `globalSearchTags`, `sweepRoundC3` and `zLayersOwnership`.
+- Commit: `70d5db75`.
+
+**Done-when.**
+1. ✓ A total-route budget (shell plus the route's own chunks) is stated (`budgets.json`) and checked from the built manifests for every route, `/projects/[id]` by name. The base build fails it (96 failures) and CI runs it after the build.
+2. ✓ The shell's imports a route does not need on first paint are lazy or loaded on use: the command palette, the relationship-map host's map, the signature-capture host's ceremony, the knowledge indicator's engine, the logo modal and the Command Deck behind the feed. The background indicators themselves stay mounted, because each subscribes at mount (the list above). The shell's share falls below ~618 KB on every route, on the measure that produced that figure: 611,178 to 615,075 bytes (reproduced from J12's commit, above). On the full first-load measure the protected shell is 1,071,009 to 1,074,906 bytes, 410,839 of it the framework's `rootMainFiles`.
+
+**Scope / residual.** None is owed by this finding. For the integrator, as context only:
+- J12's commit, rebuilt with today's toolchain, gives a shell of 569,097 to 577,215 bytes on its own measure. The shell grew between 2026-10-01 and this base (the notifications rounds' attention feed and providers), and this change takes back 273,029 of it.
+- The framework's `rootMainFiles` (410,839 bytes) and the Supabase client (~200 KB, read at first render by `RoleProvider`) are the floor of the protected shell.
+- Offline, the chunks moved out are fetched at the first idle moment (at most 2 seconds after the page is up). The service worker caches them cache-first, as it caches every `/_next/static/` file. A device that loads a build it has never run and goes offline inside that window cannot open those surfaces until it is back online. On base they arrived with the page. No finding is opened: no such report exists, and each of these surfaces but the quick-nav needs the network to do anything (DEC-29).
 
 ---
 
