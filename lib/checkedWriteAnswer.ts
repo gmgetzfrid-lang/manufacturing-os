@@ -23,6 +23,7 @@
 // message as the error and still rejects, so checkedWrite reports it failed.
 
 import type { PostgrestError } from "@supabase/supabase-js";
+import { userFacingError } from "@/lib/userFacingError";
 
 export interface KeptAnswer {
   /** The rows (or row) the write answered with; null before it answered. */
@@ -52,9 +53,15 @@ export function answered<R extends { data: unknown; error: unknown }>(q: Promise
 /** What a reorder whose writes did not all land says (a collection's pages,
  *  a folder's siblings): how many were not saved and, when some were, that
  *  the rest were — never "nothing was changed", since the other positions
- *  (and a drag's move across parents before the reorder) may have landed. */
-export function reorderNotSaved(missed: number, total: number, what: string): string {
-  return `${missed} of ${total} ${what} were not saved — you may not have permission to reorder these, or someone else changed them first.` +
+ *  (and a drag's move across parents before the reorder) may have landed.
+ *  `dbError`: the first database error among them, worded in the REASON
+ *  form (lib/userFacingError, embedded) in place of the permission /
+ *  conflict guess. */
+export function reorderNotSaved(missed: number, total: number, what: string, dbError?: { message: string; code?: string | null } | null): string {
+  const why = dbError
+    ? userFacingError(dbError, { embed: true, context: "reorder" })
+    : "you may not have permission to reorder these, or someone else changed them first.";
+  return `${missed} of ${total} ${what} were not saved — ${why}` +
     (missed < total ? " The others were saved." : "") +
     " Reload to see the order as it stands.";
 }

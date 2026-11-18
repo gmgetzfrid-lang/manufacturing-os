@@ -214,17 +214,23 @@ export async function removeItem(collectionId: string, documentId: string): Prom
 export async function reorderItems(collectionId: string, orderedDocIds: string[]): Promise<void> {
   // Bulk update sort_order — every write is issued, as before; a position
   // that failed or matched no row is said once they have all answered.
+  // (Each answer is kept so a database error is said in its own reason.)
+  const kept = orderedDocIds.map(() => keptAnswer());
   const updates = orderedDocIds.map((docId, idx) =>
-    checkedWrite(supabase
+    checkedWrite(answered(supabase
       .from("curated_collection_items")
       .update({ sort_order: idx })
       .eq("collection_id", collectionId)
       .eq("document_id", docId)
-      .select("document_id"))
+      .select("document_id"), kept[idx]))
   );
-  const missed = (await Promise.all(updates)).filter((w) => !w.ok);
+  const answers = await Promise.all(updates);
+  const missed = answers.filter((w) => !w.ok);
   // Never "nothing was changed": the other positions may have landed.
-  if (missed.length) throw new Error(reorderNotSaved(missed.length, orderedDocIds.length, "position(s)"));
+  if (missed.length) {
+    const dbError = answers.map((w, i) => (!w.ok && w.code === "db" ? kept[i].error : null)).find((e) => e) ?? null;
+    throw new Error(reorderNotSaved(missed.length, orderedDocIds.length, "position(s)", dbError));
+  }
 }
 
 export async function updateItemNotes(

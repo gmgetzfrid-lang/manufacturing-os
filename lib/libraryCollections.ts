@@ -6,7 +6,7 @@ import { buildAclIndex, buildAclIndexFromChain } from "@/lib/acl";
 import { logAuditAction } from "@/lib/audit";
 // SAF-18 (J15a): every update here reads its matched rows (lib/checkedWrite.ts).
 import { checkedWrite, CHECKED_WRITE_REFUSED, describeWriteError } from "@/lib/checkedWrite";
-import { reorderNotSaved } from "@/lib/checkedWriteAnswer";
+import { answered, keptAnswer, reorderNotSaved } from "@/lib/checkedWriteAnswer";
 import { notify } from "@/lib/inAppNotifications";
 import { getOrgControllers } from "@/lib/ownership";
 import { resolveActorPrincipal } from "@/lib/principal";
@@ -359,13 +359,16 @@ export async function renameFolderAndDescendants(collectionId: string, newNameRa
  *  issued; one that failed or matched no row is said once they have all
  *  answered (the library page shows it), never a silent success. */
 export async function reorderFolders(orderedIds: string[]): Promise<void> {
+  // (Each answer is kept so a database error is said in its own reason.)
+  const kept = orderedIds.map(() => keptAnswer());
   const answers = await Promise.all(orderedIds.map((id, i) =>
-    checkedWrite(supabase.from(TABLE).update({ sort_order: i }).eq("id", id).select("id"))));
+    checkedWrite(answered(supabase.from(TABLE).update({ sort_order: i }).eq("id", id).select("id"), kept[i]))));
   const missed = answers.filter((w) => !w.ok);
   if (missed.length) {
     // Never "nothing was changed": the other positions (and a drag's move
     // across parents, before this call) may already have landed.
-    throw new Error(reorderNotSaved(missed.length, orderedIds.length, "folder position(s)"));
+    const dbError = answers.map((w, i) => (!w.ok && w.code === "db" ? kept[i].error : null)).find((e) => e) ?? null;
+    throw new Error(reorderNotSaved(missed.length, orderedIds.length, "folder position(s)", dbError));
   }
 }
 

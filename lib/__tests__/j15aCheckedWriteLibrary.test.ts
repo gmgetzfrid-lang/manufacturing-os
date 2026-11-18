@@ -129,6 +129,10 @@ describe("lib/collections.ts — class (a): a collection edit that matched no ro
     expect(said).toBe("1 of 3 position(s) were not saved — you may not have permission to reorder these, or someone else changed them first. The others were saved. Reload to see the order as it stands.");
     expect(said).not.toMatch(/nothing was changed/i);
     expect(writes()).toHaveLength(3);
+    // a database error among them is said in its own reason (REASON form), not the permission guess (re-review B)
+    h.answers["curated_collection_items:update"] = (c: Call) => (c.ops.some((o) => o.m === "eq" && o.args[1] === "b") ? { data: null, error: { code: "40P01", message: "deadlock detected" } } : { data: [{ document_id: "x" }], error: null });
+    expect(await reorderItems("c1", ["a", "b", "c"]).catch((e: Error) => e.message)).toBe("1 of 3 position(s) were not saved — Someone else changed this at the same moment — try again. The others were saved. Reload to see the order as it stands.");
+    h.calls.length = 0;
   });
 });
 
@@ -195,6 +199,8 @@ describe("lib/libraryCollections.ts — folders", () => {
     h.answers["collections:update"] = NONE;
     const all = await reorderFolders(["a", "b"]).catch((e: Error) => e.message);
     expect(all).toBe("2 of 2 folder position(s) were not saved — you may not have permission to reorder these, or someone else changed them first. Reload to see the order as it stands.");
+    h.answers["collections:update"] = (c: Call) => (c.ops.some((o) => o.m === "eq" && o.args[1] === "a") ? { data: null, error: { code: "42501", message: 'new row violates row-level security policy for table "collections"' } } : NONE);
+    expect(await reorderFolders(["a", "b"]).catch((e: Error) => e.message)).toBe("2 of 2 folder position(s) were not saved — You don't have permission to do this. Reload to see the order as it stands.");
   });
 });
 

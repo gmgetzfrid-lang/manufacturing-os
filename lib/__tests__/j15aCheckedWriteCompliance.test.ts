@@ -348,7 +348,13 @@ describe("lib/retention.ts (RET-5's checked writes now read their matched row)",
     let n = 0;
     h.answers["documents:update"] = () => (++n === 1 ? { data: [{ id: "d1" }], error: null } : { data: null, error: { code: "42501", message: 'permission denied for table documents' } });
     const said = await setRetentionPolicy({ level: "document", id: "d1", orgId: "o1", policy: { enabled: true, years: 7, basis: "created" }, actorId: "ctl1" }).catch((e: Error) => e.message);
-    expect(said).toBe("Retention clock was NOT updated: You don't have permission to do this — nothing was changed.");
+    // the policy row landed: lead with it, and the REASON form — never "nothing was changed" (the integrator's re-review A)
+    expect(said).toBe("The retention policy was saved, but its retention clock was NOT updated: You don't have permission to do this.");
+    expect(said).not.toMatch(/nothing was changed/);
+    // recomputeRetention alone: the reason in the REASON form too (its best-effort callers log it)
+    n = 0;
+    h.answers["documents:update"] = { data: null, error: { code: "42501", message: "permission denied for table documents" } };
+    await expect(recomputeRetention("d1")).rejects.toThrow(/^Retention clock was NOT updated: You don't have permission to do this\.$/);
   });
   it("scanRetention: a flag that matched no row is skipped (no notice) and reported", async () => {
     h.answers["documents:select"] = { data: [{ id: "d1", library_id: "L", collection_id: null, document_number: "P-1", retention_until: "2020-01-01", retention_policy: null, retention_notified_at: null }], error: null };
