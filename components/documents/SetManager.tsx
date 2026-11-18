@@ -122,13 +122,13 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
         return;
       }
       // Class (b): the set's sheet count follows the landed add. A count that
-      // did not land never undoes the add; it is said as a warning, and the
-      // binder keeps counting from the number the database holds.
+      // did not land never undoes the add; it is said as a warning. The
+      // in-memory count advances as before (what later adds write is
+      // unchanged — the integrator's ruling at the J15e review).
       const countKept = keptAnswer();
       const counted = await checkedWrite(answered(supabase.from('document_sets').update({ sheet_count: newCount }).eq('id', activeSet.id).select('id'), countKept));
-      if (counted.ok) {
-        setActiveSet({ ...activeSet, sheetCount: newCount });
-      } else {
+      setActiveSet({ ...activeSet, sheetCount: newCount });
+      if (!counted.ok) {
         console.warn("[sets] sheet count not updated", counted.code, countKept.error ?? counted.error);
         showToast({
           type: "warning",

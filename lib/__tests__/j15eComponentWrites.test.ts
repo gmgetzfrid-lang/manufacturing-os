@@ -27,6 +27,8 @@ const ui = vi.hoisted(() => ({
   answer: null as null | ((w: Write) => Answer | "reject" | undefined),
   /** SELECT answers by table. */
   reads: {} as Record<string, unknown>,
+  /** SELECT errors by table. */
+  readErrors: {} as Record<string, { message: string; code?: string }>,
   toasts: [] as Array<Record<string, unknown>>,
   events: [] as Array<Record<string, unknown>>,
   messages: [] as string[],
@@ -53,6 +55,7 @@ vi.mock("@/lib/supabase", () => {
               return resolve({ data: single ? { id } : [{ id }], error: null });
             }
             if (op === "insert") return resolve({ data: single ? { id: `${table}-new` } : [], error: null });
+            if (ui.readErrors[table]) return resolve({ data: null, error: ui.readErrors[table] });
             const r = ui.reads[table];
             return resolve({ data: single ? (r ?? null) : (r ?? []), error: null });
           };
@@ -105,7 +108,7 @@ let host: HTMLDivElement;
 let root: Root;
 let warn: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
-  ui.writes = []; ui.answer = null; ui.reads = {}; ui.toasts = []; ui.events = []; ui.messages = [];
+  ui.writes = []; ui.answer = null; ui.reads = {}; ui.readErrors = {}; ui.toasts = []; ui.events = []; ui.messages = [];
   ui.abort.mockReset().mockResolvedValue(undefined);
   ui.appConfirm.mockReset().mockResolvedValue(true);
   warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -165,6 +168,16 @@ describe("CheckoutFlowModal — the lock claim and the join's collaborator list"
     expect(ui.abort).toHaveBeenCalledTimes(1);
     expect(ui.toasts).toEqual([expect.objectContaining({ type: "error", title: "Checkout failed", message: expect.stringMatching(/did not complete — the lock could not be claimed: the write was refused without an error/) })]);
     expect(ui.events).toEqual([]);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("a claim the database refused with an error (42501) is rolled back and said with the database's own words, no CHECK_OUT", async () => {
+    ui.answer = (w) => (w.table === "documents" ? { data: null, error: { message: "permission denied for table documents", code: "42501" } } : undefined);
+    const onClose = await checkout(null);
+    expect(ui.abort).toHaveBeenCalledTimes(1);
+    expect(ui.toasts).toEqual([expect.objectContaining({ type: "error", title: "Checkout failed", message: "The checkout did not complete — the lock could not be claimed: permission denied for table documents" })]);
+    expect(ui.events).toEqual([]);
+    expect(ui.messages).toEqual([]);
     expect(onClose).not.toHaveBeenCalled();
   });
 
@@ -292,6 +305,29 @@ describe("LibraryOrderModal — the order save and the clear", () => {
     expect(errorLine()).toBe("The custom order was not cleared on 3 of 3 documents — you may not have permission to change them, or someone else changed them first. Reload to see the order as it stands.");
   });
 
+  it("a clear that failed with a database error is said — never swallowed, whether the list is empty or not", async () => {
+    ui.answer = () => ({ data: null, error: { message: "permission denied for table documents", code: "42501" } });
+    const first = await open();
+    await click(button("Clear custom order"));
+    expect(errorLine()).toBe("You don't have permission to do this — nothing was changed.");
+    expect(first.onClose).not.toHaveBeenCalled();
+    act(() => root.unmount()); root = createRoot(host);
+    ui.reads.documents = [];
+    const second = await open();
+    await click(button("Clear custom order"));
+    expect(errorLine()).toBe("You don't have permission to do this — nothing was changed.");
+    expect(second.onClose).not.toHaveBeenCalled();
+  });
+
+  it("a list that failed to load never makes a refused clear a silent close", async () => {
+    ui.readErrors.documents = { message: "upstream request timeout", code: "PGRST000" };
+    ui.answer = () => ({ data: [], error: null });
+    const { onClose } = await open();
+    await click(button("Clear custom order"));
+    expect(errorLine()).toBe(CHECKED_WRITE_REFUSED);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("an empty library has nothing to clear (class c): zero rows closes as before", async () => {
     ui.reads.documents = [];
     ui.answer = () => ({ data: [], error: null });
@@ -339,7 +375,7 @@ describe("SetManager — a sheet's add and removal, and the set's count", () => 
     expect(listed()).toEqual([]);
   });
 
-  it("a count that did not land after the add (class b) is a warning: the add stands, and never 'nothing was changed'", async () => {
+  it("a count that did not land after the add (class b) is a warning: the add stands, never 'nothing was changed', and later adds write what they wrote before", async () => {
     ui.answer = (w) => (w.table === "document_sets" ? { data: [], error: null } : undefined);
     await addOne();
     expect(ui.writes.map((w) => w.table)).toEqual(["documents", "document_sets"]);
@@ -347,14 +383,14 @@ describe("SetManager — a sheet's add and removal, and the set's count", () => 
     expect(ui.toasts[0]).toMatchObject({ type: "warning", title: "Added to the set, but its sheet count was not updated" });
     expect(String(ui.toasts[0].message)).not.toMatch(/nothing was changed/i);
     expect(listed()).toEqual(["P-100"]);
-    // the binder keeps the count the database holds: the next add counts from 2, not 3
+    // base behaviour for what is written (the integrator's ruling): the in-memory count advanced to 3, so the next add counts from 3
     ui.answer = null;
     ui.reads.documents = [{ id: "d10", document_number: "P-101", title: "Pump B", rev: "1", status: "Active" }];
     await type(document.querySelector('input[placeholder="Search to add sheet..."]') as HTMLInputElement, "P-10");
     await click([...document.querySelectorAll("span")].find((s) => s.textContent === "P-101")!.closest("div.p-2")!);
     expect(ui.writes.slice(2).map((w) => [w.table, w.payload])).toEqual([
-      ["documents", { set_id: "set1", sheet_number: 2, sheet_total: 3 }],
-      ["document_sets", { sheet_count: 3 }],
+      ["documents", { set_id: "set1", sheet_number: 2, sheet_total: 4 }],
+      ["document_sets", { sheet_count: 4 }],
     ]);
   });
 

@@ -45,11 +45,15 @@ export default function LibraryOrderModal({
   const [error, setError] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  // True only once the document list has loaded: an empty list that failed
+  // to load says nothing about the library being empty.
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
     let alive = true;
     setLoading(true);
+    setLoaded(false);
     setError(null);
     (async () => {
       try {
@@ -69,6 +73,7 @@ export default function LibraryOrderModal({
             rev: (d.rev as string) || undefined,
             sort_order: d.sort_order as number | null,
           })));
+          setLoaded(true);
         }
       } catch (e) {
         if (alive) setError((e as Error).message);
@@ -147,8 +152,10 @@ export default function LibraryOrderModal({
     try {
       // projects-tab SAF-22 (J15e): class (a). One statement over the whole
       // library: zero matched rows while the modal lists documents is the
-      // refusal (nothing was changed), said on the error line; an empty
-      // library has nothing to clear (class c, closes as before). A listed
+      // refusal (nothing was changed), said on the error line; a library
+      // whose list LOADED empty has nothing to clear (class c, closes as
+      // before) — a list that failed to load never makes a refusal silent,
+      // and a database error is always said. A listed
       // document the statement did not match (a folder the person may not
       // write) is counted, and the others are said to be cleared.
       const w = await checkedWrite(supabase.from("documents")
@@ -156,7 +163,7 @@ export default function LibraryOrderModal({
         .eq("org_id", orgId)
         .eq("library_id", libraryId)
         .select("id"));
-      if (!w.ok && !(w.code === "refused" && docs.length === 0)) {
+      if (!w.ok && !(w.code === "refused" && loaded && docs.length === 0)) {
         setError(w.error);
         setBusy(false);
         return;
