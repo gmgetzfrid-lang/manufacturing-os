@@ -1,6 +1,6 @@
 # 07 · Doc packs, work packages & the field bundle
 
-**14 findings** — 5 CRITICAL · 5 HIGH · 4 MEDIUM.
+**15 findings** — 5 CRITICAL · 6 HIGH · 4 MEDIUM. *(Recounted 2026-11-18 when F7-EVID12 opened `PKG-15` (CRITICAL); the line had read "14 findings — 5 CRITICAL · 5 HIGH · 4 MEDIUM", one CRITICAL since rated HIGH.)*
 
 Frozen snapshot or live reference — and what that means when a revision moves.
 
@@ -802,3 +802,42 @@ supabase/schema.sql:1-2 — `-- Manufacturing OS — PostgreSQL schema for Supab
 **Scope / residual.** Chain reaction addressed: `document_intents` / `revision_branches` (the same deferral comment) are in the block. `HLD-12`'s schema.sql half closes on this.
 
 ---
+
+<a id="pkg-15"></a>
+
+## PKG-15 · The multipart upload door has no PKG-1 check — a document version's bytes of 64 MB or more can be overwritten in place, the same harm PKG-1 closed on the single-PUT door
+
+- **Severity:** CRITICAL
+- **Status:** RESOLVED (2026-11-18, fleet F7-EVID12 — see the Resolution)
+- **Assigned:** fleet F7-EVID12 — opened and assigned by the integrator, 2026-11-18 (DEC-90 / DEC-31), from drafting-flow `EVID-17`'s finding in passing.
+- **Verification:** CONFIRMED on base `a6dcef88` by reading the code (F7-EVID12).
+- **Locations:** `app/api/storage/multipart/route.ts` (create / complete), `app/api/storage/upload-url/route.ts` (PKG-1's check), `lib/storage.ts` (`MULTIPART_THRESHOLD`, 64 MB: every upload at or above it goes through multipart)
+- **Independently verified:** — opened 2026-11-18 by F7-EVID12; not yet challenged by a second party.
+
+**Mechanism.** `PKG-1` made `/api/storage/upload-url` refuse to sign a PUT for a key that is already a document version's bytes (`file_url` or `source_file_key`). The browser sends every file of 64 MB or more through `/api/storage/multipart` instead (`lib/storage.ts` `uploadToPathInner`). That route authorizes the key by workspace membership only: `create` opens an upload and `complete` writes the object under any key. The version ledger is never asked.
+
+**Failure scenario.** Any active member — a Viewer included — who knows an issued revision's key (a laser scan, a large drawing set) opens a multipart upload to it, PUTs parts and completes it. Every QR, doc pack and download now serves the new bytes while the revision's `file_hash`, approvals and signatures still describe the old ones — `PKG-1`'s failure scenario, through the other door.
+
+**Done when.**
+
+- [x] The multipart route asks `PKG-1`'s question with the same helper, words and codes — a version's key refused 409, a ledger read error 503 (fail closed) — at create AND at complete
+- [x] Every legitimate multipart user works exactly as before (pinned)
+
+**Resolution (2026-11-18, fleet F7-EVID12).** Reproduced on `a6dcef88`: a multipart create and complete for a key a `document_versions` row names were opened and completed with no ledger read.
+- `lib/versionKeyWriteGate.ts` `versionKeyWriteRefusal` (`:30`) is `PKG-1`'s check moved verbatim out of `upload-url`: two exact-equality lookups (`file_url`, `source_file_key`), 409 "That file already belongs to a published revision and cannot be overwritten. Publish a new revision instead.", 503 "Couldn't verify the target key; upload refused." `upload-url` now calls it (`app/api/storage/upload-url/route.ts:104-105`); its answers are unchanged, pinned.
+- `app/api/storage/multipart/route.ts:89-91` asks it at **create** and at **complete** (when the bytes land), first, then `EVID-17`'s ticket check, as `upload-url` orders them. So an upload opened before a version was published cannot complete over its bytes. Signing a part and aborting ask nothing (an abort must always work).
+- **Every legitimate multipart user traced (no regression).** Only `lib/storage.ts` `uploadToPath` calls the route, for a file at or above 64 MB. Each of its callers mints a fresh key before any version row names it, and inserts its row only after the upload returns:
+  - the library page's upload (`uniqueUploadName`: `…__rev<r>__<Date.now()>`);
+  - `lib/revisions.ts` (new revision, source file, backfill: `…__<Date.now()>`);
+  - `lib/documentLifecycle/common.ts` (`…__<Date.now()>`);
+  - knowledge (`<Date.now()>-<name>`), cost documents and plot plans (`crypto.randomUUID()`), avatars (a random id), the workspace logo (refused here outright since ORG-5).
+
+  These are the same flows `upload-url` has refused version keys for since `PKG-1`; only the transport differs by size. The backup restore puts files back through `upload-url` alone, never multipart. No multipart user writes an existing version's key.
+
+Tests: `lib/__tests__/pkg15MultipartVersionKey.test.ts`, 6 cases.
+- Refused: a `file_url` key at create and at complete (409, PKG-1's words, nothing sent to storage); a `source_file_key` the same; an upload opened before publication cannot complete after it.
+- Fail closed: a ledger read error is 503 at both.
+- Unchanged: a fresh key's create, sign, complete and abort answer byte-identically, and the ledger is asked at create and complete only; `upload-url`'s 409 / 503 / signed answers are byte-identical after the move.
+- Mutation-checked, six mutations, each failing the suite: the multipart check removed; complete not checked; a read error failing open; `source_file_key` not asked; sign and abort gated; the wording changed.
+
+**Done-when.** ✓ (1), ✓ (2) as written above. No residual.

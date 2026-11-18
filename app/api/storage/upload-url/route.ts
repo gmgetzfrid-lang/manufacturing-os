@@ -10,6 +10,7 @@ import {
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { enforceOrgAccess } from "@/lib/serverAuth";
 import { ticketKeyOverwriteRefusal, r2Head } from "@/lib/ticketKeyOverwrite";
+import { versionKeyWriteRefusal } from "@/lib/versionKeyWriteGate";
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -97,29 +98,11 @@ export async function POST(req: NextRequest) {
   // approvals) stays untouched. Refuse to re-sign such a key; the immutable
   // revision bytes can only be replaced by publishing a new version (a fresh
   // key). Checked against both the rendered bytes (file_url) and the native
-  // source (source_file_key).
-  // Two exact-equality lookups rather than a PostgREST .or() raw string:
-  // assertSafeStorageKey permits commas and parentheses, which would break or
-  // inject an .or() filter expression.
-  for (const col of ["file_url", "source_file_key"] as const) {
-    const { data: clash, error: clashErr } = await supabaseAdmin
-      .from("document_versions")
-      .select("id")
-      .eq(col, path)
-      .limit(1)
-      .maybeSingle();
-    if (clashErr) {
-      // Fail closed — never sign a PUT we could not clear against the version
-      // ledger, because the write it authorizes is irreversible.
-      return NextResponse.json({ error: "Couldn't verify the target key; upload refused." }, { status: 503 });
-    }
-    if (clash) {
-      return NextResponse.json(
-        { error: "That file already belongs to a published revision and cannot be overwritten. Publish a new revision instead." },
-        { status: 409 },
-      );
-    }
-  }
+  // source (source_file_key). Fail closed (503) when the ledger cannot be
+  // read. The check lives in lib/versionKeyWriteGate.ts (moved verbatim, so
+  // /api/storage/multipart asks the same question — PKG-15).
+  const versionRefusal = await versionKeyWriteRefusal(supabaseAdmin, path);
+  if (versionRefusal) return NextResponse.json({ error: versionRefusal.error }, { status: versionRefusal.status });
 
   // drafting-flow EVID-17: a request's stored file (a key under
   // orgs/<org>/tickets/ that a request lists, whose bytes are in storage) is

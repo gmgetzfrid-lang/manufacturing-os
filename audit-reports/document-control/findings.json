@@ -15,10 +15,10 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 188,
+    "findings": 189,
     "gaps": 0,
     "by_severity": {
-      "CRITICAL": 19,
+      "CRITICAL": 20,
       "HIGH": 56,
       "MEDIUM": 80,
       "LOW": 33
@@ -26,6 +26,7 @@
     "by_status": {
       "RESOLVED": 170,
       "OPEN": 13,
+      "RESOLVED (2026-11-18, fleet F7-EVID12 — see the Resolution)": 1,
       "RESOLVED (as split under `DEC-31`; ruled by the integrator at the P27 merge, 2026-10-20 (`DEC-90`) — the access-control door, a member reading `portal_token` over REST, stays open until `DIST-18` lands)": 1,
       "RESOLVED (2026-10-21, the integrator's fix pass at the P28 merge — ruled by the integrator at the P28 merge, 2026-10-21 (`DEC-90`): done-when 2 landed; the restore hooks beyond the brief's ruling (4) ratified)": 1,
       "RESOLVED by record (pending migrations — `20261257`, `20261259` pasted AFTER `20261219`, and `20261160` for `nudgeAcknowledgment`'s browser re-send — DEC-30)": 1,
@@ -410,6 +411,30 @@
       ],
       "refuted": false,
       "summary": "FE-201 has a P&ID marked Void (a cancelled tie-in detail) and an iso under an open 'Field Verification Needed' hold. A supervisor opens /assets/FE-201, clicks 'Print doc pack', and gets one merged PDF containing both, each stamped 'Rev 3 at time of issue — verify current revision before use' with a verify-QR. Scanning the Void sheet's QR returns GREEN/CURRENT (see the verify-status finding), and t",
+      "area": "document-control",
+      "report": "audit-reports/document-control/07-packages.md"
+    },
+    {
+      "id": "PKG-15",
+      "title": "The multipart upload door has no PKG-1 check — a document version's bytes of 64 MB or more can be overwritten in place, the same harm PKG-1 closed on the single-PUT door",
+      "severity": "CRITICAL",
+      "status": "RESOLVED (2026-11-18, fleet F7-EVID12 — see the Resolution)",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED on base `a6dcef88` by reading the code (F7-EVID12).",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/storage/multipart/route.ts",
+        "app/api/storage/upload-url/route.ts",
+        "lib/storage.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Any active member — a Viewer included — who knows an issued revision's key (a laser scan, a large drawing set) opens a multipart upload to it, PUTs parts and completes it. Every QR, doc pack and download now serves the new bytes while the revision's filehash, approvals and signatures still describe the old ones — PKG-1's failure scenario, through the other door.",
       "area": "document-control",
       "report": "audit-reports/document-control/07-packages.md"
     },

@@ -22,7 +22,7 @@ Checkout and the lock, revisions and publish, the review gate and e-signatures, 
 
 ## Findings
 
-**188 findings** — 19 CRITICAL, 56 HIGH, 80 MEDIUM, 33 LOW.
+**189 findings** — 20 CRITICAL, 56 HIGH, 80 MEDIUM, 33 LOW.
 
 ### Round F wave 1 (2026-09-23 → 2026-09-29) — six packages in parallel
 
@@ -256,7 +256,7 @@ Remaining: XEDGE extensions and the MEDIUM backlog.
 | 04 | [Holds & stop-work](./04-holds.md) | 14 |  |
 | 05 | [Distribution, acknowledgment & recall](./05-distribution.md) | 20 | `DIST-16` (MEDIUM) opened at P26, 2026-10-14; `DIST-17` (HIGH) opened at the N16 merge, 2026-10-14; `DIST-18` (HIGH) opened at P27 SHARE REMAINDERS, 2026-10-20 (owner document-control P29 TRANSMITTAL READ); `DIST-20` (MEDIUM) opened at P38 DOCUMENT NOTICE RECORD, 2026-10-21 (owner document-control P39 NOTICE RECORD REQUESTS) |
 | 06 | [Transmittals & the external portal](./06-transmittals.md) | 17 | `TRX-15` opened at the P7 merge, 2026-10-01; `TRX-16` (LOW) opened at the P8 merge, 2026-10-01; `TRX-17` (LOW) opened at P22, 2026-10-07 |
-| 07 | [Doc packs, work packages & the field bundle](./07-packages.md) | 14 |  |
+| 07 | [Doc packs, work packages & the field bundle](./07-packages.md) | 15 | `PKG-15` (CRITICAL, RESOLVED) opened at fleet F7-EVID12, 2026-11-18 |
 | 08 | [Retention, legal hold, archive & restore](./08-retention.md) | 14 |  |
 | 09 | [Content egress](./09-egress.md) | 8 |  |
 | 10 | [RLS & persistence — table by table](./10-rls.md) | 17 | `DRLS-15`, `DRLS-16` (CRITICAL — anon may execute `publish_revision`), `DRLS-17` opened at P3 LIFECYCLE, 2026-09-30 |
