@@ -69,7 +69,9 @@ function cleanPlan(v: unknown): StaffingPlan | null {
       if (Object.keys(row).length) byCraft[k] = row;
     }
   }
-  return { file: str(p.file, 200), at: str(p.at, 40), by: str(p.by, 120) || null, shifts, phases, ...(crafts?.length ? { crafts, byCraft: byCraft ?? {} } : {}) };
+  const D = /^\d{4}-\d{2}-\d{2}$/;
+  const sources = Array.isArray(p.sources) ? p.sources.flatMap((x) => (D.test(str(x?.from, 10)) && D.test(str(x?.to, 10)) ? [{ file: str(x.file, 200), from: str(x.from, 10), to: str(x.to, 10), at: str(x.at, 40), by: str(x.by, 120) || null }] : [])).slice(0, 40) : undefined;
+  return { file: str(p.file, 200), at: str(p.at, 40), by: str(p.by, 120) || null, shifts, phases, ...(crafts?.length ? { crafts, byCraft: byCraft ?? {} } : {}), ...(sources?.length ? { sources } : {}) };
 }
 
 export function cleanNextPlanSettings(st: Record<string, unknown> | null | undefined): NextPlanSettings {

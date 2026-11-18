@@ -29,7 +29,7 @@ import { useCriticalMode, useCriticalModeLoaded, saveCriticalMode } from "@/lib/
 import { CRITICAL_MODES, resolveCriticalPath, effectiveCriticalMode, type CriticalMode } from "@/lib/criticalPath";
 import type { Milestone } from "@/types/schema";
 import { EquipmentStep, useProjectEquipment } from "@/components/projects/EquipmentSetup";
-import { ManpowerStep, useManpowerSettings, manpowerSet } from "@/components/projects/ManpowerSetup";
+import { ManpowerStep, useStaffingSet } from "@/components/projects/ManpowerSetup";
 
 const ICON: Record<SetupItemId, typeof Clock> = { type: Tag, equipment: Factory, timezone: Globe2, shifts: Clock, night: Moon, critical: Zap, baseline: Flag, manpower: HardHat, roles: Users, print: Printer };
 // Opened by itself once per project on this device — after that the banner
@@ -88,7 +88,7 @@ export function ScheduleSetup(p: Props) {
   const letterheadSet = !!useLetterhead(p.projectId).lh;
   const typeSet = projectTypeSet(st.times.projectType);
   const equipmentSet = useEquipmentSet(p);
-  const mpSet = manpowerSet(useManpowerSettings(p.projectId));
+  const mpSet = useStaffingSet(p.projectId, p.milestones);
   const rolesSet = useRolesSet(p.projectId);
   const items = useMemo(() => setupChecklist({
     timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided, letterheadSet, typeSet, equipmentSet, manpowerSet: mpSet, rolesSet,
@@ -154,14 +154,14 @@ export function ScheduleSetupButton(p: Props) {
   const nightDecided = st.loaded ? st.times.nightJobs !== undefined : null;
   const letterheadSet = !!useLetterhead(p.projectId).lh;
   const equipmentSet = useEquipmentSet(p);
-  const mpSet = manpowerSet(useManpowerSettings(p.projectId));
+  const mpSet = useStaffingSet(p.projectId, p.milestones);
   const rolesSet = useRolesSet(p.projectId);
   const items = setupChecklist({ timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided, letterheadSet, typeSet: projectTypeSet(st.times.projectType), equipmentSet, manpowerSet: mpSet, rolesSet });
   const todo = toDo(items).length;
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button onClick={() => setOpen(true)} title="Project type, unit & equipment, time zone, shift times, night shifts, critical path, baseline, manpower, bids & staffing plans, roles & responsibilities, printed reports"
+      <button onClick={() => setOpen(true)} title="Project type, unit & equipment, time zone, shift times, night shifts, critical path, baseline, staffing plans, roles & responsibilities, printed reports"
         className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border shadow-sm transition-colors ${todo
           ? "text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 hover:bg-amber-100"
           : "text-[var(--color-text)] bg-[var(--color-surface)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
@@ -228,7 +228,7 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
             {at === "night" && <NightStep {...p} done={item.done} onSaved={() => undefined} />}
             {at === "critical" && <CriticalStep {...p} critical={critical} onSaved={() => go(1)} />}
             {at === "baseline" && <BaselineStep {...p} done={item.done} />}
-            {at === "manpower" && <ManpowerStep projectId={p.projectId} milestones={p.milestones} canManage={p.canManage} userEmail={p.userEmail} />}
+            {at === "manpower" && <ManpowerStep projectId={p.projectId} milestones={p.milestones} canManage={p.canManage} userId={p.userId} userEmail={p.userEmail} timezone={p.timezone} />}
             {at === "roles" && <EventOrganization projectId={p.projectId} canManage={p.canManage} actor={{ email: p.userEmail ?? null }} people={[]} />}
             {at === "print" && <LetterheadStep projectId={p.projectId} canManage={p.canManage} />}
           </div>

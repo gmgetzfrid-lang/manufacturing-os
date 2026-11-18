@@ -10,6 +10,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Check, ChevronRight, Download, FileUp, HardHat, Loader2, Plus, Trash2, X } from "lucide-react";
 import { saveFile } from "@/lib/saveFile";
+import { openContractor } from "@/lib/costsNav";
 import { supabase } from "@/lib/supabase";
 import { activeOnly } from "@/lib/activeMilestones";
 import { loadShiftRecords, type ShiftRecord } from "@/lib/shiftRecord";
@@ -17,7 +18,7 @@ import { companyOf, countOf, shiftCounts } from "@/lib/manpower";
 import { shiftWindow, type ShiftKind } from "@/lib/shiftReport";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
 import { saveStaffingPlan } from "@/lib/nextPlanStore";
-import { bandTarget, COMMON_CRAFTS, fillRange, nextDay, parseStaffingGrid, planFromGrid, setShiftHeads, type PlanCraft, type PlanGrid, type StaffingPlan } from "@/lib/staffingPlan";
+import { mergePlan, withoutRange, sourcesOf, planSpan, bandTarget, COMMON_CRAFTS, fillRange, nextDay, parseStaffingGrid, planFromGrid, setShiftHeads, type PlanCraft, type PlanGrid, type StaffingPlan } from "@/lib/staffingPlan";
 import { headCost, matchCraft, paidHoursOf, parseRateGrid, rateOf, RULES, type RateSheet } from "@/lib/rateSheet";
 import { crewShifts, crewSummary, type CrewShiftRow, type CrewSummary } from "@/lib/crewCost";
 import { contractorList, loadCrewSettings, saveContractorLink, saveCrewCompany, saveRateSheet, type Contractor, type CrewSettings } from "@/lib/crewSettings";
@@ -53,6 +54,9 @@ export interface ContractorsProps {
   onQuotes: () => void;
   /** A contractor's page to open on (asked for from elsewhere). */
   initial?: string | null;
+  /** Setup › Staffing plans: each contractor's crews and staffing plan only
+   *  (rates, quote and cost stay on Costs › Contractors). */
+  mode?: "staffing";
 }
 
 /** What a contractor has in, and its numbers over the shifts in view. */
@@ -74,6 +78,9 @@ export default function ContractorsPanel(p: ContractorsProps) {
   const [records, setRecords] = useState<Map<string, ShiftRecord>>(new Map());
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(p.initial ?? null);
+  // Setup has no phase picker: the staffing step keeps its own.
+  const [ownPhase, setOwnPhase] = useState<string | null>(null);
+  const phaseId = p.mode === "staffing" ? ownPhase : p.phase;
   const [now] = useState(() => Date.now());
 
   const [tick, setTick] = useState(0);
@@ -95,7 +102,7 @@ export default function ContractorsPanel(p: ContractorsProps) {
     return () => { live = false; };
   }, [p.projectId, tick]);
 
-  const scope = p.phase ? p.phases.find((x) => x.id === p.phase) ?? null : null;
+  const scope = phaseId ? p.phases.find((x) => x.id === phaseId) ?? null : null;
   const inScope = useCallback((key: string) => { const d = key.split(":")[0]; return !scope || ((!scope.start || d >= scope.start) && (!scope.end || d <= scope.end)); }, [scope]);
 
   const list: Crew[] = useMemo(() => {
@@ -124,7 +131,52 @@ export default function ContractorsPanel(p: ContractorsProps) {
   if (!settings) return <div className="py-12 flex justify-center">{err ? <span className="text-[13px] text-rose-700">{err}</span> : <Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" />}</div>;
   const cur = open ? list.find((x) => x.c.company === open) ?? null : null;
   const setS = (f: (s: CrewSettings) => CrewSettings) => setSettings((s) => (s ? f(s) : s));
-  if (cur) return <ContractorPage {...p} x={cur} scope={scope} settings={settings} allCrews={crews} setSettings={setS} onBack={() => setOpen(null)} reload={load} paidShift={(c) => paidHoursOf(c, shiftHoursOf(times))} />;
+  const phasePills = p.mode === "staffing" && p.phases.length > 1 ? (
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label="Phase">
+      {[{ id: null as string | null, name: "Whole project" }, ...p.phases.map((x) => ({ id: x.id as string | null, name: x.name }))].map((x) => (
+        <button key={x.id ?? "all"} type="button" aria-pressed={phaseId === x.id} onClick={() => setOwnPhase(x.id)} className={`h-8 px-3 rounded-full border text-[12.5px] font-bold ${phaseId === x.id ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{x.name}</button>
+      ))}
+    </div>
+  ) : null;
+  if (cur) return <><div className={phasePills ? "mb-3" : ""}>{phasePills}</div><ContractorPage {...p} x={cur} scope={scope} settings={settings} allCrews={crews} setSettings={setS} onBack={() => setOpen(null)} reload={load} paidShift={(c) => paidHoursOf(c, shiftHoursOf(times))} /></>;
+
+  if (p.mode === "staffing") return (
+    <div className="space-y-3" data-staffing-setup>
+      {err && <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
+      <p className="text-[13px] text-[var(--color-text-muted)]">Each contractor&apos;s staffing plan: heads by craft, day and night, by date. Upload its sheet or type it in. The shift meeting&apos;s head counts and the suggested schedule are held to it.</p>
+      {list.length === 0 ? <p className="text-[13px] text-[var(--color-text-muted)]">No contractor crews on the schedule yet.</p> : (
+        <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)]">
+          {list.map((x) => {
+            const days = x.plan ? Object.keys(x.plan.shifts).map((k) => k.split(":")[0]).sort() : [];
+            return (
+              <li key={x.c.company} className="flex items-center gap-3 px-3 py-2.5" data-contractor={x.c.company}>
+                <span className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${x.plan ? "bg-emerald-600 text-white" : "border border-[var(--color-border-strong)]"}`}>{x.plan && <Check className="w-3.5 h-3.5" />}</span>
+                <span className="min-w-0 flex-1">
+                  <b className="block text-[14px] text-[var(--color-text)]">{x.c.company}</b>
+                  <span className="block text-[12px] text-[var(--color-text-muted)]">{x.plan ? `${days.length ? `${shortDay(days[0])} to ${shortDay(days[days.length - 1])}` : "No shifts"}` : "No staffing plan yet"}{x.c.crews.length ? ` · crews: ${x.c.crews.join(", ")}` : ""}</span>
+                  {p.phases.length > 1 && (
+                    <span className="mt-1 flex flex-wrap gap-1.5">
+                      {p.phases.map((ph) => {
+                        const has = !!x.plan && Object.keys(x.plan.shifts).some((k) => { const d = k.split(":")[0]; return (!ph.start || d >= ph.start) && (!ph.end || d <= ph.end); });
+                        const src = x.plan ? sourcesOf(x.plan).find((s2) => (!ph.start || s2.from >= ph.start) && (!ph.end || s2.to <= ph.end)) : null;
+                        return (
+                          <button key={ph.id} type="button" onClick={() => { setOwnPhase(ph.id); setOpen(x.c.company); }} className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-full border text-[12px] font-bold ${has ? "border-emerald-300 text-emerald-800 dark:text-emerald-300 dark:border-emerald-800" : "border-amber-300 text-amber-900 dark:text-amber-200 dark:border-amber-800"}`}>
+                            {has ? <Check className="w-3.5 h-3.5" /> : null}{ph.name}: {has ? (src?.file || "typed in") : p.canManage ? "Upload" : "None"}
+                          </button>
+                        );
+                      })}
+                    </span>
+                  )}
+                </span>
+                <button type="button" onClick={() => { setOwnPhase(null); setOpen(x.c.company); }} className={x.plan ? btn : pri}>{x.plan ? "Open" : p.canManage ? "Put it in" : "Open"}</button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <p className="text-[12px] text-[var(--color-text-muted)]">Kern Energy crews are counted at the meeting but have no staffing plan from a contractor.</p>
+    </div>
+  );
 
   return (
     <div className="space-y-4" data-contractors>
@@ -145,6 +197,7 @@ export default function ContractorsPanel(p: ContractorsProps) {
   );
 }
 
+const shortDay = (d: string) => { const [, m, dd] = d.split("-").map(Number); return `${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][m - 1]} ${dd}`; };
 const shiftHoursOf = (t: { dayStart: string; nightStart: string }) => {
   const m = (s: string) => { const [h, mi] = s.split(":").map(Number); return h * 60 + (mi || 0); };
   const d = (m(t.nightStart) - m(t.dayStart) + 1440) % 1440;
@@ -206,11 +259,18 @@ function ContractorPage(p: ContractorsProps & {
   return (
     <div className="space-y-4" data-contractor-page={co}>
       <div className="flex items-center gap-2 flex-wrap">
-        <button type="button" onClick={p.onBack} className={btn}><ArrowLeft className="w-4 h-4" /> Contractors</button>
+        <button type="button" onClick={p.onBack} className={btn}><ArrowLeft className="w-4 h-4" /> {p.mode === "staffing" ? "Staffing plans" : "Contractors"}</button>
         <h3 className="min-w-0 flex-1 text-[18px] font-black text-[var(--color-text)] truncate">{co}</h3>
       </div>
       {err && <div role="alert" className="rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/30 px-3 py-2 text-[12.5px] font-semibold text-rose-800 dark:text-rose-300">{err}</div>}
 
+      {p.mode === "staffing" ? (
+        <>
+          <CrewsSection {...p} co={co} busy={busy} act={act} />
+          <PlanSection {...p} co={co} busy={busy} act={act} />
+          <p className="text-[12.5px] text-[var(--color-text-muted)]">The same plan shows on {co}&apos;s page in Costs › Contractors, with its rate sheet, quote and every shift&apos;s cost. <button type="button" onClick={() => openContractor(co)} className="font-bold text-[var(--color-accent)] hover:underline cursor-pointer">Open it there</button></p>
+        </>
+      ) : (<>
       <Answer x={x} scope={p.scope} />
 
       <nav className="flex flex-wrap gap-1.5" aria-label="Sections">
@@ -226,6 +286,7 @@ function ContractorPage(p: ContractorsProps & {
       <PlanSection {...p} co={co} busy={busy} act={act} />
       <RatesSection {...p} co={co} busy={busy} act={act} />
       <DailySection x={x} scope={p.scope} />
+      </>)}
     </div>
   );
 }
@@ -401,13 +462,17 @@ function PlanSection(p: SectionProps) {
       const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: null });
       const g = parseStaffingGrid(rows as unknown[][]);
       if (!g) { setMsg("That doesn't look like a staffing plan: crafts down the side, dates across the top, a Day and a Night column under each date."); return; }
-      const keep = Object.fromEntries(g.bands.map((b) => [b.name, bandTarget(b, p.phases, scopeSpan(p)) != null]));
+      const keep = Object.fromEntries(g.bands.map((b) => { const t = bandTarget(b, p.phases, scopeSpan(p)); return [b.name, p.scope ? t === p.scope.id || (t === "project" && p.phases.length <= 1) : t != null]; }));
       setRead({ g, file: f.name, keep, direct: Object.fromEntries(g.crafts.map((c) => [c.name, c.direct])) });
     } catch (e) { setMsg((e as Error).message); }
   };
+  const range = p.scope ? { from: p.scope.start ?? null, to: p.scope.end ?? null } : null;
   const saveRead = () => read && p.act("plan", async () => {
-    if (saved && !(await appConfirm({ title: `Replace ${co}'s staffing plan?`, message: `The plan in now (${planRange(saved)}) is replaced by what you picked from ${read.file}.`, confirmLabel: "Replace it" }))) return;
-    const next = planFromGrid(read.g, (b) => !!read.keep[b.name], { file: read.file, at: new Date().toISOString(), by: p.actor.email }, read.direct);
+    const picked = planFromGrid(read.g, (b) => !!read.keep[b.name], { file: read.file, at: new Date().toISOString(), by: p.actor.email }, read.direct);
+    const span = range ?? planSpan(picked);
+    const over = saved && span ? sourcesOf(saved).filter((x) => !(x.to < (span.from ?? "") || x.from > (span.to ?? "9999"))) : [];
+    if (over.length && !(await appConfirm({ title: `Replace ${co}'s plan for ${p.scope ? p.scope.name : `${dayLabel(span!.from ?? "")} to ${dayLabel(span!.to ?? "")}`}?`, message: `What is in for those dates (${over.map((x) => x.file || "typed in").join(", ")}) is replaced by ${read.file}. Every other date stays as it is.`, confirmLabel: "Replace those dates" }))) return;
+    const next = mergePlan(saved, picked, range);
     await saveStaffingPlan(p.projectId, co, next);
     p.setSettings((s) => ({ ...s, staffing: { ...s.staffing, [co]: next } }));
     setRead(null); setDraft(null);
@@ -418,22 +483,28 @@ function PlanSection(p: SectionProps) {
     setDraft(null);
   });
   const remove = () => p.act("plan", async () => {
-    if (!(await appConfirm({ title: `Remove ${co}'s staffing plan?`, message: "Head counts stay; they are no longer held to a plan.", confirmLabel: "Remove", tone: "danger" }))) return;
-    await saveStaffingPlan(p.projectId, co, null);
-    p.setSettings((s) => { const st = { ...s.staffing }; delete st[co]; return { ...s, staffing: st }; });
+    if (!saved) return;
+    if (!(await appConfirm({ title: p.scope ? `Remove ${co}'s plan for ${p.scope.name}?` : `Remove ${co}'s staffing plan?`, message: p.scope ? "Only that phase's dates are taken out; the rest of its plan stays. Head counts stay." : "Head counts stay; they are no longer held to a plan.", confirmLabel: "Remove", tone: "danger" }))) return;
+    const next = range ? withoutRange(saved, range) : null;
+    await saveStaffingPlan(p.projectId, co, next);
+    p.setSettings((s) => { const st = { ...s.staffing }; if (next) st[co] = next; else delete st[co]; return { ...s, staffing: st }; });
   });
 
+  // A stretch of dates named for the phase it falls in.
+  const phaseOf = (x: { from: string; to: string }) => p.phases.find((ph) => ph.start && ph.end && x.from >= ph.start && x.to <= ph.end)?.name ?? null;
+  const inPhase = saved && range ? Object.keys(saved.shifts).some((k) => { const d = k.split(":")[0]; return (!range.from || d >= range.from) && (!range.to || d <= range.to); }) : null;
   const phaseName = (b: PlanGrid["bands"][number]) => { const t = bandTarget(b, p.phases, scopeSpan(p)); return t == null ? "Outside this project's dates" : t === "project" ? "This project's dates" : `${p.phases.find((x) => x.id === t)?.name ?? "A phase"}'s dates`; };
 
   return (
-    <Section id="plan" title="Staffing plan" done={!!saved} sub={saved ? `${saved.file ? `Read from ${saved.file}` : "Typed in"}${saved.by ? ` by ${saved.by}` : ""}. ${planRange(saved)}.` : `How many of each craft ${co} sends each day and night. Upload its sheet or type it in.`}>
+    <Section id="plan" title={p.scope ? `Staffing plan, ${p.scope.name}` : "Staffing plan"} done={!!saved && (!range || !!inPhase)} sub={saved ? sourcesOf(saved).map((x) => { const ds = Object.keys(saved.shifts).map((k) => k.split(":")[0]).filter((d) => d >= x.from && d <= x.to).sort(); return `${phaseOf(x) ? `${phaseOf(x)}: ` : ""}${x.file || "typed in"}${ds.length ? ` (${dayLabel(ds[0])} to ${dayLabel(ds[ds.length - 1])})` : ""}`; }).join(" · ") : `How many of each craft ${co} sends each day and night. Upload its sheet or type it in; each phase can have its own.`}>
+      {range && saved && !inPhase && <p className="text-[12.5px] font-semibold text-amber-800 dark:text-amber-300">Nothing in for {p.scope!.name} yet. Upload {co}&apos;s sheet for it; the other phases&apos; plans stay as they are.</p>}
       {msg && <p className="text-[12.5px] font-semibold text-amber-800 dark:text-amber-300">{msg}</p>}
       {p.canManage && !read && (
         <div className="flex gap-1.5 flex-wrap">
-          <label className={`${saved ? btn : pri} cursor-pointer`}><FileUp className="w-4 h-4" /> {saved ? "Read a new sheet" : "Upload its staffing plan"}<input type="file" accept=".xlsx,.xls,.csv" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void readFile(f); }} /></label>
+          <label className={`${saved ? btn : pri} cursor-pointer`}><FileUp className="w-4 h-4" /> {p.scope ? (inPhase ? `Read a new sheet for ${p.scope.name}` : `Upload ${p.scope.name}'s sheet`) : saved ? "Read a sheet (replaces only its dates)" : "Upload its staffing plan"}<input type="file" accept=".xlsx,.xls,.csv" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void readFile(f); }} /></label>
           {!plan && <button type="button" onClick={() => setDraft(blank())} className={btn}><Plus className="w-4 h-4" /> Type it in</button>}
           {saved && !draft && <button type="button" onClick={() => void download()} className={btn}><Download className="w-4 h-4" /> Download (Excel)</button>}
-          {saved && !draft && <button type="button" disabled={!!p.busy} onClick={() => void remove()} className={btn}><Trash2 className="w-4 h-4" /> Remove</button>}
+          {saved && !draft && (!range || inPhase) && <button type="button" disabled={!!p.busy} onClick={() => void remove()} className={btn}><Trash2 className="w-4 h-4" /> {p.scope ? `Remove ${p.scope.name}'s plan` : "Remove"}</button>}
         </div>
       )}
 

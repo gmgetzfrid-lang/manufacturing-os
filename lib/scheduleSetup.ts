@@ -48,7 +48,7 @@ export function setupChecklist(s: {
   /** The unit picked and every work order's equipment confirmed. null =
    *  still loading; undefined = not asked (left off the list). */
   equipmentSet?: boolean | null;
-  /** Some company's bid manpower set. null = still loading. */
+  /** Every contractor on the schedule has a staffing plan. null = still loading. */
   manpowerSet?: boolean | null;
   /** The event's roles saved, each required one with a person. null = still loading. */
   rolesSet?: boolean | null;
@@ -71,8 +71,8 @@ export function setupChecklist(s: {
       why: "Schedule files often mark nearly everything critical - choose where it comes from." },
     { id: "baseline", label: "Baseline", required: false, done: s.hasBaseline,
       why: "Without one, moving work later quietly erases the slip - progress is measured against today's plan." },
-    { id: "manpower", label: "Contractors and rates", required: false, extra: true, done: s.manpowerSet === true, checking: s.manpowerSet === null,
-      why: "Each crew's company, each company's bid hands per shift and rate, and its staffing plan: the meeting's head counts are held to them, and labor cost runs from them." },
+    { id: "manpower", label: "Staffing plans", required: false, extra: true, done: s.manpowerSet === true, checking: s.manpowerSet === null,
+      why: "Each contractor's staffing plan: heads by craft, day and night. The shift meeting's head counts and the suggested schedule are held to it." },
     { id: "roles", label: "Roles & responsibilities", required: false, extra: true, done: s.rolesSet === true, checking: s.rolesSet === null,
       why: "Who runs the event: each role, what it is responsible for, and the person named to it. The post-event review's Organization line reads it." },
     { id: "print", label: "Printed reports", required: false, extra: true, done: !!s.letterheadSet,

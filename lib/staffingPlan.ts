@@ -25,7 +25,10 @@ export interface StaffingPlan {
   /** The crafts, and each shift's heads by craft (what a rate sheet prices). */
   crafts?: PlanCraft[];
   byCraft?: Record<string, Record<string, number>>;
+  /** Where each stretch of dates came from: one sheet per phase, or typed in. */
+  sources?: PlanSource[];
 }
+export interface PlanSource { file: string; from: string; to: string; at: string; by: string | null }
 /** By company ("Schultz"). */
 export type StaffingPlans = Record<string, StaffingPlan>;
 
@@ -226,4 +229,51 @@ export function planSummary(plan: StaffingPlan, from: string, to: string): { day
     if (v.direct + v.indirect > t.direct + t.indirect) { t.direct = v.direct; t.indirect = v.indirect; }
   }
   return { day, night };
+}
+
+
+// ─── One plan, put in a phase at a time ───────────────────────────
+
+const dayOfKey = (k: string) => k.split(":")[0];
+const keysOf = (pl: StaffingPlan) => [...new Set([...Object.keys(pl.shifts), ...Object.keys(pl.byCraft ?? {})])];
+/** The dates a plan covers, first and last ("YYYY-MM-DD"). */
+export function planSpan(pl: StaffingPlan): { from: string; to: string } | null {
+  const ds = keysOf(pl).map(dayOfKey).sort();
+  return ds.length ? { from: ds[0], to: ds[ds.length - 1] } : null;
+}
+/** Where a plan's dates came from; a plan saved before there were sources is one. */
+export function sourcesOf(pl: StaffingPlan): PlanSource[] {
+  if (pl.sources?.length) return pl.sources;
+  const span = planSpan(pl);
+  return span ? [{ file: pl.file, ...span, at: pl.at, by: pl.by }] : [];
+}
+
+/** A plan read (or typed) for some dates put into the one already in: the
+ *  dates in `range` (a phase's; else the new plan's own) are replaced, every
+ *  other date kept, so each phase can have its own sheet. */
+export function mergePlan(old: StaffingPlan | null, next: StaffingPlan, range?: { from: string | null; to: string | null } | null): StaffingPlan {
+  const own = planSpan(next);
+  const from = range?.from ?? own?.from ?? "", to = range?.to ?? own?.to ?? "";
+  const inR = (k: string) => { const d = dayOfKey(k); return (!from || d >= from) && (!to || d <= to); };
+  const pick = <T,>(o: Record<string, T> | undefined, keep: (k: string) => boolean) => Object.fromEntries(Object.entries(o ?? {}).filter(([k]) => keep(k)));
+  const mine = { shifts: pick(next.shifts, inR), byCraft: pick(next.byCraft, inR) };
+  const src: PlanSource = { file: next.file, from: from || own?.from || "", to: to || own?.to || "", at: next.at, by: next.by };
+  if (!old) return { ...next, ...mine, sources: [src] };
+  const shifts = { ...pick(old.shifts, (k) => !inR(k)), ...mine.shifts };
+  const byCraft = { ...pick(old.byCraft, (k) => !inR(k)), ...mine.byCraft };
+  const used = new Set(Object.values(byCraft).flatMap((m) => Object.keys(m)));
+  const crafts = [...(old.crafts ?? []), ...(next.crafts ?? []).filter((c) => !(old.crafts ?? []).some((o) => o.name === c.name))].filter((c) => used.has(c.name));
+  const sources = [...sourcesOf(old).filter((x) => x.to < src.from || x.from > src.to), src].sort((x, y) => x.from.localeCompare(y.from));
+  return { ...next, shifts, byCraft, crafts, sources, phases: [...(old.phases ?? []), ...(next.phases ?? [])] };
+}
+
+/** The plan with the dates in `range` taken out (a phase's plan removed);
+ *  null when nothing is left. */
+export function withoutRange(pl: StaffingPlan, range: { from: string | null; to: string | null }): StaffingPlan | null {
+  const inR = (k: string) => { const d = dayOfKey(k); return (!range.from || d >= range.from) && (!range.to || d <= range.to); };
+  const shifts = Object.fromEntries(Object.entries(pl.shifts).filter(([k]) => !inR(k)));
+  if (!Object.keys(shifts).length) return null;
+  const byCraft = Object.fromEntries(Object.entries(pl.byCraft ?? {}).filter(([k]) => !inR(k)));
+  const sources = sourcesOf(pl).filter((x) => (range.from && x.to < range.from) || (range.to && x.from > range.to));
+  return { ...pl, shifts, byCraft, sources };
 }

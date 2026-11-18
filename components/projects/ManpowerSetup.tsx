@@ -1,15 +1,18 @@
 "use client";
 
-// Setup › Contractors: a pointer. Each contractor's crews, staffing plan
-// and rate sheet live on its page in Costs › Contractors, with its quote
-// and budget line, so they are put in once, in one place. Kept here: the
-// project's manpower settings hook other screens read (which crew is whose).
+// Setup › Staffing plans: each contractor's crews and staffing plan, the
+// same plan its page in Costs › Contractors shows (with its rate sheet,
+// quote and cost), so it is put in once and seen in both places. Kept here:
+// the project's manpower settings hook other screens read (which crew is whose).
 
-import React, { useCallback, useEffect, useState } from "react";
-import { ArrowRight } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import type { Milestone } from "@/types/schema";
 import { loadManpowerSettings, type ManpowerSettings } from "@/lib/manpower";
-import { openContractor } from "@/lib/costsNav";
+import { supabase } from "@/lib/supabase";
+import { phasesOfRow, type ProjectPhase } from "@/lib/projectPhases";
+import { useCrewSettings } from "@/lib/useCrewSettings";
+import { contractorList } from "@/lib/crewSettings";
+import ContractorsPanel from "@/components/projects/cost/ContractorsPanel";
 
 export const MANPOWER_CHANGED = "manpower:changed";
 const cache = new Map<string, ManpowerSettings>();
@@ -32,14 +35,30 @@ export function useManpowerSettings(projectId: string | null | undefined) {
 /** Set: some company has a bid. */
 export const manpowerSet = (s: ManpowerSettings | null) => (s == null ? null : Object.keys(s.bids ?? {}).length > 0);
 
-const btn = "inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[12.5px] font-bold px-3.5 py-2 shadow-sm";
-
-export function ManpowerStep(_: { projectId: string; milestones: Milestone[]; canManage: boolean; userEmail?: string }) {
+/** Setup › Staffing plans: each contractor on the schedule and its plan,
+ *  put in here or on its page in Costs › Contractors (one plan, both places). */
+export function ManpowerStep(p: { projectId: string; milestones: Milestone[]; canManage: boolean; userId?: string; userEmail?: string; timezone?: string | null }) {
+  const [phases, setPhases] = useState<ProjectPhase[]>([]);
+  useEffect(() => {
+    let live = true;
+    void supabase.from("projects").select("phases, shift_times").eq("id", p.projectId).maybeSingle().then(({ data }) => { if (live && data) setPhases(phasesOfRow(data as { phases?: unknown; shift_times?: unknown })); });
+    return () => { live = false; };
+  }, [p.projectId]);
   return (
-    <div className="space-y-3" data-manpower-moved>
-      <p className="text-[13.5px] text-[var(--color-text)]">Each contractor has one page in <b>Costs › Contractors</b>: its crews on the schedule, its staffing plan (upload its sheet or type it in), its rate sheet, its quote and budget line, and every shift&rsquo;s heads and cost against the plan.</p>
-      <p className="text-[12.5px] text-[var(--color-text-muted)]">Head counts go in at the shift meeting, where each contractor&rsquo;s plan shows beside its count.</p>
-      <button type="button" onClick={() => openContractor(null)} className={btn}>Open Costs › Contractors <ArrowRight className="w-4 h-4" /></button>
-    </div>
+    <ContractorsPanel mode="staffing" orgId="" projectId={p.projectId} canManage={p.canManage} actor={{ uid: p.userId ?? "", email: p.userEmail ?? null }}
+      tz={p.timezone || "America/Los_Angeles"} phases={phases} phase={null} parties={[]} accounts={[]} entries={[]} docs={[]}
+      onPartiesChanged={() => {}} onQuotes={() => {}} />
   );
+}
+
+/** Setup's check: every contractor on the schedule has a staffing plan
+ *  (null while loading; true when there are none to plan). */
+export function useStaffingSet(projectId: string, milestones: Milestone[]): boolean | null {
+  const s = useCrewSettings(projectId);
+  return useMemo(() => {
+    if (!s) return null;
+    const crews = [...new Set(milestones.filter((m) => !m.cancelledAt).map((m) => m.responsibleParty?.trim() ?? "").filter(Boolean))];
+    const list = contractorList(crews, [], s).filter((c) => c.crews.length);
+    return list.every((c) => !!s.staffing[c.company]);
+  }, [s, milestones]);
 }
