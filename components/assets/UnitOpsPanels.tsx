@@ -41,6 +41,8 @@ import { syncKnowledgeSources, addKnowledgeSources, acceptAiAgreement } from "@/
 import { formatScopeParam } from "@/lib/scope";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { areaShelfDocCount, type DcLibraryNode, type DcFolderNode, type DcDocRow, type FlowsBrowseUploadGroup } from "@/lib/flowsBrowse";
+import { ZC } from "@/lib/zLayers";
+import { useDockAvoidRow } from "@/components/ui/CornerDock";
 
 // ─── Auto-categorize ───────────────────────────────────────────────────────
 
@@ -554,6 +556,9 @@ function ReadFlowsModal({ orgId, unitCode, onClose, onDone }: {
    *  launching unit (FLOW-1 — the panel links them to where they are decided). */
   onDone: (msg: string, outsideUnit?: number) => void;
 }) {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const [model, setModel] = useState<{
     tree: DcLibraryNode[];
     uploads: FlowsBrowseUploadGroup[];
@@ -870,7 +875,7 @@ function ReadFlowsModal({ orgId, unitCode, onClose, onDone }: {
   );
 
   const sheet = (
-    <div className="fixed inset-0 z-[700] flex items-start justify-center bg-black/50 pt-[6vh] p-4 overscroll-contain" onClick={onClose}>
+    <div className={`fixed inset-0 ${ZC.dialog} flex items-start justify-center bg-black/50 pt-[6vh] p-4 overscroll-contain`} onClick={onClose}>
       <div className="w-full max-w-lg max-h-[86vh] flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)] shrink-0">
@@ -1026,7 +1031,7 @@ function ReadFlowsModal({ orgId, unitCode, onClose, onDone }: {
         </div>
 
         {/* The PFD isn't anywhere yet? The door is one click away, not a maze. */}
-        <div className="px-3 py-2.5 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] shrink-0">
+        <div ref={dockRowRef} className="px-3 py-2.5 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] shrink-0">
           Don&apos;t see your PFD book at all? <Link href="/knowledge" className="font-black text-cyan-700 hover:text-cyan-600 underline">Upload it to a knowledge library</Link> or file it in Documents inside a linked folder.
         </div>
       </div>

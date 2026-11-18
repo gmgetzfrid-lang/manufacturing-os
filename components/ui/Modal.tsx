@@ -37,6 +37,7 @@ import React, { createContext, useContext, useEffect, useId, useRef, useState } 
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { useDockAvoid } from "@/components/ui/CornerDock";
+import { Z } from "@/lib/zLayers";
 
 const SIZES = {
   sm: "max-w-md",
@@ -84,7 +85,7 @@ export function Modal({
   onClose,
   size = "md",
   dismissable = true,
-  zIndex = 400,
+  zIndex = Z.sharedModal,
   className = "",
   ariaLabel,
   ariaLabelledBy,

@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { alreadyRetiredStatus, type TimelineEvent } from "@/lib/timeline";
 import { auditActorNote, AUDIT_TRAIL_UNSEEN_NOTE } from "@/lib/auditActions";
+import { ZC } from "@/lib/zLayers";
 
 interface TimelineFeedProps {
   events: TimelineEvent[];
@@ -159,7 +160,7 @@ function TimelineRow({ event, showScope, onReverseRequest }: { event: TimelineEv
   return (
     <div className="flex items-start relative">
       {/* Dot */}
-      <div className={`w-8 h-8 rounded-full ${v.bgClass} border-2 ${v.ringClass} flex items-center justify-center shrink-0 z-10 mr-3 ring-4 ring-white shadow-sm`}>
+      <div className={`w-8 h-8 rounded-full ${v.bgClass} border-2 ${v.ringClass} flex items-center justify-center shrink-0 ${ZC.raised} mr-3 ring-4 ring-white shadow-sm`}>
         <Icon className={`w-3.5 h-3.5 ${v.iconColor}`} />
       </div>
 

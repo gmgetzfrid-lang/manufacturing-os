@@ -13,6 +13,8 @@ import {
   type SignatureIntent, type SigningReauth, type SigningCredential,
 } from "@/lib/eSignatures";
 import SignaturePad from "@/components/signatures/SignaturePad";
+import { ZC } from "@/lib/zLayers";
+import { useDockAvoidRow } from "@/components/ui/CornerDock";
 
 const INTENTS: SignatureIntent[] = ["Approved", "Reviewed", "Acknowledged", "Witnessed", "Rejected"];
 
@@ -39,6 +41,9 @@ export default function SignatureCeremony({
    *  verifies it before minting the row — nothing is verified here. */
   onSign: (intent: SignatureIntent, statement: string, signatureImage?: string | null, reauth?: SigningCredential) => void;
 }) {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const [intent, setIntent] = React.useState<SignatureIntent>(defaultIntent);
   const [mode, setMode] = React.useState<"draw" | "type">(allowDrawn ? defaultMode : "type");
   const [typed, setTyped] = React.useState("");
@@ -100,7 +105,7 @@ export default function SignatureCeremony({
   );
 
   return (
-    <div className="fixed inset-0 z-[500] bg-slate-900/75 backdrop-blur-sm flex items-start sm:items-center justify-center p-4 overflow-y-auto" onClick={() => !busy && onCancel()}>
+    <div className={`fixed inset-0 ${ZC.assetModal} bg-slate-900/75 backdrop-blur-sm flex items-start sm:items-center justify-center p-4 overflow-y-auto`} onClick={() => !busy && onCancel()}>
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl my-4" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-5 py-4 border-b border-[var(--color-border)]">
           <ShieldCheck className="w-4 h-4 text-[var(--color-accent)]" />
@@ -202,7 +207,7 @@ export default function SignatureCeremony({
           </div>
         )}
 
-        <div className="flex justify-end gap-2 px-5 py-4 border-t border-[var(--color-border)]">
+        <div ref={dockRowRef} className="flex justify-end gap-2 px-5 py-4 border-t border-[var(--color-border)]">
           <button onClick={() => !busy && onCancel()} className="px-4 py-2 rounded-lg text-sm font-bold text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Cancel</button>
           <button
             onClick={submit}

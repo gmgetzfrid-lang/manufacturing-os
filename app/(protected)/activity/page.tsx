@@ -55,6 +55,7 @@ import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { SCOPE_STAMP_ACTIONS, SCOPE_STAMPS_NOT_IN, alreadyRetiredStatus } from "@/lib/timeline";
 import { foldTicketFeed, auditActorNote } from "@/lib/auditActions";
+import { ZC } from "@/lib/zLayers";
 
 interface ActivityRow {
   id: string;
@@ -308,7 +309,7 @@ export default function ActivityFeedPage() {
           <div className="space-y-6">
             {feed.groups.map((group) => (
               <div key={group.day}>
-                <div className="sticky top-0 bg-[var(--color-canvas)]/80 backdrop-blur z-10 py-2 mb-2 text-xs font-black text-[var(--color-text-muted)] uppercase tracking-widest border-b border-[var(--color-border)]">
+                <div className={`sticky top-0 bg-[var(--color-canvas)]/80 backdrop-blur ${ZC.raised} py-2 mb-2 text-xs font-black text-[var(--color-text-muted)] uppercase tracking-widest border-b border-[var(--color-border)]`}>
                   {group.day}
                 </div>
                 <div className="space-y-1.5">

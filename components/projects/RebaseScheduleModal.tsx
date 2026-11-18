@@ -17,6 +17,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { CalendarClock, X, ArrowRight, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { rebaseSchedule, type RebaseResult } from "@/lib/milestones";
 import { toWallClock, fromWallClock } from "@/lib/scheduleReflow";
+import { ZC } from "@/lib/zLayers";
 
 /** The prefill for the rebase form: today's date (the viewer's calendar
  *  day — "use this schedule starting today") and the anchor's wall-clock
@@ -103,7 +104,7 @@ export default function RebaseScheduleModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div className={`fixed inset-0 ${ZC.workflowModal} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4`}>
       <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-gradient-to-r from-[var(--color-accent-soft)] via-white to-slate-50">
           <div className="flex items-center gap-3">

@@ -31,6 +31,7 @@ import { appAlert } from "@/components/providers/DialogProvider";
 import {
   isSkillController, studioSharingChoices, sharingColumns, type StudioSharing,
 } from "@/lib/skillAuthority";
+import { ZC } from "@/lib/zLayers";
 
 /** What each sharing choice means — the copy states what is enforced. */
 const SHARING_COPY: Record<"reasoning" | "connection", Record<StudioSharing, { label: string; help: string }>> = {
@@ -133,7 +134,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+    <div className={`fixed inset-0 ${ZC.pagePopover} flex items-center justify-center bg-black/50 p-4`} onClick={onClose}>
       <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl"
         onClick={(e) => e.stopPropagation()}>
         <div className="h-1.5 bg-gradient-to-r from-violet-500 via-fuchsia-500 to-violet-500 motion-safe:animate-[shimmer_6s_linear_infinite]" style={{ backgroundSize: "200% 100%" }} />

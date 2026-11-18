@@ -18,6 +18,7 @@ import { X as XIcon, CalendarRange, Clock, ArrowRight, Loader2, AlertTriangle } 
 import type { Milestone } from "@/types/schema";
 import type { MoveMode } from "@/lib/scheduleReflow";
 import { defaultMoveMode } from "@/lib/scheduleReflow";
+import { ZC } from "@/lib/zLayers";
 
 interface Props {
   /** The tasks being moved (1, or a multi-selection). */
@@ -135,7 +136,7 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
   }, [targets, deltaDays, mode, nowMs, changeSetFor, plan]);
 
   return (
-    <div className="fixed inset-0 z-[260] flex items-end sm:items-start sm:items-center justify-center overflow-y-auto p-4" onClick={onCancel}>
+    <div className={`fixed inset-0 ${ZC.previewSheet} flex items-end sm:items-start sm:items-center justify-center overflow-y-auto p-4`} onClick={onCancel}>
       <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in" />
       <div className="relative w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2 bg-gradient-to-b from-white to-slate-50/50">

@@ -27,6 +27,7 @@ import { buildProgressIndex } from "@/lib/scheduleProgress";
 import StatusControl from "@/components/projects/StatusControl";
 import { ProgressSlider } from "@/components/projects/ProgressControl";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
+import { ZC } from "@/lib/zLayers";
 
 interface Props {
   milestone: Milestone;
@@ -153,7 +154,7 @@ export default function TaskDetailPanel({
   }, [m, subtasks, allTasks, imported, userId, onChanged, onClose]);
 
   return (
-    <div className="fixed inset-0 z-[150] flex justify-end" role="dialog" aria-modal="true">
+    <div className={`fixed inset-0 ${ZC.taskPanel} flex justify-end`} role="dialog" aria-modal="true">
       <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-[1px]" onClick={onClose} />
       <div className="relative w-full max-w-[440px] bg-[var(--color-surface)] shadow-2xl ring-1 ring-slate-900/10 flex flex-col animate-[slidein_.15s_ease-out]">
         {/* Header */}

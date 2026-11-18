@@ -42,6 +42,7 @@ import { PDFJS_VERBOSITY } from "@/lib/pdfjsConfig";
 import { useViewerPanZoom } from "@/lib/useViewerPanZoom";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
+import { ZC } from "@/lib/zLayers";
 
 // Match the worker config FullScreenViewer uses (idempotent).
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
@@ -582,13 +583,13 @@ export default function PdfRevisionDiff({
       {/* Diff canvas */}
       <div ref={scrollRef} className={`flex-1 overflow-auto bg-slate-950 relative ${panZoom.cursorClass}`} style={{ touchAction: "pan-x pan-y" }} {...panZoom.panHandlers}>
         {loading && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-slate-950/80">
+          <div className={`absolute inset-0 ${ZC.raised} flex flex-col items-center justify-center bg-slate-950/80`}>
             <Loader2 className="w-8 h-8 animate-spin text-blue-400 mb-2" />
             <span className="text-xs font-mono text-blue-300">Rendering &amp; registering…</span>
           </div>
         )}
         {error && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-red-400">
+          <div className={`absolute inset-0 ${ZC.raised} flex flex-col items-center justify-center text-red-400`}>
             <AlertTriangle className="w-10 h-10 mb-2 opacity-60" />
             <span className="text-sm font-bold">Diff failed</span>
             <span className="text-xs font-mono mt-1 max-w-md text-center text-red-300/70">{error}</span>

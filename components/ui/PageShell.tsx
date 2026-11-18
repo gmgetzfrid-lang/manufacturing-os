@@ -14,6 +14,7 @@
 // the canvas, so the floor color is identical on every screen.
 
 import React from "react";
+import { ZC } from "@/lib/zLayers";
 
 const WIDTHS = {
   /** Dense work surfaces: tables, boards, dashboards. */
@@ -60,7 +61,7 @@ export function PageHeaderBar({
     <header className={`relative isolate flex flex-wrap items-center justify-between gap-4 mb-6 ${className}`}>
       {/* Faint accent wash + hairline gives every page header presence and
           a touch of luster, instead of a flat title floating on the canvas. */}
-      <div aria-hidden className="header-wash pointer-events-none absolute -inset-x-4 -top-6 bottom-[-0.75rem] -z-10 sm:-inset-x-6 lg:-inset-x-8" />
+      <div aria-hidden className={`header-wash pointer-events-none absolute -inset-x-4 -top-6 bottom-[-0.75rem] ${ZC.underlay} sm:-inset-x-6 lg:-inset-x-8`} />
       <div className="flex items-center gap-3.5 min-w-0">
         {Icon && (
           <div className="grid place-items-center w-11 h-11 rounded-2xl bg-[var(--color-accent-soft)] text-[var(--color-accent)] ring-1 ring-[var(--color-accent)]/15 shrink-0 shadow-sm">

@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import { Textarea } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
+import { ZC } from "@/lib/zLayers";
 
 interface EngineerOption {
   uid: string;
@@ -183,7 +184,7 @@ export default function EngineerPickerModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[210] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
+    <div className={`fixed inset-0 ${ZC.confirmOverModal} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto`}>
       <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95 duration-200">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 bg-[var(--color-accent-soft)] rounded-lg"><Briefcase className="w-5 h-5 text-[var(--color-accent)]" /></div>

@@ -9,6 +9,7 @@ import React from "react";
 import { useRouter } from "next/navigation";
 import { X, Loader2, Network, ArrowRight, Waypoints } from "lucide-react";
 import { findRelatedDocuments, type RelatedDocument, type RelatedReason, type DocumentRow } from "@/lib/search";
+import { ZC } from "@/lib/zLayers";
 
 const REASON_META: Record<RelatedReason, { label: string; hex: string }> = {
   supersedes:    { label: "Supersedes (older)", hex: "#94a3b8" },
@@ -88,7 +89,7 @@ export default function RelationshipGraph({
   const go = (href: string) => { onClose(); router.push(href); };
 
   return (
-    <div className="fixed inset-0 z-[400] bg-slate-900/75 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+    <div className={`fixed inset-0 ${ZC.sharedModal} bg-slate-900/75 backdrop-blur-sm flex items-center justify-center p-4`} onClick={onClose}>
       <div className="w-full max-w-3xl bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-5 py-3 border-b border-[var(--color-border)]">
           <Network className="w-4 h-4 text-[var(--color-accent)]" />

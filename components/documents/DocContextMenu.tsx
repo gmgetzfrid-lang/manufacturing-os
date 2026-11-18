@@ -7,6 +7,7 @@
 // clamped to the viewport, closed on click-away / Escape / scroll.
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ZC } from "@/lib/zLayers";
 
 export interface ContextMenuEntry {
   key: string;
@@ -77,7 +78,7 @@ export default function DocContextMenu({
         ref={ref}
         role="menu"
         style={{ left: pos.left, top: pos.top }}
-        className="fixed z-[91] min-w-[220px] max-w-[300px] py-1.5 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-xl"
+        className={`fixed ${ZC.contextMenu} min-w-[220px] max-w-[300px] py-1.5 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-xl`}
         onContextMenu={(e) => e.preventDefault()}
       >
         {entries.map((entry) => (

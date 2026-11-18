@@ -13,6 +13,7 @@
 
 import React from "react";
 import { vizCat } from "@/components/dashboard/viz";
+import { ZC } from "@/lib/zLayers";
 
 // ── S-curve: planned vs committed vs actual, cumulative over time ────────
 
@@ -507,7 +508,7 @@ export function ExampleFrame({ children, note, className = "" }: {
 }) {
   return (
     <div className={`relative rounded-2xl border-2 border-dashed border-[var(--color-border-strong)] overflow-hidden ${className}`}>
-      <div aria-hidden className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+      <div aria-hidden className={`pointer-events-none absolute inset-0 ${ZC.raised} flex items-center justify-center`}>
         <span className="rotate-[-18deg] text-4xl font-black uppercase tracking-[0.3em] text-[var(--color-text)] opacity-[0.12] select-none">
           Example
         </span>

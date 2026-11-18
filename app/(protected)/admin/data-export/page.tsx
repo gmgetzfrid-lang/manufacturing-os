@@ -22,6 +22,7 @@ import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Input, Select } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import { ZC } from "@/lib/zLayers";
 
 type Destination = {
   id: string;
@@ -637,7 +638,7 @@ function DestinationModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
+    <div className={`fixed inset-0 ${ZC.workflowModal} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto`}>
       <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
           <div>

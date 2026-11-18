@@ -25,6 +25,7 @@ import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
 import { appAlert } from "@/components/providers/DialogProvider";
+import { ZC } from "@/lib/zLayers";
 
 // Configure PDF Worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
@@ -406,12 +407,12 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
   // --- HELPERS ---
   return (
     <div
-      className="fixed inset-0 z-[200] bg-slate-200 flex flex-col"
+      className={`fixed inset-0 ${ZC.workflowModal} bg-slate-200 flex flex-col`}
       onMouseUp={handleMouseUp} // Global mouse up for dragging safety
       onMouseLeave={handleMouseUp}
     >
       {/* TOOLBAR */}
-      <div className="h-16 bg-slate-900 flex items-center justify-between px-4 shrink-0 shadow-xl z-50">
+      <div className={`h-16 bg-slate-900 flex items-center justify-between px-4 shrink-0 shadow-xl ${ZC.pagePopover}`}>
         <div className="flex items-center space-x-4">
           <span className="text-slate-400 text-xs font-bold uppercase tracking-widest hidden md:block">Redline Pro</span>
           <div className="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
@@ -486,7 +487,7 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
           <div className="relative shadow-2xl border border-slate-300 bg-white">
              {/* 1. PDF LAYER (Background) */}
              {/* We use !important styles to ensure nothing in react-pdf captures events */}
-             <div className="relative z-0" style={{ pointerEvents: 'none', userSelect: 'none' }}>
+             <div className={`relative ${ZC.base}`} style={{ pointerEvents: 'none', userSelect: 'none' }}>
                <Document options={PDF_DOC_OPTIONS} 
                  file={fileUrl} 
                  onLoadSuccess={({ numPages }) => setNumPages(numPages)} 
@@ -505,7 +506,7 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
              
              {/* 2. FABRIC LAYER (Foreground) */}
              {/* Force high z-index to sit ON TOP of PDF canvas */}
-             <div className="absolute top-0 left-0 z-[50]" style={{ width: '100%', height: '100%' }}>
+             <div className={`absolute top-0 left-0 ${ZC.pagePopover}`} style={{ width: '100%', height: '100%' }}>
                 <canvas ref={canvasRef} />
              </div>
           </div>

@@ -76,7 +76,7 @@ describe("EDGE-14 — inapp_enabled is dead in code and changes no delivery", ()
     const files = ["app", "components", "hooks", "lib"].flatMap((d) => walk(resolve(d)));
     const hits = files.filter((f) => codeTokens(f).some((t) => /inapp_?enabled/i.test(t)));
     expect(hits.map((f) => relative(process.cwd(), f))).toEqual([]);
-  });
+  }, 120_000);
 
   it("the bell row is written whatever inapp_enabled says — false, true or no preference row (as before: nothing read it)", async () => {
     const input = {

@@ -16,6 +16,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, HelpCircle, Info } from "lucide-react";
 import { Modal, ModalFooter } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
+import { Z } from "@/lib/zLayers";
 
 type Tone = "default" | "danger";
 
@@ -109,7 +110,7 @@ export function DialogHost() {
   const cancel = () => settle(current.kind === "confirm" ? false : null);
 
   return (
-    <Modal onClose={cancel} size="sm" zIndex={700}>
+    <Modal onClose={cancel} size="sm" zIndex={Z.dialog}>
       <form
         onSubmit={(e) => {
           e.preventDefault();

@@ -4,6 +4,7 @@ import React, { useRef, useState } from "react";
 import { BookOpen, X, ChevronUp, ChevronDown, Trash2, Play } from "lucide-react";
 import type { DocumentRecord } from "@/types/schema";
 import { useDockBottomInset } from "@/components/ui/CornerDock";
+import { ZC } from "@/lib/zLayers";
 
 interface StagingTrayProps {
   docs: DocumentRecord[];
@@ -22,7 +23,7 @@ export default function StagingTray({ docs, onRemove, onClear, onOpen }: Staging
   if (docs.length === 0) return null;
 
   return (
-    <div ref={trayRef} className="fixed bottom-0 left-0 right-0 z-30 flex flex-col items-center pointer-events-none">
+    <div ref={trayRef} className={`fixed bottom-0 left-0 right-0 ${ZC.raisedTop} flex flex-col items-center pointer-events-none`}>
       <div className="w-full pointer-events-auto">
         {/* Expanded document list */}
         {expanded && (

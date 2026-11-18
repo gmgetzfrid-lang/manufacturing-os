@@ -28,6 +28,7 @@ import {
   listWorkPackages, createWorkPackage, refreshWorkPackage, recordPackagePrint,
   setWorkPackageStatus, coverEntryLabels, mergeLeftOut, readPackageMemberIds, type WorkPackage,
 } from "@/lib/workPackages";
+import { ZC } from "@/lib/zLayers";
 
 interface DocPick { id: string; label: string; rev: string | null }
 
@@ -488,7 +489,7 @@ export default function PackagesPage() {
 
       {/* CREATE MODAL */}
       {showCreate && (
-        <div className="fixed inset-0 z-[150] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+        <div className={`fixed inset-0 ${ZC.taskPanel} bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in`}>
           <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
             <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
               <div className="p-2 bg-blue-100 rounded-lg"><Package className="w-4 h-4 text-blue-700" /></div>

@@ -20,6 +20,7 @@ import { loadCapabilityPolicyEntry, type CapabilityPolicy } from "@/lib/capabili
 import { canForceReleaseCheckout, affordancePolicyFault } from "@/lib/checkoutAffordances";
 import UserAvatar from "@/components/ui/UserAvatar";
 import type { DocumentRecord, CheckoutSession } from "@/types/schema";
+import { ZC } from "@/lib/zLayers";
 
 // Tolerant timestamp → Date. Sessions come back from PostgREST as ISO strings;
 // the old code called .toDate() on them, which threw and crashed the popover —
@@ -314,7 +315,7 @@ const CheckoutInfoPopover = ({
   return (
     <div 
       ref={popoverRef}
-      className="absolute right-0 top-full mt-2 w-80 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg z-50 animate-in fade-in zoom-in-95 duration-150 origin-top-right overflow-hidden"
+      className={`absolute right-0 top-full mt-2 w-80 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg ${ZC.pagePopover} animate-in fade-in zoom-in-95 duration-150 origin-top-right overflow-hidden`}
       onClick={(e) => e.stopPropagation()} 
     >
       {/* Header */}
@@ -549,7 +550,7 @@ export default function CheckoutStatusCell({
               key={`${name}-${i}`}
               name={name}
               size={24}
-              className={`ring-1 ring-white shadow-sm ${["z-30", "z-20", "z-10"][i]}`}
+              className={`ring-1 ring-white shadow-sm ${[ZC.raisedTop, ZC.raisedHigher, ZC.raised][i]}`}
             />
           ))}
         </div>

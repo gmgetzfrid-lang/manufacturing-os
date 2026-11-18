@@ -12,6 +12,8 @@ import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
 import { setAckPolicy, AckRosterRecomputeError } from "@/lib/acknowledgments";
 import { listTeams, type Team } from "@/lib/teams";
 import { ALL_ROLES, type AckPolicy, type Role } from "@/types/schema";
+import { ZC } from "@/lib/zLayers";
+import { useDockAvoidRow } from "@/components/ui/CornerDock";
 
 export default function AckPolicyModal({ level, id, orgId, name, uid, userName, onClose, onSaved }: {
   level: "library" | "collection";
@@ -23,6 +25,9 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
   onClose: () => void;
   onSaved?: () => void;
 }) {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   // PKG-9 (P14 final review): a refused save, or a save whose rosters were
@@ -110,7 +115,7 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
   const nobody = enabled && people.length === 0 && roles.length === 0 && teamIds.length === 0;
 
   return (
-    <div className="fixed inset-0 z-[520] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className={`fixed inset-0 ${ZC.policyModal} flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4`} onClick={onClose}>
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
           <ClipboardCheck className="w-5 h-5 text-[var(--color-accent)]" />
@@ -183,7 +188,7 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
               <div role="alert" className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-2">{error}</div>
             )}
 
-            <div className="flex justify-between gap-2 pt-2 border-t border-[var(--color-border)]">
+            <div ref={dockRowRef} className="flex justify-between gap-2 pt-2 border-t border-[var(--color-border)]">
               <button onClick={() => void remove()} disabled={busy || !existing} className="px-3 py-2 rounded-lg text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-40">Remove</button>
               <div className="flex gap-2">
                 <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text-muted)]">Cancel</button>

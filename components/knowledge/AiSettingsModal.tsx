@@ -47,6 +47,7 @@ import {
 } from "@/lib/embedKeyOverview";
 import { ALLOWED_PROVIDERS, PROVIDER_BLOCK_MESSAGE } from "@/lib/ai/pricing";
 import { EMBEDDING_PROVIDERS, defaultEmbeddingModel } from "@/lib/ai/embeddings";
+import { ZC } from "@/lib/zLayers";
 
 // The complete provider offering — Claude and OpenAI, nothing else, ever.
 const PROVIDERS = [
@@ -1282,7 +1283,7 @@ export default function AiSettingsModal({ orgId, open, onClose }: {
 
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
+    <div className={`fixed inset-0 ${ZC.pagePopover} bg-black/50 flex items-start justify-center p-4 overflow-y-auto`} onClick={onClose}>
       <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-xl mt-10"
         onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">

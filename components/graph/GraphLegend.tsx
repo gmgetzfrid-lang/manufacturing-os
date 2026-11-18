@@ -15,6 +15,7 @@ import type { GraphNodeType } from "@/lib/orgGraph";
 import {
   EDGE_LEGEND, NODE_COLORS, UNIT_VARIANT_COLORS, UNIT_VARIANT_LABELS, type UnitVariant,
 } from "@/components/graph/graphTheme";
+import { ZC } from "@/lib/zLayers";
 
 const NODE_LEGEND: Array<{ type: GraphNodeType; label: string }> = [
   { type: "asset", label: "Equipment" },
@@ -28,7 +29,7 @@ const NODE_LEGEND: Array<{ type: GraphNodeType; label: string }> = [
 export default function GraphLegend({ arrowsOn, mode }: { arrowsOn: boolean; mode: "2d" | "3d" }) {
   const [open, setOpen] = React.useState(false);
   return (
-    <div className="absolute bottom-10 left-3 z-10 flex flex-col items-start gap-1.5">
+    <div className={`absolute bottom-10 left-3 ${ZC.raised} flex flex-col items-start gap-1.5`}>
       {open && (
         <div role="region" aria-label="Map legend"
           className="w-64 max-w-[calc(100vw-1.5rem)] max-h-[50vh] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-2.5 space-y-2">

@@ -54,7 +54,7 @@ import StagingTray from "@/components/documents/StagingTray";
 import MetadataStagingModal from "@/components/documents/MetadataStagingModal";
 import AssetPhotoUploader from "@/components/assets/AssetPhotoUploader";
 import BackupIndicator from "@/components/providers/BackupIndicator";
-import { Z, Z_SCALE } from "@/lib/zLayers";
+import { Z, ZC, Z_SCALE } from "@/lib/zLayers";
 import RailProbe, { AvoidProbe, ModalProbe, RaisingModalProbe, AssetEditorProbe } from "./cornerDockRailProbe";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -636,7 +636,10 @@ describe("STACK-10 / STACK-14 — at rest the dock is under every overlay; an up
     expect(Number(dock()!.style.zIndex)).toBeLessThan(drawerZ);
     // The probe carries the real editor's classes (admin/assets/page.tsx).
     const page = readFileSync(resolve("app/(protected)/admin/assets/page.tsx"), "utf8");
-    expect(page).toContain('<div className="fixed inset-0 z-[400] flex" onClick={onClose}>');
+    // Since notifications N13 its layer reads lib/zLayers (ZC.sharedModal is
+    // the same z-[400] class), and its Save row is declared (STACK-14).
+    expect(page).toContain('<div className={`fixed inset-0 ${ZC.sharedModal} flex`} onClick={onClose}>');
+    expect(ZC.sharedModal).toBe("z-[400]");
     expect(page).toContain("relative ml-auto w-full max-w-xl");
   });
 
@@ -1310,8 +1313,11 @@ describe("lib/zLayers — the scale", () => {
     expect(cover).toContain("style={{ zIndex: Z.customizeNodeModal }}");
     expect(cover).not.toContain("z-[400]");
     // The DialogHost (appConfirm) and the hover preview keep their numbers.
-    expect(src("components/providers/DialogProvider.tsx")).toContain("zIndex={700}");
-    expect(src("components/documents/DocHoverPreview.tsx")).toContain("z-[800]");
+    // (Since notifications N13 they read their numbers from the module.)
+    expect(src("components/providers/DialogProvider.tsx")).toContain("zIndex={Z.dialog}");
+    expect(Z.dialog).toBe(700);
+    expect(src("components/documents/DocHoverPreview.tsx")).toContain("${ZC.hoverPreview}");
+    expect(ZC.hoverPreview).toBe("z-[800]");
   });
 
   it("the old fixed corners are gone: BackupIndicator no longer pins bottom-left, the undo host and chip no longer pin bottom-centre", () => {
@@ -1331,7 +1337,7 @@ describe("the protected layout mounts the docks first", () => {
     const dockTag = "<CornerDock onOpenCenter={openCenter} occupiedRightPx={centerOpen ? NOTIFICATION_CENTER_RAIL_PX : 0} />";
     expect(at(dockTag)).toBeGreaterThan(0);
     expect(at(dockTag)).toBeLessThan(at("<CentreDock />"));
-    for (const s of ["<UploadIndicator />", "<BackupIndicator />", "<KnowledgeIndexIndicator />", "<BackToGraphChip />", "<NotificationListener />", "<UpdatePill />", "<DialogHost />"]) {
+    for (const s of ["<UploadIndicator />", "<BackupIndicator />", "<KnowledgeIndexIndicator />", "<BackToGraphChip />", "<NotificationListener onOpenCenter={openCenter} />", "<UpdatePill />", "<DialogHost />"]) {
       expect(at(s)).toBeGreaterThan(at("<CentreDock />"));
     }
     expect(src).toContain("const { open: openCenter, isOpen: centerOpen } = useNotificationCenter();");

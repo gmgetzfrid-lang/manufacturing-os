@@ -54,6 +54,7 @@ import {
   serverComputedLines, isServerComputedLead,
 } from "@/lib/knowledgeAskGuards";
 import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
+import { ZC } from "@/lib/zLayers";
 
 // pdf.js only loads when someone actually opens a cited page.
 const CitedPageViewer = dynamic(() => import("@/components/knowledge/CitedPageViewer"), { ssr: false });
@@ -179,10 +180,10 @@ function ProofCard({ proof, onClose, onOpenPage }: {
   }, [onClose]);
   return (
     <>
-      <div className="fixed inset-0 z-40" onClick={onClose} />
+      <div className={`fixed inset-0 ${ZC.pageFloat}`} onClick={onClose} />
       <div
         role="dialog" aria-label="Source proof"
-        className="fixed z-50 animate-pop rounded-2xl border-2 border-orange-300 dark:border-orange-800 bg-[var(--color-surface)] shadow-2xl overflow-hidden"
+        className={`fixed ${ZC.pagePopover} animate-pop rounded-2xl border-2 border-orange-300 dark:border-orange-800 bg-[var(--color-surface)] shadow-2xl overflow-hidden`}
         style={{ left: proof.x, width: Math.min(PROOF_W, typeof window !== "undefined" ? window.innerWidth - 24 : PROOF_W), ...(proof.up ? { bottom: proof.y } : { top: proof.y }) }}
       >
         <div className="h-1 bg-gradient-to-r from-orange-500 via-amber-500 to-orange-500" />

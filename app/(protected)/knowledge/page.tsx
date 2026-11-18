@@ -23,6 +23,7 @@ import {
   listKnowledgeLibraries, createKnowledgeLibrary, getAiConnections,
   type KnowledgeLibrary,
 } from "@/lib/knowledge";
+import { ZC } from "@/lib/zLayers";
 
 export default function KnowledgePage() {
   const { activeOrgId, uid, userEmail, hasAnyRole } = useRole();
@@ -152,7 +153,7 @@ export default function KnowledgePage() {
       )}
 
       {showCreate && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4" onClick={() => setShowCreate(false)}>
+        <div className={`fixed inset-0 ${ZC.pagePopover} bg-black/50 flex items-start justify-center p-4`} onClick={() => setShowCreate(false)}>
           <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-xl mt-16"
             onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">

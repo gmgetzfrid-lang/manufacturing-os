@@ -37,6 +37,8 @@ import { FilePlus2, Loader2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { createDocumentWithFile, type CreationStatus } from "@/lib/revisions";
 import { findTicketNewDocumentVersion } from "@/lib/ticketNewDocumentHandback";
+import { ZC } from "@/lib/zLayers";
+import { useDockAvoidRow } from "@/components/ui/CornerDock";
 
 export interface PublishNewDocumentModalProps {
   orgId: string;
@@ -60,6 +62,9 @@ export interface PublishNewDocumentModalProps {
 }
 
 export default function PublishNewDocumentModal(props: PublishNewDocumentModalProps) {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const [documentNumber, setDocumentNumber] = useState("");
   const [title, setTitle] = useState(props.defaultTitle);
   const [status, setStatus] = useState<CreationStatus>("Draft");
@@ -111,7 +116,7 @@ export default function PublishNewDocumentModal(props: PublishNewDocumentModalPr
   const fieldCls = "w-full text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2.5 py-1.5 outline-none focus:border-[var(--color-accent)]";
 
   return (
-    <div className="fixed inset-0 z-[520] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm p-4" onClick={props.onClose}>
+    <div className={`fixed inset-0 ${ZC.policyModal} flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm p-4`} onClick={props.onClose}>
       <div role="dialog" aria-label={props.libraryId ? `Publish as a new document in ${props.libraryName}` : "Publish as a new document"} className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
           <FilePlus2 className="w-5 h-5 text-emerald-600" />
@@ -153,7 +158,7 @@ export default function PublishNewDocumentModal(props: PublishNewDocumentModalPr
           </fieldset>
           {error && <p role="alert" className="text-xs text-red-700">{error}</p>}
         </div>
-        <div className="px-5 py-3 border-t border-[var(--color-border)] flex justify-end gap-2">
+        <div ref={dockRowRef} className="px-5 py-3 border-t border-[var(--color-border)] flex justify-end gap-2">
           <button type="button" onClick={props.onClose} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-[var(--color-border)]">Cancel</button>
           <button type="button" onClick={() => { void submit(); }} disabled={busy} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white inline-flex items-center gap-1.5">
             {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Create the document

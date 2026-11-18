@@ -15,6 +15,8 @@ import { appAlert } from "@/components/providers/DialogProvider";
 import { listTeams, type Team } from "@/lib/teams";
 import { ALL_ROLES, type ReviewControl, type ReviewControlMode, type Role } from "@/types/schema";
 import RoutingControlSection from "@/components/documents/RoutingControlSection";
+import { ZC } from "@/lib/zLayers";
+import { useDockAvoidRow } from "@/components/ui/CornerDock";
 
 const MODES: { value: ReviewControlMode; label: string; hint: string }[] = [
   { value: "none", label: "No gate", hint: "Publish directly (drawings whose review is handled by the drafting workflow, or simple libraries)." },
@@ -103,6 +105,9 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
   onClose: () => void;
   onSaved?: () => void;
 }) {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [existing, setExisting] = useState<ReviewControl | null>(null);
@@ -240,7 +245,7 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
   const unpairedAlternates = alternates.filter((a) => !alternateBacks[a.uid] || !slotOptions.some((o) => o.key === alternateBacks[a.uid]));
 
   return (
-    <div className="fixed inset-0 z-[520] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className={`fixed inset-0 ${ZC.policyModal} flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4`} onClick={onClose}>
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
           <ShieldCheck className="w-5 h-5 text-[var(--color-accent)]" />
@@ -345,7 +350,7 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
             {/* drafting-flow DF-P5 (GAP-112, DEC-36): the request review routing, beside this policy — its own section and its own save. */}
             <RoutingControlSection level={level} id={id} orgId={orgId} />
 
-            <div className="flex justify-between gap-2 pt-2 border-t border-[var(--color-border)]">
+            <div ref={dockRowRef} className="flex justify-between gap-2 pt-2 border-t border-[var(--color-border)]">
               <button onClick={() => void remove()} disabled={busy || !existing} className="px-3 py-2 rounded-lg text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-40">Remove</button>
               <div className="flex gap-2">
                 <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text-muted)]">Cancel</button>

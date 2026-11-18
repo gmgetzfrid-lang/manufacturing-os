@@ -34,6 +34,7 @@ import { openEvidencePack, openProjectEvidencePack } from "@/lib/evidencePack";
 import { openRelationshipGraph } from "@/components/documents/RelationshipGraphHost";
 import { searchAtlas } from "@/lib/featureAtlas";
 import { requestSignature } from "@/components/signatures/SignatureCaptureHost";
+import { ZC } from "@/lib/zLayers";
 
 const KIND_ICON: Record<GlobalHitKind, React.ComponentType<{ className?: string }>> = {
   document: FileText,
@@ -308,7 +309,7 @@ export default function GlobalCommandPalette() {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[600] bg-slate-900/50 backdrop-blur-[3px] flex items-start justify-center pt-[12vh] p-4 animate-in fade-in duration-150" onClick={() => setOpen(false)}>
+    <div className={`fixed inset-0 ${ZC.commandPalette} bg-slate-900/50 backdrop-blur-[3px] flex items-start justify-center pt-[12vh] p-4 animate-in fade-in duration-150`} onClick={() => setOpen(false)}>
       <div
         onClick={(e) => e.stopPropagation()}
         className="w-full max-w-xl bg-[var(--color-surface)] text-[var(--color-text)] rounded-2xl shadow-xl ring-1 ring-black/5 border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200"

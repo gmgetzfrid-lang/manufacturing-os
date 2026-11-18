@@ -1,3 +1,4 @@
+import { ZC } from "@/lib/zLayers";
 // components/pwa/swUpdate.ts — "a newer build exists": the shared state and
 // the one reload path, in a leaf module (TAX-15, notifications Round G N3).
 //
@@ -10,8 +11,9 @@
 //     fed by its own build-id poll and by the waiting worker read here — and
 //     its tap goes through `loadLatestBuild`.
 //
-// It imports nothing, so it can never put either of them in the other's
-// chunk, and nothing here can fail to load on its own.
+// It imports nothing but lib/zLayers (the prompt's layer, notifications N13 —
+// itself a module with no import), so it can never put either of them in the
+// other's chunk, and nothing here can fail to load on its own.
 
 /** The one wording for "a newer build exists" (TAX-15). It used to be two:
  *  "This tab is running an old version — tap to load the update" (the build
@@ -21,7 +23,7 @@ export const UPDATE_PROMPT_TEXT = "A newer version of the app is available — t
 
 /** The prompt's place (top-centre) and look — UpdatePill's, and the same on
  *  ServiceWorkerManager's fallback button. */
-export const UPDATE_PROMPT_WRAP_CLASS = "fixed top-3 left-1/2 -translate-x-1/2 z-[100] animate-pop";
+export const UPDATE_PROMPT_WRAP_CLASS = `fixed top-3 left-1/2 -translate-x-1/2 ${ZC.modal} animate-pop`;
 export const UPDATE_PROMPT_BUTTON_CLASS = "inline-flex items-center gap-2 rounded-full border-2 border-amber-400 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/95 px-4 py-2 text-xs font-black text-amber-900 dark:text-amber-200 shadow-xl hover:bg-amber-100 dark:hover:bg-amber-900 transition-colors";
 
 /** The question asked before reloading over an upload in flight (STACK-13):

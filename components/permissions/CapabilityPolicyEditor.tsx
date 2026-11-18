@@ -114,6 +114,7 @@ import { loadRequestTypeOptions, type RequestTypeOption } from "@/lib/requestTyp
 import { reviewClassOptions } from "@/lib/reviewModel";
 import type { OrgDraftingSettings } from "@/types/schema";
 import { DORMANT_ROLES, POLICY_TOKENS } from "@/lib/roleCapabilities";
+import { ZC } from "@/lib/zLayers";
 
 /** Every token the grid and the override rows can set — declared once, in
  *  lib/roleCapabilities.ts (ALOG-9); re-exported for the existing callers. */
@@ -902,7 +903,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
       )}
       <div className="overflow-x-auto">
         <table className="w-full text-xs border-collapse">
-          <thead className="sticky top-0 z-10">
+          <thead className={`sticky top-0 ${ZC.raised}`}>
             <tr className="bg-[var(--color-surface-2)]">
               <th className="sticky left-0 bg-[var(--color-surface-2)] text-left font-black px-4 py-2 min-w-[230px]">Action</th>
               {TOKENS.map((t) => (

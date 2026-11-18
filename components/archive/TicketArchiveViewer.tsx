@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { findInBackup } from "@/lib/archive";
 import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
+import { ZC } from "@/lib/zLayers";
 
 type ZipFile = { async(type: "blob"): Promise<Blob>; async(type: "string"): Promise<string> };
 type ZipLike = {
@@ -116,7 +117,7 @@ export default function TicketArchiveViewer({
   const attachments = Array.isArray(row?.attachments) ? row!.attachments! : [];
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-950/80 backdrop-blur-sm flex flex-col p-4 sm:p-8">
+    <div className={`fixed inset-0 ${ZC.workflowModal} bg-slate-950/80 backdrop-blur-sm flex flex-col p-4 sm:p-8`}>
       <div className="mx-auto w-full max-w-5xl flex-1 min-h-0 rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl flex flex-col overflow-hidden">
         <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
           <FileText className="w-4 h-4 text-sky-600 shrink-0" />

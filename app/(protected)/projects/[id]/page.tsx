@@ -69,6 +69,7 @@ import { markResourceNotificationsRead } from "@/lib/notificationTrail";
 import type {
   Project, ProjectMember, ProjectMemberRole, CheckoutSession, ProjectStatus, Timestamp,
 } from "@/types/schema";
+import { useDockAvoidRow } from "@/components/ui/CornerDock";
 
 // PERF-9 (projects Round G J12): the four heavy tabs load when opened, not
 // with the page — someone reading Documents never downloads the Costs,
@@ -91,6 +92,11 @@ type CheckoutWithDoc = CheckoutSession & {
 };
 
 export default function ProjectDetailPage() {
+  // STACK-14 (notifications N13): declare the two modals' action rows (the
+  // lessons capture and the status transition), so the corner dock keeps
+  // clear of them while raised (nothing changes at rest).
+  const transitionDockRowRef = useDockAvoidRow();
+  const lessonsDockRowRef = useDockAvoidRow();
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const { uid, userEmail, activeRole, hasAnyRole } = useRole();
@@ -774,7 +780,7 @@ export default function ProjectDetailPage() {
               <textarea value={lessonsDraft} onChange={(e) => setLessonsDraft(e.target.value)} rows={12} aria-label="Lessons learned"
                 className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-xs font-mono resize-y focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
             </div>
-            <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2 shrink-0">
+            <div ref={lessonsDockRowRef} className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2 shrink-0">
               <button onClick={() => void discardLessons()} disabled={lessonsBusy}
                 className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
               <button
@@ -868,7 +874,7 @@ export default function ProjectDetailPage() {
               {actionError && <div role="alert" className="mt-2 text-xs font-bold text-rose-700 dark:text-rose-300">{actionError}</div>}
             </div>
             </div>
-            <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2 shrink-0">
+            <div ref={transitionDockRowRef} className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2 shrink-0">
               <button onClick={() => void discardTransition()} disabled={transitionBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
               <button onClick={handleTransition} disabled={transitionBusy || (pendingStatus === "completed" && !gates)}
                 title={pendingStatus === "completed" && !gates ? CLOSEOUT_GATES_WAIT : undefined}

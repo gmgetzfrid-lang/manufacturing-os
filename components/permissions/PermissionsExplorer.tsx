@@ -38,6 +38,7 @@ import {
 } from "@/lib/capabilityPolicy";
 import { adminSurface } from "@/lib/adminSurfaces";
 import { DORMANT_ROLES, ENGINEER_TIER_ROLES } from "@/lib/roleCapabilities";
+import { ZC } from "@/lib/zLayers";
 
 /** ORG-14 (integrator fix pass): does the live database decide quality
  *  sign-off per project yet? `quality_signoff_status` exists only once
@@ -583,7 +584,7 @@ export default function PermissionsExplorer() {
       )}
       <div className="overflow-x-auto max-h-[70vh] overflow-y-auto">
         <table className="w-full text-xs border-collapse">
-          <thead className="sticky top-0 z-10">
+          <thead className={`sticky top-0 ${ZC.raised}`}>
             <tr className="bg-[var(--color-surface-2)]">
               <th className="sticky left-0 bg-[var(--color-surface-2)] text-left font-black px-3 py-2 min-w-[240px]">Capability</th>
               {EXPLORER_COLUMNS.map((c, i) => (

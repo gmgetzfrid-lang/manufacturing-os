@@ -19,6 +19,7 @@ import {
   uploadTemplateFile, analyzeTemplateFile, saveOutputTemplate,
   type OutputTemplate, type Placeholder,
 } from "@/lib/outputTemplates";
+import { ZC } from "@/lib/zLayers";
 
 const KIND_LABEL: Record<string, string> = { docx: "Word (.docx)", xlsx: "Excel (.xlsx)" };
 
@@ -122,10 +123,10 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
+    <div className={`fixed inset-0 ${ZC.pagePopover} bg-black/50 flex items-start justify-center p-4 overflow-y-auto`} onClick={onClose}>
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-xl mt-8 mb-8"
         onClick={(e) => e.stopPropagation()}>
-        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between sticky top-0 bg-[var(--color-surface)] rounded-t-2xl z-10">
+        <div className={`px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between sticky top-0 bg-[var(--color-surface)] rounded-t-2xl ${ZC.raised}`}>
           <div>
             <h2 className="text-base font-black text-[var(--color-text)]">
               {template ? "Edit template" : "New output template"}

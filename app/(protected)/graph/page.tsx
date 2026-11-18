@@ -81,6 +81,7 @@ import GraphControls from "@/components/graph/GraphControls";
 import GraphLensBar from "@/components/graph/GraphLensBar";
 import GraphLegend from "@/components/graph/GraphLegend";
 import OrgGraph2D from "@/components/graph/OrgGraph2D";
+import { ZC } from "@/lib/zLayers";
 
 // three.js only downloads when 3D is switched on.
 const OrgGraph3D = React.lazy(() => import("@/components/graph/OrgGraph3D"));
@@ -1242,7 +1243,7 @@ function GraphPageInner() {
             <GraphLegend arrowsOn={settings.showArrows} mode={settings.mode} />
 
             {/* Insights */}
-            <div className="absolute top-2 left-3 flex flex-col items-start gap-2 max-h-[calc(100%-1rem)] z-10">
+            <div className={`absolute top-2 left-3 flex flex-col items-start gap-2 max-h-[calc(100%-1rem)] ${ZC.raised}`}>
               <button onClick={() => setInsightsOpen((v) => !v)} aria-expanded={insightsOpen}
                 title="Orphans, hubs and bridges — counted on the full graph, whatever this view shows"
                 className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-[11px] font-black shadow-sm ${
@@ -1372,7 +1373,7 @@ function GraphPageInner() {
             {/* Path panel */}
             {pathMode && (
               <div role="dialog" aria-label="Connection path"
-                className="absolute bottom-3 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-lime-300 dark:border-lime-900 bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-3 space-y-2 z-10">
+                className={`absolute bottom-3 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-lime-300 dark:border-lime-900 bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-3 space-y-2 ${ZC.raised}`}>
                 <div className="flex items-center gap-1.5">
                   <Route className="w-3.5 h-3.5 text-lime-600" />
                   <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text)] flex-1">Connection path</span>
@@ -1419,7 +1420,7 @@ function GraphPageInner() {
                 or what feeds it, along confirmed flows. */}
             {!pathMode && !connect && (reach || (selected && (selected.type === "asset" || selected.id.startsWith("cbunit:")))) && (
               <div role="region" aria-label="Process reach along confirmed flows" data-testid="process-reach"
-                className="absolute top-2 left-1/2 -translate-x-1/2 w-80 max-w-[calc(100%-1.5rem)] rounded-xl border border-cyan-300 dark:border-cyan-900 bg-[var(--color-surface)]/97 backdrop-blur shadow-xl p-2.5 space-y-1.5 z-10">
+                className={`absolute top-2 left-1/2 -translate-x-1/2 w-80 max-w-[calc(100%-1.5rem)] rounded-xl border border-cyan-300 dark:border-cyan-900 bg-[var(--color-surface)]/97 backdrop-blur shadow-xl p-2.5 space-y-1.5 ${ZC.raised}`}>
                 {(() => {
                   const from = reach && (!selected || selected.id === reach.nodeId)
                     ? (graph?.nodes.find((n) => n.id === reach.nodeId) ?? selected)
@@ -1562,7 +1563,7 @@ function GraphPageInner() {
                 reader's whole queue, not the drawing (GM-7). */}
             {view.ghosts.length > 0 && (
               <Link href="/admin/proposed-links"
-                className="absolute bottom-3 left-3 inline-flex items-center gap-1 text-[10px] font-black text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-1 hover:bg-amber-100 z-10"
+                className={`absolute bottom-3 left-3 inline-flex items-center gap-1 text-[10px] font-black text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-1 hover:bg-amber-100 ${ZC.raised}`}
                 data-testid="proposals-chip">
                 <Sparkles className="w-3 h-3" />
                 {pendingTotal !== null
@@ -1576,7 +1577,7 @@ function GraphPageInner() {
                 and the map is now showing you WHERE that knowledge lives. */}
             {answer && !pathMode && (
               <div role="dialog" aria-label={`Search results for ${answer.question}`}
-                className="absolute top-3 left-3 w-96 max-w-[calc(100%-1.5rem)] max-h-[75%] flex flex-col rounded-xl border border-violet-300 dark:border-violet-800 bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl z-10">
+                className={`absolute top-3 left-3 w-96 max-w-[calc(100%-1.5rem)] max-h-[75%] flex flex-col rounded-xl border border-violet-300 dark:border-violet-800 bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl ${ZC.raised}`}>
                 <div className="flex items-start gap-2 p-3 pb-2 shrink-0">
                   <Quote className="w-3.5 h-3.5 mt-0.5 text-violet-600 shrink-0" />
                   <div className="flex-1 min-w-0">
@@ -1669,7 +1670,7 @@ function GraphPageInner() {
             {/* Connect panel — the manual edge, drawn where the map is. */}
             {connect && (
               <div role="dialog" aria-label="Draw a connection"
-                className="absolute bottom-3 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-emerald-300 dark:border-emerald-900 bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-3 space-y-2 z-10">
+                className={`absolute bottom-3 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-emerald-300 dark:border-emerald-900 bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-3 space-y-2 ${ZC.raised}`}>
                 <div className="flex items-center gap-1.5">
                   <Link2 className="w-3.5 h-3.5 text-emerald-600" />
                   <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text)] flex-1">Draw a connection</span>

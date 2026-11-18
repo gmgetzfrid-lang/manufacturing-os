@@ -15,6 +15,7 @@ import { supabase } from "@/lib/supabase";
 import { resolveFileUrl } from "@/lib/storage";
 import type { DocumentRecord } from "@/types/schema";
 import dynamic from "next/dynamic";
+import { ZC } from "@/lib/zLayers";
 // react-pdf is heavy; load the diff engine only when a compare opens.
 const PdfRevisionDiff = dynamic(() => import("@/components/viewers/PdfRevisionDiff"), { ssr: false });
 
@@ -150,7 +151,7 @@ export default function CompareRevisionsModal({
   // positioning — without the portal, "fixed inset-0" fills the ~640px drawer
   // instead of the screen.
   return createPortal(
-    <div className="fixed inset-0 z-[220] bg-slate-900/80 backdrop-blur-sm animate-in fade-in flex flex-col p-4">
+    <div className={`fixed inset-0 ${ZC.compareModal} bg-slate-900/80 backdrop-blur-sm animate-in fade-in flex flex-col p-4`}>
       <div className="flex-1 min-h-0 bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden flex flex-col shadow-2xl animate-in fade-in zoom-in-95">
         {/* Title + version pickers */}
         <div className="px-4 py-2.5 flex items-center justify-between gap-3 bg-slate-800 border-b border-slate-700 shrink-0 flex-wrap">

@@ -34,6 +34,7 @@ import { locateTagsOnPage, requestKnowledgeMirrorUrl, type TagPosition, type Tag
 import { createMirrorUrlMemo } from "@/lib/knowledgeMirrorUrlMemo";
 import { textMarkPosition, type PageGeometry } from "@/lib/drawingLocate";
 import { supabase } from "@/lib/supabase";
+import { ZC } from "@/lib/zLayers";
 
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
@@ -445,7 +446,7 @@ export default function CitedPageViewer({
   );
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-[2px] flex items-center justify-center" onClick={onClose}>
+    <div className={`fixed inset-0 ${ZC.drawer} bg-black/70 backdrop-blur-[2px] flex items-center justify-center`} onClick={onClose}>
       {/* Centered proof stage: 75% of the viewport each way (full-bleed on
           phones), so the document reads like a document — not a sidebar. */}
       <div className="w-[75vw] h-[75vh] max-md:w-[96vw] max-md:h-[92vh] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-pop"

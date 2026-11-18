@@ -13,6 +13,8 @@ import { setReviewPolicy, describeInterval } from "@/lib/reviewCycles";
 import { setOwner } from "@/lib/ownership";
 import { appAlert } from "@/components/providers/DialogProvider";
 import type { ReviewPolicy } from "@/types/schema";
+import { ZC } from "@/lib/zLayers";
+import { useDockAvoidRow } from "@/components/ui/CornerDock";
 
 export default function ReviewPolicyModal({ level, id, orgId, name, uid, userName, onClose, onSaved }: {
   level: "library" | "collection";
@@ -24,6 +26,9 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
   onClose: () => void;
   onSaved?: () => void;
 }) {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [enabled, setEnabled] = useState(true);
@@ -130,7 +135,7 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
   const inp = "text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-accent)]";
 
   return (
-    <div className="fixed inset-0 z-[520] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className={`fixed inset-0 ${ZC.policyModal} flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4`} onClick={onClose}>
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
           <CalendarClock className="w-5 h-5 text-[var(--color-accent)]" />
@@ -219,7 +224,7 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
                 <div className="text-[11px] text-[var(--color-text-muted)]">{describeInterval({ enabled, intervalCount: count, intervalUnit: unit })} · a document overrides this with its own cycle.</div>
               </>
             )}
-            <div className="flex justify-between gap-2 pt-2 border-t border-[var(--color-border)]">
+            <div ref={dockRowRef} className="flex justify-between gap-2 pt-2 border-t border-[var(--color-border)]">
               <button onClick={() => void remove()} disabled={busy || !existing} className="px-3 py-2 rounded-lg text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-40">Remove cycle</button>
               <div className="flex gap-2">
                 <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text-muted)]">Cancel</button>

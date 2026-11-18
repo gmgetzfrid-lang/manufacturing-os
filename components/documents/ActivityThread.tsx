@@ -22,6 +22,7 @@ import {
   answerQuestion,
   resolveMessage,
 } from "@/lib/activityThread";
+import { ZC } from "@/lib/zLayers";
 
 interface ActivityThreadProps {
   orgId: string;
@@ -229,7 +230,7 @@ export default function ActivityThread({
 
   return (
     <div className="w-full md:w-96 bg-[var(--color-surface)] flex flex-col h-[400px] md:h-auto">
-      <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] sticky top-0 z-10">
+      <div className={`px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] sticky top-0 ${ZC.raised}`}>
         <h3 className="text-sm font-bold text-[var(--color-text)] flex items-center">
           <MessageSquare className="w-4 h-4 mr-2 text-[var(--color-text-muted)]" />
           {typeof episodeId === "string" && episodeSeq ? `Checkout #${episodeSeq} — Activity` : "Activity"}

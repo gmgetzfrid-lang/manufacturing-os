@@ -21,6 +21,7 @@ import {
 import { listProjects, bulkCheckoutToProject } from "@/lib/projects";
 import type { Project, DocumentRecord, ProjectVisibility } from "@/types/schema";
 import IsoGuidance from "@/components/ui/IsoGuidance";
+import { ZC } from "@/lib/zLayers";
 
 interface BulkCheckoutToProjectModalProps {
   isOpen: boolean;
@@ -141,7 +142,7 @@ export default function BulkCheckoutToProjectModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[210] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
+    <div className={`fixed inset-0 ${ZC.confirmOverModal} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto`}>
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className={`p-2 rounded-lg ${kind === "adhoc" ? "bg-emerald-100" : "bg-indigo-100"}`}>

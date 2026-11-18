@@ -22,6 +22,7 @@
 
 import React, { useEffect, useId, useRef, useState } from "react";
 import { HelpCircle } from "lucide-react";
+import { ZC } from "@/lib/zLayers";
 
 interface HelpTooltipProps {
   /** Plain-language explanation. Can include JSX for emphasis. */
@@ -97,7 +98,7 @@ export default function HelpTooltip({
       {open && (
         <div
           id={popId}
-          className={`absolute z-[300] ${popClass} w-64 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 text-[11px] leading-relaxed rounded-lg shadow-md p-3 animate-in fade-in zoom-in-95 duration-150`}
+          className={`absolute ${ZC.overlay} ${popClass} w-64 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 text-[11px] leading-relaxed rounded-lg shadow-md p-3 animate-in fade-in zoom-in-95 duration-150`}
           role="note"
         >
           {children}

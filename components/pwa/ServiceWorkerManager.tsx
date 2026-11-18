@@ -36,6 +36,7 @@ import {
 // The upload counters' leaf module (no Supabase import, so nothing heavy joins
 // every page's root bundle): the fallback asks over an upload too (TAX-15).
 import { hasUploadsInFlight, releaseUploadUnloadGuard } from "@/lib/uploadInFlight";
+import { ZC } from "@/lib/zLayers";
 
 // The update's state and reload path moved to the leaf module (TAX-15);
 // re-exported so existing callers and tests keep their import.
@@ -219,7 +220,7 @@ export default function ServiceWorkerManager() {
 
   return (
     <>
-      <div className="fixed bottom-4 left-4 z-[200] flex flex-col gap-2 pointer-events-none">
+      <div className={`fixed bottom-4 left-4 ${ZC.workflowModal} flex flex-col gap-2 pointer-events-none`}>
         {offline && (
           <div className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-amber-500 text-white text-xs font-bold px-3 py-1.5 shadow-lg">
             <WifiOff className="w-3.5 h-3.5" />

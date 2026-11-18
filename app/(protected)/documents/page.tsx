@@ -37,6 +37,7 @@ import { postLibraryDelete, libraryDeleteError } from "@/lib/libraryDeleteClient
 import { useAttentionRollup } from "@/hooks/useTicketNotifications";
 import { listMarkFor } from "@/lib/attentionRollup";
 import AttentionDot, { AttentionUnknownNote } from "@/components/documents/AttentionDot";
+import { ZC } from "@/lib/zLayers";
 
 type UiLibrary = LibraryConfig & {
   _id: string;
@@ -681,7 +682,7 @@ function LibraryAdminMenu({
   onCustomize: () => void;
 }) {
   return (
-    <div className="absolute top-3 right-3 z-10" onClick={(e) => e.stopPropagation()}>
+    <div className={`absolute top-3 right-3 ${ZC.raised}`} onClick={(e) => e.stopPropagation()}>
       <button
         onClick={(e) => { e.stopPropagation(); onToggle(); }}
         title="Library admin"
@@ -691,8 +692,8 @@ function LibraryAdminMenu({
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-[5]" onClick={(e) => { e.stopPropagation(); onClose(); }} />
-          <div className="absolute right-0 top-full mt-1 w-52 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg overflow-hidden z-[10] animate-in fade-in zoom-in-95 duration-150 origin-top-right">
+          <div className={`fixed inset-0 ${ZC.lift}`} onClick={(e) => { e.stopPropagation(); onClose(); }} />
+          <div className={`absolute right-0 top-full mt-1 w-52 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg overflow-hidden ${ZC.raised} animate-in fade-in zoom-in-95 duration-150 origin-top-right`}>
             <div className="px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
               <div className="text-[9px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Admin</div>
               <div className="text-xs font-bold text-[var(--color-text)] truncate">{libName}</div>

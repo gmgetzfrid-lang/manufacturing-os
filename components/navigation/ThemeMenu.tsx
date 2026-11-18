@@ -10,6 +10,7 @@ import { createPortal } from "react-dom";
 import { Sun, Moon, Palette as PaletteIcon, Check, Upload, Loader2, Zap } from "lucide-react";
 import { useTheme, PALETTE_PRESETS, type Palette } from "@/components/providers/ThemeProvider";
 import { extractLogoColors, type ExtractedColor } from "@/lib/logoTheme";
+import { ZC } from "@/lib/zLayers";
 
 /** Perceptual-ish distance so the secondary is visually distinct. */
 function dist(a: string, b: string): number {
@@ -74,9 +75,9 @@ export default function ThemeMenu() {
 
       {open && typeof document !== "undefined" && createPortal(
         <>
-          <div className="fixed inset-0 z-[300]" onClick={() => setOpen(false)} />
+          <div className={`fixed inset-0 ${ZC.overlay}`} onClick={() => setOpen(false)} />
           <div
-            className="fixed z-[310] w-64 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-lg ring-1 ring-black/5 p-3 animate-in fade-in zoom-in-95 duration-150 origin-top-right"
+            className={`fixed ${ZC.overlayPopover} w-64 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-lg ring-1 ring-black/5 p-3 animate-in fade-in zoom-in-95 duration-150 origin-top-right`}
             style={{ top: pos.top, right: pos.right }}
             onClick={(e) => e.stopPropagation()}
           >

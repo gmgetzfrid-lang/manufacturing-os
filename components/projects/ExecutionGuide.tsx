@@ -18,11 +18,16 @@ import {
   HelpCircle, X as XIcon, GripVertical, ChevronRight, ChevronLeft,
   CalendarRange, ListTree, CalendarDays, MousePointerClick,
 } from "lucide-react";
+import { ZC } from "@/lib/zLayers";
+import { useDockAvoidRow } from "@/components/ui/CornerDock";
 
 const SEEN_KEY = "exec.guide.seen.v1";
 const subscribeNever = () => () => {};
 
 export default function ExecutionGuide() {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const [open, setOpen] = useState(false);
   // First-run: show the banner until the user has opened the guide or
   // dismissed it once. Hydration-safe read (server snapshot: seen) — a lazy
@@ -66,7 +71,7 @@ export default function ExecutionGuide() {
 
       {/* Cheat-sheet panel. */}
       {open && (
-        <div className="fixed inset-0 z-[300] flex items-start sm:items-center justify-center overflow-y-auto p-4" onClick={() => setOpen(false)}>
+        <div className={`fixed inset-0 ${ZC.overlay} flex items-start sm:items-center justify-center overflow-y-auto p-4`} onClick={() => setOpen(false)}>
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in" />
           <div className="relative w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden max-h-[85vh] flex flex-col animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-2 bg-gradient-to-b from-white to-slate-50/50">
@@ -119,7 +124,7 @@ export default function ExecutionGuide() {
               </Section>
             </div>
 
-            <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 flex justify-end">
+            <div ref={dockRowRef} className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 flex justify-end">
               <button onClick={() => setOpen(false)} className="text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg transition-colors">Got it</button>
             </div>
           </div>

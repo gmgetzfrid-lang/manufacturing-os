@@ -36,6 +36,7 @@ import {
   type WizardWriteDeps, type WizardWriteFailure, type WizardWriteInput, type WizardWriteStep,
 } from "@/lib/projectWizardWrites";
 import type { ProjectVisibility } from "@/types/schema";
+import { useDockAvoidRow } from "@/components/ui/CornerDock";
 
 const STEPS = [
   { key: "basics", label: "Basics", icon: Briefcase },
@@ -61,6 +62,9 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
   onClose: () => void;
   onCreated: () => void;
 }) {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [skipped, setSkipped] = useState<Record<string, boolean>>({});
@@ -572,7 +576,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center gap-2 shrink-0">
+        <div ref={dockRowRef} className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center gap-2 shrink-0">
           {failures.length > 0 && createdProjectId ? (
             <span className="ml-auto flex items-center gap-2">
               <button onClick={openAnyway} disabled={busy}

@@ -64,6 +64,7 @@ import { useUndoableActions } from "@/components/projects/useUndoableActions";
 import ScheduleFilterBar from "@/components/projects/ScheduleFilterBar";
 import { Select } from "@/components/ui/Field";
 import { filterMilestones, isFilterActive, EMPTY_FILTER, type ScheduleFilter } from "@/lib/scheduleFilter";
+import { ZC } from "@/lib/zLayers";
 
 /** What a persisted batch move reports back: whether it saved, and each
  *  moved row's updated_at after the write — the lock its Undo sends (PT
@@ -1075,8 +1076,8 @@ export default function ExecutionView({
         >
           <div className="flex" style={{ width: LEFT_W + timelineW }}>
             {/* ── Frozen outline column ── */}
-            <div className="sticky left-0 z-20 bg-[var(--color-surface)] border-r border-[var(--color-border)] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]" style={{ width: LEFT_W }}>
-              <div className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur border-b border-[var(--color-border)] flex items-center px-3 text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]" style={{ height: AXIS_H }}>
+            <div className={`sticky left-0 ${ZC.raisedHigher} bg-[var(--color-surface)] border-r border-[var(--color-border)] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]`} style={{ width: LEFT_W }}>
+              <div className={`sticky top-0 ${ZC.raised} bg-slate-50/95 backdrop-blur border-b border-[var(--color-border)] flex items-center px-3 text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]`} style={{ height: AXIS_H }}>
                 <ListTree className="w-3.5 h-3.5 mr-1.5 text-[var(--color-accent)]" /> Work breakdown
               </div>
               {/* Windowed (PT PERF-5): only the rows in view are rendered; a
@@ -1115,7 +1116,7 @@ export default function ExecutionView({
               <Gridlines domain={domain} pxPerDay={pxPerDay} rowCount={rows.length} />
               <DependencyArrows rows={rows} byId={byId} domain={domain} pxPerDay={pxPerDay} />
               {todayX >= 0 && todayX <= timelineW && (
-                <div className="absolute z-10 pointer-events-none" style={{ left: todayX, top: AXIS_H, bottom: 0, width: 0 }}>
+                <div className={`absolute ${ZC.raised} pointer-events-none`} style={{ left: todayX, top: AXIS_H, bottom: 0, width: 0 }}>
                   <div className="absolute top-0 bottom-0 w-px bg-rose-500/80" />
                   <div className="absolute -top-0 -left-[3px] w-[7px] h-[7px] rounded-full bg-rose-500 shadow" />
                 </div>
@@ -1523,7 +1524,7 @@ const Bar = React.memo(function Bar({
     const summaryResizable = canEdit && !imported;
     return (
       <div
-        className={`absolute group/bar flex items-center transition-opacity ${dimmed ? "opacity-25" : ""} ${resize ? "z-20" : ""}`}
+        className={`absolute group/bar flex items-center transition-opacity ${dimmed ? "opacity-25" : ""} ${resize ? ZC.raisedHigher : ""}`}
         style={{ top, left, width, height: ROW_H }}
         title={summaryResizable ? `${ms.name} — drag an end to extend/shorten the whole phase` : `${ms.name} — open details`}
       >
@@ -1565,7 +1566,7 @@ const Bar = React.memo(function Bar({
   // Milestone marker — a diamond at the point date, with the label beside it.
   if (isMilestonePoint) {
     return (
-      <div className={`absolute group/bar flex items-center gap-1.5 transition-opacity ${dimmed ? "opacity-25" : ""} ${onPath ? "z-10" : ""}`} style={{ top, left: left - 6, height: ROW_H }} title={`${ms.name} — milestone · ${fmtDateUTC(finish)}`}>
+      <div className={`absolute group/bar flex items-center gap-1.5 transition-opacity ${dimmed ? "opacity-25" : ""} ${onPath ? ZC.raised : ""}`} style={{ top, left: left - 6, height: ROW_H }} title={`${ms.name} — milestone · ${fmtDateUTC(finish)}`}>
         <button onClick={onOpenDetail} className="relative shrink-0" aria-label={`Milestone ${ms.name}`}>
           <span className={`block w-3 h-3 rotate-45 border-2 border-white shadow ${ms.status === "completed" ? "bg-emerald-500" : onPath ? "bg-rose-500" : "bg-slate-700"}`} />
         </button>
@@ -1575,7 +1576,7 @@ const Bar = React.memo(function Bar({
   }
 
   return (
-    <div className={`absolute group/bar flex items-center transition-opacity ${dimmed ? "opacity-25" : ""} ${onPath ? "z-10" : ""}`} style={{ top: top + 6, left, width, height: ROW_H - 12 }}>
+    <div className={`absolute group/bar flex items-center transition-opacity ${dimmed ? "opacity-25" : ""} ${onPath ? ZC.raised : ""}`} style={{ top: top + 6, left, width, height: ROW_H - 12 }}>
       {draggable && (
         <button onClick={() => onNudge(-1)} className="absolute -left-5 opacity-0 group-hover/bar:opacity-100 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-opacity" title="Move back 1 day">
           <ChevronLeft className="w-3.5 h-3.5" />
@@ -1586,7 +1587,7 @@ const Bar = React.memo(function Bar({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         style={draggable ? { touchAction: "none" } : undefined}
-        className={`relative w-full h-full rounded-md border ${tone.border} ${tone.bar} shadow-sm overflow-hidden ${draggable ? "cursor-grab active:cursor-grabbing" : ""} ${dragDelta !== 0 || resize ? "ring-2 ring-[var(--color-accent-ring)] z-20" : onPath ? "ring-2 ring-rose-500 ring-offset-1" : ""}`}
+        className={`relative w-full h-full rounded-md border ${tone.border} ${tone.bar} shadow-sm overflow-hidden ${draggable ? "cursor-grab active:cursor-grabbing" : ""} ${dragDelta !== 0 || resize ? `ring-2 ring-[var(--color-accent-ring)] ${ZC.raisedHigher}` : onPath ? "ring-2 ring-rose-500 ring-offset-1" : ""}`}
         title={`${ms.name}\n${fmtDateUTC(start)} → ${fmtDateUTC(finish)}${imported ? `\nImported (${ms.source}) — dates are set in the scheduling tool` : ""}${dragDelta ? `\nmove ${dragDelta > 0 ? "+" : ""}${dragDelta}d` : ""}${resize ? `\nresize ${resize.days > 0 ? "+" : ""}${resize.days}d` : ""}`}
       >
         {/* Group-hue cap on the left edge — a quiet identity marker that
@@ -1649,7 +1650,7 @@ const Axis = React.memo(function Axis({ domain, pxPerDay }: { domain: { start: D
     });
   }
   return (
-    <div className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur border-b border-[var(--color-border)]" style={{ height: AXIS_H }}>
+    <div className={`sticky top-0 ${ZC.raised} bg-slate-50/95 backdrop-blur border-b border-[var(--color-border)]`} style={{ height: AXIS_H }}>
       {ticks.map((t, i) => (
         <div key={i} className="absolute top-0 bottom-0 flex flex-col justify-center" style={{ left: t.x }}>
           <div className="absolute top-0 bottom-0 w-px bg-slate-200" />
@@ -1746,7 +1747,7 @@ const DependencyArrows = React.memo(function DependencyArrows({ rows, byId, doma
   if (paths.length === 0) return null;
   return (
     <svg
-      className="absolute pointer-events-none z-0"
+      className={`absolute pointer-events-none ${ZC.base}`}
       style={{ top: 0, left: 0, width: "100%", height: AXIS_H + rows.length * ROW_H, overflow: "visible" }}
       aria-hidden
     >
@@ -1840,7 +1841,7 @@ function GroupTasksModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div className={`fixed inset-0 ${ZC.workflowModal} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4`}>
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/5 overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-[var(--color-accent-soft)] text-[var(--color-accent)] flex items-center justify-center"><FolderPlus className="w-4 h-4" /></div>
@@ -1908,7 +1909,7 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
   };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div className={`fixed inset-0 ${ZC.workflowModal} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4`}>
       <div className="w-full max-w-sm bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/5 overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-[var(--color-accent-soft)] text-[var(--color-accent)] flex items-center justify-center"><CalendarRange className="w-4 h-4" /></div>

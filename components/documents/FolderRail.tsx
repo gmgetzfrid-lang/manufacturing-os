@@ -7,6 +7,7 @@ import { NodeIcon } from "@/lib/nodeIcons";
 import { safeNodeColor } from "@/lib/nodeColor";
 import AttentionDot from "@/components/documents/AttentionDot";
 import type { AttentionMarkState } from "@/lib/attentionRollup";
+import { ZC } from "@/lib/zLayers";
 
 /** N11 TRAIL (TRAIL-1 dw2, TRAIL-6 dw3): the folder's mark — the count of the
  *  Documents badge's rows in its subtree (fanned up the folder chain), or
@@ -189,7 +190,7 @@ export default function FolderRail({
     <div
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      className="group/rail relative z-30 h-full shrink-0"
+      className={`group/rail relative ${ZC.raisedTop} h-full shrink-0`}
     >
       {/* COLLAPSED RAIL — always visible, theme-toned */}
       <div className={`w-12 h-full bg-[var(--color-surface-2)] border-r flex flex-col items-center py-2 gap-1 overflow-y-auto transition-colors ${hovered ? "border-[var(--color-accent)]/40" : "border-[var(--color-border)]"}`}>

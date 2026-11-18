@@ -58,6 +58,8 @@ import { translatePostgresError } from "@/lib/inputValidation";
 import { normalizeTag } from "@/lib/assets";
 import ViewTabs, { EQUIPMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
+import { ZC } from "@/lib/zLayers";
+import { useDockAvoidRow } from "@/components/ui/CornerDock";
 
 // DocCtrl belongs here: document controllers own the asset↔document wiring
 // (categories, codebook areas, file links), so gating them out of asset
@@ -982,6 +984,9 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
   orgId: string; onClose: () => void;
   onSave: (link: UnitResourceLink) => Promise<void>;
 }) {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const [libs, setLibs] = useState<Array<{ id: string; name: string }>>([]);
   const [libraryId, setLibraryId] = useState("");
   const [folders, setFolders] = useState<PickerFolder[]>([]);
@@ -1024,7 +1029,7 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
   };
 
   return (
-    <div className="fixed inset-0 z-[500] bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4" onClick={onClose}>
+    <div className={`fixed inset-0 ${ZC.assetModal} bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4`} onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl max-h-[90vh] flex flex-col">
         <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2.5">
           <Link2 className="w-4 h-4 text-purple-600" />
@@ -1067,7 +1072,7 @@ function LinkResourceModal({ orgId, onClose, onSave }: {
             </div>
           )}
         </div>
-        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-b-2xl flex items-center justify-end gap-2">
+        <div ref={dockRowRef} className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-b-2xl flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
           <button onClick={() => void save()} disabled={busy || !libraryId}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50 shadow">
@@ -1824,6 +1829,9 @@ function AssetEditDrawer({
   onOpenCarousel: (a: Asset) => void;
   onOpenUploader: (a: Asset) => void;
 }) {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const isCreate = !asset;
   const [tag, setTag] = useState(asset?.tag ?? "");
   const [typeId, setTypeId] = useState(asset?.type_id ?? preset?.typeId ?? "");
@@ -2027,7 +2035,7 @@ function AssetEditDrawer({
   };
 
   return (
-    <div className="fixed inset-0 z-[400] flex" onClick={onClose}>
+    <div className={`fixed inset-0 ${ZC.sharedModal} flex`} onClick={onClose}>
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" />
       <div onClick={(e) => e.stopPropagation()} className="relative ml-auto w-full max-w-xl bg-[var(--color-surface)] shadow-2xl border-l border-[var(--color-border)] flex flex-col h-dvh">
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
@@ -2252,7 +2260,7 @@ function AssetEditDrawer({
                       {canEdit && (
                         <button type="button" title="Unlink from this equipment"
                           onClick={() => void unlinkDocument(d.documentId)}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 z-10 p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-rose-600 opacity-0 group-hover/docrow:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
+                          className={`absolute right-2 top-1/2 -translate-y-1/2 ${ZC.raised} p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-rose-600 opacity-0 group-hover/docrow:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity`}>
                           <X className="w-3.5 h-3.5" />
                         </button>
                       )}
@@ -2298,7 +2306,7 @@ function AssetEditDrawer({
           )}
         </div>
 
-        <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
+        <div ref={dockRowRef} className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             {!isCreate && asset?.archived && canEdit && (
               <button onClick={onRestore} disabled={busy} title="Bring it back to the registry views — its photos, aliases and document links are still attached"
@@ -2347,6 +2355,9 @@ function AddUnitModal({ orgId, userId, existingCodes, onClose, onCreated }: {
   onClose: () => void;
   onCreated: (code: string) => void;
 }) {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const [code, setCode] = useState("");
   const [label, setLabel] = useState("");
   const [busy, setBusy] = useState(false);
@@ -2374,7 +2385,7 @@ function AddUnitModal({ orgId, userId, existingCodes, onClose, onCreated }: {
   };
 
   return (
-    <div className="fixed inset-0 z-[700] flex items-start justify-center bg-black/50 pt-[14vh] p-4" onClick={onClose}>
+    <div className={`fixed inset-0 ${ZC.dialog} flex items-start justify-center bg-black/50 pt-[14vh] p-4`} onClick={onClose}>
       <div className="w-full max-w-sm rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-4 space-y-3"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2">
@@ -2394,7 +2405,7 @@ function AddUnitModal({ orgId, userId, existingCodes, onClose, onCreated }: {
             className="flex-1 px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm" />
         </div>
         {error && <div className="text-[11px] text-rose-600">{error}</div>}
-        <div className="flex items-center justify-between gap-2">
+        <div ref={dockRowRef} className="flex items-center justify-between gap-2">
           <Link href="/admin/codebook" className="text-[10px] font-bold text-violet-700 hover:underline inline-flex items-center gap-1">
             <BookMarkedIcon className="w-3 h-3" /> Full codebook (AI import, decoder)
           </Link>
@@ -2415,6 +2426,9 @@ function AddCategoryModal({ orgId, userId, existingTypes, onClose, onCreated }: 
   onClose: () => void;
   onCreated: () => void;
 }) {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const existingTypeCodes = existingTypes.map((t) => t.code);
   const [name, setName] = useState("");
   const [prefixes, setPrefixes] = useState("");
@@ -2482,7 +2496,7 @@ function AddCategoryModal({ orgId, userId, existingTypes, onClose, onCreated }: 
   };
 
   return (
-    <div className="fixed inset-0 z-[700] flex items-start justify-center bg-black/50 pt-[14vh] p-4" onClick={onClose}>
+    <div className={`fixed inset-0 ${ZC.dialog} flex items-start justify-center bg-black/50 pt-[14vh] p-4`} onClick={onClose}>
       <div className="w-full max-w-sm rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-4 space-y-3"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2">
@@ -2509,7 +2523,7 @@ function AddCategoryModal({ orgId, userId, existingTypes, onClose, onCreated }: 
           codebook later and auto-categorize will catch up.
         </p>
         {error && <div className="text-[11px] text-rose-600">{error}</div>}
-        <div className="flex items-center justify-end gap-2">
+        <div ref={dockRowRef} className="flex items-center justify-end gap-2">
           <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
           <button onClick={() => void save()} disabled={busy}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-black text-white bg-purple-600 hover:bg-purple-500 disabled:opacity-50">

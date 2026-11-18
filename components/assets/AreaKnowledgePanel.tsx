@@ -44,6 +44,8 @@ import { unitGraphHref } from "@/components/assets/UnitOpsPanels";
 import EquipmentSweepModal from "@/components/documents/EquipmentSweepModal";
 import { AreaWorkPanel } from "@/components/assets/AreaWorkPanel";
 import { countAreaEquipmentProposals, type AreaProposals } from "@/lib/areaEquipmentProposals";
+import { ZC } from "@/lib/zLayers";
+import { useDockAvoidRow } from "@/components/ui/CornerDock";
 
 /** Bind the area server-side — the same controller bar as every other
  *  knowledge mutation, and a denied write is a loud error, never a silent
@@ -558,6 +560,9 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
   onClose: () => void;
   onDone: (msg: string) => void;
 }) {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const bound = status.boundLibrary;
   // Library choice: the bound one, an existing one, or create-new.
   const [libChoice, setLibChoice] = useState<string>(bound?.id ?? "__new");
@@ -681,7 +686,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
   }, [browse]);
 
   const sheet = (
-    <div className="fixed inset-0 z-[700] flex items-start justify-center bg-black/50 pt-[6vh] p-4 overscroll-contain" onClick={onClose}>
+    <div className={`fixed inset-0 ${ZC.dialog} flex items-start justify-center bg-black/50 pt-[6vh] p-4 overscroll-contain`} onClick={onClose}>
       <div className="w-full max-w-lg max-h-[86vh] flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)] shrink-0">
@@ -811,7 +816,7 @@ function AreaKnowledgeWizard({ orgId, userId, userName, unit, status, onClose, o
           )}
         </div>
 
-        <div className="px-4 py-3 border-t border-[var(--color-border)] shrink-0 flex items-center gap-2">
+        <div ref={dockRowRef} className="px-4 py-3 border-t border-[var(--color-border)] shrink-0 flex items-center gap-2">
           <span className="flex-1 text-[10px] text-[var(--color-text-muted)]">
             <FileText className="w-3 h-3 inline mr-1" />
             New files, revisions, and deletions inside watched folders sync automatically.

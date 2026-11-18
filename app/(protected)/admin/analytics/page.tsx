@@ -32,6 +32,7 @@ import { reviewModelFieldsFromRow } from '@/lib/reviewModel';
 import { parseOutcomeReasons, type OutcomeReason } from '@/lib/ticketOutcomeReasons';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import UserAvatar from '@/components/ui/UserAvatar';
+import { ZC } from "@/lib/zLayers";
 
 // --- TYPES ---
 interface PerformanceMetric {
@@ -446,7 +447,7 @@ export default function AnalyticsPage() {
       {/* MODAL 1: ROOT CAUSE DRILL DOWN */}
       {/* --------------------------------------------------------------------------- */}
       {selectedReason && (
-        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className={`fixed inset-0 ${ZC.pagePopover} flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200`}>
           <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl w-full max-w-4xl max-h-[80vh] flex flex-col border border-[var(--color-border)] animate-in fade-in zoom-in-95">
             <div className="px-6 py-4 border-b border-[var(--color-border)] flex justify-between items-center bg-[var(--color-surface-2)] rounded-t-2xl">
               <div>
@@ -504,7 +505,7 @@ export default function AnalyticsPage() {
       {/* MODAL 2: USER PERFORMANCE PROFILE */}
       {/* --------------------------------------------------------------------------- */}
       {userProfile && (
-        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className={`fixed inset-0 ${ZC.pagePopover} flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200`}>
           <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col border border-[var(--color-border)] animate-in fade-in zoom-in-95">
 
             {/* HEADER */}
@@ -707,7 +708,7 @@ export default function AnalyticsPage() {
                       className="w-full mx-0.5 bg-orange-500 rounded-t-sm transition-all duration-500 ease-out group-hover:bg-orange-600 relative min-h-[4px]" 
                       style={{ height: `${height}%` }}
                     >
-                       <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-bold text-[var(--color-text-muted)] opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity bg-[var(--color-surface)] px-2 py-1 rounded shadow-sm z-10 border border-[var(--color-border)]">{d.count}</span>
+                       <span className={`absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-bold text-[var(--color-text-muted)] opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity bg-[var(--color-surface)] px-2 py-1 rounded shadow-sm ${ZC.raised} border border-[var(--color-border)]`}>{d.count}</span>
                     </div>
                   </div>
                   <span className="text-[9px] font-bold text-[var(--color-text-faint)] mt-2 uppercase tracking-wider truncate w-full text-center">{d.label}</span>

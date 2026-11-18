@@ -21,7 +21,7 @@ import {
 import { parseFilename, detectBulkHints, type ParsedFilename } from "@/lib/filenameParser";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { STAGING_STATUS_OPTIONS } from "@/lib/documentStatusOptions";
-import { Z } from "@/lib/zLayers";
+import { Z, ZC } from "@/lib/zLayers";
 import { useDockAvoid, useDockRaise } from "@/components/ui/CornerDock";
 
 export interface CustomColumnDef {
@@ -601,7 +601,7 @@ export default function MetadataStagingModal({
         {/* Grid */}
         <div className="flex-1 overflow-auto">
           <table className="w-full text-xs">
-            <thead className="sticky top-0 bg-[var(--color-surface)] border-b border-[var(--color-border)] z-10">
+            <thead className={`sticky top-0 bg-[var(--color-surface)] border-b border-[var(--color-border)] ${ZC.raised}`}>
               <tr>
                 <th className="text-left px-3 py-2 text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-wider w-8"></th>
                 <th className="text-left px-3 py-2 text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-wider">File</th>

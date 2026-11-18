@@ -3,6 +3,7 @@
 import React, { useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import { useOccupyRightRail } from "@/components/ui/CornerDock";
+import { ZC } from "@/lib/zLayers";
 
 interface InspectorDrawerProps {
   isOpen: boolean;
@@ -30,7 +31,7 @@ export default function InspectorDrawer({ isOpen, onClose, children, title }: In
       {/* Backdrop with frosted blur */}
       <div
         onClick={onClose}
-        className={`fixed inset-0 z-[55] transition-all duration-300 ${
+        className={`fixed inset-0 ${ZC.inspectorBackdrop} transition-all duration-300 ${
           isOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
         style={{
@@ -44,7 +45,7 @@ export default function InspectorDrawer({ isOpen, onClose, children, title }: In
       {/* Drawer panel — slides from right with spring easing */}
       <aside
         ref={panelRef}
-        className={`fixed top-0 right-0 bottom-0 z-[60] w-[640px] max-w-[92vw] lg:w-[720px] bg-[var(--color-surface)] shadow-2xl border-l border-slate-200/80 flex flex-col transition-transform duration-500 ${
+        className={`fixed top-0 right-0 bottom-0 ${ZC.drawer} w-[640px] max-w-[92vw] lg:w-[720px] bg-[var(--color-surface)] shadow-2xl border-l border-slate-200/80 flex flex-col transition-transform duration-500 ${
           isOpen ? "translate-x-0" : "translate-x-full"
         }`}
         style={{

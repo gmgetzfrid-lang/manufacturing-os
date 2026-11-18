@@ -17,6 +17,7 @@ import { LibraryCollection } from "@/types/schema";
 import NodeCover from "@/components/documents/NodeCover";
 import AttentionDot from "@/components/documents/AttentionDot";
 import type { AttentionMarkState } from "@/lib/attentionRollup";
+import { ZC } from "@/lib/zLayers";
 
 interface FolderGridProps {
   folders: LibraryCollection[];
@@ -110,7 +111,7 @@ export default function FolderGrid({
     <div 
       ref={menuRef}
       onClick={(e) => e.stopPropagation()}
-      className="absolute z-50 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg w-48 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-150 origin-top-right"
+      className={`absolute ${ZC.pagePopover} bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg w-48 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-150 origin-top-right`}
       style={contextMenu?.id === id ? { top: 0, left: 0, position: 'relative' } : { top: '100%', right: 0 }}
     >
       <button onClick={() => { onOpen(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center font-medium">
@@ -315,7 +316,7 @@ export default function FolderGrid({
           `}
         >
           {attentionFor && folder.id && (
-            <AttentionDot mark={attentionFor(folder.id)} variant="count" partial={attentionPartial} where="in this folder" className="absolute top-2 left-2 z-10" />
+            <AttentionDot mark={attentionFor(folder.id)} variant="count" partial={attentionPartial} where="in this folder" className={`absolute top-2 left-2 ${ZC.raised}`} />
           )}
           <div className="flex items-start justify-between mb-3">
             <NodeCover
@@ -372,7 +373,7 @@ export default function FolderGrid({
           the cursor was over the card and reappeared on mouse-out. */}
       {contextMenu && (
         <div
-          className="fixed z-[100]"
+          className={`fixed ${ZC.modal}`}
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >

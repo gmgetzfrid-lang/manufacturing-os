@@ -15,6 +15,8 @@ import {
   type LibraryView, type ViewFilterConfig, type ViewSortConfig, type ViewDisplayConfig,
 } from "@/lib/libraryViews";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import { ZC } from "@/lib/zLayers";
+import { useDockAvoidRow } from "@/components/ui/CornerDock";
 
 interface ViewSelectorProps {
   orgId: string;
@@ -87,8 +89,8 @@ export default function ViewSelector({
 
       {open && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 mt-1 w-64 origin-top-right bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl border border-[var(--color-border)] ring-1 ring-black/5 shadow-lg z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div className={`fixed inset-0 ${ZC.pageFloat}`} onClick={() => setOpen(false)} />
+          <div className={`absolute right-0 mt-1 w-64 origin-top-right bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl border border-[var(--color-border)] ring-1 ring-black/5 shadow-lg ${ZC.pagePopover} overflow-hidden animate-in fade-in zoom-in-95 duration-150`}>
             <div className="px-3 py-2 border-b border-[var(--color-border)]">
               <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Views</div>
             </div>
@@ -183,6 +185,9 @@ function SaveViewModal({
   filterConfig: ViewFilterConfig; sortConfig: ViewSortConfig; displayConfig: ViewDisplayConfig;
   onClose: () => void; onSaved: () => void;
 }) {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [scope, setScope] = useState<"org" | "user">(isAdmin ? "org" : "user");
@@ -206,7 +211,7 @@ function SaveViewModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[400] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div className={`fixed inset-0 ${ZC.sharedModal} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4`}>
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
           <div className="text-sm font-black text-[var(--color-text)] flex items-center gap-2">
@@ -244,7 +249,7 @@ function SaveViewModal({
           </label>
           {error && <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded p-2">{error}</div>}
         </div>
-        <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
+        <div ref={dockRowRef} className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
           <button onClick={save} disabled={busy || !name.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-black text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 shadow">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save view

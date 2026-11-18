@@ -8,6 +8,7 @@
 import React from "react";
 import { createPortal } from "react-dom";
 import DocThumb from "@/components/documents/DocThumb";
+import { ZC } from "@/lib/zLayers";
 
 export default function DocHoverPreview({
   documentId,
@@ -60,7 +61,7 @@ export default function DocHoverPreview({
       {children}
       {pos && typeof document !== "undefined" && createPortal(
         <div
-          className="fixed z-[800] pointer-events-none rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-black/5 shadow-lg p-2 animate-in fade-in zoom-in-95 duration-150"
+          className={`fixed ${ZC.hoverPreview} pointer-events-none rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-black/5 shadow-lg p-2 animate-in fade-in zoom-in-95 duration-150`}
           style={{ left: pos.left, top: pos.top }}
         >
           <DocThumb documentId={documentId} filePath={filePath} width={previewWidth} />

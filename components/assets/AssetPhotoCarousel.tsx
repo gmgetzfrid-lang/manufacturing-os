@@ -18,6 +18,7 @@ import {
   type AssetType,
 } from "@/lib/assets";
 import SignedImg from "./SignedImg";
+import { ZC } from "@/lib/zLayers";
 
 interface AssetPhotoCarouselProps {
   isOpen: boolean;
@@ -121,7 +122,7 @@ export default function AssetPhotoCarousel({
   if (typeof document === "undefined") return null;
   return createPortal(
     <div
-      className="fixed inset-0 z-[500] bg-slate-950/95 backdrop-blur-md flex flex-col"
+      className={`fixed inset-0 ${ZC.assetModal} bg-slate-950/95 backdrop-blur-md flex flex-col`}
       onClick={onClose}
       onMouseDown={(e) => e.stopPropagation()}
     >
@@ -196,14 +197,14 @@ export default function AssetPhotoCarousel({
               <>
                 <button
                   onClick={prev}
-                  className="absolute left-4 top-1/2 -translate-y-1/2 z-10 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white backdrop-blur transition-all hover:scale-105"
+                  className={`absolute left-4 top-1/2 -translate-y-1/2 ${ZC.raised} p-3 rounded-full bg-white/10 hover:bg-white/20 text-white backdrop-blur transition-all hover:scale-105`}
                   title="Previous (←)"
                 >
                   <ChevronLeft className="w-5 h-5" />
                 </button>
                 <button
                   onClick={next}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 z-10 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white backdrop-blur transition-all hover:scale-105"
+                  className={`absolute right-4 top-1/2 -translate-y-1/2 ${ZC.raised} p-3 rounded-full bg-white/10 hover:bg-white/20 text-white backdrop-blur transition-all hover:scale-105`}
                   title="Next (→)"
                 >
                   <ChevronRight className="w-5 h-5" />

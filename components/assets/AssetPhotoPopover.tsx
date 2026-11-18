@@ -23,6 +23,7 @@ import {
   type AssetType,
 } from "@/lib/assets";
 import SignedImg from "./SignedImg";
+import { ZC } from "@/lib/zLayers";
 
 interface AssetPhotoPopoverProps {
   asset: Asset;
@@ -164,7 +165,7 @@ export default function AssetPhotoPopover({
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       style={{ top: position.top, left: position.left, width: POPOVER_WIDTH }}
-      className="fixed z-[400] bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl shadow-lg border border-[var(--color-border)] ring-1 ring-black/5 overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+      className={`fixed ${ZC.sharedModal} bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl shadow-lg border border-[var(--color-border)] ring-1 ring-black/5 overflow-hidden animate-in fade-in zoom-in-95 duration-150`}
     >
       {/* Tail / pointer */}
       {anchorEl && (

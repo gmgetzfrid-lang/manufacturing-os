@@ -37,6 +37,7 @@ import {
 import type { CheckoutSession, DocumentRecord, CheckoutMode } from "@/types/schema";
 import { useToast } from "@/components/providers/ToastProvider";
 import { logCheckoutEvent } from "@/lib/audit";
+import { ZC } from "@/lib/zLayers";
 
 // ISO-style document control: every checkout must say WHY. The category is the
 // machine-readable purpose (filterable, reportable); the reason is the
@@ -611,7 +612,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
   const isIdle = activeSessions.length === 0 && !mySession && !isOrphaned && !episode && !document.checkedOutBy;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
+    <div className={`fixed inset-0 ${ZC.modal} flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in`}>
       <div className={`bg-[var(--color-surface)] w-full rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col md:flex-row animate-in fade-in zoom-in-95 ${isIdle ? "max-w-xl max-h-[88vh]" : "max-w-4xl h-[80vh]"}`}>
 
         {/* LEFT: SESSION & ACTIONS */}
