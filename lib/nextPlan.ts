@@ -4,13 +4,18 @@
 // nights", a head count typed in).
 //
 // The rules, said the same way on screen:
-//   - This year's activities, links, crews, day / night / both calendars,
-//     and planned start dates as the earliest each can start.
-//   - The project's night-shift setup decides who works nights: a job with
-//     no night crew is day-shift work, 12 hours a day, wherever the file
-//     put its hours (the same rule as the shift report and the turnover).
-//   - Work found this year is in from the start, in the order and on the
-//     shifts it was really done.
+//   - This year's activities and crews, in the order they were really done:
+//     a link the field didn't wait on gives way to what that work waited
+//     on, and a work order's steps done before a step started come first.
+//     Planned start dates are the earliest each can start (or when it
+//     really started, if sooner).
+//   - Nights as this year really ran: a crew that worked a work order on two
+//     or more nights works it days and nights; otherwise days, 12-hour
+//     shifts. The shutdown and start-up run around the clock. (The night
+//     setup is for the live shift report, not this.)
+//   - Missed scope added this year is in from the start, in the order and
+//     on the shifts it was really done. Work found by inspection is not
+//     planned; it shows as a risk with what it would do to the finish.
 //   - An activity done inside fewer shifts than its plan gets that length;
 //     nothing is made longer from a guess.
 //   - Start-up begins once every work order is done.
@@ -27,7 +32,7 @@ import type { AsBuilt } from "@/lib/asBuiltSchedule";
 import type { AsBuiltWork } from "@/lib/asBuiltWork";
 import { shiftAt, nextShift, shiftWindowsBetween, calendarShift, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
 import { dayKey, dayKeyToMs } from "@/lib/scheduleTz";
-import { applyNightStaffing } from "@/lib/nightStaffing";
+import { discoveryOf, kindOf } from "@/lib/discovery";
 
 export type Cal = "day" | "night" | "both";
 export type ActKind = "same" | "shorter" | "found" | "new" | "split" | "changed";
@@ -139,44 +144,69 @@ const isStartUp = (name: string) => /start\s*-?\s*up/i.test(name);
  *  ("Shutdown-Required Inspection ..."). */
 const isShutdown = (name: string) => /shut\s*-?\s*down\s*$/i.test(name.trim()) && !/required/i.test(name);
 
+/** How a step runs next time, from how its work order's crew really ran it
+ *  this year (null: never worked, the file's calendar). Two or more nights
+ *  is a night crew (the as-built's own rule): days and nights. One night
+ *  that finished day work is overtime: days. */
+function calOf(orderName: string, ran: { days: Set<string>; nights: Set<string> } | undefined, worked: string[]): Cal | null {
+  if (isShutdown(orderName) || isStartUp(orderName)) return "both";
+  if (!ran || !(ran.days.size + ran.nights.size)) return null;
+  if (ran.nights.size >= 2) return ran.days.size ? "both" : "night";
+  if (worked.length && worked.every((k) => k.endsWith(":night"))) return "night";
+  return "day";
+}
+
+/** Steps found by inspection this year (not missed scope): out of next
+ *  time's plan, shown as risks. A step not in the plan with no record of
+ *  how it came is counted as found. */
+export function discoveryIds(work: AsBuiltWork, milestones: Milestone[]): string[] {
+  const byId = new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m]));
+  return [...work.steps.values()].filter((w) => { const m = byId.get(w.id); return w.found && !!m && kindOf(discoveryOf(m)) !== "added"; }).map((w) => w.id);
+}
+
 /** This year's job, made into next time's activities (before any change). */
 export function planActivities(input: { built: AsBuilt; work: AsBuiltWork; milestones: Milestone[]; tz: string; times: ShiftTimes }): PlanAct[] {
-  const { built, work, tz, times } = input;
+  const { built, work, times } = input;
   const byId = new Map(input.milestones.filter((m) => m.id).map((m) => [m.id!, m]));
-  // Steps no night crew works (Setup › Night shifts): day work only.
-  const dayOnly = new Set(applyNightStaffing(input.milestones, times.nightJobs).filter((m) => m.id && (m as { staffedShift?: string }).staffedShift === "day").map((m) => m.id!));
   const all = built.orders.flatMap((o) => o.steps.map((s) => ({ s, o })));
+  // The shifts each work order's crews really worked it on this year.
+  const ran = new Map<string, { days: Set<string>; nights: Set<string> }>();
+  for (const { s, o } of all) {
+    const w = work.steps.get(s.id); if (!w) continue;
+    const k = `${o.key}|${w.crew}`; const r = ran.get(k) ?? { days: new Set<string>(), nights: new Set<string>() };
+    for (const x of w.worked) (x.endsWith(":night") ? r.nights : r.days).add(x);
+    ran.set(k, r);
+  }
   const ids = new Set(all.map((x) => x.s.id));
+  const stepById = new Map(all.map((x) => [x.s.id, x.s]));
+  const fileOf = (id: string) => (byId.get(id)?.dependsOn ?? []).filter((p) => ids.has(p) && p !== id);
   const acts: PlanAct[] = [];
   for (const { s, o } of all) {
     const m = byId.get(s.id); const w = work.steps.get(s.id);
     if (!m || !w) continue;
     const plan = Math.max(0, s.plannedH);
-    // The plan's own calendar (06:00-18:00, 24 hours), not this job's
-    // night-crew setting: next time's crews are what's being planned.
-    let cal: Cal = calendarShift(m, times) ?? (m.shift === "day" ? "day" : m.shift === "night" ? "night" : "both");
-    const nightsWorked = w.worked.some((k) => k.endsWith(":night")), daysWorked = w.worked.some((k) => k.endsWith(":day"));
+    const cal: Cal = calOf(o.name, ran.get(`${o.key}|${w.crew}`), w.worked) ?? calendarShift(m, times) ?? (m.shift === "day" ? "day" : m.shift === "night" ? "night" : "both");
     let hours = plan, kind: ActKind = "same", basis = "";
-    if (w.found) {
-      kind = "found"; basis = "found this year";
-      if (nightsWorked && daysWorked) cal = "both"; else if (nightsWorked) cal = "night"; else if (daysWorked) cal = "day";
-    }
-    // The shutdown and start-up are run around the clock by operations,
-    // whatever the night-shift setup says about the maintenance jobs.
-    if (dayOnly.has(s.id) && !isShutdown(o.name) && !isStartUp(o.name)) cal = "day";
+    if (w.found) { kind = "found"; basis = kindOf(discoveryOf(m)) === "added" ? "missed scope, added this year" : "found this year"; }
     const bound = w.worked.length * 12;
     if (!w.found && w.worked.length && bound < plan) { hours = bound; kind = "shorter"; basis = `done within ${w.worked.length} shift${w.worked.length === 1 ? "" : "s"} this year (plan ${r1(plan)} h)`; }
-    let preds = (m.dependsOn ?? []).filter((p) => ids.has(p));
+    let preds = fileOf(s.id);
     let floor: number | null = s.inPlan ? s.planStart : null;
-    if (w.found) {
-      // In the order it was really done: two finds worked side by side stay
-      // side by side, whatever link was typed when they were added.
-      const a0 = s.start;
-      preds = preds.filter((p) => { const q = all.find((x) => x.s.id === p)?.s; return !(q && !q.inPlan && a0 != null && q.finish != null && a0 < q.finish); });
-      if (!preds.length) {
-        const before = o.steps.filter((x) => x.id !== s.id && x.finish != null && a0 != null && x.finish <= a0).sort((a, b) => (b.finish ?? 0) - (a.finish ?? 0))[0];
-        if (before) preds = [before.id]; else floor = a0;
-      }
+    if (s.start != null) {
+      // In the order it was really done. A link it waited on stays; one it
+      // didn't (that work finished after it started) gives way to what that
+      // work waited on; and its work order's steps done before it started
+      // come first, linked in the file or not.
+      const t = s.start + 60_000;
+      const doneBy = (id: string) => { const q = stepById.get(id); return q?.finish != null && q.finish <= t; };
+      const kept = new Set<string>(); const seen = new Set<string>();
+      const walk = (p: string) => { if (seen.has(p)) return; seen.add(p); if (doneBy(p)) kept.add(p); else for (const q of fileOf(p)) walk(q); };
+      for (const p of preds) walk(p);
+      for (const x of o.steps) if (x.id !== s.id && x.finish != null && x.finish <= t) kept.add(x.id);
+      preds = [...kept];
+      // A planned date it started before didn't hold it.
+      if (floor != null && s.start < floor) floor = s.start;
+      if (!preds.length && floor == null) floor = s.start;
     }
     acts.push({
       id: s.id, name: s.name, order: o.key, crew: w.crew, hours: r1(hours), planHours: s.inPlan ? r1(plan) : null, cal, preds, floor, kind, basis,
@@ -440,12 +470,17 @@ export function paceOf(work: AsBuiltWork): Record<string, { mh: number; from: st
   return out;
 }
 
-/** The whole thing: this year's job, the changes, scheduled. */
-export function nextPlan(input: { built: AsBuilt; work: AsBuiltWork; milestones: Milestone[]; tz: string; times: ShiftTimes; changes: PlanChange[] }): NextPlan {
+export type PlanInput = { built: AsBuilt; work: AsBuiltWork; milestones: Milestone[]; tz: string; times: ShiftTimes; changes: PlanChange[]; withFound?: boolean };
+
+/** The whole thing: this year's job, the changes, scheduled. Work found by
+ *  inspection is left out unless `withFound`. */
+export function nextPlan(input: PlanInput): NextPlan {
   const base = planActivities(input);
   const floors = base.map((a) => a.floor).filter((t): t is number => t != null);
   const day1 = floors.length ? shiftAt(Math.min(...floors), input.tz, input.times).start : Date.now();
-  const { acts, pre, headsSet, jobsCap, crewSize } = applyChanges(base, input.changes, input.tz, input.times, day1);
+  const out = input.withFound ? [] : discoveryIds(input.work, input.milestones);
+  const found: PlanChange[] = out.length ? [{ id: "found:out", said: "", at: 0, kind: "drop", target: { ids: out } }] : [];
+  const { acts, pre, headsSet, jobsCap, crewSize } = applyChanges(base, [...found, ...input.changes], input.tz, input.times, day1);
   return schedule({ acts, pre, tz: input.tz, times: input.times, pace: paceOf(input.work), toolHours: input.work.toolHours, headsSet, jobsCap, crewSize, day1 });
 }
 
@@ -489,34 +524,4 @@ export function shiftParts(a: { start: number; finish: number; cal: "day" | "nig
     if (s1 > s0) out.push([s0, s1]);
   }
   return out.length ? out : [[a.start, Math.max(a.finish, a.start + 60_000)]];
-}
-
-
-/** The crew to hire and keep: for each crew, the fewest hands on days and
- *  on nights that, held every shift of the event, still finish when the
- *  schedule does now (the work moved to fit them), the biggest crews
- *  first. `peak`: the most a single shift's work would want. */
-export function sizeCrews(input: { built: AsBuilt; work: AsBuiltWork; milestones: Milestone[]; tz: string; times: ShiftTimes; changes: PlanChange[] }, plan: NextPlan): Array<{ crew: string; day: number | null; night: number | null; peak: { day: number; night: number } }> {
-  const holdTo = plan.finish + 30 * 60_000;
-  const crews = Object.keys(plan.load).filter((c) => c !== "Off site" && c !== "Not set" && c.trim()).sort((a, b) => plan.load[b].reduce((n, h) => n + h, 0) - plan.load[a].reduce((n, h) => n + h, 0));
-  const out: Array<{ crew: string; day: number | null; night: number | null; peak: { day: number; night: number } }> = [];
-  let list = [...input.changes];
-  for (const crew of crews) {
-    const peak = { day: 0, night: 0 };
-    plan.shifts.forEach((w, i) => { const k = w.kind === "night" ? "night" : "day"; peak[k] = Math.max(peak[k], plan.heads[crew]?.[i] ?? 0); });
-    const size: { day: number | null; night: number | null } = { day: null, night: null };
-    for (const k of ["day", "night"] as const) {
-      if (!peak[k]) continue;
-      let lo = 1, hi = peak[k];
-      while (lo < hi) {
-        const mid = Math.floor((lo + hi) / 2);
-        const p = nextPlan({ ...input, changes: [...list, { id: `size:${crew}`, said: "", at: 0, kind: "crew", crew, ...size, [k]: mid }] });
-        if (p.finish <= holdTo) hi = mid; else lo = mid + 1;
-      }
-      size[k] = lo;
-    }
-    list = [...list, { id: `size:${crew}`, said: "", at: 0, kind: "crew", crew, ...size }];
-    out.push({ crew, ...size, peak });
-  }
-  return out;
 }

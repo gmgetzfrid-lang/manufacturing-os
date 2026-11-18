@@ -57,7 +57,6 @@ export interface Lesson {
 type Input = { built: AsBuilt; work: AsBuiltWork; milestones: Milestone[]; tz: string; times: ShiftTimes };
 
 const change = (id: string, c: Record<string, unknown>): PlanChange => ({ id, said: "", at: 0, ...c } as PlanChange);
-const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 const hoursWord = (h: number) => (h >= 36 ? `${r1(h / 24)} days` : `${Math.round(h)} h`);
 
 /** The lessons this job's record gives, against the schedule made from it
@@ -178,21 +177,8 @@ export function planLessons(input: Input & { notes: MilestoneNote[]; base: NextP
     }
   }
 
-  // ── Links the work didn't wait on ──
-  // This year's plan linked steps the crews started before what they were
-  // linked to was done: next time they don't wait on them either.
-  const loose = base.acts.map((a) => ({ a, drop: notWaited(a.id) })).filter((x) => x.drop.length && !out.some((l) => l.acts.includes(x.a.id)));
-  if (loose.length) {
-    const orderName = (k: string) => built.orders.find((o) => o.key === k)?.name ?? "";
-    const named = [...new Set(loose.map((x) => orderName(x.a.order)).filter(Boolean))];
-    out.push({
-      id: "links", area: "planning", acts: loose.map((x) => x.a.id),
-      title: `${loose.length} link${loose.length === 1 ? "" : "s"} the work didn't wait on`,
-      saw: `In this year's plan, ${plural(loose.length, "step")} waited on other work, but in the field ${loose.length === 1 ? "it" : "they"} started before that work was done: ${named.slice(0, 4).join(", ")}${named.length > 4 ? ` and ${named.length - 4} more` : ""}.`,
-      does: "Those steps go in the order they were really done, without waiting on those links.",
-      changes: loose.map((x) => change(`links:${x.a.id}`, { kind: "relink", actId: x.a.id, drop: x.drop, add: [] })),
-    });
-  }
+  // (Links the work didn't wait on are the schedule's own rule now: it
+  // follows the order the work was really done in.)
 
   // ── A crew handed more at once than it worked ──
   const flows = input.flows ?? crewFlows(built, work, new Map(input.milestones.filter((m) => m.id).map((m) => [m.id!, m.dependsOn ?? []])));

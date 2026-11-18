@@ -19,7 +19,8 @@ import type { ShiftRecord } from "@/lib/shiftRecord";
 import type { ProgressLogRow } from "@/lib/progressHistory";
 import { buildAsBuilt, laneSteps, stepBar, type BuiltStep } from "@/lib/asBuiltSchedule";
 import { buildAsBuiltWork, shiftKey, type AsBuiltWork, type WaitRun } from "@/lib/asBuiltWork";
-import { nextPlan, finishLever, dayNumber, shiftParts, sizeCrews, type NextPlan, type PlanChange } from "@/lib/nextPlan";
+import { nextPlan, finishLever, dayNumber, shiftParts, type NextPlan, type PlanChange } from "@/lib/nextPlan";
+import { checkPlan, planRisks, CHECK_H, type PlanCheck, type PlanRisk } from "@/lib/nextPlanCheck";
 import { loadNextPlanSettings, saveNextPlanChanges, type NextPlanSettings } from "@/lib/nextPlanStore";
 import { planLessons, lessonChanges, lessonEffects, toTarget, mostAtOnce, type Lesson } from "@/lib/nextPlanLessons";
 import { msProjectXml, asBuiltTasks, suggestedTasks } from "@/lib/msProject";
@@ -111,19 +112,14 @@ export default function AsBuiltScheduleView(p: Props) {
   const base = useMemo(() => (work ? nextPlan({ built, work, milestones: p.milestones, tz, times, changes: [] }) : null), [work, built, p.milestones, tz, times]);
   const lessons = useMemo(() => (work && base && data ? planLessons({ built, work, milestones: p.milestones, tz, times, notes: data.notes, base, now: Date.now() }) : []), [work, base, data, built, p.milestones, tz, times]);
   const skipped = useMemo(() => new Set(changes.flatMap((c) => (c.kind === "skip" ? [c.lesson] : []))), [changes]);
-  const taught = useMemo(() => [...lessonChanges(lessons, skipped), ...changes.filter((c) => c.kind !== "skip")], [lessons, skipped, changes]);
-  // One crew per contractor kept the whole event, days and nights: the
-  // fewest that keep the finish, unless a person set its size.
-  const sized = useMemo(() => {
-    if (!work) return [];
-    const loose = nextPlan({ built, work, milestones: p.milestones, tz, times, changes: taught });
-    return sizeCrews({ built, work, milestones: p.milestones, tz, times, changes: taught }, loose);
-  }, [work, built, p.milestones, tz, times, taught]);
-  const applied = useMemo(() => {
-    const own = new Set(changes.flatMap((c) => (c.kind === "crew" ? [c.crew] : [])));
-    return [...taught.filter((c) => c.kind !== "crew"), ...sized.filter((x) => !own.has(x.crew)).map((x): PlanChange => ({ id: `kept:${x.crew}`, said: "", at: 0, kind: "crew", crew: x.crew, day: x.day, night: x.night })), ...taught.filter((c) => c.kind === "crew")];
-  }, [taught, sized, changes]);
+  // Head counts aren't planned (no people made up): a size saved before
+  // that stopped being a change is left out.
+  const applied = useMemo(() => [...lessonChanges(lessons, skipped), ...changes.filter((c) => c.kind !== "skip" && c.kind !== "heads" && c.kind !== "crew")], [lessons, skipped, changes]);
   const plan = useMemo(() => (work ? nextPlan({ built, work, milestones: p.milestones, tz, times, changes: applied }) : null), [work, built, p.milestones, tz, times, applied]);
+  // Whether to trust it: this year replayed through the same rules.
+  const check = useMemo(() => (work ? checkPlan({ built, work, milestones: p.milestones, tz, times }) : null), [work, built, p.milestones, tz, times]);
+  // What could still move it: found work, jobs that ran long.
+  const risks = useMemo(() => (work && plan ? planRisks({ built, work, milestones: p.milestones, tz, times, changes: applied }, plan, { max: 12 }) : []), [work, plan, built, p.milestones, tz, times, applied]);
 
   const crews = useMemo(() => {
     const names = [...new Set([...(work?.crews.map((c) => c.crew) ?? []), ...Object.keys(plan?.load ?? {})])];
@@ -158,7 +154,7 @@ export default function AsBuiltScheduleView(p: Props) {
   const px = nShifts && boxW ? Math.max(14, Math.min(56, Math.floor((boxW - left - (cols ? 350 : 0) - 6) / nShifts))) : 34;
 
   if (err) return <div className="rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/30 p-3 text-[13px] text-rose-800 dark:text-rose-200">{err}</div>;
-  if (!data || !work || !plan) return <div className="py-10 text-center text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline mr-1" /> Reading the job shift by shift…</div>;
+  if (!data || !work || !plan || !check) return <div className="py-10 text-center text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline mr-1" /> Reading the job shift by shift…</div>;
   if (!built.orders.length) return <div className="py-8 text-center text-[13px] text-[var(--color-text-muted)]">No schedule here yet.</div>;
 
   return (
@@ -180,7 +176,7 @@ export default function AsBuiltScheduleView(p: Props) {
       </div>
       {view === "built"
         ? <BuiltView {...p} cols={cols} built={built} work={work} colorOf={colorOf} changes={changes} onAdd={(c) => void saveChanges([...changes, c])} />
-        : <NextView {...p} cols={cols} built={built} work={work} plan={plan} colorOf={colorOf} changes={changes} applied={applied} sized={sized} lessons={lessons} skipped={skipped} settings={data.settings} onChanges={(n) => void saveChanges(n)}
+        : <NextView {...p} cols={cols} built={built} work={work} plan={plan} colorOf={colorOf} changes={changes} applied={applied} check={check} risks={risks} lessons={lessons} skipped={skipped} settings={data.settings} onChanges={(n) => void saveChanges(n)}
             onStaffing={(next) => setData({ ...data, settings: { ...data.settings, staffing: next } })} />}
     </div>
     </PxCtx.Provider>
@@ -502,7 +498,7 @@ function PlanFor({ run, stepName, crews, doneBefore, onSave, onCancel }: { run: 
 
 // ── Suggested for next time ──────────────────────────────────────────────
 
-function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBuiltWork; plan: NextPlan; colorOf: (c: string) => string; changes: PlanChange[]; applied: PlanChange[]; sized: Array<{ crew: string; day: number | null; night: number | null; peak: { day: number; night: number } }>; lessons: Lesson[]; skipped: Set<string>; settings: NextPlanSettings; onChanges: (c: PlanChange[]) => void; onStaffing: (s: NextPlanSettings["staffing"]) => void }) {
+function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBuiltWork; plan: NextPlan; colorOf: (c: string) => string; changes: PlanChange[]; applied: PlanChange[]; check: PlanCheck; risks: PlanRisk[]; lessons: Lesson[]; skipped: Set<string>; settings: NextPlanSettings; onChanges: (c: PlanChange[]) => void; onStaffing: (s: NextPlanSettings["staffing"]) => void }) {
   const { tz, times, built, work, plan, changes } = p;
   const PX = React.useContext(PxCtx);
   const { x, width } = useAxis(plan);
@@ -544,28 +540,13 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
   const finishWords = (f: number) => { const d = (plan.finish - f) / 3_600_000; return Math.abs(d) < 0.5 ? "no change to the finish" : `${r1(Math.abs(d))} h ${d > 0 ? "sooner" : "later"}`; };
   const drivingOrders = [...new Set(plan.driving.map((id) => plan.acts.find((a) => a.id === id)?.order).filter(Boolean) as string[])].map((o) => orderName.get(o) ?? o);
 
-  // A crew's size kept the whole event (one change per crew; empty: back to the suggestion).
-  const setCrew = (crew: string, kind: "day" | "night", v: string) => {
-    const cur = p.applied.find((c) => c.kind === "crew" && c.crew === crew) as Extract<PlanChange, { kind: "crew" }> | undefined;
-    const rest = changes.filter((c) => !(c.kind === "crew" && c.crew === crew) && !(c.kind === "heads" && c.crew === crew));
-    const n = v.trim() === "" ? null : Math.max(1, Math.round(Number(v)));
-    if (n != null && !Number.isFinite(n)) return;
-    const next = { day: cur?.day ?? null, night: cur?.night ?? null, [kind]: n };
-    const sug = p.sized.find((x) => x.crew === crew);
-    if (sug && next.day === sug.day && next.night === sug.night) { p.onChanges(rest); return; }
-    p.onChanges([...rest, { id: `c${Date.now().toString(36)}`, said: `${crew} crew`, at: Date.now(), kind: "crew", crew, ...next }]);
+  // A crew's contractor and its staffing plan (by the contractor's name).
+  const planOf = (crew: string): { co: string; plan: StaffingPlan | null; plant: boolean } => {
+    const co = crewWork.get(crew)?.company ?? crew;
+    const hit = Object.entries(p.settings.staffing).find(([k]) => k.toLowerCase() === co.toLowerCase() || k.toLowerCase() === crew.toLowerCase());
+    return { co, plan: hit?.[1] ?? null, plant: /\(\s*KE\s*\)$/i.test(crew) || /^kern/i.test(co) };
   };
-
-  // Staffing plan read in.
-  // This year's hands for the same shift: a staffing plan, else the count.
-  const thisYear = (crew: string, i: number): { n: number; word: string } | null => {
-    const s = work.shifts[i]; const cw = crewWork.get(crew);
-    if (!s || !cw) return null;
-    const b = cw.byShift[shiftKey(s)];
-    if (b?.planned) return { n: b.planned.direct, word: "plan" };
-    const counted = b?.counted?.direct ?? b?.counted?.total;
-    return counted != null ? { n: counted, word: "had" } : null;
-  };
+  const trusted = p.check.can && p.check.ok;
 
   const byOrder = new Map<string, NextPlan["acts"]>();
   for (const a of plan.acts) { if (!byOrder.has(a.order)) byOrder.set(a.order, []); byOrder.get(a.order)!.push(a); }
@@ -573,8 +554,8 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
   const kinds = plan.acts.reduce((m, a) => { m[a.kind] = (m[a.kind] ?? 0) + 1; return m; }, {} as Record<string, number>);
   const planFin = built.planFinish;
   const lines = <>{planFin != null && <i aria-hidden title="This year's planned finish" className="absolute top-0 bottom-0 border-l-2 border-red-600" style={{ left: x(planFin) }} />}<i aria-hidden title="Suggested finish" className="absolute top-0 bottom-0 border-l-2 border-dashed border-blue-600" style={{ left: x(plan.finish) }} /></>;
-  const KIND: Record<string, [string, string]> = { new: ["New", "bg-emerald-100 text-emerald-900"], found: ["Found this year", "bg-orange-100 text-orange-900"], shorter: ["Shorter", "bg-blue-100 text-blue-900"], split: ["Split", "bg-violet-100 text-violet-900"], changed: ["Changed", "bg-violet-100 text-violet-900"] };
-  const headsList = changes.filter((c) => c.kind === "heads");
+  const KIND: Record<string, [string, string]> = { new: ["New", "bg-emerald-100 text-emerald-900"], found: ["Added scope", "bg-orange-100 text-orange-900"], shorter: ["Shorter", "bg-blue-100 text-blue-900"], split: ["Split", "bg-violet-100 text-violet-900"], changed: ["Changed", "bg-violet-100 text-violet-900"] };
+  const mine = changes.filter((c) => c.kind !== "heads" && c.kind !== "skip" && c.kind !== "crew");
 
   return (
     <div className="space-y-2">
@@ -592,7 +573,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
               {answer.err && <p className="text-rose-700 dark:text-rose-300">{answer.err}</p>}
               {answer.question && <p><b>{answer.question}</b></p>}
               {answer.understood && <p>{answer.understood}</p>}
-              {answer.changes.length > 0 && <ul className="list-disc pl-5">{answer.changes.filter((c) => c.kind !== "heads").map((c) => <li key={c.id}>{describe(c, orderName, actName, dayOf)}</li>)}{answer.changes.some((c) => c.kind === "heads") && <li>Hands set on {answer.changes.filter((c) => c.kind === "heads").length} shifts</li>}</ul>}
+              {answer.changes.length > 0 && <ul className="list-disc pl-5">{answer.changes.map((c) => <li key={c.id}>{describe(c, orderName, actName, dayOf)}</li>)}</ul>}
               {answer.finish != null && <p>Finish: <b>{at(plan.finish)}</b> to <b>{at(answer.finish)}</b>, {finishWords(answer.finish)}.</p>}
               {answer.lever && (
                 <p><b>{answer.finish != null && answer.finish < plan.finish - 30 * 60_000 ? "Also" : "What pulls the finish in"}:</b> {answer.lever.change.kind === "nights" ? `run ${answer.lever.acts} day-shift activities on the finish path (${drivingOrders.slice(0, 3).join(", ")}) on nights too, ${answer.lever.hours} h of work` : `let ${orderName.get((answer.lever.change as { target: { order?: string } }).target.order ?? "") ?? "it"} start as soon as its links allow`}. Finish {at(answer.lever.finish)}, {answer.lever.savedH} h sooner.</p>
@@ -609,43 +590,22 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
         </div>
       )}
 
-      {(changes.some((c) => c.kind !== "skip")) && (
+      {mine.length > 0 && (
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-          <div className="font-bold text-[12.5px] mb-1">Your changes ({changes.filter((c) => c.kind !== "skip").length})</div>
+          <div className="font-bold text-[12.5px] mb-1">Your changes ({mine.length})</div>
           <ul className="space-y-1 text-[12.5px]">
-            {changes.filter((c) => c.kind !== "heads" && c.kind !== "skip").map((c) => (
+            {mine.map((c) => (
               <li key={c.id} className="flex items-start gap-2">
                 <span className="flex-1">{describe(c, orderName, actName, dayOf)}{c.said ? <span className="text-[var(--color-text-muted)]"> · from &quot;{c.said.slice(0, 120)}&quot;</span> : null}</span>
                 {p.canEdit && <button type="button" onClick={() => p.onChanges(changes.filter((x) => x.id !== c.id))} className="inline-flex items-center gap-1 text-[12px] font-bold text-[var(--color-text-muted)] hover:text-rose-700 cursor-pointer"><Undo2 className="w-3.5 h-3.5" /> Undo</button>}
-              </li>
-            ))}
-            {[...new Set(headsList.map((c) => (c as { crew: string }).crew))].map((crew) => (
-              <li key={`h${crew}`} className="flex items-start gap-2">
-                <span className="flex-1">{crew}: hands set on {headsList.filter((c) => (c as { crew: string }).crew === crew).length} shifts</span>
-                {p.canEdit && <button type="button" onClick={() => p.onChanges(changes.filter((x) => !(x.kind === "heads" && x.crew === crew)))} className="inline-flex items-center gap-1 text-[12px] font-bold text-[var(--color-text-muted)] hover:text-rose-700 cursor-pointer"><Undo2 className="w-3.5 h-3.5" /> Undo</button>}
               </li>
             ))}
           </ul>
         </div>
       )}
 
-      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 text-[12.5px] space-y-1.5">
-        <div className="font-bold">Staffing plans</div>
-        {Object.entries(p.settings.staffing).map(([co, sp]) => {
-          const s = summaryOver(sp, work.shifts.map(shiftKey));
-          return <div key={co}><b>{co}</b> ({sp.file || "typed in"}): days <b>{s.day.direct} on the tools</b> + {s.day.indirect}, nights <b>{s.night.direct}</b> + {s.night.indirect}, over these dates.</div>;
-        })}
-        {!Object.keys(p.settings.staffing).length && <div className="text-[var(--color-text-muted)]">None read yet. A contractor&apos;s staffing plan gives each shift its planned hands, by date, so each phase lines up with its own days.</div>}
-        <div className="flex flex-wrap gap-1.5 pt-0.5">
-          {[...new Set(Object.keys(plan.load))].filter((c) => !/\(KE\)|kern|^off site$|^not set$/i.test(c)).sort().map((c) => (
-            <button key={c} type="button" onClick={() => openContractor(c)} className={btnQuiet}>{Object.keys(p.settings.staffing).some((k) => k.toLowerCase() === c.toLowerCase()) ? `Change ${c}'s staffing plan` : `Upload ${c}'s staffing plan`}</button>
-          ))}
-        </div>
-        <p className="text-[11.5px] text-[var(--color-text-muted)]">Each opens that contractor&apos;s page in Costs › Contractors: read its sheet (Excel), or type it in by craft.</p>
-      </div>
-
       <div className="flex flex-wrap gap-2 text-[12.5px]">
-        <Chip>Suggested finish <b>{at(plan.finish)}</b></Chip>
+        <Chip>Suggested finish <b>{at(plan.finish)}</b>{!trusted && <span className="font-bold text-amber-800 dark:text-amber-300"> {p.check.can ? "not reliable yet" : "not checked yet"}</span>}</Chip>
         {built.planFinish != null && <Chip>This year: planned <b>{at(built.planFinish)}</b>{built.finish != null && <>, actual <b>{at(built.finish)}</b></>}</Chip>}
         <Chip><b>{plan.acts.length + plan.pre.length}</b> activities{Object.entries(kinds).filter(([k]) => k !== "same").map(([k, n]) => ` · ${n} ${(KIND[k]?.[0] ?? k).toLowerCase()}`).join("")}{plan.pre.length ? ` · ${plan.pre.length} before the shutdown` : ""}</Chip>
         <Chip><CalendarClock className="w-3.5 h-3.5 inline mr-1" />Sets the finish: {drivingOrders.slice(0, 3).join(", ")}</Chip>
@@ -697,10 +657,10 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
                     return (
                       <tr key={a.id} className={isCrit ? "[&>td:first-child]:shadow-[inset_3px_0_0_#dc2626]" : ""}>
                         <td className={`${cellAct} ${isCrit ? "!bg-rose-50 dark:!bg-rose-950/20" : ""}`}>
-                          <div className="font-bold">{a.name}{k && <span className={`ml-1 rounded px-1 text-[10px] font-black ${k[1]}`}>{k[0]}</span>}{a.heldForCrew && <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-black text-amber-900">Waits for hands</span>}</div>
+                          <div className="font-bold">{a.name}{k && <span className={`ml-1 rounded px-1 text-[10px] font-black ${k[1]}`}>{k[0]}</span>}{a.heldForCrew && <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-black text-amber-900">Waits for its crew</span>}</div>
                           <div className="text-[11px] text-[var(--color-text-muted)]"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(a.crew) }} />{a.crew} · {r1(a.hours)} h · {a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}</div>
                           {a.basis && a.kind !== "found" && <div className="text-[11px] text-blue-800 dark:text-blue-300">{a.basis}</div>}
-                          {a.waitedForCrew && <div className="text-[11px] text-blue-700 dark:text-blue-300">This year it waited {a.waitedForCrew.shifts} shift{a.waitedForCrew.shifts === 1 ? "" : "s"} for {a.waitedForCrew.crew}{a.waitedForCrew.busyOn.length ? ` (on ${[...new Set(a.waitedForCrew.busyOn.map((b) => b.split(" - ")[0]))].join(", ")})` : ""}. Check {a.waitedForCrew.crew}&apos;s hands below.</div>}
+                          {a.waitedForCrew && <div className="text-[11px] text-blue-700 dark:text-blue-300">This year it waited {a.waitedForCrew.shifts} shift{a.waitedForCrew.shifts === 1 ? "" : "s"} for {a.waitedForCrew.crew}{a.waitedForCrew.busyOn.length ? ` (on ${[...new Set(a.waitedForCrew.busyOn.map((b) => b.split(" - ")[0]))].join(", ")})` : ""}. See {a.waitedForCrew.crew} under Crews below.</div>}
                         </td>
                         <td className={cellN}>{r1(a.hours)}</td><td className={cellDt}>{at(a.start)}</td><td className={cellDt}>{at(a.finish)}</td>
                         <td className="p-0"><div className="relative h-11" style={{ width }}><Grid shifts={plan.shifts} />
@@ -711,62 +671,41 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
                 </React.Fragment>
               );
             })}
-            <SectionRow4 title="Crews kept the whole event" sub={`one crew for each contractor, days and nights, hired up front and kept to the end: the fewest that keep the finish, with the work moved into the quieter shifts to fit them${p.canEdit ? ". Type a size to change it; the schedule follows" : ""}. Each shift shows how many of them its work needs; amber: half or more of the crew has nothing to do that shift.`} width={width} shifts={plan.shifts} />
+            <SectionRow4 title="Crews" sub="the jobs each crew has going every shift of this schedule. Amber: a contractor on site (from its first shift to its last) with nothing to do. Red outline: more jobs in a shift than it ever worked in one shift this year. Head counts come from each contractor's staffing plan, not made up here." width={width} shifts={plan.shifts} />
             {Object.keys(plan.load).filter((c) => c !== "Off site" && c !== "Not set").sort((a, b) => plan.load[b].reduce((n, h) => n + h, 0) - plan.load[a].reduce((n, h) => n + h, 0)).map((crew) => {
-              const pace = plan.pace[crew];
-              const kept = plan.crewSize[crew] ?? { day: null, night: null };
-              const sug = p.sized.find((x) => x.crew === crew);
-              const own = changes.some((c) => c.kind === "crew" && c.crew === crew);
-              // This year: its staffing plan (or the count) at its most, days and nights.
-              const year = { day: 0, night: 0 };
-              work.shifts.forEach((w, i) => { const t = thisYear(crew, i); if (t) { const k = w.kind === "night" ? "night" : "day"; year[k] = Math.max(year[k], t.n); } });
-              // On site from its first shift with work to its last.
-              const busy = plan.shifts.map((_, i) => (plan.heads[crew][i] ?? 0) > 0);
+              const jobs = plan.jobs[crew] ?? [];
+              const most = crewWork.get(crew)?.mostMoved ?? 1;
+              const mineActs = plan.acts.filter((a) => a.crew === crew && a.hours > 0);
+              const works = { day: mineActs.some((a) => a.cal !== "night"), night: mineActs.some((a) => a.cal !== "day") };
+              const busy = jobs.map((n) => n > 0);
               const first = busy.indexOf(true), last = busy.lastIndexOf(true);
-              const box = (k: "day" | "night") => (
-                <label className="inline-flex items-center gap-1 text-[11.5px] text-[var(--color-text-muted)]">{k === "day" ? "Days" : "Nights"}
-                  <input key={`${crew}${k}${kept[k] ?? ""}`} defaultValue={kept[k] == null ? "" : String(kept[k])} disabled={!p.canEdit} inputMode="numeric" placeholder="-" aria-label={`${crew} kept on ${k === "day" ? "days" : "nights"}`}
-                    onBlur={(e) => { if (e.target.value !== (kept[k] == null ? "" : String(kept[k]))) setCrew(crew, k, e.target.value); }} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                    className={`w-11 h-6 rounded border text-center text-[12px] font-black p-0 ${own ? "border-[var(--color-accent)] bg-orange-50 dark:bg-orange-950/30" : "border-slate-400 bg-[var(--color-surface)]"} text-[var(--color-text)]`} />
-                </label>
-              );
+              const sp = planOf(crew);
+              // A contractor on site with nothing to do is paid to stand by; plant crews have their other work.
+              const onSite = (i: number) => !sp.plant && i >= first && i <= last && works[plan.shifts[i].kind === "night" ? "night" : "day"];
+              const idle = plan.shifts.filter((_, i) => onSite(i) && !jobs[i]).length;
+              const over = jobs.filter((n) => n > most).length;
+              const sum = sp.plan ? summaryOver(sp.plan, plan.shifts.map(shiftKey)) : null;
               return (
-                <tr key={`hd${crew}`} data-kept={crew}>
+                <tr key={`cr${crew}`} data-crew={crew}>
                   <td className={cellAct}>
                     <div className="font-bold"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(crew) }} />{crew}</div>
-                    <div className="mt-1 flex flex-wrap gap-2">{box("day")}{(kept.night != null || (sug?.peak.night ?? 0) > 0) && box("night")}</div>
-                    {first >= 0 && <div className="text-[11px] font-semibold text-[var(--color-text)]">On site {dayLabel(plan.shifts[first].start)} {plan.shifts[first].kind} to {dayLabel(plan.shifts[last].start)} {plan.shifts[last].kind}</div>}
-                    <div className="text-[11px] text-[var(--color-text-muted)]">
-                      {own ? (sug ? <>Suggested {sug.day ?? "-"} days{sug.night != null ? `, ${sug.night} nights` : ""}. {p.canEdit && <button type="button" onClick={() => p.onChanges(changes.filter((c) => !(c.kind === "crew" && c.crew === crew)))} className="font-bold text-[var(--color-accent)] hover:underline cursor-pointer">Use it</button>}</> : null) : "The fewest that keep the finish."}
-                      {(year.day || year.night) ? ` This year: ${year.day} days${year.night ? `, ${year.night} nights` : ""} at the most.` : ""}
-                    </div>
-                    <div className="text-[10.5px] text-[var(--color-text-faint)]">{pace ? `${pace.mh} man-hours a plan hour, from ${pace.from}` : "No head counts for it this year: 1 hand a job going"}</div>
+                    {first >= 0 && <div className="text-[11px] text-[var(--color-text)]">On site {dayLabel(plan.shifts[first].start)} {plan.shifts[first].kind} to {dayLabel(plan.shifts[last].start)} {plan.shifts[last].kind}, {works.night ? (works.day ? "days and nights" : "nights") : "days"}{idle ? <b className="text-amber-800 dark:text-amber-300"> · {idle} shift{idle === 1 ? "" : "s"} with nothing to do</b> : ""}{over ? <b className="text-rose-700 dark:text-rose-400"> · {over} shift{over === 1 ? "" : "s"} busier than any this year ({most} job{most === 1 ? "" : "s"})</b> : ""}</div>}
+                    {sp.plant ? <div className="text-[11px] text-[var(--color-text-muted)]">Kern Energy crew: no contractor staffing plan.</div>
+                      : sum ? <div className="text-[11px] text-[var(--color-text-muted)]">Staffing plan ({sp.plan!.file || "typed in"}): days {sum.day.direct} on the tools{sum.night.direct ? `, nights ${sum.night.direct}` : ""} at the most. <button type="button" onClick={() => openContractor(sp.co)} className="font-bold text-[var(--color-accent)] hover:underline cursor-pointer">Open it</button></div>
+                      : <div className="text-[11px] text-[var(--color-text-muted)]">No staffing plan yet. <button type="button" onClick={() => openContractor(sp.co)} className="font-bold text-[var(--color-accent)] hover:underline cursor-pointer">Put in {sp.co}&apos;s</button></div>}
                   </td>
-                  <td className={cellN}>{[kept.day, kept.night].filter((x) => x != null).join(" / ") || "-"}<div className="text-[10px] font-normal text-[var(--color-text-muted)]">kept</div></td><td className="col-x" /><td className="col-x" />
-                  <td className="p-0"><div className="relative h-12" style={{ width }}><Grid shifts={plan.shifts} />
+                  <td className={cellN}>{Math.max(0, ...jobs)}<div className="text-[10px] font-normal text-[var(--color-text-muted)]">most in a shift</div></td><td className="col-x" /><td className="col-x" />
+                  <td className="p-0"><div className="relative h-10" style={{ width }}><Grid shifts={plan.shifts} />
                     {plan.shifts.map((w, i) => {
-                      const need = plan.heads[crew][i] ?? 0;
-                      const k = w.kind === "night" ? "night" : "day";
-                      const size = kept[k];
-                      if (i < first || i > last || (!size && !need)) return null;
-                      const idle = size != null && need * 2 <= size;
+                      const n = jobs[i] ?? 0;
+                      if (!n && !onSite(i)) return null;
+                      const plannedHands = sp.plan?.shifts[shiftKey(w)]?.direct;
                       return (
-                        <span key={i} title={`${dayLabel(w.start)} ${w.kind}: its work needs ${need}${size != null ? ` of the ${size} kept on ${k === "day" ? "days" : "nights"}` : ""}`} className={`absolute top-2 h-6 rounded border text-center text-[11px] font-black leading-[22px] ${idle ? "bg-amber-50 border-amber-300 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200" : "bg-emerald-50 border-emerald-300 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200"}`} style={{ left: i * PX + 2, width: PX - 4 }}>{need}</span>
+                        <span key={i} title={`${dayLabel(w.start)} ${w.kind}: ${n ? `${n} job${n === 1 ? "" : "s"} going, ${Math.round(plan.load[crew]?.[i] ?? 0)} h of work` : "on site, nothing to do"}${plannedHands != null ? `; staffing plan ${plannedHands} on the tools` : ""}`}
+                          className={`absolute top-2 h-6 rounded border text-center text-[11px] font-black leading-[22px] ${!n ? "bg-amber-50 border-amber-300 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200" : "text-white border-transparent"}`}
+                          style={{ left: i * PX + 2, width: PX - 4, background: n ? p.colorOf(crew) : undefined, outline: n > most ? "2px solid #dc2626" : undefined, outlineOffset: 1 }}>{n}</span>
                       );
                     })}
-                  </div></td>
-                </tr>
-              );
-            })}
-            <SectionRow4 title="Crew load" sub="hours of its work scheduled each shift. Red outline: more jobs going at once than that crew ever moved in a shift this year." width={width} shifts={plan.shifts} />
-            {Object.entries(plan.load).map(([crew, l]) => {
-              const most = crewWork.get(crew)?.mostMoved ?? 1;
-              return (
-                <tr key={`ld${crew}`}>
-                  <td className={cellAct}><div className="font-bold"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(crew) }} />{crew}</div><div className="text-[11px] text-[var(--color-text-muted)]">{Math.round(l.reduce((n, h) => n + h, 0))} h scheduled · this year at most {most} job{most === 1 ? "" : "s"} moving in a shift</div></td>
-                  <td className={cellN}>{Math.round(l.reduce((n, h) => n + h, 0))}</td><td className="col-x" /><td className="col-x" />
-                  <td className="p-0"><div className="relative h-10" style={{ width }}><Grid shifts={plan.shifts} />
-                    {l.map((h, i) => h > 0.05 && <span key={i} title={`${Math.round(h)} h of work, ${plan.jobs[crew][i]} going`} className="absolute top-2 h-6 rounded text-white text-center text-[11px] font-black leading-6" style={{ left: i * PX + 2, width: PX - 4, background: p.colorOf(crew), opacity: 0.45 + 0.55 * Math.min(1, h / 36), outline: plan.jobs[crew][i] > most ? "2px solid #dc2626" : undefined, outlineOffset: 1 }}>{Math.round(h)}</span>)}
                   </div></td>
                 </tr>
               );
@@ -775,7 +714,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
         </table>
       </div>
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-[12px] text-[var(--color-text)]">
-        <b>How it&apos;s built.</b> This year&apos;s activities, links, crews, day or night calendars, and planned start dates as the earliest each can start. Work found this year is in from the start, in the order and on the shifts it was really done. An activity done inside fewer shifts than its plan gets that length; nothing is made longer from a guess. Start-up begins once every work order is done. A crew&apos;s hands, when set, limit how much of its work runs at once; the rest waits, the most urgent first. Waits you plan for (from the As-built view) go in as steps or before the shutdown. What this job taught (the box at the top) goes in first: time off site at the clock time it really took, with what gets it out moved to first thing; links the crews didn&apos;t wait on dropped; a crew given no more jobs at once than it really worked.
+        <b>How it&apos;s built.</b> This year&apos;s activities and crews, in the order they were really done: a link the crews didn&apos;t wait on gives way to what that work waited on, and a work order&apos;s steps done before a step started come first. Nights as this year really ran: a crew that worked a work order on two or more nights works it days and nights, otherwise days, 12-hour shifts; the shutdown and start-up run around the clock. Planned start dates are the earliest each can start, or when it really started if sooner. Missed scope added this year is in; work found by inspection is not planned, it shows as a risk above with what it would do to the finish. An activity done inside fewer shifts than its plan gets that length; nothing is made longer from a guess. Start-up begins once every work order is done. What this job taught (the box at the top) goes in: time off site at the clock time it really took, with what gets it out moved to first thing; a crew given no more jobs at once than it really worked. The check at the top runs this year back through these same rules with each step at the length it really took; the schedule is trusted only when that lands within {CHECK_H} hours of the real finish.
       </div>
     </div>
   );
@@ -785,16 +724,19 @@ const AREA_WORD: Record<Lesson["area"], string> = { logistics: "Logistics", cont
 
 /** What this job taught, put into the suggested schedule, and what it
  *  takes to make this year's target. */
-function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBuiltWork; plan: NextPlan; changes: PlanChange[]; applied: PlanChange[]; lessons: Lesson[]; skipped: Set<string>; onChanges: (c: PlanChange[]) => void; at: (t: number) => string; orderName: (k: string) => string }) {
+function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBuiltWork; plan: NextPlan; changes: PlanChange[]; applied: PlanChange[]; check: PlanCheck; risks: PlanRisk[]; lessons: Lesson[]; skipped: Set<string>; onChanges: (c: PlanChange[]) => void; at: (t: number) => string; orderName: (k: string) => string }) {
   const { built, work, plan, tz, times, lessons, skipped } = p;
-  const [open, setOpen] = useState<string | null>(null);
   const input = useMemo(() => ({ built, work, milestones: p.milestones, tz, times }), [built, work, p.milestones, tz, times]);
   const person = useMemo(() => { const mine = new Set(lessons.flatMap((l) => l.changes.map((c) => c.id))); return p.applied.filter((c) => !mine.has(c.id)); }, [p.applied, lessons]);
   const effects = useMemo(() => lessonEffects(input, lessons, skipped, person, plan), [input, lessons, skipped, person, plan]);
   const target = built.planFinish;
   const { orderName } = p;
   const reach = useMemo(() => (target != null ? toTarget(input, p.applied, plan, target, orderName) : null), [input, p.applied, plan, target, orderName]);
-  if (!lessons.length && target == null) return null;
+  const { check, risks } = p;
+  const trusted = check.can && check.ok;
+  const [allRisks, setAllRisks] = useState(false);
+  const moving = risks.filter((r) => r.finishH >= 0.5), still = risks.filter((r) => r.finishH < 0.5);
+  const offWord = (h: number) => (Math.abs(h) < 0.5 ? "the same time" : `${r1(Math.abs(h))} h ${h < 0 ? "before" : "after"} it`);
   const lateH = target != null ? r1((plan.finish - target) / 3_600_000) : null;
   const byId = new Map(plan.acts.map((a) => [a.id, a]));
   const pathOrders = [...new Set(plan.driving.map((id) => byId.get(id)?.order).filter((o): o is string => !!o))].map(orderName);
@@ -810,8 +752,15 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
   return (
     <section className="rounded-xl border-2 border-[var(--color-text)] bg-[var(--color-surface)] p-3 sm:p-4 space-y-3" data-taught>
       <div>
-        <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">What this job taught, put in</div>
-        {target != null && lateH != null && (
+        <div className={`rounded-lg px-3 py-2 text-[12.5px] ${trusted ? "bg-emerald-50 text-emerald-950 dark:bg-emerald-950/30 dark:text-emerald-100" : "bg-amber-50 text-amber-950 dark:bg-amber-950/30 dark:text-amber-100"}`} data-check={trusted ? "ok" : check.can ? "off" : "none"}>
+          {check.can ? (
+            <><b>{trusted ? "Checked against this year." : "Not reliable yet."}</b> This year run back through these rules, each step at the length it really took and the found work in, lands {p.at(check.replay!)}; it really finished {p.at(check.actual!)} ({offWord(check.offH!)}). {trusted ? `Within ${CHECK_H} h, so the rules hold for this job.` : `More than ${CHECK_H} h apart: something in how this job ran isn't in the rules yet, so the finish below is not a promise.`}</>
+          ) : (
+            <><b>Not checked yet.</b> The check runs this year back through these rules once every step is done, and holds it against the real finish. Until then the finish below is not a promise.</>
+          )}
+        </div>
+        <div className="mt-3 text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">What this job taught, put in</div>
+        {trusted && target != null && lateH != null && (
           lateH <= 0.5 ? (
             <p className="mt-1 text-[16px] sm:text-[17px] font-black leading-snug text-[var(--color-text)]">{lateH < -0.5 ? `Makes this year's target: finishes ${p.at(plan.finish)}, ${r1(-lateH)} h before the plan's ${p.at(target)}.` : `Makes this year's target: ${p.at(target)}.`} <span className="font-semibold text-[var(--color-text-muted)]">This year it {built.finish != null ? `finished ${p.at(built.finish)}` : "is not finished"}.</span></p>
           ) : reach && reach.shortH <= 0.5 && reach.levers.length ? (
@@ -835,12 +784,11 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
           {lessons.map((l) => {
             const out = skipped.has(l.id);
             const jobs = l.crew && !out ? crewJobs(l.crew) : null;
-            const linkRows = l.id === "links" && open === l.id ? l.changes.flatMap((c) => (c.kind === "relink" ? [{ act: byId.get(c.actId), drop: c.drop.map((d) => byId.get(d)?.name ?? byId.get(`${d}:2`)?.name.replace(/\s*\(2 of 2\)$/, "") ?? "").filter(Boolean) }] : [])) : [];
             return (
               <li key={l.id} className={`py-2.5 ${out ? "opacity-60" : ""}`} data-lesson={l.id}>
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                   <span className="rounded bg-[var(--color-surface-2)] px-1.5 text-[10.5px] font-black uppercase tracking-wide text-[var(--color-text-muted)]">{AREA_WORD[l.area]}</span>
-                  <b className="flex-1 min-w-0 text-[13.5px] text-[var(--color-text)]">{l.title}</b>
+                  <b className="order-last basis-full sm:order-none sm:basis-0 sm:flex-1 min-w-0 text-[13.5px] text-[var(--color-text)]">{l.title}</b>
                   {!out && <span className={`text-[12px] font-bold ${(effects[l.id] ?? 0) >= 0.5 ? "text-emerald-700 dark:text-emerald-400" : (effects[l.id] ?? 0) <= -0.5 ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>{effectWord(effects[l.id])}</span>}
                   {p.canEdit && <button type="button" onClick={() => skip(l.id, !out)} className="text-[12px] font-bold text-[var(--color-accent)] hover:underline cursor-pointer">{out ? "Put back" : "Leave out"}</button>}
                 </div>
@@ -849,18 +797,28 @@ function Taught(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBui
                 {jobs && (
                   <p className="mt-0.5 text-[12.5px] text-[var(--color-text)]">Here at most {jobs.open} sit open for {l.crew} at once. Its jobs in order: {jobs.mine.slice(0, 6).map((a) => `${p.at(a.start).replace(/ · .*$/, "")} ${orderName(a.order)}`).join("; ")}{jobs.mine.length > 6 ? `; and ${jobs.mine.length - 6} more` : ""}.</p>
                 )}
-                {l.id === "links" && !out && (
-                  <button type="button" onClick={() => setOpen(open === l.id ? null : l.id)} className="mt-0.5 text-[12px] font-bold text-[var(--color-accent)] hover:underline cursor-pointer">{open === l.id ? "Hide them" : "See them"}</button>
-                )}
-                {linkRows.length > 0 && (
-                  <ul className="mt-1 space-y-0.5 text-[12px] text-[var(--color-text)]">
-                    {linkRows.map((r, i) => r.act && <li key={i}><b>{r.act.name}</b> <span className="text-[var(--color-text-muted)]">({orderName(r.act.order)})</span> no longer waits on {r.drop.join(", ")}</li>)}
-                  </ul>
-                )}
               </li>
             );
           })}
         </ul>
+      )}
+      {risks.length > 0 && (
+        <div data-risks>
+          <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">Risks: not planned, what each does if it happens again</div>
+          <ul className="mt-1 divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
+            {[...moving, ...(allRisks ? still : [])].map((r) => (
+              <li key={r.id} className="py-2" data-risk={r.id}>
+                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                  <span className="rounded bg-[var(--color-surface-2)] px-1.5 text-[10.5px] font-black uppercase tracking-wide text-[var(--color-text-muted)]">{r.kind === "found" ? "Found" : "Ran long"}</span>
+                  <b className="order-last basis-full sm:order-none sm:basis-0 sm:flex-1 min-w-0 text-[13px] text-[var(--color-text)]">{r.where}</b>
+                  <span className={`text-[12px] font-bold ${r.finishH >= 0.5 ? "text-rose-700 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>{r.finishH >= 0.5 ? `finish ${r1(r.finishH)} h later` : "no change to the finish"}</span>
+                </div>
+                <p className="mt-0.5 text-[12.5px] text-[var(--color-text-muted)]">{r.kind === "found" ? `Found this year: ${r.title} (${r.crew}, ${r1(r.hours)} h of work).` : `This year: ${r.title}. ${r1(r.hours)} h past plan in all (${r.crew}).`}</p>
+              </li>
+            ))}
+          </ul>
+          {still.length > 0 && <button type="button" onClick={() => setAllRisks(!allRisks)} className="mt-1 text-[12px] font-bold text-[var(--color-accent)] hover:underline cursor-pointer">{allRisks ? "Hide the ones that don't move the finish" : `${still.length} more that don't move the finish`}</button>}
+        </div>
       )}
       <p className="text-[11.5px] text-[var(--color-text-muted)]">From this job&apos;s record, the same facts the post-event review reads. Each one&apos;s effect is against leaving it out{lessons.some((l) => l.honest) ? "; for time off site, against the real time away on this year's dates" : ""}.</p>
     </section>

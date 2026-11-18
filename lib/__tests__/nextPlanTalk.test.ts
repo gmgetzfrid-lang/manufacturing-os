@@ -12,9 +12,10 @@ describe("Tell the schedule: the reply, checked", () => {
     expect(r.dropped).toBe(2);
     expect(r.changes[0].said).toBe("V-7 is critical");
   });
-  it("hands over a span of days and shifts become one change per shift", () => {
-    const r = parseTalkReply({ changes: [{ kind: "heads", crew: "Ancon", day: "3-4", shift: "both", n: 10 }] }, known, "Ancon 2 crews", shiftsOfDay);
-    expect(r.changes.map((c) => (c as { shift: number }).shift)).toEqual([4, 5, 6, 7]);
+  it("crews are jobs at a time, never a head count", () => {
+    const r = parseTalkReply({ changes: [{ kind: "jobs", crew: "Ancon", n: 2 }, { kind: "jobs", crew: "Nobody", n: 3 }, { kind: "heads", crew: "Ancon", day: "3-4", shift: "both", n: 10 }] }, known, "Ancon 2 crews", shiftsOfDay);
+    expect(r.changes).toMatchObject([{ kind: "jobs", crew: "Ancon", n: 2 }]);
+    expect(r.dropped).toBe(2);
   });
   it("a question is passed on, not guessed", () => {
     expect(parseTalkReply({ question: "There are three E-22s. Which unit?" , changes: [] }, known, "E-22 first", shiftsOfDay).question).toMatch(/three E-22s/);

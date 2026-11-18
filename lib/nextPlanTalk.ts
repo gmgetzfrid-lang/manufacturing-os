@@ -18,7 +18,7 @@ export const TALK_SYSTEM = [
   '- {"kind":"hours","actId":"<id>","hours":H}  how long one activity takes',
   '- {"kind":"drop","order":"..."|"ids":[...]}  not needed next time',
   '- {"kind":"add","name":"...","crew":"...","hours":H,"after":"<id>"|null,"before":"<id>"|null,"pre":true|false}  a new activity (pre: before the shutdown, a booking or material)',
-  '- {"kind":"heads","crew":"<crew>","day":N,"shift":"day"|"night"|"both","n":H}  hands on the tools; days "1-9" is allowed as "day":"1-9"',
+  '- {"kind":"jobs","crew":"<crew>","n":N}  how many of that crew\'s jobs can run at once ("Ancon has 2 crews": 2). Never a head count.',
   "Use only the order keys, activity ids and crews listed. A name that fits more than one (E-22 on two units) is a question, not a guess.",
   "If they say something is critical or the critical path, use first and asap for it. Never invent numbers they didn't give.",
 ].join("\n");
@@ -33,6 +33,7 @@ export function talkCatalog(plan: NextPlan, orders: Array<{ key: string; name: s
 
 /** The model's reply, checked against what's there. */
 export function parseTalkReply(v: unknown, known: { orders: Set<string>; acts: Set<string>; crews: Set<string> }, said: string, shiftsOfDay: (day: number, kind: "day" | "night") => number): { understood: string; changes: PlanChange[]; question: string | null; dropped: number } {
+  void shiftsOfDay; // kept for callers: no change is by shift any more
   const r = (v ?? {}) as { understood?: unknown; changes?: unknown; question?: unknown };
   const out: PlanChange[] = [];
   let dropped = 0;
@@ -41,20 +42,9 @@ export function parseTalkReply(v: unknown, known: { orders: Set<string>; acts: S
   list.forEach((x: Record<string, unknown>, i: number) => {
     const target = { order: typeof x.order === "string" && known.orders.has(x.order) ? x.order : undefined, ids: Array.isArray(x.ids) ? x.ids.filter((id): id is string => typeof id === "string" && known.acts.has(id)) : undefined };
     const base = { id: `t${now.toString(36)}${i}`, said, at: now };
-    if (x.kind === "heads") {
-      const crew = typeof x.crew === "string" && known.crews.has(x.crew) ? x.crew : null;
-      const n = Number(x.n);
-      if (!crew || !Number.isFinite(n)) { dropped++; return; }
-      const span = String(x.day ?? "").split("-").map(Number).filter(Number.isFinite);
-      const [d0, d1] = [span[0], span[1] ?? span[0]];
-      if (!d0) { dropped++; return; }
-      const kinds: Array<"day" | "night"> = x.shift === "night" ? ["night"] : x.shift === "both" ? ["day", "night"] : ["day"];
-      for (let d = d0; d <= Math.min(d1, d0 + 60); d++) for (const k of kinds) {
-        const c = cleanChange({ ...base, id: `${base.id}${d}${k}`, kind: "heads", crew, shift: shiftsOfDay(d, k), n });
-        if (c) out.push(c);
-      }
-      return;
-    }
+    // Head counts aren't a change the schedule takes (no people are made up).
+    if (x.kind === "heads") { dropped++; return; }
+    if (x.kind === "jobs" && !(typeof x.crew === "string" && known.crews.has(x.crew))) { dropped++; return; }
     const c = cleanChange({ ...base, ...x, target, actId: typeof x.actId === "string" && known.acts.has(x.actId) ? x.actId : undefined, after: typeof x.after === "string" && known.acts.has(x.after) ? x.after : null, before: typeof x.before === "string" && known.acts.has(x.before) ? x.before : null });
     if (c) out.push(c); else dropped++;
   });
