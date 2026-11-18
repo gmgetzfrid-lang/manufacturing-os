@@ -59,6 +59,7 @@ import {
 import { extractEquipmentTags } from "@/lib/drawingText";
 import { checkedWrite } from "@/lib/checkedWrite";
 import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
+import { LINKS_CHANGED } from "@/lib/equipmentBridgeText";
 
 /** One sheet a tag was read on (GAP-301): the site's sheet address from that
  *  page's own title block, or only the page when it declared none. */
@@ -220,6 +221,22 @@ export interface ApplyResult {
   /** The EQUIPMENT_BRIDGE_APPLIED audit row could not be written — the work
    *  above landed. */
   auditError?: string;
+  /** SAF-21: the document's column write matched no row (COLUMN_ROW_GONE) —
+   *  set only on ApplyColumnRefused's `partial`. */
+  columnError?: string;
+}
+
+/** SAF-21 (a): the apply's column write matched no row — the document went
+ *  mid-apply. Thrown with COLUMN_ROW_GONE as its message (what the route
+ *  answers, as for a database error); `partial` is what had landed before it
+ *  (assets created, relations written), already recorded in
+ *  EQUIPMENT_BRIDGE_APPLIED with columnWritten: false. The ledger is not
+ *  marked applied. */
+export class ApplyColumnRefused extends Error {
+  constructor(readonly partial: ApplyResult) {
+    super(COLUMN_ROW_GONE);
+    this.name = "ApplyColumnRefused";
+  }
 }
 
 const NIL_UUID = "00000000-0000-0000-0000-000000000000";
@@ -239,9 +256,12 @@ type PgErr = { code?: string; message?: string } | null | undefined;
 /** SAF-21: a person's dismissal or vanished review matched no proposal row
  *  (it went meanwhile). */
 export const PROPOSAL_GONE = "this document's proposal was not found (it may have been removed or recomputed meanwhile) — nothing was changed. Reload and try again.";
-/** SAF-21: a person's review or link matched no 'drawing' row — someone
- *  adopted or removed the link meanwhile. */
-export const LINKS_CHANGED = "the link changed meanwhile (someone else linked or removed it) — nothing was changed. Reload and try again.";
+/** SAF-21: a person's review or link matched no 'drawing' row (shared with
+ *  the browser's adoption flow, lib/transitionIn.ts). */
+export { LINKS_CHANGED };
+/** SAF-21: the apply's write to the document's equipment column matched no
+ *  row (the document went mid-apply). */
+export const COLUMN_ROW_GONE = "The tags were not written to the document's equipment column: the document was not found (it may have been removed meanwhile).";
 /** SAF-21: the apply landed, but its proposal row matched no write (it went
  *  meanwhile) — what ApplyResult.ledgerError says then. */
 export const LEDGER_ROW_GONE = "The tags were applied, but this document's proposal row was not found (it may have been removed meanwhile), so the apply is not remembered on it — run the sweep again.";
@@ -876,7 +896,15 @@ export async function computeForDocument(admin: SupabaseClient, orgId: string, d
       autoApplied = true;
       autoRelations = done.relations;
       auditError ??= done.auditError;
-    } catch { /* stays pending for manual review — never breaks ingest */ }
+    } catch (e) {
+      // Stays pending for manual review — never breaks ingest. SAF-21: an
+      // apply whose column write matched no row still created assets and
+      // relations (recorded in its audit row); those relations are reported.
+      if (e instanceof ApplyColumnRefused) {
+        autoRelations = e.partial.relations;
+        auditError ??= e.partial.auditError;
+      }
+    }
   }
   const relations = mergeRelations(refreshed, autoRelations);
   return {
@@ -1377,6 +1405,20 @@ export async function applyForDocument(admin: SupabaseClient, input: {
   // ── Populate the column (when one is mapped): array-union merge, never
   //    clobbering manual tags. Kept — the drawing row's chips render from it.
   const appliedNow = wanted.filter((s) => !result.held.includes(s.tag)).map((s) => s.tag);
+  /** EQUIPMENT_BRIDGE_APPLIED — what this apply landed, plus `outcome`. */
+  const recordApplied = async (outcome: Record<string, unknown>): Promise<{ message: string } | null> => (await admin.from("audit_logs").insert({
+    action: "EQUIPMENT_BRIDGE_APPLIED",
+    resource_type: "document",
+    resource_id: documentId,
+    org_id: orgId,
+    user_id: input.userId,
+    details: {
+      tags: appliedNow, createdAssets: result.createdAssets, codesLeftBlank: result.codesLeftBlank,
+      column: targetKey, auto: input.userId === null, degraded: result.degraded, failed: result.failed,
+      held: result.held, relations: result.relations, codesFilled: result.codesFilled,
+      revision: prov.revision, ...outcome,
+    },
+  })).error;
   if (targetKey) {
     const metadata = (doc.metadata && typeof doc.metadata === "object" ? doc.metadata : {}) as Record<string, unknown>;
     const existingTags = columnTags(metadata[targetKey]);
@@ -1390,9 +1432,15 @@ export async function applyForDocument(admin: SupabaseClient, input: {
         .eq("id", documentId).eq("org_id", orgId).select("id"), kept));
       if (kept.error) throw new Error(kept.error.message);
       // SAF-21 (a): the column write matched no row (the document went
-      // meanwhile) — said as an error, as a database error is; the ledger is
-      // not told these tags were written into it.
-      if (!w.ok) throw new Error(`The tags were not written to the document's equipment column: the document was not found (it may have been removed meanwhile).`);
+      // meanwhile). What landed before it — the registry assets created and
+      // the relation written — is recorded (EQUIPMENT_BRIDGE_APPLIED with
+      // columnWritten: false and columnError); the ledger is NOT marked
+      // applied; and the refusal goes to the caller, as a database error does.
+      if (!w.ok) {
+        const auditErr = await recordApplied({ ledgerWritten: false, columnWritten: false, columnError: COLUMN_ROW_GONE });
+        if (auditErr) result.auditError = `The tags were not written to the document's equipment column, and the audit record of what landed could not be written: ${auditErr.message}`;
+        throw new ApplyColumnRefused({ ...result, appliedTags: [], columnError: COLUMN_ROW_GONE });
+      }
     }
   }
 
@@ -1440,19 +1488,7 @@ export async function applyForDocument(admin: SupabaseClient, input: {
 
   // Checked: the apply created registry assets and relations — a missing
   // audit row is said to the caller, never swallowed.
-  const { error: auditErr } = await admin.from("audit_logs").insert({
-    action: "EQUIPMENT_BRIDGE_APPLIED",
-    resource_type: "document",
-    resource_id: documentId,
-    org_id: orgId,
-    user_id: input.userId,
-    details: {
-      tags: appliedNow, createdAssets: result.createdAssets, codesLeftBlank: result.codesLeftBlank,
-      column: targetKey, auto: input.userId === null, degraded: result.degraded, failed: result.failed,
-      held: result.held, relations: result.relations, codesFilled: result.codesFilled,
-      revision: prov.revision, ledgerError: result.ledgerError ?? null,
-    },
-  });
+  const auditErr = await recordApplied({ ledgerError: result.ledgerError ?? null });
   if (auditErr) result.auditError = `The tags were applied, but the audit record could not be written: ${auditErr.message}`;
 
   result.appliedTags = appliedNow;

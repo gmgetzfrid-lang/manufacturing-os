@@ -19,7 +19,7 @@ vi.mock("@/lib/supabase", () => ({ supabase: {} }));
 
 import {
   computeForDocument, applyForDocument, dismissForDocument, reviewVanished, adoptDrawingRelation,
-  LEDGER_ROW_GONE, PROPOSAL_GONE, LINKS_CHANGED,
+  LEDGER_ROW_GONE, PROPOSAL_GONE, LINKS_CHANGED, COLUMN_ROW_GONE, ApplyColumnRefused,
 } from "@/lib/equipmentBridgeServer";
 import { rebuildSubtreePaths, rebuildSubtreeAclIndex, type CollectionTree, type CollectionTreeRow } from "@/lib/serverCollections";
 import { persistReclaimShortfall } from "@/lib/archiveCatalog";
@@ -126,14 +126,36 @@ describe("SAF-21 — the Bridge's apply (a / b / c)", () => {
     expect(audit("EQUIPMENT_BRIDGE_APPLIED")[0].details).toMatchObject({ ledgerError: LEDGER_ROW_GONE });
     expect(LEDGER_ROW_GONE).not.toMatch(/nothing was changed/i);
   });
-  it("(a) the column write matched no row (the document went meanwhile): the apply fails as a database error does, and the ledger is not marked applied", async () => {
+  it("(a) the column write matched no row (the document went meanwhile): what landed is recorded (columnWritten: false), the ledger is not marked applied, and the refusal reaches the caller", async () => {
     seed();
     await computeForDocument(fake(), "o1", "d1");
     db.refuseWrites.add("documents");
-    await expect(applyForDocument(fake(), { orgId: "o1", documentId: "d1", userId: "u1" }))
-      .rejects.toThrow("The tags were not written to the document's equipment column: the document was not found (it may have been removed meanwhile).");
+    const err = await applyForDocument(fake(), { orgId: "o1", documentId: "d1", userId: "u1" }).then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(ApplyColumnRefused);
+    expect((err as Error).message).toBe(COLUMN_ROW_GONE);
+    expect(COLUMN_ROW_GONE).toBe("The tags were not written to the document's equipment column: the document was not found (it may have been removed meanwhile).");
+    expect((err as ApplyColumnRefused).partial).toMatchObject({ createdAssets: 1, appliedTags: [], columnError: COLUMN_ROW_GONE, relations: { written: 3 } });
     expect(ledger().applied).toEqual([]);
-    expect(audit("EQUIPMENT_BRIDGE_APPLIED")).toHaveLength(0);
+    expect(ledger().status).not.toBe("applied");
+    expect(db.tables.assets.find((a) => a.tag === "P-7")).toBeDefined();
+    const applied = audit("EQUIPMENT_BRIDGE_APPLIED");
+    expect(applied).toHaveLength(1);
+    expect(applied[0].details).toMatchObject({ createdAssets: 1, relations: { written: 3 }, column: "equipment", columnWritten: false, columnError: COLUMN_ROW_GONE, ledgerWritten: false });
+  });
+  it("(a) …on auto-apply the compute stays pending (autoApplied false) but keeps the relations that landed; the audit row records them", async () => {
+    seed();
+    db.tables.libraries[0].equipment_bridge = { targetColumnKey: "equipment", autoApply: true };
+    db.refuseWrites.add("documents");
+    const r = await computeForDocument(fake(), "o1", "d1");
+    expect(r.autoApplied).toBe(false);
+    expect(r.relations).toMatchObject({ written: 3 });
+    expect(ledger().applied).toEqual([]);
+    expect(audit("EQUIPMENT_BRIDGE_APPLIED")[0].details).toMatchObject({ auto: true, createdAssets: 1, columnWritten: false, columnError: COLUMN_ROW_GONE });
+  });
+  it("ordinary path: the audit row carries no column outcome keys (byte-identical details)", async () => {
+    await applied();
+    const d = audit("EQUIPMENT_BRIDGE_APPLIED")[0].details as Row;
+    expect(Object.keys(d).sort()).toEqual(["auto", "codesFilled", "codesLeftBlank", "column", "createdAssets", "degraded", "failed", "held", "ledgerError", "relations", "revision", "tags"]);
   });
   it("(b) the first-review mark that matched no row is logged; the apply still succeeds", async () => {
     seed();
