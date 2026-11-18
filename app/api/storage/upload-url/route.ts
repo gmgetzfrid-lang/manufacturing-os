@@ -11,6 +11,7 @@ import { memberHoldsAny } from "@/lib/roleHeld";
 import { enforceOrgAccess } from "@/lib/serverAuth";
 import { ticketKeyOverwriteRefusal, r2Head } from "@/lib/ticketKeyOverwrite";
 import { versionKeyWriteRefusal } from "@/lib/versionKeyWriteGate";
+import { outsideOrgWriteRefusal } from "@/lib/storageWriteAllowList";
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -36,7 +37,8 @@ export async function POST(req: NextRequest) {
   // orgs/<orgId>/… — require the caller to be an active member of that org, or
   // any authenticated user could sign a PUT for any key they can guess and
   // overwrite another tenant's files (IDOR / cross-tenant write). Mirrors the
-  // check in download-url. Non-org-prefixed keys keep their prior behavior.
+  // check in download-url. A key outside orgs/<uuid>/ is held to the
+  // allow-list below (drafting-flow EVID-19).
   const orgMatch = path.match(/^orgs\/([0-9a-fA-F-]{36})\//);
   // ORG-5: the workspace logo (a file directly under orgs/<org>/branding/,
   // lib/storageKey.ts isWorkspaceLogoKey) is the AREA whose bytes every member
@@ -79,6 +81,18 @@ export async function POST(req: NextRequest) {
     // is only logged. Downloads and exports never pass this gate.
     const gate = await enforceOrgAccess(supabaseAdmin, orgMatch[1], "storage/upload-url");
     if (gate) return NextResponse.json({ error: gate.error }, { status: gate.status });
+  }
+  // drafting-flow EVID-19 (DEC-90: deny by default): a key OUTSIDE
+  // orgs/<uuid>/ is signed only when lib/storageWriteAllowList.ts allows it —
+  // the caller's own avatars/<uid>/ folder, or the backup restore's put-back
+  // of a legacy request file in its one historical shape,
+  // tickets/<id>/attachments/<name> (an Admin of every workspace whose
+  // request lists it, each past the subscription gate, only while the object
+  // is absent). Everything else is refused in plain words, nothing signed; a
+  // lookup that cannot be made is a 503.
+  if (!orgMatch) {
+    const outside = await outsideOrgWriteRefusal(supabaseAdmin, r2Head(r2 as never, R2_BUCKET), path, user.id, "storage/upload-url");
+    if (outside) return NextResponse.json({ error: outside.error }, { status: outside.status });
   }
   if (logo) {
     const problem = logoUploadProblem(contentType, size);
