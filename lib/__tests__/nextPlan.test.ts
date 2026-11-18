@@ -9,7 +9,7 @@ const t = (d: number, h: number) => Date.UTC(2026, 9, d, h + 7);
 const act = (x: Partial<PlanAct> & { id: string }): PlanAct => ({ name: x.id, order: "wo", crew: "Schultz", hours: 4, planHours: 4, cal: "both", preds: [], floor: null, kind: "same", basis: "", waitedForCrew: null, ...x });
 const run = (acts: PlanAct[], changes: PlanChange[] = [], pace = { Schultz: { mh: 4, from: "plan" } }) => {
   const a = applyChanges(acts, changes, tz, times, t(26, 6));
-  return schedule({ acts: a.acts, pre: a.pre, tz, times, pace, toolHours: { day: 10, night: 11 }, headsSet: a.headsSet, day1: t(26, 6) });
+  return schedule({ acts: a.acts, pre: a.pre, tz, times, pace, toolHours: { day: 10, night: 11 }, headsSet: a.headsSet, jobsCap: a.jobsCap, day1: t(26, 6) });
 };
 const c = (x: Record<string, unknown>): PlanChange => ({ id: String(x.kind) + Math.random(), said: "", at: 0, ...x } as PlanChange);
 
@@ -90,5 +90,44 @@ describe("staffing plans", () => {
     expect(isDirectCraft("Pipefitter Journeyman", "PF")).toBe(true);
     expect(isDirectCraft("Firewatch/Holewatch", "HW")).toBe(false);
     expect(isDirectCraft("Field Coordinator", "")).toBe(false);
+  });
+});
+
+describe("a crew held to so many jobs at once", () => {
+  // Four of Ancon's jobs ready at once; one of them holds the finish (a long job waits on it).
+  const jobs = [
+    act({ id: "j1", crew: "Ancon", hours: 4 }), act({ id: "j2", crew: "Ancon", hours: 4 }), act({ id: "j3", crew: "Ancon", hours: 4 }),
+    act({ id: "key", crew: "Ancon", hours: 4, name: "zz last by name" }), act({ id: "long", crew: "Schultz", hours: 20, preds: ["key"] }),
+  ];
+  it("never has more open than it can work, and takes the one that holds the finish first", () => {
+    const p = run(jobs, [c({ kind: "jobs", crew: "Ancon", n: 2 })]);
+    const mine = p.acts.filter((a) => a.crew === "Ancon");
+    for (const a of mine) expect(mine.filter((b) => b.start < a.finish && b.finish > a.start).length).toBeLessThanOrEqual(2);
+    expect(p.acts.find((a) => a.id === "key")!.start).toBe(t(26, 6));
+    expect(p.jobsCap).toEqual({ Ancon: 2 });
+  });
+  it("with no limit they all run at once", () => {
+    const p = run(jobs);
+    expect(p.acts.filter((a) => a.crew === "Ancon").every((a) => a.start === t(26, 6))).toBe(true);
+  });
+  it("a second crew is one more job at a time", () => {
+    const one = run(jobs, [c({ kind: "jobs", crew: "Ancon", n: 1 })]);
+    const two = run(jobs, [c({ kind: "jobs", crew: "Ancon", n: 1 }), c({ kind: "jobs", crew: "Ancon", n: 2 })]);
+    expect(two.acts.filter((a) => a.crew === "Ancon").reduce((m, a) => Math.max(m, a.finish), 0)).toBeLessThan(one.acts.filter((a) => a.crew === "Ancon").reduce((m, a) => Math.max(m, a.finish), 0));
+  });
+});
+
+describe("what the lessons change", () => {
+  const base = [act({ id: "a", floor: t(26, 6), hours: 12 }), act({ id: "b", preds: ["a"], hours: 6 }), act({ id: "c", preds: ["b"], hours: 2, floor: t(28, 6) })];
+  it("a link it didn't wait on is dropped, even to a step since split in two", () => {
+    const p = run(base, [c({ kind: "split", actId: "b", fraction: 0.5, name: "b off site", crew: "Off site", hours: 72, cal: "both" }), c({ kind: "relink", actId: "c", drop: ["b"], add: ["a"] })]);
+    expect(p.acts.find((x) => x.id === "c")!.preds).toEqual(["a"]);
+  });
+  it("an earliest start moved; an activity's time and calendar set (off site: around the clock)", () => {
+    const p = run(base, [c({ kind: "floor", target: { ids: ["c"] }, at: null }), c({ kind: "set", actId: "b", hours: 72, cal: "both", crew: "Off site" })]);
+    const b = p.acts.find((x) => x.id === "b")!;
+    expect(b.finish - b.start).toBe(72 * 3_600_000);
+    expect(b.crew).toBe("Off site");
+    expect(p.acts.find((x) => x.id === "c")!.start).toBe(b.finish);
   });
 });

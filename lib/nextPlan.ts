@@ -13,6 +13,9 @@
 //   - Start-up begins once every work order is done.
 //   - A crew's hands, when set, limit how much of its work can run at once;
 //     work over that waits (the most urgent first).
+//   - A crew held to so many jobs at once (what it really worked at a time
+//     this year) takes them that many at a time, the ones that hold the
+//     finish first.
 //
 // Pure: no database here.
 
@@ -62,6 +65,15 @@ export type PlanChange = { id: string; said: string; at: number } & (
   | { kind: "hold"; target: Target; day: number }
   | { kind: "first"; target: Target }
   | { kind: "heads"; crew: string; shift: number; n: number }
+  // At most n of the crew's activities open at once.
+  | { kind: "jobs"; crew: string; n: number }
+  // A lesson (lib/nextPlanLessons) left out by a person.
+  | { kind: "skip"; lesson: string }
+  // From the lessons: an activity's length and calendar (off-site time is
+  // clock time), links it didn't really need, and its earliest start.
+  | { kind: "set"; actId: string; hours?: number; cal?: Cal; basis?: string; kindAs?: ActKind; crew?: string }
+  | { kind: "relink"; actId: string; drop: string[]; add: string[] }
+  | { kind: "floor"; target: Target; at: number | null }
 );
 
 export interface NextPlan {
@@ -82,6 +94,8 @@ export interface NextPlan {
   headsSet: Record<string, Array<number | null>>;
   /** Man-hours per plan hour used for each crew, and where it came from. */
   pace: Record<string, { mh: number; from: string }>;
+  /** Crews held to so many jobs at once. */
+  jobsCap: Record<string, number>;
 }
 
 const H = 3_600_000;
@@ -112,7 +126,9 @@ export function snapStart(t: number, cal: Cal, tz: string, times: ShiftTimes): n
 }
 
 const isStartUp = (name: string) => /start\s*-?\s*up/i.test(name);
-const isShutdown = (name: string) => /shut\s*-?\s*down/i.test(name);
+/** The shutdown itself ("Transmix-2 - Shutdown"), not work that needs one
+ *  ("Shutdown-Required Inspection ..."). */
+const isShutdown = (name: string) => /shut\s*-?\s*down\s*$/i.test(name.trim()) && !/required/i.test(name);
 
 /** This year's job, made into next time's activities (before any change). */
 export function planActivities(input: { built: AsBuilt; work: AsBuiltWork; milestones: Milestone[]; tz: string; times: ShiftTimes }): PlanAct[] {
@@ -168,10 +184,11 @@ export function planActivities(input: { built: AsBuilt; work: AsBuiltWork; miles
 const hits = (a: PlanAct, t: Target) => (t.ids?.length ? t.ids.includes(a.id) : false) || (t.order ? a.order === t.order : false);
 
 /** The activities after the changes, and the hands set. */
-export function applyChanges(base: PlanAct[], changes: PlanChange[], tz: string, times: ShiftTimes, day1: number): { acts: PlanAct[]; pre: PlanAct[]; headsSet: Record<string, Record<number, number>> } {
+export function applyChanges(base: PlanAct[], changes: PlanChange[], tz: string, times: ShiftTimes, day1: number): { acts: PlanAct[]; pre: PlanAct[]; headsSet: Record<string, Record<number, number>>; jobsCap: Record<string, number> } {
   let acts: PlanAct[] = base.map((a) => ({ ...a, preds: [...a.preds], changedBy: [...(a.changedBy ?? [])] }));
   const pre: PlanAct[] = [];
   const headsSet: Record<string, Record<number, number>> = {};
+  const jobsCap: Record<string, number> = {};
   const mark = (a: PlanAct, c: PlanChange) => { a.changedBy = [...new Set([...(a.changedBy ?? []), c.id])]; };
   for (const c of changes) {
     if (c.kind === "drop") {
@@ -211,9 +228,27 @@ export function applyChanges(base: PlanAct[], changes: PlanChange[], tz: string,
       for (const x of acts) if (x.preds.includes(a.id)) x.preds = x.preds.map((p) => (p === a.id ? two.id : p));
     } else if (c.kind === "heads") {
       (headsSet[c.crew] ??= {})[c.shift] = Math.max(0, Math.round(c.n));
+    } else if (c.kind === "jobs") {
+      if (c.n >= 1) jobsCap[c.crew] = Math.round(c.n); else delete jobsCap[c.crew];
+    } else if (c.kind === "set") {
+      const a = acts.find((x) => x.id === c.actId);
+      if (a) {
+        if (c.hours != null) a.hours = Math.max(0, r1(c.hours));
+        if (c.cal) a.cal = c.cal;
+        if (c.crew) a.crew = c.crew;
+        if (c.basis != null) a.basis = c.basis;
+        if (c.kindAs) a.kind = c.kindAs;
+        mark(a, c);
+      }
+    } else if (c.kind === "relink") {
+      const a = acts.find((x) => x.id === c.actId);
+      // A link to a step since split is to its parts (":1", ":2").
+      if (a) { a.preds = [...new Set([...a.preds.filter((p) => !c.drop.includes(p) && !c.drop.includes(p.replace(/:(1|2|w)$/, ""))), ...c.add.filter((p) => p !== a.id && acts.some((x) => x.id === p))])]; mark(a, c); }
+    } else if (c.kind === "floor") {
+      for (const a of acts) if (hits(a, c.target)) { a.floor = c.at; mark(a, c); }
     }
   }
-  return { acts, pre, headsSet };
+  return { acts, pre, headsSet, jobsCap };
 }
 
 /** Schedule the activities: forward through their links and calendars; a
@@ -224,6 +259,8 @@ export function schedule(input: {
   pace: Record<string, { mh: number; from: string }>;
   toolHours: { day: number; night: number };
   headsSet?: Record<string, Record<number, number>>;
+  /** At most so many of a crew's activities open at once. */
+  jobsCap?: Record<string, number>;
   day1?: number;
 }): NextPlan {
   const { tz, times } = input;
@@ -236,11 +273,11 @@ export function schedule(input: {
   const toolOf = (w: ShiftWindow) => (w.kind === "night" ? input.toolHours.night : input.toolHours.day);
   const paceOf = (crew: string) => input.pace[crew]?.mh ?? 1;
   const headsSet = input.headsSet ?? {};
+  const jobsCap = input.jobsCap ?? {};
 
   // Shifts to schedule into (grown as needed).
   const shifts: ShiftWindow[] = shiftWindowsBetween(day1, day1 + 30 * 86_400_000, tz, times, 4000);
   const idxAt = (t: number) => { let lo = 0, hi = shifts.length - 1; while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (shifts[mid].start <= t) lo = mid; else hi = mid - 1; } return lo; };
-  const used: Record<string, number[]> = {};
   const occupancy = (s: number, f: number) => {
     const out: Array<[number, number]> = [];
     if (f <= s) return out;
@@ -254,33 +291,77 @@ export function schedule(input: {
     const n = headsSet[crew]?.[i];
     return n == null ? Infinity : (n * toolOf(shifts[i])) / paceOf(crew);
   };
+  /** The first moment in [s, f) the crew already has `cap` jobs open, and
+   *  when the first of those ends; null when it never does. */
+  const crowded = (spans: Array<[number, number]>, s: number, f: number, cap: number): number | null => {
+    const near = spans.filter(([a, b]) => a < f && b > s);
+    if (near.length < cap) return null;
+    const points = [s, ...near.map(([a]) => a).filter((a) => a > s && a < f)].sort((x, y) => x - y);
+    for (const t of points) {
+      const open = near.filter(([a, b]) => a <= t && b > t);
+      if (open.length >= cap) return Math.min(...open.map(([, b]) => b));
+    }
+    return null;
+  };
 
-  // Ready list: links first, then the most urgent, then the earliest.
-  const done = new Map<string, { start: number; finish: number; held: boolean }>();
-  const waiting = new Set(acts.map((a) => a.id));
-  const est = (a: PlanAct) => Math.max(a.floor ?? day1, ...a.preds.map((p) => done.get(p)?.finish ?? -Infinity), day1);
-  for (let guard = 0; waiting.size && guard < acts.length * 4 + 10; guard++) {
-    const ready = [...waiting].map((id) => byId.get(id)!).filter((a) => a.preds.every((p) => done.has(p) || !byId.has(p)));
-    if (!ready.length) {
-      // A loop in the links: break it at the earliest.
-      const a = byId.get([...waiting][0])!; a.preds = a.preds.filter((p) => done.has(p)); continue;
-    }
-    ready.sort((a, b) => Number(!!b.first) - Number(!!a.first) || est(a) - est(b) || a.name.localeCompare(b.name));
-    const a = ready[0];
-    let s = snapStart(est(a), a.cal, tz, times), f = advance(s, a.hours, a.cal, tz, times), held = false;
-    if (headsSet[a.crew]) {
-      for (let g = 0; g < 400; g++) {
-        const occ = occupancy(s, f);
-        const bad = occ.find(([i, h]) => (used[a.crew]?.[i] ?? 0) + h > capOf(a.crew, i) + 1e-6);
-        if (!bad) break;
-        held = true;
-        s = snapStart(shifts[Math.min(shifts.length - 1, bad[0] + 1)].start, a.cal, tz, times);
-        f = advance(s, a.hours, a.cal, tz, times);
+  // One pass: links first, then (when crews are limited) the most urgent,
+  // then the earliest.
+  const pass = (urgency: Map<string, number> | null) => {
+    const used: Record<string, number[]> = {};
+    const spans: Record<string, Array<[number, number]>> = {};
+    const done = new Map<string, { start: number; finish: number; held: boolean }>();
+    const waiting = new Set(acts.map((a) => a.id));
+    const preds = new Map(acts.map((a) => [a.id, [...a.preds]]));
+    const est = (a: PlanAct) => Math.max(a.floor ?? day1, ...(preds.get(a.id) ?? []).map((p) => done.get(p)?.finish ?? -Infinity), day1);
+    for (let guard = 0; waiting.size && guard < acts.length * 4 + 10; guard++) {
+      const ready = [...waiting].map((id) => byId.get(id)!).filter((a) => (preds.get(a.id) ?? []).every((p) => done.has(p) || !byId.has(p)));
+      if (!ready.length) {
+        // A loop in the links: break it at the earliest.
+        const id = [...waiting][0]; preds.set(id, (preds.get(id) ?? []).filter((p) => done.has(p))); continue;
       }
+      ready.sort((a, b) => Number(!!b.first) - Number(!!a.first) || (urgency ? (urgency.get(a.id) ?? 0) - (urgency.get(b.id) ?? 0) : 0) || est(a) - est(b) || a.name.localeCompare(b.name));
+      const a = ready[0];
+      let s = snapStart(est(a), a.cal, tz, times), f = advance(s, a.hours, a.cal, tz, times), held = false;
+      const cap = jobsCap[a.crew];
+      if (headsSet[a.crew] || cap) {
+        for (let g = 0; g < 600; g++) {
+          let next: number | null = null;
+          if (headsSet[a.crew]) {
+            const bad = occupancy(s, f).find(([i, h]) => (used[a.crew]?.[i] ?? 0) + h > capOf(a.crew, i) + 1e-6);
+            if (bad) next = shifts[Math.min(shifts.length - 1, bad[0] + 1)].start;
+          }
+          if (next == null && cap && a.hours > 0) next = crowded(spans[a.crew] ?? [], s, f, cap);
+          if (next == null || next <= s) break;
+          held = true;
+          s = snapStart(next, a.cal, tz, times);
+          f = advance(s, a.hours, a.cal, tz, times);
+        }
+      }
+      for (const [i, h] of occupancy(s, f)) { (used[a.crew] ??= [])[i] = (used[a.crew][i] ?? 0) + h; }
+      if (a.hours > 0) (spans[a.crew] ??= []).push([s, f]);
+      done.set(a.id, { start: s, finish: f, held });
+      waiting.delete(a.id);
     }
-    for (const [i, h] of occupancy(s, f)) { (used[a.crew] ??= [])[i] = (used[a.crew][i] ?? 0) + h; }
-    done.set(a.id, { start: s, finish: f, held });
-    waiting.delete(a.id);
+    return done;
+  };
+  let done = pass(null);
+  if (Object.keys(jobsCap).length || Object.keys(headsSet).length) {
+    // The latest each can start without moving the finish, from the first
+    // pass: the ones with the least room go first when a crew is short.
+    const end = Math.max(...[...done.values()].map((d) => d.finish));
+    const succ = new Map<string, string[]>();
+    for (const a of acts) for (const p of a.preds) succ.set(p, [...(succ.get(p) ?? []), a.id]);
+    const late = new Map<string, number>();
+    const lateStart = (id: string, seen = new Set<string>()): number => {
+      const k = late.get(id); if (k != null) return k;
+      if (seen.has(id)) return end;
+      seen.add(id);
+      const d = done.get(id)!; const dur = d.finish - d.start;
+      const lf = Math.min(end, ...(succ.get(id) ?? []).filter((x) => done.has(x)).map((x) => lateStart(x, seen)));
+      const v = lf - dur; late.set(id, v); return v;
+    };
+    for (const a of acts) if (done.has(a.id)) lateStart(a.id);
+    done = pass(late);
   }
 
   const out = acts.map((a) => ({ ...a, start: done.get(a.id)?.start ?? day1, finish: done.get(a.id)?.finish ?? day1, heldForCrew: done.get(a.id)?.held ?? false }));
@@ -309,6 +390,11 @@ export function schedule(input: {
   for (let g = 0; cur && g < out.length; g++) {
     driving.push(cur.id);
     const pred = cur.preds.map((p) => outById.get(p)).filter((p): p is (typeof out)[number] => !!p && Math.abs(p.finish - cur!.start) < 60_000 + 1);
+    if (!pred.length && cur.heldForCrew) {
+      // Held for its crew: the job of the same crew that freed it.
+      const freed = out.filter((x) => x.id !== cur!.id && x.crew === cur!.crew && Math.abs(snapStart(x.finish, cur!.cal, tz, times) - cur!.start) < 60_000 + 1 && !driving.includes(x.id));
+      if (freed.length) { cur = freed.reduce((x, y) => (y.finish > x.finish ? y : x)); continue; }
+    }
     if (!pred.length) {
       // A gap of off-calendar time (a day crew waiting for morning).
       const near = cur.preds.map((p) => outById.get(p)).filter((p): p is (typeof out)[number] => !!p && p.finish <= cur!.start && snapStart(p.finish, cur!.cal, tz, times) >= cur!.start - 60_000);
@@ -318,7 +404,7 @@ export function schedule(input: {
     }
     cur = pred.reduce((x, y) => (y.finish > x.finish ? y : x));
   }
-  return { acts: out, pre: input.pre ?? [], start: day1, finish, driving, shifts: shown, load, jobs, heads, headsSet: headsShown, pace: input.pace };
+  return { acts: out, pre: input.pre ?? [], start: day1, finish, driving, shifts: shown, load, jobs, heads, headsSet: headsShown, pace: input.pace, jobsCap };
 }
 
 /** Man-hours per plan hour for each crew, from what this year showed. */
@@ -336,8 +422,8 @@ export function nextPlan(input: { built: AsBuilt; work: AsBuiltWork; milestones:
   const base = planActivities(input);
   const floors = base.map((a) => a.floor).filter((t): t is number => t != null);
   const day1 = floors.length ? shiftAt(Math.min(...floors), input.tz, input.times).start : Date.now();
-  const { acts, pre, headsSet } = applyChanges(base, input.changes, input.tz, input.times, day1);
-  return schedule({ acts, pre, tz: input.tz, times: input.times, pace: paceOf(input.work), toolHours: input.work.toolHours, headsSet, day1 });
+  const { acts, pre, headsSet, jobsCap } = applyChanges(base, input.changes, input.tz, input.times, day1);
+  return schedule({ acts, pre, tz: input.tz, times: input.times, pace: paceOf(input.work), toolHours: input.work.toolHours, headsSet, jobsCap, day1 });
 }
 
 /** The one change that pulls the finish in most: running a work order on

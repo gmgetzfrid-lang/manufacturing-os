@@ -39,6 +39,8 @@ export function cleanChange(v: unknown): PlanChange | null {
       const h = num(c.hours) ?? 0; const f = num(c.fraction); const id = str(c.actId, 200); const name = str(c.name, 200).trim();
       return id && name && f != null && f > 0 && f < 1 ? { ...base, kind: "split", actId: id, fraction: f, name, crew: str(c.crew, 80), hours: Math.max(0, Math.min(5000, h)), cal } : null;
     }
+    case "jobs": { const n = num(c.n); const crew = str(c.crew, 80); return crew && n != null && n >= 0 && n <= 200 ? { ...base, kind: "jobs", crew, n: Math.round(n) } : null; }
+    case "skip": { const l = str(c.lesson, 200); return l ? { ...base, kind: "skip", lesson: l } : null; }
     case "heads": { const n = num(c.n), s = num(c.shift); const crew = str(c.crew, 80); return crew && n != null && n >= 0 && n <= 2000 && s != null && s >= 0 && s < 2000 ? { ...base, kind: "heads", crew, shift: Math.round(s), n: Math.round(n) } : null; }
     default: return null;
   }
