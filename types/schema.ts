@@ -1131,6 +1131,13 @@ export interface TicketAttachment {
    *  approved Draft the drafter marked issue-ready — the Draft's id. The
    *  bytes are the Draft's (same storage key); no second upload was made. */
   issuedFromDraftId?: string;
+  /** drafting-flow EVID-12 (fleet F7): the sha256 the workflow route computed
+   *  from the stored bytes when the file was attached (uploadedAt), with what
+   *  it is bound to (bytes read, the serving GetObject's ETag) and the route's HMAC
+   *  seal (lib/ticketFileHash.ts — an unsealed or moved value is ignored).
+   *  Absent on a file attached before this, or not hashable within the
+   *  attach's bound. Server-set; never the client's. */
+  contentHash?: { sha256: string; bytes: number; etag: string | null; seal: string };
 }
 
 /** drafting-flow DF-P5 ROSTER (GAP-103 / GAP-112): one slot of a ticket's
