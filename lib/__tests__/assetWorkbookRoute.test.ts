@@ -104,6 +104,22 @@ describe("POST /api/assets/parse-workbook", () => {
     const json = await (await post({ orgId: "o1", fileBase64: workbookB64(MASTER), sheet: "Notes" })).json();
     expect(json.headers).toEqual(["Revision", "By"]);
   });
+  it("a sheet refused for its size answers 422 WITH the workbook's sheet names, so another sheet can be picked (XEDGE-12)", async () => {
+    // A register whose last used column (ZZ, 702) under 10,001 rows is past the
+    // 5,128,192-cell budget, beside a small sheet.
+    const wide: unknown[][] = [Array.from({ length: 702 }, (_, i) => (i === 701 ? "Last" : i === 0 ? "Tag" : null))];
+    for (let r = 0; r < 10_000; r++) wide.push(["P-" + r]);
+    const fileBase64 = workbookB64({ Register: wide, Notes: [["Revision", "By"], ["A", "JD"]] });
+    const res = await post({ orgId: "o1", fileBase64 });
+    expect(res.status).toBe(422);
+    const json = await res.json();
+    expect(json.error).toMatch(/^Sheet "Register" spans 10,001 rows × 702 columns; the generator reads at most 5,128,192 cells per sheet/);
+    expect(json.sheetNames).toEqual(["Register", "Notes"]);
+    expect(json.sheetName).toBe("Register");
+    const other = await post({ orgId: "o1", fileBase64, sheet: "Notes" });
+    expect(other.status).toBe(200);
+    expect((await other.json()).headers).toEqual(["Revision", "By"]);
+  }, 60_000);
   it("refuses an empty or over-size upload before parsing", async () => {
     expect((await post({ orgId: "o1", fileBase64: "" })).status).toBe(400);
     const big = Buffer.alloc(3 * 1024 * 1024 + 10, 65).toString("base64");

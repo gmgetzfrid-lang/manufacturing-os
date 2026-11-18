@@ -26,7 +26,7 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import * as XLSX from "xlsx";
-import { parseWorkbook, MAX_SHEET_CELLS } from "@/lib/xlsxData";
+import { parseWorkbook, MAX_SHEET_CELLS, SheetRefusedError } from "@/lib/xlsxData";
 
 const root = resolve(__dirname, "../..");
 const fixture = (name: string) => readFileSync(resolve(__dirname, "fixtures/xlsx", name));
@@ -239,7 +239,7 @@ describe("XEDGE-12 — a binary workbook's string cells stay strings", () => {
 describe("XEDGE-12 — a sheet's used range is read within a cell budget", () => {
   it("a range a few bytes declare is trimmed to the cells present: an xlsx dimension to XFD, a CSV line of commas", () => inZone("UTC", () => {
     const ws = XLSX.utils.aoa_to_sheet([["Tag", "Desc", "Qty"], ["P-1", "pump", 1], ["P-2", "valve", 2]]);
-    ws["!ref"] = "A1:XFD200"; // 3.3M cells declared, 9 present
+    ws["!ref"] = "A1:XFD400"; // 6.6M cells declared (past the budget), 9 present
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "S");
     const bytes = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer; // the writer walks the range; not timed
@@ -257,8 +257,9 @@ describe("XEDGE-12 — a sheet's used range is read within a cell budget", () =>
 
   it("real data spanning more than MAX_SHEET_CELLS is refused in plain words; a range within it reads exactly as before", () => inZone("UTC", () => {
     const far = Buffer.from("Tag,Desc\n" + "a" + ",".repeat(1_000_000) + "b\n" + "x,y\n".repeat(1000));
-    expect(MAX_SHEET_CELLS).toBe(2_003_200); // the 10,016-row read window × 200 columns
-    expect(() => parseWorkbook(far)).toThrow(/spans 1,002 rows × 1,000,001 columns; the generator reads at most 2,003,200 cells per sheet/);
+    expect(MAX_SHEET_CELLS).toBe(5_128_192); // the 10,016-row read window × 512 columns
+    expect(() => parseWorkbook(far)).toThrow(SheetRefusedError);
+    expect(() => parseWorkbook(far)).toThrow(/spans 1,002 rows × 1,000,001 columns; the generator reads at most 5,128,192 cells per sheet/);
     // Within the budget nothing is trimmed: an A1:Z5 dimension still reads 26 columns, as 0.18.5 read it.
     const ws = XLSX.utils.aoa_to_sheet([["Tag", "Desc", "Qty"], ["P-1", "pump", 1]]);
     ws["!ref"] = "A1:Z5";
@@ -266,6 +267,40 @@ describe("XEDGE-12 — a sheet's used range is read within a cell budget", () =>
     XLSX.utils.book_append_sheet(wb, ws, "S");
     expect(parseWorkbook(XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer).headers).toHaveLength(26);
   }));
+});
+
+describe("XEDGE-12 — wide registers read exactly as on the base (the one-pass read)", () => {
+  // sha256 of JSON.stringify(parseWorkbook(bytes)), produced on the base
+  // (xlsx 0.18.5 and the base lib/xlsxData.ts) over the same bytes.
+  const sha = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
+  const header = (n: number, p: string) => Array.from({ length: n }, (_, i) => p + i);
+
+  it("9,000 equipment rows under a 250-column header, 3 columns filled — as xlsx and as CSV (2.3 MB, inside the asset door's 3 MB)", () => inZone("UTC", () => {
+    const aoa: unknown[][] = [header(250, "Field")];
+    for (let r = 0; r < 9000; r++) aoa.push(["P-" + r, "Pump " + r, "Area " + (r % 7)]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "Equipment");
+    const xlsx = parseWorkbook(XLSX.write(wb, { type: "buffer", bookType: "xlsx", compression: true }) as Buffer);
+    expect(xlsx.rows).toHaveLength(9000);
+    expect(xlsx.headers).toHaveLength(250);
+    expect(xlsx.rowNumbers?.slice(0, 2)).toEqual([2, 3]);
+    expect(sha(xlsx)).toBe("4aab64f3cc3dd0af15a31ca7d0cc077e3dd6771e0fabb97dd53312fadc680559");
+    const lines = [header(250, "Field").join(",")];
+    for (let r = 0; r < 9000; r++) lines.push("P-" + r + ",Pump " + r + ",Area " + (r % 7) + ",".repeat(247));
+    const csv = Buffer.from(lines.join("\n"));
+    expect(csv.length).toBeLessThan(3 * 1024 * 1024);
+    expect(sha(parseWorkbook(csv))).toBe("307d91c4af9b5f88cfa21438b35bfcd56b554a60ed90e0a0510cf4450de162b8");
+  }), 120_000);
+
+  it("a dense 10,000 × 210 workbook (20 MB, inside the template door's 25 MB)", () => inZone("UTC", () => {
+    const aoa: unknown[][] = [header(210, "H")];
+    for (let r = 0; r < 10_000; r++) aoa.push(Array.from({ length: 210 }, (_, k) => "s" + ((r + k) % 40)));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "S");
+    const out = parseWorkbook(XLSX.write(wb, { type: "buffer", bookType: "xlsx", compression: true }) as Buffer);
+    expect(out.rows).toHaveLength(10_000);
+    expect(sha(out)).toBe("aa92f981091a210ff53cb5285169cf2963dd231785eb87e137558ec5ac28f444");
+  }), 300_000);
 });
 
 describe("XEDGE-12 — round trips", () => {

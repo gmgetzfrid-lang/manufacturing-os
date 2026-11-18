@@ -89,6 +89,7 @@ vi.mock("@/lib/ai/providerCall", async (orig) => {
 });
 
 import { POST } from "@/app/api/templates/generate/route";
+import { parseWorkbook } from "@/lib/xlsxData";
 import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
 
 const draft = async (extra: Row = {}) => {
@@ -123,6 +124,24 @@ beforeEach(() => {
   ai.failOn = 0;
   ai.failStatus = 504;
   sheet.rows = [{ Name: "A" }, { Name: "B" }, { Name: "C" }];
+});
+
+describe("XEDGE-12 — a sheet refused for its size still names the workbook's sheets", () => {
+  it("the draft answers 400 with the refusal AND the sheet names, so the picker can offer another sheet", async () => {
+    vi.mocked(parseWorkbook).mockImplementationOnce(() => {
+      throw Object.assign(new Error('Sheet "Big" spans 10,001 rows × 702 columns; the generator reads at most 5,128,192 cells per sheet.'), { sheetName: "Big", sheetNames: ["Big", "Small"] });
+    });
+    const r = await draft();
+    expect(r.status).toBe(400);
+    expect(String(r.json.error)).toMatch(/^Couldn't read that spreadsheet: Sheet "Big" spans/);
+    expect(r.json.sheetNames).toEqual(["Big", "Small"]);
+    expect(r.json.sheetName).toBe("Big");
+    // Any other read failure answers as before: the message alone.
+    vi.mocked(parseWorkbook).mockImplementationOnce(() => { throw new Error("Invalid HTML: could not find <table>"); });
+    const plain = await draft();
+    expect(plain.status).toBe(400);
+    expect(plain.json).toEqual({ error: "Couldn't read that spreadsheet: Invalid HTML: could not find <table>" });
+  });
 });
 
 describe("GOV-11 / PR-12 — drafting is gated like every other AI call", () => {

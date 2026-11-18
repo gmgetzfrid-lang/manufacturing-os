@@ -104,6 +104,9 @@ export default function AssetCsvImportModal({
   // The spreadsheet door: an .xlsx / .xls / .csv read server-side by
   // lib/xlsxData.ts parseWorkbook (POST /api/assets/parse-workbook).
   const [workbook, setWorkbook] = useState<{ fileName: string; b64: string; sheetNames: string[]; sheetName: string } | null>(null);
+  // A workbook whose chosen sheet was refused (too many rows, too wide): its
+  // other sheets are still offered (XEDGE-12).
+  const [refusedBook, setRefusedBook] = useState<{ fileName: string; b64: string; sheetNames: string[]; sheetName: string } | null>(null);
 
   useEffect(() => {
     if (!isOpen || !orgId) return;
@@ -176,7 +179,13 @@ export default function AssetCsvImportModal({
         body: JSON.stringify({ orgId, fileBase64: b64, fileName, sheet }),
       });
       const json = await res.json().catch(() => ({})) as { error?: string; headers?: string[]; rows?: string[][]; rowNumbers?: number[]; sheetNames?: string[]; sheetName?: string };
-      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+      if (!res.ok) {
+        setRefusedBook(Array.isArray(json.sheetNames) && json.sheetNames.length > 1
+          ? { fileName, b64, sheetNames: json.sheetNames, sheetName: json.sheetName ?? "" }
+          : null);
+        throw new Error(json.error ?? `HTTP ${res.status}`);
+      }
+      setRefusedBook(null);
       const hdr = json.headers ?? [];
       const data = json.rows ?? [];
       if (hdr.length === 0 || data.length === 0) throw new Error("No header row and data rows were found in that sheet.");
@@ -308,6 +317,16 @@ export default function AssetCsvImportModal({
                 </label>
                 {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               </div>
+              {refusedBook && (
+                <label className="flex items-center gap-2 text-[11px]">
+                  <span className="font-bold">Try another sheet of {refusedBook.fileName}</span>
+                  <select value={refusedBook.sheetName} disabled={busy}
+                    onChange={(e) => void readWorkbook(refusedBook.fileName, refusedBook.b64, e.target.value)}
+                    className="px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-surface)]">
+                    {refusedBook.sheetNames.map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </label>
+              )}
               <div className="text-[10px] text-[var(--color-text-muted)]">First row = headers. The <code>type</code> column matches an existing asset-type by name (case-insensitive); unmatched types are left blank. A <code>unit</code> column (Site Codebook code or name) files each row into its operating area; a <code>site code</code> column (2030.22) works too — the unit is read from it.</div>
             </div>
           )}

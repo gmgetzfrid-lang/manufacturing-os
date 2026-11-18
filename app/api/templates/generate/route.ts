@@ -211,6 +211,11 @@ export async function POST(req: NextRequest) {
     try {
       sheetData = parseWorkbook(await fetchBytes(sourceFileKey), body.sheet);
     } catch (e) {
+      // A refusal of one sheet (too many rows, too wide) still names the
+      // workbook's sheets, so the person can pick another one.
+      if (e instanceof Error && Array.isArray((e as { sheetNames?: unknown }).sheetNames)) {
+        return NextResponse.json({ error: `Couldn't read that spreadsheet: ${e.message}`, sheetName: (e as { sheetName?: string }).sheetName, sheetNames: (e as { sheetNames?: string[] }).sheetNames }, { status: 400 });
+      }
       return bad(`Couldn't read that spreadsheet: ${(e as Error).message}`, 400);
     }
     if (sheetData.rows.length === 0) {
