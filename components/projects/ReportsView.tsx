@@ -614,7 +614,7 @@ export default function ReportsView(p: Props) {
       ) : sel === "asbuilt" ? (
         <AsBuiltScheduleView projectId={projectId} orgId={live[0]?.orgId ?? null} milestones={p.milestones} childrenByParent={p.childrenByParent} cancelled={p.cancelled}
           phases={ph.phases} phase={ph.phase} tz={tz} times={times} canEdit={!!p.canEdit} userName={p.userName ?? null}
-          onExcel={() => void run("download")} onPrint={() => void run("print")} />
+          onExcel={() => void run("download")} onPrint={() => void run("print")} projectName={name} scopeName={asBuiltScope} />
       ) : (
         <div className="grid gap-5 grid-cols-[minmax(0,1fr)] lg:grid-cols-[minmax(280px,360px)_minmax(0,1fr)] items-start">
           <div className="space-y-4 min-w-0">

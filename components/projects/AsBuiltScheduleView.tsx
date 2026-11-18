@@ -22,6 +22,8 @@ import { buildAsBuiltWork, shiftKey, type AsBuiltWork, type WaitRun } from "@/li
 import { nextPlan, finishLever, dayNumber, type NextPlan, type PlanChange } from "@/lib/nextPlan";
 import { loadNextPlanSettings, saveNextPlanChanges, type NextPlanSettings } from "@/lib/nextPlanStore";
 import { planLessons, lessonChanges, lessonEffects, toTarget, mostAtOnce, type Lesson } from "@/lib/nextPlanLessons";
+import { msProjectXml, asBuiltTasks, suggestedTasks } from "@/lib/msProject";
+import { saveFile } from "@/lib/saveFile";
 import { openContractor } from "@/lib/costsNav";
 import type { StaffingPlan } from "@/lib/staffingPlan";
 import { talkCatalog, parseTalkReply } from "@/lib/nextPlanTalk";
@@ -52,6 +54,9 @@ interface Props {
   userName?: string | null;
   onExcel?: () => void;
   onPrint?: () => void;
+  /** For file names: the project, and the phase or "All phases". */
+  projectName?: string;
+  scopeName?: string;
   /** Show the dates and counts columns (set by the view's toolbar). */
   cols?: boolean;
 }
@@ -121,6 +126,21 @@ export default function AsBuiltScheduleView(p: Props) {
     try { await saveNextPlanChanges(p.projectId, scope, next); setMsg(null); } catch (e) { setMsg((e as Error).message); }
   }, [data, scope, p.projectId]);
 
+  // The schedule on screen as a Microsoft Project file.
+  const toProject = async () => {
+    if (!work || !plan) return;
+    const what = view === "built" ? "as-built schedule" : "suggested schedule";
+    const title = [p.projectName || "Project", what, p.scopeName].filter(Boolean).join(", ");
+    const orderName = (k: string) => { const o = built.orders.find((x) => x.key === k); return o ? `${o.wo ? `WO ${o.wo} · ` : ""}${o.name}` : k; };
+    const tasks = view === "built"
+      ? asBuiltTasks(built, new Map(p.milestones.filter((m) => m.id).map((m) => [m.id!, m.dependsOn ?? []])), Date.now())
+      : suggestedTasks(plan, orderName);
+    if (!tasks.length) { setMsg("Nothing to export."); return; }
+    const xml = msProjectXml({ title, tz, times, tasks });
+    const ok = await saveFile(new TextEncoder().encode(xml), `${title.replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim()}.xml`, "application/xml");
+    setMsg(ok ? null : "Tap Microsoft Project again to save the file.");
+  };
+
   // One shift's width: the whole job across the space the chart has.
   const nShifts = view === "built" ? work?.shifts.length ?? 0 : plan?.shifts.length ?? 0;
   const left = boxW >= 640 ? 290 : 170;
@@ -142,7 +162,8 @@ export default function AsBuiltScheduleView(p: Props) {
         </div>
         <button type="button" onClick={() => setFull(!full)} className={btnQuiet}>{full ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />} {full ? "Close full screen" : "Full screen"}</button>
         <button type="button" aria-pressed={cols} onClick={() => setCols(!cols)} className={btnQuiet}><CalendarDays className="w-4 h-4" /> {cols ? "Hide dates" : "Show dates"}</button>
-        {p.onExcel && <button type="button" onClick={p.onExcel} className={btnQuiet}><Download className="w-4 h-4" /> Excel</button>}
+        {p.onExcel && view === "built" && <button type="button" onClick={p.onExcel} className={btnQuiet}><Download className="w-4 h-4" /> Excel</button>}
+        <button type="button" onClick={() => void toProject()} className={btnQuiet} title="A file Microsoft Project opens: File, Open, XML Format"><Download className="w-4 h-4" /> Microsoft Project</button>
         {p.onPrint && <button type="button" onClick={p.onPrint} className={btnQuiet}><Printer className="w-4 h-4" /> Print</button>}
         {msg && <span role="status" className="text-[12px] font-semibold text-rose-700 dark:text-rose-400">{msg}</span>}
       </div>
@@ -601,7 +622,12 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
           return <div key={co}><b>{co}</b> ({sp.file || "typed in"}): days <b>{s.day.direct} on the tools</b> + {s.day.indirect}, nights <b>{s.night.direct}</b> + {s.night.indirect}, over these dates.</div>;
         })}
         {!Object.keys(p.settings.staffing).length && <div className="text-[var(--color-text-muted)]">None read yet. A contractor&apos;s staffing plan gives each shift its planned hands, by date, so each phase lines up with its own days.</div>}
-        <button type="button" onClick={() => openContractor(null)} className="font-bold text-[var(--color-accent)] hover:underline cursor-pointer">{Object.keys(p.settings.staffing).length ? "Change them" : "Put one in"} on each contractor&apos;s page in Costs › Contractors</button>
+        <div className="flex flex-wrap gap-1.5 pt-0.5">
+          {[...new Set(Object.keys(plan.load))].filter((c) => !/\(KE\)|kern|^off site$|^not set$/i.test(c)).sort().map((c) => (
+            <button key={c} type="button" onClick={() => openContractor(c)} className={btnQuiet}>{Object.keys(p.settings.staffing).some((k) => k.toLowerCase() === c.toLowerCase()) ? `Change ${c}'s staffing plan` : `Upload ${c}'s staffing plan`}</button>
+          ))}
+        </div>
+        <p className="text-[11.5px] text-[var(--color-text-muted)]">Each opens that contractor&apos;s page in Costs › Contractors: read its sheet (Excel), or type it in by craft.</p>
       </div>
 
       <div className="flex flex-wrap gap-2 text-[12.5px]">

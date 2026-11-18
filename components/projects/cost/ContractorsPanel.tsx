@@ -8,7 +8,8 @@
 // where the cost is heading against the quote and the budget line.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Check, ChevronRight, FileUp, HardHat, Loader2, Plus, Trash2, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, Download, FileUp, HardHat, Loader2, Plus, Trash2, X } from "lucide-react";
+import { saveFile } from "@/lib/saveFile";
 import { supabase } from "@/lib/supabase";
 import { activeOnly } from "@/lib/activeMilestones";
 import { loadShiftRecords, type ShiftRecord } from "@/lib/shiftRecord";
@@ -369,6 +370,29 @@ function PlanSection(p: SectionProps) {
   const plan = draft ?? saved;
   const blank = (): StaffingPlan => ({ file: "", at: new Date().toISOString(), by: p.actor.email, shifts: {}, crafts: [], byCraft: {} });
 
+  // The plan as a sheet laid out like a contractor's: crafts down, each
+  // date's day and night across, heads in the cells, totals at the foot.
+  const download = async () => {
+    if (!saved) return;
+    const XLSX = await import("xlsx");
+    const crafts = saved.crafts ?? [];
+    const inScope = (k: string) => { const d = k.split(":")[0]; return !p.scope || ((!p.scope.start || d >= p.scope.start) && (!p.scope.end || d <= p.scope.end)); };
+    const keys = [...new Set([...Object.keys(saved.byCraft ?? {}), ...Object.keys(saved.shifts)])].filter(inScope).sort();
+    const label = (k: string) => { const [d, kind] = k.split(":"); const [, m, dd] = d.split("-").map(Number); return `${m}/${dd} ${kind === "night" ? "Night" : "Day"}`; };
+    const rows: Array<Array<string | number>> = [[`${co} staffing plan`], [p.scope ? `${p.scope.name}` : "Whole project"], [], ["Craft", "On the tools", ...keys.map(label)]];
+    for (const c of crafts) rows.push([c.name, c.direct ? "Yes" : "No", ...keys.map((k) => saved.byCraft?.[k]?.[c.name] ?? "")]);
+    rows.push(["On the tools", "", ...keys.map((k) => saved.shifts[k]?.direct ?? 0)]);
+    rows.push(["Supervision and support", "", ...keys.map((k) => saved.shifts[k]?.indirect ?? 0)]);
+    rows.push(["Total", "", ...keys.map((k) => (saved.shifts[k]?.direct ?? 0) + (saved.shifts[k]?.indirect ?? 0))]);
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"] = [{ wch: 34 }, { wch: 12 }, ...keys.map(() => ({ wch: 10 }))];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Staffing plan");
+    const data = XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+    const ok = await saveFile(new Uint8Array(data), `${co} staffing plan${p.scope ? ` ${p.scope.name}` : ""}.xlsx`.replace(/[\\/:*?"<>|]+/g, " "), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    setMsg(ok ? null : "Tap Download again to save the file.");
+  };
+
   const readFile = async (f: File) => {
     setMsg(null);
     try {
@@ -408,6 +432,7 @@ function PlanSection(p: SectionProps) {
         <div className="flex gap-1.5 flex-wrap">
           <label className={`${saved ? btn : pri} cursor-pointer`}><FileUp className="w-4 h-4" /> {saved ? "Read a new sheet" : "Upload its staffing plan"}<input type="file" accept=".xlsx,.xls,.csv" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void readFile(f); }} /></label>
           {!plan && <button type="button" onClick={() => setDraft(blank())} className={btn}><Plus className="w-4 h-4" /> Type it in</button>}
+          {saved && !draft && <button type="button" onClick={() => void download()} className={btn}><Download className="w-4 h-4" /> Download (Excel)</button>}
           {saved && !draft && <button type="button" disabled={!!p.busy} onClick={() => void remove()} className={btn}><Trash2 className="w-4 h-4" /> Remove</button>}
         </div>
       )}
