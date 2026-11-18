@@ -1982,27 +1982,34 @@ export async function correctRevisionLabel(input: CorrectRevLabelInput):
 
   // Keep the parent document's label in step when the corrected rev is current.
   let syncedCurrent = false;
+  let syncFailure: string | null = null;
   if (isCurrent) {
-    // SAF-18 class (a): a sync that matched no row is a failure too — the
-    // document would keep the old label beside the corrected revision.
+    // SAF-18 (J15a): a sync that matched no row is a failure too — the
+    // document would keep the old label beside the corrected revision. The
+    // correction itself LANDED (the version row above), so its record is
+    // written either way (the integrator's ruling): REV_LABEL_CORRECTED with
+    // syncedCurrent false and the sync's failure, then the failure is thrown.
     const { data: synced, error: docErr } = await supabase
       .from("documents")
       .update({ rev: check.label, revision: check.label, updated_at: new Date().toISOString(), updated_by: actorUserId })
       .eq("id", doc.id)
       .select("id");
-    if (docErr || !synced || synced.length === 0) {
-      throw new Error(`The revision was corrected, but the document row failed to sync: ${docErr?.message ?? "the write was refused"}. Re-run the correction or fix the document label via Metadata.`);
-    }
-    syncedCurrent = true;
+    if (docErr || !synced || synced.length === 0) syncFailure = docErr?.message ?? "the write was refused";
+    else syncedCurrent = true;
   }
 
   await logRevisionEvent({
     orgId, documentId: doc.id, versionId, userId: actorUserId,
     userEmail: actorEmail ?? "", userRole: actorRole ?? "",
     type: "REV_LABEL_CORRECTED",
-    details: { oldLabel, newLabel: check.label, reason: input.reason?.trim() || null, syncedCurrent },
+    details: syncFailure === null
+      ? { oldLabel, newLabel: check.label, reason: input.reason?.trim() || null, syncedCurrent }
+      : { oldLabel, newLabel: check.label, reason: input.reason?.trim() || null, syncedCurrent, syncFailure },
   });
 
+  if (syncFailure !== null) {
+    throw new Error(`The revision was corrected, but the document row failed to sync: ${syncFailure}. Re-run the correction or fix the document label via Metadata.`);
+  }
   return { oldLabel, newLabel: check.label, syncedCurrent };
 }
 

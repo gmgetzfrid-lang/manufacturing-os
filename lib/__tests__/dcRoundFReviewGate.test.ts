@@ -787,7 +787,15 @@ describe("RG-12 — post-promote writes are checked and viewers resolve by curre
   it("SAF-18 (J15a): the success path is unchanged — the standby sign-off is voided, the draft's provenance declared, the publish audited", async () => {
     seedDoc();
     db.tables.document_review_signoffs = [{ id: "alt1", document_id: "d1", document_version_id: "v4A", reviewer_user_id: "u9", slot: "alternate", activated: false, status: "pending" }];
-    const res = await fin();
+    // The post-publish pipeline starts notices it never awaits; they are let
+    // finish (and their console lines kept quiet) before this test ends, so
+    // none is still logging when the worker tears down.
+    const quiet = (["log", "warn", "error"] as const).map((m) => vi.spyOn(console, m).mockImplementation(() => undefined));
+    let res: Awaited<ReturnType<typeof fin>>;
+    try {
+      res = await fin();
+      for (let i = 0; i < 25; i++) await new Promise((r) => setTimeout(r, 0));
+    } finally { quiet.forEach((q) => q.mockRestore()); }
     expect(res).toMatchObject({ published: true });
     expect(db.tables.document_review_signoffs[0].status).toBe("void");
     expect(db.tables.document_versions.find((v) => v.id === "v4A")).toMatchObject({ review_state: "approved", revision_label: "4", provenance: "declared" });

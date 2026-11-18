@@ -124,7 +124,10 @@ describe("lib/collections.ts — class (a): a collection edit that matched no ro
     expect(writes().map((c) => c.ops[0].args[0])).toEqual([{ sort_order: 0 }, { sort_order: 1 }, { sort_order: 2 }]);
     h.calls.length = 0;
     h.answers["curated_collection_items:update"] = (c: Call) => (c.ops.some((o) => o.m === "eq" && o.args[1] === "b") ? NONE : { data: [{ document_id: "x" }], error: null });
-    await expect(reorderItems("c1", ["a", "b", "c"])).rejects.toThrow(`1 of 3 position(s) were not saved. ${CHECKED_WRITE_REFUSED}`);
+    // (the integrator's MINOR 4: never "nothing was changed" — two positions landed)
+    const said = await reorderItems("c1", ["a", "b", "c"]).catch((e: Error) => e.message);
+    expect(said).toBe("1 of 3 position(s) were not saved — you may not have permission to reorder these, or someone else changed them first. The others were saved. Reload to see the order as it stands.");
+    expect(said).not.toMatch(/nothing was changed/i);
     expect(writes()).toHaveLength(3);
   });
 });
@@ -141,6 +144,20 @@ describe("lib/libraryCollections.ts — folders", () => {
     await expect(updateCollectionAppearance("f1", { color: "#fff" }, "u1")).rejects.toThrow(`The folder's appearance was not saved. ${CHECKED_WRITE_REFUSED}`);
     await expect(updateCollectionHomeConfig("f1", { enabled: true, parts: [] })).rejects.toThrow(`The folder's home was not saved. ${CHECKED_WRITE_REFUSED}`);
     await expect(updateFolder("f1", { name: "N" })).rejects.toThrow(`The folder was not updated. ${CHECKED_WRITE_REFUSED}`);
+  });
+  it("a database error reaches the customize modal / home board worded, never as raw Postgres text (the integrator's MINOR 3)", async () => {
+    h.answers["collections:update"] = { data: null, error: { code: "42501", message: 'new row violates row-level security policy for table "collections"' } };
+    const said = await Promise.all([
+      updateCollectionAppearance("f1", { color: "#fff" }, "u1").catch((e: Error) => e.message),
+      updateCollectionHomeConfig("f1", { enabled: true, parts: [] }).catch((e: Error) => e.message),
+      updateFolder("f1", { name: "N" }).catch((e: Error) => e.message),
+    ]);
+    expect(said).toEqual([
+      "The folder's appearance was not saved. You don't have permission to do this — nothing was changed.",
+      "The folder's home was not saved. You don't have permission to do this — nothing was changed.",
+      "The folder was not updated. You don't have permission to do this — nothing was changed.",
+    ]);
+    for (const m of said) expect(m).not.toMatch(/row-level security|"collections"/);
   });
   const node = { id: "f1", library_id: "L", name: "Old", path_names: ["Root", "Old"], path: ["Root", "Old"] };
   const kids = [{ id: "k1", path_names: ["Root", "Old", "A"], path_ids: ["f1", "k1"] }, { id: "k2", path_names: ["Root", "Old", "B"], path_ids: ["f1", "k2"] }];
@@ -172,8 +189,12 @@ describe("lib/libraryCollections.ts — folders", () => {
     expect(writes().map(opsOf)).toEqual(['update({…}).eq("id", "a").select("id")', 'update({…}).eq("id", "b").select("id")']);
     h.calls.length = 0;
     h.answers["collections:update"] = (c: Call) => (c.ops.some((o) => o.m === "eq" && o.args[1] === "a") ? NONE : { data: [{ id: "b" }], error: null });
-    await expect(reorderFolders(["a", "b"])).rejects.toThrow(`1 of 2 folder position(s) were not saved. ${CHECKED_WRITE_REFUSED}`);
+    await expect(reorderFolders(["a", "b"])).rejects.toThrow("1 of 2 folder position(s) were not saved — you may not have permission to reorder these, or someone else changed them first. The others were saved. Reload to see the order as it stands.");
     expect(writes()).toHaveLength(2);
+    // none landed: no "the others were saved", and still never "nothing was changed" (a drag may have moved the folder first)
+    h.answers["collections:update"] = NONE;
+    const all = await reorderFolders(["a", "b"]).catch((e: Error) => e.message);
+    expect(all).toBe("2 of 2 folder position(s) were not saved — you may not have permission to reorder these, or someone else changed them first. Reload to see the order as it stands.");
   });
 });
 

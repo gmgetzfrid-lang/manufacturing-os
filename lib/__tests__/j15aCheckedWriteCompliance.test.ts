@@ -92,7 +92,7 @@ import { waiveAcknowledgment, nudgeAcknowledgment, scanAndNotifyAcks, recomputeD
 import { invalidateDraftSignoffs, activateAlternate, openReviewRoster, scanReviews } from "@/lib/reviewControl";
 import { markReviewed, onDocumentIssued, scanAndNotifyReviews } from "@/lib/reviewCycles";
 import { applyEffectiveDate, scanEffectiveDates } from "@/lib/effectiveDate";
-import { recomputeRetention, scanRetention } from "@/lib/retention";
+import { recomputeRetention, scanRetention, setRetentionPolicy } from "@/lib/retention";
 import { revokeLiveSharesForDocument, correctRevisionLabel } from "@/lib/revisions";
 import type { DocumentRecord } from "@/types/schema";
 
@@ -318,6 +318,38 @@ describe("lib/retention.ts (RET-5's checked writes now read their matched row)",
     h.answers["libraries:select"] = { data: { retention_policy: null }, error: null };
     await expect(recomputeRetention("d1")).rejects.toThrow("Retention clock was NOT cleared: the write was refused.");
   });
+  it("setRetentionPolicy (the integrator's MAJOR): 60 covered documents, one refused — every batch is still sent, the 59 are re-clocked, and ONE plain sentence names the one", async () => {
+    const ids = Array.from({ length: 60 }, (_, i) => `d${i + 1}`);
+    h.answers["libraries:update"] = { data: [{ id: "L" }], error: null };
+    h.answers["documents:select"] = (c: Call) => {
+      if (c.ops.some((o) => o.m === "maybeSingle")) {
+        const id = c.ops.find((o) => o.m === "eq" && o.args[0] === "id")?.args[1];
+        return { data: { id, retention_policy: null, collection_id: null, library_id: "L", created_at: "2020-01-01T00:00:00Z", updated_at: null, effective_date: null, disposition_state: null }, error: null };
+      }
+      return { data: ids.map((id) => ({ id })), error: null };
+    };
+    h.answers["libraries:select"] = { data: { retention_policy: { enabled: true, years: 7, basis: "created" } }, error: null };
+    h.answers["documents:update"] = (c: Call) => (c.ops.some((o) => o.m === "eq" && o.args[1] === "d7") ? NONE : { data: [{ id: "x" }], error: null });
+    const said = await setRetentionPolicy({ level: "library", id: "L", orgId: "o1", policy: { enabled: true, years: 7, basis: "created" }, actorId: "ctl1" }).catch((e: Error) => e.message);
+    expect(said).toBe("The retention policy was saved, but 1 of 60 document(s) it covers could not be re-clocked — they keep their previous retention deadline. Save the policy again to retry; if it persists, ask Document Control (you may not be allowed to change those documents).");
+    const reclocks = writes("documents");
+    expect(reclocks).toHaveLength(60);
+    expect(reclocks.filter((c) => !c.ops.some((o) => o.m === "eq" && o.args[1] === "d7"))).toHaveLength(59);
+    expect(warned(/d7 was not re-clocked: Retention clock was NOT updated: the write was refused\./)).toBe(true);
+    // every one landing: resolves, as before
+    h.answers["documents:update"] = { data: [{ id: "x" }], error: null };
+    await expect(setRetentionPolicy({ level: "library", id: "L", orgId: "o1", policy: { enabled: true, years: 7, basis: "created" }, actorId: "ctl1" })).resolves.toBeUndefined();
+  });
+  it("setRetentionPolicy / recomputeRetention: a database error is worded, never raw Postgres text (the integrator's MINOR 3)", async () => {
+    h.answers["documents:update"] = { data: null, error: { code: "42501", message: 'new row violates row-level security policy for table "documents"' } };
+    await expect(setRetentionPolicy({ level: "document", id: "d1", orgId: "o1", policy: null, actorId: "ctl1" })).rejects.toThrow("You don't have permission to do this — nothing was changed.");
+    h.answers["documents:update"] = { data: [{ id: "d1" }], error: null };
+    h.answers["documents:select"] = { data: { id: "d1", retention_policy: { enabled: true, years: 7, basis: "created" }, collection_id: null, library_id: "L", created_at: "2020-01-01T00:00:00Z", updated_at: null, effective_date: null, disposition_state: null }, error: null };
+    let n = 0;
+    h.answers["documents:update"] = () => (++n === 1 ? { data: [{ id: "d1" }], error: null } : { data: null, error: { code: "42501", message: 'permission denied for table documents' } });
+    const said = await setRetentionPolicy({ level: "document", id: "d1", orgId: "o1", policy: { enabled: true, years: 7, basis: "created" }, actorId: "ctl1" }).catch((e: Error) => e.message);
+    expect(said).toBe("Retention clock was NOT updated: You don't have permission to do this — nothing was changed.");
+  });
   it("scanRetention: a flag that matched no row is skipped (no notice) and reported", async () => {
     h.answers["documents:select"] = { data: [{ id: "d1", library_id: "L", collection_id: null, document_number: "P-1", retention_until: "2020-01-01", retention_policy: null, retention_notified_at: null }], error: null };
     h.answers["documents:update"] = NONE;
@@ -337,17 +369,19 @@ describe("lib/revisions.ts — the retirement's share revoke (class c) and the l
     h.answers["document_shares:update"] = { data: null, error: { message: "permission denied for table document_shares" } };
     expect(await revokeLiveSharesForDocument("d1", "u1")).toMatchObject({ revoked: 0, error: "permission denied for table document_shares" });
   });
-  it("correctRevisionLabel: a document-row sync that matched no row throws the sync sentence — no REV_LABEL_CORRECTED claims it synced", async () => {
+  it("correctRevisionLabel: a document-row sync that matched no row is recorded (REV_LABEL_CORRECTED, syncedCurrent false, the failure) and then thrown — the correction landed, its record exists", async () => {
     const doc = { id: "d1", currentVersionId: "v1" } as DocumentRecord;
     const input = { doc, versionId: "v1", newLabel: "1B", reason: "typo", libraryId: "L", orgId: "o1", actorUserId: "u1" };
     h.answers["document_versions:select"] = { data: [{ id: "v1", revision_label: "1A", review_state: null }], error: null };
     h.answers["documents:select"] = { data: { pending_version_id: null }, error: null };
     h.answers["documents:update"] = NONE;
     await expect(correctRevisionLabel(input)).rejects.toThrow("The revision was corrected, but the document row failed to sync: the write was refused. Re-run the correction or fix the document label via Metadata.");
-    expect(k.revisionEvents).toEqual([]);
+    expect(k.revisionEvents).toEqual([expect.objectContaining({ type: "REV_LABEL_CORRECTED", details: { oldLabel: "1A", newLabel: "1B", reason: "typo", syncedCurrent: false, syncFailure: "the write was refused" } })]);
+    k.revisionEvents.length = 0;
     h.answers["documents:update"] = { data: [{ id: "d1" }], error: null };
     expect(await correctRevisionLabel(input)).toEqual({ oldLabel: "1A", newLabel: "1B", syncedCurrent: true });
-    expect(k.revisionEvents.map((e) => e.type)).toEqual(["REV_LABEL_CORRECTED"]);
+    // the success record is exactly as before (no syncFailure key)
+    expect(k.revisionEvents).toEqual([expect.objectContaining({ type: "REV_LABEL_CORRECTED", details: { oldLabel: "1A", newLabel: "1B", reason: "typo", syncedCurrent: true } })]);
     expect(writes("documents").at(-1)!.ops.map((o) => o.m)).toEqual(["update", "eq", "select"]);
   });
 });

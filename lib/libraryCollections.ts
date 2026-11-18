@@ -5,7 +5,8 @@ import { supabase } from "@/lib/supabase";
 import { buildAclIndex, buildAclIndexFromChain } from "@/lib/acl";
 import { logAuditAction } from "@/lib/audit";
 // SAF-18 (J15a): every update here reads its matched rows (lib/checkedWrite.ts).
-import { checkedWrite, CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
+import { checkedWrite, CHECKED_WRITE_REFUSED, describeWriteError } from "@/lib/checkedWrite";
+import { reorderNotSaved } from "@/lib/checkedWriteAnswer";
 import { notify } from "@/lib/inAppNotifications";
 import { getOrgControllers } from "@/lib/ownership";
 import { resolveActorPrincipal } from "@/lib/principal";
@@ -263,8 +264,9 @@ export async function updateCollectionAppearance(
   if (pageConfig !== undefined) patch.page_config = pageConfig;
   // SAF-18 class (a): a save that matched no row throws the typed refusal
   // (the customize modal says it and stays open).
+  // (The database's error is worded here — the modal shows it — REL-3.)
   const { data: saved, error } = await supabase.from(TABLE).update(patch).eq("id", collectionId).select("id");
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(`The folder's appearance was not saved. ${describeWriteError(error)}`);
   if (!saved || saved.length === 0) throw new Error(`The folder's appearance was not saved. ${CHECKED_WRITE_REFUSED}`);
 }
 
@@ -277,7 +279,7 @@ export async function updateCollectionHomeConfig(collectionId: string, config: L
     .update({ home_config: config, updated_at: new Date().toISOString() })
     .eq("id", collectionId)
     .select("id");
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(`The folder's home was not saved. ${describeWriteError(error)}`);
   if (!saved || saved.length === 0) throw new Error(`The folder's home was not saved. ${CHECKED_WRITE_REFUSED}`);
 }
 
@@ -293,7 +295,7 @@ export async function updateFolder(
 
   // SAF-18 class (a): a write that matched no row throws the typed refusal.
   const { data: saved, error } = await supabase.from(TABLE).update(update).eq("id", collectionId).select("id");
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(`The folder was not updated. ${describeWriteError(error)}`);
   if (!saved || saved.length === 0) throw new Error(`The folder was not updated. ${CHECKED_WRITE_REFUSED}`);
 }
 
@@ -361,8 +363,9 @@ export async function reorderFolders(orderedIds: string[]): Promise<void> {
     checkedWrite(supabase.from(TABLE).update({ sort_order: i }).eq("id", id).select("id"))));
   const missed = answers.filter((w) => !w.ok);
   if (missed.length) {
-    const db = missed.find((w) => !w.ok && w.code === "db");
-    throw new Error(`${missed.length} of ${orderedIds.length} folder position(s) were not saved. ${db && !db.ok ? db.error : CHECKED_WRITE_REFUSED}`);
+    // Never "nothing was changed": the other positions (and a drag's move
+    // across parents, before this call) may already have landed.
+    throw new Error(reorderNotSaved(missed.length, orderedIds.length, "folder position(s)"));
   }
 }
 

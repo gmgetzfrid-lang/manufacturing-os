@@ -48,3 +48,13 @@ export function answered<R extends { data: unknown; error: unknown }>(q: Promise
     },
   );
 }
+
+/** What a reorder whose writes did not all land says (a collection's pages,
+ *  a folder's siblings): how many were not saved and, when some were, that
+ *  the rest were — never "nothing was changed", since the other positions
+ *  (and a drag's move across parents before the reorder) may have landed. */
+export function reorderNotSaved(missed: number, total: number, what: string): string {
+  return `${missed} of ${total} ${what} were not saved — you may not have permission to reorder these, or someone else changed them first.` +
+    (missed < total ? " The others were saved." : "") +
+    " Reload to see the order as it stands.";
+}

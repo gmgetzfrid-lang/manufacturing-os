@@ -397,7 +397,11 @@ async function closeEpisode(input: {
     .limit(1);
   if (liveErr && !isMissingEpisodeSchema(liveErr)) throw new Error(liveErr.message);
   if ((live ?? []).length > 0) return "live_sessions";
-  const { error } = await db
+  // SAF-18 class (c) (J15a, residual 2): the CAS matching no row — the
+  // episode already closed by a racer — answers "closed" as before; the
+  // database's error is kept whole for the schema and rail checks below.
+  const closeKept = keptAnswer();
+  await checkedWrite(answered(db
     .from("checkout_episodes")
     .update({
       status: "closed",
@@ -407,7 +411,9 @@ async function closeEpisode(input: {
       close_reason: input.reason,
     })
     .eq("id", input.episodeId)
-    .eq("status", "active"); // CAS: only close a still-open episode
+    .eq("status", "active") // CAS: only close a still-open episode
+    .select("id"), closeKept));
+  const error = closeKept.error;
   if (error) {
     if (isMissingEpisodeSchema(error)) return "skipped";
     // The database rail (20261075) refused because a session joined between
@@ -928,7 +934,10 @@ export async function abortFailedLockClaim(input: {
 }): Promise<void> {
   const db = input.client ?? supabase;
   const now = new Date().toISOString();
-  const { error } = await db
+  // SAF-18 class (c) (J15a, residual 2): the session already ended matches
+  // no row — nothing to roll back; the error is thrown as before.
+  const abortKept = keptAnswer();
+  await checkedWrite(answered(db
     .from("checkout_sessions")
     .update({
       status: "checked_in",
@@ -938,7 +947,9 @@ export async function abortFailedLockClaim(input: {
       released_reason: "Checkout did not complete — the lock claim failed",
     })
     .eq("id", input.sessionId)
-    .eq("status", "active");
+    .eq("status", "active")
+    .select("id"), abortKept));
+  const error = abortKept.error;
   if (error) throw new Error(`The checkout could not be rolled back: ${error.message}`);
   // The checkout-sourced edit intent is keyed (document, user, kind, source),
   // so the row the upsert wrote a moment ago IS this session's — end it.
@@ -1166,8 +1177,11 @@ export async function reconcileDocumentCheckoutState(
   const holderStillActive = !!holder && sessions.some((s) => String(s.userId) === String(holder));
   const names = activeCollaboratorNames(sessions);
 
+  // SAF-18 class (b) (J15a, residual 2): the display list is the repair's
+  // bookkeeping — one that did not land is said, as the clear above is.
   if (holderStillActive) {
-    await db.from("documents").update({ active_collaborators: names }).eq("id", documentId);
+    const listed = await checkedWrite(db.from("documents").update({ active_collaborators: names }).eq("id", documentId).select("id"));
+    if (!listed.ok) console.warn(`[reconcileDocumentCheckoutState] collaborator list NOT rebuilt: ${listed.error}`);
     return;
   }
 
@@ -1182,7 +1196,10 @@ export async function reconcileDocumentCheckoutState(
     .eq("id", heir.id)
     .maybeSingle();
   const heirSession = heirRow as { purpose?: string | null; note?: string | null; started_at?: string | null } | null;
-  await db
+  // SAF-18 class (b) (J15a, residual 2): the repair's lock transfer — like
+  // the clear above (SURF-4), the lock-column guard may refuse it; one that
+  // did not land is said, never read as repaired.
+  const passed = await checkedWrite(db
     .from("documents")
     .update({
       checked_out_by: heir.userId,
@@ -1191,5 +1208,7 @@ export async function reconcileDocumentCheckoutState(
       checkout_note: [heirSession?.purpose, heirSession?.note].filter(Boolean).join(" — ") || null,
       active_collaborators: names,
     })
-    .eq("id", documentId);
+    .eq("id", documentId)
+    .select("id"));
+  if (!passed.ok) console.warn(`[reconcileDocumentCheckoutState] stale lock NOT passed to ${heir.userName ?? "the senior session"}: ${passed.error}`);
 }

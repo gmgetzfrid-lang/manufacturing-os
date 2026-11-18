@@ -12,7 +12,7 @@ import { supabase } from "@/lib/supabase";
 // (curated_collection_items has no id column — its key is (collection_id,
 // document_id) — so its writes read back document_id.)
 import { checkedWrite, CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
-import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
+import { answered, keptAnswer, reorderNotSaved } from "@/lib/checkedWriteAnswer";
 
 export interface CuratedCollection {
   id: string;
@@ -223,10 +223,8 @@ export async function reorderItems(collectionId: string, orderedDocIds: string[]
       .select("document_id"))
   );
   const missed = (await Promise.all(updates)).filter((w) => !w.ok);
-  if (missed.length) {
-    const db = missed.find((w) => !w.ok && w.code === "db");
-    throw new Error(`${missed.length} of ${orderedDocIds.length} position(s) were not saved. ${db && !db.ok ? db.error : CHECKED_WRITE_REFUSED}`);
-  }
+  // Never "nothing was changed": the other positions may have landed.
+  if (missed.length) throw new Error(reorderNotSaved(missed.length, orderedDocIds.length, "position(s)"));
 }
 
 export async function updateItemNotes(

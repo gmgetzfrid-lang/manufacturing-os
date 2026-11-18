@@ -104,10 +104,11 @@ import { resolveBranch, BRANCH_MERGE_REFUSED } from "@/lib/branches";
 import { renumberDocument } from "@/lib/documentLifecycle/renumber";
 import { archiveRolledBackDoc, restoreSupersededSource } from "@/lib/documentLifecycle/common";
 import { applyWrites, type Chunk } from "@/lib/unitCodeDecode";
-import { finishMySession, adoptInFlightCheckout } from "@/lib/checkoutEpisodes";
+import { finishMySession, adoptInFlightCheckout, abortFailedLockClaim, reconcileDocumentCheckoutState } from "@/lib/checkoutEpisodes";
 import type { DocumentRecord } from "@/types/schema";
 
 const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
+const warned = (re: RegExp) => warn.mock.calls.some((c: unknown[]) => re.test(String(c[0])));
 let warn: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   h.calls.length = 0;
@@ -316,6 +317,49 @@ describe("lib/checkoutEpisodes.ts — check-in (finishMySession), adoption", () 
     h.answers["checkout_sessions:update"] = { data: null, error: { message: "upstream request timeout" } };
     expect((await adoptInFlightCheckout({ orgId: "o1", documentId: "d1" }))?.id).toBe("e1");
     expect(String(warn.mock.calls[0]?.[0])).toMatch(/could not be tagged with the episode/);
+  });
+  // The integrator's residual-2 ruling: the writes through a `db` client
+  // parameter (which the census does not count) are converted too.
+  it("closeEpisode (c): the CAS matching no row (already closed by a racer) answers closed, as before; the rail's error still answers live_sessions", async () => {
+    h.answers["checkout_sessions:select"] = NONE;
+    h.answers["documents:select"] = { data: { checked_out_by: "u1" }, error: null };
+    h.answers["checkout_episodes:update"] = NONE;
+    expect(await finish()).toMatchObject({ transition: { kind: "close" }, episodeClosed: true });
+    expect(writes("checkout_episodes").map(opsOf)).toEqual(['update({…}).eq("id", "e1").eq("status", "active").select("id")']);
+    h.answers["checkout_episodes:update"] = { data: [{ id: "e1" }], error: null };
+    expect(await finish()).toMatchObject({ episodeClosed: true });
+    h.answers["checkout_episodes:update"] = { data: null, error: { code: "P0001", message: "episode e1 still has active sessions" } };
+    expect(await finish()).toMatchObject({ episodeClosed: false });
+    h.answers["checkout_episodes:update"] = { data: null, error: { code: "40001", message: "could not serialize access" } };
+    await expect(finish()).rejects.toThrow("could not serialize access");
+  });
+  it("abortFailedLockClaim (c): a session already ended (zero rows) is nothing to roll back; an error throws in its words, as before", async () => {
+    const abort = () => abortFailedLockClaim({ sessionId: "s1", documentId: "d1", userId: "u1" });
+    h.answers["checkout_sessions:update"] = NONE;
+    await expect(abort()).resolves.toBeUndefined();
+    expect(writes("checkout_sessions").map(opsOf)).toEqual(['update({…}).eq("id", "s1").eq("status", "active").select("id")']);
+    h.answers["checkout_sessions:update"] = { data: null, error: { message: "permission denied for table checkout_sessions" } };
+    await expect(abort()).rejects.toThrow("The checkout could not be rolled back: permission denied for table checkout_sessions");
+  });
+  it("reconcileDocumentCheckoutState (b): the collaborator list and the lock transfer that did not land are said; landed ones are quiet and the same writes", async () => {
+    h.answers["checkout_sessions:select"] = (c: Call) => (c.ops.some((o) => o.m === "maybeSingle") ? { data: { purpose: "Edit", note: null, started_at: "2026-11-01" }, error: null } : { data: [{ id: "s2", user_id: "u2", user_name: "U Two", started_at: "2026-11-01" }], error: null });
+    h.answers["documents:select"] = { data: { checked_out_by: "u2" }, error: null };
+    await reconcileDocumentCheckoutState("d1");
+    expect(writes("documents").map((c) => c.ops[0].args[0])).toEqual([{ active_collaborators: ["U Two"] }]);
+    expect(warn).not.toHaveBeenCalled();
+    h.answers["documents:update"] = NONE;
+    await reconcileDocumentCheckoutState("d1");
+    expect(warned(/collaborator list NOT rebuilt/)).toBe(true);
+    h.answers["documents:select"] = { data: { checked_out_by: "gone" }, error: null };
+    h.answers["documents:update"] = { data: [{ id: "d1" }], error: null };
+    h.calls.length = 0; warn.mockClear();
+    await reconcileDocumentCheckoutState("d1");
+    expect(writes("documents").map(opsOf)).toEqual(['update({…}).eq("id", "d1").select("id")']);
+    expect(writes("documents")[0].ops[0].args[0]).toMatchObject({ checked_out_by: "u2", checked_out_by_name: "U Two", checkout_note: "Edit", active_collaborators: ["U Two"] });
+    expect(warn).not.toHaveBeenCalled();
+    h.answers["documents:update"] = NONE;
+    await reconcileDocumentCheckoutState("d1");
+    expect(warned(/stale lock NOT passed to U Two/)).toBe(true);
   });
   it("the quick hold's claim reads its row through checkedWrite and hands resolveLockClaim the same answer (driven by the checkout suites)", () => {
     const ce = src("lib/checkoutEpisodes.ts");
