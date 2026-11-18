@@ -3,22 +3,26 @@
 // /api/storage/multipart create / complete — signs a write to a key OUTSIDE
 // orgs/<uuid>/ except what lib/storageWriteAllowList.ts allows:
 //   - `avatars/<uid>/…` for that uid alone (lib/userProfiles.ts saveMyAvatar);
-//   - a legacy request file for the backup restore's put-back: an active Admin
-//     of EVERY workspace whose request lists the key, and only while the
-//     object is absent (listed and stored → EVID-17's 409).
+//   - a legacy request file for the backup restore's put-back, in its one
+//     historical shape `tickets/<id>/attachments/<name>` only: an active
+//     Admin of EVERY workspace whose request lists the key, each workspace
+//     past the subscription gate (BILL-10), and only while the object is
+//     absent (listed and stored → EVID-17's 409). A key of any other shape
+//     is refused without a read, even when a (restored) request lists it.
 // Everything else is 403 in plain words with nothing signed; a lookup or
 // storage check that cannot be made is a 503. The orgs/<uuid>/ branch is
 // untouched: every key the app's writers mint is pinned signed exactly as
 // before, and the writer census below fails when a new writer appears.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { NextRequest } from "next/server";
 
 const ORG_A = "12345678-1234-1234-1234-123456789abc";
 const ORG_B = "87654321-4321-4321-4321-cba987654321";
-const LEGACY = "tickets/REQ-7/1600000000000_iso_IFC.pdf"; // a pre-orgs/ request file
+// The one legacy shape (the initial commit's lib/paths.ts storageTicketAttachmentPath, no org).
+const LEGACY = "tickets/REQ-7/attachments/iso_IFC.pdf";
 
 type Member = { org_id: string; uid: string; role: string; roles: string[]; status?: string };
 
@@ -32,6 +36,8 @@ const state = vi.hoisted(() => ({
   stored: [] as string[],
   headErr: null as null | Error,
   versionClash: false,
+  /** workspaces whose subscription has lapsed (orgs row: canceled) */
+  lapsed: [] as string[],
   reads: [] as Array<{ table: string; filters: Array<[string, unknown[]]> }>,
   signed: [] as Array<{ key: string; contentType?: unknown }>,
   sends: [] as Array<{ name: string; key: string }>,
@@ -58,9 +64,14 @@ function chain(table: string) {
       const orgEq = eqs().org_id as string | undefined;
       const orgs = (url && state.listedBy[url]) || [];
       const rows = orgs.filter((o) => orgEq === undefined || o === orgEq).map((o) => ({ id: `t-${o}`, org_id: o }));
-      return { data: rows, error: null };
+      const limit = arg("limit")?.[0] as number | undefined;
+      return { data: limit === undefined ? rows : rows.slice(0, limit), error: null };
     }
     if (table === "audit_logs") return { data: null, error: null };
+    if (table === "orgs") {
+      const id = eqs().id as string;
+      return { data: state.lapsed.includes(id) ? { subscription_status: "canceled", trial_ends_at: null } : null, error: null };
+    }
     return { data: null, error: null };
   };
   const c: Record<string, unknown> = {};
@@ -92,7 +103,8 @@ vi.mock("@/lib/supabaseAdmin", () => ({
     from: (t: string) => chain(t),
   },
 }));
-vi.mock("@/lib/serverAuth", () => ({ enforceOrgAccess: vi.fn(async () => null) }));
+// lib/serverAuth.ts is REAL: enforceOrgAccess reads the `orgs` row above,
+// so both SUBSCRIPTION_ENFORCE modes are the route's own behaviour.
 vi.mock("@/lib/r2", () => ({
   R2_BUCKET: "b",
   r2: {
@@ -120,12 +132,13 @@ import { POST as uploadUrl } from "@/app/api/storage/upload-url/route";
 import { POST as multipart } from "@/app/api/storage/multipart/route";
 import {
   outsideOrgWriteRefusal, avatarKeyOwner, isOrgKey,
-  OUTSIDE_ORG_REFUSAL, AVATAR_NOT_YOURS_REFUSAL, LEGACY_KEY_NOT_ADMIN_REFUSAL, OUTSIDE_ORG_UNVERIFIED,
+  isLegacyTicketKey, OUTSIDE_ORG_REFUSAL, AVATAR_NOT_YOURS_REFUSAL, LEGACY_KEY_NOT_ADMIN_REFUSAL, OUTSIDE_ORG_UNVERIFIED,
 } from "@/lib/storageWriteAllowList";
 import { TICKET_KEY_LISTED_REFUSAL } from "@/lib/ticketKeyOverwrite";
 import { restoreUploadRequest } from "@/lib/storageKey";
 import { makeLibraryStoragePath, makeTicketAttachmentPath, makeUserPrivatePath, uniqueUploadName } from "@/lib/storage";
 import { ticketStagingFolder } from "@/lib/ticketCreate";
+import { resetWouldRefuseLogForTests } from "@/lib/serverAuth";
 
 const up = (path: string, extra: Record<string, unknown> = { contentType: "application/pdf" }) =>
   uploadUrl(new NextRequest("https://app/api/storage/upload-url", {
@@ -148,9 +161,12 @@ const admin = (org: string, uid = "u1", roles = ["Admin"]): Member => ({ org_id:
 beforeEach(() => {
   state.user = { id: "u1", email: "u1@example.com" };
   state.listedBy = {}; state.ticketsErr = null; state.membersErr = null; state.members = [];
-  state.stored = []; state.headErr = null; state.versionClash = false;
+  state.stored = []; state.headErr = null; state.versionClash = false; state.lapsed = [];
   state.reads = []; state.signed = []; state.sends = [];
+  delete process.env.SUBSCRIPTION_ENFORCE;
+  resetWouldRefuseLogForTests();
 });
+afterEach(() => { delete process.env.SUBSCRIPTION_ENFORCE; vi.restoreAllMocks(); });
 
 describe("EVID-19 — upload-url: a key outside orgs/<uuid>/ is refused unless allow-listed", () => {
   it("REPRODUCED on base 96a7b81d: a legacy key workspace A's request lists, asked for by a user of workspace B — now 403 in plain words, nothing signed, storage never asked", async () => {
@@ -179,14 +195,73 @@ describe("EVID-19 — upload-url: a key outside orgs/<uuid>/ is refused unless a
     expect(state.signed).toEqual([]);
   });
 
-  it("a key nothing lists and no rule allows (a stray legacy key, the offline-archive data/ prefix, a non-uuid orgs/ folder) → 403 in plain words", async () => {
-    for (const key of ["legacy/other/report.pdf", "data/archive-1.zip", "exports/run.zip", "orgs/acme/tickets/1_a.pdf", "public/index.html"]) {
+  it("a key nothing lists and no rule allows (a stray key, the offline-archive data/ prefix, a non-uuid orgs/ folder, an unlisted legacy-shaped key) → 403 in plain words", async () => {
+    for (const key of ["legacy/other/report.pdf", "data/archive-1.zip", "exports/run.zip", "orgs/acme/tickets/1_a.pdf", "public/index.html", LEGACY]) {
       state.signed = [];
       const res = await up(key);
       expect(res.status, key).toBe(403);
       expect(await res.json(), key).toEqual({ error: OUTSIDE_ORG_REFUSAL });
       expect(state.signed, key).toEqual([]);
     }
+  });
+
+  it("review fix 1 — a crafted backup cannot farm rule 2: a key OUTSIDE the legacy shape is refused (403, today's words) even when the caller's own restored request lists it and the caller is its Admin; nothing is read", async () => {
+    state.members = [admin(ORG_A)];
+    const farmed = ["data/x.zip", "exports/run-1.zip", "public/index.html", "tmp/a.bin", "tickets/REQ-7/1600000000000_iso.pdf",
+      "tickets/REQ-7/attachments/sub/x.pdf", "tickets/REQ 7/attachments/x.pdf", "legacy/tickets/REQ-7/attachments/x.pdf", "libraries/l1/x.pdf"];
+    for (const key of farmed) {
+      state.listedBy[key] = [ORG_A];
+      state.reads = []; state.signed = []; state.sends = [];
+      const res = await up(key);
+      expect(res.status, key).toBe(403);
+      expect(await res.json(), key).toEqual({ error: OUTSIDE_ORG_REFUSAL });
+      expect(state.signed, key).toEqual([]);
+      expect(allowListReads(), key).toEqual([]);
+      expect(state.sends, key).toEqual([]);
+      for (const action of ["create", "complete"]) {
+        const r = await mp({ action, path: key, contentType: "application/octet-stream", ...COMPLETE });
+        expect(r.status, `${key} ${action}`).toBe(403);
+      }
+      expect(state.sends, key).toEqual([]);
+    }
+    expect(isLegacyTicketKey(LEGACY)).toBe(true);
+  });
+
+  it("review fix 2 — the subscription gate: with SUBSCRIPTION_ENFORCE on, a lapsed listing workspace refuses the legacy put-back with the orgs/ branch's own 402 and words; nothing signed, storage never asked", async () => {
+    process.env.SUBSCRIPTION_ENFORCE = "true";
+    state.members = [admin(ORG_A)]; state.listedBy[LEGACY] = [ORG_A]; state.lapsed = [ORG_A];
+    const orgsBranch = await up(`orgs/${ORG_A}/libraries/l1/x.pdf`);
+    expect(orgsBranch.status).toBe(402);
+    const orgsWords = await orgsBranch.json();
+    state.signed = []; state.sends = [];
+    const res = await up(LEGACY);
+    expect(res.status).toBe(402);
+    expect(await res.json()).toEqual(orgsWords);
+    expect(state.signed).toEqual([]);
+    expect(state.sends).toEqual([]);
+    // the multipart door: refused at create (as its orgs/ branch), not asked at complete
+    expect((await mp({ action: "create", path: LEGACY, contentType: "application/pdf" })).status).toBe(402);
+    expect((await mp({ action: "complete", path: LEGACY, ...COMPLETE })).status).toBe(200);
+  });
+
+  it("review fix 2 — with SUBSCRIPTION_ENFORCE off, the lapsed workspace's would-be refusal is only logged (named by the door) and the put-back is signed byte-identically, as the orgs/ branch", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    state.members = [admin(ORG_A)]; state.listedBy[LEGACY] = [ORG_A]; state.lapsed = [ORG_A];
+    const res = await up(LEGACY);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(SIGNED(LEGACY));
+    expect(warn.mock.calls.some((c) => String(c[0]).startsWith("[storage/upload-url] subscription gate would refuse org " + ORG_A))).toBe(true);
+    // a workspace in good standing: no line
+    warn.mockClear(); resetWouldRefuseLogForTests(); state.lapsed = [];
+    expect((await up(LEGACY)).status).toBe(200);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("review fix 2 — every listing workspace is gated: lapsed B refuses an Admin of A and B (enforced)", async () => {
+    process.env.SUBSCRIPTION_ENFORCE = "true";
+    state.members = [admin(ORG_A), admin(ORG_B)]; state.listedBy[LEGACY] = [ORG_A, ORG_B]; state.lapsed = [ORG_B];
+    expect((await up(LEGACY)).status).toBe(402);
+    expect(state.signed).toEqual([]);
   });
 
   it("REGRESSION — the caller's own avatar (lib/userProfiles.ts saveMyAvatar): signed exactly as before, the response byte-identical, nothing extra read", async () => {
@@ -430,7 +505,7 @@ describe("EVID-19 — lib/storageWriteAllowList.ts", () => {
 
   it("the restore rule's listing is unscoped (every workspace that lists the key), the Admin lookup scoped to the caller and active rows", async () => {
     state.listedBy[LEGACY] = [ORG_A]; state.members = [admin(ORG_A)];
-    expect(await outsideOrgWriteRefusal(sb, head([]), LEGACY, "u1")).toBeNull();
+    expect(await outsideOrgWriteRefusal(sb, head([]), LEGACY, "u1", null)).toBeNull();
     const t = state.reads.find((r) => r.table === "tickets")!;
     expect(t.filters).toEqual(expect.arrayContaining([["select", ["org_id"]], ["contains", ["attachments", JSON.stringify([{ url: LEGACY }])]]]));
     expect(t.filters.some(([f, a]) => f === "eq" && a[0] === "org_id")).toBe(false);
@@ -440,13 +515,28 @@ describe("EVID-19 — lib/storageWriteAllowList.ts", () => {
 
   it("a request row with no workspace is never matched to an Admin", async () => {
     state.listedBy[LEGACY] = [ORG_A, null]; state.members = [admin(ORG_A)];
-    expect(await outsideOrgWriteRefusal(sb, head([]), LEGACY, "u1")).toEqual({ status: 403, error: LEGACY_KEY_NOT_ADMIN_REFUSAL });
+    expect(await outsideOrgWriteRefusal(sb, head([]), LEGACY, "u1", null)).toEqual({ status: 403, error: LEGACY_KEY_NOT_ADMIN_REFUSAL });
     // refused before the Admin lookup, so no `null` is ever sent as a workspace id
     expect(state.reads.filter((r) => r.table === "org_members")).toEqual([]);
   });
 
+  it("review fix 3 — exactly 1,000 listing rows are decided; 1,001 cannot be cleared in one read and are refused (503)", async () => {
+    state.members = [admin(ORG_A)];
+    state.listedBy[LEGACY] = Array.from({ length: 1000 }, () => ORG_A);
+    expect(await outsideOrgWriteRefusal(sb, head([]), LEGACY, "u1", null)).toBeNull();
+    expect(state.reads.find((r) => r.table === "tickets")!.filters).toContainEqual(["limit", [1001]]);
+    state.listedBy[LEGACY] = Array.from({ length: 1001 }, () => ORG_A);
+    expect(await outsideOrgWriteRefusal(sb, head([]), LEGACY, "u1", null)).toEqual({ status: 503, error: OUTSIDE_ORG_UNVERIFIED });
+  });
+
+  it("the legacy shape is exact: the historical lib/paths.ts layout (no org, cleanSegment's alphabet), nothing around it", () => {
+    for (const k of [LEGACY, "tickets/abc_1.2-3/attachments/a.b_c-d.dwg"]) expect(isLegacyTicketKey(k), k).toBe(true);
+    for (const k of ["tickets/REQ-7/attachments/", "tickets/REQ-7/attachments/a/b.pdf", "tickets/REQ-7/x/a.pdf", "xtickets/REQ-7/attachments/a.pdf",
+      "tickets/REQ-7/attachments/a b.pdf", "tickets/REQ-7/1_a.pdf", `orgs/${ORG_A}/tickets/REQ-7/attachments/a.pdf`]) expect(isLegacyTicketKey(k), k).toBe(false);
+  });
+
   it("a thrown lookup is a 503, never an admission", async () => {
     const throwing = { from: () => { throw new Error("boom"); } } as never;
-    expect(await outsideOrgWriteRefusal(throwing, head([]), LEGACY, "u1")).toEqual({ status: 503, error: OUTSIDE_ORG_UNVERIFIED });
+    expect(await outsideOrgWriteRefusal(throwing, head([]), LEGACY, "u1", null)).toEqual({ status: 503, error: OUTSIDE_ORG_UNVERIFIED });
   });
 });

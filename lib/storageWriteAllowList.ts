@@ -16,16 +16,26 @@
 //   1. `avatars/<uid>/…` — lib/userProfiles.ts saveMyAvatar, the profile
 //      page's photo (the signed-in person's own id, from the session). Allowed
 //      for that uid alone; nothing is read.
-//   2. A legacy request file (a key from before the orgs/ layout that a
-//      request's `attachments` list) — the backup restore's "Put the files
-//      back" (app/(protected)/admin/restore/page.tsx), which asks upload-url
-//      only for a file its existence probe (/api/storage/resolve?exists=1,
-//      held to the restore surface: an Admin of the workspace the key is
-//      attributed to) found NOT in storage. Allowed only when the caller is an
-//      active Admin (the restore surface's entry rule, by the full role
-//      collection) of EVERY workspace whose request lists the key, and only
-//      while the object is absent; a listed key whose bytes are stored is
-//      refused with EVID-17's words (409).
+//   2. A legacy request file in the ONE historical shape the code ever
+//      named outside orgs/: `tickets/<ticketId>/attachments/<filename>`, each
+//      segment of [A-Za-z0-9._-] (the initial commit's lib/paths.ts
+//      storageTicketAttachmentPath, "legacy single-tenant", cleanSegment;
+//      removed as dead code in #97). Every ticket key the app minted since
+//      storage moved to R2 is orgs/<uuid>/tickets/… (lib/storage.ts
+//      makeTicketAttachmentPath, unchanged since that commit; orgs.id has
+//      been a UUID since the first schema). This is the backup restore's
+//      "Put the files back" (app/(protected)/admin/restore/page.tsx), which
+//      asks upload-url only for a file its existence probe
+//      (/api/storage/resolve?exists=1, held to the restore surface) found NOT
+//      in storage. Allowed only when a request lists the key, the caller is
+//      an active Admin (the restore surface's entry rule, by the full role
+//      collection) of EVERY workspace whose request lists it, each of those
+//      workspaces passes the subscription gate (BILL-10, as the same restore's
+//      orgs/ files do), and the object is absent; listed and stored is
+//      refused with EVID-17's words (409). A key of any other shape is never
+//      looked up: a restored row can list anything (the restore writes
+//      tickets.attachments as the service role), so a listing alone is not
+//      an allow-list.
 //
 // Everything else outside orgs/<uuid>/ is refused (403, plain words, nothing
 // signed). Every other writer in the app mints an orgs/<uuid>/ key or writes
@@ -36,6 +46,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { TICKET_KEY_LISTED_REFUSAL } from "@/lib/ticketKeyOverwrite";
 import { adminSurface, adminSurfaceAllows } from "@/lib/adminSurfaces";
 import { heldRoles } from "@/lib/roleHeld";
+import { enforceOrgAccess } from "@/lib/serverAuth";
 
 export const OUTSIDE_ORG_REFUSAL =
   "Files can only be uploaded into a workspace you belong to, or as your own profile picture. This file location is neither, so nothing was signed.";
@@ -49,8 +60,12 @@ export const OUTSIDE_ORG_UNVERIFIED =
 /** The orgs/<uuid>/ prefix both doors match (character for character). */
 const ORG_KEY_RE = /^orgs\/([0-9a-fA-F-]{36})\//;
 const AVATAR_KEY_RE = /^avatars\/([^/]+)\/[^/]+/;
+/** The one legacy request-file shape (rule 2): lib/paths.ts
+ *  storageTicketAttachmentPath without an org, cleanSegment's alphabet. */
+const LEGACY_TICKET_KEY_RE = /^tickets\/[A-Za-z0-9._-]+\/attachments\/[A-Za-z0-9._-]+$/;
 /** More request rows than this naming one legacy key cannot be cleared in
- *  one read: refused as unverified rather than decided on a partial list. */
+ *  one read: refused as unverified rather than decided on a partial list
+ *  (LISTING_PAGE + 1 rows are read, so exactly LISTING_PAGE is decided). */
 const LISTING_PAGE = 1000;
 
 type Refusal = { status: number; error: string };
@@ -59,6 +74,11 @@ type Head = (key: string) => Promise<unknown>;
 /** True when `path` is in the orgs/<uuid>/ layout (the doors' own branch). Pure. */
 export function isOrgKey(path: string): boolean {
   return ORG_KEY_RE.test(path ?? "");
+}
+
+/** True when `path` has the one legacy request-file shape rule 2 admits. Pure. */
+export function isLegacyTicketKey(path: string): boolean {
+  return LEGACY_TICKET_KEY_RE.test(path ?? "");
 }
 
 /** The uid an `avatars/<uid>/…` key belongs to, else null. Pure. */
@@ -78,12 +98,17 @@ function isNotFound(e: unknown): boolean {
  * orgs/<uuid>/ branch did not match (an orgs/ key reaching here is refused:
  * no request lists it as a legacy key). `head` asks storage whether the
  * object exists (it throws NotFound / 404 when it does not).
+ * `subscriptionGate` names the door for BILL-10's gate (`enforceOrgAccess`,
+ * asked for each listing workspace before signing — refused only with
+ * SUBSCRIPTION_ENFORCE on, logged otherwise); null skips it, as the
+ * multipart door's orgs/ branch skips it after create.
  */
 export async function outsideOrgWriteRefusal(
   sb: Pick<SupabaseClient, "from">,
   head: Head,
   path: string,
   uid: string,
+  subscriptionGate: string | null,
 ): Promise<Refusal | null> {
   // 1. The caller's own avatar folder — pure, nothing read.
   const avatarOwner = avatarKeyOwner(path);
@@ -91,17 +116,19 @@ export async function outsideOrgWriteRefusal(
     return avatarOwner === uid ? null : { status: 403, error: AVATAR_NOT_YOURS_REFUSAL };
   }
 
-  // 2. A legacy request file, for the backup restore's put-back.
+  // 2. A legacy request file, for the backup restore's put-back — only in
+  // its one historical shape; anything else is refused without a read.
+  if (!isLegacyTicketKey(path)) return { status: 403, error: OUTSIDE_ORG_REFUSAL };
   let orgIds: Array<string | null>;
   try {
     const { data, error } = await sb
       .from("tickets")
       .select("org_id")
       .contains("attachments", JSON.stringify([{ url: path }]))
-      .limit(LISTING_PAGE);
+      .limit(LISTING_PAGE + 1);
     if (error) return { status: 503, error: OUTSIDE_ORG_UNVERIFIED };
     const rows = Array.isArray(data) ? (data as Array<{ org_id?: string | null }>) : [];
-    if (rows.length >= LISTING_PAGE) return { status: 503, error: OUTSIDE_ORG_UNVERIFIED };
+    if (rows.length > LISTING_PAGE) return { status: 503, error: OUTSIDE_ORG_UNVERIFIED };
     orgIds = [...new Set(rows.map((r) => (typeof r?.org_id === "string" && r.org_id ? r.org_id : null)))];
   } catch {
     return { status: 503, error: OUTSIDE_ORG_UNVERIFIED };
@@ -133,6 +160,16 @@ export async function outsideOrgWriteRefusal(
   // listed legacy key is signed only for a member of that workspace).
   if (!(orgIds as string[]).every((o) => adminOf.has(o))) {
     return { status: 403, error: LEGACY_KEY_NOT_ADMIN_REFUSAL };
+  }
+
+  // BILL-10: new stored bytes for a workspace are billable — the same gate,
+  // words and codes as the orgs/ branch (402 with SUBSCRIPTION_ENFORCE on,
+  // logged off), for every workspace whose request lists the key.
+  if (subscriptionGate) {
+    for (const orgId of orgIds as string[]) {
+      const gate = await enforceOrgAccess(sb as SupabaseClient, orgId, subscriptionGate);
+      if (gate) return { status: gate.status, error: gate.error };
+    }
   }
 
   // EVID-17's rule: listed and stored is never overwritten; absent is the

@@ -77,11 +77,14 @@ export async function POST(req: NextRequest) {
   }
   // drafting-flow EVID-19: upload-url's rule for a key outside orgs/<uuid>/
   // (lib/storageWriteAllowList.ts — the caller's own avatar folder, or a
-  // legacy request file an Admin puts back while it is absent; anything else
-  // refused). Asked when an upload opens and again when it completes (the
-  // moment the bytes land). Signing a part and aborting are unchanged.
+  // legacy tickets/<id>/attachments/<name> file an Admin puts back while it
+  // is absent; anything else refused). Asked when an upload opens and again
+  // when it completes (the moment the bytes land); the subscription gate at
+  // create only, as the orgs/ branch. Signing a part and aborting are
+  // unchanged.
   if (!orgMatch && (action === "create" || action === "complete")) {
-    const outside = await outsideOrgWriteRefusal(supabaseAdmin, r2Head(r2 as never, R2_BUCKET), path, user.id);
+    const outside = await outsideOrgWriteRefusal(supabaseAdmin, r2Head(r2 as never, R2_BUCKET), path, user.id,
+      action === "create" ? "storage/multipart" : null);
     if (outside) return bad(outside.error, outside.status);
   }
   if (nodeImage && action === "create") {

@@ -85,11 +85,13 @@ export async function POST(req: NextRequest) {
   // drafting-flow EVID-19 (DEC-90: deny by default): a key OUTSIDE
   // orgs/<uuid>/ is signed only when lib/storageWriteAllowList.ts allows it —
   // the caller's own avatars/<uid>/ folder, or the backup restore's put-back
-  // of a legacy request file (an Admin of every workspace whose request lists
-  // it, only while the object is absent). Everything else is refused in plain
-  // words, nothing signed; a lookup that cannot be made is a 503.
+  // of a legacy request file in its one historical shape,
+  // tickets/<id>/attachments/<name> (an Admin of every workspace whose
+  // request lists it, each past the subscription gate, only while the object
+  // is absent). Everything else is refused in plain words, nothing signed; a
+  // lookup that cannot be made is a 503.
   if (!orgMatch) {
-    const outside = await outsideOrgWriteRefusal(supabaseAdmin, r2Head(r2 as never, R2_BUCKET), path, user.id);
+    const outside = await outsideOrgWriteRefusal(supabaseAdmin, r2Head(r2 as never, R2_BUCKET), path, user.id, "storage/upload-url");
     if (outside) return NextResponse.json({ error: outside.error }, { status: outside.status });
   }
   if (logo) {

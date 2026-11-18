@@ -6101,6 +6101,16 @@ Before such a modal starts an upload, once the run's cards clear, and whenever n
 
 *Landed 2026-11-18 (fleet F8-EVID19 — drafting-flow `EVID-19` RESOLVED under this ruling; no migration):* outside `orgs/<uuid>/`, both signing doors (`/api/storage/upload-url`, and `/api/storage/multipart` create and complete; sign and abort unchanged) sign a write only through one allow-list, `lib/storageWriteAllowList.ts`. It has two rules. (1) `avatars/<uid>/…` for that uid alone. (2) A legacy request file, the backup restore's put-back: an active Admin (the restore surface's rule) of every workspace whose request lists the key, and only while the object is absent; listed and stored is `EVID-17`'s 409. Everything else is 403 in plain words with nothing signed; a lookup that cannot be made is 503. The `orgs/<uuid>/` branch is byte-identical. Every writer through the two doors is inventoried in the record and pinned unchanged, with a writer census in the test (48 cases, 15 mutations killed). The restore's legacy put-back has four named differences: an added HEAD that fails closed; a key two workspaces list refused to an Admin of one, as done-when 2 requires; a version key now 403 instead of 409, still refused; and no subscription gate, as before.
 
+*Landed 2026-11-18 (fleet F8-EVID19 fix pass — after the independent review; ruling (b) upheld, ruling (d) reversed; no migration):*
+- **Correction to the line above:** "everything else is 403" did not hold. A restore writes `tickets.attachments` as the service role, so a crafted backup could make any absent outside key (`data/`, `exports/`, `public/` …) signable for that workspace's Admin.
+- **(1)** Rule 2 now admits only the one historical legacy request-file shape, `tickets/<id>/attachments/<name>` (the initial commit's `lib/paths.ts`, never imported). The evidence is in the record. Every other outside key is 403 before any read.
+- **(2)** The legacy put-back passes `enforceOrgAccess` for every listing workspace: 402 with the `orgs/` branch's words when enforced, logged when not; multipart at create only.
+- **(3)** The listing read asks for 1,001 rows.
+- **Tests and mutations:** 54 cases, 25 mutations killed.
+- **Residual, owned by the next holder of `lib/storageWriteAllowList.ts` and `app/api/storage/resolve/route.ts`:**
+  - A planted listing of another workspace's exact legacy key blocks that workspace's put-back. This is fail-safe: nothing is signed.
+  - An Admin can squat an absent legacy-shaped key only their own workspace lists, billed by the gate.
+
 <a id="dec-91"></a>
 ## DEC-91 · No role known is null, never a placeholder: what an audit row says, what a consumer allows, and what a browser keeps after sign-out
 
