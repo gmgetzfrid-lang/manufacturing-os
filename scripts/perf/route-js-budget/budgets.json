@@ -1,0 +1,26 @@
+{
+  "about": "projects-tab PERF-12 (projects-joint J18): first-load JavaScript per route, in bytes, from the built manifests (rootMainFiles + the client-reference manifest entryJSFiles; scripts/perf/route-js-budget/budget.mjs). A route not named in `routes` is held to defaultRouteMaxBytes under the (protected) layout and to publicDefaultRouteMaxBytes outside it; every route's shell to shellMaxBytes. Set 2026-11-18 from the measured build of the J18 change, each rounded up from the measurement plus 3% headroom. A route over its budget fails `npm run perf:budget` (run after `next build`, and in CI). Raising a budget is a decision: say why in the commit.",
+  "measuredAt": "2026-11-18",
+  "routes": {
+    "/projects/[id]": 1770000,
+    "/documents/[libraryId]": 3449000,
+    "/requests/[id]": 2316000,
+    "/admin/assets": 1814000,
+    "/dashboard": 1507000,
+    "/inbox": 1453000,
+    "/projects": 1359000,
+    "/": 738000,
+    "/verify/[docId]": 509000
+  },
+  "defaultRouteMaxBytes": 1371000,
+  "defaultRouteMeasuredMax": {
+    "route": "/knowledge/[id]",
+    "bytes": 1330715
+  },
+  "publicDefaultRouteMaxBytes": 766000,
+  "publicDefaultRouteMeasuredMax": {
+    "route": "/submit/[token]",
+    "bytes": 743167
+  },
+  "shellMaxBytes": 1108000
+}

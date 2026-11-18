@@ -51,12 +51,19 @@ import {
 import { useTicketNotifications, useAttentionStatus, type AttentionSection } from '@/hooks/useTicketNotifications';
 import { useNotificationCenter } from '@/components/notifications/NotificationCenter';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import LogoUploadModal from '@/components/branding/LogoUploadModal';
+import { lazyModule, loadFailedToast, usePreloadWhenIdle } from '@/lib/lazyModule';
+import { useOptionalToast } from '@/components/providers/ToastProvider';
 import UserAvatar from '@/components/ui/UserAvatar';
 import {
   DOCUMENT_VIEWS, EQUIPMENT_VIEWS, HOME_VIEWS, ACTIVITY_VIEWS, INTELLIGENCE_VIEWS,
 } from '@/components/navigation/ViewTabs';
 import { ZC } from "@/lib/zLayers";
+
+/** The logo upload modal opens on a click: it is fetched when the browser is
+ *  first idle, or at that click, not with the app shell (projects-tab
+ *  PERF-12, projects-joint J18). A failed fetch closes it and says so in a
+ *  toast; the next click fetches again. */
+export const logoUploadModalModule = lazyModule(() => import('@/components/branding/LogoUploadModal'), 'logo upload');
 
 // A consolidated tool stays highlighted on any of its views. DERIVED from
 // the ViewTabs arrays so the two surfaces can never drift again (a new view
@@ -135,6 +142,17 @@ export default function Sidebar({
   }, []);
   const { logoUrl, branding, canEdit: canEditBranding } = useOrgBranding();
   const [logoModalOpen, setLogoModalOpen] = useState(false);
+  // Only someone who can edit the branding can open it.
+  usePreloadWhenIdle(logoUploadModalModule, canEditBranding);
+  const [logoAttempt, setLogoAttempt] = useState(0);
+  const toast = useOptionalToast();
+  const LogoUploadModal = logoUploadModalModule.useLoaded(logoModalOpen, {
+    attempt: logoAttempt,
+    onError: () => {
+      setLogoModalOpen(false);
+      toast?.showToast(loadFailedToast("logo upload"));
+    },
+  })?.default;
   const isMobile = useIsMobile();
 
   // `railCollapsed` is the persisted DESKTOP icon-rail preference. The
@@ -385,7 +403,7 @@ export default function Sidebar({
               <div className="text-[9px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest">Workspace</div>
               {canEditBranding && (
                 <button
-                  onClick={() => setLogoModalOpen(true)}
+                  onClick={() => { setLogoModalOpen(true); setLogoAttempt((n) => n + 1); }}
                   title={logoUrl ? 'Change workspace logo' : 'Add a workspace logo'}
                   className="shrink-0 w-5 h-5 grid place-items-center rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-accent)] transition-colors"
                 >
@@ -417,7 +435,7 @@ export default function Sidebar({
         </div>
       )}
 
-      {logoModalOpen && <LogoUploadModal onClose={() => setLogoModalOpen(false)} />}
+      {logoModalOpen && LogoUploadModal && <LogoUploadModal onClose={() => setLogoModalOpen(false)} />}
 
       <nav className="flex-1 overflow-y-auto overflow-x-hidden py-3 custom-scrollbar min-h-0">
         {sections.map((section) => {

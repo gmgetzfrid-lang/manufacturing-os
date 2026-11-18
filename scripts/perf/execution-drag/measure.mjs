@@ -73,6 +73,9 @@ try {
         longTasks: window.__long.length, longTaskMs: Math.round(window.__long.reduce((a, b) => a + b, 0)),
       };
     });
+    // A drag that did not move its bar measured no drag at all: say so, so
+    // the run counts as an error in the totals instead of a second control.
+    if (drag && !moved) errors.push(`the drag did not move the bar (moved ${moved} px; bar at x=${Math.round(box.x)})`);
     out.runs.push({ cpuThrottle: `${rate}x`, drag, dom, barMovedPx: moved, ...r, errors: errors.slice(0, 3) });
     await page.close();
   }

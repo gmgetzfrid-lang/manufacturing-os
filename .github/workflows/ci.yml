@@ -1,6 +1,6 @@
 # CI gate — runs on every PR and every push to master.
 #
-# Four checks, in fail-fast order:
+# Five checks, in fail-fast order:
 #   1. tsc --noEmit   — type errors
 #   2. eslint         — lint ERRORS fail the build (warnings don't)
 #   3. vitest         — the regression suites (workflow state machine, ticket
@@ -9,6 +9,8 @@
 #   4. next build     — the production build, with placeholder Supabase env so
 #                       module-scope client construction succeeds. No real
 #                       credentials in CI; nothing executes against a database.
+#   5. perf:budget    — each route's first-load JavaScript from that build's
+#                       manifests, against its budget (projects-tab PERF-12).
 #
 # Recommended: in GitHub → Settings → Branches, protect `master` and require
 # the "verify" check — then a red build physically cannot be merged.
@@ -65,3 +67,8 @@ jobs:
 
       - name: Production build
         run: npm run build
+
+      # projects-tab PERF-12: every route's first-load JavaScript, read from
+      # the build's manifests, against scripts/perf/route-js-budget/budgets.json.
+      - name: Route JavaScript budget
+        run: npm run perf:budget

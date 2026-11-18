@@ -5,7 +5,9 @@ import { supabase, setPreferMicrosoft } from "@/lib/supabase";
 import { signOutOfThisBrowser, announceServiceWorkerSession } from "@/lib/swSession";
 import Sidebar from "@/components/navigation/Sidebar";
 import TopBar from "@/components/navigation/TopBar";
-import GlobalCommandPalette from "@/components/navigation/GlobalCommandPalette";
+// The palette's shortcut listener and open state; the palette itself loads
+// when the browser is idle or at the first press (PERF-12, projects-joint J18).
+import GlobalCommandPalette from "@/components/navigation/GlobalCommandPaletteHost";
 import { RoleProvider, useRole } from "@/components/providers/RoleContext";
 import { OrgBrandingProvider } from "@/components/providers/OrgBrandingProvider";
 import { SubscriptionProvider } from "@/components/providers/SubscriptionProvider";

@@ -19,6 +19,7 @@ import type { InboxSnapshot } from "@/lib/inbox";
 import { useGreeting } from "@/components/cockpit/DailyBrief";
 import { useNotificationCenter } from "@/components/notifications/NotificationCenter";
 import { csvCell } from "@/lib/csvSafe";
+import { formatAgo } from "@/lib/formatAgo";
 
 // Headline counts for the three command-deck pillars. Fetched separately from
 // the personal inbox snapshot (org-wide numbers), each guarded so a missing
@@ -263,20 +264,19 @@ export function roleFocus(role: string | null | undefined, d: InboxSnapshot): st
   return null;
 }
 
-export function formatAgo(iso: string | undefined): string {
-  if (!iso) return "—";
-  try {
-    const d = new Date(iso);
-    const diff = Date.now() - d.getTime();
-    if (diff < 60_000) return "now";
-    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
-    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
-    if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)}d`;
-    return d.toLocaleDateString();
-  } catch {
-    return "";
-  }
-}
+// formatAgo — the compact age ("now", "5m", "3h", "2d", then the date) —
+// lives in lib/formatAgo.ts since projects-tab PERF-12 (projects-joint J18).
+// The notification center's feed (components/cockpit/AttentionFeed.tsx) is
+// in the app shell on every route; importing the age from this file put the
+// whole Command Deck and DailyBrief there too. It is re-exported here, the
+// same function, for the inbox page and the dashboard widgets that import it
+// from the deck.
+//
+// (This note keeps the lines below where the audit records cite them —
+// exportInboxCsv and the rest of this file are unchanged.)
+//
+//
+export { formatAgo };
 
 // CSV export — dumps every Inbox section into one CSV with section
 // headers. Friendly enough to send to email/Slack at end of day.
