@@ -230,6 +230,28 @@ describe("EVID-6 (P13) — the drain writes each lost row as an AUDIT_DEAD_LETTE
     expect(db.rows.audit_dead_letters[0]).toMatchObject({ drain_attempts: 2, drain_error: null });
   });
 
+  it("SAF-21 (b): a drained stamp, or a refusal's note, that matched no row (the outbox row went meanwhile) is said — the landed audit row still counts drained", async () => {
+    const vanishing = (field: string) => ({ from: (t: string) => {
+      const b = memFrom(t) as Record<string, unknown>;
+      if (t === "audit_dead_letters") {
+        const update = b.update as (p: Row) => unknown;
+        b.update = (p: Row) => { if (field in p) db.rows.audit_dead_letters = []; return update(p); };
+      }
+      return b;
+    } } as unknown as Parameters<typeof drainAuditDeadLetters>[0]);
+    db.rows.audit_dead_letters = [outbox("o1", "2026-10-14T01:00:00.000Z")];
+    const errors: string[] = [];
+    expect(await drainAuditDeadLetters(vanishing("drained_at"), { stopBy: later(), errors })).toEqual({ drained: 1, failed: 0, orgs: 1, skipped: 0, parked: 0 });
+    expect(db.rows.audit_logs).toHaveLength(1);
+    expect(errors).toContain("audit-outbox: outbox o1 was written to the audit log (o1) but could not be marked drained (the outbox row matched no write — it may have been removed); if it is still there, the next run marks it without writing it again");
+    db.rows.audit_logs = [];
+    db.rows.audit_dead_letters = [outbox("o2", "2026-10-14T01:00:00.000Z")];
+    db.writeError = (table, op) => (table === "audit_logs" && op === "insert" ? { code: "23514", message: "check violation" } : null);
+    const noted: string[] = [];
+    expect(await drainAuditDeadLetters(vanishing("drain_error"), { stopBy: later(), errors: noted })).toEqual({ drained: 0, failed: 1, orgs: 0, skipped: 0, parked: 0 });
+    expect(noted[0]).toMatch(/could not be written to the audit log \(check violation\); it stays in the outbox — and its refusal could not be recorded \(the outbox row matched no write — it may have been removed\)$/);
+  });
+
   it("a row already written (its drained stamp refused last run): the keyed write is refused by the primary key and the row is only stamped, never written twice", async () => {
     db.rows.audit_dead_letters = [outbox("o1", "2026-10-14T01:00:00.000Z")];
     db.rows.audit_logs = [{ id: "o1", org_id: ORG, action: AUDIT_DEAD_LETTER_ACTION, resource_type: "org", resource_id: ORG, user_id: null, details: { outboxId: "o1" } }];

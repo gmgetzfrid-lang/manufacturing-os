@@ -10,6 +10,11 @@
 // (lib/costs.ts, lib/costDocs.ts, lib/changeOrders.ts) are J3's to convert
 // (DEC-31: the safety-critical paths first); until they are, the census
 // RATCHETS them — the count of unchecked sites may fall, never rise.
+//
+// projects-tab SAF-21 (J15d): the census counts writes through a client
+// handed in as a parameter (`db` / `sb` / `admin` / `client` `.from(…)`) as
+// well as through `supabase` — the rule J15a built for its own files
+// (lib/__tests__/j15aCheckedWriteCensus.test.ts, now a pointer here).
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -85,18 +90,27 @@ describe("checkedWrite", () => {
 
 const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 
-/** Statements that carry a supabase update/delete, with whether the
- *  statement routes through checkedWrite. A statement runs from the previous
- *  `;` / `{` boundary to the next `;`. */
-function writeSites(text: string): Array<{ line: number; checked: boolean; snippet: string }> {
-  const out: Array<{ line: number; checked: boolean; snippet: string }> = [];
+/** projects-tab SAF-21 (J15d): a write through a client handed in as a
+ *  PARAMETER — `db.from(…)`, `sb.from(…)`, `admin.from(…)`, `client.from(…)`
+ *  — is a supabase write too (the server drains, sweeps and bridges are
+ *  handed their client). `Array.from`, a Map's / Set's `delete`, a URL's
+ *  `searchParams.delete` and a member access (`auth.admin.from`) never match. */
+const CLIENT_PARAM = /(?:^|[^\w.$])(?:db|sb|admin|client)\s*\.\s*from\(/;
+
+/** Statements that carry a supabase update/delete — through `supabase` /
+ *  `supabaseAdmin`, or through a client parameter (CLIENT_PARAM) — with
+ *  whether the statement routes through checkedWrite. A statement runs from
+ *  the previous `;` / `{` boundary to the next `;`. */
+function writeSites(text: string): Array<{ line: number; checked: boolean; viaParam: boolean; snippet: string }> {
+  const out: Array<{ line: number; checked: boolean; viaParam: boolean; snippet: string }> = [];
   const re = /\.(update|delete)\(/g;
   for (const m of text.matchAll(re)) {
     const at = m.index ?? 0;
     const start = Math.max(text.lastIndexOf(";", at), text.lastIndexOf("{", at)) + 1;
     const end = text.indexOf(";", at);
     const stmt = text.slice(start, end < 0 ? text.length : end);
-    if (!stmt.includes("supabase")) continue;
+    const viaParam = !stmt.includes("supabase");
+    if (viaParam && !CLIENT_PARAM.test(stmt)) continue;
     // Checked = routed through checkedWrite, or J3 MONEY-LEDGER's shape: the
     // statement returns the matched rows (`.select("id")`) and the code right
     // after it tests their count (a zero-row match is a refusal, never success).
@@ -104,7 +118,7 @@ function writeSites(text: string): Array<{ line: number; checked: boolean; snipp
     // (A builder assigned in one statement and awaited with its .select("id")
     // in the next — the change-order decision claim — counts the same way.)
     const countChecked = /\.select\("id"\)/.test(stmt + after.slice(0, 200)) && /\.length\b/.test(after);
-    out.push({ line: text.slice(0, at).split("\n").length, checked: stmt.includes("checkedWrite(") || countChecked, snippet: stmt.trim().slice(0, 80) });
+    out.push({ line: text.slice(0, at).split("\n").length, checked: stmt.includes("checkedWrite(") || countChecked, viaParam, snippet: stmt.trim().slice(0, 80) });
   }
   return out;
 }
@@ -130,6 +144,35 @@ describe("census — no raw discarded write result in the quality data layers (G
     expect(writeSites(bare).map((w) => w.checked)).toEqual([false]);
     expect(writeSites(counted).map((w) => w.checked)).toEqual([true]);
     expect(writeSites(helper).map((w) => w.checked)).toEqual([true]);
+  });
+  it("SAF-21: a write through a client parameter is counted — a bare one flagged, a checked one not; Array.from, Map / Set delete and searchParams.delete never match", () => {
+    for (const p of ["db", "sb", "admin", "client"]) {
+      expect(writeSites(`async function a(${p}) {\n  await ${p}.from("t").update({ x: 1 }).eq("id", id);\n}`).map((s) => [s.checked, s.viaParam]), p).toEqual([[false, true]]);
+      expect(writeSites(`async function a(${p}) {\n  await ${p}\n    .from("t")\n    .delete().eq("id", id);\n}`).map((s) => s.checked), `${p}, split over lines`).toEqual([false]);
+      expect(writeSites(`async function b(${p}) {\n  const w = await checkedWrite(${p}.from("t").delete().eq("id", id).select("id"));\n}`).map((s) => s.checked), p).toEqual([true]);
+      expect(writeSites(`async function c(${p}) {\n  const { data: hit } = await ${p}.from("t").update({ x: 1 }).eq("id", id).select("id");\n  if (!hit || hit.length === 0) return NO_ROW;\n}`).map((s) => s.checked), p).toEqual([true]);
+    }
+    expect(writeSites('function c() {\n  Array.from(keys).forEach((k) => cache.delete(k));\n  next.delete(id);\n  url.searchParams.delete("q");\n  const h = createHash("sha256").update(buf).digest("hex");\n}')).toEqual([]);
+    // a member access is not a parameter (nor a name that merely ends in one)
+    expect(writeSites('async function d() {\n  await auth.admin.from("t").update({ x: 1 }).eq("id", id);\n  await mydb.from("t").delete().eq("id", id);\n}')).toEqual([]);
+    // the `supabase` rule is unchanged
+    expect(writeSites('function e() {\n  const r = await supabase.from("t").update({ x: 1 }).eq("id", id);\n}').map((s) => [s.checked, s.viaParam])).toEqual([[false, false]]);
+  });
+  it("SAF-21: the client-parameter writes the census now sees are all checked — lib/checkoutEpisodes.ts's five (J15a) and every file SAF-21 named", () => {
+    const ce = writeSites(src("lib/checkoutEpisodes.ts")).filter((s) => s.viaParam);
+    expect(ce.map((s) => s.checked)).toEqual([true, true, true, true, true]);
+    // Measured at b138efc7 by this rule: 37 unchecked client-parameter sites.
+    const SAF21: Record<string, number> = {
+      "lib/equipmentBridgeServer.ts": 14, "lib/serverCollections.ts": 3, "lib/exportRunner.ts": 3, "lib/auditOutboxDrain.ts": 3,
+      "lib/projects.ts": 2, "lib/linkProposerServer.ts": 2, "lib/dataRestore.ts": 2, "lib/consentWindowScan.ts": 2,
+      "lib/ticketSla.ts": 1, "lib/ticketPreauthorizationApply.ts": 1, "lib/serverRetention.ts": 1, "lib/intakeStaging.ts": 1,
+      "lib/archiveCatalog.ts": 1, "lib/aclIndexRebuild.ts": 1,
+    };
+    for (const [f, before] of Object.entries(SAF21)) {
+      const viaParam = writeSites(src(f)).filter((s) => s.viaParam);
+      expect(viaParam.length, `${f}: its client-parameter writes are counted (${before} were unchecked)`).toBeGreaterThanOrEqual(before);
+      expect(viaParam.filter((s) => !s.checked).map((s) => `L${s.line} ${s.snippet}`), f).toEqual([]);
+    }
   });
   it("the money files check every update/delete's matched rows (J3 converted them; the ratchet is at zero)", () => {
     // Baseline at 8276cad was costs 3, costDocs 5, changeOrders 3 unchecked
@@ -180,6 +223,12 @@ const CLEAN_LIB = [
     "lib/libraryViews.ts", "lib/markupRequests.ts", "lib/markups.ts", "lib/retention.ts",
     "lib/reviewControl.ts", "lib/reviewCycles.ts", "lib/revisions.ts", "lib/watches.ts",
     "lib/tableViews.ts", "lib/transmittals.ts", "lib/unitCodeDecode.ts",
+    // J15d (SAF-21, 2026-11-18): the files whose writes go through a client
+    // parameter (lib/projects.ts is listed above).
+    "lib/equipmentBridgeServer.ts", "lib/serverCollections.ts", "lib/exportRunner.ts", "lib/auditOutboxDrain.ts",
+    "lib/linkProposerServer.ts", "lib/dataRestore.ts", "lib/consentWindowScan.ts", "lib/ticketSla.ts",
+    "lib/ticketPreauthorizationApply.ts", "lib/serverRetention.ts", "lib/intakeStaging.ts", "lib/archiveCatalog.ts",
+    "lib/aclIndexRebuild.ts",
 ];
 /** lib files still carrying unchecked sites (SAF-18): the count may fall, never rise. */
 const LIB_RATCHET: Record<string, number> = {};

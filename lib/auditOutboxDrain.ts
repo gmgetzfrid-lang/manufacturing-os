@@ -42,7 +42,8 @@
 // the table is missing: nothing to do, nothing said.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { isMissingSchemaError } from "@/lib/checkedWrite";
+import { checkedWrite, isMissingSchemaError } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 
 /** The machine label on every drained row (DEC-87 §2: system:<channel>). */
 export const AUDIT_OUTBOX_ACTOR = "system:audit-outbox";
@@ -145,19 +146,29 @@ export async function drainAuditDeadLetters(sb: SupabaseClient, opts: { stopBy: 
         const landed = await writeOnce(sb, o);
         if ("error" in landed) {
           report.failed++;
-          const { error: noteError } = await sb.from("audit_dead_letters")
+          // SAF-21 (b): the refusal's note — checked; a note that matched no
+          // row (the outbox row went meanwhile) is said, as an error is.
+          const noted = keptAnswer();
+          const note = await checkedWrite(answered(sb.from("audit_dead_letters")
             .update({ drain_error: landed.error.slice(0, 1000) })
-            .eq("id", o.id);
+            .eq("id", o.id).select("id"), noted));
+          const noteProblem = noted.error ? noted.error.message : note.ok ? null : "the outbox row matched no write — it may have been removed";
           const parks = attempts + 1 >= AUDIT_OUTBOX_MAX_ATTEMPTS;
-          opts.errors.push(`audit-outbox: the lost ${o.action} row of workspace ${o.org_id} (outbox ${o.id}) could not be written to the audit log (${landed.error}); it stays in the outbox${parks ? ` and, after ${AUDIT_OUTBOX_MAX_ATTEMPTS} attempts, is no longer retried` : ""}${noteError ? ` — and its refusal could not be recorded (${noteError.message})` : ""}`);
+          opts.errors.push(`audit-outbox: the lost ${o.action} row of workspace ${o.org_id} (outbox ${o.id}) could not be written to the audit log (${landed.error}); it stays in the outbox${parks ? ` and, after ${AUDIT_OUTBOX_MAX_ATTEMPTS} attempts, is no longer retried` : ""}${noteProblem ? ` — and its refusal could not be recorded (${noteProblem})` : ""}`);
           continue;
         }
-        const { error: stampError } = await sb.from("audit_dead_letters")
+        // SAF-21 (b): the drained stamp after the audit row landed — checked;
+        // a stamp that matched no row is said as a refused one is (the audit
+        // row stands either way, and is counted drained).
+        const stamped = keptAnswer();
+        const stamp = await checkedWrite(answered(sb.from("audit_dead_letters")
           .update({ drained_at: new Date().toISOString(), audit_log_id: landed.id, drain_error: null })
-          .eq("id", o.id);
-        if (stampError) {
+          .eq("id", o.id).select("id"), stamped));
+        if (stamped.error || !stamp.ok) {
           // written, not stamped: the next run's write is refused by the primary key, and it only stamps
-          opts.errors.push(`audit-outbox: outbox ${o.id} was written to the audit log (${landed.id}) but could not be marked drained (${stampError.message}); the next run marks it without writing it again`);
+          opts.errors.push(stamped.error
+            ? `audit-outbox: outbox ${o.id} was written to the audit log (${landed.id}) but could not be marked drained (${stamped.error.message}); the next run marks it without writing it again`
+            : `audit-outbox: outbox ${o.id} was written to the audit log (${landed.id}) but could not be marked drained (the outbox row matched no write — it may have been removed); if it is still there, the next run marks it without writing it again`);
         }
         report.drained++;
         orgs.set(o.org_id, (orgs.get(o.org_id) ?? 0) + 1);
@@ -179,7 +190,10 @@ export async function drainAuditDeadLetters(sb: SupabaseClient, opts: { stopBy: 
       // PRUNE: rows drained AUDIT_OUTBOX_KEEP_DAYS ago or more (their content is the AUDIT_DEAD_LETTER row).
       if (Date.now() < opts.stopBy) {
         const before = new Date(Date.now() - AUDIT_OUTBOX_KEEP_DAYS * 86_400_000).toISOString();
-        const { error: pruneError } = await sb.from("audit_dead_letters").delete().lte("drained_at", before);
+        // SAF-21 (c): nothing old enough to prune is a success; an error is said.
+        const pruned = keptAnswer();
+        await checkedWrite(answered(sb.from("audit_dead_letters").delete().lte("drained_at", before).select("id"), pruned));
+        const pruneError = pruned.error;
         if (pruneError) opts.errors.push(`audit-outbox: drained rows older than ${AUDIT_OUTBOX_KEEP_DAYS} days could not be pruned (${pruneError.message}); the next run tries again`);
       }
     }

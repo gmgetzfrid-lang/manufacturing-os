@@ -19,6 +19,7 @@
 // untouched — adoption moves the document, it never rewrites history.
 
 import { supabase } from "@/lib/supabase";
+import { LINKS_CHANGED } from "@/lib/equipmentBridgeText";
 import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
 import { normalizeTag } from "@/lib/assets";
 import { submitTicketCreate, queueNotNotifiedLine } from "@/lib/ticketCreateClient";
@@ -662,6 +663,9 @@ async function linkAdoptedEquipment(
   }
   if (drawingHeld.size === 0) return null;
   const notMine: string[] = [];
+  // SAF-21: an adopt the Bridge refused because the link changed meanwhile
+  // (someone else adopted or removed it) is not "still the sweep's reading".
+  const changed: string[] = [];
   let token = "";
   try { token = (await supabase.auth.getSession()).data.session?.access_token ?? ""; } catch { /* the route refuses it, said below */ }
   for (const a of assets.filter((x) => drawingHeld.has(x.id))) {
@@ -671,12 +675,17 @@ async function linkAdoptedEquipment(
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ action: "adopt", orgId, documentId: docId, assetId: a.id }),
       });
-      if (!res.ok) notMine.push(a.tag);
+      if (!res.ok) {
+        const json = (await res.json().catch(() => ({}))) as { error?: unknown };
+        (String(json?.error ?? "").includes(LINKS_CHANGED) ? changed : notMine).push(a.tag);
+      }
     } catch { notMine.push(a.tag); }
   }
-  return notMine.length > 0
-    ? `The sheet was adopted, but ${notMine.join(", ")} ${notMine.length === 1 ? "is" : "are"} still the equipment sweep's reading, not your link — Link ${notMine.length === 1 ? "it" : "them"} from the equipment registry so a later Dismiss of the reading cannot remove ${notMine.length === 1 ? "it" : "them"}.`
-    : null;
+  const notes = [
+    notMine.length > 0 ? `The sheet was adopted, but ${notMine.join(", ")} ${notMine.length === 1 ? "is" : "are"} still the equipment sweep's reading, not your link — Link ${notMine.length === 1 ? "it" : "them"} from the equipment registry so a later Dismiss of the reading cannot remove ${notMine.length === 1 ? "it" : "them"}.` : null,
+    changed.length > 0 ? `The sheet was adopted, but the link for ${changed.join(", ")} changed meanwhile (someone else linked or removed it) — check ${changed.length === 1 ? "it" : "them"} on the equipment registry.` : null,
+  ].filter((n): n is string => n !== null);
+  return notes.length > 0 ? notes.join(" ") : null;
 }
 
 /** INTK-16: did the door create this document (documents.authored_by_link_id,

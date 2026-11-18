@@ -21,6 +21,7 @@ import { heldRoles } from "@/lib/roleHeld";
 import { primaryRole } from "@/lib/roleCapabilities";
 import { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES, REDACT_COLUMNS, redactedColumnsFor } from "@/lib/exportTables";
 import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { STORAGE_UNATTRIBUTABLE_CODE } from "@/lib/storageKey";
 import { formatTicketNumber, ticketNumberConfigFromRow } from "@/lib/ticketNumber";
 import { requestNumberYear } from "@/lib/ticketCreate";
@@ -238,6 +239,14 @@ export const RESTORE_SERVICE_ROLE_WAIVERS: Readonly<Record<string, string>> = {
   // at the PS-P9 merge, 2026-10-20 (DEC-90).
   print_sheet_tokens: "the per-print sheet tokens of printed packs — a one-way SHA-256 of each sheet's 192-bit token, the print, and the document + version that sheet printed (no scannable code). Bounded to this workspace's documents and versions (RESTORE_PARENT_RULES); a row grants no access and is no one's act: /api/verify computes the verdict from the live document, so a restored row only lets a sheet printed before the restore keep its verdict (a row naming a document of this workspace says no more than that document's own ?v= QR does); the guard keeps what a sheet printed immutable",
 };
+
+/** One `.eq(col, row[col])` per key column, in order, on a write builder —
+ *  the business-key filters of a numbering-counter advance (SAF-21). */
+function eqEach<Q extends { eq(column: string, value: string | number): Q }>(q: Q, cols: readonly string[], row: Record<string, unknown>): Q {
+  let out = q;
+  for (const c of cols) out = out.eq(c, row[c] as string | number);
+  return out;
+}
 
 /** True when `table` is append-only / self-insert-only and must not be blind-imported. */
 export function isImmutableTable(table: string): boolean {
@@ -1830,9 +1839,13 @@ async function mintRestoreTicketNumbers(
       if (made.count === 1) first = 1;
     } else if (typeof held.next_seq === "number" && Number.isFinite(held.next_seq)) {
       const seen = held.next_seq;
-      const moved = await sb.from("ticket_number_counters").update({ next_seq: seen + need }).eq("org_id", orgId).eq("year", year).eq("next_seq", seen).select("next_seq");
+      // SAF-21 (c): a compare-and-set — no row matched means another writer
+      // moved the counter first, and the loop reads it again (as before).
+      // The counter's key is (org_id, year): it reads back next_seq.
+      const moved = keptAnswer();
+      const cas = await checkedWrite(answered(sb.from("ticket_number_counters").update({ next_seq: seen + need }).eq("org_id", orgId).eq("year", year).eq("next_seq", seen).select("next_seq"), moved));
       if (moved.error) return { ok: false, error: `the request number counter could not be advanced: ${moved.error.message}` };
-      if (Array.isArray(moved.data) && moved.data.length === 1) first = seen + 1;
+      if (cas.ok && Array.isArray(moved.data) && moved.data.length === 1) first = seen + 1;
     } else {
       return { ok: false, error: "the request number counter holds no number" };
     }
@@ -2775,11 +2788,13 @@ export async function applyRestoreChunk(
       for (const x of slice) {
         const now = live.get(restoreKeyOf(table, x.row) as string);
         if (now === undefined || now >= x.value) continue;
-        let u = sb.from(table).update({ [counter]: x.value }).eq("org_id", orgId);
-        for (const c of cols) u = u.eq(c, x.row[c] as string | number);
-        const { data: moved, error: moveErr } = await u.lt(counter, x.value).select(counter);
+        // SAF-21 (c): advanced only while still behind (`.lt`) — no row
+        // matched means the counter is already past it: not counted, as before.
+        const kept = keptAnswer();
+        await checkedWrite(answered(eqEach(sb.from(table).update({ [counter]: x.value }).eq("org_id", orgId), cols, x.row).lt(counter, x.value).select(counter), kept));
+        const moveErr = kept.error;
         if (moveErr) return fail(500, `Could not advance the ${table} numbering counter past the restored numbers: ${moveErr.message}`, inserted, rowsAfterFilters, moveErr.code ?? null);
-        advanced += Array.isArray(moved) ? moved.length : 0;
+        advanced += Array.isArray(kept.data) ? kept.data.length : 0;
       }
     }
   }

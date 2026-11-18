@@ -83,6 +83,7 @@ vi.mock("@/lib/supabase", () => {
 const unitDecode = vi.hoisted(() => ({ fn: vi.fn(async () => ({ results: [] as unknown[], note: null as string | null })) }));
 vi.mock("@/lib/unitCodeClient", () => ({ requestUnitCodeDecode: unitDecode.fn }));
 
+import { LINKS_CHANGED } from "@/lib/equipmentBridgeText";
 import {
   extractCandidateTags, likeExact, sameNumber, scanTransitionImpact, listTransitionCandidates, adoptDocument,
   blockingNumberCollision, candidateInReview, candidateReviewNote, pendingDraftRetired, RETIRED_PENDING_NOTE,
@@ -653,13 +654,13 @@ describe("adoption's equipment links: a pair the equipment sweep holds becomes t
     db.tables.document_assets = [{ id: "r1", org_id: "o1", document_id: "sheet1", asset_id: "a1", tag_text: "FE-201", source: "drawing" }];
   };
   const posts: Array<Record<string, unknown>> = [];
-  let answer = { ok: true, status: 200 };
+  let answer: { ok: boolean; status: number; error?: string } = { ok: true, status: 200 };
   beforeEach(() => {
     posts.length = 0;
     answer = { ok: true, status: 200 };
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: { body?: string }) => {
       posts.push(JSON.parse(String(init?.body ?? "{}")));
-      return { ok: answer.ok, status: answer.status, json: async () => ({ ok: answer.ok, adopted: answer.ok }) };
+      return { ok: answer.ok, status: answer.status, json: async () => (answer.error ? { error: answer.error } : { ok: answer.ok, adopted: answer.ok }) };
     }));
   });
   afterEach(() => vi.unstubAllGlobals());
@@ -690,6 +691,14 @@ describe("adoption's equipment links: a pair the equipment sweep holds becomes t
     answer = { ok: false, status: 403 };
     const res = await adoptWith();
     expect(res.equipmentNote).toMatch(/FE-201 is still the equipment sweep's reading, not your link/);
+  });
+  it("SAF-21: an adopt refused because the link changed meanwhile (LINKS_CHANGED) is said as its own outcome — never 'still the sweep's reading'", async () => {
+    seed();
+    answer = { ok: false, status: 500, error: `The link could not be saved: ${LINKS_CHANGED}` };
+    const res = await adoptWith();
+    expect(res.ok).toBe(true);
+    expect(res.equipmentNote).toBe("The sheet was adopted, but the link for FE-201 changed meanwhile (someone else linked or removed it) — check it on the equipment registry.");
+    expect(res.equipmentNote).not.toMatch(/still the equipment sweep's reading/);
   });
   it("no drawing-held pair: nothing is adopted and nothing is said", async () => {
     seed();

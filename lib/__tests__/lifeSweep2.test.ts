@@ -135,7 +135,9 @@ describe("LIFE-14 — resume, never re-create; the sweep never clobbers a verdic
   });
   it("the 24h sweep only writes auto_released over a NULL outcome", () => {
     const p = src("lib/projects.ts");
-    expect(p).toMatch(/\.update\(\{ \.\.\.basePayload, outcome: "auto_released" \}\)[\s\S]*?\.eq\("status", "active"\)[\s\S]*?\.is\("outcome", null\);/);
+    // SAF-21 (J15d): the same filters, in the same order, now in one checked
+    // statement that reads back the rows it changed (`.select(RETURNING)`).
+    expect(p).toMatch(/\.update\(\{ \.\.\.basePayload, outcome: "auto_released" \}\)[\s\S]*?\.eq\("status", "active"\)[\s\S]*?\.is\("outcome", null\)\s*\.select\(RETURNING\), kept\)\);/);
   });
 });
 

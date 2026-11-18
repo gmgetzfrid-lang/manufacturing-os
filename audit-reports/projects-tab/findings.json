@@ -14,16 +14,16 @@
     "audit-reports/projects-tab/10-accessibility-mobile.md"
   ],
   "totals": {
-    "findings": 153,
+    "findings": 154,
     "gaps": 10,
     "by_severity": {
       "CRITICAL": 17,
       "HIGH": 53,
-      "MEDIUM": 70,
+      "MEDIUM": 71,
       "LOW": 13
     },
     "by_status": {
-      "RESOLVED": 143,
+      "RESOLVED": 144,
       "REFUTED": 2,
       "OPEN": 7,
       "RESOLVED (2026-10-14, by the integrator's ruling at the J20 integrator fix pass — done-when 1 met as narrowed under DEC-90: the pending pointer, the trusted promote and the redline accepted as documented exceptions; PASTE pending: `20261214`, after `20261184` and `20261205`)": 1
@@ -3270,7 +3270,7 @@
       "id": "SAF-21",
       "title": "37 update / delete sites that write through a client handed in as a parameter discard a zero-row result, and the census cannot see them",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by the client-parameter rule of `lib/__tests__/j15aCheckedWriteCensus.test.ts` run over `lib/`, at the J15a head; re-run by J15a's independent reviewer with the same per-file counts; not exercised against a live database)",
       "blast_radius": "audit integrity / silent failure",
@@ -3302,6 +3302,31 @@
       ],
       "refuted": false,
       "summary": "A drain, sweep or bridge step updates a row another writer already moved (or a policy filtered); the step reads only { error }, records its work as done, and the next run never retries it.",
+      "area": "projects-tab",
+      "report": "audit-reports/projects-tab/02-safety-compliance.md"
+    },
+    {
+      "id": "SAF-22",
+      "title": "113 update / delete sites under app/ and components/ discard a zero-row result, outside the census's reach",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (the census rule of `lib/__tests__/checkedWrite.test.ts`, widened by J15d, run over `app/` and `components/` at the J15d head by J15d and again by its independent reviewer, with the same counts; not exercised against a live database)",
+      "blast_radius": "audit integrity / silent failure",
+      "related": [
+        "SAF-18",
+        "SAF-21",
+        "GAP-402",
+        "DEC-31"
+      ],
+      "locations": [],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": null,
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
     },

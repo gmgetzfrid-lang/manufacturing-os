@@ -12,6 +12,8 @@
 // ANY linked rows, not by the pending count alone.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 
 export interface CatalogRowState {
   status: "full" | "producing" | "pending" | "committed" | "empty";
@@ -57,8 +59,14 @@ export function catalogReclaimLabel(row: CatalogRowState): string | null {
 export async function persistReclaimShortfall(
   sb: SupabaseClient, orgId: string, archiveId: string, keysFailed: number,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { error } = await sb.from("archives").update({ reclaim_shortfall: keysFailed }).eq("org_id", orgId).eq("archive_id", archiveId);
-  if (!error) return { ok: true };
+  // SAF-21 (b): bookkeeping after the reclaim — a write that matches no
+  // catalog row (the archive's row went, or never existed) is reported like
+  // a refused one, never as persisted.
+  const kept = keptAnswer();
+  const w = await checkedWrite(answered(sb.from("archives").update({ reclaim_shortfall: keysFailed }).eq("org_id", orgId).eq("archive_id", archiveId).select("id"), kept));
+  const error = kept.error;
+  if (!error && w.ok) return { ok: true };
+  if (!error) return { ok: false, error: `shortfall persist: no catalog row for archive ${archiveId} matched — the catalog cannot show that ${keysFailed} key(s) failed to delete` };
   const preMigration = /reclaim_shortfall|42703|PGRST204/i.test(`${error.code ?? ""} ${error.message ?? ""}`);
   return {
     ok: false,

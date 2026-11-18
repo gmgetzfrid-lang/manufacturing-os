@@ -54,6 +54,8 @@ import { SLA_DEFAULT_DAYS_MAX, boundedSlaDays } from "@/lib/notifications";
 // DF-P22 fix pass (AUTHZ-13 / DEC-89): an escalation names a request only to
 // the contact's people who may read it.
 import { isContractorOnly, ticketReadScope, type ScopedTicket } from "@/lib/ticketReadScope";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 
 /** GAP-106: the fraction of the SLA window at which the owner is warned. */
 export const SLA_WARN_FRACTION = 0.75;
@@ -975,7 +977,11 @@ export async function runSlaEscalationScan(deps: SlaScanDeps): Promise<SlaEscala
       const told = (reachedBy.get(k.claimId) ?? []).sort();
       if (told.length === 0) {
         report.unreached += 1;
-        const { error: relErr } = await sb.from("ticket_sla_escalations").delete().eq("id", k.claimId);
+        // SAF-21 (c): a release that matches no row — the claim is already
+        // gone — leaves the request as free to retry as a landed release does.
+        const released = keptAnswer();
+        await checkedWrite(answered(sb.from("ticket_sla_escalations").delete().eq("id", k.claimId).select("id"), released));
+        const relErr = released.error;
         say(`ticket ${k.t.id}: the escalation reached nobody (${k.to.length} contact(s) resolved) — ${relErr ? `its claim could not be released (${relErr.message}), so it is not retried` : "it is retried on the next run"}`);
         continue;
       }

@@ -740,6 +740,27 @@ describe("DEC-90 ruling (4) — every restore that works today restores the same
     expect(rowsOf("ticket_number_counters").map((c) => [c.year, c.next_seq]).sort()).toEqual([[2025, 900], [2026, 150]]);
   });
 
+  it("SAF-21 (c): a counter that moved past the restored number between the read and the advance matches no row — not counted advanced, never lowered, never an error", async () => {
+    db.keys.ticket_number_counters = [["org_id", "year"]];
+    db.rows.ticket_number_counters = [{ org_id: ORG, year: 2026, next_seq: 40 }];
+    const sb = { from: (t: string) => {
+      const b = from(t) as Record<string, (...a: unknown[]) => unknown>;
+      if (t === "ticket_number_counters") {
+        const update = b.update;
+        // another filer takes numbers up to 200 after the read, before the advance
+        b.update = (...a: unknown[]) => { db.rows.ticket_number_counters[0].next_seq = 200; return update(...a); };
+      }
+      return b;
+    } };
+    const r = await applyRestoreChunk(sb as never, { orgId: ORG, table: "ticket_number_counters", rows: [{ org_id: "backup-org", year: 2026, next_seq: 150 }], idRemap: { orgId: { "backup-org": ORG }, uid: {} } });
+    expect(r).toMatchObject({ ok: true, advanced: 0 });
+    expect(rowsOf("ticket_number_counters").map((c) => [c.year, c.next_seq])).toEqual([[2026, 200]]);
+    db.rows.ticket_number_counters = [{ org_id: ORG, year: 2026, next_seq: 40 }];
+    const landed = await applyRestoreChunk({ from } as never, { orgId: ORG, table: "ticket_number_counters", rows: [{ org_id: "backup-org", year: 2026, next_seq: 150 }], idRemap: { orgId: { "backup-org": ORG }, uid: {} } });
+    expect(landed).toMatchObject({ ok: true, advanced: 1 });
+    expect(rowsOf("ticket_number_counters").map((c) => [c.year, c.next_seq])).toEqual([[2026, 150]]);
+  });
+
   it("the fresh number is issued in the YEAR OF THE NUMBER IT REPLACES (P16 fix pass 3, the review) — that year's counter; a number carrying no year takes the server's UTC year, as /api/tickets/create gives a body with no local year", async () => {
     db.keys.ticket_number_counters = [["org_id", "year"]];
     db.rows.ticket_number_counters = [{ org_id: ORG, year: 2024, next_seq: 9 }];

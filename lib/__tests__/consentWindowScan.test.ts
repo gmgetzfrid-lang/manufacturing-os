@@ -693,6 +693,27 @@ describe("issue-path parity (review minor): an issuing close tells the routed po
     expect(r).toMatchObject({ issued: 1 });
     expect(t.status).toBe("FINAL_DRAFT");
     expect(db.tables.document_intents).toEqual([expect.objectContaining({ ticket_id: "t9" })]);
+    // SAF-21 (c): the clear reads its matched rows; a landed clear names no failure
+    expect(r.errors.join(" ")).not.toMatch(/document intents were not cleared/);
+  });
+  it("SAF-21 (c): issue-as-is with no ticket-sourced intent of its own to clear — the clear matches no row and is no failure", async () => {
+    const SRC = "22222222-2222-4222-8222-222222222222";
+    const issue = () => {
+      seedTicket({ warned: "2026-10-21T09:00:00Z" });
+      const t = db.tables.tickets[0];
+      t.metadata = { ...(t.metadata as Row), source_document: { id: SRC, document_number: "PID-100", rev: "B" }, issue_ready: { rev: "1A", at: "2026-10-19T08:00:00.000Z" } };
+      t.history = [{ action: "Consent window opened — Operations", user: "system:consent-window", date: "2026-10-19T09:00:00Z", details: "…", consentIssueAsIs: { rev: "1A", at: "2026-10-19T08:00:00.000Z" } }];
+      t.attachments = [{ id: "a-d", name: "x.pdf", url: "orgs/o1/x.pdf", type: "Draft", rev: "1A", status: "submitted" }];
+      db.tables.documents = [{ id: SRC, org_id: "o1", rev: "B", current_version_id: null, document_number: "PID-100" }];
+      db.tables.document_intents = [{ document_id: SRC, ticket_id: "t9", source: "ticket", user_id: "d-2" }];
+      return t;
+    };
+    const t = issue();
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ issued: 1 });
+    expect(t.status).toBe("FINAL_DRAFT");
+    expect(db.tables.document_intents).toEqual([expect.objectContaining({ ticket_id: "t9" })]);
+    expect(r.errors.join(" ")).not.toMatch(/document intents were not cleared/);
   });
 });
 

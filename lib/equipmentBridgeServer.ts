@@ -57,6 +57,9 @@ import {
   type Codebook,
 } from "@/lib/codebook";
 import { extractEquipmentTags } from "@/lib/drawingText";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
+import { LINKS_CHANGED } from "@/lib/equipmentBridgeText";
 
 /** One sheet a tag was read on (GAP-301): the site's sheet address from that
  *  page's own title block, or only the page when it declared none. */
@@ -190,6 +193,10 @@ export interface RelationOutcome {
   /** Why no relation was recorded (20261170 or 20261171 not applied, a
    *  refused write), or null. */
   notRecorded: string | null;
+  /** SAF-21: 'drawing' rows read for a refresh that matched no row at the
+   *  write — a person adopted or removed the link meanwhile; left as they
+   *  are, never counted refreshed. Present only when there were some. */
+  changedMeanwhile?: number;
 }
 
 export interface ApplyResult {
@@ -214,6 +221,22 @@ export interface ApplyResult {
   /** The EQUIPMENT_BRIDGE_APPLIED audit row could not be written — the work
    *  above landed. */
   auditError?: string;
+  /** SAF-21: the document's column write matched no row (COLUMN_ROW_GONE) —
+   *  set only on ApplyColumnRefused's `partial`. */
+  columnError?: string;
+}
+
+/** SAF-21 (a): the apply's column write matched no row — the document went
+ *  mid-apply. Thrown with COLUMN_ROW_GONE as its message (what the route
+ *  answers, as for a database error); `partial` is what had landed before it
+ *  (assets created, relations written), already recorded in
+ *  EQUIPMENT_BRIDGE_APPLIED with columnWritten: false. The ledger is not
+ *  marked applied. */
+export class ApplyColumnRefused extends Error {
+  constructor(readonly partial: ApplyResult) {
+    super(COLUMN_ROW_GONE);
+    this.name = "ApplyColumnRefused";
+  }
 }
 
 const NIL_UUID = "00000000-0000-0000-0000-000000000000";
@@ -229,6 +252,19 @@ const siteCodeTaken = (e: { message?: string } | null | undefined) =>
   !!e && /assets_org_code_unique/.test(e.message ?? "");
 
 type PgErr = { code?: string; message?: string } | null | undefined;
+
+/** SAF-21: a person's dismissal or vanished review matched no proposal row
+ *  (it went meanwhile). */
+export const PROPOSAL_GONE = "this document's proposal was not found (it may have been removed or recomputed meanwhile) — nothing was changed. Reload and try again.";
+/** SAF-21: a person's review or link matched no 'drawing' row (shared with
+ *  the browser's adoption flow, lib/transitionIn.ts). */
+export { LINKS_CHANGED };
+/** SAF-21: the apply's write to the document's equipment column matched no
+ *  row (the document went mid-apply). */
+export const COLUMN_ROW_GONE = "The tags were not written to the document's equipment column: the document was not found (it may have been removed meanwhile).";
+/** SAF-21: the apply landed, but its proposal row matched no write (it went
+ *  meanwhile) — what ApplyResult.ledgerError says then. */
+export const LEDGER_ROW_GONE = "The tags were applied, but this document's proposal row was not found (it may have been removed meanwhile), so the apply is not remembered on it — run the sweep again.";
 const missingColumn = (e: PgErr) =>
   !!e && (e.code === "42703" || e.code === "PGRST204" || /column [\w."]+ does not exist|could not find the .* column/i.test(e.message ?? ""));
 /** A pre-migration database: the TABLE is missing (42P01 / PGRST205) —
@@ -860,7 +896,15 @@ export async function computeForDocument(admin: SupabaseClient, orgId: string, d
       autoApplied = true;
       autoRelations = done.relations;
       auditError ??= done.auditError;
-    } catch { /* stays pending for manual review — never breaks ingest */ }
+    } catch (e) {
+      // Stays pending for manual review — never breaks ingest. SAF-21: an
+      // apply whose column write matched no row still created assets and
+      // relations (recorded in its audit row); those relations are reported.
+      if (e instanceof ApplyColumnRefused) {
+        autoRelations = e.partial.relations;
+        auditError ??= e.partial.auditError;
+      }
+    }
   }
   const relations = mergeRelations(refreshed, autoRelations);
   return {
@@ -952,11 +996,21 @@ export async function syncDrawingRelations(
       asserted_by: "machine", model: it.model, source_revision: prov.revision, source_version_id: prov.versionId,
       vanished_at: null, superseded_at: null,
     };
-    const err = existing
-      ? (await admin.from("document_assets").update(patch).eq("id", existing.id).eq("org_id", orgId).eq("source", "drawing")).error
-      : (await admin.from("document_assets").insert({
-          org_id: orgId, document_id: documentId, asset_id: it.assetId, source: "drawing", ...patch,
-        })).error;
+    let err: PgErr;
+    let unmatched = false;
+    if (existing) {
+      // SAF-21 (c): a refresh that matches no row — the link stopped being a
+      // 'drawing' row meanwhile (a person adopted or removed it) — is left as
+      // it is and never counted refreshed; a database error reads as before.
+      const kept = keptAnswer();
+      const w = await checkedWrite(answered(admin.from("document_assets").update(patch).eq("id", existing.id).eq("org_id", orgId).eq("source", "drawing").select("id"), kept));
+      err = kept.error;
+      unmatched = !kept.error && !w.ok;
+    } else {
+      err = (await admin.from("document_assets").insert({
+        org_id: orgId, document_id: documentId, asset_id: it.assetId, source: "drawing", ...patch,
+      })).error;
+    }
     if (err && missingProvenance(err)) {
       // Before 20261171: no provenance columns — no row is written without
       // them. The column write still happens, and this is said.
@@ -971,6 +1025,7 @@ export async function syncDrawingRelations(
     }
     if (err && uniqueViolation(err)) { out.keptHuman++; continue; } // a person (or the tag sync) linked it meanwhile
     if (err) { out.notRecorded = `the relation write was refused: ${err.message ?? "error"}`; return out; }
+    if (unmatched) { out.changedMeanwhile = (out.changedMeanwhile ?? 0) + 1; continue; }
     if (existing) out.refreshed++; else out.written++;
   }
   return out;
@@ -980,9 +1035,11 @@ export async function syncDrawingRelations(
  *  apply): counts add up, the first reason nothing was recorded is kept. */
 function mergeRelations(a: RelationOutcome | null, b: RelationOutcome | null): RelationOutcome | null {
   if (!a || !b) return a ?? b;
+  const changedMeanwhile = (a.changedMeanwhile ?? 0) + (b.changedMeanwhile ?? 0);
   return {
     written: a.written + b.written, refreshed: a.refreshed + b.refreshed, keptHuman: a.keptHuman + b.keptHuman,
     notRecorded: a.notRecorded ?? b.notRecorded,
+    ...(changedMeanwhile > 0 ? { changedMeanwhile } : {}),
   };
 }
 
@@ -1019,8 +1076,12 @@ async function markRevisionTruth(
     if (complete && isPresent && r.vanished_at) { patch.vanished_at = null; marks.push("reappeared"); }
     if (versionId && r.source_version_id && r.source_version_id !== versionId && !r.superseded_at) { patch.superseded_at = now; marks.push("superseded"); }
     if (marks.length === 0) continue;
-    const { error: updErr } = await admin.from("document_assets").update(patch).eq("id", r.id).eq("org_id", orgId).eq("source", "drawing");
-    if (updErr) { out.failed = (out.failed ?? 0) + 1; marks = []; }
+    // SAF-21 (c): a mark that matches no row (the link was adopted or
+    // removed meanwhile) is not counted — a mark counts only when it lands.
+    const kept = keptAnswer();
+    const w = await checkedWrite(answered(admin.from("document_assets").update(patch).eq("id", r.id).eq("org_id", orgId).eq("source", "drawing").select("id"), kept));
+    if (kept.error) { out.failed = (out.failed ?? 0) + 1; marks = []; }
+    else if (!w.ok) marks = [];
     for (const m of marks) out[m]++;
   }
   return out;
@@ -1121,25 +1182,39 @@ async function removeDrawingRelations(
     const spelling = personTag.get(String(r.asset_id));
     if (!spelling) { deleted.push(r); continue; }
     const base = { source: "jsonb_sync", tag_text: spelling, sheet_label: null, pages: null };
-    const write = (patch: Record<string, unknown>) => admin.from("document_assets").update(patch)
-      .eq("id", String(r.id)).eq("org_id", orgId).eq("source", "drawing");
-    let { error } = await write({ ...base, ...HUMAN_PROVENANCE(null) });
-    if (error && missingColumn(error)) ({ error } = await write(base)); // before 20261171
-    if (error) throw new Error(`The relation could not be removed: ${error.message}`);
+    const kept = keptAnswer();
+    const write = (patch: Record<string, unknown>) => checkedWrite(answered(admin.from("document_assets").update(patch)
+      .eq("id", String(r.id)).eq("org_id", orgId).eq("source", "drawing").select("id"), kept));
+    let w = await write({ ...base, ...HUMAN_PROVENANCE(null) });
+    if (kept.error && missingColumn(kept.error)) w = await write(base); // before 20261171
+    if (kept.error) throw new Error(`The relation could not be removed: ${kept.error.message}`);
+    // SAF-21 (c): no row matched — the row is no longer a 'drawing' row (a
+    // person adopted it, or it went) — so it is left as it is, and neither
+    // counted nor recorded as removed.
+    if (!w.ok) continue;
     converted.push(r);
   }
+  const gone = new Set<string>();
   for (let i = 0; i < deleted.length; i += 100) {
-    const { error } = await admin.from("document_assets").delete()
-      .in("id", deleted.slice(i, i + 100).map((r) => String(r.id))).eq("org_id", orgId).eq("source", "drawing");
-    if (error) throw new Error(`The relation could not be removed: ${error.message}`);
+    const kept = keptAnswer();
+    await checkedWrite(answered(admin.from("document_assets").delete()
+      .in("id", deleted.slice(i, i + 100).map((r) => String(r.id))).eq("org_id", orgId).eq("source", "drawing").select("id"), kept));
+    if (kept.error) throw new Error(`The relation could not be removed: ${kept.error.message}`);
+    // SAF-21 (c): only the rows the DELETE matched were removed.
+    for (const row of (Array.isArray(kept.data) ? kept.data : []) as Array<{ id?: unknown }>) gone.add(String(row.id));
   }
-  out.removed = doomed.length;
+  const keptIds = new Set(converted.map((r) => String(r.id)));
+  // What landed, in the order it was read — on the ordinary path, every row.
+  const landed = doomed.filter((r) => keptIds.has(String(r.id)) || gone.has(String(r.id)));
+  out.removed = landed.length;
   out.keptAsPersonsLink = converted.length;
+  // No audit row claims a removal that did not happen.
+  if (landed.length === 0) return out;
   const describe = (r: Record<string, unknown>) => ({ tag: r.tag_text, assetId: r.asset_id, sheet: r.sheet_label ?? null, pages: r.pages ?? null, revision: r.source_revision ?? null, model: r.model ?? null });
   const { error: auditErr } = await admin.from("audit_logs").insert({
     action, resource_type: "document", resource_id: documentId, org_id: orgId, user_id: userId,
     details: {
-      removed: doomed.map(describe),
+      removed: landed.map(describe),
       keptAsPersonsLink: converted.map((r) => ({ tag: r.tag_text, assetId: r.asset_id, as: personTag.get(String(r.asset_id)) })),
       ...(opts.via ? { via: opts.via } : {}),
     },
@@ -1290,9 +1365,12 @@ export async function applyForDocument(admin: SupabaseClient, input: {
       const before = unitBefore.get(String(s.assetId));
       if (!before) continue; // created just now
       const id = String(s.assetId);
-      const write = async (p: Record<string, unknown>, guard: "unit_code" | "code"): Promise<{ message: string } | null> => {
-        try { return (await admin.from("assets").update(p).eq("id", id).is(guard, null)).error; }
-        catch (e) { return { message: String(e) }; }
+      // SAF-21 (c): each write is guarded by its own IS NULL — a match of no
+      // row means someone filled the field meanwhile: never counted filled.
+      const write = async (p: Record<string, unknown>, guard: "unit_code" | "code"): Promise<{ err: { message: string } | null; matched: boolean }> => {
+        const kept = keptAnswer();
+        const w = await checkedWrite(answered(admin.from("assets").update(p).eq("id", id).is(guard, null).select("id"), kept));
+        return { err: kept.error, matched: w.ok };
       };
       const unitCode = unitOf(s);
       if (!before.unit_code && unitCode) {
@@ -1301,15 +1379,15 @@ export async function applyForDocument(admin: SupabaseClient, input: {
         if (!before.code && code) patch.code = code;
         // CB-10: a code another asset carries is refused (20261128) — the
         // filing is re-sent without it, and the tag recorded.
-        const err = await write(patch, "unit_code");
-        if (patch.code && siteCodeTaken(err) && !(await write({ unit_code: unitCode }, "unit_code"))) codesLeftBlank.add(s.tag);
+        const first = await write(patch, "unit_code");
+        if (patch.code && siteCodeTaken(first.err) && !(await write({ unit_code: unitCode }, "unit_code")).err) codesLeftBlank.add(s.tag);
         unitBefore.set(id, { unit_code: unitCode, code: before.code });
       } else if (before.unit_code && !before.code) {
         const code = tagToCode(s.tag, before.unit_code, book);
         if (code) {
-          const err = await write({ code }, "code");
-          if (!err) result.codesFilled++;
-          else if (siteCodeTaken(err)) codesLeftBlank.add(s.tag);
+          const filled = await write({ code }, "code");
+          if (!filled.err && filled.matched) result.codesFilled++;
+          else if (siteCodeTaken(filled.err)) codesLeftBlank.add(s.tag);
         }
         unitBefore.set(id, { unit_code: before.unit_code, code: code ?? null });
       }
@@ -1327,6 +1405,20 @@ export async function applyForDocument(admin: SupabaseClient, input: {
   // ── Populate the column (when one is mapped): array-union merge, never
   //    clobbering manual tags. Kept — the drawing row's chips render from it.
   const appliedNow = wanted.filter((s) => !result.held.includes(s.tag)).map((s) => s.tag);
+  /** EQUIPMENT_BRIDGE_APPLIED — what this apply landed, plus `outcome`. */
+  const recordApplied = async (outcome: Record<string, unknown>): Promise<{ message: string } | null> => (await admin.from("audit_logs").insert({
+    action: "EQUIPMENT_BRIDGE_APPLIED",
+    resource_type: "document",
+    resource_id: documentId,
+    org_id: orgId,
+    user_id: input.userId,
+    details: {
+      tags: appliedNow, createdAssets: result.createdAssets, codesLeftBlank: result.codesLeftBlank,
+      column: targetKey, auto: input.userId === null, degraded: result.degraded, failed: result.failed,
+      held: result.held, relations: result.relations, codesFilled: result.codesFilled,
+      revision: prov.revision, ...outcome,
+    },
+  })).error;
   if (targetKey) {
     const metadata = (doc.metadata && typeof doc.metadata === "object" ? doc.metadata : {}) as Record<string, unknown>;
     const existingTags = columnTags(metadata[targetKey]);
@@ -1334,10 +1426,21 @@ export async function applyForDocument(admin: SupabaseClient, input: {
     const additions = appliedNow.filter((t) => !existingNorms.has(assetNorm(t)));
     if (additions.length > 0) {
       const next = [...existingTags, ...additions.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))];
-      const { error: updErr } = await admin.from("documents")
+      const kept = keptAnswer();
+      const w = await checkedWrite(answered(admin.from("documents")
         .update({ metadata: { ...metadata, [targetKey]: next }, updated_at: new Date().toISOString() })
-        .eq("id", documentId).eq("org_id", orgId);
-      if (updErr) throw new Error(updErr.message);
+        .eq("id", documentId).eq("org_id", orgId).select("id"), kept));
+      if (kept.error) throw new Error(kept.error.message);
+      // SAF-21 (a): the column write matched no row (the document went
+      // meanwhile). What landed before it — the registry assets created and
+      // the relation written — is recorded (EQUIPMENT_BRIDGE_APPLIED with
+      // columnWritten: false and columnError); the ledger is NOT marked
+      // applied; and the refusal goes to the caller, as a database error does.
+      if (!w.ok) {
+        const auditErr = await recordApplied({ ledgerWritten: false, columnWritten: false, columnError: COLUMN_ROW_GONE });
+        if (auditErr) result.auditError = `The tags were not written to the document's equipment column, and the audit record of what landed could not be written: ${auditErr.message}`;
+        throw new ApplyColumnRefused({ ...result, appliedTags: [], columnError: COLUMN_ROW_GONE });
+      }
     }
   }
 
@@ -1367,31 +1470,25 @@ export async function applyForDocument(admin: SupabaseClient, input: {
     dismissed: dismissals.filter((d) => !appliedNow.includes(d.tag)),
     applied_columns: appliedColumns,
   };
-  let { error: ledgerErr } = await admin.from("document_equipment_suggestions").update(ledger)
-    .eq("org_id", orgId).eq("document_id", documentId);
-  if (ledgerErr && missingColumn(ledgerErr)) {
+  // SAF-21 (b): the ledger records an apply that has landed — a write that
+  // matches no row (the proposal went meanwhile) is said in ledgerError, as
+  // a database error is, never taken as written. The ledger has no id
+  // column: the matched rows are read back by document_id.
+  const ledgerKept = keptAnswer();
+  let ledgerW = await checkedWrite(answered(admin.from("document_equipment_suggestions").update(ledger)
+    .eq("org_id", orgId).eq("document_id", documentId).select("document_id"), ledgerKept));
+  if (ledgerKept.error && missingColumn(ledgerKept.error)) {
     for (const c of LEDGER_COLS_20261171) delete ledger[c]; // before 20261171
-    ({ error: ledgerErr } = await admin.from("document_equipment_suggestions").update(ledger)
-      .eq("org_id", orgId).eq("document_id", documentId));
+    ledgerW = await checkedWrite(answered(admin.from("document_equipment_suggestions").update(ledger)
+      .eq("org_id", orgId).eq("document_id", documentId).select("document_id"), ledgerKept));
   }
-  if (ledgerErr) result.ledgerError = ledgerErr.message;
+  if (ledgerKept.error) result.ledgerError = ledgerKept.error.message;
+  else if (!ledgerW.ok) result.ledgerError = LEDGER_ROW_GONE;
   if (input.userId) await markReviewed(admin, String(doc.library_id ?? ""), bridge, input.userId);
 
   // Checked: the apply created registry assets and relations — a missing
   // audit row is said to the caller, never swallowed.
-  const { error: auditErr } = await admin.from("audit_logs").insert({
-    action: "EQUIPMENT_BRIDGE_APPLIED",
-    resource_type: "document",
-    resource_id: documentId,
-    org_id: orgId,
-    user_id: input.userId,
-    details: {
-      tags: appliedNow, createdAssets: result.createdAssets, codesLeftBlank: result.codesLeftBlank,
-      column: targetKey, auto: input.userId === null, degraded: result.degraded, failed: result.failed,
-      held: result.held, relations: result.relations, codesFilled: result.codesFilled,
-      revision: prov.revision, ledgerError: result.ledgerError ?? null,
-    },
-  });
+  const auditErr = await recordApplied({ ledgerError: result.ledgerError ?? null });
   if (auditErr) result.auditError = `The tags were applied, but the audit record could not be written: ${auditErr.message}`;
 
   result.appliedTags = appliedNow;
@@ -1419,10 +1516,13 @@ async function currentReading(admin: SupabaseClient, orgId: string, documentId: 
 /** BR-9: the first time a person applies or dismisses in a library. */
 async function markReviewed(admin: SupabaseClient, libraryId: string, bridge: BridgeConfig | null, userId: string): Promise<void> {
   if (!libraryId || bridge?.reviewedAt) return;
-  await admin.from("libraries")
+  // SAF-21 (b): bookkeeping after the person's act — it never fails the act;
+  // a refusal or a database error is logged (before, both were swallowed).
+  const kept = keptAnswer();
+  const w = await checkedWrite(answered(admin.from("libraries")
     .update({ equipment_bridge: { ...(bridge ?? {}), reviewedAt: new Date().toISOString(), reviewedBy: userId } })
-    .eq("id", libraryId)
-    .then(() => undefined, () => undefined);
+    .eq("id", libraryId).select("id"), kept));
+  if (!w.ok) console.warn(`[equipmentBridge] library ${libraryId}: the first-review mark was not saved — ${kept.error?.message ?? "no row matched"}`);
 }
 
 // ─── Review actions ─────────────────────────────────────────────────────────
@@ -1452,18 +1552,23 @@ export async function dismissForDocument(admin: SupabaseClient, input: {
   const fresh = nextSuggested.filter((s) => !applied.includes(s.tag) && !s.dismissed);
   const status = fresh.length > 0 ? "pending" : applied.length > 0 ? "applied" : "dismissed";
   let remembered = true;
-  let { error } = await admin.from("document_equipment_suggestions")
+  // SAF-21 (a): the dismissal is the person's decision — a write that matches
+  // no row (the proposal went meanwhile) is refused like an error: nothing
+  // removed, no audit row.
+  const kept = keptAnswer();
+  let w = await checkedWrite(answered(admin.from("document_equipment_suggestions")
     .update({ suggested: nextSuggested, dismissed, status })
-    .eq("org_id", orgId).eq("document_id", documentId);
-  if (error && missingColumn(error)) {
+    .eq("org_id", orgId).eq("document_id", documentId).select("document_id"), kept));
+  if (kept.error && missingColumn(kept.error)) {
     // Before 20261171 the ledger cannot remember a dismissal across a
     // recompute: the flag lives on this proposal only — said to the caller.
     remembered = false;
-    ({ error } = await admin.from("document_equipment_suggestions")
+    w = await checkedWrite(answered(admin.from("document_equipment_suggestions")
       .update({ suggested: nextSuggested, status })
-      .eq("org_id", orgId).eq("document_id", documentId));
+      .eq("org_id", orgId).eq("document_id", documentId).select("document_id"), kept));
   }
-  if (error) throw new Error(`The dismissal could not be saved: ${error.message}`);
+  if (kept.error) throw new Error(`The dismissal could not be saved: ${kept.error.message}`);
+  if (!w.ok) throw new Error(`The dismissal could not be saved: ${PROPOSAL_GONE}`);
   const removal = await removeDrawingRelations(admin, orgId, documentId, target.filter((t) => applied.includes(t)), userId, "EQUIPMENT_BRIDGE_RELATION_REMOVED", { via: "review" });
   const relationsRemoved = removal.removed;
   const { error: auditErr } = await admin.from("audit_logs").insert({
@@ -1515,10 +1620,14 @@ export async function reviewVanished(admin: SupabaseClient, input: {
     if (row && Array.isArray(row.applied)) {
       const gone = new Set(rows.map((r) => normalizeTag(String(r.tag_text ?? ""))));
       const goneKeys = new Set(rows.map((r) => assetNorm(String(r.tag_text ?? ""))));
-      const { error: ledgerErr } = await admin.from("document_equipment_suggestions")
+      // SAF-21 (a): no row matched (the proposal went meanwhile) — refused
+      // like an error, before anything is removed.
+      const kept = keptAnswer();
+      const w = await checkedWrite(answered(admin.from("document_equipment_suggestions")
         .update({ applied: (row.applied as string[]).filter((t) => !gone.has(t) && !goneKeys.has(assetNorm(t))) })
-        .eq("org_id", orgId).eq("document_id", documentId);
-      if (ledgerErr) throw new Error(`The review could not be saved: ${ledgerErr.message}`);
+        .eq("org_id", orgId).eq("document_id", documentId).select("document_id"), kept));
+      if (kept.error) throw new Error(`The review could not be saved: ${kept.error.message}`);
+      if (!w.ok) throw new Error(`The review could not be saved: ${PROPOSAL_GONE}`);
     }
     const removal = await removeDrawingRelations(admin, orgId, documentId, tags, userId, "EQUIPMENT_BRIDGE_VANISHED_REMOVED", { onlyVanished: true, via: "vanished" });
     return {
@@ -1530,15 +1639,22 @@ export async function reviewVanished(admin: SupabaseClient, input: {
 
   // 'keep': remembered for the revision it was confirmed on.
   const reading = await currentReading(admin, orgId, documentId);
-  const { error: upd } = await admin.from("document_assets").update({ vanished_at: null, presence_confirmed_on: reading.versionId })
-    .in("id", rows.map((r) => r.id)).eq("org_id", orgId).eq("source", "drawing");
-  if (upd) throw new Error(`The review could not be saved: ${upd.message}`);
+  // SAF-21 (a): the person's decision. Only the rows the write matched are
+  // kept and recorded; when none matched (each link was adopted or removed
+  // meanwhile) the review is refused — no audit row.
+  const kept = keptAnswer();
+  const w = await checkedWrite(answered(admin.from("document_assets").update({ vanished_at: null, presence_confirmed_on: reading.versionId })
+    .in("id", rows.map((r) => r.id)).eq("org_id", orgId).eq("source", "drawing").select("id"), kept));
+  if (kept.error) throw new Error(`The review could not be saved: ${kept.error.message}`);
+  if (!w.ok) throw new Error(`The review could not be saved: ${LINKS_CHANGED}`);
+  const matched = new Set(w.ids);
+  const keptRows = rows.filter((r) => matched.has(String(r.id)));
   const { error: auditErr } = await admin.from("audit_logs").insert({
     action: "EQUIPMENT_BRIDGE_VANISHED_KEPT", resource_type: "document", resource_id: documentId, org_id: orgId, user_id: userId,
-    details: { tags: rows.map((r) => r.tag_text), vanishedAt: rows.map((r) => r.vanished_at), confirmedOn: reading.versionId, revision: reading.revision },
+    details: { tags: keptRows.map((r) => r.tag_text), vanishedAt: keptRows.map((r) => r.vanished_at), confirmedOn: reading.versionId, revision: reading.revision },
   });
   return {
-    changed: rows.length,
+    changed: keptRows.length,
     ...(auditErr ? { auditError: `The review was saved, but its audit record could not be written: ${auditErr.message}` } : {}),
   };
 }
@@ -1565,11 +1681,15 @@ export async function adoptDrawingRelation(admin: SupabaseClient, input: {
   const row = sel.data as Record<string, unknown> | null;
   if (!row) return { adopted: false, already: null };
   if (row.source !== "drawing") return { adopted: false, already: String(row.source ?? "") };
-  const write = (patch: Record<string, unknown>) => admin.from("document_assets").update(patch)
-    .eq("id", String(row.id)).eq("org_id", orgId).eq("source", "drawing");
-  let { error } = await write({ source: "manual", ...HUMAN_PROVENANCE(userId) });
-  if (error && missingColumn(error)) ({ error } = await write({ source: "manual" })); // before 20261171
-  if (error) throw new Error(`The link could not be saved: ${error.message}`);
+  // SAF-21 (a): the person's decision — a write that matches no row (the
+  // link was adopted or removed meanwhile) is refused: no audit row.
+  const kept = keptAnswer();
+  const write = (patch: Record<string, unknown>) => checkedWrite(answered(admin.from("document_assets").update(patch)
+    .eq("id", String(row.id)).eq("org_id", orgId).eq("source", "drawing").select("id"), kept));
+  let w = await write({ source: "manual", ...HUMAN_PROVENANCE(userId) });
+  if (kept.error && missingColumn(kept.error)) w = await write({ source: "manual" }); // before 20261171
+  if (kept.error) throw new Error(`The link could not be saved: ${kept.error.message}`);
+  if (!w.ok) throw new Error(`The link could not be saved: ${LINKS_CHANGED}`);
   const { error: auditErr } = await admin.from("audit_logs").insert({
     action: "EQUIPMENT_BRIDGE_RELATION_ADOPTED", resource_type: "document", resource_id: documentId, org_id: orgId, user_id: userId,
     details: { assetId, tag: row.tag_text ?? null, sheet: row.sheet_label ?? null, pages: row.pages ?? null, revision: row.source_revision ?? null, model: row.model ?? null },

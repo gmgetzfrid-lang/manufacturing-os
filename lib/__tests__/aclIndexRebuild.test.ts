@@ -50,6 +50,8 @@ const state = vi.hoisted(() => ({
   updates: [] as Array<{ table: string; patch: Record<string, unknown>; id: string }>,
   readErrors: {} as Record<string, string>,
   writeErrors: {} as Record<string, string>,
+  /** SAF-21: ids whose row went between the read and the write (the write matches no row). */
+  gone: new Set<string>(),
 }));
 
 function chain(table: string) {
@@ -70,9 +72,13 @@ function chain(table: string) {
           if (col === "id") {
             const patch = pendingPatch;
             pendingPatch = null;
-            if (state.writeErrors[table]) return Promise.resolve({ error: { message: state.writeErrors[table] } });
-            state.updates.push({ table, patch, id: val });
-            return Promise.resolve({ error: null });
+            // SAF-21: the write reads back its matched row (`.select("id")`), as PostgREST answers it.
+            const answer = state.writeErrors[table]
+              ? { data: null, error: { message: state.writeErrors[table] } }
+              : state.gone.has(val)
+                ? { data: [], error: null }
+                : (state.updates.push({ table, patch, id: val }), { data: [{ id: val }], error: null });
+            return Object.assign(Promise.resolve(answer), { select: () => Promise.resolve(answer) });
           }
         }
         return new Proxy(c, handler);
@@ -91,6 +97,7 @@ beforeEach(() => {
   state.updates = [];
   state.readErrors = {};
   state.writeErrors = {};
+  state.gone = new Set();
 });
 
 describe("rebuildAclIndexes (DB-4 / DEC-10)", () => {
@@ -114,6 +121,23 @@ describe("rebuildAclIndexes (DB-4 / DEC-10)", () => {
     expect(docUpdates).toContain("docStale");
     expect(docUpdates).not.toContain("docOk");
     expect(counts.documents).toBe(1);
+  });
+
+  it("SAF-21 (c): a stale row deleted between the read and the write matches no row — not counted rebuilt, and no error noted", async () => {
+    const libAcl: AccessControl = { rules: [allow("Drafter", "read")] };
+    const correctIdx = buildAclIndexFromChain([libAcl], Date.parse("2026-08-24T00:00:00Z"));
+    state.tables.orgs = [{ id: "org1" }];
+    state.tables.libraries = [{ id: "lib1", acl: libAcl, acl_index: correctIdx }];
+    state.tables.collections = [];
+    state.tables.documents = [
+      { id: "docStale", library_id: "lib1", collection_id: null, acl: null, acl_index: null },
+      { id: "docGone", library_id: "lib1", collection_id: null, acl: null, acl_index: null },
+    ];
+    state.gone.add("docGone");
+    const counts = await rebuildAclIndexes(sb, Date.parse("2026-08-24T00:00:00Z"));
+    expect(state.updates.filter((u) => u.table === "documents").map((u) => u.id)).toEqual(["docStale"]);
+    expect(counts.documents).toBe(1);
+    expect(counts.errors).toEqual([]);
   });
 
   it("drops an expired grant from a rebuilt index (OWN-7)", async () => {

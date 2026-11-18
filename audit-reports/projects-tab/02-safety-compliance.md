@@ -1250,7 +1250,7 @@ That is 49 → 0. `lib/processFlows.ts` is closed by record: it has been clean s
 *Opened 2026-11-18 by the integrator at the J15a merge (SAF-18's remainder, per `DEC-31`).*
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J15d CLIENT-PARAMETER WRITE SWEEP (new) — by the integrator, 2026-11-18, at the J15a merge (DEC-31; fleet plan `audit-reports/fleet-plans/projects-joint.json`).
 - **Verification:** CONFIRMED (by the client-parameter rule of `lib/__tests__/j15aCheckedWriteCensus.test.ts` run over `lib/`, at the J15a head; re-run by J15a's independent reviewer with the same per-file counts; not exercised against a live database)
 - **Blast radius:** audit integrity / silent failure
@@ -1266,7 +1266,71 @@ That is 49 → 0. `lib/processFlows.ts` is closed by record: it has been clean s
 **Remediation.** As SAF-18 (the J15 rulings (a) / (b) / (c), unchanged): each site reads its matched rows through `lib/checkedWrite.ts` or the count-checked shape; success paths byte-identical; callers say a refusal in plain words. Fold the client-parameter rule into the shared census so a new such site fails it.
 
 **Done when.**
-- [ ] Every site above reads its matched rows, classified, with a zero-row test and a success-path pin.
-- [ ] `lib/__tests__/checkedWrite.test.ts` counts client-parameter writes (no false positives on `Array.from`, Map / Set `delete`, `searchParams.delete`), and every file is at zero.
+- [x] Every site above reads its matched rows, classified, with a zero-row test and a success-path pin.
+- [x] `lib/__tests__/checkedWrite.test.ts` counts client-parameter writes (no false positives on `Array.from`, Map / Set `delete`, `searchParams.delete`), and every file is at zero.
+
+**Resolution (2026-11-18, projects-joint J15d CLIENT-PARAMETER WRITE SWEEP; DEC-90's J15 rulings (1)–(7) and classes (a) / (b) / (c), unchanged).** Re-measured at `b138efc7` with the client-parameter rule: the same 37 sites in the same 14 files, and no other file the census reads. After: 0 in each. Every site routes through `lib/checkedWrite.ts` with `.select(…)` appended, and `lib/checkedWriteAnswer.ts`'s `answered` keeps PostgREST's own answer beside the verdict. So every pre-migration test still sees the whole error, code and message (`missingColumn`, `isMissingRetentionColumn`, `isMissingOutcomeSchema`, the reclaim column, PGRST204 / 42703 on `link_rules`), and every message a database error gave before is the same sentence. Tables with no `id` column read back another key: `document_equipment_suggestions` `document_id`, `ticket_number_counters` `next_seq`. No migration.
+- **Done-when 1, by class.** No site changes what is written, when, or in what order; only how the answer is read and reported. Most of these writes run as the service role, so a zero-row match means another writer moved or removed the row between the read and the write. Every claim of a zero-row defect below is that race.
+  - **(a) The person's decision; a zero-row match is refused, and no audit row claims it.** These are the Bridge's dismissal ledger and its pre-20261171 retry, the vanished review's "remove" ledger and its "keep", the adopt (and its retry), and the apply's column write. The refusal is said in plain words: `PROPOSAL_GONE`, `LINKS_CHANGED`, or `COLUMN_ROW_GONE` ("The tags were not written to the document's equipment column: the document was not found…"). The equipment-bridge route already answers a thrown error as 500 with its message, and every screen that calls it (the sweep modal, `/admin/assets`, the graph page, `GraphShapeWizard`) shows that message.
+    - The apply's column write that matches no row still records what had already landed: `EQUIPMENT_BRIDGE_APPLIED` with the assets created and the relation outcome, plus `columnWritten: false`, `columnError` and `ledgerWritten: false`. The ledger is not marked applied, and the refusal is thrown as `ApplyColumnRefused` (message `COLUMN_ROW_GONE`; its `partial` is what landed). On auto-apply the compute stays pending (`autoApplied: false`) but keeps the relations that landed. A database error there behaves as at the base. On the ordinary path the audit row's details are byte-identical. *(Corrected 2026-11-18 at the J15d review, the integrator's ruling 1: the first pass threw before the audit row, losing the only record of the created assets.)*
+    - The browser's adoption flow (`lib/transitionIn.ts` `linkAdoptedEquipment`) also calls 'adopt'. A refusal carrying `LINKS_CHANGED` (now in `lib/equipmentBridgeText.ts`, shared with the server) is its own outcome: "The sheet was adopted, but the link for … changed meanwhile (someone else linked or removed it) — check it on the equipment registry." It is never listed as "still the equipment sweep's reading". Any other refusal is said as before. *(Corrected 2026-11-18 at the J15d review, the integrator's ruling 2.)*
+    - Before, a dismissal whose proposal row had gone still removed the links and wrote `EQUIPMENT_BRIDGE_DISMISSED`.
+    - Before, a "remove" whose ledger write matched nothing still removed the links. This is the silent re-link its own comment guards against.
+    - Before, a "keep" or an adopt over a link someone else had just changed wrote `EQUIPMENT_BRIDGE_VANISHED_KEPT` / `EQUIPMENT_BRIDGE_RELATION_ADOPTED`. A partial "keep" now records only the rows that matched.
+  - **(b) Bookkeeping after a landed act: said, never taken as written, never failing the act.**
+    - The apply's ledger write (and its retry) sets `ledgerError` = `LEDGER_ROW_GONE` in the result and in `EQUIPMENT_BRIDGE_APPLIED`.
+    - The first-review mark is logged. Before, both a refusal and an error were swallowed.
+    - `closeSucceededRun`'s three writes answer `RUN_ROW_UNMATCHED`, which the two run routes already name as "run row not updated: …". A first write that matched nothing is `close-failed` and is not retried.
+    - `persistReclaimShortfall` answers `ok: false` with the archive named. Both shed commits already put that in `errors` and `shortfallPersisted: false`.
+    - The outbox drain's drained stamp and its refusal note are said in the run's `errors`. A row whose stamp failed still counts as drained, because its audit row landed.
+    - The link proposer's switch-off and its pre-20261125 retry say "it could not be switched off (the skill was not found …)", never "switched off".
+  - **(c) Zero rows is legitimate: it stays a quiet success and is never counted; a database error is still said.**
+    - The Bridge: the relation refresh is counted `changedMeanwhile` (a new optional key), never `refreshed`. A revision-truth mark counts only when it lands, as its comment already said. The `IS NULL`-guarded unit and code backfill no longer counts `codesFilled` for a code someone else filled. Removal counts and records only the rows its UPDATE / DELETE matched (a person-tagged conversion included), and writes no `EQUIPMENT_BRIDGE_RELATION_REMOVED` row when none matched.
+    - `rebuildSubtreePaths` / `rebuildSubtreeAclIndex` and the nightly `rebuildAclIndexes` count only rows that matched.
+    - `reclockRetentionForDocs` counts a document deleted meanwhile neither updated nor failed.
+    - `sweepAndReserved`: a reservation claimed meanwhile is neither swept nor reserved.
+    - The outbox prune, the SLA escalation's claim release, the pre-authorization's alert retire (bound to `read_at IS NULL`), the consent plan's compare-and-set and the issue-as-is intent clear are unchanged.
+    - The restore's counter compare-and-set and advance, and the checkout sweep (and its pre-migration retry), already read their rows; they now do so through the checked shape the census reads, with the same answers.
+  - **On a database error,** each site behaves as before. A builder that rejects outright, which supabase-js does not do for a database error, is now kept as the error and reported where it used to propagate.
+- **Callers changed (ruling 3).**
+  - `lib/transitionIn.ts`: the adoption flow's adopt loop tells a `LINKS_CHANGED` refusal from any other (above).
+  - Every other caller of a function whose failure mode changed already caught it and said it, so none changed. These are the equipment-bridge route and its four screens; the export run routes; both shed commits; the collections move, delete and trash routes; the documents move route; the intake upload route; and the crons.
+- **Tests.** `lib/__tests__/j15dClientParamSweep.test.ts` (28) drives the Bridge, `serverCollections`, `archiveCatalog`, `exportRunner`, `serverRetention`, `intakeStaging` and `markConsentPlanOpened` against `lib/__tests__/helpers/fakeSupabase.ts`. A `refuseWrites` table, or a hook that moves the row between the read and the write, gives each site a zero-row case; each also has an ordinary-path pin. Cases were added to `transitionIn` (the changed-meanwhile adopt), `aclIndexRebuild`, `aoRoundGP13AuditOutbox`, `linkProposalsRoundG` (the switch-off and its retry), `dfRoundG_P22_escalation` (the claim release), `dfRoundG_P23_followUps` (the alert retire), `projects` (the sweep and its retry), `aoRoundGP16RestoreTicketNumber` (the counter advance) and `consentWindowScan` (the intent clear). The counter's compare-and-set zero-row case was already pinned there ("a counter that keeps moving under the compare-and-set").
+  - Mutation-checked: 31 fixes were reverted one at a time (the review fixes' three, the census rule and an unwrapped census site among them), and a test killed each. Four class (c) sites (the claim release, the alert retire, the consent mark and the intent clear) were also mutated the other way, turning a zero-row match into an error, and their tests failed. One more mutation survived: an unwrapped statement in `lib/ticketSla.ts` passed the census. See remainder (2).
+  - Existing tests adjusted (DEC-90 ruling 7), each with the same intent. The mocks in `aclIndexRebuild`, `roundEAclRebuild`, `dcRoundFCollections`, `dcRoundFShed` and `dfRoundG_P22_escalation` now answer an UPDATE / DELETE with its matched rows, as PostgREST does. `projects.test.ts`'s `isMissingOutcomeSchema` stub is now a `vi.fn` (still false). The source pin in `lifeSweep2` (LIFE-14) is widened to the single checked statement, with the same filters in the same order.
+- **Done-when 2.** `lib/__tests__/checkedWrite.test.ts` `writeSites` now also counts a statement that writes through `CLIENT_PARAM`: `db` / `sb` / `admin` / `client` `.from(` not preceded by a word character, `.` or `$`.
+  - The rule is a strict superset of the old `supabase` rule.
+  - Self-tests prove the shapes are judged correctly. A bare client-parameter write is flagged, including one split over lines. A `checkedWrite` write and a count-checked write are not flagged. `Array.from`, Map / Set `delete`, `searchParams.delete`, a hash `.update(`, `auth.admin.from` and `mydb.from` never match.
+  - A pin holds `lib/checkoutEpisodes.ts`'s five client-parameter writes and all 14 SAF-21 files at zero.
+  - The 13 SAF-21 files not already listed join `CLEAN_LIB` (`lib/projects.ts` already was), so every file the census reads is at zero under the widened rule.
+  - `lib/__tests__/j15aCheckedWriteCensus.test.ts` is now a pointer: it pins that the shared census carries the rule and holds J15a's 27 files in `CLEAN_LIB`.
+- **Remainders (DEC-31).**
+  - (1) **Outside the census's scope.** The census reads `lib`, `components/projects` and the Projects routes. The same rule finds 113 unchecked update / delete sites in 46 other files under `app/` and `components/`: 86 through `supabase`, 27 through a client parameter. The client-parameter ones are in `app/api/data-export/run-scheduled` 8, `app/api/admin/shed` 5, `app/api/admin/ticket-shed` 4, `app/api/admin/archive-cancel` 2, `app/api/admin/ticket-shed/commit` 2, `app/api/stripe/webhook` 2, and 1 each in `app/api/admin/purge`, `restore/begin`, `shed/commit` and `ticket-shed/restore`. Neither SAF-18 nor SAF-21 named them. **Owner: the projects-joint integrator** — a new finding if the census's scope is widened.
+  - (2) The count-checked heuristic accepts any `.length` within 400 characters after a statement that selects `"id"`. Mutation showed that an unwrapped statement in `lib/ticketSla.ts` passes, because `k.to.length` follows it. This is pre-existing. **Owner: the integrator.**
+  - (3) `CLIENT_PARAM` names four parameter names. No other name writes in the census's scope today. **Owner: the integrator.**
+  - *(The README's progress cell for this report read 19 / 21; at the J15d review it was set to 21 / 21, matching the Status lines.)*
+
+---
+
+## SAF-22 · 113 update / delete sites under app/ and components/ discard a zero-row result, outside the census's reach
+
+*Opened 2026-11-18 by the integrator at the J15d merge (SAF-21's remainder (1), per `DEC-31`).*
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Assigned:** projects-joint J15e APP AND COMPONENT WRITE SWEEP (new) — by the integrator, 2026-11-18, at the J15d merge (DEC-31; fleet plan `audit-reports/fleet-plans/projects-joint.json`).
+- **Verification:** CONFIRMED (the census rule of `lib/__tests__/checkedWrite.test.ts`, widened by J15d, run over `app/` and `components/` at the J15d head by J15d and again by its independent reviewer, with the same counts; not exercised against a live database)
+- **Blast radius:** audit integrity / silent failure
+- **Locations:** 46 files under `app/` and `components/` outside the census's scope (the Projects surface is already in it): 113 sites, 86 through `supabase` and 27 through a client parameter — among them `app/api/exports/run-scheduled` 8, `app/api/admin/shed` 5, the ticket-shed routes 4 + 2 + 1, `archive-cancel` 2, the Stripe webhook 2, and one each in `purge`, `restore/begin` and `shed/commit`; the full per-file list is what the widened census prints when its scope covers those trees.
+- **Related:** `SAF-18`, `SAF-21`, `GAP-402`, `DEC-31`
+- **Independently verified:** — (`author`: opened by the integrator from J15d's report and its reviewer's re-run, per `DEC-31`; not yet challenged)
+
+**Mechanism.** As SAF-18 and SAF-21: PostgREST answers an UPDATE / DELETE that matched nothing with success, and a site that reads only `{ error }` reports a write that did not happen. The census reads `lib/` and the Projects surface; these routes and components were never in its scope.
+
+**Remediation.** As SAF-18 (the J15 rulings (a) / (b) / (c), unchanged), and widen the census's scope to `app/` and `components/` so a new such site fails it.
+
+**Done when.**
+- [ ] Every site reads its matched rows, classified, with a zero-row test and a success-path pin.
+- [ ] `lib/__tests__/checkedWrite.test.ts` reads `app/` and `components/`, and every file there is at zero.
 
 ---

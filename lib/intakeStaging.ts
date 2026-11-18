@@ -30,6 +30,8 @@
 import { ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { ATTEMPT_OUTCOME } from "@/lib/intakeRateLimit";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 
 /** Every staged object lives under this prefix, and nothing else does. */
 export const STAGING_ROOT = "intake-staging/";
@@ -127,10 +129,14 @@ export async function sweepAndReserved(client: StagingClient, input: {
       const at = Date.parse(String(r.created_at ?? ""));
       if (!Number.isFinite(at) || at >= cutoff || !STAGED_ID_RE.test(String(r.id))) { reservedBytes += bytes; continue; }
       const gone = await input.removeObject(`${input.prefix}${r.id}`);
-      const { error: rowErr } = gone
-        ? await client.from("intake_attempts").delete().eq("id", r.id).eq("outcome", ATTEMPT_OUTCOME.staged)
-        : { error: { message: "object not removed" } };
-      if (rowErr) reservedBytes += bytes; else swept++;
+      if (!gone) { reservedBytes += bytes; continue; } // object not removed: it keeps counting
+      // SAF-21 (c): the delete is bound to outcome 'staged' — no row matched
+      // means the reservation was claimed (or swept by another begin)
+      // meanwhile: it is no longer staged, so it is neither counted here nor
+      // counted swept. A database error keeps it counting, as before.
+      const kept = keptAnswer();
+      const w = await checkedWrite(answered(client.from("intake_attempts").delete().eq("id", r.id).eq("outcome", ATTEMPT_OUTCOME.staged).select("id"), kept));
+      if (kept.error) reservedBytes += bytes; else if (w.ok) swept++;
     }
     return { reservedBytes, swept };
   } catch (e) {

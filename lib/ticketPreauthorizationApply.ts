@@ -41,6 +41,8 @@ import { currentRoster, separationOfDutiesActive } from "@/lib/workflow";
 import { writeRosterLedger } from "@/lib/ticketRoster";
 import { notifyBatchWithReason } from "@/lib/inAppNotifications";
 import { slaNoticeSurvivesTransition } from "@/lib/ticketSla";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import {
   PREAUTH_ACTOR, PREAUTH_AUDIT, PREAUTH_MIGRATION, preauthEligibleSlots, preauthFromRow, preauthSignatureStands, planPreauthorizations,
   applyPreauthorizations, preauthHistoryEntry, isMissingPreauthTable, readGrantorMemberships, type Preauthorization, type PreauthSignatureRow,
@@ -259,10 +261,16 @@ export async function retireReleasedAlerts(db: Db, input: { ticketId: string; or
     for (const row of ((stale as Array<{ id: string; metadata: Record<string, unknown> | null }> | null) ?? [])) {
       const action = String(row.metadata?.action ?? "");
       if (slaNoticeSurvivesTransition(action, false)) continue;
-      const { error: updErr } = await db.from("notifications")
+      // SAF-21 (c): bound to read_at IS NULL — no row matched means the
+      // person read the alert meanwhile, which retires it as well; an error
+      // is named, as before.
+      const kept = keptAnswer();
+      await checkedWrite(answered(db.from("notifications")
         .update({ metadata: { ...(row.metadata ?? {}), superseded_at: input.at, superseded_by: PREAUTH_RELEASED_SUPERSEDED_BY } })
         .eq("id", row.id)
-        .is("read_at", null);
+        .is("read_at", null)
+        .select("id"), kept));
+      const updErr = kept.error;
       if (updErr) failed.push(String(updErr.message ?? row.id));
     }
     return failed.length ? failed.join("; ") : null;

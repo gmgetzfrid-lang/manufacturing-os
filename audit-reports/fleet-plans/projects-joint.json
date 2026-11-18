@@ -1299,6 +1299,28 @@
   "sequencingNotes": "Added by the integrator 2026-11-18 at the J15a merge (DEC-90: the J15 rulings (a)/(b)/(c) apply unchanged).",
   "decisionsNeeded": [],
   "alreadyResolvedElsewhere": []
+ },
+ {
+  "name": "J15e APP AND COMPONENT WRITE SWEEP — the update / delete sites under app/ and components/ that the census never read check their matched rows, and the census reads those trees (SAF-22)",
+  "findings": {
+   "projects-tab": [
+    "SAF-22 (opened by the integrator 2026-11-18 at the J15d merge, DEC-31: 113 unchecked update/delete sites in 46 files under app/ and components/ outside the census's scope — 86 through supabase, 27 through a client parameter)"
+   ]
+  },
+  "files": [
+   "the 46 files the census rule finds under app/ and components/ (measure with lib/__tests__/checkedWrite.test.ts's writeSites over those trees)",
+   "their callers",
+   "lib/__tests__/checkedWrite.test.ts (widen its scope to app/ and components/ with every file at zero)"
+  ],
+  "migrationsLikely": 0,
+  "when": "after N13 merged (N13 edits many components/ files); before or beside J18 only if no file overlaps",
+  "dependsOn": [
+   "J15d merged (the client-parameter census rule)",
+   "N13 merged"
+  ],
+  "sequencingNotes": "Added by the integrator 2026-11-18 at the J15d merge (DEC-90: the J15 rulings (a)/(b)/(c) apply unchanged; split into batches if the file set is too wide).",
+  "decisionsNeeded": [],
+  "alreadyResolvedElsewhere": []
  }
  ],
  "ownershipRule": "Where the two briefs disagree on a shared file, projects-and-cost's proposal applies: libs / API routes / migrations follow the projects-and-cost brief, components / pages follow the projects-tab brief; the schedule engine (lib/milestones.ts, criticalPath.ts, executionReport.ts) follows projects-tab's P6b brief with PC-4's rollup semantics folded in.",

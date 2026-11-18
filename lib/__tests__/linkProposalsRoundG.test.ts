@@ -494,6 +494,52 @@ describe("LNK-6 — a match that never returns switches its skill off with the r
     expect(run.notes.join(" ")).toMatch(/without finishing and was stopped — the skill was switched off/);
     expect(pending().filter((r) => String(r.proposer).startsWith("rule:"))).toHaveLength(0);
   }, 20_000);
+  it("SAF-21 (b): the switch-off reads its matched row — one that matched no row (the skill went meanwhile) is said as not switched off; the ordinary path is unchanged", async () => {
+    setup("\\bWO-\\d{5}\\b", "Repairs per WO-10023 completed.");
+    const stuck: SkillMatcherFactory = () => ({
+      match: async () => ({ found: [], terminated: { index: 0, ms: 900 }, skipped: [], budgetSpent: false, error: null }),
+      close: async () => {},
+    } as unknown as ReturnType<SkillMatcherFactory>);
+    db.ref.refuseWrites.add("link_rules");
+    const refused = await runLinkProposers(admin(), ORG, { matcher: stuck });
+    expect(t("link_rules").find((r) => r.id === "r1")!.enabled).toBe(true);
+    expect(refused.notes.join(" ")).toMatch(/“Work orders”: one match never finished and was stopped; it could not be switched off \(the skill was not found — it may have been deleted meanwhile\)\./);
+    expect(refused.notes.join(" ")).not.toMatch(/the skill was switched off/);
+    db.ref.refuseWrites.delete("link_rules");
+    const landed = await runLinkProposers(admin(), ORG, { matcher: stuck });
+    expect(t("link_rules").find((r) => r.id === "r1")!).toMatchObject({ enabled: false, disabled_reason: expect.stringMatching(/one match ran for 900 ms/) });
+    expect(landed.disabledSkills).toEqual(["Work orders"]);
+    expect(landed.notes.join(" ")).toMatch(/“Work orders”: one match ran for 900 ms on one page without finishing and was stopped — the skill was switched off\./);
+    // before 20261125 (no disabled_reason column): the retry without it reads its matched row too
+    const rule = t("link_rules").find((r) => r.id === "r1")!;
+    rule.enabled = true; delete rule.disabled_reason;
+    db.ref.beforeUpdate = { link_rules: (next, old) => { if ("disabled_reason" in next && !("disabled_reason" in old)) throw { code: "PGRST204", message: "Could not find the 'disabled_reason' column of 'link_rules' in the schema cache" }; return next; } };
+    const pre = await runLinkProposers(admin(), ORG, { matcher: stuck });
+    expect(t("link_rules").find((r) => r.id === "r1")!).toMatchObject({ enabled: false });
+    expect(pre.notes.join(" ")).toMatch(/the skill was switched off/);
+    rule.enabled = true;
+    // the skill is deleted between the refused first write and the retry
+    const base = admin() as unknown as { from: (t: string) => Record<string, (...a: unknown[]) => unknown> };
+    let n = 0;
+    const vanishing = { ...base, from: (tb: string) => {
+      const b = base.from(tb);
+      if (tb !== "link_rules") return b;
+      const wrap = (q: Record<string, (...a: unknown[]) => unknown>): unknown => new Proxy(q, {
+        get(target, prop: string) {
+          const v = target[prop];
+          if (prop === "then" || typeof v !== "function") return v;
+          return (...a: unknown[]) => {
+            if (prop === "update" && ++n === 2) db.ref.tables.link_rules = [];
+            const r = v(...a);
+            return r === target ? wrap(target) : r;
+          };
+        },
+      });
+      return wrap(b);
+    } } as unknown as SupabaseClient;
+    const gone = await runLinkProposers(vanishing, ORG, { matcher: stuck });
+    expect(gone.notes.join(" ")).toMatch(/it could not be switched off \(the skill was not found — it may have been deleted meanwhile\)\./);
+  });
   it("fix pass 2: a soft overrun (one slow page) skips that document for the skill, keeps the skill on and says so", async () => {
     setup("\\bWO-\\d{5}\\b", "Repairs per WO-10023 completed.");
     const soft: SkillMatcherFactory = () => ({

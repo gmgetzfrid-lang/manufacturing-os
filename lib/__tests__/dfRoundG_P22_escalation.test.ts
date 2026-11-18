@@ -92,7 +92,8 @@ function builder(table: string) {
       if (op === "delete") {
         const mm = new Set(matched());
         db.tables[table] = (db.tables[table] ?? []).filter((r) => !mm.has(r));
-        return resolve({ data: null, error: null });
+        // SAF-21: a delete reads back the rows it matched, as PostgREST answers `.select("id")`.
+        return resolve({ data: [...mm].map((r) => ({ id: r.id })), error: null });
       }
       if (op === "update") {
         const mm = matched();
@@ -255,6 +256,19 @@ describe("a configured contact hears of an uncleared breach once per breach per 
     reach = 1;
     await runSlaEscalationScan({ client, emit, now: NOW });
     expect(db.tables.ticket_sla_escalations).toHaveLength(1);
+  });
+  it("SAF-21 (c): a release whose claim is already gone matched no row — still said as retried, never an error; a database error is said", async () => {
+    configure({ contact: { kind: "role", role: "Admin" }, periodDays: 2 });
+    reach = 0;
+    const gone = async (input: SlaEmitInput) => { db.tables.ticket_sla_escalations = []; return emit(input); };
+    const r = await runSlaEscalationScan({ client, emit: gone, now: NOW });
+    expect(r.unreached).toBe(1);
+    expect(r.errors.join(" ")).toMatch(/reached nobody \(\d+ contact\(s\) resolved\) — it is retried on the next run/);
+    expect(db.tables.audit_logs).toEqual([]);
+    db.errors["ticket_sla_escalations:delete"] = { code: "57014", message: "statement timeout" };
+    const failed = await runSlaEscalationScan({ client, emit, now: NOW });
+    expect(failed.errors.join(" ")).toMatch(/its claim could not be released \(statement timeout\), so it is not retried/);
+    delete db.errors["ticket_sla_escalations:delete"];
   });
   it("a contact that names nobody (no active holder of the role) sends nothing and says so", async () => {
     configure({ contact: { kind: "role", role: "QAQC" }, periodDays: 2 });

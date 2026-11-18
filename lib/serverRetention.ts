@@ -13,6 +13,8 @@ import {
   retentionBasisISO,
 } from "@/lib/retentionPolicy";
 import type { RetentionPolicy } from "@/types/schema";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 
 export interface RetentionDocRow {
   id: string;
@@ -54,13 +56,19 @@ export async function reclockRetentionForDocs(
   let failed = 0;
   let firstError: string | null = null;
   for (let i = 0; i < updates.length; i += 25) {
-    const results = await Promise.all(updates.slice(i, i + 25).map((u) =>
-      admin.from("documents")
+    // SAF-21 (c): a document deleted since it was read matches no row — it
+    // needs no clock and is not counted re-clocked; an error is counted
+    // failed with its message, as before.
+    const results = await Promise.all(updates.slice(i, i + 25).map(async (u) => {
+      const kept = keptAnswer();
+      const w = await checkedWrite(answered(admin.from("documents")
         .update({ retention_until: u.retention_until, disposition_state: u.disposition_state })
-        .eq("id", u.id)));
+        .eq("id", u.id).select("id"), kept));
+      return { error: kept.error, matched: w.ok };
+    }));
     for (const r of results) {
       if (r.error) { failed += 1; if (!firstError) firstError = r.error.message; }
-      else updated += 1;
+      else if (r.matched) updated += 1;
     }
   }
   return { updated, failed, firstError };
