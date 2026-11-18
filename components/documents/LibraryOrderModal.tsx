@@ -11,6 +11,8 @@ import {
   FileText, ArrowDownAZ, ChevronUp, ChevronDown,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer, reorderNotSaved } from "@/lib/checkedWriteAnswer";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { ZC } from "@/lib/zLayers";
 import { useDockAvoidRow } from "@/components/ui/CornerDock";
@@ -116,9 +118,20 @@ export default function LibraryOrderModal({
       // Bulk-update sort_order. One row per update to avoid the
       // upsert-with-conflict dance (Postgres-via-Supabase doesn't have
       // a clean bulk-update API).
-      await Promise.all(docs.map((d, idx) =>
-        supabase.from("documents").update({ sort_order: idx }).eq("id", d.id)
+      // projects-tab SAF-22 (J15e): class (a). Every position is still
+      // written; each reads its matched row, and one that matched none (or
+      // failed) is said on the modal's error line, which stays open — never
+      // "saved", and never "nothing was changed" when others landed.
+      const kept = docs.map(() => keptAnswer());
+      const results = await Promise.all(docs.map((d, idx) =>
+        checkedWrite(answered(supabase.from("documents").update({ sort_order: idx }).eq("id", d.id).select("id"), kept[idx]))
       ));
+      const missed = results.filter((r) => !r.ok).length;
+      if (missed > 0) {
+        setError(reorderNotSaved(missed, docs.length, "positions", kept.find((k) => k.error)?.error ?? null));
+        setBusy(false);
+        return;
+      }
       onSaved();
       onClose();
     } catch (e) {
@@ -132,10 +145,30 @@ export default function LibraryOrderModal({
     if (!(await appConfirm({ title: "Clear custom order", message: "Clear custom order? Documents will fall back to updated-date order.", tone: "danger" }))) return;
     setBusy(true);
     try {
-      await supabase.from("documents")
+      // projects-tab SAF-22 (J15e): class (a). One statement over the whole
+      // library: zero matched rows while the modal lists documents is the
+      // refusal (nothing was changed), said on the error line; an empty
+      // library has nothing to clear (class c, closes as before). A listed
+      // document the statement did not match (a folder the person may not
+      // write) is counted, and the others are said to be cleared.
+      const w = await checkedWrite(supabase.from("documents")
         .update({ sort_order: null })
         .eq("org_id", orgId)
-        .eq("library_id", libraryId);
+        .eq("library_id", libraryId)
+        .select("id"));
+      if (!w.ok && !(w.code === "refused" && docs.length === 0)) {
+        setError(w.error);
+        setBusy(false);
+        return;
+      }
+      const cleared = new Set(w.ok ? w.ids : []);
+      const notCleared = docs.filter((d) => !cleared.has(d.id)).length;
+      if (notCleared > 0) {
+        setError(`The custom order was not cleared on ${notCleared} of ${docs.length} documents — you may not have permission to change them, or someone else changed them first.` +
+          (notCleared < docs.length ? " The others were cleared." : "") + " Reload to see the order as it stands.");
+        setBusy(false);
+        return;
+      }
       onSaved();
       onClose();
     } catch (e) {

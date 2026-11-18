@@ -278,3 +278,32 @@ describe("census, widened — every lib file and the Projects surface (GAP-402 r
     for (const f of Object.keys(IN_FLIGHT)) expect(known.has(f), f).toBe(true);
   });
 });
+
+// ── the census, widened to components/ (projects-joint J15e, SAF-22) ─────
+// SAF-22: the census never read components/ outside components/projects.
+// Measured at c3520544 by writeSites: 7 unchecked sites in 3 files
+// (CheckoutFlowModal 2, LibraryOrderModal 2, SetManager 3) — J15e's
+// components batch converted them, so every file here is at zero and a new
+// unchecked update / delete under components/ fails this test. (The app/
+// scope is the J15e app batch's; components/projects is read above.)
+const COMPONENTS_SCOPE = ["components"];
+const componentFiles = () => COMPONENTS_SCOPE.flatMap(walkTs).filter((f) => !f.startsWith("components/projects/"));
+
+describe("census, widened — components/ (SAF-22, J15e components batch)", () => {
+  it("every components/ file outside components/projects has no unchecked update/delete", () => {
+    const offenders = componentFiles().filter(judged).flatMap((f) => unchecked(f).map((s) => `${f} L${s.line} ${s.snippet}`));
+    expect(offenders).toEqual([]);
+  });
+  it("the scope is real: it reads the files J15e converted, and their writes are counted (and checked)", () => {
+    const files = new Set(componentFiles());
+    for (const [f, n] of Object.entries({
+      "components/documents/CheckoutFlowModal.tsx": 2, "components/documents/LibraryOrderModal.tsx": 2, "components/documents/SetManager.tsx": 3,
+    })) {
+      expect(files.has(f), f).toBe(true);
+      const sites = writeSites(src(f));
+      expect(sites.length, f).toBeGreaterThanOrEqual(n);
+      expect(sites.filter((s) => !s.checked), f).toEqual([]);
+    }
+    expect([...files].some((f) => f.startsWith("components/projects/"))).toBe(false);
+  });
+});
