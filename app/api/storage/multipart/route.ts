@@ -22,6 +22,7 @@ import { memberHoldsAny } from "@/lib/roleHeld";
 import { enforceOrgAccess } from "@/lib/serverAuth";
 import { ticketKeyOverwriteRefusal, r2Head } from "@/lib/ticketKeyOverwrite";
 import { versionKeyWriteRefusal } from "@/lib/versionKeyWriteGate";
+import { outsideOrgWriteRefusal } from "@/lib/storageWriteAllowList";
 
 export const runtime = "nodejs";
 
@@ -73,6 +74,15 @@ export async function POST(req: NextRequest) {
       const gate = await enforceOrgAccess(supabaseAdmin, orgMatch[1], "storage/multipart");
       if (gate) return bad(gate.error, gate.status);
     }
+  }
+  // drafting-flow EVID-19: upload-url's rule for a key outside orgs/<uuid>/
+  // (lib/storageWriteAllowList.ts — the caller's own avatar folder, or a
+  // legacy request file an Admin puts back while it is absent; anything else
+  // refused). Asked when an upload opens and again when it completes (the
+  // moment the bytes land). Signing a part and aborting are unchanged.
+  if (!orgMatch && (action === "create" || action === "complete")) {
+    const outside = await outsideOrgWriteRefusal(supabaseAdmin, r2Head(r2 as never, R2_BUCKET), path, user.id);
+    if (outside) return bad(outside.error, outside.status);
   }
   if (nodeImage && action === "create") {
     const problem = nodeImageUploadProblem(body.contentType);

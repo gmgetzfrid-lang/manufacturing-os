@@ -1491,7 +1491,7 @@ Tests: `lib/__tests__/evid17TicketKeyOverwrite.test.ts`, 11 cases.
 - Fail closed: a lookup error is 503 (both doors); a storage error is 503. PKG-1 is unchanged and first.
 - Mutation-checked, seven mutations, each failing the suite: the upload-url gate removed; complete not gated; an absent file refused (the restore broken); the lookup failing open; the storage check failing open; sign and abort gated; the lookup not scoped to the workspace. `lib/__tests__/aoRoundGLogoUpload.test.ts`'s Supabase stand-in now answers the new `tickets` read with no rows (a harness addition; no assertion changed).
 
-**Scope (narrowed at F7-EVID12's last pass, DEC-29).** This finding and its fix cover keys under `orgs/<uuid>/tickets/` only (`ticketKeyOrg`). A request row that still lists a legacy key outside the `orgs/` layout gets no protection from this check. Such keys sit behind a wider gap: the signing doors sign a write to ANY key outside `orgs/<uuid>/` for any signed-in user of any workspace. That gap is [`EVID-19`](#evid-19).
+**Scope (narrowed at F7-EVID12's last pass, DEC-29).** This finding and its fix cover keys under `orgs/<uuid>/tickets/` only (`ticketKeyOrg`). A request row that still lists a legacy key outside the `orgs/` layout gets no protection from this check. Such keys sit behind a wider gap: the signing doors sign a write to ANY key outside `orgs/<uuid>/` for any signed-in user of any workspace. That gap is [`EVID-19`](#evid-19). *(Updated 2026-11-18, fleet F8-EVID19.)* [`EVID-19`](#evid-19) is RESOLVED, so a legacy key a request lists now has the same protection, from `lib/storageWriteAllowList.ts` rather than from this check. Listed and stored is refused with this finding's words (409). Listed and absent is signed only for an active Admin of every workspace whose request lists it (the backup restore's put-back). Any other key outside `orgs/<uuid>/` is refused unless it is the caller's own `avatars/<uid>/` folder.
 
 **Done-when.** ✓ (1), ✓ (2), ✓ (3) as written above, for keys under `orgs/<uuid>/tickets/`. **Residual (DEC-31):** two narrower ways to replace a listed file's bytes are not closed by a signing door, and are opened as [`EVID-18`](#evid-18): the uploader's own PUT URL signed before the attach, and a controller's audited delete followed by a fresh put-back. **Also found, not this finding's:** the multipart route had no `PKG-1` check either, so a published revision's bytes (a file of 64 MB or more) could be overwritten through it. *Opened by the integrator, 2026-11-18, as document-control [`PKG-15`](../document-control/07-packages.md#pkg-15) (CRITICAL) and RESOLVED in this branch: the same check, at create and complete.*
 
@@ -1531,8 +1531,9 @@ Tests: `lib/__tests__/evid17TicketKeyOverwrite.test.ts`, 11 cases.
 ## EVID-19 · The signing doors sign a write to ANY key outside `orgs/<uuid>/` for any signed-in user of any workspace — a legacy key a request or record still lists can be overwritten across tenants
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED (2026-11-18, fleet F8-EVID19 — see the Resolution)
 - **Assigned:** the next holder of `app/api/storage/upload-url/route.ts` and `app/api/storage/multipart/route.ts` — by the integrator, 2026-11-18 (DEC-31), at F7-EVID12's last pass (with `EVID-18`).
+- **Assigned:** fleet F8-EVID19 — by the integrator, 2026-11-18, under `DEC-90`'s ruling for this finding (deny by default; outside `orgs/<uuid>/`, sign only an explicit allow-list of prefixes, each with its own ownership rule; refuse everything else in plain words, 403, nothing signed).
 - **Verification:** CONFIRMED by reading the code on F7-EVID12's last pass (base `be205317`).
 - **Locations:** `app/api/storage/upload-url/route.ts:40` (`orgMatch`: membership, the subscription gate, the logo and cover rules apply only when the key starts `orgs/<uuid>/`), `app/api/storage/multipart/route.ts` (the same), `lib/userProfiles.ts:200` (`avatars/<uid>/…`, a legitimate key outside `orgs/`)
 - **Independently verified:** — reported by the F7-EVID12 re-review, 2026-11-18, and confirmed here; not yet challenged by a second party. Noted earlier, without an id, in admin-and-org `02-backup-restore.md`'s sound-invariants table ("the untreated non-org-prefixed branch").
@@ -1548,7 +1549,64 @@ Tests: `lib/__tests__/evid17TicketKeyOverwrite.test.ts`, 11 cases.
 
 **Done when.**
 
-- [ ] Neither signing door signs a write to a key outside `orgs/<uuid>/` except an allow-listed, owner-scoped layout (for example `avatars/<own uid>/` for the caller alone), with the refusal in plain words
-- [ ] A legacy key that a request or a record of a workspace lists is signed only for a member of that workspace, and `EVID-17`'s listed-and-stored refusal applies to it too
-- [ ] Every legitimate writer (avatars, the restore's put-back of legacy keys) is traced and pinned unchanged
+- [x] Neither signing door signs a write to a key outside `orgs/<uuid>/` except an allow-listed, owner-scoped layout (for example `avatars/<own uid>/` for the caller alone), with the refusal in plain words
+- [x] A legacy key that a request or a record of a workspace lists is signed only for a member of that workspace, and `EVID-17`'s listed-and-stored refusal applies to it too
+- [x] Every legitimate writer (avatars, the restore's put-back of legacy keys) is traced and pinned unchanged
+
+**Resolution (2026-11-18, fleet F8-EVID19, base `96a7b81d`; no migration).** Reproduced on the base: `upload-url` signed a PUT, and the multipart route opened and completed an upload, for a legacy key that workspace A's request lists, asked for by a user of workspace B only. It signed another user's `avatars/<uid>/` key and a `data/…` key the same way.
+
+- **One helper, both doors.** `lib/storageWriteAllowList.ts` `outsideOrgWriteRefusal` (`:82`) decides every key the doors' `orgs/<uuid>/` branch does not match. `app/api/storage/upload-url/route.ts:91-94` asks it right after that branch, before the logo, cover, `PKG-1` and `EVID-17` checks, which are unchanged and still run in their old order. `app/api/storage/multipart/route.ts:83-86` asks it at **create** and again at **complete** (the moment the bytes land). Signing a part and aborting are unchanged; an abort must always work. The `orgs/<uuid>/` branch of both routes is byte-identical (the diff adds lines after it and rewords one comment above it).
+- **The allow-list (DEC-90: deny by default).** Two rules, each with its own owner:
+  1. `avatars/<uid>/…` is signed for that uid alone (`:91`). The helper reads nothing for it. Another person's folder is refused, 403: "You can only upload your own profile picture, so nothing was signed."
+  2. A legacy request file is a key outside `orgs/` that a request's `attachments` lists. It is signed only for an active Admin of **every** workspace whose request lists it (`:134`). Admin is the restore surface's entry rule, `lib/adminSurfaces.ts` `restore`, read by the full role collection. It is signed only while the object is absent from storage. Listed and stored is refused with `EVID-17`'s words, 409 (`:146`). A plain member is refused, as is an Admin of only some of the listing workspaces, or a listing row with no workspace (`:111`). The refusal is 403: "That older file can only be put back by an Admin of the workspace whose request lists it, while restoring a backup. Nothing was signed."
+  - **Everything else** outside `orgs/<uuid>/` is refused, 403: "Files can only be uploaded into a workspace you belong to, or as your own profile picture. This file location is neither, so nothing was signed." That covers a stray legacy key, `data/…` (the offline-archive prefix), `exports/…`, an `orgs/<non-uuid>/` folder and `public/…`.
+  - **Fail closed.** A request lookup, a membership lookup or a storage check that errors or throws is refused, 503: "Couldn't check who may upload to that file location, so the upload was refused. Try again in a moment." So is a listing of 1,000 rows or more, which cannot be cleared in one read.
+- **Writer inventory (every legitimate writer through these two doors, traced on the base).** Only two files call the doors directly: `lib/storage.ts` (`getPresignedUploadUrl`, `multipartCall`) and `app/(protected)/admin/restore/page.tsx:373`. Every other writer goes through `lib/storage.ts` `uploadToPath`, with keys as follows:
+  - `orgs/<org>/tickets/<n>/…`: `uploadTicketAttachment` on the request page (attach, IFC upload, redline).
+  - `orgs/<org>/tickets/pending/<uid>/<batch>/…`: the staging folder used by `requests/new` and `CheckInPanel`.
+  - `orgs/<org>/libraries/…`: `makeLibraryStoragePath`, used by the `documents/[libraryId]` upload, `lib/revisions.ts` (five sites) and `lib/documentLifecycle/common.ts`.
+  - `orgs/<org>/user_private/<uid>/…`: `uploadUserPrivateFile`.
+  - `orgs/<org>/branding/logo-…`: the branding page and `LogoUploadModal`.
+  - `orgs/<org>/branding/covers|backgrounds/…`: `CustomizeNodeModal`.
+  - `orgs/<org>/assets/<id>/photos/…`: `AssetPhotoUploader`.
+  - `orgs/<org>/plot-plans/…`: `lib/plotPlans.ts`.
+  - `orgs/<org>/project-costs/<p>/…`: `lib/costDocs.ts`.
+  - `orgs/<org>/knowledge/<lib>/…`: `lib/knowledge.ts`.
+  - `orgs/<org>/output-<folder>/…`: `lib/outputTemplates.ts`.
+  - `orgs/<org>/diagnostics/…`: `storageSelfTest`, which nothing calls today.
+  - `avatars/<own uid>/…`: `lib/userProfiles.ts:200` `saveMyAvatar`. The uid is the session's own (`RoleContext`) and the photo is capped at 5 MB, so it always uses `upload-url`. **Rule 1.**
+  - The backup restore's "Put the files back" puts back org-remapped `orgs/<org>/…` keys (unchanged) and legacy keys. **Rule 2** covers the legacy keys: the probe asks for one only when `/api/storage/resolve?exists=1` (`:140-145`) attributes the key to a workspace whose Admin the caller is and storage says it is absent. A legacy key outside `tickets.attachments` never reaches `upload-url` from the restore. A document version's key is attributed but has always been refused by `PKG-1`. Every other registered column is answered "unattributed" by the probe and never uploaded (`lib/dataRestore.ts` `classifyRestoreFileProbe`).
+  - **Writers that never pass through these doors** (out of scope, unchanged): the intake door's own presigned PUT and server `PutObject` (`app/api/intake/upload/route.ts`), the create route's `CopyObject`, the ticket shed's restore (`PutObject`), and the export runner (the customer's bucket). No writer mints a `tmp/`, `public/`, `data/` or `exports/` key in our bucket through these doors.
+- **What changed for the restore's legacy put-back, exactly.** For every case the existence probe admits, the response is byte-identical. Four things differ:
+  - (a) One added storage HEAD. If it fails for any reason other than not-found, the restore now gets a 503 and counts the file as failed with that sentence. Before, the PUT was signed. This is the same fail-closed rule `EVID-17` applies to `orgs/<org>/tickets/` keys, and a re-run puts the file back.
+  - (b) A legacy key that requests of **two** workspaces list is refused for an Admin of only one of them. Done-when 2 requires this: the key is also the other workspace's file. Before, the probe already refused it whenever its unscoped `.limit(1)` read (`resolve/route.ts:104`) returned the other workspace's row.
+  - (c) A legacy key that is a document version's bytes is now refused 403 instead of 409. It was refused before too, and nothing is signed either way.
+  - (d) As before, the legacy put-back is not under the subscription gate (BILL-10 gates only `orgs/<uuid>/` keys). Adding it would change a working restore, so it was left out.
+- **Not in scope, unchanged:** `EVID-18`'s windows for `orgs/<org>/tickets/` keys. For a legacy key, `EVID-18` (0) — "any member can get a signed write for a listed but absent key" — is now held to an Admin of every listing workspace.
+
+Tests: `lib/__tests__/evid19OutsideOrgWrite.test.ts`, 48 cases.
+- **Refused:**
+  - A cross-tenant legacy key at `upload-url` and at multipart create and complete (403, nothing signed, storage never asked).
+  - A plain member, or an inactive Admin, of the listing workspace.
+  - A key listed by two workspaces, for an Admin of one.
+  - A stray key, `data/`, `exports/`, `orgs/<non-uuid>/` and `public/`.
+  - Another user's avatar, at both doors.
+  - Listed and stored (409, `EVID-17`'s words), including a multipart upload opened while the file was absent that completes after the bytes are there.
+- **Unchanged (each writer pinned):**
+  - The caller's own avatar: a byte-identical `upload-url` response, and multipart create, sign, complete and abort as before, with nothing read.
+  - The restore's put-back, driven with the page's own request body (`restoreUploadRequest`), byte-identical.
+  - One key per inventoried `orgs/` writer, minted by the real minting function where one is exported: signed byte-identically at `upload-url`, and created and completed at multipart (except the logo, which has always been refused there), with the allow-list reading nothing.
+  - Sign and abort ask nothing.
+  - The `orgs/` branch's own refusal words.
+  - `PKG-1` still applies after the allow-list.
+- **Fail closed:** request lookup, membership lookup, storage check and a thrown lookup are each 503.
+- **A writer census:** every file in `app/`, `components/`, `lib/` and `hooks/` that calls an upload helper or fetches either door must be in the inventory. A new writer fails the test until its key layout is checked against the allow-list. `lib/userProfiles.ts`'s avatar template is pinned to the rule.
+- **Mutation-checked, fifteen mutations, each failing the suite:**
+  - The `upload-url` gate removed; the multipart gate removed; the multipart gate at create only; the gate on sign and abort too.
+  - The avatar rule ignoring the uid.
+  - Admin of one listing workspace sufficing (`every` → `some`); any active member counting (no Admin check); the membership `status` filter dropped.
+  - A stored legacy key allowed; an unlisted key allowed; a listing row with no workspace passed on to the Admin lookup.
+  - Fail-open on: the request lookup, the membership lookup, the storage check, a thrown lookup.
+
+**Done-when.** ✓ (1), ✓ (2), ✓ (3) as written. For (3), the four differences above are named: (a) and (c) still refuse what refused before, or fail closed; (b) is what (2) requires. **Residual:** none for this finding. `EVID-18` stays OPEN for `orgs/<org>/tickets/` keys, with its owner.
 
