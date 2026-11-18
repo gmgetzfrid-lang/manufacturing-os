@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { PlanAct, PlanChange } from "@/lib/nextPlan";
-import { schedule, applyChanges, advance, dayNumber } from "@/lib/nextPlan";
+import { schedule, applyChanges, advance, dayNumber, shiftParts } from "@/lib/nextPlan";
 import { parseStaffingGrid, isDirectCraft, planSummary } from "@/lib/staffingPlan";
 
 const tz = "America/Los_Angeles";
@@ -129,5 +129,19 @@ describe("what the lessons change", () => {
     expect(b.finish - b.start).toBe(72 * 3_600_000);
     expect(b.crew).toBe("Off site");
     expect(p.acts.find((x) => x.id === "c")!.start).toBe(b.finish);
+  });
+});
+
+describe("12-hour shifts", () => {
+  const hoursOf = (x: { start: number; finish: number; cal: "day" | "night" | "both" }, shifts: Parameters<typeof shiftParts>[1]) => shiftParts(x, shifts).map(([s0, s1]) => (s1 - s0) / 3_600_000);
+  it("18 hours of day work: the rest of a day shift, a whole one, part of the next; nothing at night", () => {
+    const p = run([act({ id: "dc", hours: 18, cal: "day", floor: t(26, 16) })]);
+    expect(p.acts[0].finish).toBe(t(28, 10));
+    expect(hoursOf(p.acts[0], p.shifts)).toEqual([2, 12, 4]);
+    expect(shiftParts(p.acts[0], p.shifts).every(([s0]) => p.shifts.find((w) => w.start <= s0 && w.end > s0)?.kind === "day")).toBe(true);
+  });
+  it("round the clock breaks at each shift change", () => {
+    const p = run([act({ id: "rc", hours: 18, cal: "both", floor: t(26, 16) })]);
+    expect(hoursOf(p.acts[0], p.shifts)).toEqual([2, 12, 4]);
   });
 });

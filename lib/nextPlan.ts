@@ -6,6 +6,9 @@
 // The rules, said the same way on screen:
 //   - This year's activities, links, crews, day / night / both calendars,
 //     and planned start dates as the earliest each can start.
+//   - The project's night-shift setup decides who works nights: a job with
+//     no night crew is day-shift work, 12 hours a day, wherever the file
+//     put its hours (the same rule as the shift report and the turnover).
 //   - Work found this year is in from the start, in the order and on the
 //     shifts it was really done.
 //   - An activity done inside fewer shifts than its plan gets that length;
@@ -24,6 +27,7 @@ import type { AsBuilt } from "@/lib/asBuiltSchedule";
 import type { AsBuiltWork } from "@/lib/asBuiltWork";
 import { shiftAt, nextShift, shiftWindowsBetween, calendarShift, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
 import { dayKey, dayKeyToMs } from "@/lib/scheduleTz";
+import { applyNightStaffing } from "@/lib/nightStaffing";
 
 export type Cal = "day" | "night" | "both";
 export type ActKind = "same" | "shorter" | "found" | "new" | "split" | "changed";
@@ -134,6 +138,8 @@ const isShutdown = (name: string) => /shut\s*-?\s*down\s*$/i.test(name.trim()) &
 export function planActivities(input: { built: AsBuilt; work: AsBuiltWork; milestones: Milestone[]; tz: string; times: ShiftTimes }): PlanAct[] {
   const { built, work, tz, times } = input;
   const byId = new Map(input.milestones.filter((m) => m.id).map((m) => [m.id!, m]));
+  // Steps no night crew works (Setup › Night shifts): day work only.
+  const dayOnly = new Set(applyNightStaffing(input.milestones, times.nightJobs).filter((m) => m.id && (m as { staffedShift?: string }).staffedShift === "day").map((m) => m.id!));
   const all = built.orders.flatMap((o) => o.steps.map((s) => ({ s, o })));
   const ids = new Set(all.map((x) => x.s.id));
   const acts: PlanAct[] = [];
@@ -150,6 +156,9 @@ export function planActivities(input: { built: AsBuilt; work: AsBuiltWork; miles
       kind = "found"; basis = "found this year";
       if (nightsWorked && daysWorked) cal = "both"; else if (nightsWorked) cal = "night"; else if (daysWorked) cal = "day";
     }
+    // The shutdown and start-up are run around the clock by operations,
+    // whatever the night-shift setup says about the maintenance jobs.
+    if (dayOnly.has(s.id) && !isShutdown(o.name) && !isStartUp(o.name)) cal = "day";
     const bound = w.worked.length * 12;
     if (!w.found && w.worked.length && bound < plan) { hours = bound; kind = "shorter"; basis = `done within ${w.worked.length} shift${w.worked.length === 1 ? "" : "s"} this year (plan ${r1(plan)} h)`; }
     let preds = (m.dependsOn ?? []).filter((p) => ids.has(p));
@@ -453,3 +462,18 @@ export function dayNumber(plan: Pick<NextPlan, "start">, t: number, tz: string):
   return Math.round((dayKeyToMs(dayKey(t, tz), tz) - dayKeyToMs(dayKey(plan.start, tz), tz)) / 86_400_000) + 1;
 }
 export { toMs as _toMs };
+
+/** An activity's working time, one piece per shift it works (a day-shift
+ *  job is never drawn through the night; round the clock breaks at each
+ *  shift change). */
+export function shiftParts(a: { start: number; finish: number; cal: "day" | "night" | "both" }, shifts: Array<{ start: number; end: number; kind: string }>): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (const w of shifts) {
+    if (w.end <= a.start || w.start >= a.finish) continue;
+    if (a.cal !== "both" && w.kind !== a.cal) continue;
+    const s0 = Math.max(a.start, w.start), s1 = Math.min(a.finish, w.end);
+    if (s1 > s0) out.push([s0, s1]);
+  }
+  return out.length ? out : [[a.start, Math.max(a.finish, a.start + 60_000)]];
+}
+

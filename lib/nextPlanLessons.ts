@@ -258,7 +258,7 @@ export function toTarget(input: Input, changes: PlanChange[], plan: NextPlan, ta
     for (const o of orders) {
       if (path.some((a) => a.order === o && a.floor != null && a.start <= a.floor + 60_000)) tries.push({ c: change(`lever:asap:${o}:${round}`, { kind: "asap", target: { order: o } }), words: `Start ${orderName(o)} as soon as what comes before it is done, not on this year's planned date` });
       const days = cur.acts.filter((a) => a.order === o && a.cal === "day");
-      if (days.length) tries.push({ c: change(`lever:nights:${o}:${round}`, { kind: "nights", target: { ids: days.map((a) => a.id) }, on: true }), words: `Work ${orderName(o)} on nights too (${r1(days.reduce((n, a) => n + a.hours, 0))} h of its work)` });
+      if (days.length) tries.push({ c: change(`lever:nights:${o}:${round}`, { kind: "nights", target: { ids: days.map((a) => a.id) }, on: true }), words: `Put a night crew on ${orderName(o)} (its ${r1(days.reduce((n, a) => n + a.hours, 0))} h of work runs days and nights, 12-hour shifts)` });
     }
     for (const crew of new Set(path.filter((a) => a.heldForCrew).map((a) => a.crew))) {
       const n = cur.jobsCap[crew]; if (!n) continue;

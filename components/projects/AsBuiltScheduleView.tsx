@@ -19,7 +19,7 @@ import type { ShiftRecord } from "@/lib/shiftRecord";
 import type { ProgressLogRow } from "@/lib/progressHistory";
 import { buildAsBuilt, laneSteps, stepBar, type BuiltStep } from "@/lib/asBuiltSchedule";
 import { buildAsBuiltWork, shiftKey, type AsBuiltWork, type WaitRun } from "@/lib/asBuiltWork";
-import { nextPlan, finishLever, dayNumber, type NextPlan, type PlanChange } from "@/lib/nextPlan";
+import { nextPlan, finishLever, dayNumber, shiftParts, type NextPlan, type PlanChange } from "@/lib/nextPlan";
 import { loadNextPlanSettings, saveNextPlanChanges, type NextPlanSettings } from "@/lib/nextPlanStore";
 import { planLessons, lessonChanges, lessonEffects, toTarget, mostAtOnce, type Lesson } from "@/lib/nextPlanLessons";
 import { msProjectXml, asBuiltTasks, suggestedTasks } from "@/lib/msProject";
@@ -658,11 +658,11 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
               const crit = acts.some((a) => driving.has(a.id));
               const changed = acts.filter((a) => a.kind !== "same" || a.changedBy?.length).length;
               const isOpen = open.has(key);
-              const bar = pieces(acts.filter((a) => a.finish > a.start).map((a) => ({
-                key: a.id, from: a.start, to: a.finish, color: p.colorOf(a.crew), label: `${r1(a.hours)} h`,
+              const bar = pieces(acts.filter((a) => a.finish > a.start).flatMap((a) => shiftParts(a, plan.shifts).map(([s0, s1], i, all) => ({
+                key: `${a.id}:${i}`, from: s0, to: s1, color: p.colorOf(a.crew), label: all.length === 1 || (s1 - s0) === Math.max(...all.map(([q0, q1]) => q1 - q0)) ? `${r1(a.hours)} h` : undefined,
                 ring: driving.has(a.id) ? "0 0 0 1.5px #dc2626" : a.kind === "new" || a.kind === "found" ? "0 0 0 1.5px #ea580c" : undefined,
-                title: `${a.name} · ${a.crew} · ${at(a.start)} to ${at(a.finish)} · ${r1(a.hours)} h${driving.has(a.id) ? " · sets the finish" : ""}`,
-              })), x, 8);
+                title: `${a.name} · ${a.crew} · ${at(a.start)} to ${at(a.finish)} · ${r1(a.hours)} h, ${a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}${driving.has(a.id) ? " · sets the finish" : ""}`,
+              }))), x, 8);
               const bo = built.orders.find((o) => o.key === key);
               return (
                 <React.Fragment key={key}>
@@ -690,7 +690,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
                         </td>
                         <td className={cellN}>{r1(a.hours)}</td><td className={cellDt}>{at(a.start)}</td><td className={cellDt}>{at(a.finish)}</td>
                         <td className="p-0"><div className="relative h-11" style={{ width }}><Grid shifts={plan.shifts} />
-                          <i title={`${a.name}: ${r1(a.hours)} h`} className="absolute top-3 h-4 rounded-sm" style={{ left: x(a.start), width: Math.max(3, x(a.finish) - x(a.start)), background: p.colorOf(a.crew), boxShadow: a.kind === "new" || a.kind === "found" ? "0 0 0 2px #fff, 0 0 0 3.5px #ea580c" : undefined }} />{lines}</div></td>
+                          {shiftParts(a, plan.shifts).map(([s0, s1], i) => <i key={i} title={`${a.name}: ${r1(a.hours)} h, ${a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}`} className="absolute top-3 h-4 rounded-sm" style={{ left: x(s0) + 1, width: Math.max(3, x(s1) - x(s0) - 2), background: p.colorOf(a.crew), boxShadow: a.kind === "new" || a.kind === "found" ? "0 0 0 2px #fff, 0 0 0 3.5px #ea580c" : undefined }} />)}{lines}</div></td>
                       </tr>
                     );
                   })}
