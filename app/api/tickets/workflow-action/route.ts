@@ -14,7 +14,7 @@ import {
   signatureRefusal, writeRosterLedger, writeRosterReopen, isMissingRosterLedger, type FileHash, type SignatureRow,
 } from "@/lib/ticketRoster";
 import { loadPickerMembers } from "@/lib/ticketPickerMembers";
-import { hashFilesAtAttach, verifiedStoredHash, storedHashFields, type AttachHash } from "@/lib/ticketFileHash";
+import { hashFilesAtAttach, verifiedStoredHash, storedHashAuditFields, type AttachHash } from "@/lib/ticketFileHash";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { isSafeStorageKey } from "@/lib/storageKey";
 import { ticketFolder, underFolder, restoredFromNumber, restoreRenumberingConfirmed, renumberedRequestListsKey } from "@/lib/ticketFilePrefix";
@@ -323,7 +323,7 @@ async function vetTicketAttachment(
     ticketRowId: string;
     history: unknown;
   },
-): Promise<{ ok: true; attachment: TicketAttachment; etag: string | null; siblingUnchecked: boolean } | { ok: false; status: number; error: string }> {
+): Promise<{ ok: true; attachment: TicketAttachment; etag: string | null; bytes: number | null; siblingUnchecked: boolean } | { ok: false; status: number; error: string }> {
   const url = typeof a?.url === "string" ? a.url : "";
   const name = typeof a?.name === "string" ? a.name.trim().slice(0, 255) : "";
   const prefix = ticketFolder(ctx.orgId, ctx.ticketNumber);
@@ -355,6 +355,9 @@ async function vetTicketAttachment(
   const alreadyListed = ctx.listed.find((x) => x?.url === url) ?? null;
   let size: string | undefined = alreadyListed?.size ?? undefined;
   let etag: string | null = null;
+  // EVID-12 (fleet F7 fix pass): the byte count storage answered, so a file
+  // already over the attach hash's byte budget is never read for it.
+  let bytes: number | null = null;
   let siblingUnchecked = false;
   if (!alreadyListed) {
     // EDGE-19 done-when 3: the folder may also hold the files of a request
@@ -371,6 +374,8 @@ async function vetTicketAttachment(
     try {
       const head = await r2.send(new HeadObjectCommand({ Bucket: R2_BUCKET, Key: url }));
       size = formatBytes((head as { ContentLength?: number }).ContentLength) ?? size;
+      const len = (head as { ContentLength?: unknown }).ContentLength;
+      bytes = typeof len === "number" && Number.isFinite(len) ? len : null;
       etag = typeof (head as { ETag?: unknown }).ETag === "string" ? ((head as { ETag: string }).ETag).replace(/"/g, "") : null;
     } catch (e) {
       const err = e as { name?: string; $metadata?: { httpStatusCode?: number } };
@@ -407,10 +412,25 @@ async function vetTicketAttachment(
     uploadedBy: alreadyListed?.uploadedBy ?? ctx.uploadedBy,
     uploadedAt: alreadyListed?.uploadedAt ?? new Date().toISOString(),
   } as TicketAttachment;
-  return { ok: true, attachment, etag, siblingUnchecked };
+  return { ok: true, attachment, etag, bytes, siblingUnchecked };
 }
 
+/** EVID-12 (fleet F7 fix pass): the handler runs inside this wrapper so the
+ *  attach-time hash read (started after vetting, awaited before the update
+ *  is built) is aborted on EVERY return — the dozens of refusals between the
+ *  two included — and no GetObject streams on after the response. On a path
+ *  that awaited the hash, the abort is a no-op. One mechanism, not one edit
+ *  per return. */
 export async function POST(req: NextRequest) {
+  const attachHashAbort = new AbortController();
+  try {
+    return await handleWorkflowAction(req, attachHashAbort.signal);
+  } finally {
+    attachHashAbort.abort();
+  }
+}
+
+async function handleWorkflowAction(req: NextRequest, attachHashAbort: AbortSignal) {
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -709,6 +729,7 @@ export async function POST(req: NextRequest) {
   // Final, and who uploaded it, when, its size and status are stamped here.
   const vetted: { attachment?: TicketAttachment; finalAttachment?: TicketAttachment; redlineAttachment?: TicketAttachment } = {};
   const vettedEtags: Record<string, string | null> = {};
+  const vettedBytes: Record<string, number | null> = {};
   // EDGE-19 (DF-P17 final fix pass): the renumbered-request check could not
   // run for a vetted file — recorded on this action's audit row.
   let renumberedSiblingUnchecked = false;
@@ -726,6 +747,7 @@ export async function POST(req: NextRequest) {
     if (!res.ok) return NextResponse.json({ error: res.error }, { status: res.status });
     vetted[slot] = res.attachment;
     vettedEtags[slot] = res.etag;
+    vettedBytes[slot] = res.bytes;
     if (res.siblingUnchecked) renumberedSiblingUnchecked = true;
   }
   // EVID-12 (fleet F7, DEC-90 option (b)): each file this action newly
@@ -738,10 +760,10 @@ export async function POST(req: NextRequest) {
   const attachHashKeys = (Object.values(vetted) as TicketAttachment[])
     .filter((x) => !!x?.url && !x.contentHash && !(ticket.attachments ?? []).some((b) => b?.url === x.url))
     .map((x) => x.url);
-  const attachEtags = new Map<string, string | null>();
+  const attachVetted = new Map<string, { etag: string | null; bytes: number | null }>();
   for (const slot of Object.keys(vetted) as Array<keyof typeof vetted>) {
     const url = vetted[slot]?.url;
-    if (url) attachEtags.set(url, vettedEtags[slot] ?? null);
+    if (url) attachVetted.set(url, { etag: vettedEtags[slot] ?? null, bytes: vettedBytes[slot] ?? null });
   }
   const attachHashing: Promise<Map<string, AttachHash>> = attachHashKeys.length === 0
     ? Promise.resolve(new Map())
@@ -749,7 +771,7 @@ export async function POST(req: NextRequest) {
       attachHashKeys,
       async (k, signal) => (await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: k }), { abortSignal: signal })) as never,
       { deadlineMs: HASH_LIMITS.attachDeadlineMs, byteBudget: HASH_LIMITS.attachByteBudget },
-      attachHashCtx, attachEtags,
+      attachHashCtx, attachVetted, attachHashAbort,
     ).catch(() => new Map<string, AttachHash>());
 
   // Referenced people must be active members of the same org — and a picked
@@ -1464,8 +1486,8 @@ export async function POST(req: NextRequest) {
   /** What an attaching action's row says of the file's hash: the stored one
    *  (verified), or why there is none for a file hashed in this request. */
   const attachHashFields = (slot: keyof typeof vetted): Record<string, unknown> => {
-    const s = verifiedStoredHash(vetted[slot], attachHashCtx);
-    if (s) return storedHashFields(s);
+    const stored = storedHashAuditFields(vetted[slot], attachHashCtx);
+    if (Object.keys(stored).length > 0) return stored;
     return attachHashReason[slot] ? { sha256Unavailable: attachHashReason[slot] } : {};
   };
 
@@ -1533,7 +1555,7 @@ export async function POST(req: NextRequest) {
       // EVID-12 (fleet F7): on today's path, the issued Draft's stored hash
       // (same key, same bytes) when it has a sealed one.
       const draft = (ticket.attachments ?? []).find((d) => d.id === a.issuedFromDraftId);
-      return { ...base, ...storedHashFields(verifiedStoredHash(draft, attachHashCtx)) };
+      return { ...base, ...storedHashAuditFields(draft, attachHashCtx) };
     });
   // SM-12: self-assignment names the caller from their membership too
   // (computeTransition would derive it from the email's local part).
@@ -1808,7 +1830,7 @@ export async function POST(req: NextRequest) {
       // (attached before this, or not hashable in the attach's bound) is
       // named exactly as before and hashed in the follow-up row.
       ...(APPROVING_ACTIONS.has(action.action)
-        ? { approvedDrafts: (ticket.attachments ?? []).filter((a) => a?.type === "Draft" && a.status === "submitted").map((a) => ({ ...fileIdentity(a, null), ...storedHashFields(verifiedStoredHash(a, attachHashCtx)) })) }
+        ? { approvedDrafts: (ticket.attachments ?? []).filter((a) => a?.type === "Draft" && a.status === "submitted").map((a) => ({ ...fileIdentity(a, null), ...storedHashAuditFields(a, attachHashCtx) })) }
         : {}),
       ...(hashKeys.length > 0 ? { filesHashedIn: filesHashedAction } : {}),
       // EVID-12 (DF-P5 fix pass 2): the sign-off that COMPLETES a roster is

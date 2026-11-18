@@ -99,6 +99,21 @@ export function storedHashFields(s: StoredContentHash | null): Record<string, un
   return s ? { sha256: s.sha256, sha256AtAttach: { bytes: s.bytes, etag: s.etag } } : {};
 }
 
+/** Said on an audit row for a file that carries a stored hash whose seal does
+ *  not verify (the sealing key was rotated or set after the file was hashed,
+ *  or the value was written by someone else) — never a silent fall-back to
+ *  the shape of a file that has none. */
+export const SEAL_DID_NOT_VERIFY = "seal did not verify";
+
+/** An audit row's hash fields for a file entry: the verified stored hash; or,
+ *  when the entry carries one that does not verify, `sha256AtAttachUnverified`;
+ *  or nothing (a file with no stored hash — exactly today's identity). */
+export function storedHashAuditFields(a: Pick<TicketAttachment, "url" | "contentHash"> | null | undefined, ctx: HashSealContext): Record<string, unknown> {
+  const s = verifiedStoredHash(a, ctx);
+  if (s) return storedHashFields(s);
+  return a && a.contentHash !== undefined && a.contentHash !== null ? { sha256AtAttachUnverified: SEAL_DID_NOT_VERIFY } : {};
+}
+
 /** The minimum of an S3-style GetObject answer read here. */
 interface StoredObject {
   ContentLength?: number;
@@ -110,29 +125,49 @@ export type AttachHash =
   | { ok: true; hash: StoredContentHash }
   | { ok: false; reason: string };
 
+/** The reason a file whose size the vetting HEAD already put over the byte
+ *  budget is not read at all (the same words the bounded hasher uses). */
+export const OVER_BYTE_BUDGET = "not hashed (byte budget)";
+
 /**
  * Hash the files an action attaches, under ONE deadline and ONE byte budget
  * (lib/ticketRoster.ts hashStoredFilesBounded — the GetObject is aborted at
- * the clock). `vettedEtags` maps a key to the ETag the vetting HEAD read: when
- * both are known and differ, the bytes changed between the check and the
- * read, and no hash is stored ("the stored file changed while it was being
- * attached"). Never throws; every key gets an answer.
+ * the clock). `vetted` maps a key to what the vetting HEAD read:
+ *   * `etag` — when both it and the GetObject's are known and differ, the
+ *     bytes changed between the check and the read, and no hash is stored
+ *     ("the stored file changed while it was being attached");
+ *   * `bytes` — a file the HEAD already put over the byte budget is not read
+ *     at all (no GetObject, no wait).
+ * `abort` (the request's own signal) cancels every read still in flight —
+ * the route aborts it on every return, so a refused request leaves no
+ * GetObject streaming after its response. Never throws; every key gets an
+ * answer.
  */
 export async function hashFilesAtAttach(
   keys: ReadonlyArray<string>,
   get: (key: string, signal?: AbortSignal) => Promise<StoredObject>,
   limits: { deadlineMs: number; byteBudget: number },
   ctx: HashSealContext,
-  vettedEtags: ReadonlyMap<string, string | null> = new Map(),
+  vetted: ReadonlyMap<string, { etag: string | null; bytes: number | null }> = new Map(),
+  abort?: AbortSignal,
 ): Promise<Map<string, AttachHash>> {
   const out = new Map<string, AttachHash>();
-  const unique = [...new Set(keys.filter(Boolean))];
-  if (unique.length === 0) return out;
+  const unique: string[] = [];
+  for (const k of new Set(keys.filter(Boolean))) {
+    const size = vetted.get(k)?.bytes;
+    if (typeof size === "number" && size > limits.byteBudget) out.set(k, { ok: false, reason: OVER_BYTE_BUDGET });
+    else unique.push(k);
+  }
+  if (unique.length === 0 || abort?.aborted) {
+    for (const k of unique) out.set(k, { ok: false, reason: "not hashed (the request ended)" });
+    return out;
+  }
   const servedEtag = new Map<string, string | null>();
   let hashes: Map<string, FileHash>;
   try {
     hashes = await hashStoredFilesBounded(unique, async (k, signal) => {
-      const o = await get(k, signal);
+      const both = abort && signal ? AbortSignal.any([signal, abort]) : (abort ?? signal);
+      const o = await get(k, both);
       servedEtag.set(k, typeof o?.ETag === "string" ? o.ETag.replace(/"/g, "") : null);
       return o as never;
     }, limits);
@@ -146,8 +181,8 @@ export async function hashFilesAtAttach(
     if (!h) { out.set(k, { ok: false, reason: "not hashed" }); continue; }
     if (!h.ok) { out.set(k, { ok: false, reason: h.reason }); continue; }
     const etag = servedEtag.get(k) ?? null;
-    const vetted = vettedEtags.get(k) ?? null;
-    if (etag && vetted && etag !== vetted) { out.set(k, { ok: false, reason: "the stored file changed while it was being attached" }); continue; }
+    const headEtag = vetted.get(k)?.etag ?? null;
+    if (etag && headEtag && etag !== headEtag) { out.set(k, { ok: false, reason: "the stored file changed while it was being attached" }); continue; }
     const sealed = sealContentHash(ctx, k, { sha256: h.sha256, bytes: h.bytes ?? 0, etag });
     out.set(k, sealed ? { ok: true, hash: sealed } : { ok: false, reason: "no sealing key configured" });
   }

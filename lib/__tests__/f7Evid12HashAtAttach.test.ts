@@ -30,6 +30,8 @@ const state = vi.hoisted(() => ({
   getHang: false,
   /** the ETag a GetObject answers when it differs from the HEAD's (a re-PUT between the two) */
   getEtagOverride: null as string | null,
+  /** the abort signal each GetObject was sent with */
+  getSignals: [] as Array<AbortSignal | undefined>,
   after: [] as Array<() => unknown>,
 }));
 function chain(table: string) {
@@ -65,10 +67,11 @@ vi.mock("next/server", async (importOriginal) => ({ ...(await importOriginal<typ
 vi.mock("@/lib/r2", () => ({
   R2_BUCKET: "b",
   r2: {
-    send: vi.fn(async (cmd: { constructor: { name: string }; input: { Key: string } }) => {
+    send: vi.fn(async (cmd: { constructor: { name: string }; input: { Key: string } }, opts?: { abortSignal?: AbortSignal }) => {
       const kind = cmd.constructor.name;
       const key = cmd.input.Key;
       state.r2.push({ kind, key });
+      if (kind === "GetObjectCommand") state.getSignals.push(opts?.abortSignal);
       const o = state.objects[key];
       if (!o) throw Object.assign(new Error("NotFound"), { name: "NotFound", $metadata: { httpStatusCode: 404 } });
       if (kind === "GetObjectCommand") {
@@ -129,7 +132,7 @@ const stable = (o: unknown) => JSON.parse(JSON.stringify(o ?? null, (k, v) => (V
 beforeEach(() => {
   __resetCapabilityPolicyCache();
   state.user = null; state.rows = {}; state.calls = []; state.r2 = []; state.after = [];
-  state.getFail = false; state.getHang = false; state.getEtagOverride = null;
+  state.getFail = false; state.getHang = false; state.getEtagOverride = null; state.getSignals = [];
   state.objects = { [KEY]: { bytes: BYTES, etag: "etag-a" } };
   Object.assign(HASH_LIMITS, LIMITS0);
   seed();
@@ -232,11 +235,12 @@ describe("EVID-12 (F7) — bookkeeping: an attach whose hash cannot be taken lan
     expect((r.audit!.details.attachment as Record<string, unknown>).sha256Unavailable).toBe("not hashed (deadline)");
   });
 
-  it("a file over the attach byte budget: not hashed (recorded why), attach identical", async () => {
+  it("a file the storage check already puts over the attach byte budget: never read (no GetObject, no wait), recorded why, attach identical", async () => {
     const today = await baseline();
     HASH_LIMITS.attachByteBudget = 4;
     const r = await attach();
     expect(r.status).toBe(200);
+    expect(gets()).toEqual([]);
     expect(stable(r.entry)).toEqual(stable(today.entry));
     expect((r.audit!.details.attachment as Record<string, unknown>).sha256Unavailable).toBe("not hashed (byte budget)");
   });
@@ -248,6 +252,20 @@ describe("EVID-12 (F7) — bookkeeping: an attach whose hash cannot be taken lan
     expect(r.status).toBe(200);
     expect(stable(r.entry)).toEqual(stable(today.entry));
     expect((r.audit!.details.attachment as Record<string, unknown>).sha256Unavailable).toBe("the stored file changed while it was being attached");
+  });
+
+  it("a request refused AFTER the hash read started aborts that read on the way out — no GetObject streams on after the response", async () => {
+    state.getHang = true; // the default 3 s deadline: the refusal must not wait for it
+    state.user = { id: "d-1" };
+    state.rows.tickets = [ticketRow()];
+    const t0 = Date.now();
+    // a referenced person who is not a member: refused (400) after the file was vetted and its hash started
+    const res = await post({ ticketId: "t1", actionType: "attach_file", attachment: { name: "iso_1A.pdf", url: KEY, type: "Draft" }, engineer: { id: "ghost", name: "G", email: "g@x.io" } });
+    expect(res.status).toBe(400);
+    expect(Date.now() - t0).toBeLessThan(1_500);
+    expect(gets().map((g) => g.key)).toEqual([KEY]);
+    expect(state.getSignals[0]?.aborted).toBe(true);
+    expect(updates()).toEqual([]);
   });
 
   it("a refused attach (the file is not in storage) is refused exactly as before — no hash read", async () => {
@@ -302,7 +320,7 @@ describe("EVID-12 (F7) — the serial approval's own row carries each approved D
     expect(f.details).toEqual({ approval: a.id, deliverable_rev: "1", approvedDrafts: [{ id: "a-d", name: "iso_1A.pdf", url: KEY, size: null, etag: null, sha256: SHA }] });
   });
 
-  it("a hash that is not the route's seal for THIS ticket and key — unsealed, tampered, moved from another ticket or key — is ignored: today's row", async () => {
+  it("a hash that is not the route's seal for THIS ticket and key — unsealed, tampered, moved from another ticket or key, or sealed under a key since rotated — is never carried as server-computed, and the row SAYS so (no silent fall-back to the legacy shape)", async () => {
     const forged = [
       { sha256: SHA, bytes: BYTES.length, etag: "etag-a" },
       { ...sealed(), sha256: "f".repeat(64) },
@@ -314,7 +332,24 @@ describe("EVID-12 (F7) — the serial approval's own row carries each approved D
       state.rows.tickets = [awaiting([{ ...DRAFT, contentHash } as TicketAttachment])];
       state.user = { id: "req-1" };
       expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(200);
-      expect(row("TICKET_APPROVE_DRAFT_IFC")!.details.approvedDrafts).toEqual([{ id: "a-d", name: "iso_1A.pdf", url: KEY, size: null, etag: null }]);
+      expect(row("TICKET_APPROVE_DRAFT_IFC")!.details.approvedDrafts).toEqual([{ id: "a-d", name: "iso_1A.pdf", url: KEY, size: null, etag: null, sha256AtAttachUnverified: "seal did not verify" }]);
+      await runAfter();
+      // the follow-up hashes it as for any file, and claims no match against an unverified value
+      const f = (row("TICKET_APPROVE_DRAFT_IFC_FILES_HASHED")!.details.approvedDrafts as Array<Record<string, unknown>>)[0];
+      expect(f).toMatchObject({ sha256: SHA });
+      expect("matchesStoredHash" in f).toBe(false);
+    }
+    // a key rotated after the file was hashed: the seal no longer verifies, and the row says so
+    const before = sealed();
+    vi.stubEnv("TICKET_FILE_HASH_SECRET", "a-new-key");
+    try {
+      state.calls = []; state.after = [];
+      state.rows.tickets = [awaiting([{ ...DRAFT, contentHash: before }])];
+      expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(200);
+      expect((row("TICKET_APPROVE_DRAFT_IFC")!.details.approvedDrafts as Array<Record<string, unknown>>)[0]).toMatchObject({ sha256AtAttachUnverified: "seal did not verify" });
+      expect("sha256" in (row("TICKET_APPROVE_DRAFT_IFC")!.details.approvedDrafts as Array<Record<string, unknown>>)[0]).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
     }
   });
 
