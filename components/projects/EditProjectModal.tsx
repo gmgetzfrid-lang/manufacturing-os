@@ -175,7 +175,8 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
             updated_by: actorUserId,
           }).eq("id", project.id!).select("id"), kept));
           const extErr = kept.r?.error ?? null;
-          if (!w.ok) throw new Error(`Name, description, MOC, target date and visibility were saved, but purpose / goals / Summary of Work were not: ${(w.code === "db" && extErr ? userFacingError(extErr, { context: "EditProjectModal", embed: true }) : w.error).replace(/\.$/, "")}. Save changes retries just those.`);
+          // (the first write landed — a refusal here is said without "Nothing was changed")
+          if (!w.ok) throw new Error(`Name, description, MOC, target date and visibility were saved, but purpose / goals / Summary of Work were not: ${(w.code === "db" && extErr ? userFacingError(extErr, { context: "EditProjectModal", embed: true }) : "the database did not change them (you may not be allowed to, or someone else changed the project first)").replace(/\.$/, "")}. Save changes retries just those.`);
           await logAuditAction({
             action: "PROJECT_UPDATED",
             resourceId: project.id!, resourceType: "project",

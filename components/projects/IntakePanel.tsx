@@ -574,7 +574,14 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       const dKept: Kept = {};
       const dw = await checkedWrite(answered(supabase.from("documents")
         .update({ pending_version_id: null, updated_at: new Date().toISOString() }).eq("id", p.docId).select("id"), dKept));
-      if (!dw.ok) throw new Error(`Couldn't clear the pending revision: ${failureText(dw, dKept)}`);
+      if (!dw.ok && dw.code === "db") throw new Error(`Couldn't clear the pending revision: ${failureText(dw, dKept)}`);
+      // The rejection above has LANDED (the version is 'rejected', and a retry
+      // would be refused). A pointer clear that matched no row — a per-document
+      // write deny (documents_deny_write_guard) that the version write is not
+      // under — is a follow-on that did not happen: it is said, and the
+      // rejection is still completed — sign-offs closed, INTAKE_REJECTED
+      // (naming the uncleared pointer), the company told (SAF-18, J15c review).
+      const pointerCleared = dw.ok;
       // RG-10: close out any sign-off rows on the rejected draft, so the daily
       // scan and the reviewers' inboxes stop chasing a draft nothing points at.
       // Zero rows is the normal case (an intake draft has no roster) — DEC-90
@@ -588,12 +595,14 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         action: "INTAKE_REJECTED",
         resource_type: "document", resource_id: p.docId,
         org_id: orgId, user_id: uid, user_email: userEmail ?? null,
-        details: { projectId, versionId: p.pendingVersionId, revLabel: p.revLabel, company: p.company, reason: reason.trim() },
+        details: { projectId, versionId: p.pendingVersionId, revLabel: p.revLabel, company: p.company, reason: reason.trim(), ...(pointerCleared ? {} : { pendingPointerCleared: false }) },
       });
-      const shown = auditErr
+      const shown = !pointerCleared
+        ? `${p.label} Rev ${p.revLabel ?? ""} rejected, but its pending pointer could not be cleared: the database did not change the document (you may not be allowed to edit it, or someone else changed it first) — ask Document Control to clear it. The company sees the rejection, with your reason, on their portal.${auditErr ? ` Its audit record also failed: ${userFacingError(auditErr, { embed: true })}` : ""}`
+        : auditErr
         ? `${p.label} Rev ${p.revLabel ?? ""} rejected, but its audit record failed: ${userFacingError(auditErr, { embed: true })}`
         : `${p.label} Rev ${p.revLabel ?? ""} rejected — the company sees it as not accepted, with your reason, on their portal.`;
-      setMsg(shown, auditErr ? "error" : "success");
+      setMsg(shown, auditErr || !pointerCleared ? "error" : "success");
       // SAF-9: the rejection landed — the server emails the link's contact
       // the outcome and the reason it reads from the version, without
       // holding up the message or the refresh.

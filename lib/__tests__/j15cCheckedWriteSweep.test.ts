@@ -224,7 +224,7 @@ describe("lib/milestones.ts — a person's schedule edits (class a)", () => {
     refuse("milestones", "update");
     const no = await importGhostMilestones({ orgId: "o1", projectId: "p1", source: "p6", csv, createdBy: "u1" });
     expect(no.updated).toBe(0);
-    expect(no.errors).toEqual([`Row 2: ${CHECKED_WRITE_REFUSED}`]);
+    expect(no.errors).toEqual(["Row 2: not changed (you may not be allowed to, or someone else changed it first)"]);
   });
 
   it("rebaseSchedule: a task the update did not match is reported left unchanged (never counted shifted) — the audit row carries only what moved", async () => {
@@ -245,7 +245,7 @@ describe("lib/milestones.ts — a person's schedule edits (class a)", () => {
     refuse("milestones", "update", (r) => r.id === "c2");
     const res = await groupTasksUnderParent({ orgId: "o1", projectId: "p1", parentId: "par", childIds: ["c1", "c2"], actorUserId: "u1" });
     expect(res.childCount).toBe(1);
-    expect(res.errors).toEqual([`c2: ${CHECKED_WRITE_REFUSED}`]);
+    expect(res.errors).toEqual(["c2: not changed (you may not be allowed to, or someone else changed it first)"]);
     expect(db.audits.find((a) => a.action === "TASKS_GROUPED")?.details).toMatchObject({ childCount: 1 });
     db.hides = null;
     const ok = await groupTasksUnderParent({ orgId: "o1", projectId: "p1", parentId: "par", childIds: ["c1", "c2"], actorUserId: "u1" });
@@ -274,7 +274,7 @@ describe("lib/milestones.ts — a person's schedule edits (class a)", () => {
     db.tables.milestones = [milestone("m1"), milestone("m2")];
     refuse("milestones", "update", (r) => r.id === "m2");
     const res = await setBaseline({ orgId: "o1", projectId: "p1", actorUserId: "u1" });
-    expect(res).toMatchObject({ ok: false, count: 1, via: "legacy", error: `Baseline applied to 1 of 2 tasks — ${CHECKED_WRITE_REFUSED}` });
+    expect(res).toMatchObject({ ok: false, count: 1, via: "legacy", error: "Baseline applied to 1 of 2 tasks — a task was not changed (you may not be allowed to, or someone else changed it first)" });
     expect(db.audits.find((a) => a.action === "SCHEDULE_BASELINED")?.details).toMatchObject({ count: 1, requested: 2, partial: true });
     db.hides = null;
     expect(await setBaseline({ orgId: "o1", projectId: "p1", actorUserId: "u1" })).toMatchObject({ ok: true, count: 2, via: "legacy" });
@@ -291,14 +291,14 @@ describe("lib/milestones.ts — importMilestonesFromParsed's per-row and structu
     refuse("milestones", "update", (r) => r.id === "m2");
     const res = await importMilestonesFromParsed({ orgId: "o1", projectId: "p1", source: "p6", rows: [row("A1"), row("A2")] as never, createdBy: "u1" });
     expect(res.updated).toBe(1);
-    expect(res.errors.some((e) => e.endsWith(`: ${CHECKED_WRITE_REFUSED}`))).toBe(true);
+    expect(res.errors.some((e) => e.endsWith(": not changed (you may not be allowed to, or someone else changed it first)"))).toBe(true);
   });
 
   it("a structure write the update did not match is reported, never silent", async () => {
     db.tables.milestones = [milestone("m1", { source: "p6", external_ref: "P" }), milestone("m2", { source: "p6", external_ref: "C" })];
     refuse("milestones", "update", (r) => r.id === "m2");
     const res = await importMilestonesFromParsed({ orgId: "o1", projectId: "p1", source: "p6", rows: [row("P"), row("C", { parentExternalRef: "P" })] as never, createdBy: "u1" });
-    expect(res.errors).toContain(`Structure for m2: ${CHECKED_WRITE_REFUSED}`);
+    expect(res.errors).toContain("Structure for m2: not changed (you may not be allowed to, or someone else changed it first)");
   });
 });
 
@@ -320,7 +320,23 @@ describe("lib/projects.ts", () => {
     refuse("checkout_sessions", "update", (r) => r.id === "s-ann");
     const out = await releaseAllCheckoutsForProject({ projectId: "p1", reason: "closed", actorUserId: "own" });
     expect(out.releasedSessionIds).toEqual(["s-own"]);
-    expect(out.stillHeld).toEqual([{ sessionId: "s-ann", documentId: "d2", userId: "ann", userName: "ann", reason: CHECKED_WRITE_REFUSED }]);
+    expect(out.stillHeld).toEqual([{ sessionId: "s-ann", documentId: "d2", userId: "ann", userName: "ann", reason: "The release was not applied: the database did not change it (you may not be allowed to, or someone else changed it first)." }]);
+    expect(db.audits.filter((a) => a.action === "CHECK_IN").map((a) => a.resourceId)).toEqual(["d1"]);
+  });
+
+  it("releaseAllCheckoutsForProject (class c): a holder who checked in between the read and the release is not reported still held", async () => {
+    db.tables.checkout_sessions = [
+      { id: "s-own", document_id: "d1", org_id: "o1", user_id: "own", user_name: "Owner", project_id: "p1", status: "active" },
+      { id: "s-ann", document_id: "d2", org_id: "o1", user_id: "ann", user_name: "ann", project_id: "p1", status: "active" },
+    ];
+    // ann checks in just before the release's UPDATE reaches her session
+    db.hides = (t, o, r) => {
+      if (t !== "checkout_sessions" || o !== "update" || r.id !== "s-ann") return false;
+      r.status = "checked_in";
+      return true;
+    };
+    const out = await releaseAllCheckoutsForProject({ projectId: "p1", reason: "closed", actorUserId: "own" });
+    expect(out).toEqual({ released: 1, releasedSessionIds: ["s-own"], stillHeld: [] });
     expect(db.audits.filter((a) => a.action === "CHECK_IN").map((a) => a.resourceId)).toEqual(["d1"]);
   });
 
@@ -355,18 +371,31 @@ describe("lib/projects.ts", () => {
     expect(db.notices).toHaveLength(1);
   });
 
-  it("deleteProject before 20261103: schedule tasks the DELETE did not remove are said and audited, never counted", async () => {
+  it("deleteProject before 20261103: schedule tasks the DELETE did not remove are audited and returned as a warning — the deletion that landed is never thrown over", async () => {
     db.tables.milestones = [milestone("m1"), milestone("m2")];
     refuse("milestones", "delete");
-    await expect(deleteProject({ projectId: "p1", actorUserId: "own" })).rejects.toThrow(
-      "The project was deleted, but its 2 schedule task(s) were not: the database removed 0 of 2 (you may not be allowed to delete them, or someone else changed them first)",
-    );
+    const out = await deleteProject({ projectId: "p1", actorUserId: "own" });
+    expect(db.tables.projects).toEqual([]);
+    expect(out.warning).toBe("The project was deleted, but not all of its 2 schedule task(s) were: the database removed 0 of 2 (you may not be allowed to delete them, or someone else changed them first). The tasks left no longer belong to a project — ask an Admin or Document Control to remove them.");
     expect(db.audits.find((a) => a.action === "PROJECT_DELETED")?.details).toMatchObject({ scheduleError: "the database removed 0 of 2 (you may not be allowed to delete them, or someone else changed them first)" });
+  });
+
+  it("deleteProject before 20261103: a schedule delete the database errors on still throws, as before", async () => {
+    db.tables.milestones = [milestone("m1")];
+    db.fails = (t, op) => (t === "milestones" && op === "delete" ? { message: "canceling statement due to statement timeout", code: "57014" } : null);
+    await expect(deleteProject({ projectId: "p1", actorUserId: "own" })).rejects.toThrow(/^The project was deleted, but its 1 schedule task\(s\) were not: /);
+  });
+
+  it("the project page shows the delete's warning after it leaves the deleted project", () => {
+    const page = readFileSync(join(process.cwd(), "app/(protected)/projects/[id]/page.tsx"), "utf8");
+    expect(page).toContain('router.push("/projects");\n      // SAF-18 (J15c): the project is gone; what did not go with it is said after leaving its page.\n      if (out.warning) void appAlert({ message: out.warning, tone: "danger" });');
   });
 
   it("deleteProject before 20261103: the ordinary path deletes the project, then its schedule, audited without an error", async () => {
     db.tables.milestones = [milestone("m1"), milestone("m2")];
-    await expect(deleteProject({ projectId: "p1", actorUserId: "own" })).resolves.toMatchObject({ counts: expect.any(Object) });
+    const out = await deleteProject({ projectId: "p1", actorUserId: "own" });
+    expect(out).toMatchObject({ counts: expect.any(Object) });
+    expect(out).not.toHaveProperty("warning");
     expect(db.tables.milestones).toEqual([]);
     expect(db.audits.find((a) => a.action === "PROJECT_DELETED")?.details).not.toHaveProperty("scheduleError");
   });
@@ -376,7 +405,7 @@ describe("lib/projects.ts", () => {
     db.tables.project_members = [{ id: "pm-own", project_id: "p1", user_id: "own", role: "owner" }];
     refuse("project_members", "update");
     await expect(transferOwnership({ projectId: "p1", newOwnerUserId: "new", actorUserId: "own" }))
-      .rejects.toThrow(`Ownership moved, but the previous owner's roster row was not updated: ${CHECKED_WRITE_REFUSED}`);
+      .rejects.toThrow("Ownership moved, but the previous owner's roster row was not updated: the database did not change it (you may not be allowed to, or someone else changed it first). Reload the project to check its team.");
     expect(db.audits).toEqual([]);
   });
 
@@ -465,7 +494,7 @@ describe("lib/teams.ts", () => {
 
   it("deleteTeam: a library release the update did not match stops the delete — no OWNER_TEAM_CLEARED, no TEAM_DELETED", async () => {
     refuse("libraries", "update");
-    await expect(deleteTeam("t1", { orgId: "o1", actorId: "a" })).rejects.toThrow(/^Team not deleted: library "Drawings" is still owned by it and could not be released \(Nothing was changed/);
+    await expect(deleteTeam("t1", { orgId: "o1", actorId: "a" })).rejects.toThrow(/^Team not deleted: library "Drawings" is still owned by it and could not be released \(the database did not change it — you may not be allowed to, or someone else changed it first\)\.$/);
     expect(writesTo("teams")).toEqual([]);
     expect(db.audits).toEqual([]);
   });

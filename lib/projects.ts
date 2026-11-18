@@ -14,7 +14,7 @@ import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { logAuditAction } from "@/lib/audit";
 import { auditActorNote } from "@/lib/auditActions";
 import { notify, notifyMany, notifyBatchChecked } from "@/lib/inAppNotifications";
-import { checkedWrite, CHECKED_WRITE_REFUSED, type CheckedWriteFailure } from "@/lib/checkedWrite";
+import { checkedWrite, type CheckedWriteFailure } from "@/lib/checkedWrite";
 import { answered, type Kept } from "@/lib/checkedWriteKeep";
 import {
   ensureActiveEpisode,
@@ -234,6 +234,11 @@ export async function writeActivityChecked(input: WriteActivityInput): Promise<v
 function savedButNotRecorded(what: string, activityError: string): Error {
   return new Error(`${what} — saved, but the project feed row was not written: ${activityError.replace(/^The project activity row was not written: /, "")}`);
 }
+
+/** projects-joint J15c (SAF-18): the words for a follow-on write that
+ *  matched no row after part of the act had already landed — never
+ *  "Nothing was changed", which would contradict what did. */
+const NOT_APPLIED = "the database did not change it (you may not be allowed to, or someone else changed it first)";
 
 /** projects-joint J15c (SAF-18, DEC-90): a failed checked write in words —
  *  the database's own sentence, as this file gave it before, for an error;
@@ -818,10 +823,14 @@ export async function releaseAllCheckoutsForProject(params: {
       stillHeld.push({ sessionId: r.id, documentId: r.document_id, userId: r.user_id, userName: r.user_name, reason: userFacingError(res.error, { context: "projects" }) });
       continue;
     }
-    // SAF-18: a release that matched no row did not end the session — it is
-    // reported held (refused, or changed by someone else first), never dropped.
+    // SAF-18: a release that matched no row did not end the session. The
+    // session is read again: one its holder checked in meanwhile (no longer
+    // active) is no error (DEC-90 class c) and is left out; one still active,
+    // or one that cannot be read, is reported held — never dropped.
     if (res.ended.length === 0) {
-      stillHeld.push({ sessionId: r.id, documentId: r.document_id, userId: r.user_id, userName: r.user_name, reason: CHECKED_WRITE_REFUSED });
+      const { data: now, error: nowErr } = await supabase.from("checkout_sessions").select("status").eq("id", r.id).maybeSingle();
+      if (!nowErr && now && (now as { status?: string | null }).status !== "active") continue;
+      stillHeld.push({ sessionId: r.id, documentId: r.document_id, userId: r.user_id, userName: r.user_name, reason: `The release was not applied: ${NOT_APPLIED}.` });
       continue;
     }
     endedRows.push(...res.ended);
@@ -1340,7 +1349,7 @@ export async function deleteProject(input: {
   projectId: string; actorUserId: string; actorEmail?: string; actorRole?: string;
   /** Required by the database when the project carries cost / quality records. */
   reason?: string;
-}): Promise<{ counts: Record<string, unknown> | null }> {
+}): Promise<{ counts: Record<string, unknown> | null; warning?: string }> {
   const p = await assertCanManageProject(input.projectId, input.actorUserId);
   const { data, error } = await supabase.rpc("delete_project_record", {
     p_project: input.projectId,
@@ -1363,7 +1372,7 @@ export async function deleteProject(input: {
 async function legacyDeleteRecordlessProject(
   p: ManagedProject,
   input: { projectId: string; actorUserId: string; actorEmail?: string; actorRole?: string },
-): Promise<{ counts: Record<string, unknown> | null }> {
+): Promise<{ counts: Record<string, unknown> | null; warning?: string }> {
   const counts = await countProjectRecords(input.projectId);
   const regulated = regulatedRecordTotal(counts);
   if (regulated === null || regulated > 0) {
@@ -1383,23 +1392,33 @@ async function legacyDeleteRecordlessProject(
   }
   // milestones.project_id is ON DELETE SET NULL — the schedule goes with the project.
   let scheduleError: string | null = null;
+  // Checked (SAF-18): every task read above must come back from the DELETE.
+  // The project's deletion has LANDED by now, so a shortfall (the delete
+  // guard filtered tasks out) is recorded and returned as a warning the page
+  // shows after it leaves the deleted project — never thrown over a delete
+  // that happened. A database error throws, as before.
+  let scheduleShortfall: string | null = null;
   if (milestoneIds.length > 0) {
-    // Checked (SAF-18): every task read above must come back from the
-    // DELETE — a shortfall is tasks the database kept, said, never counted.
     const kept: Kept = {};
     const w = await checkedWrite(answered(supabase.from("milestones").delete().in("id", milestoneIds).select("id"), kept));
     if (!w.ok && w.code === "db") scheduleError = failureText(w, kept, { embed: true });
     else {
       const removed = w.ok ? w.ids.length : 0;
-      if (removed < milestoneIds.length) scheduleError = `the database removed ${removed} of ${milestoneIds.length} (you may not be allowed to delete them, or someone else changed them first)`;
+      if (removed < milestoneIds.length) scheduleShortfall = `the database removed ${removed} of ${milestoneIds.length} (you may not be allowed to delete them, or someone else changed them first)`;
     }
   }
   await logAuditAction({
     action: "PROJECT_DELETED", resourceId: input.projectId, resourceType: "project",
     orgId: p.orgId, userId: input.actorUserId, userEmail: input.actorEmail, userRole: input.actorRole,
-    details: { name: p.name, counts, path: "pre-20261103", ...(scheduleError ? { scheduleError } : {}) },
+    details: { name: p.name, counts, path: "pre-20261103", ...((scheduleError ?? scheduleShortfall) ? { scheduleError: scheduleError ?? scheduleShortfall } : {}) },
   });
   if (scheduleError) throw new Error(`The project was deleted, but its ${milestoneIds.length} schedule task(s) were not: ${scheduleError}`);
+  if (scheduleShortfall) {
+    return {
+      counts: counts as unknown as Record<string, unknown>,
+      warning: `The project was deleted, but not all of its ${milestoneIds.length} schedule task(s) were: ${scheduleShortfall}. The tasks left no longer belong to a project — ask an Admin or Document Control to remove them.`,
+    };
+  }
   return { counts: counts as unknown as Record<string, unknown> };
 }
 
@@ -1470,7 +1489,7 @@ async function legacyTransferOwnership(
       const { data: still, error: stillErr } = await supabase.from("project_members").select("id")
         .eq("project_id", input.projectId).eq("user_id", p.ownerUserId).eq("role", "owner").maybeSingle();
       if (stillErr) throw new Error(`Ownership moved, but whether the previous owner's roster row was updated could not be checked: ${userFacingReadError(stillErr, "projects")}`);
-      if (still) throw new Error(`Ownership moved, but the previous owner's roster row was not updated: ${CHECKED_WRITE_REFUSED}`);
+      if (still) throw new Error(`Ownership moved, but the previous owner's roster row was not updated: ${NOT_APPLIED}. Reload the project to check its team.`);
     }
   }
   const activityError = await writeActivity({

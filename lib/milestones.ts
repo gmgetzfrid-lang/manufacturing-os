@@ -45,6 +45,13 @@ import type {
 function failureText(w: CheckedWriteFailure, kept: Kept): string {
   return w.code === "db" && kept.r?.error ? userFacingError(kept.r.error, { context: "milestones" }) : w.error;
 }
+/** One row of a many-row act (an import, a grouping, a baseline) the
+ *  database did not change: other rows may have landed, so the refusal is
+ *  said for that row — never "Nothing was changed" over the whole act. */
+const ROW_NOT_CHANGED = "not changed (you may not be allowed to, or someone else changed it first)";
+function rowFailureText(w: CheckedWriteFailure, kept: Kept): string {
+  return w.code === "refused" ? ROW_NOT_CHANGED : failureText(w, kept);
+}
 /** The row a person's checked edit saved (`.select("*")`), or its failure thrown. */
 function savedRow(w: CheckedWriteResult, kept: Kept): MilestoneRow {
   if (!w.ok) throw new Error(failureText(w, kept));
@@ -1533,7 +1540,7 @@ export async function importGhostMilestones(input: ImportGhostMilestonesInput): 
             planned_at: plannedIso, updated_at: new Date().toISOString(),
             updated_by: input.createdBy,
           }).eq("id", (existing as { id: string }).id).select("id"), kept));
-          if (!w.ok) { result.errors.push(`Row ${i+1}: ${failureText(w, kept)}`); }
+          if (!w.ok) { result.errors.push(`Row ${i+1}: ${rowFailureText(w, kept)}`); }
           else result.updated++;
           continue;
         }
@@ -2240,7 +2247,7 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
         // A matched row that comes back empty was refused — never counted updated.
         const kept: Kept = {};
         const w = await checkedWrite(answered(supabase.from("milestones").update(updateFields(p)).eq("id", p.id!).select("id"), kept));
-        if (!w.ok) { result.errors.push(`${rowLabel(p)}: ${failureText(w, kept)}`); continue; }
+        if (!w.ok) { result.errors.push(`${rowLabel(p)}: ${rowFailureText(w, kept)}`); continue; }
         result.updated++;
         continue;
       }
@@ -2329,7 +2336,7 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
         missing.add("20260715"); // 20260715 not applied — keep the hierarchy, drop the links
         w = await checkedWrite(answered(supabase.from("milestones").update({ parent_id: u.parent_id }).eq("id", u.id).select("id"), kept));
       }
-      if (!w.ok) result.errors.push(`Structure for ${u.id}: ${failureText(w, kept)}`);
+      if (!w.ok) result.errors.push(`Structure for ${u.id}: ${rowFailureText(w, kept)}`);
     }));
     input.onProgress?.({ done: Math.min(i + chunk.length, structure.length), total: structure.length, phase: "structure" });
   }
@@ -2702,7 +2709,7 @@ export async function groupTasksUnderParent(input: GroupTasksInput): Promise<Gro
       })
       .eq("id", cid)
       .select("id"), kept));
-    if (!w.ok) errors.push(`${cid.slice(0,8)}: ${failureText(w, kept)}`);
+    if (!w.ok) errors.push(`${cid.slice(0,8)}: ${rowFailureText(w, kept)}`);
     else updated++;
   }
 
@@ -2857,7 +2864,8 @@ export async function setBaseline(input: {
       baseline_set_at: now,
       baseline_set_by: input.actorUserId,
     }).eq("id", r.id).select("id"), kept));
-    if (!w.ok) errors.push(failureText(w, kept)); else count++;
+    // (other rows may have landed — a refusal is said for this row)
+    if (!w.ok) errors.push(w.code === "refused" ? `a task was ${ROW_NOT_CHANGED}` : failureText(w, kept)); else count++;
   }));
 
   await logAuditAction({

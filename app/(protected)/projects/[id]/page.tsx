@@ -354,8 +354,10 @@ export default function ProjectDetailPage() {
       tone: "danger", confirmLabel: "Delete",
     }))) return;
     try {
-      await deleteProject({ projectId: project.id, actorUserId: uid, actorEmail: userEmail ?? undefined, actorRole: activeRole ?? undefined, reason });
+      const out = await deleteProject({ projectId: project.id, actorUserId: uid, actorEmail: userEmail ?? undefined, actorRole: activeRole ?? undefined, reason });
       router.push("/projects");
+      // SAF-18 (J15c): the project is gone; what did not go with it is said after leaving its page.
+      if (out.warning) void appAlert({ message: out.warning, tone: "danger" });
     } catch (e) { await appAlert({ message: userFacingCaughtError(e, { context: "project page" }), tone: "danger" }); }
   };
 

@@ -121,8 +121,9 @@ describe("EditProjectModal — the purpose / goals / Summary of Work write", () 
     ui.refused.add("projects");
     const onSaved = await openAndEditPurpose();
     expect(host.querySelector('[role="alert"]')?.textContent).toBe(
-      `Name, description, MOC, target date and visibility were saved, but purpose / goals / Summary of Work were not: ${CHECKED_WRITE_REFUSED.replace(/\.$/, "")}. Save changes retries just those.`,
+      "Name, description, MOC, target date and visibility were saved, but purpose / goals / Summary of Work were not: the database did not change them (you may not be allowed to, or someone else changed the project first). Save changes retries just those.",
     );
+    expect(host.querySelector('[role="alert"]')?.textContent).not.toContain("Nothing was changed");
     expect(ui.audits).toEqual([]);
     expect(onSaved).not.toHaveBeenCalled();
   });

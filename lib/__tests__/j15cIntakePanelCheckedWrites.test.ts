@@ -19,6 +19,8 @@ const s = vi.hoisted(() => ({
   appPrompt: vi.fn(),
   /** Tables whose UPDATE row-level security filters to zero rows (no error). */
   refused: new Set<string>(),
+  /** Tables whose UPDATE the database answers with an error. */
+  failing: new Map<string, { message: string; code?: string }>(),
   /** The link's assigned documents as the list reads them. */
   assigned: [] as string[],
   /** projects.intake_library_id as the panel reads it. */
@@ -46,6 +48,7 @@ vi.mock("@/lib/supabase", () => {
     const single = methods.includes("maybeSingle") || methods.includes("single");
     if (methods[0] === "update") {
       s.writes.push({ table, method: "update", args: args[0] });
+      if (s.failing.has(table)) return { data: null, error: s.failing.get(table)! };
       // PostgREST answers `.select("id")` with the rows it matched — none when RLS hid them
       return { data: s.refused.has(table) ? [] : [{ id: `${table}-1` }], error: null };
     }
@@ -83,7 +86,7 @@ import { CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
 let host: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
-  s.refused = new Set(); s.assigned = []; s.library = "lib1"; s.writes = [];
+  s.refused = new Set(); s.failing = new Map(); s.assigned = []; s.library = "lib1"; s.writes = [];
   s.notify.mockReset().mockResolvedValue({ sent: true });
   s.appPrompt.mockReset().mockResolvedValue("The weld map is missing from sheet 2");
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
@@ -112,12 +115,32 @@ const setInput = async (el: HTMLInputElement, v: string) => {
 };
 
 describe("SAF-18 (J15c) — a rejection's own writes are checked", () => {
-  it("a pending-pointer clear that matched no row is said, and no INTAKE_REJECTED row or contractor notice follows it", async () => {
+  // The pointer clear follows a rejection that has already LANDED (the
+  // version is 'rejected'; a retry would be refused). A per-document write
+  // deny filters the clear to zero rows while the version write stands: the
+  // rejection is still completed — sign-offs closed, INTAKE_REJECTED naming
+  // the uncleared pointer, the contractor told — and the gap is said.
+  it("a pending-pointer clear that matched no row does not undo the landed rejection: it is completed, audited (pendingPointerCleared: false), told, and the gap is said", async () => {
     s.refused.add("documents");
     await render();
     await click(button("Reject"));
-    expect(notice()).toBe(`Couldn't clear the pending revision: ${CHECKED_WRITE_REFUSED}`);
+    expect(s.writes.map((w) => `${w.method}:${w.table}`)).toEqual([
+      "update:document_versions", "update:documents", "update:document_review_signoffs", "insert:audit_logs",
+    ]);
+    const audit = wrote("audit_logs", "insert")[0].args[0] as { action: string; details: Record<string, unknown> };
+    expect(audit.action).toBe("INTAKE_REJECTED");
+    expect(audit.details.pendingPointerCleared).toBe(false);
+    expect(s.notify).toHaveBeenCalledWith("o1", "v2");
+    expect(notice()).toBe("P-101 Rev B rejected, but its pending pointer could not be cleared: the database did not change the document (you may not be allowed to edit it, or someone else changed it first) — ask Document Control to clear it. The company sees the rejection, with your reason, on their portal. The company's contact was emailed the outcome.");
+    expect(notice()).not.toContain("Nothing was changed");
     expect(tone()).toBe("error");
+  });
+
+  it("a pending-pointer clear the database errors on stops there, as before — no INTAKE_REJECTED, no notice", async () => {
+    s.failing.set("documents", { message: "canceling statement due to statement timeout", code: "57014" });
+    await render();
+    await click(button("Reject"));
+    expect(notice()).toMatch(/^Couldn't clear the pending revision: /);
     expect(wrote("audit_logs", "insert")).toEqual([]);
     expect(s.notify).not.toHaveBeenCalled();
   });
@@ -137,6 +160,8 @@ describe("SAF-18 (J15c) — a rejection's own writes are checked", () => {
     expect(s.writes.map((w) => `${w.method}:${w.table}`)).toEqual([
       "update:document_versions", "update:documents", "update:document_review_signoffs", "insert:audit_logs",
     ]);
+    // the success path's audit row is the one it always was (no added key)
+    expect((wrote("audit_logs", "insert")[0].args[0] as { details: Record<string, unknown> }).details).not.toHaveProperty("pendingPointerCleared");
   });
 });
 

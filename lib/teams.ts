@@ -205,7 +205,8 @@ export async function deleteTeam(teamId: string, ctx?: { orgId?: string | null; 
       // no OWNER_TEAM_CLEARED row claims it.
       const kept: Kept = {};
       const w = await checkedWrite(answered(supabase.from("libraries").update({ owner_team_id: null }).eq("id", l.id).select("id"), kept));
-      if (!w.ok) throw new Error(`Team not deleted: library "${l.name}" is still owned by it and could not be released (${kept.r?.error?.message ?? w.error.replace(/\.$/, "")}).`);
+      // (a library released before it stays released — so no "Nothing was changed" here)
+      if (!w.ok) throw new Error(`Team not deleted: library "${l.name}" is still owned by it and could not be released (${kept.r?.error?.message ?? (w.code === "refused" ? "the database did not change it — you may not be allowed to, or someone else changed it first" : w.error.replace(/\.$/, ""))}).`);
       await logAuditAction({
         action: "OWNER_TEAM_CLEARED", resourceType: "library", resourceId: l.id,
         orgId: ctx.orgId, userId: ctx.actorId ?? "unknown", userEmail: ctx.actorEmail ?? undefined,

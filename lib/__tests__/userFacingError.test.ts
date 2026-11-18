@@ -456,8 +456,8 @@ describe("REL-3 — the Projects and Companies libraries route through it", () =
 
   it("the cited leaks are closed: the edit dialog's second write and the stale-checkout release translate the driver's text", () => {
     const edit = readFileSync(join(process.cwd(), "components/projects/EditProjectModal.tsx"), "utf8");
-    // (J15c, SAF-18: the second write is checked — a refusal is said in CHECKED_WRITE_REFUSED's words)
-    expect(edit).toContain('were not: ${(w.code === "db" && extErr ? userFacingError(extErr, { context: "EditProjectModal", embed: true }) : w.error).replace(/\\.$/, "")}. Save changes retries just those.');
+    // (J15c, SAF-18: the second write is checked — a refusal is said in words that do not deny the first write)
+    expect(edit).toContain('were not: ${(w.code === "db" && extErr ? userFacingError(extErr, { context: "EditProjectModal", embed: true }) : "the database did not change them (you may not be allowed to, or someone else changed the project first)").replace(/\\.$/, "")}. Save changes retries just those.');
     expect(edit).not.toContain("${extErr.message}");
     const banner = readFileSync(join(process.cwd(), "components/projects/StaleCheckoutBanner.tsx"), "utf8");
     expect(banner).toContain("Couldn't release ${row.docNumber || \"the checkout\"}: ${userFacingCaughtError(e, { context: \"StaleCheckoutBanner release\" })}");
