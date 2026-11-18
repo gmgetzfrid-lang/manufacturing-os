@@ -25,7 +25,7 @@
       "RESOLVED (2026-10-20, admin-and-org Round G P5; limb (c) closed by decision — ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90): `org_has_active_subscription` kept as documented, unwired scaffolding; the contractor intake door's call is tracked on `BILL-10` Done-when 2 alone)": 1,
       "RESOLVED (code) — database half pending 20261238 (ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90): the status stays exactly this until `20261238` is pasted and its result rows come back all true)": 1,
       "RESOLVED *(2026-10-14, admin-and-org Round G P13; the controller / owner shortcut that precedes the gate is opened as `ORG-23`)*": 1,
-      "OPEN": 1,
+      "RESOLVED *(2026-11-18, fleet F3-member-gate-and-restore, under DEC-90; client-only, no migration)*": 1,
       "RESOLVED (2026-10-20, ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90) — fixed in the same package at its merge rather than left open; within the stated bound below)": 1
     }
   },
@@ -1963,7 +1963,7 @@
       "id": "ORG-23",
       "title": "A principal known not to be an active member still passes the controller and effective-owner shortcuts in `lib/permissions.ts`, which run before its `isActiveMember` gate",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED *(2026-11-18, fleet F3-member-gate-and-restore, under DEC-90; client-only, no migration)*",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by reading, on `ddc3678` + P13's `lib/principal.ts`)",
       "blast_radius": null,

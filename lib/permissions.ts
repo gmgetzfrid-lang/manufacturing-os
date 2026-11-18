@@ -45,8 +45,21 @@ export function heldRoles(p: Pick<Principal, "role" | "roles">): Role[] {
  *  (RoleContext), and its collection is then empty — so "no role known" is
  *  never a controller. The same answer as heldRoles(p).some(isControllerRole)
  *  for every real headline; Principal.role itself stays a Role. */
-export function isControllerPrincipal(p: Pick<Principal, "roles"> & { role: Role | null }): boolean {
+export function isControllerPrincipal(p: Pick<Principal, "roles" | "isActiveMember"> & { role: Role | null }): boolean {
+  // ORG-23: a principal KNOWN not to be an active member holds no tier.
+  if (knownInactive(p)) return false;
   return (p.role !== null && isControllerRole(p.role)) || (p.roles ?? []).some(isControllerRole);
+}
+
+/** admin-and-org ORG-23: the member gate every decision below asks FIRST —
+ *  before the controller tier and the effective-owner rung — so a principal
+ *  known not to be an active member (lib/principal.ts resolveActorPrincipal:
+ *  the membership read succeeded and found no active row, ORG-22) passes no
+ *  shortcut and is denied, as RLS (is_org_controller, user_is_effective_owner,
+ *  node_visible — each reads the ACTIVE membership) will answer. An unknown
+ *  status (no flag) and an active member are unchanged. */
+function knownInactive(p: Pick<Principal, "isActiveMember">): boolean {
+  return p.isActiveMember === false;
 }
 
 export function canWithAclChain(params: {
@@ -62,6 +75,7 @@ export function canWithAclChain(params: {
 }): boolean {
   const { principal, action, aclChain = [], defaultAllow = true } = params;
 
+  if (knownInactive(principal)) return false;
   if (isControllerPrincipal(principal)) return true;
   if (params.effectiveOwnerUserId && principal.uid
       && params.effectiveOwnerUserId === principal.uid
@@ -99,7 +113,8 @@ export function canWithAclChain(params: {
 /**
  * Evaluate publish authority from the DENORMALIZED acl_index — the exact
  * column the DB's user_can_publish_on_library() reads. Returns null when the
- * index is absent (caller falls back to the raw-ACL evaluator). Preferring
+ * index is absent (caller falls back to the raw-ACL evaluator) — except for a
+ * principal known not to be an active member, which is false (ORG-23). Preferring
  * the index keeps app-side and DB-side authority reading the SAME source, so
  * a writer that updates only one column can no longer fork security.
  * Semantics mirror the SQL: an explicit publish deny wins; then any
@@ -109,8 +124,8 @@ export function canPublishViaIndex(
   idx: import("@/types/schema").AclIndex | null | undefined,
   p: Principal,
 ): boolean | null {
+  if (knownInactive(p)) return false;
   if (!idx || (!idx.allow && !idx.deny)) return null;
-  if (p.isActiveMember === false) return false;
   const uid = p.uid;
   // CHAIN-1 / ADD-1: role subjects match ANY held role — a deny naming an
   // additively-held role binds, and an allow naming one grants.
@@ -150,6 +165,7 @@ export function canPublishOnLibrary(params: {
   principal: Principal;
   libraryAcl?: AccessControl;
 }): boolean {
+  if (knownInactive(params.principal)) return false;
   if (isControllerPrincipal(params.principal)) return true;
   const decision = evaluateAclChain([params.libraryAcl], {
     uid: params.principal.uid,
@@ -174,6 +190,7 @@ export function canDiscover(params: {
 }): boolean {
   const { principal, aclChain = [], visibility = "normal" } = params;
 
+  if (knownInactive(principal)) return false;
   if (isControllerPrincipal(principal)) return true;
   if (params.effectiveOwnerUserId && principal.uid
       && params.effectiveOwnerUserId === principal.uid) return true;
@@ -234,6 +251,7 @@ export function canReadNode(params: {
   const { principal, aclChain = [], actions = ["read"] } = params;
   const visibility: NodeVisibility = params.visibility === "hidden" || params.visibility === "private"
     ? params.visibility : "normal";
+  if (knownInactive(principal)) return false;
   if (isControllerPrincipal(principal)) return true;
   if (params.privateDraft && !(principal.uid && params.privateDraft.createdBy === principal.uid)) return false;
   if (params.effectiveOwnerUserId && principal.uid && params.effectiveOwnerUserId === principal.uid) return true;
@@ -259,13 +277,15 @@ export function canReadNode(params: {
  *  reader (uid, any held role, a team, the org) wins; then an allow of the
  *  action, or of `admin` while `admin` itself is not denied; an index with
  *  no entry for the reader grants nothing. Controllers and the effective
- *  owner short-circuit as in canReadNode. */
+ *  owner short-circuit as in canReadNode — after the member gate (ORG-23):
+ *  a principal known not to be an active member is false, index or none. */
 export function canReadViaIndex(
   idx: import("@/types/schema").AclIndex | null | undefined,
   p: Principal,
   actions: readonly PermissionAction[] = ["read"],
   effectiveOwnerUserId?: string | null,
 ): boolean | null {
+  if (knownInactive(p)) return false;
   if (isControllerPrincipal(p)) return true;
   if (effectiveOwnerUserId && p.uid && effectiveOwnerUserId === p.uid) return true;
   if (!idx || (!idx.allow && !idx.deny)) return null;
@@ -275,7 +295,6 @@ export function canReadViaIndex(
   const anyEntry = (bucket: Record<string, Lists> | undefined) => !!bucket
     && Object.values(bucket).some((m) => !!m && Object.values(m).some((l) => Array.isArray(l) && l.length > 0));
   if (!anyEntry(idx.allow as unknown as Record<string, Lists>) && !anyEntry(idx.deny as unknown as Record<string, Lists>)) return null;
-  if (p.isActiveMember === false) return false;
   const roles = heldRoles(p) as string[];
   const teams = p.teamIds ?? [];
   const org = p.orgId ?? null;
