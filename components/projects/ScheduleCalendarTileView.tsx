@@ -208,8 +208,8 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   // while its siblings stay put. See lib/calendarPlacement.ts.
   const split = useMemo(
     // One card per work order: a step that is a work order of its own (one
-    // PSV in the PSVs folder, a WO set under another's equipment) is its own
-    // card; added work stays on its equipment's (lib/workOrderCrew).
+    // PSV in the PSVs folder, a WO set under another's equipment, found work
+    // given its own WO) is its own card (lib/workOrderCrew).
     () => {
       // The group's work order: its own number, or the nearest one above it.
       const woUp = (g: Milestone) => {
@@ -219,7 +219,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
       };
       return splitPlacements(milestones, childrenByParent, showSubtasks, (step, group) => {
         const w = woOf(step);
-        return !!w && !discoveryOf(step) && w !== woUp(group);
+        return !!w && w !== woUp(group);
       });
     },
     [milestones, childrenByParent, showSubtasks, byId],

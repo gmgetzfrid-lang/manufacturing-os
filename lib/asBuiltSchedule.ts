@@ -73,6 +73,8 @@ export interface BuiltOrder {
   status: BuiltStatus;
   /** Every step added after the plan: an added work order. */
   allAdded: boolean;
+  /** Found work given its own WO: the work order it was found on. */
+  foundOn: string | null;
   varianceH: number | null;
 }
 
@@ -131,6 +133,7 @@ export function buildAsBuilt(input: {
 
   const orders: BuiltOrder[] = [];
   const leafIds = new Set(leaves.map((m) => m.id!));
+  const byId = new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m]));
   for (const [key, g] of workOrderGroupsOf(milestones, childrenByParent)) {
     const steps = g.steps.filter((m) => leafIds.has(m.id!)).map(stepOf)
       .sort((a, b) => (a.planStart ?? Infinity) - (b.planStart ?? Infinity) || (a.barStart ?? Infinity) - (b.barStart ?? Infinity));
@@ -153,6 +156,7 @@ export function buildAsBuilt(input: {
       finish, done,
       status: allDone ? "done" : steps.some((s) => s.status === "held") ? "held" : steps.some((s) => s.status !== "not_started") ? "in_progress" : "not_started",
       allAdded: steps.every((s) => !s.inPlan),
+      foundOn: discoveryOf(g.owner) && g.owner.parentId ? byId.get(g.owner.parentId)?.name ?? null : null,
       varianceH: finish != null && planFinish != null ? r1((finish - planFinish) / H) : null,
     });
   }
@@ -173,6 +177,27 @@ export function buildAsBuilt(input: {
     startsNotRecorded: all.filter((s) => s.status === "done" && s.start == null).length,
     cancelled: (input.cancelled ?? []).map((c) => ({ name: c.m.name, where: c.crumbs.join(" › "), steps: c.steps, at: c.at, note: c.m.cancelNote ?? null })),
   };
+}
+
+/** Steps packed into lanes so none overlap: steps done one after another
+ *  share a lane, steps worked at the same time stack. `from`/`to` in ms. */
+export function laneSteps<T extends { from: number; to: number }>(xs: T[]): { lanes: number; at: Array<T & { lane: number }> } {
+  const ends: number[] = [];
+  const at = [...xs].sort((a, b) => a.from - b.from || a.to - b.to).map((x) => {
+    let lane = ends.findIndex((e) => e <= x.from);
+    if (lane < 0) { lane = ends.length; ends.push(x.to); } else ends[lane] = x.to;
+    return { ...x, lane };
+  });
+  return { lanes: ends.length, at };
+}
+
+/** A step's bar as built: its start (recorded, else its planned start when
+ *  done) to its finish, or to `now` while it's still going. Null: not
+ *  started, or no times to place it. */
+export function stepBar(s: BuiltStep, now: number): { from: number; to: number } | null {
+  const from = s.barStart;
+  const to = s.finish ?? (s.status !== "not_started" ? now : null);
+  return from != null && to != null && to > from ? { from, to } : null;
 }
 
 // ─── Words ───────────────────────────────────────────────────────────────
@@ -200,9 +225,10 @@ export function asBuiltKey(a: AsBuilt, tz: string): string[] {
 const NAVY = "#000A72", INK = "#0f172a", MUTED = "#64748b", RULE = "#e2e8f0", GREEN = "#0f766e", AMBER = "#b45309", BLUE = "#2563eb", GRAY = "#94a3b8";
 const FONT = "font-family:Lato,Calibri,Arial,sans-serif;";
 
-function timelineHtml(a: AsBuilt, tz: string, now: number): string {
+/** The days the report's bars run across, and where a time falls on them (%). */
+function axisOf(a: AsBuilt, tz: string, now: number) {
   const pts = [a.planStart, a.planFinish, a.start, a.finish, ...a.orders.flatMap((o) => [o.planStart, o.planFinish, o.barStart, o.finish ?? (o.status !== "not_started" ? now : null)])].filter((x): x is number => x != null);
-  if (!pts.length) return "";
+  if (!pts.length) return null;
   const first = dayKey(Math.min(...pts), tz), last = dayKey(Math.max(...pts), tz);
   const dayStart = (k: string) => { const [y, m, d] = k.split("-").map(Number); return wallClockToMs({ year: y, month: m, day: d, hour: 0, minute: 0, second: 0 }, tz); };
   const days: string[] = [];
@@ -215,40 +241,70 @@ function timelineHtml(a: AsBuilt, tz: string, now: number): string {
   const [ly, lm, ld] = days[days.length - 1].split("-").map(Number);
   const t1 = wallClockToMs({ year: ly, month: lm, day: ld + 1, hour: 0, minute: 0, second: 0 }, tz);
   const x = (t: number) => Math.max(0, Math.min(100, ((t - t0) / (t1 - t0)) * 100));
-  const seg = (s: number | null, f: number | null, color: string, top: number, h: number, dashed = false) => {
-    if (s == null || f == null) return "";
-    const l = x(s), w = Math.max(0.4, x(f) - l);
-    return `<div style="position:absolute;left:${l}%;width:${w}%;top:${top}px;height:${h}px;${dashed ? `border:1px dashed ${color};` : `background:${color};`}border-radius:2px;"></div>`;
-  };
   const grid = days.map((k, i) => `<div style="position:absolute;left:${(i / days.length) * 100}%;top:0;bottom:0;border-left:1px solid ${RULE};"></div>`).join("");
   const planEnd = a.planFinish != null ? `<div style="position:absolute;left:${x(a.planFinish)}%;top:0;bottom:0;border-left:2px solid ${NAVY};"></div>` : "";
   const head = days.map((k) => { const [y, m, d] = k.split("-").map(Number); const dd = new Date(Date.UTC(y, m - 1, d)); return `<div style="flex:1;text-align:center;font-size:8.5px;color:${MUTED};border-left:1px solid ${RULE};padding:1px 0;">${dd.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" })}<br>${m}/${d}</div>`; }).join("");
-  const rows = a.orders.map((o) => {
-    const color = o.allAdded ? AMBER : o.status === "done" ? GREEN : BLUE;
-    const end = o.finish ?? (o.status !== "not_started" ? now : null);
-    return `<tr><td style="${FONT}font-size:9.5px;padding:2px 6px 2px 0;white-space:nowrap;max-width:230px;overflow:hidden;text-overflow:ellipsis;border-bottom:1px solid ${RULE};">${o.wo ? `<b>${esc(o.wo)}</b> ` : ""}${esc(o.name)}</td>` +
-      `<td style="padding:0;border-bottom:1px solid ${RULE};"><div style="position:relative;height:18px;">${grid}${planEnd}${seg(o.planStart, o.planFinish, GRAY, 3, 5)}${seg(o.barStart, end, color, 9, 6)}</div></td>` +
-      `<td style="${FONT}font-size:9.5px;padding:2px 0 2px 6px;text-align:right;white-space:nowrap;border-bottom:1px solid ${RULE};color:${o.varianceH != null && o.varianceH >= 0.5 ? "#b91c1c" : MUTED};">${o.finish != null ? varianceWords(o.varianceH) : BUILT_WORD[o.status]}</td></tr>`;
-  }).join("");
-  return `<div style="${FONT}font-size:14px;font-weight:bold;color:${NAVY};margin:14px 0 4px;border-bottom:2px solid ${NAVY};padding-bottom:3px;">Timeline</div>` +
-    `<div style="${FONT}font-size:10px;color:${MUTED};margin-bottom:4px;"><span style="display:inline-block;width:14px;height:5px;background:${GRAY};"></span> Plan &nbsp; <span style="display:inline-block;width:14px;height:6px;background:${GREEN};"></span> Actual &nbsp; <span style="display:inline-block;width:14px;height:6px;background:${BLUE};"></span> Still going &nbsp; <span style="display:inline-block;width:14px;height:6px;background:${AMBER};"></span> Added work order &nbsp; <span style="display:inline-block;width:2px;height:10px;background:${NAVY};"></span> Planned finish</div>` +
-    `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;table-layout:fixed;"><colgroup><col style="width:230px"><col><col style="width:62px"></colgroup>` +
-    `<tr><td></td><td style="padding:0;"><div style="display:flex;">${head}</div></td><td style="${FONT}font-size:8.5px;color:${MUTED};text-align:right;">vs plan</td></tr>${rows}</table>`;
+  const bar = (s: number | null, f: number | null, style: string, top: number, h: number, inner = "") => {
+    if (s == null || f == null) return "";
+    const l = x(s), w = Math.max(0.4, x(f) - l);
+    return `<div style="position:absolute;left:${l}%;width:${w}%;top:${top}px;height:${h}px;${style}border-radius:2px;box-sizing:border-box;overflow:hidden;">${inner}</div>`;
+  };
+  return { x, grid, planEnd, head, bar };
 }
 
-function tableHtml(a: AsBuilt, tz: string): string {
+const stepColor = (s: BuiltStep) => (!s.inPlan ? AMBER : s.status === "done" ? GREEN : BLUE);
+const LEGEND = (extra = "") => `<div style="${FONT}font-size:10px;color:${MUTED};margin-bottom:4px;"><span style="display:inline-block;width:14px;height:5px;background:${GRAY};"></span> Plan &nbsp; <span style="display:inline-block;width:14px;height:6px;background:${GREEN};"></span> Done &nbsp; <span style="display:inline-block;width:14px;height:6px;background:${BLUE};"></span> Still going &nbsp; <span style="display:inline-block;width:14px;height:6px;background:${AMBER};"></span> Added after the plan &nbsp; <span style="display:inline-block;width:2px;height:10px;background:${NAVY};"></span> Planned finish${extra}</div>`;
+
+/** A work order's bar, one piece per step (start to finish as built),
+ *  steps worked at the same time stacked. */
+function orderBar(o: BuiltOrder, ax: NonNullable<ReturnType<typeof axisOf>>, now: number, top: number): { html: string; h: number } {
+  const { lanes, at } = laneSteps(o.steps.flatMap((s) => { const b = stepBar(s, now); return b ? [{ ...b, s }] : []; }));
+  const html = at.map((p) => ax.bar(p.from, p.to, `background:${stepColor(p.s)};border-right:1.5px solid #fff;`, top + p.lane * 8, 6)).join("");
+  return { html, h: Math.max(1, lanes) * 8 };
+}
+
+function timelineHtml(a: AsBuilt, tz: string, now: number): string {
+  const ax = axisOf(a, tz, now);
+  if (!ax) return "";
+  const rows = a.orders.map((o) => {
+    const b = orderBar(o, ax, now, 9);
+    return `<tr><td style="${FONT}font-size:9.5px;padding:2px 6px 2px 0;white-space:nowrap;max-width:230px;overflow:hidden;text-overflow:ellipsis;border-bottom:1px solid ${RULE};vertical-align:top;">${o.wo ? `<b>${esc(o.wo)}</b> ` : ""}${esc(o.name)}</td>` +
+      `<td style="padding:0;border-bottom:1px solid ${RULE};"><div style="position:relative;height:${b.h + 12}px;">${ax.grid}${ax.planEnd}${ax.bar(o.planStart, o.planFinish, `background:${GRAY};`, 3, 5)}${b.html}</div></td>` +
+      `<td style="${FONT}font-size:9.5px;padding:2px 0 2px 6px;text-align:right;white-space:nowrap;border-bottom:1px solid ${RULE};vertical-align:top;color:${o.varianceH != null && o.varianceH >= 0.5 ? "#b91c1c" : MUTED};">${o.finish != null ? varianceWords(o.varianceH) : BUILT_WORD[o.status]}</td></tr>`;
+  }).join("");
+  return `<div style="${FONT}font-size:14px;font-weight:bold;color:${NAVY};margin:14px 0 4px;border-bottom:2px solid ${NAVY};padding-bottom:3px;">Timeline</div>` +
+    LEGEND(" &nbsp; Each work order's bar is its steps, one piece each, as built; steps worked at the same time are stacked.") +
+    `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;table-layout:fixed;"><colgroup><col style="width:230px"><col><col style="width:62px"></colgroup>` +
+    `<tr><td></td><td style="padding:0;"><div style="display:flex;">${ax.head}</div></td><td style="${FONT}font-size:8.5px;color:${MUTED};text-align:right;">vs plan</td></tr>${rows}</table>`;
+}
+
+/** Every work order with its steps, each on the same days as the timeline:
+ *  the plan (gray) above what was done. */
+function tableHtml(a: AsBuilt, tz: string, now: number): string {
+  const ax = axisOf(a, tz, now);
+  if (!ax) return "";
+  const cell = (v: string, extra = "") => `<td style="${FONT}font-size:9.5px;padding:2px 4px;border-bottom:1px solid ${RULE};vertical-align:top;${extra}">${v}</td>`;
   const th = (t: string, right = false) => `<th style="${FONT}font-size:8.5px;font-weight:bold;text-transform:uppercase;letter-spacing:.05em;color:${MUTED};text-align:${right ? "right" : "left"};padding:3px 4px;border-bottom:1px solid ${INK};">${t}</th>`;
-  const td = (v: string, extra = "") => `<td style="${FONT}font-size:9.5px;padding:2px 4px;border-bottom:1px solid ${RULE};vertical-align:top;${extra}">${v}</td>`;
-  const head = `<tr>${th("Step")}${th("Crew")}${th("Plan start")}${th("Plan finish")}${th("Actual start")}${th("Actual finish")}${th("Plan h", true)}${th("Took h", true)}${th("vs plan", true)}${th("Status")}</tr>`;
+  const lane = (inner: string, h: number) => `<td style="padding:0;border-bottom:1px solid ${RULE};"><div style="position:relative;height:${h}px;">${ax.grid}${ax.planEnd}${inner}</div></td>`;
+  const vs = (h: number | null) => cell(esc(varianceWords(h)), `text-align:right;white-space:nowrap;${h != null && h >= 0.5 ? "color:#b91c1c;" : ""}`);
   const body = a.orders.map((o) => {
-    const top = `<tr style="background:#f1f5f9;">${td(`<b>${o.wo ? `WO ${esc(o.wo)} · ` : ""}${esc(o.name)}</b>${o.phase ? ` <span style="color:${MUTED};">· ${esc(o.phase)}</span>` : ""}${o.allAdded ? ` <span style="color:${AMBER};font-weight:bold;">· added</span>` : ""}`, "")}${td("")}${td(esc(dt(o.planStart, tz)))}${td(esc(dt(o.planFinish, tz)))}${td(esc(dt(o.start, tz)))}${td(esc(dt(o.finish, tz)))}${td("")}${td("")}${td(`<b>${esc(varianceWords(o.varianceH))}</b>`, `text-align:right;${o.varianceH != null && o.varianceH >= 0.5 ? "color:#b91c1c;" : ""}`)}${td(`${o.done}/${o.steps.length} ${esc(BUILT_WORD[o.status].toLowerCase())}`)}</tr>`;
-    const steps = o.steps.map((s) => `<tr>${td(`${esc(s.name)}${s.added ? `<div style="font-size:8.5px;color:${AMBER};">added: ${esc(s.added)}</div>` : ""}`, "padding-left:12px;")}${td(esc(s.crew ?? ""))}${td(esc(dt(s.planStart, tz)))}${td(esc(dt(s.planFinish, tz)))}` +
-      `${td(s.start != null ? esc(dt(s.start, tz)) : s.status === "done" ? `<span style="color:${AMBER};">not recorded</span>` : "")}${td(esc(dt(s.finish, tz)))}${td(String(r1(s.plannedH)), "text-align:right;")}${td(s.elapsedH != null ? String(s.elapsedH) : "", "text-align:right;")}` +
-      `${td(esc(varianceWords(s.varianceH)), `text-align:right;${s.varianceH != null && s.varianceH >= 0.5 ? "color:#b91c1c;" : ""}`)}${td(s.status === "done" ? "Done" : `${esc(BUILT_WORD[s.status])}${s.pct ? ` ${s.pct}%` : ""}`)}</tr>`).join("");
+    const b = orderBar(o, ax, now, 9);
+    const top = `<tr style="background:#f1f5f9;">${cell(`<b>${o.wo ? `WO ${esc(o.wo)} · ` : ""}${esc(o.name)}</b>${o.phase ? ` <span style="color:${MUTED};">· ${esc(o.phase)}</span>` : ""}${o.allAdded ? ` <span style="color:${AMBER};font-weight:bold;">· added</span>` : ""}${o.foundOn ? `<div style="font-size:8.5px;color:${MUTED};">Found on ${esc(o.foundOn)}</div>` : ""}<div style="font-size:8.5px;color:${MUTED};">${o.done} of ${o.steps.length} steps done</div>`)}` +
+      lane(`${ax.bar(o.planStart, o.planFinish, `background:${GRAY};`, 3, 5)}${b.html}`, b.h + 14) + cell("") + vs(o.varianceH) + cell(esc(BUILT_WORD[o.status]), "white-space:nowrap;") + `</tr>`;
+    const steps = o.steps.map((s) => {
+      const sb = stepBar(s, now);
+      const when = s.start != null || s.finish != null ? `${s.start != null ? esc(dt(s.start, tz)) : `<span style="color:${AMBER};">start not recorded</span>`} to ${s.finish != null ? esc(dt(s.finish, tz)) : "still going"}` : "";
+      return `<tr>${cell(`${esc(s.name)}<div style="font-size:8.5px;color:${MUTED};">${[s.crew ? esc(s.crew) : "", when].filter(Boolean).join(" · ")}</div>${s.added ? `<div style="font-size:8.5px;color:${AMBER};">${esc(s.added.charAt(0).toUpperCase() + s.added.slice(1))}</div>` : ""}`, "padding-left:12px;")}` +
+        lane(`${ax.bar(s.planStart, s.planFinish, `background:${GRAY};`, 3, 4)}${sb ? ax.bar(sb.from, sb.to, `background:${stepColor(s)};${s.start == null ? "opacity:.55;" : ""}`, 9, 7) : ""}`, 20) +
+        cell(s.elapsedH != null ? `${s.elapsedH} h` : "", "text-align:right;white-space:nowrap;") + vs(s.varianceH) +
+        cell(s.status === "done" ? "Done" : `${esc(BUILT_WORD[s.status])}${s.pct ? ` ${s.pct}%` : ""}`, "white-space:nowrap;") + `</tr>`;
+    }).join("");
     return top + steps;
   }).join("");
   return `<div style="${FONT}font-size:14px;font-weight:bold;color:${NAVY};margin:16px 0 4px;border-bottom:2px solid ${NAVY};padding-bottom:3px;">Work orders and steps</div>` +
-    `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;">${head}${body}</table>`;
+    LEGEND(" &nbsp; Plan h and exact times are in the Excel file.") +
+    `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;table-layout:fixed;"><colgroup><col style="width:250px"><col><col style="width:44px"><col style="width:52px"><col style="width:74px"></colgroup>` +
+    `<tr>${th("Work order, step")}<th style="padding:0;border-bottom:1px solid ${INK};"><div style="display:flex;">${ax.head}</div></th>${th("Took", true)}${th("vs plan", true)}${th("Status")}</tr>${body}</table>`;
 }
 
 /** The whole report as a page to print (landscape). */
@@ -271,7 +327,7 @@ export function asBuiltDocument(a: AsBuilt, o: { project: string; scope: string;
   const body = `<div style="${FONT}color:${INK};">` +
     `<div style="border-top:4px solid ${NAVY};padding:8px 0 2px;"><div style="font-size:10px;font-weight:bold;letter-spacing:.12em;text-transform:uppercase;color:${MUTED};">As-built schedule</div>` +
     `<div style="font-size:19px;font-weight:bold;color:${NAVY};">${esc(o.project)}</div><div style="font-size:11px;color:${MUTED};">${esc(o.scope)} · as of ${esc(dtLong(now, tz))}</div></div>` +
-    tiles + key + timelineHtml(a, tz, now) + tableHtml(a, tz) + cancelled + `</div>`;
+    tiles + key + timelineHtml(a, tz, now) + tableHtml(a, tz, now) + cancelled + `</div>`;
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(`${o.project} - as-built schedule`)}</title><style>@page{size:landscape;margin:10mm}body{margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}@media screen{body{padding:16px}}tr{page-break-inside:avoid}</style></head><body>${body}</body></html>`;
 }
 

@@ -10,14 +10,14 @@
 // in), the crew load and the hands it needs. lib/asBuiltWork, lib/nextPlan.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Send, Undo2, Check, X, Download, Printer, CalendarClock } from "lucide-react";
+import { Loader2, Send, Undo2, Check, X, Download, Printer, CalendarClock, ChevronRight, ChevronsDownUp, ChevronsUpDown } from "lucide-react";
 import type { Milestone, MilestoneNote } from "@/types/schema";
 import type { CancelledJob } from "@/lib/cancelledJobs";
 import type { ProjectPhase } from "@/lib/projectPhases";
 import type { ShiftTimes } from "@/lib/shiftReport";
 import type { ShiftRecord } from "@/lib/shiftRecord";
 import type { ProgressLogRow } from "@/lib/progressHistory";
-import { buildAsBuilt } from "@/lib/asBuiltSchedule";
+import { buildAsBuilt, laneSteps, stepBar, type BuiltStep } from "@/lib/asBuiltSchedule";
 import { buildAsBuiltWork, shiftKey, type AsBuiltWork, type WaitRun } from "@/lib/asBuiltWork";
 import { nextPlan, finishLever, dayNumber, type NextPlan, type PlanChange } from "@/lib/nextPlan";
 import { loadNextPlanSettings, saveNextPlanChanges, type NextPlanSettings } from "@/lib/nextPlanStore";
@@ -174,6 +174,43 @@ function Legend({ items }: { items: Array<[React.CSSProperties, string]> }) {
   );
 }
 
+/** A work order's bar, one piece per step (or activity), start to finish;
+ *  pieces at the same time stacked. Returns the pieces and their height. */
+type Piece = { key: string; from: number; to: number; color: string; title: string; label?: string; ring?: string };
+function pieces(items: Piece[], x: (t: number) => number, top: number): { h: number; nodes: React.ReactNode } {
+  const { lanes, at } = laneSteps(items);
+  const nodes = at.map((q) => {
+    const l = x(q.from), w = Math.max(3, x(q.to) - l);
+    return (
+      <i key={q.key} title={q.title} className="absolute rounded-[3px] overflow-hidden whitespace-nowrap not-italic text-white text-[9.5px] font-bold leading-[10px] px-[3px]"
+        style={{ left: l + 0.75, width: Math.max(2, w - 1.5), top: top + q.lane * 13, height: 10, background: q.color, boxShadow: q.ring }}>
+        {q.label && w >= 34 ? q.label : null}
+      </i>
+    );
+  });
+  return { h: Math.max(1, lanes) * 13, nodes };
+}
+
+/** Fold every work order's steps away, or show them all. */
+function FoldAll({ open, total, onAll }: { open: number; total: number; onAll: (open: boolean) => void }) {
+  const all = open >= total;
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
+      <button type="button" onClick={() => onAll(!all)} className={btnQuiet}>{all ? <ChevronsDownUp className="w-4 h-4" /> : <ChevronsUpDown className="w-4 h-4" />} {all ? "Fold the steps away" : "Show every step"}</button>
+      <span>Each work order&apos;s bar is its steps, one piece each. Tap a work order to see its steps.</span>
+    </div>
+  );
+}
+
+function OrderName({ open, onToggle, children }: { open: boolean; onToggle: () => void; children: React.ReactNode }) {
+  return (
+    <button type="button" onClick={onToggle} aria-expanded={open} className="w-full text-left flex items-start gap-1 cursor-pointer">
+      <ChevronRight className={`w-4 h-4 mt-0.5 shrink-0 text-[var(--color-text-muted)] transition-transform ${open ? "rotate-90" : ""}`} />
+      <span className="min-w-0 flex-1">{children}</span>
+    </button>
+  );
+}
+
 const cellAct = "sticky left-0 z-[2] bg-[var(--color-surface)] border-r border-[var(--color-border)] align-top px-2 py-1.5 w-[170px] min-w-[170px] max-w-[170px] sm:w-[290px] sm:min-w-[290px] sm:max-w-[290px]";
 const cellDt = "align-top px-2 py-1.5 text-[11px] whitespace-nowrap text-[var(--color-text)]";
 const cellN = "align-top px-1.5 py-1.5 text-center font-bold text-[12.5px] min-w-[44px]";
@@ -186,12 +223,23 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
   const keys = work.shifts.map(shiftKey);
   const idx = new Map(keys.map((k, i) => [k, i]));
   const [planning, setPlanning] = useState<{ step: string; run: number } | null>(null);
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [now] = useState(() => Date.now());
   const planFin = built.planFinish;
   const line = planFin != null ? <i aria-hidden title="Planned finish" className="absolute top-0 bottom-0 border-l-2 border-red-600" style={{ left: x(planFin) }} /> : null;
   const orders = [...built.orders].sort((a, b) => (a.planStart ?? Infinity) - (b.planStart ?? Infinity));
   const t = work.totals;
   const late = built.finish != null && built.planFinish != null ? r1((built.finish - built.planFinish) / 3_600_000) : null;
-  const planned = (k: string, crew: string) => work.crews.find((c) => c.crew === crew)?.byShift[k];
+  const flip = (k: string) => setOpen((o) => { const n = new Set(o); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  // A step's piece: its start to its finish as built; with no start
+  // recorded, from the first shift it was worked.
+  const spanOf = (st: BuiltStep): { from: number; to: number } | null => {
+    const b = stepBar(st, now);
+    if (b) return b;
+    const ks = (work.steps.get(st.id)?.worked ?? []).map((k) => idx.get(k)).filter((i): i is number => i != null);
+    if (!ks.length) return null;
+    return { from: work.shifts[Math.min(...ks)].start, to: st.finish ?? work.shifts[Math.max(...ks)].end };
+  };
 
   return (
     <div className="space-y-2">
@@ -202,8 +250,9 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
         <Chip>Sat in progress: <b>{t.waitedSteps}</b> activities, <b>{t.waitedShifts}</b> shifts</Chip>
         <Chip>Ready but not started: <b>{t.readySteps}</b> activities, <b>{t.readyShifts}</b> shifts</Chip>
       </div>
-      <Legend items={[[{ background: "#334155" }, "Progress logged that shift"], [ORDER_WAIT, "Work order open, nothing logged that shift"], [WAIT, "Activity in progress, nothing logged"], [READY, "Ready, not started"], [{ background: "#cbd5e1", height: 4 }, "Plan"], [{ borderLeft: "2px solid #dc2626", width: 2 }, "Planned finish"]]} />
+      <Legend items={[[{ background: "#2563eb" }, "A step, start to finish (on a step's own line: each shift it was worked)"], [ORDER_WAIT, "Work order open, nothing logged that shift"], [WAIT, "Activity in progress, nothing logged"], [READY, "Ready, not started"], [{ background: "#cbd5e1", height: 4 }, "Plan"], [{ borderLeft: "2px solid #dc2626", width: 2 }, "Planned finish"]]} />
       <div className="text-[11.5px] text-[var(--color-text-muted)]">Night shifts count as waiting only for work that ran on nights (its crew worked that work order on two or more nights). Day work sitting overnight is not waiting.</div>
+      <FoldAll open={open.size} total={orders.length} onAll={(all) => setOpen(all ? new Set(orders.map((o) => o.key)) : new Set())} />
       <div className="overflow-auto max-h-[75vh] rounded-xl border border-[var(--color-border)]">
         <table className="border-separate border-spacing-0 w-max text-[12px]">
           <thead className="sticky top-0 z-[4] bg-[var(--color-surface-2)]">
@@ -217,25 +266,35 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
           <tbody>
             {orders.map((o) => {
               const ow = work.orders.get(o.key);
+              const isOpen = open.has(o.key);
+              const bar = pieces(o.steps.flatMap((st) => {
+                const sp = spanOf(st); const crew = work.steps.get(st.id)?.crew ?? st.crew ?? "";
+                return sp ? [{ key: st.id, ...sp, color: p.colorOf(crew), label: st.elapsedH != null ? `${st.elapsedH} h` : undefined,
+                  title: `${st.name} · ${crew} · ${when(sp.from, tz)} to ${st.finish != null ? when(st.finish, tz) : "still going"}${st.elapsedH != null ? ` · took ${st.elapsedH} h` : ""}${!st.inPlan ? " · added" : ""}` }] : [];
+              }), x, 12);
               return (
                 <React.Fragment key={o.key}>
-                  <tr className="bg-[var(--color-surface-2)]">
+                  <tr className="bg-[var(--color-surface-2)]" data-order={o.key}>
                     <td className={`${cellAct} !bg-[var(--color-surface-2)]`}>
-                      <div className="font-black text-[12.5px] text-[var(--color-text)]">{o.name}</div>
-                      <div className="text-[11px] text-[var(--color-text-muted)]">{o.wo ? `${o.wo} · ` : ""}{o.steps.length} activit{o.steps.length === 1 ? "y" : "ies"}{o.steps.some((s) => !s.inPlan) ? ` · ${o.steps.filter((s) => !s.inPlan).length} added` : ""}</div>
+                      <OrderName open={isOpen} onToggle={() => flip(o.key)}>
+                        <div className="font-black text-[12.5px] text-[var(--color-text)]">{o.name}</div>
+                        {o.foundOn && <div className="text-[11px] font-semibold text-orange-800 dark:text-orange-300">Found on {o.foundOn}</div>}
+                        <div className="text-[11px] text-[var(--color-text-muted)]">{o.wo ? `${o.wo} · ` : ""}{o.steps.length} step{o.steps.length === 1 ? "" : "s"}{o.steps.some((s) => !s.inPlan) ? ` · ${o.steps.filter((s) => !s.inPlan).length} added` : ""}</div>
+                      </OrderName>
                     </td>
                     <td className={cellDt}>{when(o.planStart, tz)}<br />{when(o.planFinish, tz)}</td>
                     <td className={cellDt}>{when(o.start, tz)}<br />{when(o.finish, tz)}</td>
                     <td className={cellN}>{ow?.worked ?? 0}</td>
                     <td className={`${cellN} ${ow?.waited ? "text-amber-700 dark:text-amber-400" : ""}`}>{ow?.waited || "-"}</td>
-                    <td className="p-0 relative"><div className="relative h-11" style={{ width }}>
+                    <td className="p-0 relative"><div className="relative" style={{ width, height: Math.max(44, 12 + bar.h + 7) }}>
                       <Grid shifts={work.shifts} />
                       {o.planStart != null && o.planFinish != null && <i className="absolute top-1.5 h-1 rounded bg-slate-300" style={{ left: x(o.planStart), width: Math.max(2, x(o.planFinish) - x(o.planStart)) }} />}
-                      {ow?.cells.map((c, i) => c && <i key={i} className="absolute top-4 h-2.5 rounded-sm" style={{ left: i * PX + 1, width: PX - 2, ...(c === "work" ? { background: "#334155" } : ORDER_WAIT) }} title={c === "work" ? "Progress logged that shift" : "Work order open, nothing logged that shift"} />)}
+                      {bar.nodes}
+                      {ow?.cells.map((c, i) => c === "wait" && <i key={i} className="absolute bottom-1 h-[4px] rounded-sm" style={{ left: i * PX + 1, width: PX - 2, ...ORDER_WAIT }} title="Work order open, nothing logged that shift" />)}
                       {line}
                     </div></td>
                   </tr>
-                  {[...o.steps].sort((a, b) => (a.start ?? a.planStart ?? 0) - (b.start ?? b.planStart ?? 0)).map((s) => {
+                  {isOpen && [...o.steps].sort((a, b) => (a.start ?? a.planStart ?? 0) - (b.start ?? b.planStart ?? 0)).map((s) => {
                     const w = work.steps.get(s.id);
                     if (!w) return null;
                     const waited = w.waits.reduce((n, r) => n + r.shifts, 0) + (w.ready?.shifts.length ?? 0);
@@ -381,6 +440,8 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
   const actName = useMemo(() => new Map(plan.acts.map((a) => [a.id, a.name])), [plan]);
   const driving = useMemo(() => new Set(plan.driving), [plan]);
   const crewWork = useMemo(() => new Map(work.crews.map((c) => [c.crew, c])), [work]);
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const flip = (k: string) => setOpen((o) => { const n = new Set(o); if (n.has(k)) n.delete(k); else n.add(k); return n; });
 
   // Tell the schedule.
   const [text, setText] = useState("");
@@ -507,8 +568,9 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
         <Chip><b>{plan.acts.length + plan.pre.length}</b> activities{Object.entries(kinds).filter(([k]) => k !== "same").map(([k, n]) => ` · ${n} ${(KIND[k]?.[0] ?? k).toLowerCase()}`).join("")}{plan.pre.length ? ` · ${plan.pre.length} before the shutdown` : ""}</Chip>
         <Chip><CalendarClock className="w-3.5 h-3.5 inline mr-1" />Sets the finish: {drivingOrders.slice(0, 3).join(", ")}</Chip>
       </div>
-      <Legend items={[[{ background: "#2563eb" }, "Crew's work"], [{ background: "#fff", boxShadow: "0 0 0 1.5px #ea580c" }, "Not in this year's plan"], [{ background: "#fee2e2", borderLeft: "3px solid #dc2626" }, "Sets the finish"], [{ borderLeft: "2px solid #dc2626", width: 2 }, "This year's planned finish"], [{ borderLeft: "2px dashed #2563eb", width: 2 }, "Suggested finish"]]} />
+      <Legend items={[[{ background: "#2563eb" }, "Crew's work: each piece of a work order's bar is one activity"], [{ background: "#fff", boxShadow: "0 0 0 1.5px #ea580c" }, "Not in this year's plan"], [{ background: "#fee2e2", boxShadow: "0 0 0 1.5px #dc2626" }, "Sets the finish"], [{ borderLeft: "2px solid #dc2626", width: 2 }, "This year's planned finish"], [{ borderLeft: "2px dashed #2563eb", width: 2 }, "Suggested finish"]]} />
 
+      <FoldAll open={open.size} total={orders.length} onAll={(all) => setOpen(all ? new Set(orders.map(([k]) => k)) : new Set())} />
       <div className="overflow-auto max-h-[75vh] rounded-xl border border-[var(--color-border)]">
         <table className="border-separate border-spacing-0 w-max text-[12px]">
           <thead className="sticky top-0 z-[4] bg-[var(--color-surface-2)]">
@@ -527,17 +589,27 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
               const s0 = Math.min(...acts.map((a) => a.start)), s1 = Math.max(...acts.map((a) => a.finish));
               const crit = acts.some((a) => driving.has(a.id));
               const changed = acts.filter((a) => a.kind !== "same" || a.changedBy?.length).length;
+              const isOpen = open.has(key);
+              const bar = pieces(acts.filter((a) => a.finish > a.start).map((a) => ({
+                key: a.id, from: a.start, to: a.finish, color: p.colorOf(a.crew), label: `${r1(a.hours)} h`,
+                ring: driving.has(a.id) ? "0 0 0 1.5px #dc2626" : a.kind === "new" || a.kind === "found" ? "0 0 0 1.5px #ea580c" : undefined,
+                title: `${a.name} · ${a.crew} · ${at(a.start)} to ${at(a.finish)} · ${r1(a.hours)} h${driving.has(a.id) ? " · sets the finish" : ""}`,
+              })), x, 8);
+              const bo = built.orders.find((o) => o.key === key);
               return (
                 <React.Fragment key={key}>
-                  <tr className="bg-[var(--color-surface-2)]">
+                  <tr className="bg-[var(--color-surface-2)]" data-order={key}>
                     <td className={`${cellAct} !bg-[var(--color-surface-2)]`}>
-                      <div className="font-black text-[12.5px]">{orderName.get(key) ?? key}{crit && <span className="ml-1 rounded bg-rose-100 px-1 text-[10px] font-black text-rose-900">Sets the finish</span>}</div>
-                      <div className="text-[11px] text-[var(--color-text-muted)]">{acts.length} activit{acts.length === 1 ? "y" : "ies"}{changed ? ` · ${changed} changed` : ""}</div>
+                      <OrderName open={isOpen} onToggle={() => flip(key)}>
+                        <div className="font-black text-[12.5px]">{orderName.get(key) ?? key}{crit && <span className="ml-1 rounded bg-rose-100 px-1 text-[10px] font-black text-rose-900">Sets the finish</span>}</div>
+                        {bo?.foundOn && <div className="text-[11px] font-semibold text-orange-800 dark:text-orange-300">Found on {bo.foundOn}</div>}
+                        <div className="text-[11px] text-[var(--color-text-muted)]">{acts.length} activit{acts.length === 1 ? "y" : "ies"}{changed ? ` · ${changed} changed` : ""}</div>
+                      </OrderName>
                     </td>
                     <td className={cellN}>{r1(acts.reduce((n, a) => n + a.hours, 0))}</td><td className={cellDt}>{at(s0)}</td><td className={cellDt}>{at(s1)}</td>
-                    <td className="p-0"><div className="relative h-11" style={{ width }}><Grid shifts={plan.shifts} /><i className="absolute top-4 h-2.5 rounded-sm bg-slate-700" style={{ left: x(s0), width: Math.max(3, x(s1) - x(s0)) }} />{lines}</div></td>
+                    <td className="p-0"><div className="relative" style={{ width, height: Math.max(44, 8 + bar.h + 4) }}><Grid shifts={plan.shifts} />{bar.nodes}{lines}</div></td>
                   </tr>
-                  {[...acts].sort((a, b) => a.start - b.start).map((a) => {
+                  {isOpen && [...acts].sort((a, b) => a.start - b.start).map((a) => {
                     const k = KIND[a.kind];
                     const isCrit = driving.has(a.id);
                     return (

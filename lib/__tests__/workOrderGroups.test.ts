@@ -98,17 +98,18 @@ const kidsLru = kidsOf(lru);
 describe("calendar: one card per work order", () => {
   const byId = new Map(lru.map((m) => [m.id!, m]));
   const woUp = (g: Milestone) => { for (let x: Milestone | undefined = g; x; x = x.parentId ? byId.get(x.parentId) : undefined) { const w = taskWorkOrder(x, (id) => kidsLru.get(id) ?? []); if (w) return w; } return ""; };
-  const own = (s: Milestone, g: Milestone) => !!woOf(s) && !s.attributes?.discovery && woOf(s) !== woUp(g);
+  const own = (s: Milestone, g: Milestone) => !!woOf(s) && woOf(s) !== woUp(g);
   const { chips, apart } = splitPlacements(lru, kidsLru, false, own);
   const ids = chips.map((c) => c.id);
   it("a folder of work orders is no card; each PSV is its own", () => {
     expect(ids).not.toContain("psvs");
     expect(ids).toEqual(expect.arrayContaining(["psv209", "psv210"]));
   });
-  it("E-02 is one card for its own steps (the added one too); the WO set under it is its own card", () => {
+  it("E-02 is one card for its own steps; the WO set under it and found work given its own WO are their own cards", () => {
     expect(ids).toContain("e02");
     expect(ids).toContain("e02x");
-    expect(apart.has("e02a") || apart.has("e02b") || apart.has("e02d")).toBe(false);
+    expect(ids).toContain("e02d");
+    expect(apart.has("e02a") || apart.has("e02b")).toBe(false);
     expect(ids).not.toContain("e02a");
   });
   it("a folder holding no-WO steps keeps its card for those; its WO steps stand alone", () => {
@@ -132,10 +133,10 @@ describe("report: each step listed under its work order", () => {
     expect(unit("psv209")).toBeNull();
     expect(rows.some((x) => rowTask(x)?.name === "PSVs")).toBe(false);
   });
-  it("E-02's steps (and its added work) under E-02; the WO set under it alone", () => {
+  it("E-02's steps under E-02; the WO set under it, and found work given its own WO, alone", () => {
     expect(unit("e02a")?.name).toBe("E-02 - De-Butanizer Condenser");
     expect(unit("e02b")?.name).toBe("E-02 - De-Butanizer Condenser");
-    expect(unit("e02d")?.name).toBe("E-02 - De-Butanizer Condenser");
+    expect(unit("e02d")).toBeNull();
     expect(unit("e02x")).toBeNull();
   });
   it("steps of their own on one WO number share it; no-WO steps stay with their task", () => {
@@ -159,6 +160,19 @@ describe("work orders list: a task with its WO typed on each step", () => {
     // Each PSV still its own card; E-02's nested WO its own.
     expect(g.find((x) => x.wo === "310735")?.owner.id).toBe("psv209");
     expect(g.find((x) => x.wo === "310458")?.owner.id).toBe("e02x");
+  });
+  it("found work given its own WO is its own work order; with the task's WO, or none, it's on the task's", () => {
+    const withSame = [...lru,
+      step({ id: "e02e", parentId: "e02", name: "Patch weld", workOrderRef: "310456", attributes: { discovery: JSON.stringify({ id: "d2", what: "pinhole", kind: "discovery" }) } }),
+      step({ id: "e02f", parentId: "e02", name: "Re-test", attributes: { discovery: JSON.stringify({ id: "d3", what: "leak", kind: "discovery" }) } }),
+      step({ id: "e02g", parentId: "e02", name: "Weld repair, cap", workOrderRef: "399999", attributes: { discovery: JSON.stringify({ id: "d", what: "crack", kind: "discovery" }) } }),
+    ];
+    const g = [...workOrderGroupsOf(withSame, kidsOf(withSame)).values()];
+    const own = g.find((x) => x.wo === "399999")!;
+    expect(own.steps.map((s) => s.id).sort()).toEqual(["e02d", "e02g"]);
+    // Two steps of one find on its own number: one work order, not two pieces of equipment.
+    expect(own.also).toBeUndefined();
+    expect(g.find((x) => x.wo === "310456")!.steps.map((s) => s.id).sort()).toEqual(["e02a", "e02b", "e02e", "e02f"]);
   });
 });
 

@@ -3,7 +3,7 @@
 
 import { describe, it, expect } from "vitest";
 import type { Milestone } from "@/types/schema";
-import { buildAsBuilt, asBuiltDocument, varianceWords } from "@/lib/asBuiltSchedule";
+import { buildAsBuilt, asBuiltDocument, varianceWords, laneSteps, stepBar } from "@/lib/asBuiltSchedule";
 
 const tz = "America/Los_Angeles";
 const at = (d: string, h: string) => `${d}T${h}:00-07:00`;
@@ -51,7 +51,7 @@ describe("buildAsBuilt", () => {
     const html = asBuiltDocument(a, { project: "Transmix", scope: "Whole project", tz, now: Date.parse(at("2026-11-08", "09:00")) });
     expect(html).toContain("not recorded");
     expect(html).toContain("WO 301502");
-    expect(html).toContain("added: discovery");
+    expect(html).toContain(">Discovery</div>");
     expect(html).toContain("still going");
     expect(html).not.toMatch(/[—–]/);
   });
@@ -60,5 +60,48 @@ describe("buildAsBuilt", () => {
     expect(varianceWords(-2)).toBe("-2 h");
     expect(varianceWords(0.2)).toBe("on plan");
     expect(varianceWords(null)).toBe("");
+  });
+});
+
+describe("a work order's bar, one piece per step", () => {
+  it("steps one after another share a lane; steps at the same time stack", () => {
+    const r = laneSteps([{ id: "a", from: 0, to: 10 }, { id: "b", from: 10, to: 20 }, { id: "c", from: 5, to: 15 }, { id: "d", from: 16, to: 18 }]);
+    expect(r.lanes).toBe(2);
+    expect(Object.fromEntries(r.at.map((x) => [x.id, x.lane]))).toEqual({ a: 0, c: 1, b: 0, d: 1 });
+  });
+  it("each step's piece runs start to finish; one still going runs to now; one not started has none", () => {
+    const a = buildAsBuilt({ milestones: ms, childrenByParent: kids, tz });
+    const [hydro, blinds, weld] = a.orders[0].steps;
+    const now = Date.parse(at("2026-10-29", "12:00"));
+    expect(stepBar(hydro, now)).toEqual({ from: Date.parse(at("2026-10-28", "12:00")), to: Date.parse(at("2026-10-28", "13:00")) });
+    // No start recorded: from its planned start (said as "not recorded" on the page).
+    expect(stepBar(blinds, now)?.from).toBe(Date.parse(at("2026-10-28", "10:00")));
+    expect(stepBar(weld, now)).toEqual({ from: Date.parse(at("2026-10-29", "07:00")), to: now });
+    expect(stepBar({ ...weld, status: "not_started", barStart: null }, now)).toBeNull();
+  });
+  it("the printed report draws each work order's steps on the same days, with the plan above", () => {
+    const a = buildAsBuilt({ milestones: ms, childrenByParent: kids, tz });
+    const html = asBuiltDocument(a, { project: "Transmix", scope: "Phase 1", tz, now: Date.parse(at("2026-10-29", "12:00")) });
+    expect(html).toContain("Work orders and steps");
+    expect(html).toContain("one piece each");
+    expect(html).not.toContain("Plan start");
+  });
+});
+
+describe("found work given its own WO", () => {
+  const found = [...ms,
+    m("Unbolt flange", { parentId: "E-12", workOrderRef: "312476", durationHours: 4, plannedStartAt: at("2026-10-30", "06:00"), plannedAt: at("2026-10-30", "10:00"),
+      attributes: { discovery: JSON.stringify({ id: "d2", seq: 1, of: 1, what: "blind flange swapped", foundAt: 0, impact: { hours: 4 } }) } }),
+  ];
+  const k2 = new Map<string, Milestone[]>([["E-12", found.slice(1)]]);
+  it("is its own work order, named for where it was found", () => {
+    const a = buildAsBuilt({ milestones: found, childrenByParent: k2, tz });
+    expect(a.orders.map((o) => o.wo).sort()).toEqual(["301502", "312476"]);
+    const own = a.orders.find((o) => o.wo === "312476")!;
+    expect(own.foundOn).toBe("E-12");
+    expect(own.steps.map((s) => s.name)).toEqual(["Unbolt flange"]);
+    // Found work on E-12's own number stays on E-12.
+    expect(a.orders.find((o) => o.wo === "301502")!.steps.map((s) => s.name)).toContain("Welded pipe");
+    expect(a.orders.find((o) => o.wo === "301502")!.foundOn).toBeNull();
   });
 });

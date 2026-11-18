@@ -822,11 +822,13 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     if (!m.parentId) return [];
     const sibs = siblingsOf.get(m.parentId) ?? [];
     const i = sibs.findIndex((x) => x.id === m.id);
-    const prev = i > 0 ? sibs[i - 1] : undefined;
     // A folder of work orders isn't a sequence: one PSV doesn't wait on the
-    // PSV before it (lib/workOrderCrew).
+    // PSV before it, and a work order set under another's equipment isn't
+    // one of its steps (lib/workOrderCrew).
     const own = (x: Milestone) => !!ownWorkOrder(x, pathOf(x), (id) => kids.get(id) ?? []);
-    if (prev && (own(m) || own(prev))) return [];
+    if (own(m)) return [];
+    let prev: Milestone | undefined;
+    for (let j = i - 1; j >= 0 && !prev; j--) if (!own(sibs[j])) prev = sibs[j];
     return prev && finishMsOf(prev) <= startMsOf(m) + 3_600_000 ? [prev] : [];
   };
   const doneM = (m: Milestone) => m.status === "completed" || pctOf(m) >= 100;

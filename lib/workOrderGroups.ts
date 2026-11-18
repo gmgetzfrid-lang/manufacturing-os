@@ -63,8 +63,9 @@ export function workOrderGroupsOf(milestones: Milestone[], childrenByParent: Map
   const groups = new Map<string, { wo: string | null; owner: Milestone; steps: Milestone[] }>();
   for (const m of milestones) {
     if (!m.id || (childrenByParent.get(m.id)?.length ?? 0) > 0) continue;
-    // Added work stays on its equipment's card, even with a WO # of its own.
-    let x: Milestone | undefined = discoveryOf(m) && m.parentId ? byId.get(m.parentId) ?? m : m, wo = "", owner: Milestone | undefined;
+    // Added work with a WO # of its own is its own work order; with the
+    // task's number, or none, it's on the work order it was found on.
+    let x: Milestone | undefined = m, wo = "", owner: Milestone | undefined;
     const seen = new Set<string>();
     while (x && x.id && !seen.has(x.id)) {
       seen.add(x.id);
@@ -111,8 +112,9 @@ function byNumber(groups: Map<string, { wo: string | null; owner: Milestone; ste
     // The work order is named for its top task (the one others sit under).
     const [top, other] = above(g.owner).has(cur.owner.id ?? "") ? [cur.owner, g.owner] : above(cur.owner).has(g.owner.id ?? "") ? [g.owner, cur.owner] : [cur.owner, g.owner];
     cur.owner = top;
-    // Another piece of equipment on the same number: named as well.
-    if (!above(other).has(top.id ?? "") && other.id !== top.id) cur.also = [...(cur.also ?? []), other];
+    // Another piece of equipment on the same number: named as well (not
+    // a second step of found work given its own number).
+    if (!above(other).has(top.id ?? "") && other.id !== top.id && !(discoveryOf(other) && discoveryOf(top))) cur.also = [...(cur.also ?? []), other];
   }
   return out;
 }

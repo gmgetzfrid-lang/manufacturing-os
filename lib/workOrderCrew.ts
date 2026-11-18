@@ -105,8 +105,9 @@ export function workOrderOfStep(id: string, byId: Map<string, Milestone>): { key
   return { key: `${wo || "-"}:${owner.id}`, wo: wo || null, owner };
 }
 
-/** Added work (discovery, added scope) stays with its equipment, even with
- *  a WO # of its own. */
+/** Added work (discovery, added scope). Its WO number doesn't make the
+ *  task it was found on a work order; with a number of its own (not the
+ *  task's) it is a work order of its own. */
 const isAdded = (m: Milestone) => { const a = m.attributes as Record<string, unknown> | null | undefined; return !!a && a.discovery != null && a.discovery !== ""; };
 
 type KidsOf = (id: string) => Milestone[];
@@ -133,7 +134,7 @@ const taskWo = (a: Milestone, kidsOf?: KidsOf) => (kidsOf ? taskWorkOrder(a, kid
  *  the tasks above it, nearest first; `kidsOf`: each task's steps. */
 export function ownWorkOrder(m: Milestone, chain: Milestone[], kidsOf?: KidsOf): string {
   const w = woOf(m);
-  if (!w || isAdded(m)) return "";
+  if (!w) return "";
   const above = chain.map((a) => taskWo(a, kidsOf)).find(Boolean);
   return above === w ? "" : w;
 }
