@@ -6,7 +6,7 @@ import { CornerPortal, useDockAllowances, DOCK_PRIORITY } from "@/components/ui/
 
 export type ToastType = "success" | "error" | "info" | "warning";
 
-interface Toast {
+export interface Toast {
   id: string;
   type: ToastType;
   title: string;
@@ -17,14 +17,26 @@ interface Toast {
    *  type, title and message — so a repeat of the same message coalesces;
    *  a producer that knows its event (kind + resource) passes that. */
   coalesceKey?: string;
+  /** One optional button on the card (TAX-9: the burst summary's "Open
+   *  notifications"). Clicking it runs `onClick` and dismisses the card. It
+   *  is not part of the coalesce key; a merge keeps the newest arrival's. */
+  action?: ToastAction;
 }
 
-interface Shown extends Toast {
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
+export interface Shown extends Toast {
   key: string;
   /** How many arrivals this card stands for. */
   count: number;
   /** When the last of them arrived. */
   at: number;
+  /** Whether the arrivals merged into this card said different things (a
+   *  producer key, not the content key). The card shows the newest words. */
+  varied: boolean;
 }
 
 interface ToastContextValue {
@@ -49,6 +61,37 @@ export function toastCoalesceKey(t: Pick<Toast, "type" | "title" | "message" | "
 }
 
 /** The newest `allowance` toasts are the ones within the visible stack. */
+/** A coalesce merge (RT-11 / OS-4 refinement, notifications N13): the card
+ *  moves to the newest place with its count raised, and shows the NEWEST
+ *  arrival's words, tone and action — a producer key that joins differently
+ *  worded rows about one event never hides the newer row behind the first.
+ *  Under the content key (type, title, message) every arrival is word-for-word
+ *  the same, so such a card reads exactly as before. */
+export function mergeToast(
+  same: Shown,
+  next: Pick<Toast, "type" | "title" | "message" | "duration" | "action">,
+  at: number,
+): Shown {
+  const varied = same.varied || same.type !== next.type || same.title !== next.title || (same.message ?? "") !== (next.message ?? "");
+  return {
+    ...same,
+    type: next.type,
+    title: next.title,
+    message: next.message,
+    duration: next.duration,
+    action: next.action,
+    count: same.count + 1,
+    at,
+    varied,
+  };
+}
+
+/** The count badge's tooltip: "identical" only when every merged arrival
+ *  said the same thing. */
+export function toastCountTitle(t: Pick<Shown, "count" | "varied">): string {
+  return t.varied ? `${t.count} updates — showing the newest` : `${t.count} identical messages`;
+}
+
 export function visibleToasts<T>(toasts: T[], allowance: number): T[] {
   return allowance <= 0 ? [] : toasts.slice(-allowance);
 }
@@ -70,19 +113,20 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const showToast = useCallback(({ type, title, message, duration = 5000, coalesceKey }: Omit<Toast, "id">) => {
+  const showToast = useCallback(({ type, title, message, duration = 5000, coalesceKey, action }: Omit<Toast, "id">) => {
     const key = toastCoalesceKey({ type, title, message, coalesceKey });
     const now = Date.now();
     const id = Math.random().toString(36).substring(2, 9);
     setToasts((prev) => {
       const same = prev.find((t) => t.key === key && now - t.at < COALESCE_WINDOW_MS);
       if (same) {
-        // One card with a count, moved to the newest place, its time restarted.
+        // One card with a count, moved to the newest place, its time
+        // restarted, showing the newest arrival's words (mergeToast).
         const timer = timers.current.get(same.id);
         if (timer) { clearTimeout(timer); timers.current.delete(same.id); }
-        return [...prev.filter((t) => t.id !== same.id), { ...same, count: same.count + 1, at: now, duration }];
+        return [...prev.filter((t) => t.id !== same.id), mergeToast(same, { type, title, message, duration, action }, now)];
       }
-      return [...prev, { id, type, title, message, duration, key, count: 1, at: now }];
+      return [...prev, { id, type, title, message, duration, action, key, count: 1, at: now, varied: false }];
     });
   }, []);
 
@@ -150,7 +194,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               <h4 className="text-sm font-bold text-[var(--color-text)]">
                 {toast.title}
                 {toast.count > 1 && (
-                  <span className="ml-1.5 align-middle inline-flex items-center rounded-full bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 text-[10px] font-black text-[var(--color-text-muted)]" title={`${toast.count} identical messages`}>
+                  <span className="ml-1.5 align-middle inline-flex items-center rounded-full bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 text-[10px] font-black text-[var(--color-text-muted)]" title={toastCountTitle(toast)}>
                     ×{toast.count}
                   </span>
                 )}
@@ -159,6 +203,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 <p className="text-xs text-[var(--color-text-muted)] mt-1 leading-relaxed">
                   {toast.message}
                 </p>
+              )}
+              {toast.action && (
+                <button
+                  type="button"
+                  onClick={() => { const run = toast.action!.onClick; removeToast(toast.id); run(); }}
+                  className="mt-2 inline-flex items-center rounded-lg px-2 py-1 text-xs font-bold text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]"
+                >
+                  {toast.action.label}
+                </button>
               )}
             </div>
 

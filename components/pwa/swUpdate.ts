@@ -24,6 +24,24 @@ export const UPDATE_PROMPT_TEXT = "A newer version of the app is available — t
 export const UPDATE_PROMPT_WRAP_CLASS = "fixed top-3 left-1/2 -translate-x-1/2 z-[100] animate-pop";
 export const UPDATE_PROMPT_BUTTON_CLASS = "inline-flex items-center gap-2 rounded-full border-2 border-amber-400 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/95 px-4 py-2 text-xs font-black text-amber-900 dark:text-amber-200 shadow-xl hover:bg-amber-100 dark:hover:bg-amber-900 transition-colors";
 
+/** The question asked before reloading over an upload in flight (STACK-13):
+ *  UpdatePill asks it through the app's dialog; ServiceWorkerManager's
+ *  fallback, whose dialog host is in the chunk that failed to load, asks it
+ *  through the browser's own confirm (TAX-15, notifications N13). */
+export const RELOAD_DURING_UPLOAD_QUESTION = {
+  title: "An upload is still running",
+  message: "Loading the update reloads this tab, which stops the upload in progress. Files that already finished are saved; the rest will need uploading again.",
+  confirmLabel: "Reload anyway",
+  cancelLabel: "Wait",
+} as const;
+
+/** The fallback's one-line form of that question, for `window.confirm`
+ *  (whose buttons are the browser's OK / Cancel). */
+export function reloadDuringUploadConfirmText(): string {
+  const q = RELOAD_DURING_UPLOAD_QUESTION;
+  return `${q.title}.\n\n${q.message}\n\nOK — ${q.confirmLabel.toLowerCase()}. Cancel — ${q.cancelLabel.toLowerCase()}.`;
+}
+
 /** How long the update button waits for the new worker to take control
  *  before reloading anyway (OFF-4). */
 export const UPDATE_RELOAD_FALLBACK_MS = 3000;

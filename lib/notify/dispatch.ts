@@ -2,8 +2,21 @@
 //
 // THE single entry point every producer should call. One event in → resolved
 // recipients (from all follow systems) → fanned out to every delivery channel
-// (in-app bell, email, and — for the push-worthy kinds — Web Push), each
-// honoring per-user, per-channel preferences.
+// (in-app bell, email, and — for the push-worthy kinds — Web Push). Which
+// preference each channel honours:
+//   * the bell: none — a bell row is always written, the durable trace of an
+//     obligation, never suppressible (DEC-74 §7, ratified under DEC-90 at the
+//     N3 merge). The member's in-app switch is the pop-up toast
+//     (`toast_enabled` and its per-category switches), which
+//     components/providers/NotificationListener.tsx honours; it never stops
+//     a bell row. `notification_preferences.inapp_enabled` (20260723) is
+//     deprecated and read by nothing — kept, not dropped, because a dropped
+//     column cannot be restored (DEC-74; 20261148 comments it DEPRECATED).
+//     No code here or in lib/inAppNotifications.ts reads it (drafting-flow
+//     EDGE-14, notifications N13 — a test pins this);
+//   * email: the recipient's email preferences, through queueEmail's
+//     email_gate() (lib/notifications.ts);
+//   * push: `push_enabled` and the device, decided in the sender (below).
 //
 // Push (notifications Round G, N10 — GAP-205, OS-9): the third leg runs only
 // after the bell and email legs have finished, never throws into the caller

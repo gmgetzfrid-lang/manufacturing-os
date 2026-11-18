@@ -22,7 +22,7 @@
 import React, { useEffect, useLayoutEffect, useState, useSyncExternalStore } from "react";
 import { RefreshCw } from "lucide-react";
 import {
-  UPDATE_PROMPT_BUTTON_CLASS, UPDATE_PROMPT_TEXT, UPDATE_PROMPT_WRAP_CLASS, loadLatestBuildInThisTab, registerUpdatePromptShell,
+  RELOAD_DURING_UPLOAD_QUESTION, UPDATE_PROMPT_BUTTON_CLASS, UPDATE_PROMPT_TEXT, UPDATE_PROMPT_WRAP_CLASS, loadLatestBuildInThisTab, registerUpdatePromptShell,
   subscribeUpdatePromptShell, subscribeWaitingWorker, updatePromptShellMounted, waitingWorkerSnapshot,
 } from "@/components/pwa/swUpdate";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -42,13 +42,7 @@ export async function confirmReloadDuringUploads(deps: {
   release: () => void;
 } = { inFlight: hasUploadsInFlight, confirm: appConfirm, release: releaseUploadUnloadGuard }): Promise<boolean> {
   if (!deps.inFlight()) return true;
-  const ok = await deps.confirm({
-    title: "An upload is still running",
-    message: "Loading the update reloads this tab, which stops the upload in progress. Files that already finished are saved; the rest will need uploading again.",
-    confirmLabel: "Reload anyway",
-    cancelLabel: "Wait",
-    tone: "danger",
-  });
+  const ok = await deps.confirm({ ...RELOAD_DURING_UPLOAD_QUESTION, tone: "danger" });
   if (ok) deps.release();
   return ok;
 }

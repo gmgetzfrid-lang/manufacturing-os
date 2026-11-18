@@ -21,7 +21,9 @@ vi.mock("@/components/system/UpdatePill", () => {
   throw new Error("ChunkLoadError: Loading chunk app/update-pill failed. (missing: /_next/static/chunks/update-pill.js)");
 });
 
-import ServiceWorkerManager, { UpdatePromptBoundary } from "@/components/pwa/ServiceWorkerManager";
+import ServiceWorkerManager, { UpdatePromptBoundary, confirmReloadFromFallback } from "@/components/pwa/ServiceWorkerManager";
+import { beginTransfer, endTransfer } from "@/lib/uploadActivity";
+import { RELOAD_DURING_UPLOAD_QUESTION } from "@/components/pwa/swUpdate";
 import { UPDATE_PROMPT_TEXT, __resetWaitingWorkerForTests, registerUpdatePromptShell, reportWaitingWorker } from "@/components/pwa/swUpdate";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -116,5 +118,65 @@ describe("TAX-15 — a failed load of the update prompt never takes the page dow
     // the shell's own UpdatePill (not mounted in this file) is the one prompt; ServiceWorkerManager adds none
     expect(prompts()).toHaveLength(0);
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+// notifications N13 LAYERS SWEEP — TAX-15 done-when 2's fallback limb: over
+// an upload in flight the fallback asks UpdatePill's question first (through
+// window.confirm: the app's dialog host is in the chunk that failed), and
+// reloads only on yes; with no upload its tap is exactly as before.
+describe("TAX-15 (N13) — the fallback asks before reloading over an upload", () => {
+  const leaveGuarded = () => {
+    const ev = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  };
+
+  it("an upload on the wire, the person says Wait: no reload, the upload's guard stays; says OK: the worker is activated, and the browser's own prompt is released", async () => {
+    installServiceWorker(true);
+    await act(async () => { root.render(React.createElement(ServiceWorkerManager)); });
+    await flush();
+    beginTransfer();
+    try {
+      expect(leaveGuarded()).toBe(true);
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+      await act(async () => { (prompts()[0].querySelector("button") as HTMLButtonElement).click(); });
+      await flush();
+      expect(confirm).toHaveBeenCalledTimes(1);
+      expect(confirm.mock.calls[0][0]).toContain(RELOAD_DURING_UPLOAD_QUESTION.title);
+      expect(confirm.mock.calls[0][0]).toContain(RELOAD_DURING_UPLOAD_QUESTION.message);
+      expect(waiting.postMessage).not.toHaveBeenCalled();
+      expect(leaveGuarded()).toBe(true);
+      confirm.mockReturnValue(true);
+      await act(async () => { (prompts()[0].querySelector("button") as HTMLButtonElement).click(); });
+      await flush();
+      expect(confirm).toHaveBeenCalledTimes(2);
+      expect(waiting.postMessage).toHaveBeenCalledWith("SKIP_WAITING");
+      // not asked twice: the leave-page guard is released for this reload
+      expect(leaveGuarded()).toBe(false);
+    } finally {
+      endTransfer();
+    }
+  });
+
+  it("no upload: the tap reloads at once, with no question (as before)", async () => {
+    installServiceWorker(true);
+    await act(async () => { root.render(React.createElement(ServiceWorkerManager)); });
+    await flush();
+    const confirm = vi.spyOn(window, "confirm");
+    await act(async () => { (prompts()[0].querySelector("button") as HTMLButtonElement).click(); });
+    await flush();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(waiting.postMessage).toHaveBeenCalledWith("SKIP_WAITING");
+  });
+
+  it("confirmReloadFromFallback: a confirm that throws (dialogs blocked) answers Wait — the upload is never stopped without a yes", () => {
+    const release = vi.fn();
+    expect(confirmReloadFromFallback({ inFlight: () => false, confirm: () => { throw new Error("x"); }, release })).toBe(true);
+    expect(confirmReloadFromFallback({ inFlight: () => true, confirm: () => { throw new Error("blocked"); }, release })).toBe(false);
+    expect(confirmReloadFromFallback({ inFlight: () => true, confirm: () => false, release })).toBe(false);
+    expect(release).not.toHaveBeenCalled();
+    expect(confirmReloadFromFallback({ inFlight: () => true, confirm: () => true, release })).toBe(true);
+    expect(release).toHaveBeenCalledTimes(1);
   });
 });
