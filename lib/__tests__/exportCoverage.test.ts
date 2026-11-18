@@ -113,6 +113,10 @@ const DECISION_AT_MERGE: Record<string, string> = {
   // never imported — IMMUTABLE_TABLES; DEC-90) and are no longer here.
   // drafting-flow Round G DF-P24 EXAMINATION SCOPE (20261266) — the integrator decides at the merge.
   // drafting-flow Round G DF-P24's ticket_examination_scopes was decided at its merge (EXPORTED; DEC-90) and is no longer here — DF-P25 (DEC-90 ruling (7)) now RESTORES it after tickets with the waiver cleared (RESTORE_SERVICE_ROLE_WAIVERS).
+  // drafting-flow Round G F5 DRAWING AUDIT HISTORY (20261270, EVID-14) — the integrator decides at the merge
+  // (proposed: EXPORTED after drawing_audit_logs; never imported — IMMUTABLE_TABLES, written only by the
+  // database's trigger on drawing_audit_logs).
+  drawing_audit_log_history: "drafting-flow F5 (20261270): the append-only history of replaced drawing audit verdicts — decided at the merge",
 };
 
 // EGR-7 / XEDGE-10: a column whose NAME says "credential". `_key` alone is

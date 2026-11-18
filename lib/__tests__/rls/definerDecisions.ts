@@ -159,6 +159,7 @@ export const TRIGGER_FUNCTIONS: readonly string[] = [
   "documents_guard_access_change()",
   "documents_intake_adoption_guard()",
   "documents_resync_assets()",
+  "drawing_audit_logs_record_history()", // 20261270 (drafting-flow EVID-14, F5): appends a replaced or removed verdict to drawing_audit_log_history
   "enforce_change_order_decision_guard()",
   "enforce_checkout_episode_guard()", // 20261075 (DCK-14), on the replay since IRLS-19's in-place correction
   "enforce_checkout_release_guard()",

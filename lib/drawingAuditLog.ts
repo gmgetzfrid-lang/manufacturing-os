@@ -45,6 +45,36 @@ export function wouldLowerSeverity(stored: string | null | undefined, next: Audi
   return was === undefined ? true : RANK[next] < was;
 }
 
+/** Who produced a verdict — drawing_audit_logs.source (20261270, drafting-flow
+ *  EVID-14): `engine` the drawing route's connector audit, `orchestrator` the
+ *  log_audit_completion tool (a controller confirmed it), `human` a signed-in
+ *  session writing the row directly (the database stamps it; no app path
+ *  writes it). Every verdict a write replaces is kept whole in
+ *  drawing_audit_log_history by the database's own trigger, so no writer
+ *  does anything for the history. */
+export type AuditSource = "engine" | "orchestrator" | "human";
+
+type WriteError = { code?: string | null; message?: string | null } | null;
+
+/** A database without 20261270 has no `source` column: PostgREST answers
+ *  PGRST204 (Postgres 42703) and writes nothing. */
+export function isMissingSourceColumn(e: WriteError): boolean {
+  return !!e && (e.code === "42703" || e.code === "PGRST204"
+    || /column .* does not exist|could not find the .* column/i.test(e.message ?? ""));
+}
+
+/** A verdict write that names its source, and on a database without
+ *  20261270 (the column is missing: nothing was written) the write sent
+ *  before it, unchanged. Any other answer is the first write's. */
+export async function writeWithSourceFallback<E extends WriteError>(
+  withSource: () => PromiseLike<{ error: E }>,
+  today: () => PromiseLike<{ error: E }>,
+): Promise<{ error: E }> {
+  const first = await withSource();
+  if (isMissingSourceColumn(first.error)) return await today();
+  return first;
+}
+
 /** One sheet as the auditor sees it. `name` must be the same string the
  *  findings refer to it by — the audit reports by display name. */
 export interface AuditSheet {

@@ -534,6 +534,55 @@ describe("before 20261124 the audit is still recorded, on the key that database 
   });
 });
 
+// ── drafting-flow F5 (EVID-14 done-when 2, 20261270) — the engine names itself
+
+describe("EVID-14 — the drawing route's verdict rows name their source, engine; before 20261270 today's write is sent", () => {
+  const upserts = () => db.ops.filter((o) => o.table === "drawing_audit_logs" && o.kind === "upsert");
+
+  it("on 20261270: ONE write, every row with source engine, on 20261124's key", async () => {
+    twoLibraries();
+    const a = await record("kl-1");
+    expect(a.status).toBe(200);
+    expect(a.body.recorded).toBe(3);
+    expect(upserts()).toHaveLength(1);
+    expect((upserts()[0].payload as Row[]).every((r) => r.source === "engine" && r.library_id === "kl-1")).toBe(true);
+    expect(logRows().map((r) => r.source)).toEqual(["engine", "engine", "engine"]);
+  });
+
+  it("before 20261270 (PGRST204, nothing written): the second write is today's, byte for byte — and the same rows land, with the same answer, as with the column (A/B)", async () => {
+    const strip = (r: Row) => { const { id: _id, audited_at: _at, source: _s, ...rest } = r; return rest; };
+    twoLibraries();
+    const a = await record("kl-1");
+    const withColumn = { status: a.status, body: a.body, rows: logRows().map(strip) };
+    twoLibraries();
+    db.missingColumns.drawing_audit_logs = ["source"];
+    const b = await record("kl-1");
+    expect(upserts()).toHaveLength(2);
+    const [first, second] = upserts();
+    expect(second.payload).toEqual((first.payload as Row[]).map(({ source: _s, ...r }) => r));
+    expect((second.payload as Row[]).some((r) => "source" in r)).toBe(false);
+    expect({ status: b.status, body: b.body, rows: logRows().map(strip) }).toEqual(withColumn);
+    expect(logRows().some((r) => "source" in r)).toBe(false);
+  });
+
+  it("before 20261124 (the legacy key) the write is today's: one upsert, no source, no library_id", async () => {
+    twoLibraries();
+    db.missingColumns.drawing_audit_logs = ["library_id"];
+    expect((await record("kl-1")).status).toBe(200);
+    expect(upserts()).toHaveLength(1);
+    expect((upserts()[0].payload as Row[]).every((r) => !("source" in r) && !("library_id" in r))).toBe(true);
+  });
+
+  it("any other refusal is answered as before — one write, its message, nothing recorded", async () => {
+    twoLibraries();
+    db.hooks.push((op) => (op.table === "drawing_audit_logs" && op.kind === "upsert" ? { error: { code: "XX000", message: "disk full" } } : undefined));
+    const a = await record("kl-1");
+    expect(a.status).toBe(500);
+    expect(a.body.error).toBe("disk full");
+    expect(upserts()).toHaveLength(1);
+  });
+});
+
 // ── ING-1 / ING-8 / ING-12 — the rebuild is the one reset ───────────────────
 
 describe("the rebuild goes through resetKnowledgeIndex (DEC-58 handoff)", () => {

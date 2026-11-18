@@ -835,6 +835,40 @@ describe("ORCH-1 criterion 3 / DEC-68 — log_audit_completion writes ORG-WIDE r
     expect(d.provisional).toBeUndefined();
     expect(d.waitingFindings).toBeUndefined();
   });
+
+  // drafting-flow F5 (EVID-14 done-when 2, 20261270): the row names its source.
+  const confirmed = async () => {
+    const ctx = await ctxOf("u-dc");
+    const params = { sheet_number: "025-PID-0103", revision: "D", status: "passed" };
+    const fp = fingerprint("log_audit_completion", { ...params, document_id: "d-1" });
+    return toolByName("log_audit_completion")!.run(params, { ...ctx, approved: new Set([fp]) });
+  };
+
+  it("EVID-14: on 20261124's key the confirmed record names its source, orchestrator, in ONE write", async () => {
+    expect((await confirmed()).data).toMatchObject({ status: "logged" });
+    const writes = db.ops.filter((o) => o.table === "drawing_audit_logs" && o.kind === "upsert");
+    expect(writes).toHaveLength(1);
+    expect(writes[0].payload).toMatchObject({ source: "orchestrator", library_id: null });
+    expect(rowsOf("drawing_audit_logs")[0]).toMatchObject({ status: "passed", source: "orchestrator" });
+  });
+
+  it("EVID-14: before 20261270 (no source column — PGRST204, nothing written) the write it sent before 20261270 is sent, byte for byte, and the record lands", async () => {
+    db.missingColumns.drawing_audit_logs = ["source"];
+    expect((await confirmed()).data).toMatchObject({ status: "logged" });
+    const writes = db.ops.filter((o) => o.table === "drawing_audit_logs" && o.kind === "upsert");
+    expect(writes).toHaveLength(2);
+    const { source, ...today } = writes[0].payload as Row;
+    expect(source).toBe("orchestrator");
+    expect(writes[1].payload).toEqual(today);
+    expect(Object.keys(writes[1].payload as Row)).not.toContain("source");
+    expect(rowsOf("drawing_audit_logs")).toEqual([expect.objectContaining({ status: "passed", library_id: null })]);
+  });
+
+  it("EVID-14: any other refusal is answered as before — one write, its error, no second try", async () => {
+    db.hooks.push((op) => (op.table === "drawing_audit_logs" && op.kind === "upsert" ? { error: { code: "23514", message: "violates check constraint" } } : undefined));
+    expect((await confirmed()).data).toMatchObject({ error: "violates check constraint" });
+    expect(db.ops.filter((o) => o.table === "drawing_audit_logs" && o.kind === "upsert")).toHaveLength(1);
+  });
 });
 
 describe("DEC-68 handoff — check_audit_history never answers 'already audited' for a provisional row", () => {
