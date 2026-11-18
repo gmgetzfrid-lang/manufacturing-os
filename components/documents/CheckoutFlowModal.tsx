@@ -23,6 +23,8 @@ import {
   abortFailedLockClaim,
 } from "@/lib/checkoutEpisodes";
 import { recordIntent } from "@/lib/intents";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, type Kept } from "@/lib/checkedWriteKeep";
 import {
   X,
   Clock,
@@ -369,7 +371,12 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       // -wins left an orphaned session + a mismatched collaborator list.
       // (The active_collaborators array is still a read-modify-write; that is
       // a benign list, not the authoritative lock.)
-      const claim = await supabase
+      // projects-tab SAF-22 (J15e): class (a), the person's checkout. The
+      // claim reads its matched row through checkedWrite, and the answer it
+      // gave — row, no row, or error, unchanged — is what resolveLockClaim
+      // settles below, exactly as before.
+      const claimKept: Kept = {};
+      const claimCheck = await checkedWrite(answered(supabase
         .from("documents")
         .update({
           checked_out_by: currentUser.uid,
@@ -382,7 +389,11 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
         .eq("id", document.id!)
         .or(`checked_out_by.is.null,checked_out_by.eq.${currentUser.uid}`)
         .select("id")
-        .maybeSingle();
+        .maybeSingle(), claimKept));
+      const claim = claimKept.r;
+      // Only a request that threw outright leaves no answer: the checkout
+      // stops there, as the throw did before, in plain words.
+      if (!claim) throw new Error(claimCheck.ok ? "The checkout did not complete — the lock claim gave no answer." : claimCheck.error);
 
       // DCK-4: a null row means one of TWO things — the lock is held by
       // someone else (a genuine CAS miss) or the write itself was REFUSED
@@ -410,10 +421,16 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
       if (!lockedRow) {
         // Someone else holds the lock (they had it already, or won the race).
         // Join THEIR episode as a collaborator — do NOT seize the lock.
-        await supabase
+        // projects-tab SAF-22 (J15e): class (b). The session row above is the
+        // join; this display list is bookkeeping (the reconcile rebuilds it
+        // from the session rows). A list write that matched no row or failed
+        // is logged and never stops the join — before, both were silent.
+        const collab = await checkedWrite(supabase
           .from("documents")
           .update({ active_collaborators: newCollaborators })
-          .eq("id", document.id!);
+          .eq("id", document.id!)
+          .select("id"));
+        if (!collab.ok) console.warn("[checkout] join: the collaborator list was not updated", collab.code, collab.error);
         await postEpisodeSystemMessage({
           orgId: document.orgId,
           documentId: document.id!,

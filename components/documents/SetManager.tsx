@@ -8,6 +8,9 @@ import {
   AlertCircle, Loader2, Search
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
+import { userFacingError } from "@/lib/userFacingError";
 import { DocumentSet, DocumentRecord } from '@/types/schema';
 import { ZC } from "@/lib/zLayers";
 
@@ -108,11 +111,34 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
     try {
       const newSheetNum = setSetDocs.length + 1;
       const newCount = (activeSet.sheetCount || 0) + 1;
-      await supabase.from('documents').update({
+      // projects-tab SAF-22 (J15e): class (a) — the document joining the set
+      // is the person's act. A write that matched no row (or failed) is said,
+      // and the set's count is not touched.
+      const added = await checkedWrite(supabase.from('documents').update({
         set_id: activeSet.id, sheet_number: newSheetNum, sheet_total: newCount,
-      }).eq('id', docRecord.id);
-      await supabase.from('document_sets').update({ sheet_count: newCount }).eq('id', activeSet.id);
+      }).eq('id', docRecord.id).select('id'));
+      if (!added.ok) {
+        showToast({ type: "error", title: "Failed to add document to set", message: added.error });
+        return;
+      }
+      // Class (b): the set's sheet count follows the landed add. A count that
+      // did not land never undoes the add; it is said as a warning. The
+      // in-memory count advances as before (what later adds write is
+      // unchanged — the integrator's ruling at the J15e review).
+      const countKept = keptAnswer();
+      const counted = await checkedWrite(answered(supabase.from('document_sets').update({ sheet_count: newCount }).eq('id', activeSet.id).select('id'), countKept));
       setActiveSet({ ...activeSet, sheetCount: newCount });
+      if (!counted.ok) {
+        console.warn("[sets] sheet count not updated", counted.code, countKept.error ?? counted.error);
+        showToast({
+          type: "warning",
+          title: "Added to the set, but its sheet count was not updated",
+          // The add landed: the reason alone, never "nothing was changed".
+          message: countKept.error
+            ? userFacingError(countKept.error, { embed: true, context: "sets" })
+            : "You may not have permission to change this set, or someone else changed it first. Reload to see its count as it stands.",
+        });
+      }
       setSetDocs(prev => [...prev, { ...docRecord, sheetNumber: newSheetNum }]);
       setSearchTerm('');
       setSearchResults([]);
@@ -124,9 +150,15 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
   const removeFromSet = async (docRecord: DocumentRecord) => {
     if (!activeSet || !docRecord.id) return;
     try {
-      await supabase.from('documents').update({
+      // projects-tab SAF-22 (J15e): class (a). A removal that matched no row
+      // (or failed) is said, and the sheet stays listed.
+      const removed = await checkedWrite(supabase.from('documents').update({
         set_id: null, sheet_number: null, sheet_total: null,
-      }).eq('id', docRecord.id);
+      }).eq('id', docRecord.id).select('id'));
+      if (!removed.ok) {
+        showToast({ type: "error", title: "Remove failed", message: removed.error });
+        return;
+      }
       setSetDocs(prev => prev.filter(d => d.id !== docRecord.id));
     } catch { showToast({ type: "error", title: "Remove failed" }); }
   };
