@@ -26,7 +26,7 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import * as XLSX from "xlsx";
-import { parseWorkbook } from "@/lib/xlsxData";
+import { parseWorkbook, htmlMayMarkText } from "@/lib/xlsxData";
 
 const root = resolve(__dirname, "../..");
 const fixture = (name: string) => readFileSync(resolve(__dirname, "fixtures/xlsx", name));
@@ -189,7 +189,7 @@ describe("XEDGE-12 — text cells keep the 0.18.5 typing rules", () => {
     expect(values(html(["1:45 PM", "13:45"]))).toEqual(["1:45 PM", "13:45"]);
   }));
 
-  it("an HTML cell marked as text (data-t=\"s\", t=\"s\", T=s) keeps its text exactly, as 0.18.5 kept it", () => {
+  it("an HTML cell marked as text (six spellings, td or th) keeps its text exactly, as 0.18.5 kept it", () => {
     const marked = ["00123", "1-2", "1/2", "1e5", "TRUE", "(12)", "50%", "12345678901234567890", "#N/A", "15-Mar-2026", "13:45", "1:45 PM", "2026-03-15", " padded "];
     const table = (attr: string) => Buffer.from(
       "<table><tr><td>Tag</td><td>Value</td></tr>"
@@ -197,9 +197,42 @@ describe("XEDGE-12 — text cells keep the 0.18.5 typing rules", () => {
       + "</table>",
     );
     for (const zone of ["UTC", "America/Chicago", "Asia/Kolkata"]) {
-      for (const attr of [' data-t="s"', ' t="s"', " T=s"]) {
+      for (const attr of [' data-t="s"', ' t="s"', " t=s", " T='s'", ' data-t = "s"', ' x:t="s"']) {
         expect(inZone(zone, () => values(table(attr)))).toEqual(marked.map((v) => v.trim()));
       }
+    }
+  });
+
+  it("only a mark inside a <td> / <th> tag counts: cell text, other tags and other attributes never trigger it", () => {
+    const html = (s: string) => Buffer.from(s);
+    for (const attr of [' data-t="s"', ' t="s"', " t=s", " T='s'", ' data-t = "s"', ' x:t="s"']) {
+      expect(htmlMayMarkText(html(`<table><tr><td${attr}>a</td></tr></table>`))).toBe(true);
+      expect(htmlMayMarkText(html(`<table><tr><TH class="h"${attr}>a</TH></tr></table>`))).toBe(true);
+    }
+    expect(htmlMayMarkText(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('<table><tr><td t="s">a</td></tr></table>', "utf16le")]))).toBe(true);
+    for (const plain of [
+      "<table><tr><td>Weight = Steel</td><td>t = s</td><td>data-t=\"s\"</td></tr></table>",
+      '<table t="s"><tr data-t="s"><td><span t="s">x</span></td><td class="st" format="sum">y</td></tr></table>',
+      '<html><body data-t="s"><p>t=s</p><table><tr><td width="64" style="font-weight:bold">z</td></tr></table></body></html>',
+    ]) expect(htmlMayMarkText(html(plain))).toBe(false);
+    // So a table whose TEXT says "Weight = Steel" re-types every cell as 0.18.5 did.
+    const table = html("<table><tr><td>Tag</td><td>Value</td></tr><tr><td>Weight = Steel</td><td>15-Mar-2026</td></tr><tr><td>t = s</td><td>00123</td></tr></table>");
+    expect(inZone("UTC", () => values(table))).toEqual(["2026-03-15", "123"]);
+  });
+
+  it("the cell-tag scan runs in linear time on adversarial markup", () => {
+    for (const evil of [
+      "<td" + " t".repeat(200_000),
+      "<td".repeat(200_000),
+      "<td " + "<td x ".repeat(100_000) + ">",
+      "<td " + "data-t_".repeat(100_000),
+      "<td " + "x:t_:t_".repeat(60_000) + "=",
+      "<td " + "t" + " ".repeat(400_000) + "x",
+      ("<td " + "a".repeat(50) + ">").repeat(20_000),
+    ]) {
+      const started = Date.now();
+      htmlMayMarkText(Buffer.from(evil));
+      expect(Date.now() - started).toBeLessThan(1500);
     }
   });
 
