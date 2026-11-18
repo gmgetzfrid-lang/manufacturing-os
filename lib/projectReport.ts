@@ -16,6 +16,8 @@
 
 import { supabase } from "@/lib/supabase";
 import { userFacingError, userFacingReadError } from "@/lib/userFacingError";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, type Kept } from "@/lib/checkedWriteKeep";
 import { listAccounts, listEntries, computeCostRollup, milestonePctIndex, fmtMoney } from "@/lib/costs";
 import {
   listChangeOrders, summarizeChangeOrders, approvedChangesByAccount, CO_REASON_LABEL, type CoReason,
@@ -601,10 +603,14 @@ export async function draftLessonsLearned(orgId: string, projectId: string): Pro
 export async function saveLessonsLearned(input: {
   orgId: string; projectId: string; text: string; actorId: string; actorEmail?: string | null;
 }): Promise<{ ok: boolean; error?: string }> {
-  const { error } = await supabase.from("projects")
+  // Checked (SAF-18, DEC-90 class a): a save that matched no row is refused
+  // in words and writes no PROJECT_LESSONS_SAVED row.
+  const kept: Kept = {};
+  const w = await checkedWrite(answered(supabase.from("projects")
     .update({ lessons_learned: input.text.trim() || null })
-    .eq("id", input.projectId);
-  if (error) return { ok: false, error: userFacingError(error, { context: "projectReport" }) };
+    .eq("id", input.projectId)
+    .select("id"), kept));
+  if (!w.ok) return { ok: false, error: w.code === "db" && kept.r?.error ? userFacingError(kept.r.error, { context: "projectReport" }) : w.error };
   await supabase.from("audit_logs").insert({
     action: "PROJECT_LESSONS_SAVED", resource_type: "project", resource_id: input.projectId,
     org_id: input.orgId, user_id: input.actorId, user_email: input.actorEmail ?? null,

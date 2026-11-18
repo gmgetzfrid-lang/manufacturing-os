@@ -12,6 +12,8 @@ import { X, Loader2, Check, Pencil, Lock, Globe, Target, Plus, FileText, Search 
 import { supabase } from "@/lib/supabase";
 import { userFacingError, userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 import { updateProjectMeta } from "@/lib/projects";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, type Kept } from "@/lib/checkedWriteKeep";
 import { logAuditAction } from "@/lib/audit";
 import { invalidateProjectSnapshot } from "@/lib/projectSnapshot";
 import type { Project, ProjectVisibility } from "@/types/schema";
@@ -161,15 +163,19 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
           || after.sowDocumentId !== before.sowDocumentId
           || JSON.stringify(after.goals) !== JSON.stringify(before.goals);
         if (changed) {
-          const { error: extErr } = await supabase.from("projects").update({
+          // Checked (SAF-18): a write that matched no row was refused — said
+          // like an error, and no PROJECT_UPDATED row claims it.
+          const kept: Kept = {};
+          const w = await checkedWrite(answered(supabase.from("projects").update({
             purpose: after.purpose || null,
             goals: after.goals.length > 0 ? after.goals : null,
             success_criteria: after.successCriteria || null,
             sow_document_id: after.sowDocumentId,
             updated_at: new Date().toISOString(),
             updated_by: actorUserId,
-          }).eq("id", project.id!);
-          if (extErr) throw new Error(`Name, description, MOC, target date and visibility were saved, but purpose / goals / Summary of Work were not: ${userFacingError(extErr, { context: "EditProjectModal", embed: true }).replace(/\.$/, "")}. Save changes retries just those.`);
+          }).eq("id", project.id!).select("id"), kept));
+          const extErr = kept.r?.error ?? null;
+          if (!w.ok) throw new Error(`Name, description, MOC, target date and visibility were saved, but purpose / goals / Summary of Work were not: ${(w.code === "db" && extErr ? userFacingError(extErr, { context: "EditProjectModal", embed: true }) : w.error).replace(/\.$/, "")}. Save changes retries just those.`);
           await logAuditAction({
             action: "PROJECT_UPDATED",
             resourceId: project.id!, resourceType: "project",

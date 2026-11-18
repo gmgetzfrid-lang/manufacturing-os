@@ -21,6 +21,7 @@ import { normalizeRoles } from "@/lib/roleCapabilities";
 import { notifyCompliance as notify } from "@/lib/complianceNotify";
 import { loadScanRetryPlan } from "@/lib/complianceNotify";
 import { logAuditAction } from "@/lib/audit";
+import { checkedWrite } from "@/lib/checkedWrite";
 import { getOrgControllers } from "@/lib/ownership";
 import type { RecertPolicy, AccessControl, AccessRule } from "@/types/schema";
 
@@ -447,8 +448,11 @@ export async function scanAccessRecerts(orgId: string, opts?: { leadDays?: numbe
       notify({ orgId, userId: uid, kind: "access_recert_due", title: overdue ? `Access recert overdue: ${name}` : `Access recert due: ${name}`, body: "Review who has access to this library and recertify it.", link, resourceType: "library", resourceId: l.id as string }, { retryKey })
     ));
     // DELIV-7 dw1: stamped only when every notice landed.
+    // DEC-90 class (b): the cooldown stamp is bookkeeping — a refused stamp
+    // never fails the scan; it is logged (the next run re-sends), never taken as stamped.
     if (landed.every(Boolean)) {
-      await supabase.from("libraries").update({ recert_notified_at: new Date().toISOString() }).eq("id", l.id as string);
+      const stamp = await checkedWrite(supabase.from("libraries").update({ recert_notified_at: new Date().toISOString() }).eq("id", l.id as string).select("id"));
+      if (!stamp.ok) console.warn(`[accessRecert] the notice stamp on library ${l.id as string} was not written: ${stamp.error}`);
     }
     n++;
   }

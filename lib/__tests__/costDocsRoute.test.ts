@@ -5,6 +5,8 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const state = vi.hoisted(() => ({
   user: null as null | { id: string; email?: string },
@@ -488,5 +490,31 @@ describe("COST-3 done-when 2 (DEC-48, J12 line) — a read never links the quote
       expect(linkWrites()).toHaveLength(0);
       expect(state.calls.some((c) => c.table === "companies")).toBe(false);
     }
+  });
+});
+
+// projects-joint J15c CHECKED-WRITE SWEEP (SAF-18): the save's verdict now
+// comes from lib/checkedWrite (the census follows it); the raw error is kept
+// beside it, so the pre-migration retry and the 500's sentence are as before.
+describe("SAF-18 (J15c) — the read's save is a checked write", () => {
+  it("routes through checkedWrite, keeping the same predicate builder", () => {
+    const route = readFileSync(join(process.cwd(), "app/api/projects/cost-docs/route.ts"), "utf8");
+    expect(route).toContain('const w = await checkedWrite(answered(stillAsRead(supabaseAdmin.from("cost_documents").update(patch)\n      .eq("id", costDocId).eq("org_id", orgId)).select("id"), kept));');
+  });
+
+  it("a save the database refused with an error (not a missing column) is the 500 it was, with no retry and nothing audited", async () => {
+    state.updateErrorsOnce = { code: "42501", message: "permission denied for table cost_documents" };
+    const res = await post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("The read succeeded but saving it failed: permission denied for table cost_documents");
+    expect(updatePatch()).toHaveLength(1);
+    expect(state.calls.some((c) => c.table === "audit_logs")).toBe(false);
+  });
+
+  it("a save that matched no row (row-level security, or decided meanwhile) is the 409, and nothing is audited", async () => {
+    ai.duringCall = () => { state.rows.cost_documents = []; };
+    const res = await post(readCostDoc, "http://x/api/projects/cost-docs", { orgId: "o1", projectId: "pr1", costDocId: "d1" });
+    expect(res.status).toBe(409);
+    expect(state.calls.some((c) => c.table === "audit_logs")).toBe(false);
   });
 });

@@ -38,6 +38,10 @@ const s = vi.hoisted(() => ({
   mintCalls: [] as Array<{ orgId: string; sheets: Array<{ documentId: string; versionId: string }> }>,
   settleCalls: [] as Array<{ orgId: string; printId: string; printedDocumentIds: string[] }>,
   tokens: new Map<string, string>(),
+  /** EVID-15 (J15c): how the linked drawings' download_audits insert answers. */
+  auditInsert: "ok" as "ok" | "refused" | "throws",
+  alerts: [] as Array<{ message: string; tone?: string }>,
+  alertHangs: false,
 }));
 
 vi.mock("react-pdf", () => ({ Document: () => null, Page: () => null, pdfjs: { GlobalWorkerOptions: {} } }));
@@ -65,11 +69,18 @@ vi.mock("@/lib/supabase", () => {
       if (table === "document_versions") return { data: { file_url: "https://files/x.pdf" }, error: null };
       return { data: [], error: null };
     };
+    let inserting = false;
     const handler: ProxyHandler<Record<string, unknown>> = {
       get(_t, prop: string) {
-        if (prop === "then") return (resolve: (v: unknown) => void) => resolve(result());
+        if (prop === "then") {
+          return (resolve: (v: unknown) => void, reject: (e: unknown) => void) => {
+            if (inserting && table === "download_audits" && s.auditInsert === "throws") return reject(new Error("fetch failed"));
+            if (inserting && table === "download_audits" && s.auditInsert === "refused") return resolve({ data: null, error: { code: "42501", message: 'new row violates row-level security policy for table "download_audits"' } });
+            resolve(result());
+          };
+        }
         if (prop === "maybeSingle" || prop === "single") return async () => result();
-        if (prop === "insert") return () => { s.log.push(`insert:${table}`); return new Proxy(c, handler); };
+        if (prop === "insert") return () => { s.log.push(`insert:${table}`); inserting = true; return new Proxy(c, handler); };
         return () => new Proxy(c, handler);
       },
     };
@@ -120,7 +131,9 @@ vi.mock("@/components/documents/BulkCheckoutToProjectModal", () => ({ default: (
 vi.mock("@/components/assets/EquipmentTagsStrip", () => ({ default: () => null }));
 vi.mock("@/lib/markupExport", () => ({ bakeMarkupIntoPdf: vi.fn() }));
 vi.mock("@/lib/draftHandoff", () => ({ stashDraft: vi.fn() }));
-vi.mock("@/components/providers/DialogProvider", () => ({ appAlert: vi.fn(async () => { s.log.push("alert"); }) }));
+vi.mock("@/components/providers/DialogProvider", () => ({
+  appAlert: vi.fn((a: { message: string; tone?: string }) => { s.log.push("alert"); s.alerts.push(a); return s.alertHangs ? new Promise<void>(() => {}) : Promise.resolve(); }),
+}));
 vi.mock("@/lib/downloads", async (importActual) => {
   const actual = await importActual<typeof import("@/lib/downloads")>();
   return {
@@ -177,6 +190,7 @@ beforeEach(() => {
   s.mintCalls = [];
   s.settleCalls = [];
   s.tokens = new Map([[D1, T1], [D2, T2]]);
+  s.auditInsert = "ok"; s.alerts = []; s.alertHangs = false;
   Object.defineProperty(URL, "createObjectURL", { configurable: true, writable: true, value: () => { s.log.push("blob"); return "blob:pack"; } });
   Object.defineProperty(URL, "revokeObjectURL", { configurable: true, writable: true, value: () => {} });
   vi.spyOn(window, "open").mockImplementation(() => {
@@ -313,5 +327,52 @@ describe("PS-P9 — the collection book's 'Print all' (MultiDocViewer) names eac
     await bookAction("download");
     expect(s.mintCalls).toEqual([]);
     expect(s.stamps.map((x) => x.verifyUrl)).toEqual([undefined, undefined]);
+  });
+});
+
+// drafting-flow EVID-15 (projects-joint J15c): the linked drawings' copy
+// record reads the insert's { error }. A refused or failed record never
+// blocks the copy — the tab is already open and the PS-P9 settle already
+// sent — it is logged and said after, in MultiDocViewer's words (EGR-6),
+// and the alert is not awaited (the print is never held behind it).
+describe("EVID-15 — the linked drawings' 'Print all' says a copy the distribution record refused", () => {
+  const UNRECORDED = "The drawings were sent to print, but 2 sheets are NOT on the distribution record (the record write was refused), so they will not be recalled if the drawings change. Tell Document Control.";
+
+  for (const kind of ["refused", "throws"] as const) {
+    it(`a record that ${kind === "refused" ? "the database refused" : "threw"} is logged and said AFTER the copy left and the settle was sent`, async () => {
+      s.auditInsert = kind;
+      const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      await printLinked();
+      expect(s.log).toEqual(["mint", "stamp", "stamp", "blob", "open", "insert:download_audits", "settle", "alert"]);
+      expect(s.alerts).toEqual([{ message: UNRECORDED, tone: "danger" }]);
+      expect(err.mock.calls.map((c) => String(c[0]))).toContain(kind === "refused"
+        ? "[download_audits] REFUSED — these linked drawings are missing from the distribution record:"
+        : "[download_audits] insert failed — these linked drawings are missing from the distribution record:");
+    });
+  }
+
+  it("the alert is not awaited: one that never closes leaves the print done and the button free", async () => {
+    s.auditInsert = "refused";
+    s.alertHangs = true;
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await printLinked();
+    expect(s.alerts).toHaveLength(1);
+    expect((buttonByText(/Print all \(2\)/) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("REGRESSION — a record that lands says nothing (the print as before)", async () => {
+    await printLinked();
+    expect(s.alerts).toEqual([]);
+    expect(s.log).toEqual(["mint", "stamp", "stamp", "blob", "open", "insert:download_audits", "settle"]);
+  });
+
+  it("an unlink the database refused is said in the modal's alert — never an unhandled rejection — and the list is read again", async () => {
+    const assets = await import("@/lib/assets");
+    vi.mocked(assets.unlinkAssetFile).mockRejectedValueOnce(new Error("Nothing was changed — you don't have permission to do this, or someone else changed it first. Reload and try again."));
+    const reads = vi.mocked(assets.listAssetFiles).mock.calls.length;
+    await render(React.createElement(FileReferenceModal, { tag: "CKT-1", orgId: "org1", userId: "u1", canManage: true, onClose: () => {} }));
+    await click(host.querySelector('button[title="Remove link"]'));
+    expect(s.alerts).toEqual([{ message: "The drawing was not unlinked: Nothing was changed — you don't have permission to do this, or someone else changed it first. Reload and try again.", tone: "danger" }]);
+    expect(vi.mocked(assets.listAssetFiles).mock.calls.length).toBe(reads + 2);
   });
 });

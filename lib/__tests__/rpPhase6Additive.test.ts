@@ -161,7 +161,8 @@ describe("DEC-9 — team supervision", () => {
 
   it("deleting a team clears its library ownership (audited) BEFORE the delete", async () => {
     db.tables["libraries"] = { data: [{ id: "l1", name: "Drawings" }] };
-    db.tables["teams"] = { data: [] };
+    // the DELETE answers its matched row, as PostgREST does to .select("id") (J15c: checked)
+    db.tables["teams"] = { data: [{ id: "t1" }] };
     await deleteTeam("t1", { orgId: "org1", actorId: "a" });
     const clear = db.calls.findIndex((c) => c.table === "libraries" && c.method === "update");
     const del = db.calls.findIndex((c) => c.table === "teams" && c.method === "delete");

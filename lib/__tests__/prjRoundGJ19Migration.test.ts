@@ -154,7 +154,8 @@ describe("§1 SEC-21 residual 3 — milestones.project_id", () => {
     expect(lib).toContain('const EXISTING_READ_BASE = ["id", "project_id", "external_ref",');
     expect(lib).toContain("id: p.id!, ...scope, project_id: p.existing!.project_id ?? null, external_ref: p.row.externalRef ?? null,");
     // the per-row fallback writes no scope column (so the app before J19 still lands rows under the rail)
-    expect(lib).toContain(': await supabase.from("milestones").update(updateFields(p)).eq("id", p.id!).select("id").maybeSingle();');
+    // (J15c, SAF-18: the same write, read through checkedWrite)
+    expect(lib).toContain('await checkedWrite(answered(supabase.from("milestones").update(updateFields(p)).eq("id", p.id!).select("id"), kept));');
     const updateFieldsBody = between(lib, "const updateFields = (p: Prepared) => stripForSchema({", "});");
     expect(updateFieldsBody).not.toMatch(/project_id|\.\.\.scope/);
     const patch = between(lib, "const PATCH_COLUMN", "};");

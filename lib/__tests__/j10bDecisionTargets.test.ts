@@ -254,3 +254,82 @@ describe("A11Y-15 (J14) — the remaining Projects write buttons carry the 24 / 
     expect(src("components/projects/EditProjectModal.tsx")).toContain("<button onClick={() => void save()} disabled={busy}");
   });
 });
+
+// projects-tab A11Y-16 (projects-joint J15c CHECKED-WRITE SWEEP, its pass
+// over the project page). A11Y-15's census read the page's MembersTab only;
+// the rest of the page's write buttons kept their ~28 px boxes. Now the page
+// is read WHOLE under the same inverted census: every <button> in
+// app/(protected)/projects/[id]/page.tsx carries DECISION_TARGET unless it is
+// a tab (role="tab" — it switches a view and writes nothing) or its whole
+// click is on this list of read-only handlers. ActionButton's one <button>
+// carries the floor, which covers every use (Pause, Complete, Cancel, Resume,
+// Archive, Reopen, Delete, Export CSV, Edit, Evidence pack, Report, Lessons
+// learned); the lessons editor's "Save to project", the transition's Confirm
+// and the Activity tab's "Post comment" carry it too; both lifecycle
+// clusters are spaced 8 px.
+const READ_ONLY_16: RegExp[] = [
+  /^\(\) => \{ if \(window\.history\.length > 1\) router\.back\(\); else router\.push\("\/projects"\); \}$/,   // Back to projects
+  /^\(\) => setActionError\(null\)$/,                                                                         // dismiss the error banner
+  /^\(\) => void discardLessons\(\)$/,                                                                        // the lessons editor's Cancel (asks; discards the local draft)
+  /^\(\) => void discardTransition\(\)$/,                                                                     // the transition's Cancel (asks; clears the local reason)
+  /^\(\) => setEditingResp\(\(p\) => \(\{ \.\.\.p, \[m\.userId\]: m\.responsibility \?\? "" \}\)\)$/,          // the Members tab opens a responsibility's editor
+];
+const PAGE = "app/(protected)/projects/[id]/page.tsx";
+const isTab = (tag: string) => /\brole="tab"/.test(tag);
+const readOnly16 = (tag: string) => { const h = onClickOf(tag); return h != null && READ_ONLY_16.some((re) => re.test(h)); };
+
+describe("A11Y-16 (J15c) — the project page, read whole, carries the 24 / 44 px floor on every write button", () => {
+  it("every button on the page carries the floor unless it is a tab or its click is on the read-only list (counted)", () => {
+    const tags = buttonTags(src(PAGE));
+    const deciders = tags.filter((t) => !isTab(t) && !readOnly16(t));
+    const bare = deciders.filter((t) => !t.includes("${DECISION_TARGET}"));
+    expect(bare).toEqual([]);
+    // ActionButton, Save to project, Confirm, Post comment, and the Members tab's four
+    expect(deciders.length).toBeGreaterThanOrEqual(8);
+    for (const label of ["<button onClick={onClick} className={`${DECISION_TARGET}", "saveLessonsLearned(", "<button onClick={handleTransition}", "onClick={onPost}",
+      "onClick={addByEmail}", "void saveResp(m)", "void makeOwner(m)", "await removeMember("]) {
+      expect(deciders.some((t) => t.includes(label)), label).toBe(true);
+    }
+    // the only exemptions: the tab strip's one button, and the read-only clicks
+    expect(tags.filter(isTab)).toHaveLength(1);
+    expect(tags.filter((t) => !isTab(t) && readOnly16(t))).toHaveLength(READ_ONLY_16.length);
+  });
+
+  it("the read-only list carries no dead entry, and a write added to one of its handlers leaves it", () => {
+    const handlers = buttonTags(src(PAGE)).map(onClickOf).filter((h): h is string => h != null);
+    for (const re of READ_ONLY_16) expect(handlers.some((h) => re.test(h)), String(re)).toBe(true);
+    expect(readOnly16(`<button onClick={() => setActionError(null)} className="x">`)).toBe(true);
+    expect(readOnly16(`<button onClick={() => { setActionError(null); void handleDelete(); }} className="x">`)).toBe(false);
+    expect(readOnly16(`<button onClick={() => void handleReopen()} className="x">`)).toBe(false);
+    // a tab is exempt only as a tab
+    expect(isTab(`<button onClick={onClick} className="x">`)).toBe(false);
+  });
+
+  it("the lifecycle clusters, the lessons footer and the transition footer are spaced 8 px", () => {
+    const page = src(PAGE);
+    expect(page).toContain('<div className="flex items-center gap-2">\n                <ActionButton icon={<Pause className="w-3.5 h-3.5" />} label="Pause"');
+    expect(page).toContain('<div className="flex items-center gap-2">\n                <ActionButton icon={<Play className="w-3.5 h-3.5" />} label="Resume"');
+    expect(page).not.toMatch(/<div className="flex items-center gap-1">\n\s*<ActionButton/);
+    expect((page.match(/flex items-center justify-end gap-2 shrink-0">\n\s*<button onClick=\{\(\) => void discard(?:Lessons|Transition)\(\)\}/g) ?? []).length).toBe(2);
+  });
+
+  it("every handler, label and disabled state is unchanged — only the class strings moved", () => {
+    const page = src(PAGE);
+    expect(page).toContain("function ActionButton({ icon, label, onClick, color }: { icon: React.ReactNode; label: string; onClick: () => void; color?: \"red\" | \"emerald\" }) {");
+    expect(page).toContain("<button onClick={onClick} className={`${DECISION_TARGET} inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition-colors ${cls}`}>\n      {icon}{label}\n    </button>");
+    for (const use of [
+      'label="Pause" onClick={() => setPendingStatus("paused")} />',
+      'label="Complete" onClick={() => setPendingStatus("completed")} color="emerald" />',
+      'label="Cancel" onClick={() => setPendingStatus("cancelled")} color="red" />',
+      'label="Resume" onClick={() => setPendingStatus("active")} color="emerald" />',
+      'label="Archive" onClick={() => setPendingStatus("archived")} />',
+      'label="Reopen" onClick={() => void handleReopen()} />',
+      'label="Delete"\n                color="red"\n                onClick={() => void handleDelete()}',
+      'label="Export CSV"', 'label="Edit"\n                onClick={() => setShowEdit(true)}', 'label="Evidence pack"', 'label="Report"', 'label="Lessons learned"',
+    ]) expect(page, use).toContain(use);
+    expect(page).toContain("const res = await saveLessonsLearned({ orgId: project.orgId, projectId: project.id, text: lessonsDraft, actorId: uid, actorEmail: userEmail });");
+    expect(page).toContain("disabled={lessonsBusy}\n                className={`${DECISION_TARGET} inline-flex items-center gap-1.5 px-3 py-2 rounded-lg");
+    expect(page).toContain('<button onClick={handleTransition} disabled={transitionBusy || (pendingStatus === "completed" && !gates)}');
+    expect(page).toContain("onClick={onPost}\n                  disabled={!commentDraft.trim() || posting}\n                  className={`${DECISION_TARGET} inline-flex");
+  });
+});

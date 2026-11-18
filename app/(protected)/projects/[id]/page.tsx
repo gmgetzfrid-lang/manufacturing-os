@@ -494,7 +494,7 @@ export default function ProjectDetailPage() {
             </div>
 
             {canManage && project.status === "active" && (
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-2">
                 <ActionButton icon={<Pause className="w-3.5 h-3.5" />} label="Pause" onClick={() => setPendingStatus("paused")} />
                 <ActionButton icon={<CheckCircle2 className="w-3.5 h-3.5" />} label="Complete" onClick={() => setPendingStatus("completed")} color="emerald" />
                 <ActionButton icon={<XCircle className="w-3.5 h-3.5" />} label="Cancel" onClick={() => setPendingStatus("cancelled")} color="red" />
@@ -578,7 +578,7 @@ export default function ProjectDetailPage() {
               </>
             )}
             {canManage && project.status === "paused" && (
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-2">
                 <ActionButton icon={<Play className="w-3.5 h-3.5" />} label="Resume" onClick={() => setPendingStatus("active")} color="emerald" />
                 <ActionButton icon={<XCircle className="w-3.5 h-3.5" />} label="Cancel" onClick={() => setPendingStatus("cancelled")} color="red" />
               </div>
@@ -785,7 +785,7 @@ export default function ProjectDetailPage() {
                   setLessonsDraft(null);
                 }}
                 disabled={lessonsBusy}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
+                className={`${DECISION_TARGET} inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60`}>
                 {lessonsBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 Save to project
               </button>
@@ -870,7 +870,7 @@ export default function ProjectDetailPage() {
               <button onClick={() => void discardTransition()} disabled={transitionBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
               <button onClick={handleTransition} disabled={transitionBusy || (pendingStatus === "completed" && !gates)}
                 title={pendingStatus === "completed" && !gates ? CLOSEOUT_GATES_WAIT : undefined}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
+                className={`${DECISION_TARGET} inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60`}>
                 {transitionBusy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 Confirm
               </button>
@@ -903,7 +903,7 @@ function ActionButton({ icon, label, onClick, color }: { icon: React.ReactNode; 
     ? "border-emerald-500/40 bg-emerald-500/[0.08] text-emerald-800 dark:text-emerald-300 hover:bg-emerald-500/15"
     : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]";
   return (
-    <button onClick={onClick} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition-colors ${cls}`}>
+    <button onClick={onClick} className={`${DECISION_TARGET} inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition-colors ${cls}`}>
       {icon}{label}
     </button>
   );
@@ -1039,7 +1039,7 @@ function ActivityTab({
                 <button
                   onClick={onPost}
                   disabled={!commentDraft.trim() || posting}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
+                  className={`${DECISION_TARGET} inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50`}
                 >
                   {posting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
                   Post comment

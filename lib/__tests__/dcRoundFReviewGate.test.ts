@@ -749,8 +749,10 @@ describe("RG-10 — the intake route never repoints past a live review", () => {
     const p = src("components/projects/IntakePanel.tsx");
     const reject = between(p, "const reject = async", "const portalUrl");
     expect(reject).toMatch(/from\("document_review_signoffs"\)\s*\n\s*\.update\(\{ status: "void"/);
-    expect(reject).toContain('.eq("document_version_id", p.pendingVersionId).in("status", ["pending", "signed"]);');
-    expect(reject).toMatch(/if \(voidErr\) throw new Error\(/);
+    // J15c (SAF-18): the same filters, read through checkedWrite — zero rows
+    // stays the normal case (DEC-90 class c); a database error still throws.
+    expect(reject).toContain('.eq("document_version_id", p.pendingVersionId).in("status", ["pending", "signed"]).select("id"), vKept));');
+    expect(reject).toMatch(/if \(!vw\.ok && vw\.code === "db"\) throw new Error\(/);
   });
 });
 
