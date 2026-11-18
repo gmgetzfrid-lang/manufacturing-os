@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { clearAccessRequestNotices, queueAccessRequestOutcome } from "@/lib/accessRequestOutcome";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 
 // Decline a pending access request (EGRESS-5 follow-through). The public
 // request door (/api/auth/request-access) refuses a second request while one
@@ -58,14 +60,27 @@ export async function POST(req: NextRequest) {
 
   // Only a pending row can be declined — approving happened elsewhere and a
   // decided row stays decided.
-  const { data: declined, error: updateError } = await supabaseAdmin
+  // projects-tab SAF-22 (J15e): class (a) — the decline is the person's
+  // decision. A match of no row means the request is no longer pending: if
+  // it is declined already (a second click) the decline holds and nothing is
+  // re-announced, as before; if it was answered otherwise meanwhile (granted
+  // through Add member), the decline is refused, never answered ok.
+  const kept = keptAnswer();
+  const w = await checkedWrite(answered(supabaseAdmin
     .from("access_requests")
     .update({ status: "declined" })
     .eq("id", id)
     .eq("status", "pending")
-    .select("id");
-  if (updateError) {
-    return NextResponse.json({ error: updateError.message }, { status: 500 });
+    .select("id"), kept));
+  if (kept.error) {
+    return NextResponse.json({ error: kept.error.message }, { status: 500 });
+  }
+  const declined = kept.data;
+  if (!w.ok) {
+    const { data: now } = await supabaseAdmin.from("access_requests").select("status").eq("id", id).maybeSingle();
+    if ((now as { status?: string } | null)?.status !== "declined") {
+      return NextResponse.json({ error: "This request was already answered (it is no longer pending), so it was not declined. Reload to see where it stands." }, { status: 409 });
+    }
   }
 
   // PROD-2 dw2: the person who asked hears the answer, at the address they

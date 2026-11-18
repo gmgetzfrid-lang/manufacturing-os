@@ -14,6 +14,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
+import { eqOrNull } from "@/lib/writeFilters";
 import { loadPrincipal } from "@/lib/knowledgeAccess";
 import {
   loadDestinationPolicies,
@@ -103,11 +106,17 @@ export async function POST(req: NextRequest) {
     if (!parent || parent.deleted_at) parentId = null;
   }
 
-  const { error: restoreErr } = await supabaseAdmin
+  // projects-tab SAF-22 (J15e): class (a) — the restore is the person's
+  // decision; a write that matched no row (the folder purged meanwhile)
+  // restored nothing, so no documents return and no row records it.
+  const restoreKept = keptAnswer();
+  const restored = await checkedWrite(answered(supabaseAdmin
     .from("collections")
     .update({ deleted_at: null, deleted_by: null, parent_id: parentId })
-    .eq("id", collectionId);
-  if (restoreErr) return bad(`Couldn't restore the folder: ${restoreErr.message}`, 500);
+    .eq("id", collectionId)
+    .select("id"), restoreKept));
+  if (restoreKept.error) return bad(`Couldn't restore the folder: ${restoreKept.error.message}`, 500);
+  if (!restored.ok) return bad("The folder wasn't restored: it was removed meanwhile — nothing was changed. Reload the trash.", 409);
 
   // RET-10: bring the stepped-up documents home and re-clock them. The delete
   // recorded which documents it moved and where (FOLDER_DELETED audit detail);
@@ -143,10 +152,13 @@ async function returnSteppedUpDocuments(
   const moved: RetentionDocRow[] = [];
   for (let i = 0; i < ids.length; i += 200) {
     const chunk = ids.slice(i, i + 200);
-    let q = supabaseAdmin.from("documents").update({ collection_id: collectionId })
-      .in("id", chunk).eq("org_id", orgId).eq("library_id", libraryId);
-    q = heir ? q.eq("collection_id", heir) : q.is("collection_id", null);
-    const { data, error } = await q.select(RETENTION_DOC_COLUMNS);
+    // SAF-22 (J15e): class (c) — a chunk whose documents were since moved
+    // on purpose returns none; the rows returned are what came home.
+    const kept = keptAnswer();
+    await checkedWrite(answered(eqOrNull(supabaseAdmin.from("documents").update({ collection_id: collectionId })
+      .in("id", chunk).eq("org_id", orgId).eq("library_id", libraryId), "collection_id", heir)
+      .select(RETENTION_DOC_COLUMNS), kept));
+    const { data, error } = kept;
     if (error) return { ...none, documentsReturned: moved.length, note: `Returning the folder's documents failed part-way (${error.message}).` };
     moved.push(...((data ?? []) as RetentionDocRow[]));
   }

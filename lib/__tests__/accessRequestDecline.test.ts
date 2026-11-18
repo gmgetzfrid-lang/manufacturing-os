@@ -13,6 +13,9 @@ const state = vi.hoisted(() => ({
   request: null as Record<string, unknown> | null,
   member: null as Record<string, unknown> | null,
   updates: [] as Array<{ patch: Record<string, unknown>; filters: Array<[string, unknown]> }>,
+  /** SAF-22 (J15e): false = the decline's guarded UPDATE matches no row (the request is no longer pending). */
+  updateMatches: true,
+  outcomes: [] as unknown[],
 }));
 
 function chain(table: string) {
@@ -26,6 +29,8 @@ function chain(table: string) {
           if (pendingPatch) {
             state.updates.push({ patch: pendingPatch, filters });
             pendingPatch = null;
+            // SAF-22 (J15e): PostgREST answers `.select("id")` with the matched row
+            return resolve({ data: state.updateMatches ? [{ id: "req1" }] : [], error: null });
           }
           resolve({ data: null, error: null });
         };
@@ -54,6 +59,11 @@ vi.mock("@/lib/supabaseAdmin", () => ({
   },
 }));
 
+vi.mock("@/lib/accessRequestOutcome", () => ({
+  queueAccessRequestOutcome: vi.fn(async (_sb: unknown, o: unknown) => { state.outcomes.push(o); }),
+  clearAccessRequestNotices: vi.fn(async () => undefined),
+}));
+
 import { POST } from "@/app/api/admin/access-requests/route";
 
 function decline(id: string, token = "Bearer t"): Promise<Response> {
@@ -69,6 +79,8 @@ beforeEach(() => {
   state.request = { id: "req1", org_id: "org1", status: "pending" };
   state.member = { role: "Admin", roles: [] };
   state.updates = [];
+  state.updateMatches = true;
+  state.outcomes = [];
 });
 
 describe("POST /api/admin/access-requests", () => {
@@ -108,5 +120,30 @@ describe("POST /api/admin/access-requests", () => {
     expect(u.patch).toEqual({ status: "declined" });
     expect(u.filters).toContainEqual(["id", "req1"]);
     expect(u.filters).toContainEqual(["status", "pending"]);
+  });
+});
+
+// projects-joint J15e (projects-tab SAF-22): the decline reads its matched row.
+describe("SAF-22 (J15e) — a decline that matched no pending row", () => {
+  it("regression: a pending request is declined and its outcome queued, as before", async () => {
+    const res = await decline("req1");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(state.outcomes).toHaveLength(1);
+  });
+  it("already declined (a second click): the decline holds, 200, nothing re-announced", async () => {
+    state.updateMatches = false;
+    state.request = { id: "req1", org_id: "org1", status: "declined" };
+    const res = await decline("req1");
+    expect(res.status).toBe(200);
+    expect(state.outcomes).toEqual([]);
+  });
+  it("REPRODUCED: answered otherwise meanwhile (granted through Add member) — before, 200 'ok'; now a 409 that says it was not declined", async () => {
+    state.updateMatches = false;
+    state.request = { id: "req1", org_id: "org1", status: "approved" };
+    const res = await decline("req1");
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("This request was already answered (it is no longer pending), so it was not declined. Reload to see where it stands.");
+    expect(state.outcomes).toEqual([]);
   });
 });

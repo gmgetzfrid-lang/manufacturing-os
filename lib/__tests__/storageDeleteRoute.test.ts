@@ -1079,3 +1079,32 @@ describe("ILIFE-14 — a key another record still names is never freed", () => {
     expect(src.indexOf("keysReferencedOutside(supabaseAdmin")).toBeLessThan(src.indexOf('action: "STORAGE_OBJECT_DELETE"'));
   });
 });
+
+// projects-joint J15e (projects-tab SAF-22): the custody row's "failed" mark
+// after a storage delete that failed reads its matched row (class b).
+describe("SAF-22 (J15e) — the custody row's failure mark", () => {
+  it("a storage delete that fails marks the custody row (matched) quietly; the answer is the 502 it was", async () => {
+    member("Admin");
+    revision();
+    state.rows.audit_logs = [{ id: "audit-1" }];
+    const { r2 } = await import("@/lib/r2");
+    vi.mocked(r2.send).mockImplementationOnce(async () => { throw new Error("SlowDown"); });
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await del(RENDERED);
+    expect(res.status).toBe(502);
+    expect(state.rows.audit_logs).toHaveLength(1);
+    expect(err.mock.calls.some((c) => /custody row could not be marked failed/.test(String(c[0])))).toBe(false);
+    err.mockRestore();
+  });
+  it("REPRODUCED: a mark that matched no row (or failed) was swallowed — the custody row still reads as a deletion; now it is logged, the answer unchanged", async () => {
+    member("Admin");
+    revision();
+    const { r2 } = await import("@/lib/r2");
+    vi.mocked(r2.send).mockImplementationOnce(async () => { throw new Error("SlowDown"); });
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await del(RENDERED);
+    expect(res.status).toBe(502);
+    expect(err.mock.calls.some((c) => /the storage delete failed and its custody row could not be marked failed/.test(String(c[0])) && (c[1] as { error?: string }).error === "no row matched")).toBe(true);
+    err.mockRestore();
+  });
+});

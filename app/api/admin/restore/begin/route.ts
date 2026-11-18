@@ -29,6 +29,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeAdminSurface } from "@/lib/adminGate";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { planRestore, mergeNewUserUids, placeholderProfile, type CurrentMember, RESTORE_LINK_MEMBER_STATUSES, restoredMemberRoles, restoredMemberHeadline } from "@/lib/dataRestore";
 
 export const runtime = "nodejs";
@@ -82,9 +84,15 @@ export async function POST(req: NextRequest) {
   // Org-name choice — checked (fix pass 4): the audit row says whether it applied.
   let orgNameApplied = false;
   if (plan.orgNameCollision && parsed.orgNameChoice === "backup") {
-    const { error: renameErr } = await sb.from("orgs").update({ name: plan.orgNameCollision.backupName }).eq("id", orgId);
-    if (renameErr) {
-      return NextResponse.json({ error: `Could not apply the backup's workspace name (${renameErr.message}) — nothing was written.` }, { status: 500 });
+    // SAF-22 (J15e): class (a) — the person's choice; a rename that matched
+    // no row is refused before anything is written.
+    const kept = keptAnswer();
+    const renamed = await checkedWrite(answered(sb.from("orgs").update({ name: plan.orgNameCollision.backupName }).eq("id", orgId).select("id"), kept));
+    if (kept.error) {
+      return NextResponse.json({ error: `Could not apply the backup's workspace name (${kept.error.message}) — nothing was written.` }, { status: 500 });
+    }
+    if (!renamed.ok) {
+      return NextResponse.json({ error: "Could not apply the backup's workspace name (the workspace row was not found, or you can't change it) — nothing was written." }, { status: 409 });
     }
     orgNameApplied = true;
   }

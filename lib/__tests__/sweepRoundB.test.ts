@@ -92,7 +92,8 @@ describe("LIFE-6 — the hold knows its ticket; a close cannot be silent over it
     expect(gate).toMatch(/if \(resolution\.action === "release"\) \{/);
     // The gate sits inside the enforcement frame, before the CAS update.
     expect(r.indexOf("code: \"holds_open\"")).toBeGreaterThan(r.indexOf("computeTransition(ticket, input)"));
-    expect(r.indexOf("code: \"holds_open\"")).toBeLessThan(r.indexOf("let baseQuery = supabaseAdmin"));
+    // SAF-22 (J15e): the CAS write is now built by transitionWrite (read through checkedWrite)
+    expect(r.indexOf("code: \"holds_open\"")).toBeLessThan(r.indexOf("const transitionWrite = async"));
     // The release write waits for the CAS to land (a lost race releases nothing).
     expect(r.indexOf(".update({ released_at: nowIso")).toBeGreaterThan(r.indexOf("if (!updated) {"));
     expect(r.split(".update({ released_at: nowIso")).toHaveLength(2);

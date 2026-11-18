@@ -3250,3 +3250,41 @@ describe("GOV-9 criterion 4 (I-26) — a title block read only off an AI transcr
     expect(r.body.identityAiRead).toEqual(["025-PID-0201"]);
   });
 });
+
+// projects-joint J15e (projects-tab SAF-22): the rebuild mark and the locate
+// cache read their matched rows.
+describe("SAF-22 (J15e) — the kept rebuild place and the located-position cache", () => {
+  it("REPRODUCED: a place write that matched no library (removed meanwhile) read as kept — the caller was told to press again to continue; now it says the place could not be saved", async () => {
+    const docs = Array.from({ length: 8 }, (_, i) => kdoc(`r-${i}`, { name: `D${i}.pdf` }));
+    seed({ knowledge_documents: docs });
+    const real = Date.now();
+    let clock = 0;
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => real + clock);
+    db.hooks.push((op) => {
+      if (op.table === "knowledge_documents" && op.kind === "update" && (op.payload as Row)?.status === "stale") clock += 30_000;
+      // the library row goes between the mark's read and its write
+      if (op.table === "knowledge_libraries" && op.kind === "update") db.tables.knowledge_libraries = [];
+    });
+    try {
+      const res = await post({ orgId: "o1", libraryId: "kl-1", action: "rebuild" });
+      const body = await res.json();
+      expect(res.status).toBe(409);
+      expect(body.error).toMatch(/2 were not reached in time, and where this call stopped could not be saved \(the library was not found \(it may have been removed meanwhile\), so its place was not kept\) — the next press starts again from the first document/);
+    } finally { spy.mockRestore(); }
+  });
+  it("a cache write that fails is logged (it was swallowed) and the located positions are still answered; every tag is tried", async () => {
+    locateSheet();
+    ai.script = [
+      { text: '{"V-3": [0.5, 0.5], "P-101A": [0.2, 0.8]}', usage: U },
+      { text: '{"V-3": [0.5, 0.5]}', usage: U }, { text: '{"V-3": [0.5, 0.5]}', usage: U },
+      { text: '{"P-101A": [0.5, 0.5]}', usage: U }, { text: '{"P-101A": [0.5, 0.5]}', usage: U },
+    ];
+    db.hooks.push((op) => (op.table === "knowledge_page_entities" && op.kind === "update" ? { error: { code: "42501", message: "permission denied for table knowledge_page_entities" } } : undefined));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3", "P-101A"] })).json();
+    expect(body.positions.map((p: { tag: string }) => p.tag).sort()).toEqual(["P-101A", "V-3"]);
+    const logged = warn.mock.calls.filter((c) => /the located position of .* was not cached: permission denied/.test(String(c[0])));
+    expect(logged).toHaveLength(2);
+    warn.mockRestore();
+  });
+});

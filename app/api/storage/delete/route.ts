@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { assertSafeStorageKey } from "@/lib/storageKey";
 import { keysReferencedOutside } from "@/lib/storageKeyRegistry";
 import {
@@ -332,11 +334,17 @@ export async function DELETE(req: NextRequest) {
     // The object may still exist — mark the custody row so it never reads as
     // a completed destruction. Best-effort: the failure response stands
     // either way.
+    // projects-tab SAF-22 (J15e): class (b) — a mark that failed or matched
+    // no row (swallowed before) is logged: the custody row then still reads
+    // as a deletion, and the log is the record that it did not happen.
     if (auditRow?.id) {
-      await supabaseAdmin
+      const kept = keptAnswer();
+      const marked = await checkedWrite(answered(supabaseAdmin
         .from("audit_logs")
         .update({ details: { path, documentId, versionId, failed: true, error: (e as Error).message } })
-        .eq("id", auditRow.id);
+        .eq("id", auditRow.id)
+        .select("id"), kept));
+      if (!marked.ok) console.error("storage/delete: the storage delete failed and its custody row could not be marked failed", { path, orgId, auditId: auditRow.id, error: kept.error?.message ?? "no row matched" });
     }
     return NextResponse.json({ error: "Storage deletion failed; the object was not removed." }, { status: 502 });
   }

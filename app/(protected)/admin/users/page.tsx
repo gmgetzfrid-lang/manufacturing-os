@@ -2,6 +2,8 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { checkedWrite } from '@/lib/checkedWrite';
+import { answered, keptAnswer } from '@/lib/checkedWriteAnswer';
 import { useRole } from '@/components/providers/RoleContext';
 import { revokeMember } from '@/lib/members';
 import { pruneRemovedMemberAclIndex, aclIndexScopeOf } from '@/lib/memberAclIndexPrune';
@@ -222,24 +224,28 @@ export default function AdminUsersPage() {
       // ALOG-4 / ORG-4's shape: the update reads back the row it changed, so
       // a write RLS filtered out (zero rows, no error) is a refusal — never a
       // role shown as saved that the database never stored.
-      const { data: changed, error } = await supabase
+      // projects-tab SAF-22 (J15e): the same reads, through checkedWrite.
+      const kept = keptAnswer();
+      const changed = await checkedWrite(answered(supabase
         .from('org_members')
         .update({ roles: cleaned, role: headline })
         .eq('id', member.id)
-        .select('id');
+        .select('id'), kept));
+      const { error } = kept;
       if (error) {
         // Pre-migration fallback: the roles[] column may not exist yet. Persist
         // the headline so editing still works, and point at the migration.
         const msg = error.message || '';
         if (/roles/i.test(msg) && /(column|schema|find)/i.test(msg)) {
-          const { data: changed2, error: e2 } = await supabase.from('org_members').update({ role: headline }).eq('id', member.id).select('id');
-          if (e2) throw e2;
-          if (!changed2 || changed2.length === 0) throw new Error(ROLE_WRITE_REFUSED);
+          const kept2 = keptAnswer();
+          const changed2 = await checkedWrite(answered(supabase.from('org_members').update({ role: headline }).eq('id', member.id).select('id'), kept2));
+          if (kept2.error) throw kept2.error;
+          if (!changed2.ok) throw new Error(ROLE_WRITE_REFUSED);
           await appAlert('Saved the primary role. To stack multiple roles, apply migration 20260722_member_roles_collection.sql to your database.');
         } else {
           throw error;
         }
-      } else if (!changed || changed.length === 0) {
+      } else if (!changed.ok) {
         throw new Error(ROLE_WRITE_REFUSED);
       }
       // ALOG-4: every change of a member's roles is on the record — a grant

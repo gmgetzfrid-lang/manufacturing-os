@@ -492,7 +492,7 @@ vi.mock("@/lib/r2", () => ({
   R2_BUCKET: "test-bucket",
 }));
 import { POST as workflowAction } from "@/app/api/tickets/workflow-action/route";
-import { POST as commentPost } from "@/app/api/tickets/comment/route";
+import { POST as commentPost, PATCH as commentPatch, DELETE as commentDelete } from "@/app/api/tickets/comment/route";
 import { POST as watchPost } from "@/app/api/tickets/watch/route";
 import { isContractorOnly } from "@/lib/ticketReadScope";
 import { logAuditAction } from "@/lib/audit";
@@ -1317,5 +1317,80 @@ describe("EVID-6 / PERS-7 — logAuditAction reports a refused write and never s
     state.calls = [];
     await logAuditAction({ action: "VIEW", resourceId: "d1", resourceType: "document", orgId: "o1", userId: "u-1" });
     expect(insertsOf("audit_logs")[0]).toMatchObject({ user_id: "u-1", metadata: null });
+  });
+});
+
+// ── projects-joint J15e (projects-tab SAF-22): the route's follow-on writes
+// read their matched rows. Same harness: a write whose filters match no row
+// answers zero rows; `state.errors` hands a write its database error. ──
+describe("SAF-22 (J15e) — workflow-action and comment follow-on writes, read through checkedWrite", () => {
+  const closing = (holdReleasedAt: string | null) => {
+    state.user = { id: "req-1" };
+    state.rows.org_members = [member("req-1", "Requester"), member("d-1", "Drafter")];
+    state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", attachments: [FINAL] })];
+    state.rows.document_holds = [{ id: "h-1", document_id: "doc-1", reason: "rev in progress", notes: null, origin_ticket_id: "t1", released_at: holdReleasedAt }];
+  };
+  it("a hold someone else released meanwhile (its `released_at IS NULL` guard matched nothing) gets no HOLD_RELEASED row from this close; the close stands", async () => {
+    closing(null);
+    // the hold is released elsewhere after the gate read it, before the release write
+    state.onCall = (table, method) => { if (table === "document_holds" && method === "update") state.rows.document_holds[0].released_at = "2026-11-18T00:00:00Z"; };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const res = await post({ ticketId: "t1", actionType: "close_ticket", holdResolution: { action: "release", reason: "done" } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, status: "CLOSED" });
+    expect(insertsOf("audit_logs").some((a) => a.action === "HOLD_RELEASED")).toBe(false);
+    expect(warn.mock.calls.some((c) => /hold h-1 was already released when TICKET_CLOSE_TICKET/.test(String(c[0])))).toBe(true);
+  });
+  it("regression: a hold this close released still gets its HOLD_RELEASED row, byte for byte", async () => {
+    closing(null);
+    expect((await post({ ticketId: "t1", actionType: "close_ticket", holdResolution: { action: "release", reason: "done" } })).status).toBe(200);
+    expect(insertsOf("audit_logs").find((a) => a.action === "HOLD_RELEASED")?.details).toEqual({ holdId: "h-1", reason: "rev in progress", releasedReason: "done", viaTicketClose: "t1", released: 1 });
+  });
+  it("a stale alert whose supersede mark fails is logged (it was silent) and the transition answers as before", async () => {
+    state.user = { id: "d-1" };
+    state.rows.org_members = [member("d-1", "Drafter"), member("req-1", "Requester")];
+    state.rows.tickets = [ticketRow({ attachments: [{ ...DRAFT, status: "staged" }] })];
+    state.rows.notifications = [{ id: "n-1", org_id: "o1", user_id: "sup-1", resource_id: "t1", read_at: null, metadata: { action: "assign", status: "DRAFTING" } }];
+    state.errors["notifications.update"] = [{ message: "permission denied for table notifications" }];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect((await post({ ticketId: "t1", actionType: "submit_draft" })).status).toBe(200);
+    expect(warn.mock.calls.some((c) => /the stale alert n-1 on ticket t1 was not superseded: permission denied/.test(String(c[0])))).toBe(true);
+  });
+  const withComment = () => {
+    state.user = { id: "d-1" };
+    state.rows.org_members = [member("d-1", "Drafter")];
+    state.rows.tickets = [ticketRow({ comments: [{ id: "c-1", text: "old", authorUid: "d-1", user: "d-1@x.io" }] })];
+    state.rows.ticket_comments = [{ id: "c-1", body: "old" }];
+  };
+  const patch = () => commentPatch(req("/api/tickets/comment", { ticketId: "t1", commentId: "c-1", text: "new" }));
+  it("comment edit: the compare-and-set lands as before; one that matched no row (the ticket moved) is the 409 it was", async () => {
+    withComment();
+    expect(await (await patch()).json()).toEqual({ ok: true });
+    expect(updatesOf("ticket_comments")[0]).toMatchObject({ body: "new" });
+    state.calls = [];
+    withComment();
+    state.onCall = (table, method) => { if (table === "tickets" && method === "update") state.rows.tickets[0].last_modified = "2026-10-02T00:00:09.000Z"; };
+    const lost = await patch();
+    expect(lost.status).toBe(409);
+    expect(updatesOf("ticket_comments")).toHaveLength(0);
+  });
+  it("comment edit / delete: a mirror write that fails is logged (it was silent); before the table exists it stays quiet", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    withComment();
+    state.errors["ticket_comments.update"] = [{ message: "permission denied for table ticket_comments" }];
+    expect(await (await patch()).json()).toEqual({ ok: true });
+    expect(err.mock.calls.some((c) => /the edit of comment c-1 was not mirrored to ticket_comments: permission denied/.test(String(c[0])))).toBe(true);
+    err.mockClear();
+    withComment();
+    state.errors["ticket_comments.update"] = [{ message: "permission denied for table ticket_comments" }];
+    expect((await commentDelete(req("/api/tickets/comment", { ticketId: "t1", commentId: "c-1" }))).status).toBe(200);
+    expect(err.mock.calls.some((c) => /the delete of comment c-1 was not mirrored to ticket_comments: permission denied/.test(String(c[0])))).toBe(true);
+    for (const run of [() => patch(), () => commentDelete(req("/api/tickets/comment", { ticketId: "t1", commentId: "c-1" }))]) {
+      err.mockClear();
+      withComment();
+      state.errors["ticket_comments.update"] = [{ code: "42P01", message: 'relation "public.ticket_comments" does not exist' }];
+      expect((await run()).status).toBe(200);
+      expect(err.mock.calls.some((c) => /was not mirrored/.test(String(c[0])))).toBe(false);
+    }
   });
 });

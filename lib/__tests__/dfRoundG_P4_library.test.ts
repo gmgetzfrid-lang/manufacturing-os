@@ -12,6 +12,7 @@
 // exercised on a throwaway PostgreSQL 16 (cases recorded on DCW-1, AUTHZ-3,
 // AUTHZ-10).
 
+import { eqOrNull } from "@/lib/writeFilters";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -613,9 +614,26 @@ describe("SM-9 / EDGE-15 class (DF-P4) — the hand-back route's null token is i
     const legs = state.calls.slice(i + 1).filter((c) => c.table === "tickets" && (c.method === "eq" || c.method === "is")).map((c) => [c.method, ...c.args]);
     expect(legs).toEqual([["eq", "id", "t1"], ["is", "last_modified", null]]);
   });
+  it("SAF-22 (J15e): a compare-and-set that matched no row (the ticket moved between the read and the write) is the 409 it was, and no audit row follows", async () => {
+    state.user = { id: "a-1" };
+    state.rows.org_members = [member("a-1", "Admin")];
+    state.rows.tickets = [ticketRow({ last_modified: null, status: "CLOSED", metadata: { source_document: { id: "doc-1" } } })];
+    state.rows.document_versions = [{ id: "v9", org_id: "o1", record_id: "doc-1", revision_label: "5", related_ticket_id: "t1", review_state: null }];
+    state.rows.audit_logs = [];
+    const calls = state.calls;
+    // another writer stamps the ticket the moment this route's update is built
+    const push = calls.push.bind(calls);
+    calls.push = (...items) => { for (const c of items) if (c.table === "tickets" && c.method === "update") state.rows.tickets[0].last_modified = "2026-11-18T00:00:00Z"; return push(...items); };
+    const res = await handback(req("/api/tickets/handback", { ticketId: "t1", versionId: "v9" }));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ conflict: true });
+    expect(state.calls.some((c) => c.table === "audit_logs" && c.method === "insert")).toBe(false);
+  });
   it("with a token the leg is the token, as before", () => {
     const src = readFileSync(join(process.cwd(), "app", "api", "tickets", "handback", "route.ts"), "utf8");
-    expect(src).toContain('q = ticket.lastModified ? q.eq("last_modified", String(ticket.lastModified)) : q.is("last_modified", null);');
+    // SAF-22 (J15e): widened to the checked shape — the same leg, built by lib/writeFilters.ts eqOrNull
+    expect(src).toContain('"last_modified", ticket.lastModified ? String(ticket.lastModified) : null).select("id"), updKept));');
+    expect(eqOrNull({ eq: (c: string, v: string) => ["eq", c, v], is: (c: string, v: null) => ["is", c, v] }, "last_modified", "2026-01-01")).toEqual(["eq", "last_modified", "2026-01-01"]);
   });
 });
 

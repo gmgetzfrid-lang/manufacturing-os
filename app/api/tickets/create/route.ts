@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { CopyObjectCommand, DeleteObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { callerScopedClient } from "@/lib/serverAuth";
 import { runWithServerClient } from "@/lib/serverClientScope";
@@ -936,8 +937,12 @@ async function create(
   if (origin.kind === "checkin" && link.sessionId) {
     const applied = ("project_id" in row && !projectDropped) || (await ticketProjectColumnPresent(supabaseAdmin)) === true;
     if (applied) {
-      const { error: stampErr } = await supabaseAdmin.from("checkout_sessions")
-        .update({ linked_ticket_id: ticketId }).eq("id", link.sessionId).is("linked_ticket_id", null).select("id");
+      // projects-tab SAF-22 (J15e): class (c) — a session already stamped
+      // (or gone) matches nothing; only a database error is said, as before.
+      const stampKept = keptAnswer();
+      await checkedWrite(answered(supabaseAdmin.from("checkout_sessions")
+        .update({ linked_ticket_id: ticketId }).eq("id", link.sessionId).is("linked_ticket_id", null).select("id"), stampKept));
+      const stampErr = stampKept.error;
       if (stampErr) console.warn(`[tickets/create] checkout session ${link.sessionId} could not be stamped with ${ticketNumber}: ${stampErr.message}`);
     }
   }

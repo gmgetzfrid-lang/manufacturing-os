@@ -24,6 +24,8 @@ import { selectShedCandidates, type ShedCandidateRow } from "@/lib/shed";
 import { makeArchiveId, archiveLocation } from "@/lib/archive";
 import { partitionOrgKeys, sharedLiveKeys } from "@/lib/shedKeyGuard";
 import { keysReferencedOutside } from "@/lib/storageKeyRegistry";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 
 export const runtime = "nodejs";
 
@@ -153,6 +155,15 @@ export async function GET(req: NextRequest) {
   });
 }
 
+/** SAF-22 (J15e): drop the label this produce reserved, on its way out of
+ *  an abandoned produce. Class (c) — a reservation already gone is a quiet
+ *  success; a database error is logged (the answer is the abort's own). */
+async function dropReservation(sb: SupabaseClient, orgId: string, archiveId: string): Promise<void> {
+  const kept = keptAnswer();
+  await checkedWrite(answered(sb.from("archives").delete().eq("org_id", orgId).eq("archive_id", archiveId).select("id"), kept));
+  if (kept.error) console.error(`[admin/shed] the reserved catalog row ${archiveId} could not be dropped`, kept.error.message);
+}
+
 export async function POST(req: NextRequest) {
   let body: { orgId?: string; keep?: number; targetBytes?: number; confirm?: boolean };
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
@@ -201,18 +212,28 @@ export async function POST(req: NextRequest) {
   // CLAIM the versions atomically before bundling so two concurrent produces can't
   // grab the same rows and race the archive_id stamp. Captured versions keep this
   // archive_id; any unreadable binary is un-claimed after the loop.
+  // projects-tab SAF-22 (J15e): class (c) — a chunk that claims nothing lost
+  // the race (zero rows is legitimate); a chunk the database refused is no
+  // longer read as "claimed nothing": when nothing at all was claimed, the
+  // answer says the database's reason instead of blaming another run.
   const claimedIds = new Set<string>();
+  let claimError: { message: string } | null = null;
   for (let i = 0; i < selectedIds.length; i += 200) {
     const chunk = selectedIds.slice(i, i + 200);
-    const { data } = await sb
+    const kept = keptAnswer();
+    await checkedWrite(answered(sb
       .from("document_versions")
       .update({ archive_id: archiveId })
       .in("id", chunk).eq("org_id", orgId).is("archive_id", null).is("archived_at", null)
-      .select("id");
-    for (const v of ((data ?? []) as Array<{ id: string }>)) claimedIds.add(v.id);
+      .select("id"), kept));
+    if (kept.error) claimError ??= kept.error;
+    for (const v of ((kept.data ?? []) as Array<{ id: string }>)) claimedIds.add(v.id);
   }
   if (claimedIds.size === 0) {
-    await sb.from("archives").delete().eq("org_id", orgId).eq("archive_id", archiveId);
+    await dropReservation(sb, orgId, archiveId);
+    if (claimError) {
+      return NextResponse.json({ error: `The revisions could not be claimed for the archive (${claimError.message}). Nothing was archived.` }, { status: 503 });
+    }
     return NextResponse.json({ error: "Those revisions were just archived by another run." }, { status: 409 });
   }
 
@@ -261,12 +282,21 @@ export async function POST(req: NextRequest) {
   // returns to the eligible pool instead of being stranded with this archive_id.
   const capturedSet = new Set(capturedIds);
   const toUnclaim = Array.from(claimedIds).filter((id) => !capturedSet.has(id));
+  // SAF-22 (J15e): class (b) — bookkeeping after the produce; a chunk that
+  // does not un-claim every row (or fails) is logged, never fails the answer.
+  // A row left claimed stays with this uncommitted archive, and Discard
+  // (archive-cancel) frees it.
   for (let i = 0; i < toUnclaim.length; i += 200) {
     const chunk = toUnclaim.slice(i, i + 200);
-    await sb.from("document_versions").update({ archive_id: null }).in("id", chunk).eq("org_id", orgId).eq("archive_id", archiveId).is("archived_at", null);
+    const kept = keptAnswer();
+    await checkedWrite(answered(sb.from("document_versions").update({ archive_id: null }).in("id", chunk).eq("org_id", orgId).eq("archive_id", archiveId).is("archived_at", null).select("id"), kept));
+    const freed = ((kept.data ?? []) as unknown[]).length;
+    if (kept.error || freed < chunk.length) {
+      console.error(`[admin/shed] ${chunk.length - freed} of ${chunk.length} unreadable revision(s) were not un-claimed from ${archiveId}; Discard frees them`, kept.error?.message ?? "no row matched");
+    }
   }
   if (bundled === 0) {
-    await sb.from("archives").delete().eq("org_id", orgId).eq("archive_id", archiveId);
+    await dropReservation(sb, orgId, archiveId);
     return NextResponse.json({ error: "Could not read any selected binaries from storage." }, { status: 502 });
   }
 
@@ -291,10 +321,14 @@ export async function POST(req: NextRequest) {
     hashMismatch ? `${hashMismatch} hash mismatch, left in place` : "",
     unhashed ? `${unhashed} without a recorded hash` : "",
   ].filter(Boolean);
-  await sb.from("archives").update({
+  // SAF-22 (J15e): class (b) — the catalog's counts are bookkeeping; the
+  // archive is produced either way. A refusal or failure is logged.
+  const catKept = keptAnswer();
+  const catW = await checkedWrite(answered(sb.from("archives").update({
     file_count: bundled, total_bytes: bytes,
     note: `${bundled} superseded revision binaries${noteExtras.length ? ` (${noteExtras.join("; ")})` : ""}`,
-  }).eq("org_id", orgId).eq("archive_id", archiveId);
+  }).eq("org_id", orgId).eq("archive_id", archiveId).select("id"), catKept));
+  if (!catW.ok) console.error(`[admin/shed] the catalog row of ${archiveId} was not updated with its counts`, catKept.error?.message ?? "no row matched");
 
   return new NextResponse(zipBytes as unknown as BodyInit, {
     status: 200,

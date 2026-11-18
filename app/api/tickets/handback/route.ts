@@ -43,6 +43,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
+import { eqOrNull } from "@/lib/writeFilters";
 import { rowToTicket } from "@/lib/ticketTransitions";
 import { parseSourceDocument } from "@/lib/sourceDocRef";
 import { publishedDeliverable } from "@/lib/ticketHandback";
@@ -200,15 +203,17 @@ export async function POST(req: NextRequest) {
   };
   const history = [...(ticket.history ?? []), entry];
 
-  let q = supabaseAdmin.from("tickets").update({ metadata, history, last_modified: now }).eq("id", ticketId);
   // SM-9 / EDGE-15 (DF-P4): a row with no token compare-and-sets on the null
   // itself (the workflow route's leg since DF-P1) — the first writer stamps
   // it and a concurrent second matches no row (409) — never a write with no
-  // compare-and-set at all.
-  q = ticket.lastModified ? q.eq("last_modified", String(ticket.lastModified)) : q.is("last_modified", null);
-  const { data: updated, error: updErr } = await q.select("id").maybeSingle();
+  // compare-and-set at all. projects-tab SAF-22 (J15e): the same guard, read
+  // through checkedWrite (built in the one statement).
+  const updKept = keptAnswer();
+  const updated = await checkedWrite(answered(eqOrNull(supabaseAdmin.from("tickets").update({ metadata, history, last_modified: now }).eq("id", ticketId),
+    "last_modified", ticket.lastModified ? String(ticket.lastModified) : null).select("id"), updKept));
+  const updErr = updKept.error;
   if (updErr) return bad(updErr.message, 500);
-  if (!updated) return NextResponse.json({ error: "The ticket changed while you were acting — refresh and try again", conflict: true }, { status: 409 });
+  if (!updated.ok) return NextResponse.json({ error: "The ticket changed while you were acting — refresh and try again", conflict: true }, { status: 409 });
 
   // Audit — server-written; a failure here is reported, not swallowed.
   const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert({

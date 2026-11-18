@@ -105,6 +105,8 @@ type Opts = {
   /** ids whose un-link (archive_id → null) matches no row (raced / already gone). */
   unclaimMisses?: string[];
   auditError?: boolean;
+  /** SAF-22 (J15e): the ticket_comments delete's database error. */
+  commentDeleteError?: { message: string };
 };
 let stamps: Array<{ id: unknown; ops: Op[] }>;
 let unclaims: Array<{ id: unknown; ops: Op[] }>;
@@ -120,7 +122,7 @@ function resolver(o: Opts) {
     }
     if (table === "tickets") {
       const upd = argOf(ops, "update")?.[0] as Record<string, unknown> | undefined;
-      if (upd && "archived_at" in upd) { stamps.push({ id: filter(ops, "eq", "id"), ops }); return { data: null, error: null, count: o.stampCount ?? 1 }; }
+      if (upd && "archived_at" in upd) { stamps.push({ id: filter(ops, "eq", "id"), ops }); return { data: (o.stampCount ?? 1) > 0 ? [{ id: filter(ops, "eq", "id") }] : [], error: null }; } // SAF-22 (J15e): the stamp reads its matched row
       if (upd && "archive_id" in upd && upd.archive_id === null) {
         const id = filter(ops, "eq", "id") as string;
         unclaims.push({ id, ops });
@@ -142,7 +144,7 @@ function resolver(o: Opts) {
       const keys = (filter(ops, "in", "file_url") as string[] | undefined) ?? [];
       return { data: (o.liveRevisionKeys ?? []).filter((k) => keys.includes(k)).map((k, i) => ({ id: `v${i}`, file_url: k })), error: null };
     }
-    if (table === "ticket_comments" && argOf(ops, "delete")) { commentDeletes++; return { data: null, error: null }; }
+    if (table === "ticket_comments" && argOf(ops, "delete")) { commentDeletes++; return o.commentDeleteError ? { data: null, error: o.commentDeleteError } : { data: [], error: null }; }
     if (table === "audit_logs" && argOf(ops, "insert")) {
       if (o.auditError) return { data: null, error: { message: "audit refused" } };
       audits.push(argOf(ops, "insert")?.[0] as Record<string, unknown>);
@@ -283,6 +285,16 @@ describe("SM-9 — a comment posted after capture is never wiped unarchived", ()
     expect((body.errors as string[]).some((e) => /raced — left untouched/.test(e))).toBe(true);
   });
 
+  it("SAF-22 (J15e): the comment rows' delete — none to delete is a quiet success (class c); a delete the database refused is named in errors, as before", async () => {
+    state.resolve = resolver({ tickets: [captured({})] });
+    const quiet = await commit();
+    expect(quiet.res.status).toBe(200);
+    expect((quiet.body.errors as string[]).some((e) => /^comments\[/.test(e))).toBe(false);
+    state.resolve = resolver({ tickets: [captured({})], commentDeleteError: { message: "permission denied for table ticket_comments" } });
+    const said = await commit();
+    expect(said.body.errors as string[]).toContain("comments[0]: permission denied for table ticket_comments");
+  });
+
   it("regression: an already-stamped stub (an interrupted earlier commit) is re-freed as before", async () => {
     state.resolve = resolver({ tickets: [captured({ archived_at: "2026-10-02T00:00:00Z", status: "CLOSED" })] });
     const { res, body } = await commit();
@@ -407,7 +419,7 @@ describe("SM-9 (restore) — only from the archive the stub was reclaimed into, 
     const updates: Op[][] = [];
     state.resolve = (table, ops) => {
       if (table === "tickets") {
-        if (argOf(ops, "update")) { updates.push(ops); return { data: null, error: null, count: 1 }; }
+        if (argOf(ops, "update")) { updates.push(ops); return { data: [{ id: "t1" }], error: null }; } // SAF-22 (J15e): the matched row
         return { data: [{ id: "t1", attachments: [{ url: key }], ...stub }], error: null };
       }
       return { data: [], error: null };

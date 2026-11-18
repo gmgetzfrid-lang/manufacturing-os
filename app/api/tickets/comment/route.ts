@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite, isMissingSchemaError } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
+import { eqOrNull } from "@/lib/writeFilters";
 import { notifyBatchWithReason } from "@/lib/inAppNotifications";
 import { extractMentionUids, recordNotEmailedFor, type NotEmailedRecordClient } from "@/lib/notifications";
 import { rowToTicket, escapeHtml } from "@/lib/ticketTransitions";
@@ -135,7 +138,10 @@ export async function POST(req: NextRequest) {
     // and-set on the last_modified it read (the null token its own leg) — a
     // workflow action landing in between is never overwritten; the loser is
     // told to retry.
-    let legacy = supabaseAdmin
+    // projects-tab SAF-22 (J15e): the same compare-and-set and answers, read
+    // through checkedWrite (the guard built in the one statement).
+    const legacyKept = keptAnswer();
+    const legacy = await checkedWrite(answered(eqOrNull(supabaseAdmin
       .from("tickets")
       .update({
         comments: [...(ticket.comments || []), comment],
@@ -143,11 +149,11 @@ export async function POST(req: NextRequest) {
         watchers: nextWatchers,
         last_modified: now,
       })
-      .eq("id", body.ticketId);
-    legacy = ticket.lastModified ? legacy.eq("last_modified", String(ticket.lastModified)) : legacy.is("last_modified", null);
-    const { data: legacyRows, error: updErr } = await legacy.select("id");
+      .eq("id", body.ticketId), "last_modified", ticket.lastModified ? String(ticket.lastModified) : null)
+      .select("id"), legacyKept));
+    const updErr = legacyKept.error;
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
-    if (((legacyRows as unknown[] | null) ?? []).length === 0) {
+    if (!legacy.ok) {
       return NextResponse.json({ error: "The ticket changed while you were commenting — refresh and try again", conflict: true }, { status: 409 });
     }
   }
@@ -262,23 +268,29 @@ export async function PATCH(req: NextRequest) {
   // CAS on the ticket's last_modified as read: a concurrent workflow action
   // rewriting the comments array must not be clobbered by this whole-array
   // write (the exact split-brain post_ticket_comment was built to prevent).
-  let casQuery = supabaseAdmin
+  // SAF-22 (J15e): the same compare-and-set, read through checkedWrite.
+  const casKept = keptAnswer();
+  const cas = await checkedWrite(answered(eqOrNull(supabaseAdmin
     .from("tickets")
     .update({ comments: next, last_modified: editedAt })
-    .eq("id", body.ticketId!);
-  casQuery = auth.readLastModified
-    ? casQuery.eq("last_modified", auth.readLastModified)
-    : casQuery.is("last_modified", null);
-  const { data: casRows, error: updErr } = await casQuery.select("id");
+    .eq("id", body.ticketId!), "last_modified", auth.readLastModified)
+    .select("id"), casKept));
+  const updErr = casKept.error;
   if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
-  if (((casRows as unknown[]) ?? []).length === 0) {
+  if (!cas.ok) {
     return NextResponse.json({ error: "The ticket changed while you were editing — refresh and try again", conflict: true }, { status: 409 });
   }
 
-  // Keep the table in lockstep (best-effort pre-migration).
-  await supabaseAdmin.from("ticket_comments")
+  // Keep the table in lockstep (best-effort pre-migration). SAF-22 (J15e):
+  // class (c) — a comment the table never held (older than the table)
+  // matches nothing; a failure other than the table's absence is logged.
+  const mirrorKept = keptAnswer();
+  await checkedWrite(answered(supabaseAdmin.from("ticket_comments")
     .update({ ...(text ? { body: text, edited_at: editedAt } : {}), ...(category !== undefined ? { category } : {}) })
-    .eq("id", body.commentId!).then(() => {});
+    .eq("id", body.commentId!).select("id"), mirrorKept));
+  if (mirrorKept.error && !isMissingSchemaError(mirrorKept.error)) {
+    console.error(`[ticket-comment] the edit of comment ${body.commentId} was not mirrored to ticket_comments: ${mirrorKept.error.message}`);
+  }
   // The root-cause classification is audited server-side (it used to be a
   // client-logged row a closed tab could skip).
   if (category !== undefined) {
@@ -300,20 +312,25 @@ export async function DELETE(req: NextRequest) {
   if (!auth.canEditText) return NextResponse.json({ error: TEXT_DENIED }, { status: 403 });
 
   const next = auth.comments.filter((c) => c.id !== body.commentId);
-  let casQuery = supabaseAdmin
+  // SAF-22 (J15e): the same compare-and-set, read through checkedWrite.
+  const casKept = keptAnswer();
+  const cas = await checkedWrite(answered(eqOrNull(supabaseAdmin
     .from("tickets")
     .update({ comments: next, last_modified: new Date().toISOString() })
-    .eq("id", body.ticketId!);
-  casQuery = auth.readLastModified
-    ? casQuery.eq("last_modified", auth.readLastModified)
-    : casQuery.is("last_modified", null);
-  const { data: casRows, error: updErr } = await casQuery.select("id");
+    .eq("id", body.ticketId!), "last_modified", auth.readLastModified)
+    .select("id"), casKept));
+  const updErr = casKept.error;
   if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
-  if (((casRows as unknown[]) ?? []).length === 0) {
+  if (!cas.ok) {
     return NextResponse.json({ error: "The ticket changed while you were editing — refresh and try again", conflict: true }, { status: 409 });
   }
 
-  await supabaseAdmin.from("ticket_comments").update({ deleted_at: new Date().toISOString() }).eq("id", body.commentId!).then(() => {});
+  // SAF-22 (J15e): class (c), as the edit's mirror above.
+  const mirrorKept = keptAnswer();
+  await checkedWrite(answered(supabaseAdmin.from("ticket_comments").update({ deleted_at: new Date().toISOString() }).eq("id", body.commentId!).select("id"), mirrorKept));
+  if (mirrorKept.error && !isMissingSchemaError(mirrorKept.error)) {
+    console.error(`[ticket-comment] the delete of comment ${body.commentId} was not mirrored to ticket_comments: ${mirrorKept.error.message}`);
+  }
 
   return NextResponse.json({ ok: true });
 }

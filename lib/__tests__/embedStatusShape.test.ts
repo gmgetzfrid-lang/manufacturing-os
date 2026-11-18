@@ -707,3 +707,43 @@ describe("SEM-8 — saving Library AI setup never erases the standing consent", 
     expect(parseEmbedBuildMarker((browser.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild)).toMatchObject({ userId: ME, standing: true, valid: true });
   });
 });
+
+// projects-joint J15e (projects-tab SAF-22): the reset's clear is read through
+// checkedWrite as a count (never every chunk id); the whole error still
+// decides the pre-20261121 fallback.
+describe("SAF-22 (J15e) — the reset's vector clear", () => {
+  const seedChunks = () => {
+    admin.state.tables.knowledge_chunks = [
+      { id: "a", org_id: ORG, library_id: LIB, embedding: [1], embedding_model: "m", embed_attempts: 2, embed_error: "x" },
+      { id: "b", org_id: ORG, library_id: LIB, embedding: null, embedding_model: null, embed_attempts: 0, embed_error: null },
+    ];
+  };
+  it("regression: the clear is asked as a count and empties every vector and counter, 200", async () => {
+    seedChunks();
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    const res = await POST(req({ action: "reset" }));
+    expect(res.status).toBe(200);
+    expect(admin.state.tables.knowledge_chunks[0]).toMatchObject({ embedding: null, embedding_model: null, embed_attempts: 0, embed_error: null });
+  });
+  it("a library with no chunks clears none (class c) and still answers 200", async () => {
+    admin.state.tables.knowledge_chunks = [];
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    expect((await POST(req({ action: "reset" }))).status).toBe(200);
+  });
+  it("before 20261121 (PGRST204 naming a counter) the fallback runs on the whole error, as before; any other error is the 500 it was", async () => {
+    seedChunks();
+    let reads = 0;
+    Object.defineProperty(admin.state.failWrites, "knowledge_chunks", {
+      configurable: true, enumerable: true,
+      get: () => (reads++ === 0 ? { code: "PGRST204", message: "Could not find the 'embed_attempts' column of 'knowledge_chunks' in the schema cache" } : undefined),
+    });
+    const { POST } = await import("@/app/api/knowledge/embed/route");
+    expect((await POST(req({ action: "reset" }))).status).toBe(200);
+    expect(admin.state.tables.knowledge_chunks[0]).toMatchObject({ embedding: null, embedding_model: null, embed_attempts: 2 });
+    delete (admin.state.failWrites as Record<string, unknown>).knowledge_chunks;
+    admin.state.failWrites.knowledge_chunks = { code: "57014", message: "canceling statement due to statement timeout" };
+    const res = await POST(req({ action: "reset" }));
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("Couldn't clear the existing vectors: canceling statement due to statement timeout");
+  });
+});

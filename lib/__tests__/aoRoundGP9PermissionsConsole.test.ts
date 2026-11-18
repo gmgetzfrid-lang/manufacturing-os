@@ -44,6 +44,8 @@ const db = vi.hoisted(() => ({
   rpcError: null as null | { message: string; code?: string },
   /** the browser client's getUser error (an auth-server blip) */
   authError: null as null | { message: string },
+  /** SAF-22 (J15e): runs before an UPDATE matches (another writer landing first). */
+  beforeUpdate: null as null | ((table: string) => void),
 }));
 function table(name: string) {
   const filters: Array<(r: Row) => boolean> = [];
@@ -57,6 +59,7 @@ function table(name: string) {
     if (op?.kind === "insert") { rows().push({ ...op.row }); return { data: null, error: null }; }
     if (!op && db.readError[name]) return { data: null, error: db.readError[name] };
     if (!op && name === "org_configurations" && db.throwRead) { db.throwRead = false; throw new Error("socket hang up"); }
+    if (op?.kind === "update") db.beforeUpdate?.(name);
     const hit = rows().filter((r) => filters.every((f) => f(r)));
     if (op?.kind === "update") {
       for (const r of hit) Object.assign(r, op.patch);
@@ -392,6 +395,16 @@ describe("ALOG-12 — a save carries its loaded version; a stale one is refused 
     expect((db.tables.org_configurations[0].data as CapabilityPolicy).caps?.["ticket.assign"]).toEqual(["Admin"]);
     expect(audits()).toHaveLength(0);
     expect(db.calls.some((c) => c.table === "org_configurations" && c.kind === "update")).toBe(false);
+  });
+  it("SAF-22 (J15e): a save whose compare-and-set matched no row (another admin saved between the read and the write) is the same 409, nothing written, no audit row", async () => {
+    db.beforeUpdate = (t) => { if (t === "org_configurations") db.tables.org_configurations[0].updated_at = "2026-10-02T00:00:00+00:00"; };
+    try {
+      const res = await post({ op: "save", orgId: "o1", caps: { "ticket.assign": ["Viewer", "Admin"] }, version: V });
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toMatch(/changed while you were editing/i);
+      expect((db.tables.org_configurations[0].data as CapabilityPolicy).caps?.["ticket.assign"]).toEqual(["Admin"]);
+      expect(audits()).toHaveLength(0);
+    } finally { db.beforeUpdate = null; }
   });
   it("version null (the grid loaded when nothing was stored) while a row now exists → 409", async () => {
     const res = await post({ op: "save", orgId: "o1", caps: { "ticket.assign": ["Admin"] }, version: null });

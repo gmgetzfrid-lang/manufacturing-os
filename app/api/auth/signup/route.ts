@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { normalizeEmail, applyEmailLookup, findOrgByTypedName } from "@/lib/identity";
 import { publicDoorClientIp, publicDoorVerdict, recordPublicDoorAttempt } from "@/lib/publicDoorLimiter";
 
@@ -151,7 +153,12 @@ export async function POST(req: NextRequest) {
     });
 
     if (memberError) {
-      await supabaseAdmin.from("orgs").delete().eq("id", orgId);
+      // projects-tab SAF-22 (J15e): class (b) — the roll-back of the half-made
+      // workspace; the answer is the failure's own either way, and a roll-back
+      // that matched no row or failed is logged, never taken as done.
+      const rollKept = keptAnswer();
+      const rolled = await checkedWrite(answered(supabaseAdmin.from("orgs").delete().eq("id", orgId).select("id"), rollKept));
+      if (!rolled.ok) console.error(`[auth/signup] the half-made workspace ${orgId} was not rolled back: ${rollKept.error?.message ?? "no row matched"}`);
       await supabaseAdmin.auth.admin.deleteUser(userId);
       return NextResponse.json({ error: `Failed to add admin: ${memberError.message}` }, { status: 500 });
     }

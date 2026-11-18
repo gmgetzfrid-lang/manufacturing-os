@@ -770,7 +770,8 @@ describe("PROD-17 (P28) — the library page's metadata save and bulk archive", 
     expect(bulk.match(/supabase\.from\("documents"\)\.select\(/g)).toHaveLength(1);
     expect(bulk).toContain("const held = new Set(readRows.filter((r) => r.legal_hold === true).map((r) => r.id));");
     // REV-31 (the P28 integrator fix pass): the same write on the same rows, carrying the one reason as archive_reason
-    expect(bulk).toMatch(/\.update\(\{\s*status: "Archived",\s*archived_at: now,\s*archived_by: uid \?\? null,\s*archive_reason: archiveReason\.trim\(\),\s*updated_at: now,\s*updated_by: uid \?\? null,\s*\}\)\.in\("id", targets\)\.select\("id"\);/);
+    // SAF-22 (J15e): widened to the checked shape — the same columns and filters, read through checkedWrite
+    expect(bulk).toMatch(/\.update\(\{\s*status: "Archived",\s*archived_at: now,\s*archived_by: uid \?\? null,\s*archive_reason: archiveReason\.trim\(\),\s*updated_at: now,\s*updated_by: uid \?\? null,\s*\}\)\.in\("id", targets\)\.select\("id"\), archKept\)\);/);
     const at = bulk.indexOf("recallRetiredBatch({");
     expect(at).toBeGreaterThan(bulk.indexOf('.in("id", targets).select("id")'));
     // DIST-16 done-when 2 (the P28 integrator fix pass): no row is left out by its prior status here — the record decides

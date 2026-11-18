@@ -133,3 +133,32 @@ describe("POST /api/auth/signup — duplicate-email refusals", () => {
     expect(row.roles).toEqual(["Admin"]);
   });
 });
+
+// projects-joint J15e (projects-tab SAF-22): the roll-back of a half-made
+// workspace reads its matched row (class b) — the answer is the failure's own.
+describe("SAF-22 (J15e) — the roll-back after a refused founding member", () => {
+  const failingMember = (rollback: { data: unknown; error: unknown }) => {
+    mockState.queues.users = [{ data: [] }];
+    mockState.createUserResult = { data: { user: { id: "uid-new" } }, error: null };
+    mockState.queues.orgs = [{ data: null }, { data: { id: "org-new" } }, rollback];
+    mockState.queues.org_members = [{ data: null, error: { message: "member insert refused" } }];
+  };
+  it("a roll-back that lands answers the 500 as before, with no log line", async () => {
+    failingMember({ data: [{ id: "org-new" }], error: null });
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await POST(makeRequest(BODY));
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("Failed to add admin: member insert refused");
+    expect(err.mock.calls.some((c) => /was not rolled back/.test(String(c[0])))).toBe(false);
+    err.mockRestore();
+  });
+  it("REPRODUCED: a roll-back that matched no row (or failed) was silent — a half-made workspace left behind unseen; now logged, the answer unchanged", async () => {
+    failingMember({ data: [], error: null });
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await POST(makeRequest(BODY));
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("Failed to add admin: member insert refused");
+    expect(err.mock.calls.some((c) => /\[auth\/signup\] the half-made workspace org-new was not rolled back: no row matched/.test(String(c[0])))).toBe(true);
+    err.mockRestore();
+  });
+});

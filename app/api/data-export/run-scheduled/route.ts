@@ -91,6 +91,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 300;
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { checkedWrite, type CheckedWriteResult } from "@/lib/checkedWrite";
+import { answered, keptAnswer, type KeptAnswer } from "@/lib/checkedWriteAnswer";
 import { buildAndDeliverExport, closeSucceededRun, computeNextRunAt, exportEmbedDeadline, pushesToBucket, pushTransmissionBegan, retentionProblem, type ExportDestination } from "@/lib/exportRunner";
 import { scheduledRunGate, cloudBucketAllowed, CLOUD_BUCKET_REFUSAL, SUBSCRIPTION_INACTIVE_REFUSAL } from "@/lib/exportEntitlement";
 import {
@@ -192,12 +194,15 @@ async function handler(req: NextRequest) {
       schedule_day_of_month: dest.schedule_day_of_month,
       from: new Date(),
     });
-    const { data: claimed, error: claimErr } = await sb
+    // projects-tab SAF-22 (J15e): read through checkedWrite, the same answers.
+    const claimKept = keptAnswer();
+    const claim = await checkedWrite(answered(sb
       .from("export_destinations")
       .update({ next_run_at: tentativeNext })
       .eq("id", dest.id)
       .eq("next_run_at", dest.next_run_at ?? nowIso)
-      .select("id");
+      .select("id"), claimKept));
+    const claimErr = claimKept.error;
     if (claimErr) {
       // Not claimed, so not run: its clock did not move, and the next sweep
       // picks it up again.
@@ -206,7 +211,7 @@ async function handler(req: NextRequest) {
       results.push({ destinationId: dest.id, ok: false, error: msg });
       continue;
     }
-    if (!claimed || claimed.length === 0) {
+    if (!claim.ok) {
       results.push({ destinationId: dest.id, ok: false, error: "skipped: already claimed by another run" });
       continue;
     }
@@ -259,13 +264,14 @@ async function handler(req: NextRequest) {
         duration_ms: 0,
       });
       if (runErr) unrecorded.push(`run row not recorded: ${runErr.message}`);
-      const { error: destErr } = await sb.from("export_destinations").update({
+      const destKept = keptAnswer();
+      const destErr = unlanded(await checkedWrite(answered(sb.from("export_destinations").update({
         last_run_at: at,
         last_run_status: "failed",
         last_run_error: keepPause ? withPauseKept(skipMsg) : skipMsg.slice(0, 500),
         ...(planLapsed ? { enabled: false } : {}),
-      }).eq("id", dest.id);
-      if (destErr) unrecorded.push(`last-run status not recorded: ${destErr.message}`);
+      }).eq("id", dest.id).select("id"), destKept)), destKept, "destination");
+      if (destErr) unrecorded.push(`last-run status not recorded: ${destErr}`);
       for (const u of unrecorded) console.error(`[run-scheduled] destination ${dest.id}: ${u}`);
       results.push({ destinationId: dest.id, ok: false, error: [keepPause ? `${skipMsg} ${PAUSE_KEPT_SENTENCE}` : skipMsg, ...unrecorded].join("; ") });
       continue;
@@ -366,12 +372,13 @@ async function handler(req: NextRequest) {
           duration_ms: 0,
         });
         if (runErr) unrecorded.push(`run row not recorded: ${runErr.message}`);
-        const { error: destErr } = await sb.from("export_destinations").update({
+        const destKept = keptAnswer();
+        const destErr = unlanded(await checkedWrite(answered(sb.from("export_destinations").update({
           last_run_at: at,
           last_run_status: "failed",
           last_run_error: msg.slice(0, 500),
-        }).eq("id", dest.id);
-        if (destErr) unrecorded.push(`last-run status not recorded: ${destErr.message}`);
+        }).eq("id", dest.id).select("id"), destKept)), destKept, "destination");
+        if (destErr) unrecorded.push(`last-run status not recorded: ${destErr}`);
         for (const u of unrecorded) console.error(`[run-scheduled] destination ${dest.id}: ${u}`);
         results.push({
           destinationId: dest.id, ok: false, error: [msg, ...unrecorded].join("; "),
@@ -418,12 +425,13 @@ async function handler(req: NextRequest) {
       // a card that said paused keeps the pause (unless an Admin has saved it
       // since), so a later unreadable night still finds it paused.
       const keepPause = (confirmation.unconfirmed !== undefined || unverified !== null) && pauseToKeep(dest);
-      const { error: destErr } = await sb.from("export_destinations").update({
+      const destKept = keptAnswer();
+      const destErr = unlanded(await checkedWrite(answered(sb.from("export_destinations").update({
         last_run_at: startedAt, last_run_status: "failed", last_run_error: keepPause ? withPauseKept(msg) : msg.slice(0, 500),
-      }).eq("id", dest.id);
-      if (destErr) console.error(`[run-scheduled] destination ${dest.id}: last-run status not recorded: ${destErr.message}`);
+      }).eq("id", dest.id).select("id"), destKept)), destKept, "destination");
+      if (destErr) console.error(`[run-scheduled] destination ${dest.id}: last-run status not recorded: ${destErr}`);
       const said = keepPause ? `${msg} ${PAUSE_KEPT_SENTENCE}` : msg;
-      results.push({ destinationId: dest.id, ok: false, error: destErr ? `${said}; last-run status not recorded: ${destErr.message}` : said });
+      results.push({ destinationId: dest.id, ok: false, error: destErr ? `${said}; last-run status not recorded: ${destErr}` : said });
       continue;
     }
 
@@ -502,7 +510,8 @@ async function handler(req: NextRequest) {
         }, result.retention);
         if (runUpdErr) unrecorded.push(`run row not updated: ${runUpdErr.message}`);
       }
-      const { error: destUpdErr } = await sb.from("export_destinations").update({
+      const destKept = keptAnswer();
+      const destUpdErr = unlanded(await checkedWrite(answered(sb.from("export_destinations").update({
         last_run_at: completedAt,
         last_run_status: "succeeded",
         last_run_error: cardNote ? cardNote.slice(0, 500) : null,
@@ -514,8 +523,8 @@ async function handler(req: NextRequest) {
           schedule_day_of_month: dest.schedule_day_of_month,
           from: new Date(completedAt),
         }),
-      }).eq("id", dest.id);
-      if (destUpdErr) unrecorded.push(`last-run status not recorded: ${destUpdErr.message}`);
+      }).eq("id", dest.id).select("id"), destKept)), destKept, "destination");
+      if (destUpdErr) unrecorded.push(`last-run status not recorded: ${destUpdErr}`);
       for (const u of unrecorded) console.error(`[run-scheduled] destination ${dest.id}: ${u}`);
       const warnings = [...notices, ...(alert.ok ? [] : [`the export alert was not sent: ${alert.error}`]), ...(bellMark?.error ? [bellMark.error] : []), ...unrecorded];
 
@@ -558,7 +567,8 @@ async function handler(req: NextRequest) {
       // the result, never swallowed (a run row left "running" stays stuck).
       const unrecorded: string[] = [];
       {
-        const { error: runUpdErr } = await sb.from("export_runs").update({
+        const runKept = keptAnswer();
+        const runUpdErr = unlanded(await checkedWrite(answered(sb.from("export_runs").update({
           status: "failed",
           error_message: msg.slice(0, 1000),
           ...(notices.length ? {
@@ -574,10 +584,11 @@ async function handler(req: NextRequest) {
           } : {}),
           completed_at: completedAt,
           duration_ms: Date.parse(completedAt) - Date.parse(startedAt),
-        }).eq("id", runId);
-        if (runUpdErr) unrecorded.push(`run row not updated: ${runUpdErr.message}`);
+        }).eq("id", runId).select("id"), runKept)), runKept, "run");
+        if (runUpdErr) unrecorded.push(`run row not updated: ${runUpdErr}`);
       }
-      const { error: destUpdErr } = await sb.from("export_destinations").update({
+      const destKept = keptAnswer();
+      const destUpdErr = unlanded(await checkedWrite(answered(sb.from("export_destinations").update({
         last_run_at: completedAt,
         last_run_status: "failed",
         last_run_error: cardError,
@@ -590,8 +601,8 @@ async function handler(req: NextRequest) {
           schedule_day_of_month: dest.schedule_day_of_month,
           from: new Date(completedAt),
         }),
-      }).eq("id", dest.id);
-      if (destUpdErr) unrecorded.push(`last-run status not recorded: ${destUpdErr.message}`);
+      }).eq("id", dest.id).select("id"), destKept)), destKept, "destination");
+      if (destUpdErr) unrecorded.push(`last-run status not recorded: ${destUpdErr}`);
       for (const u of unrecorded) console.error(`[run-scheduled] destination ${dest.id}: ${u}`);
       const failWarnings = [
         ...notices, ...(graceAlert && !graceAlert.ok ? [`the unconfirmed-night alert was not sent: ${graceAlert.error}`] : []),
@@ -620,11 +631,22 @@ async function recordPauseBellSent(
   const step = { ts: new Date().toISOString(), step: ALERT_SENT_STEP, detail: `the bell reached ${notified} controller(s)` };
   const refused = (why: string) => `the pausing alert was sent, but recording that on the run row failed (${why}); if the run's closing write is refused too, the next paused night says that alert may not have been sent`;
   try {
-    const { error } = await sb.from("export_runs").update({ diagnostics: [...(opened ? [opened] : []), step] }).eq("id", runId);
-    return error ? { step, error: refused(error.message) } : { step };
+    const kept = keptAnswer();
+    const error = unlanded(await checkedWrite(answered(sb.from("export_runs").update({ diagnostics: [...(opened ? [opened] : []), step] }).eq("id", runId).select("id"), kept)), kept, "run");
+    return error ? { step, error: refused(error) } : { step };
   } catch (e) {
     return { step, error: refused((e as Error).message) };
   }
+}
+
+/** projects-tab SAF-22 (J15e): a sweep's bookkeeping write, read through
+ *  checkedWrite — class (b): the database's own message, as the sweep named
+ *  it before, or, for a write that matched no row (the destination or the
+ *  run removed meanwhile), that said; null once a row matched. Never taken
+ *  as written, never stopping the sweep. */
+function unlanded(w: CheckedWriteResult, kept: KeptAnswer, row: "destination" | "run"): string | null {
+  if (kept.error) return kept.error.message;
+  return w.ok ? null : `the ${row} row was not found (it may have been removed meanwhile)`;
 }
 
 /** BILL-3: did the scheduled gate refuse on its subscription or plan limb?

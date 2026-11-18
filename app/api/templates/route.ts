@@ -16,6 +16,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchBytes } from "@/lib/r2Bytes";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { loadPrincipal } from "@/lib/knowledgeAccess";
 import { memberDisplayName } from "@/lib/orgMemberName";
 import { extractDocxText, extractXlsxText } from "@/lib/docxRender";
@@ -138,8 +140,14 @@ export async function POST(req: NextRequest) {
     updated_at: new Date().toISOString(),
   };
 
+  // projects-tab SAF-22 (J15e): class (a) — an edit that matched no
+  // template (deleted meanwhile) is refused, never answered `template: null`.
+  const kept = keptAnswer();
+  const edited = id
+    ? await checkedWrite(answered(supabaseAdmin.from("output_templates").update(fields).eq("id", id).eq("org_id", orgId).select(), kept))
+    : null;
   const { data, error } = id
-    ? await supabaseAdmin.from("output_templates").update(fields).eq("id", id).eq("org_id", orgId).select().maybeSingle()
+    ? { data: Array.isArray(kept.data) ? (kept.data[0] ?? null) : kept.data, error: kept.error }
     : await supabaseAdmin.from("output_templates").insert({
         ...fields,
         created_by: user.id,
@@ -153,6 +161,7 @@ export async function POST(req: NextRequest) {
       missingTable(error.message, error.code) ? 424 : 500,
     );
   }
+  if (edited && !edited.ok) return bad("This template was deleted meanwhile, so your changes were not saved. Reload the templates.", 409);
   return NextResponse.json({ template: data });
 }
 
@@ -168,8 +177,12 @@ export async function DELETE(req: NextRequest) {
   if (!principal?.isController) {
     return bad("Only Admin or Doc Control can manage output templates.", 403);
   }
-  const { error } = await supabaseAdmin
-    .from("output_templates").delete().eq("id", id).eq("org_id", orgId);
-  if (error) return bad(`Couldn't delete: ${error.message}`, 500);
+  // projects-tab SAF-22 (J15e): class (a) — a delete that matched no
+  // template (deleted meanwhile, elsewhere) is refused, never answered ok.
+  const kept = keptAnswer();
+  const removed = await checkedWrite(answered(supabaseAdmin
+    .from("output_templates").delete().eq("id", id).eq("org_id", orgId).select("id"), kept));
+  if (kept.error) return bad(`Couldn't delete: ${kept.error.message}`, 500);
+  if (!removed.ok) return bad("This template was already deleted (by someone else, or in another tab). Reload the templates.", 409);
   return NextResponse.json({ ok: true });
 }

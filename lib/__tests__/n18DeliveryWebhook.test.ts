@@ -57,6 +57,7 @@ vi.mock("@supabase/supabase-js", async () => {
                 const t: Record<string, unknown> = {};
                 t.eq = () => t;
                 t.in = () => t;
+                t.select = () => t; // SAF-22 (J15e): the drain's writes read their matched rows
                 t.then = () => new Promise(() => undefined);
                 return t;
               }
@@ -66,6 +67,7 @@ vi.mock("@supabase/supabase-js", async () => {
                 const t: Record<string, unknown> = {};
                 t.eq = () => t;
                 t.in = () => t;
+                t.select = () => t; // SAF-22 (J15e): the drain's writes read their matched rows
                 t.then = (r: (v: unknown) => unknown, j?: (e: unknown) => unknown) => Promise.resolve(err).then(r, j);
                 return t;
               }

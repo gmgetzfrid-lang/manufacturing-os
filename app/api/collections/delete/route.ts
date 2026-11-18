@@ -13,6 +13,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { loadPrincipal } from "@/lib/knowledgeAccess";
 import { loadCollectionTree, rebuildSubtreePaths } from "@/lib/serverCollections";
 import {
@@ -76,28 +78,44 @@ export async function POST(req: NextRequest) {
 
   // Contents step UP, then the folder goes. Order matters: if the delete
   // ran first, a cascade or FK could take the contents with it.
-  const { data: steppedUp, error: childErr } = await supabaseAdmin
+  // projects-tab SAF-22 (J15e): class (c) — a folder with no subfolders or
+  // no documents steps none up; the rows returned are what moved.
+  const childKept = keptAnswer();
+  await checkedWrite(answered(supabaseAdmin
     .from("collections").update({ parent_id: heirParent }).eq("parent_id", collectionId)
-    .select("id, name");
+    .select("id, name"), childKept));
+  const { data: steppedUp, error: childErr } = childKept;
   if (childErr) return bad(`Couldn't move subfolders out: ${childErr.message}`, 500);
-  const { data: steppedDocs, error: docErr } = await supabaseAdmin
+  const docKept = keptAnswer();
+  await checkedWrite(answered(supabaseAdmin
     .from("documents").update({ collection_id: heirParent }).eq("collection_id", collectionId)
-    .select(RETENTION_DOC_COLUMNS);
+    .select(RETENTION_DOC_COLUMNS), docKept));
+  const { data: steppedDocs, error: docErr } = docKept;
   if (docErr) return bad(`Couldn't move documents out: ${docErr.message}`, 500);
   // 30-DAY DELETE HOLD (20261011): the emptied folder shell is soft-deleted —
   // hidden from every listing, restorable by controllers from "Recently
   // deleted", purged for real by the maintenance cron after 30 days. On a DB
   // that hasn't run the migration yet, fall back to the old hard delete so
   // the button never breaks.
-  const { error: delErr } = await supabaseAdmin
+  // SAF-22 (J15e): class (a) — the folder's own delete is the person's
+  // decision: a write that matched no row (the folder removed meanwhile) is
+  // not answered ok and writes no FOLDER_DELETED row. Its contents' step-up
+  // above landed, so its consequences below (paths, retention) still run,
+  // and the refusal says the contents moved. The pre-migration fallback is
+  // classified on the whole error, as before.
+  const delKept = keptAnswer();
+  let deleted = await checkedWrite(answered(supabaseAdmin
     .from("collections")
     .update({ deleted_at: new Date().toISOString(), deleted_by: user.id })
-    .eq("id", collectionId);
+    .eq("id", collectionId)
+    .select("id"), delKept));
+  const delErr = delKept.error;
   if (delErr) {
     if (/deleted_at|42703|PGRST204/i.test(`${delErr.code} ${delErr.message}`)) {
-      const { error: hardErr } = await supabaseAdmin
-        .from("collections").delete().eq("id", collectionId);
-      if (hardErr) return bad(`Couldn't delete the folder: ${hardErr.message}`, 500);
+      const hardKept = keptAnswer();
+      deleted = await checkedWrite(answered(supabaseAdmin
+        .from("collections").delete().eq("id", collectionId).select("id"), hardKept));
+      if (hardKept.error) return bad(`Couldn't delete the folder: ${hardKept.error.message}`, 500);
     } else {
       return bad(`Couldn't delete the folder: ${delErr.message}`, 500);
     }
@@ -131,6 +149,13 @@ export async function POST(req: NextRequest) {
       retentionFailed: reclock.failed,
       ...(reclock.firstError ? { retentionError: reclock.firstError } : {}),
     };
+  }
+
+  if (!deleted.ok) {
+    return NextResponse.json({
+      error: "The folder was not deleted: it was removed or changed meanwhile. Its subfolders and documents had already been moved up to its parent. Reload to see where things stand.",
+      contentsMovedTo: heirParent,
+    }, { status: 409 });
   }
 
   // The audit detail records which records lost a deadline and what it was

@@ -177,7 +177,7 @@ describe("POST /api/admin/create-user — re-add merges roles (ORGSEL-3)", () =>
       org_members: [
         { data: { role: "Admin" } }, // caller membership
         { data: { uid: "uid-a", role: "DraftingSupervisor", roles: ["DraftingSupervisor", "DocCtrl"], display_name: "Greg" } },
-        { data: null, error: null }, // the update
+        { data: [{ id: "m-a" }], error: null }, // the update — its matched row (SAF-22, J15e: the write reads it)
       ],
       users: [
         { data: [{ id: "uid-a", email: "greg@corp.com" }] }, // profile lookup
@@ -204,7 +204,7 @@ describe("POST /api/admin/create-user — re-add merges roles (ORGSEL-3)", () =>
       org_members: [
         { data: { role: "Admin" } },
         { data: { uid: "uid-a", role: "Drafter", roles: ["Drafter"], display_name: "Greg G" } },
-        { data: null, error: null },
+        { data: [{ id: "m-a" }], error: null }, // the update's matched row (SAF-22, J15e)
       ],
       users: [
         { data: [{ id: "uid-a", email: "greg@corp.com" }] },
@@ -423,5 +423,46 @@ describe("POST /api/admin/create-user — the subscription gate (SURF-15, throug
       expect(memberWrites().length).toBeGreaterThan(0);
       expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[create-user\] subscription gate would refuse org org-1 \(SUBSCRIPTION_ENFORCE off\): This workspace's subscription was canceled/));
     } finally { warn.mockRestore(); restore(); }
+  });
+});
+
+// projects-joint J15e (projects-tab SAF-22): the re-add's membership write and
+// the new member's role seed read their matched rows.
+describe("SAF-22 (J15e) — the re-add and the role seed read their matched rows", () => {
+  it("a re-add whose update matched no member row (removed meanwhile) is 409: no audit row, no profile write", async () => {
+    mockState.queues = {
+      org_members: [
+        { data: { role: "Admin" } },
+        { data: { uid: "uid-a", role: "Drafter", roles: ["Drafter"], display_name: "Greg", status: "inactive" } },
+        { data: [], error: null }, // the update matched nothing
+      ],
+      users: [{ data: [{ id: "uid-a", email: "greg@corp.com" }] }],
+    };
+    const res = await POST(makeRequest({ email: "greg@corp.com", password: "x", orgId: "org-1", role: "Viewer" }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/membership changed or was removed meanwhile — nothing was changed/);
+    expect(mockState.calls.some((c) => c.table === "audit_logs")).toBe(false);
+    expect(mockState.calls.some((c) => c.table === "users" && c.method === "upsert")).toBe(false);
+    expect(mockState.calls.some((c) => c.table === "access_requests")).toBe(false);
+  });
+  it("a role seed that matched no row is logged (class b), never failing the add; before the column exists it stays quiet", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const run = async (seed: { data: unknown; error: unknown }) => {
+      mockState.calls = [];
+      mockState.queues = {
+        org_members: [{ data: { role: "Admin" } }, { data: null }, { data: null, error: null }, seed],
+        users: [{ data: [] }, { data: null, error: null }],
+      };
+      mockState.createUserResult = { data: { user: { id: "brand-new-uid" } }, error: null };
+      return POST(makeRequest({ email: "new@corp.com", password: "x", orgId: "org-1", role: "Viewer" }));
+    };
+    expect((await run({ data: [], error: null })).status).toBe(200);
+    expect(warn.mock.calls.some((c) => /the role collection of new@corp\.com was not seeded: no member row matched/.test(String(c[0])))).toBe(true);
+    warn.mockClear();
+    expect((await run({ data: null, error: { code: "42703", message: 'column "roles" of relation "org_members" does not exist' } })).status).toBe(200);
+    expect(warn.mock.calls.some((c) => /was not seeded/.test(String(c[0])))).toBe(false);
+    warn.mockClear();
+    expect((await run({ data: [{ id: "m-new" }], error: null })).status).toBe(200);
+    expect(warn.mock.calls.some((c) => /was not seeded/.test(String(c[0])))).toBe(false);
   });
 });

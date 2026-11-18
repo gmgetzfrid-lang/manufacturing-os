@@ -15,6 +15,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { loadPrincipal } from "@/lib/knowledgeAccess";
 import { loadCollectionTree, rebuildSubtreePaths, rebuildSubtreeAclIndex, type CollectionTreeRow } from "@/lib/serverCollections";
 import type { AccessControl } from "@/types/schema";
@@ -74,9 +76,14 @@ export async function POST(req: NextRequest) {
 
   // Write the new parent, then re-parent in memory and rebuild every denorm
   // path in the subtree from the live tree.
-  const { error: moveErr } = await supabaseAdmin
-    .from("collections").update({ parent_id: newParentId }).eq("id", collectionId);
-  if (moveErr) return bad(`Couldn't move the folder: ${moveErr.message}`, 500);
+  // projects-tab SAF-22 (J15e): class (a) — the move is the person's
+  // decision; a write that matched no row (the folder removed meanwhile)
+  // moved nothing, so nothing is rebuilt or recorded.
+  const moveKept = keptAnswer();
+  const moved = await checkedWrite(answered(supabaseAdmin
+    .from("collections").update({ parent_id: newParentId }).eq("id", collectionId).select("id"), moveKept));
+  if (moveKept.error) return bad(`Couldn't move the folder: ${moveKept.error.message}`, 500);
+  if (!moved.ok) return bad("The folder wasn't moved: it was removed or changed meanwhile — nothing was changed. Reload and try again.", 409);
   const nodeInTree = tree.byId.get(collectionId);
   if (nodeInTree) nodeInTree.parent_id = newParentId;
 

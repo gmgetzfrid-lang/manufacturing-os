@@ -3,6 +3,9 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { checkedWrite } from '@/lib/checkedWrite';
+import { answered, keptAnswer } from '@/lib/checkedWriteAnswer';
+import { eqOrNull } from '@/lib/writeFilters';
 import { useRole } from '@/components/providers/RoleContext';
 import { Ticket, TicketStatus, OrgDraftingSettings, SelectOption, Role } from '@/types/schema';
 import { logAuditAction } from '@/lib/audit';
@@ -1222,10 +1225,12 @@ export default function RequestPortal() {
     if (!activeOrgId || !t.id) return { err: 'no active workspace', wrote: false, stale: false };
     const id = t.id;
     const casWrite = async (token: unknown) => {
-      let q = supabase.from('tickets').update({ priority: 1, last_modified: new Date().toISOString() }).eq('id', id).eq('org_id', activeOrgId);
-      q = token ? q.eq('last_modified', String(token)) : q.is('last_modified', null);
-      const { data: hit, error } = await q.select('id');
-      return { landed: !!hit && hit.length > 0, error };
+      // projects-tab SAF-22 (J15e): the same compare-and-set and answers,
+      // read through checkedWrite (the guard built in the one statement).
+      const kept = keptAnswer();
+      const w = await checkedWrite(answered(eqOrNull(supabase.from('tickets').update({ priority: 1, last_modified: new Date().toISOString() }).eq('id', id).eq('org_id', activeOrgId),
+        'last_modified', token ? String(token) : null).select('id'), kept));
+      return { landed: w.ok, error: kept.error };
     };
     const first = await casWrite(t.lastModified);
     if (first.error) return { err: first.error.message || 'the write was refused', wrote: false, stale: false };

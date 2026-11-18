@@ -17,6 +17,10 @@ import { addressIsOwn, unsubscribeUrl } from "@/lib/unsubscribeToken";
 import { PREFERENCE_EXEMPT_EVENT_TYPES } from "@/lib/notificationPrefs";
 import { providerMessageIdOf } from "@/lib/resendWebhook";
 import { providerIdColumnLatch } from "@/lib/deliveryRecordLatch";
+import { checkedWrite, type CheckedWriteResult } from "@/lib/checkedWrite";
+import { answered, keptAnswer, type KeptAnswer } from "@/lib/checkedWriteAnswer";
+import { counted, countKept } from "@/lib/checkedWriteCount";
+import { withFilters } from "@/lib/writeFilters";
 
 // A full batch is up to MAX_BATCH sequential-ish Resend round-trips — far
 // beyond the platform's default ~10s function budget. Without this, the
@@ -43,6 +47,16 @@ let providerIdUnwritableLogged = false;
  *  provider's id: PostgREST's schema-cache miss (PGRST204) or Postgres's
  *  undefined column (42703), naming provider_message_id. Anything else is
  *  not the missing paste and latches nothing. */
+/** projects-tab SAF-22 (J15e): a row's bookkeeping after its send — class
+ *  (b): never failing the batch or the send, never taken as written. A mark
+ *  that failed, or matched no row (removed meanwhile), is logged with the
+ *  database's own words; a 'sent' mark that did not land leaves the row
+ *  'sending', which the drain's reclaim re-queues after 15 minutes. */
+function noteUnmarked(rowId: string, mark: "sent" | "retry", w: CheckedWriteResult, kept: KeptAnswer): void {
+  if (w.ok) return;
+  console.error(`[send-queued] email ${rowId} was not marked ${mark === "sent" ? "sent" : "for retry"}: ${kept.error ? kept.error.message : "no row matched (it may have been removed meanwhile)"}`);
+}
+
 function providerIdColumnMissing(error: { code?: string; message?: string }): boolean {
   return (error.code === "PGRST204" || error.code === "42703") && /provider_message_id/.test(error.message ?? "");
 }
@@ -197,27 +211,31 @@ export async function POST(req: Request) {
   // rows are the backlog the operator expected to send. Only the last 7 days —
   // older notifications are stale enough that a surprise blast hurts more
   // than the silence did.
+  // projects-tab SAF-22 (J15e): class (c) — none to recover is the ordinary
+  // case (asked as a count, never every id); a failure, silent before, is
+  // logged, and the drain goes on as it did.
   {
-    let unsuppress = supabase
+    const kept = countKept();
+    await checkedWrite(counted(withFilters(supabase
       .from("email_notifications")
-      .update({ status: "queued", attempt_count: 0, error_message: null })
+      .update({ status: "queued", attempt_count: 0, error_message: null }, { count: "exact" })
       .eq("status", "suppressed")
-      .gte("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
-    if (scopeOrgIds) unsuppress = unsuppress.in("org_id", scopeOrgIds);
-    await unsuppress;
+      .gte("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()), (q) => (scopeOrgIds ? q.in("org_id", scopeOrgIds) : q)), kept));
+    if (kept.error) console.error(`[send-queued] suppressed rows of the last 7 days were not re-queued: ${kept.error.message}`);
   }
 
   // Reclaim orphans: rows stranded in 'sending' by a previous run that crashed
   // between claiming and completing. 15 min is far longer than any real send,
   // so this never steals a row another run is actively processing.
+  // SAF-22 (J15e): class (c), as the recovery above.
   {
-    let reclaim = supabase
+    const kept = countKept();
+    await checkedWrite(counted(withFilters(supabase
       .from("email_notifications")
-      .update({ status: "queued" })
+      .update({ status: "queued" }, { count: "exact" })
       .eq("status", "sending")
-      .lt("last_attempted_at", new Date(Date.now() - 15 * 60 * 1000).toISOString());
-    if (scopeOrgIds) reclaim = reclaim.in("org_id", scopeOrgIds);
-    await reclaim;
+      .lt("last_attempted_at", new Date(Date.now() - 15 * 60 * 1000).toISOString()), (q) => (scopeOrgIds ? q.in("org_id", scopeOrgIds) : q)), kept));
+    if (kept.error) console.error(`[send-queued] rows stranded in 'sending' were not reclaimed: ${kept.error.message}`);
   }
 
   // Find candidate work.
@@ -239,14 +257,22 @@ export async function POST(req: Request) {
   // that raced us to the same rows finds them already 'sending', so its guard
   // matches nothing and it returns an empty set — no email is ever sent twice.
   const candidateIds = candidates.map((r: EmailNotificationRow) => r.id);
-  const { data: claimed } = await supabase
+  // SAF-22 (J15e): class (c) — a claim another drain won matches nothing
+  // (processed: 0, as before); a claim the database refused is no longer read
+  // as an empty queue: it is said, so the cron reports a failed batch.
+  const claimKept = keptAnswer();
+  await checkedWrite(answered(supabase
     .from("email_notifications")
     .update({ status: "sending", last_attempted_at: new Date().toISOString() })
     .in("id", candidateIds)
     .in("status", ["queued", "failed"])
-    .select("*");
+    .select("*"), claimKept));
+  if (claimKept.error) {
+    console.error(`[send-queued] the queued emails could not be claimed: ${claimKept.error.message}`);
+    return NextResponse.json({ error: `The queued emails could not be claimed (${claimKept.error.message}); nothing was sent.` }, { status: 500 });
+  }
 
-  const queued = (claimed ?? []) as EmailNotificationRow[];
+  const queued = (claimKept.data ?? []) as EmailNotificationRow[];
   if (queued.length === 0) return NextResponse.json({ processed: 0 });
 
   let sent = 0;
@@ -340,20 +366,25 @@ export async function POST(req: Request) {
         attempt_count: (row.attempt_count || 0) + 1,
       };
       if (!providerId) {
-        await supabase.from("email_notifications").update(sentPatch).eq("id", row.id);
+        const k = keptAnswer();
+        noteUnmarked(row.id, "sent", await checkedWrite(answered(supabase.from("email_notifications").update(sentPatch).eq("id", row.id).select("id"), k)), k);
       } else {
-        const { error: sentErr } = await supabase
+        const withId = keptAnswer();
+        const marked = await checkedWrite(answered(supabase
           .from("email_notifications")
           .update({ ...sentPatch, provider_message_id: providerId })
-          .eq("id", row.id);
-        if (!sentErr) providerIdColumnLatch.clear();
+          .eq("id", row.id)
+          .select("id"), withId));
+        const sentErr = withId.error;
+        if (!sentErr) { providerIdColumnLatch.clear(); noteUnmarked(row.id, "sent", marked, withId); }
         else {
           if (providerIdColumnMissing(sentErr)) providerIdColumnLatch.set();
           if (!providerIdUnwritableLogged) {
             providerIdUnwritableLogged = true;
             console.warn(`[send-queued] the provider's message id was not kept (${sentErr.code ?? "?"}: ${sentErr.message}) — delivery reports cannot be matched until 20261258 is pasted; the email is recorded sent as before`);
           }
-          await supabase.from("email_notifications").update(sentPatch).eq("id", row.id);
+          const k = keptAnswer();
+          noteUnmarked(row.id, "sent", await checkedWrite(answered(supabase.from("email_notifications").update(sentPatch).eq("id", row.id).select("id"), k)), k);
         }
       }
       sent++;
@@ -361,14 +392,16 @@ export async function POST(req: Request) {
       failed++;
       const msg = (e as Error).message || String(e);
       if (!errorSample) errorSample = msg.slice(0, 200);
-      await supabase
+      const k = keptAnswer();
+      noteUnmarked(row.id, "retry", await checkedWrite(answered(supabase
         .from("email_notifications")
         .update({
           status: (row.attempt_count || 0) + 1 >= MAX_ATTEMPTS ? "failed" : "queued",
           attempt_count: (row.attempt_count || 0) + 1,
           error_message: msg.slice(0, 500),
         })
-        .eq("id", row.id);
+        .eq("id", row.id)
+        .select("id"), k)), k);
     }
   };
   for (let i = 0; i < queued.length; i += 5) {

@@ -41,6 +41,9 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
+import { withFilters } from "@/lib/writeFilters";
 import { openAiKey } from "@/lib/ai/keyVault";
 import {
   ingestKnowledgeDocBatch, refuseNonPdf, reindexLibraryChunks, onDocumentReady, markIngestFailed,
@@ -476,15 +479,21 @@ async function acceptPartial(doc: Record<string, unknown>, userId: string) {
     vision_retry_tried: [], ingest_failures: 0,
     ingest_claimed_by: null, ingest_claimed_at: null,
   }).filter(([k]) => known.has(k)));
-  let q = supabaseAdmin.from("knowledge_documents").update(update)
-    .eq("id", id).eq("file_key", String(row.file_key)).eq("pages_indexed", Number(row.pages_indexed ?? 0));
-  if ("source_version_id" in row) {
-    q = row.source_version_id == null ? q.is("source_version_id", null) : q.eq("source_version_id", row.source_version_id as string);
-  }
-  if (lease.kind === "claimed") q = q.eq("ingest_claimed_by", driver);
-  const { data, error } = await q.select("id");
+  // projects-tab SAF-22 (J15e): the same compare-and-set and answers, read
+  // through checkedWrite (the filters built in the one statement).
+  const kept = keptAnswer();
+  const accepted = await checkedWrite(answered(withFilters(supabaseAdmin.from("knowledge_documents").update(update)
+    .eq("id", id).eq("file_key", String(row.file_key)).eq("pages_indexed", Number(row.pages_indexed ?? 0)), (q) => {
+    let g = q;
+    if ("source_version_id" in row) {
+      g = row.source_version_id == null ? g.is("source_version_id", null) : g.eq("source_version_id", row.source_version_id as string);
+    }
+    if (lease.kind === "claimed") g = g.eq("ingest_claimed_by", driver);
+    return g;
+  }).select("id"), kept));
+  const { error } = kept;
   if (error) return refuse(`Could not accept the partial index: ${error.message}`, 500);
-  if ((data ?? []).length === 0) {
+  if (!accepted.ok) {
     return refuse("The document changed while it was being accepted (a new revision, or indexing moved on) — reload and try again.");
   }
   await onIndexed(doc, userId, Number(row.page_count ?? 0), Number(row.vision_pages ?? 0));

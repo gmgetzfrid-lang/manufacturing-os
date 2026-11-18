@@ -54,6 +54,8 @@ import { authorizeAdminSurface } from "@/lib/adminGate";
 import { monthStartIso } from "@/lib/ai/usageServer";
 import { RECORD_NOTICE_KINDS, noticeRecordRetention, recordCutoff, type NoticeRetention } from "@/lib/noticeRetention";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { counted, countKept } from "@/lib/checkedWriteCount";
 
 export const runtime = "nodejs";
 
@@ -420,17 +422,23 @@ export async function POST(req: NextRequest) {
         });
         if (recErr) throw new Error(`not purged — the record of what it holds could not be written first: ${recErr.message}`);
       }
+      // projects-tab SAF-22 (J15e): class (c) — rows the counted set lost
+      // meanwhile (another purge) are not claimed: the line reports what the
+      // delete itself matched, asked as a count (never every id). A database
+      // error throws its own words, as before.
+      let removed = rows;
       if (rows > 0) {
-        const base = sb
+        const kept = countKept();
+        await checkedWrite(counted(floorOf(t.key, sb
           .from(t.table)
-          .delete()
+          .delete({ count: "exact" })
           .eq("org_id", orgId)
-          .lt("created_at", cut);
-        const { error } = await floorOf(t.key, base as unknown as FilterBuilder);
-        if (error) throw new Error(error.message);
+          .lt("created_at", cut) as unknown as FilterBuilder), kept));
+        if (kept.error) throw new Error(kept.error.message);
+        if (kept.count !== null) removed = kept.count;
       }
-      deleted.push({ table: t.key, rows, cutoffIso: cut, ...(abandoned ? { abandoned } : {}) });
-      totalDeleted += rows;
+      deleted.push({ table: t.key, rows: removed, cutoffIso: cut, ...(abandoned ? { abandoned } : {}) });
+      totalDeleted += removed;
     } catch (e) {
       deleted.push({ table: t.key, rows: 0, cutoffIso: cut, error: (e as Error).message });
     }

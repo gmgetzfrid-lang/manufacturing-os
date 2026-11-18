@@ -83,7 +83,8 @@ beforeEach(() => { state.resolve = () => ({ data: [], error: null }); state.audi
 function deleteResolver(opts: { docs: Array<Record<string, unknown>>; reclocks: Array<Record<string, unknown>>; heirPolicy?: unknown }) {
   return (table: string, ops: Op[]) => {
     if (table === "collections") {
-      if (argOf(ops, "update")) return { data: [], error: null };
+      // SAF-22 (J15e): the folder's own soft delete reads its matched row; no subfolder steps up
+      if (argOf(ops, "update")) return { data: "deleted_at" in (argOf(ops, "update")![0] as Record<string, unknown>) ? [{ id: "f1" }] : [], error: null };
       if (argOf(ops, "maybeSingle") && filter(ops, "eq", "id") === "heir") return { data: { retention_policy: opts.heirPolicy ?? null }, error: null };
       if (argOf(ops, "maybeSingle")) return { data: { id: "f1", org_id: "o1", library_id: "l1", parent_id: "heir", name: "Radiography", path_names: [], path_ids: [] }, error: null };
     }
@@ -157,7 +158,7 @@ describe("trash restore — RET-10 returns the stepped-up documents and re-clock
     const reclocks: Array<Record<string, unknown>> = [];
     state.resolve = (table, ops) => {
       if (table === "collections") {
-        if (argOf(ops, "update")) return { data: null, error: null };
+        if (argOf(ops, "update")) return { data: [{ id: "f1" }], error: null }; // SAF-22 (J15e): the restore reads its matched row
         if (filter(ops, "eq", "id") === "heir") return { data: { id: "heir", deleted_at: null }, error: null };
         return { data: { id: "f1", org_id: "o1", library_id: "l1", parent_id: "heir", name: "Radiography", deleted_at: "2026-09-01", retention_policy: P }, error: null };
       }
@@ -191,7 +192,7 @@ describe("trash restore — RET-10 returns the stepped-up documents and re-clock
   it("restores the shell alone, and says so, when no delete record names the documents", async () => {
     state.resolve = (table, ops) => {
       if (table === "collections") {
-        if (argOf(ops, "update")) return { data: null, error: null };
+        if (argOf(ops, "update")) return { data: [{ id: "f1" }], error: null }; // SAF-22 (J15e): the restore reads its matched row
         return { data: { id: "f1", org_id: "o1", library_id: "l1", parent_id: null, name: "x", deleted_at: "2026-09-01", retention_policy: null }, error: null };
       }
       return { data: [], error: null };

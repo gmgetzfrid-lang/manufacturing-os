@@ -351,6 +351,14 @@ describe("settings — the library's review mark is kept; who turned auto-apply 
     st.db.tables.libraries.push({ id: "lib-x", org_id: "o2" });
     expect((await POST(req({ action: "settings", orgId: "o1", libraryId: "lib-x" }))).status).toBe(404);
   });
+  // projects-joint J15e (projects-tab SAF-22): the settings write reads its matched row.
+  it("SAF-22 (J15e): a settings write that matched no library (removed meanwhile) is 409, never answered with the settings it did not save", async () => {
+    st.db.refuseWrites.add("libraries");
+    const res = await POST(req({ action: "settings", orgId: "o1", libraryId: "lib1", targetColumnKey: "equipment", autoApply: true }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("The equipment-sweep settings were not saved: the library was removed or changed meanwhile. Reload and try again.");
+    expect(st.db.tables.libraries[0].equipment_bridge).not.toHaveProperty("autoApply");
+  });
 });
 
 describe("GM-14 — /api/equipment/sheets serves an equipment tag's sheets per caller", () => {

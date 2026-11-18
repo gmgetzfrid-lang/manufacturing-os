@@ -21,6 +21,8 @@
 // The in-memory PostgREST with the REAL lib/revisions.ts and lib/audit.ts;
 // the page's saveMetadata and handleBulkArchive lifted from the page and run.
 
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -543,7 +545,7 @@ describe("REV-34 (a) / (d) — the library page's bulk archive records each row'
     const documents = ids.map((id) => ({ id, documentNumber: String(docRow(id).document_number), title: id, status: docRow(id).status, currentVersionId: docRow(id).current_version_id }));
     const fn = lift<() => Promise<void>>("handleBulkArchive", {
       selectedDocIds: new Set(ids), activeOrgId: ORG, library: { orgId: ORG }, uid: ME, userEmail: "dana@x", activeRole: "DocCtrl",
-      supabase, documents, libraryId: "lib1", recallsCopyHolders, finishBulkArchive,
+      supabase, checkedWrite, answered, keptAnswer, documents, libraryId: "lib1", recallsCopyHolders, finishBulkArchive,
       appPrompt: async () => "Plant closed",
       appAlert: async (o: Record<string, unknown>) => { st.alerts.push(o); },
       setDocuments: () => {}, setSelectedDocIds: () => {},

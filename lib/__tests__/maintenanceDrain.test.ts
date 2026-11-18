@@ -1617,8 +1617,9 @@ describe("NEDGE-10 — the drain: a signed one-click List-Unsubscribe header and
     expect(out).toMatchObject({ processed: 1, sent: 0, failed: 1 });
     expect(String(out.errorSample)).toMatch(/^Resend 502: bad gateway/);
     const route = src("app/api/notifications/send-queued/route.ts");
-    expect(route).toMatch(/\.update\(\{ status: "sending", last_attempted_at: new Date\(\)\.toISOString\(\) \}\)\s*\n\s*\.in\("id", candidateIds\)\s*\n\s*\.in\("status", \["queued", "failed"\]\)\s*\n\s*\.select\("\*"\);/);
-    expect(route).toMatch(/\.eq\("status", "suppressed"\)\s*\n\s*\.gte\("created_at", new Date\(Date\.now\(\) - 7 \* 24 \* 60 \* 60 \* 1000\)\.toISOString\(\)\);/);
+    // SAF-22 (J15e): widened to the checked shape — the same filters, in the same order
+    expect(route).toMatch(/\.update\(\{ status: "sending", last_attempted_at: new Date\(\)\.toISOString\(\) \}\)\s*\n\s*\.in\("id", candidateIds\)\s*\n\s*\.in\("status", \["queued", "failed"\]\)\s*\n\s*\.select\("\*"\), claimKept\)\);/);
+    expect(route).toMatch(/\.eq\("status", "suppressed"\)\s*\n\s*\.gte\("created_at", new Date\(Date\.now\(\) - 7 \* 24 \* 60 \* 60 \* 1000\)\.toISOString\(\)\), \(q\) => /);
   });
 
   it("REGRESSION: unconfigured email still defers the whole backlog untouched", async () => {
@@ -2055,5 +2056,41 @@ describe("N10 (GAP-205) — step 7c: the device registrations of people with no 
     const route = src("app/api/cron/maintenance/route.ts");
     expect(route).toContain("const PUSH_PRUNE_MS = 20_000;");
     expect(route).toContain("await prunePushSubscriptions(sb, result.errors, Math.min(runEnd, Date.now() + PUSH_PRUNE_MS));");
+  });
+});
+
+// projects-joint J15e (projects-tab SAF-22): the drain's writes read their matched rows.
+describe("SAF-22 (J15e) — the email drain's writes, read through checkedWrite", () => {
+  const drain = () => drainPOST(new Request("http://app.local/api/notifications/send-queued", { method: "POST", headers: { authorization: "Bearer cron-secret" } }));
+  const queued = (over: Row) => ({ org_id: ORG_A, status: "queued", attempt_count: 0, subject: "S", body_text: "Body", body_html: null, created_at: minutesAgo(5), metadata: { external: true, rendered: true }, ...over });
+  it("REPRODUCED: a claim the database refused answered `processed: 0` (an empty queue); now a 500 naming it, so the cron reports the batch failed — nothing sent", async () => {
+    process.env.RESEND_API_KEY = "re_test";
+    db.tables.email_notifications = [queued({ id: "e1", to_email: "a@x.io" })];
+    db.writeError.email_notifications = { message: "permission denied for table email_notifications" };
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await drain();
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("The queued emails could not be claimed (permission denied for table email_notifications); nothing was sent.");
+    expect(resendBodies).toEqual([]);
+    // the recovery and the reclaim before it were silent on failure; now logged
+    expect(err.mock.calls.some((c) => /suppressed rows of the last 7 days were not re-queued: permission denied/.test(String(c[0])))).toBe(true);
+    expect(err.mock.calls.some((c) => /rows stranded in 'sending' were not reclaimed: permission denied/.test(String(c[0])))).toBe(true);
+  });
+  it("a 'sent' mark that matched no row (removed meanwhile) is logged; the send still counts, the batch goes on", async () => {
+    process.env.RESEND_API_KEY = "re_test";
+    db.tables.email_notifications = [queued({ id: "e1", to_email: "a@x.io" })];
+    let updates = 0;
+    db.onExec = (table, op) => { if (table === "email_notifications" && op === "update" && ++updates === 4) db.tables.email_notifications = []; };
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(await (await drain()).json()).toEqual({ processed: 1, sent: 1, failed: 0 });
+    expect(err.mock.calls.some((c) => /email e1 was not marked sent: no row matched/.test(String(c[0])))).toBe(true);
+  });
+  it("regression: a send that lands marks its row sent, with no log line", async () => {
+    process.env.RESEND_API_KEY = "re_test";
+    db.tables.email_notifications = [queued({ id: "e1", to_email: "a@x.io" })];
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(await (await drain()).json()).toEqual({ processed: 1, sent: 1, failed: 0 });
+    expect(db.tables.email_notifications[0].status).toBe("sent");
+    expect(err.mock.calls.some((c) => /\[send-queued\]/.test(String(c[0])))).toBe(false);
   });
 });

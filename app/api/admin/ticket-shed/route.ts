@@ -32,6 +32,8 @@ import {
 } from "@/lib/ticketShed";
 import { makeArchiveId, archiveLocation } from "@/lib/archive";
 import { isOrgOwnedKey } from "@/lib/shedKeyGuard";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 
 export const runtime = "nodejs";
 
@@ -101,6 +103,15 @@ export async function GET(req: NextRequest) {
   });
 }
 
+/** SAF-22 (J15e): drop the label this produce reserved, on its way out of
+ *  an abandoned produce. Class (c) — a reservation already gone is a quiet
+ *  success; a database error is logged (the answer is the abort's own). */
+async function dropReservation(sb: SupabaseClient, orgId: string, archiveId: string): Promise<void> {
+  const kept = keptAnswer();
+  await checkedWrite(answered(sb.from("archives").delete().eq("org_id", orgId).eq("archive_id", archiveId).select("id"), kept));
+  if (kept.error) console.error(`[admin/ticket-shed] the reserved catalog row ${archiveId} could not be dropped`, kept.error.message);
+}
+
 export async function POST(req: NextRequest) {
   let body: { orgId?: string; days?: number; targetBytes?: number; confirm?: boolean };
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
@@ -135,18 +146,27 @@ export async function POST(req: NextRequest) {
   // what makes two simultaneous produces safe — the loser claims nothing rather
   // than re-pointing the winner's rows. Captured rows keep this archive_id; any we
   // can't fully bundle are un-claimed after the loop.
+  // projects-tab SAF-22 (J15e): class (c) — a chunk that claims nothing lost
+  // the race; a chunk the database refused is no longer read as "claimed
+  // nothing": when nothing at all was claimed the answer gives its reason.
   const claimedIds: string[] = [];
+  let claimError: { message: string } | null = null;
   for (let i = 0; i < selectedIds.length; i += 200) {
     const chunk = selectedIds.slice(i, i + 200);
-    const { data } = await sb
+    const kept = keptAnswer();
+    await checkedWrite(answered(sb
       .from("tickets")
       .update({ archive_id: archiveId })
       .in("id", chunk).eq("org_id", orgId).is("archive_id", null).is("archived_at", null)
-      .select("id");
-    for (const r of ((data ?? []) as Array<{ id: string }>)) claimedIds.push(r.id);
+      .select("id"), kept));
+    if (kept.error) claimError ??= kept.error;
+    for (const r of ((kept.data ?? []) as Array<{ id: string }>)) claimedIds.push(r.id);
   }
   if (claimedIds.length === 0) {
-    await sb.from("archives").delete().eq("org_id", orgId).eq("archive_id", archiveId);
+    await dropReservation(sb, orgId, archiveId);
+    if (claimError) {
+      return NextResponse.json({ error: `The tickets could not be claimed for the archive (${claimError.message}). Nothing was archived.` }, { status: 503 });
+    }
     return NextResponse.json({ error: "Those tickets were just archived by another run." }, { status: 409 });
   }
 
@@ -232,12 +252,20 @@ export async function POST(req: NextRequest) {
   // of being stranded with this archive_id.
   const capturedSet = new Set(capturedIds);
   const toUnclaim = claimedIds.filter((id) => !capturedSet.has(id));
+  // SAF-22 (J15e): class (b) — a chunk that does not un-claim every row (or
+  // fails) is logged, never fails the produce; a ticket left claimed stays
+  // with this uncommitted archive, and Discard (archive-cancel) frees it.
   for (let i = 0; i < toUnclaim.length; i += 200) {
     const chunk = toUnclaim.slice(i, i + 200);
-    await sb.from("tickets").update({ archive_id: null }).in("id", chunk).eq("org_id", orgId).eq("archive_id", archiveId).is("archived_at", null);
+    const kept = keptAnswer();
+    await checkedWrite(answered(sb.from("tickets").update({ archive_id: null }).in("id", chunk).eq("org_id", orgId).eq("archive_id", archiveId).is("archived_at", null).select("id"), kept));
+    const freed = ((kept.data ?? []) as unknown[]).length;
+    if (kept.error || freed < chunk.length) {
+      console.error(`[admin/ticket-shed] ${chunk.length - freed} of ${chunk.length} uncaptured ticket(s) were not un-claimed from ${archiveId}; Discard frees them`, kept.error?.message ?? "no row matched");
+    }
   }
   if (capturedTickets === 0) {
-    await sb.from("archives").delete().eq("org_id", orgId).eq("archive_id", archiveId);
+    await dropReservation(sb, orgId, archiveId);
     return NextResponse.json({ error: "Could not fully capture any selected ticket (attachments unreadable). Nothing archived." }, { status: 502 });
   }
   if (Object.keys(fileMeta).length) zip.file("files-meta.json", JSON.stringify(fileMeta, null, 2));
@@ -257,10 +285,14 @@ export async function POST(req: NextRequest) {
   const zipBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 
   // Finalize the catalog row with real counts (reserved + rows already claimed above).
-  await sb.from("archives").update({
+  // SAF-22 (J15e): class (b) — the catalog's counts are bookkeeping; the
+  // archive is produced either way. A refusal or failure is logged.
+  const catKept = keptAnswer();
+  const catW = await checkedWrite(answered(sb.from("archives").update({
     file_count: bundledFiles, total_bytes: fileBytes,
     note: `${capturedTickets} closed ticket(s)${skippedIncomplete ? `, ${skippedIncomplete} skipped (unreadable attachments)` : ""}${skippedForeignKey ? `, ${skippedForeignKey} skipped (attachment key outside this workspace)` : ""}`,
-  }).eq("org_id", orgId).eq("archive_id", archiveId);
+  }).eq("org_id", orgId).eq("archive_id", archiveId).select("id"), catKept));
+  if (!catW.ok) console.error(`[admin/ticket-shed] the catalog row of ${archiveId} was not updated with its counts`, catKept.error?.message ?? "no row matched");
 
   return new NextResponse(zipBytes as unknown as BodyInit, {
     status: 200,
