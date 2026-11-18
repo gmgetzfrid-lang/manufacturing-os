@@ -159,7 +159,8 @@ describe("PKG-9's residual — the inherited ack policy is read CHECKED", () => 
     // only the stale-REVISION void ran (it precedes the policy read, as before) — never the "no policy" void of every pending row
     expect(voids).toHaveLength(1);
     const staleVoid = src("lib/acknowledgments.ts");
-    expect(staleVoid).toContain('.eq("document_id", doc.id).eq("status", "pending").not("document_version_id", "eq", versionId);');
+    // (SAF-18, J15a: the same filters, now reading back the rows it voided)
+    expect(staleVoid).toContain('.eq("document_id", doc.id).eq("status", "pending").not("document_version_id", "eq", versionId).select("id")');
     const writeErrors: string[] = [];
     state.writes = [];
     await onDocumentIssuedAck({ orgId: "org1", documentId: "d1", writeErrors });

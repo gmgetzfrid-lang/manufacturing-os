@@ -82,9 +82,12 @@ export async function recomputeRetention(documentId: string): Promise<void> {
   const policy = await effectiveRetentionPolicyForDocument({
     retentionPolicy: doc.retention_policy, collectionId: doc.collection_id, libraryId: doc.library_id,
   });
+  // SAF-18 (J15a): RET-5's checked writes read their matched row too — a
+  // re-clock that matched none is refused, never a stale deadline.
   if (!policy) {
-    const { error } = await supabase.from("documents").update({ retention_until: null, disposition_state: null }).eq("id", doc.id);
+    const { data: cleared, error } = await supabase.from("documents").update({ retention_until: null, disposition_state: null }).eq("id", doc.id).select("id");
     if (error) throw new Error(`Retention clock was NOT cleared: ${error.message}`);
+    if (!cleared || cleared.length === 0) throw new Error("Retention clock was NOT cleared: the write was refused.");
     return;
   }
   const basis = policy.basis ?? "created";
@@ -94,8 +97,9 @@ export async function recomputeRetention(documentId: string): Promise<void> {
     : /* issued | superseded */ (doc.updated_at || doc.created_at);
   const until = computeRetentionUntil(basisISO, policy);
   const state = until && until <= todayISO() ? "eligible" : "active";
-  const { error } = await supabase.from("documents").update({ retention_until: until, disposition_state: state }).eq("id", doc.id);
+  const { data: reclocked, error } = await supabase.from("documents").update({ retention_until: until, disposition_state: state }).eq("id", doc.id).select("id");
   if (error) throw new Error(`Retention clock was NOT updated: ${error.message}`);
+  if (!reclocked || reclocked.length === 0) throw new Error("Retention clock was NOT updated: the write was refused.");
 }
 
 /** Set (or clear) the retention policy at a level, then recompute the covered
@@ -352,8 +356,10 @@ export async function scanRetention(orgId: string, opts?: { renudgeDays?: number
     const priorStamp = (d.retention_notified_at as string | null) ?? null;
     // RET-5: a refused flag write must not be notified as "eligible" — the
     // record would read as pending review while the row still says nothing.
-    const { error: flagErr } = await supabase.from("documents").update({ disposition_state: "eligible", retention_notified_at: new Date().toISOString() }).eq("id", docId);
+    // SAF-18 (J15a): a flag that matched no row is refused the same way.
+    const { data: flagged, error: flagErr } = await supabase.from("documents").update({ disposition_state: "eligible", retention_notified_at: new Date().toISOString() }).eq("id", docId).select("id");
     if (flagErr) { failures.push(`${docId}: ${flagErr.message}`); continue; }
+    if (!flagged || flagged.length === 0) { failures.push(`${docId}: the write was refused`); continue; }
     const policy = resolveEffectiveRetentionPolicy(
       (d.retention_policy as RetentionPolicy | null) ?? null,
       d.collection_id ? colPol.get(d.collection_id as string) ?? null : null,

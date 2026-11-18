@@ -126,7 +126,13 @@ export default function CustomizeNodeModal({
 
   const handleSave = async () => {
     setSaving(true);
-    try { await onSave(v); onClose(); } finally { setSaving(false); }
+    try { await onSave(v); onClose(); }
+    catch (e) {
+      // SAF-18 (J15a): a save the database refused (or that failed) is said;
+      // the modal stays open with what was chosen.
+      showToast({ type: "error", title: "Not saved", message: e instanceof Error && e.message ? e.message : "The appearance could not be saved." });
+    }
+    finally { setSaving(false); }
   };
 
   return createPortal(

@@ -528,7 +528,8 @@ describe("TRX-15 (P22, DEC-90 A5) — the issue writes `stampable: true` on each
     expect(stampFooterUnprintable("Rev A — 1.2 (é, €, “x”)")).toBe("");
     const lib = readFileSync(join(process.cwd(), "lib/transmittals.ts"), "utf8");
     expect(lib).toMatch(/const bound = readAt !== null && \(marked \|\| checks !== null\);/);
-    expect(lib).toMatch(/if \(bound && readAt\) write = write\.eq\("updated_at", readAt\);/);
+    // (SAF-18, J15a: the bind sits in the write's own statement, after the same id / draft filters)
+    expect(lib).toMatch(/\(\(q\) => \(bound && readAt \? q\.eq\("updated_at", readAt\) : q\)\)\(\s*supabase\s*\.from\("transmittals"\)\s*\.update\(patch\)\s*\.eq\("id", id\)\s*\.eq\("status", "draft"\),\s*\)/);
     expect(lib).toMatch(/if \(opts\.checked\.draftUpdatedAt !== readAt\) throw new Error\(draftChangedRefusal\(draft\.number\)\);/);
   });
 });

@@ -30,6 +30,9 @@
 
 import { supabase } from "@/lib/supabase";
 import { logCheckoutEvent } from "@/lib/audit";
+// SAF-18 (J15a): every update here reads its matched rows (lib/checkedWrite.ts).
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 
 type SupabaseLike = typeof supabase;
 
@@ -333,12 +336,16 @@ export async function adoptInFlightCheckout(input: {
   });
   if (!ensured) return null;
 
-  await supabase
+  // SAF-18 class (c): sessions already tagged (a racer adopted them) match
+  // no row — a success; a database error is said, never silent.
+  const tagged = await checkedWrite(supabase
     .from("checkout_sessions")
     .update({ episode_id: ensured.episode.id })
     .eq("document_id", input.documentId)
     .eq("status", "active")
-    .is("episode_id", null);
+    .is("episode_id", null)
+    .select("id"));
+  if (!tagged.ok && tagged.code === "db") console.warn(`[checkoutEpisodes] adopting the in-flight checkout: its sessions could not be tagged with the episode: ${tagged.error}`);
 
   return ensured.episode;
 }
@@ -523,13 +530,20 @@ export async function finishMySession(input: {
         outcome_ref: input.outcome.ref ?? null,
       }
     : basePayload;
-  const endMine = (payload: Record<string, unknown>) =>
-    supabase
+  // SAF-18 class (c): no active session of mine left (a force release got
+  // there first) matches no row — a success; the database's error is kept
+  // whole for the pre-migration retry and thrown in its own words, as before.
+  const endMine = async (payload: Record<string, unknown>) => {
+    const kept = keptAnswer();
+    await checkedWrite(answered(supabase
       .from("checkout_sessions")
       .update(payload)
       .eq("document_id", input.documentId)
       .eq("user_id", input.userId)
-      .eq("status", "active");
+      .eq("status", "active")
+      .select("id"), kept));
+    return { error: kept.error };
+  };
   let { error: endErr } = await endMine(withOutcome);
   if (endErr && input.outcome && isMissingOutcomeSchema(endErr)) {
     // Pre-migration env: record the check-in without the outcome columns.
@@ -567,7 +581,9 @@ export async function finishMySession(input: {
     // Guarded: only clear when the lock is OURS or ALREADY NULL — a racer
     // who just checked out (new session + fresh lock) between our fetch and
     // this write must not have their lock wiped.
-    await supabase
+    // SAF-18 class (c): that guard matching no row is legitimate; a
+    // database error is said, never silent (the close goes on as before).
+    const cleared = await checkedWrite(supabase
       .from("documents")
       .update({
         checked_out_by: null,
@@ -578,7 +594,9 @@ export async function finishMySession(input: {
         active_collaborators: [],
       })
       .eq("id", input.documentId)
-      .or(`checked_out_by.is.null,checked_out_by.eq.${input.userId}`);
+      .or(`checked_out_by.is.null,checked_out_by.eq.${input.userId}`)
+      .select("id"));
+    if (!cleared.ok && cleared.code === "db") console.warn(`[checkoutEpisodes] check-in: the document's lock columns could not be cleared: ${cleared.error}`);
     let closeResult: CloseEpisodeResult = "skipped";
     if (episode?.id) {
       closeResult = await closeEpisode({
@@ -627,7 +645,9 @@ export async function finishMySession(input: {
     const heirSession = heirRow as { purpose?: string | null; note?: string | null; started_at?: string | null } | null;
     const heirNote = [heirSession?.purpose, heirSession?.note].filter(Boolean).join(" — ") || null;
 
-    await supabase
+    // SAF-18 class (c): the CAS losing (someone force-released or re-checked
+    // out meanwhile) matches no row — legitimate; a database error is said.
+    const passed = await checkedWrite(supabase
       .from("documents")
       .update({
         checked_out_by: heir.userId,
@@ -641,7 +661,9 @@ export async function finishMySession(input: {
       .eq("id", input.documentId)
       // CAS: only if WE still appear as the holder — a concurrent force
       // release / re-checkout must not be clobbered by our stale view.
-      .eq("checked_out_by", input.userId);
+      .eq("checked_out_by", input.userId)
+      .select("id"));
+    if (!passed.ok && passed.code === "db") console.warn(`[checkoutEpisodes] check-in: the lock could not be passed to ${heir.userName ?? "the next collaborator"}: ${passed.error}`);
 
     const stillOut = activeCollaboratorNames(sessions.filter((s) => s.userId !== input.userId));
     await postEpisodeSystemMessage({
@@ -653,10 +675,14 @@ export async function finishMySession(input: {
   } else {
     // A collaborator (not the holder) left: rebuild the display list only.
     const stillOut = activeCollaboratorNames(sessions.filter((s) => s.userId !== input.userId));
-    await supabase
+    // SAF-18 class (b): the display list is bookkeeping after the check-in
+    // (which already landed above) — a list that did not save is said.
+    const listed = await checkedWrite(supabase
       .from("documents")
       .update({ active_collaborators: stillOut })
-      .eq("id", input.documentId);
+      .eq("id", input.documentId)
+      .select("id"));
+    if (!listed.ok) console.warn(`[checkoutEpisodes] check-in: the document's collaborator list was not updated: ${listed.error}`);
     await postEpisodeSystemMessage({
       orgId: input.orgId,
       documentId: input.documentId,
@@ -1004,7 +1030,11 @@ export async function quickHold(input: {
   } catch { /* non-blocking */ }
 
   // Atomic conditional lock claim — same CAS as the full modal.
-  const claim = await supabase
+  // SAF-18: the claim reads its matched row through checkedWrite; the answer
+  // resolveLockClaim settles is the same one as before (the row, or none,
+  // and the database's own error).
+  const claimKept = keptAnswer();
+  const claimed = await checkedWrite(answered(supabase
     .from("documents")
     .update({
       checked_out_by: input.userId,
@@ -1016,7 +1046,8 @@ export async function quickHold(input: {
     .eq("id", input.documentId)
     .or(`checked_out_by.is.null,checked_out_by.eq.${input.userId}`)
     .select("id")
-    .maybeSingle();
+    .maybeSingle(), claimKept));
+  const claim = { data: claimed.ok ? claimKept.data : null, error: claimKept.error };
   // DCK-4: a FAILED write is not a lost race — and a filtered write carries
   // NO error, so a no-row answer is settled by re-reading the lock holder.
   const resolved = await resolveLockClaim({ claim, documentId: input.documentId, userId: input.userId });

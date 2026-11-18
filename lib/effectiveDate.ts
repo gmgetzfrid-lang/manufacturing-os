@@ -8,6 +8,8 @@
 // owner + acknowledgment assignees are told it's now in force.
 
 import { supabase } from "@/lib/supabase";
+// SAF-18 (J15a): every update here reads its matched rows.
+import { checkedWrite } from "@/lib/checkedWrite";
 // DELIV-16 / DELIV-7 dw1 (notifications N14): the bell notices here carry
 // document-control obligations — notify(), retried and dead-lettered when
 // it does not land (lib/complianceNotify.ts).
@@ -344,14 +346,22 @@ export async function applyEffectiveDate(input: { documentId: string; versionId:
   const suppress = !eff || eff <= todayISO(zone);
   // OWN-14: checked — both call sites treat this as best-effort, but a
   // refusal must at least THROW so their catch is a decision, not a default.
-  const { error: verErr } = await supabase.from("document_versions")
+  // SAF-18 (J15a): a write that matched no row is that refusal too — said
+  // after both writes ran, as they always did (the database's own words are
+  // kept for an error, which stops here as before).
+  const { data: verRows, error: verErr } = await supabase.from("document_versions")
     .update({ effective_date: eff }).eq("id", input.versionId).select("id");
   if (verErr) throw new Error(verErr.message);
-  const { error: docErr } = await supabase.from("documents").update({
+  const verMissed = !verRows || verRows.length === 0;
+  const { data: docRows, error: docErr } = await supabase.from("documents").update({
     effective_date: eff,
     effective_notified_at: suppress ? new Date().toISOString() : null,
   }).eq("id", input.documentId).select("id");
   if (docErr) throw new Error(docErr.message);
+  const docMissed = !docRows || docRows.length === 0;
+  if (verMissed || docMissed) {
+    throw new Error(`The effective date was not saved on the ${verMissed && docMissed ? "revision or the document" : verMissed ? "revision" : "document"} (the write was refused).`);
+  }
 }
 
 /** How far back the effective-date scan reads its dead letters: a notice lost
@@ -399,9 +409,11 @@ export async function scanEffectiveDates(orgId: string): Promise<number> {
   for (const d of docs) {
     const docId = d.id as string;
     if (!belongsToCurrentVersion(d.effective_date as string | null, (d.current_version_id as string | null) ?? null, versionDate)) {
-      const { error: quietErr } = await supabase.from("documents")
+      const { data: quieted, error: quietErr } = await supabase.from("documents")
         .update({ effective_notified_at: new Date().toISOString() }).eq("id", docId).select("id");
       if (quietErr) console.error(`[effectiveDate] could not silence a stale effective date on ${docId}:`, quietErr.message);
+      // SAF-18 class (b): a silencing that matched no row is said too.
+      else if (!quieted || quieted.length === 0) console.error(`[effectiveDate] could not silence a stale effective date on ${docId}: the write was refused`);
       continue;
     }
     const label = (d.document_number as string) || (d.title as string) || (d.name as string) || "Document";
@@ -428,8 +440,11 @@ export async function scanEffectiveDates(orgId: string): Promise<number> {
     ));
     // DELIV-7 dw1: the one-shot watermark is set only when every notice
     // landed — a lost one is sent again on the next run, to its recipient only.
+    // SAF-18 class (b): a watermark that did not land is said (the document
+    // is announced again next run), never fails the scan.
     if (landed.every(Boolean)) {
-      await supabase.from("documents").update({ effective_notified_at: new Date().toISOString() }).eq("id", docId);
+      const stamped = await checkedWrite(supabase.from("documents").update({ effective_notified_at: new Date().toISOString() }).eq("id", docId).select("id"));
+      if (!stamped.ok) console.warn(`[effectiveDate] scan: the "now in effect" watermark of ${docId} was not stamped: ${stamped.error}`);
     }
     n++;
   }

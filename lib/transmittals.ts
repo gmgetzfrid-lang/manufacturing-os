@@ -55,6 +55,9 @@
 
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
+// SAF-18 (J15a): the issue reads its matched row through checkedWrite.
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { openPrintWindow } from "@/lib/evidencePack";
 import { configuredPublicOrigin, recipientOrigin } from "@/lib/publicOrigin";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
@@ -1615,18 +1618,23 @@ export async function issueTransmittal(
   const now = new Date().toISOString();
   const patch: Record<string, unknown> = { status: "issued", issued_at: now, updated_at: now };
   if (marked) patch.items = arming.items;
-  let write = supabase
-    .from("transmittals")
-    .update(patch)
-    .eq("id", id)
-    .eq("status", "draft");
-  if (bound && readAt) write = write.eq("updated_at", readAt);
   // DIST-18 (limb a): the read-back names its columns — never portal_token,
   // which the database mints in this very UPDATE and client roles may not
   // SELECT once 20261231 is pasted (RETURNING * would be refused, 42501).
-  const { data, error } = await write
+  // (SAF-18: the bind is applied in the same statement as the write and its
+  // read-back — the same filters, in the same order, as before.)
+  const kept = keptAnswer();
+  const issued = await checkedWrite(answered(((q) => (bound && readAt ? q.eq("updated_at", readAt) : q))(
+    supabase
+      .from("transmittals")
+      .update(patch)
+      .eq("id", id)
+      .eq("status", "draft"),
+  )
     .select(TRANSMITTAL_CLIENT_COLUMNS)
-    .maybeSingle();
+    .maybeSingle(), kept));
+  const error = kept.error;
+  const data = issued.ok ? kept.data : null;
   if (error) { if (isMissingTable(error)) throw new Error(MIGRATION_HINT); throw new Error(error.message); }
   if (!data) {
     if (bound) {

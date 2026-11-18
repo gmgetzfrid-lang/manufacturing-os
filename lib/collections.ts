@@ -6,6 +6,13 @@
 // of a library; user-scoped ones are personal pin sets.
 
 import { supabase } from "@/lib/supabase";
+// SAF-18 (J15a, class (a)): a collection edit is the person's decision — a
+// write that matched no row throws the typed refusal (CollectionModal shows
+// it); the database's own error keeps its words, as before.
+// (curated_collection_items has no id column — its key is (collection_id,
+// document_id) — so its writes read back document_id.)
+import { checkedWrite, CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 
 export interface CuratedCollection {
   id: string;
@@ -121,18 +128,20 @@ export async function updateCollection(
   updatedBy: string
 ): Promise<void> {
   const payload: Record<string, unknown> = { ...patch, updated_by: updatedBy, updated_at: new Date().toISOString() };
-  let { error } = await supabase.from("curated_collections").update(payload).eq("id", id);
+  let { data: saved, error } = await supabase.from("curated_collections").update(payload).eq("id", id).select("id");
   // Pre-migration safety: retry without folder_id if the column isn't there yet.
   if (error && isMissingFolderColumn(error)) {
     delete payload.folder_id;
-    ({ error } = await supabase.from("curated_collections").update(payload).eq("id", id));
+    ({ data: saved, error } = await supabase.from("curated_collections").update(payload).eq("id", id).select("id"));
   }
   if (error) throw new Error(error.message);
+  if (!saved || saved.length === 0) throw new Error(`The collection was not saved. ${CHECKED_WRITE_REFUSED}`);
 }
 
 export async function deleteCollection(id: string): Promise<void> {
-  const { error } = await supabase.from("curated_collections").delete().eq("id", id);
+  const { data: deleted, error } = await supabase.from("curated_collections").delete().eq("id", id).select("id");
   if (error) throw new Error(error.message);
+  if (!deleted || deleted.length === 0) throw new Error(`The collection was not deleted. ${CHECKED_WRITE_REFUSED}`);
 }
 
 export async function listItems(collectionId: string): Promise<CuratedCollectionItem[]> {
@@ -191,24 +200,33 @@ export async function addItem(input: {
 }
 
 export async function removeItem(collectionId: string, documentId: string): Promise<void> {
-  const { error } = await supabase
+  const kept = keptAnswer();
+  const removed = await checkedWrite(answered(supabase
     .from("curated_collection_items")
     .delete()
     .eq("collection_id", collectionId)
-    .eq("document_id", documentId);
-  if (error) throw new Error(error.message);
+    .eq("document_id", documentId)
+    .select("document_id"), kept));
+  if (kept.error) throw new Error(kept.error.message);
+  if (!removed.ok) throw new Error(`The document was not removed from the collection. ${CHECKED_WRITE_REFUSED}`);
 }
 
 export async function reorderItems(collectionId: string, orderedDocIds: string[]): Promise<void> {
-  // Bulk update sort_order
+  // Bulk update sort_order — every write is issued, as before; a position
+  // that failed or matched no row is said once they have all answered.
   const updates = orderedDocIds.map((docId, idx) =>
-    supabase
+    checkedWrite(supabase
       .from("curated_collection_items")
       .update({ sort_order: idx })
       .eq("collection_id", collectionId)
       .eq("document_id", docId)
+      .select("document_id"))
   );
-  await Promise.all(updates);
+  const missed = (await Promise.all(updates)).filter((w) => !w.ok);
+  if (missed.length) {
+    const db = missed.find((w) => !w.ok && w.code === "db");
+    throw new Error(`${missed.length} of ${orderedDocIds.length} position(s) were not saved. ${db && !db.ok ? db.error : CHECKED_WRITE_REFUSED}`);
+  }
 }
 
 export async function updateItemNotes(
@@ -216,10 +234,13 @@ export async function updateItemNotes(
   documentId: string,
   notes: string
 ): Promise<void> {
-  const { error } = await supabase
+  const kept = keptAnswer();
+  const noted = await checkedWrite(answered(supabase
     .from("curated_collection_items")
     .update({ notes })
     .eq("collection_id", collectionId)
-    .eq("document_id", documentId);
-  if (error) throw new Error(error.message);
+    .eq("document_id", documentId)
+    .select("document_id"), kept));
+  if (kept.error) throw new Error(kept.error.message);
+  if (!noted.ok) throw new Error(`The note was not saved. ${CHECKED_WRITE_REFUSED}`);
 }

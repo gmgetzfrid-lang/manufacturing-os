@@ -17,6 +17,7 @@ import type {
 } from "@/types/schema";
 import { NodeIcon } from "@/lib/nodeIcons";
 import { safeNodeColor } from "@/lib/nodeColor";
+import { appAlert } from "@/components/providers/DialogProvider";
 
 const PART_META: Record<WebPartType, { label: string; icon: React.ComponentType<{ className?: string }>; defaultTitle: string; defaultWidth: WebPart["width"] }> = {
   about:        { label: "About",            icon: Info,      defaultTitle: "About this library", defaultWidth: "full" },
@@ -84,15 +85,21 @@ export default function LibraryHomeBoard({
     setEditing(true);
   };
 
+  // SAF-18 (J15a): a save the database refused (or that failed) is said;
+  // the editor stays open with the draft.
+  const saveFailed = (e: unknown) => appAlert({ message: e instanceof Error && e.message ? e.message : "The home could not be saved.", tone: "danger" });
+
   const save = async () => {
     setSaving(true);
     try { await onSave({ ...draft, enabled: true }); setEditing(false); }
+    catch (e) { await saveFailed(e); }
     finally { setSaving(false); }
   };
 
   const disableHome = async () => {
     setSaving(true);
     try { await onSave({ enabled: false, parts: draft.parts }); setEditing(false); }
+    catch (e) { await saveFailed(e); }
     finally { setSaving(false); }
   };
 

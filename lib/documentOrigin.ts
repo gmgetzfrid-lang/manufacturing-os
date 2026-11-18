@@ -7,6 +7,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
+import { checkedWrite, CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
 
 export interface OriginInfo {
   origin?: "internal" | "external" | null;
@@ -29,13 +30,18 @@ export async function setDocumentOrigin(input: {
   externalSource?: string | null; externalReference?: string | null; externalEdition?: string | null; externalUrl?: string | null;
 }): Promise<void> {
   const ext = input.origin === "external";
-  await supabase.from("documents").update({
+  // SAF-18 class (a): the origin IS the decision. A write that failed or
+  // matched no row throws (OriginSection says it) and no
+  // DOCUMENT_ORIGIN_SET row claims it happened — before J15a the result was
+  // discarded and the audit row written whatever the database did.
+  const saved = await checkedWrite(supabase.from("documents").update({
     origin: input.origin,
     external_source: ext ? (input.externalSource?.trim() || null) : null,
     external_reference: ext ? (input.externalReference?.trim() || null) : null,
     external_edition: ext ? (input.externalEdition?.trim() || null) : null,
     external_url: ext ? (input.externalUrl?.trim() || null) : null,
-  }).eq("id", input.documentId);
+  }).eq("id", input.documentId).select("id"));
+  if (!saved.ok) throw new Error(saved.code === "refused" ? `The document's origin was not saved. ${CHECKED_WRITE_REFUSED}` : saved.error);
   await logAuditAction({
     action: "DOCUMENT_ORIGIN_SET", resourceType: "document", resourceId: input.documentId,
     orgId: input.orgId ?? undefined, userId: input.actorId ?? "",

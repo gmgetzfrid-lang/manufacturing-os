@@ -9,6 +9,7 @@ import React, { useEffect, useState } from "react";
 import { Archive, X, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { setRetentionPolicy } from "@/lib/retention";
+import { appAlert } from "@/components/providers/DialogProvider";
 import type { RetentionPolicy } from "@/types/schema";
 
 type Basis = NonNullable<RetentionPolicy["basis"]>;
@@ -51,11 +52,14 @@ export default function RetentionPolicyModal({ level, id, orgId, name, uid, user
   const save = async () => {
     setBusy(true);
     try { await setRetentionPolicy({ level, id, orgId, policy: { enabled, years, basis, action }, actorId: uid, actorName: userName }); onSaved?.(); onClose(); }
+    // SAF-18 (J15a): a refused save or re-clock is said, never an unhandled rejection.
+    catch (e) { await appAlert({ message: (e as Error)?.message || "The retention policy could not be saved.", tone: "danger" }); }
     finally { setBusy(false); }
   };
   const remove = async () => {
     setBusy(true);
     try { await setRetentionPolicy({ level, id, orgId, policy: null, actorId: uid, actorName: userName }); onSaved?.(); onClose(); }
+    catch (e) { await appAlert({ message: (e as Error)?.message || "The retention policy could not be removed.", tone: "danger" }); }
     finally { setBusy(false); }
   };
 

@@ -23,6 +23,7 @@
 // did before this feature existed.
 
 import { supabase } from "@/lib/supabase";
+import { CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
 import { loadContainerChain, firstDefinedInChain } from "@/lib/containerChain";
 
 export type DocClass = "drawing" | "procedure";
@@ -117,7 +118,11 @@ export async function setDocClass(input: {
   docClass: DocClass | null;
 }): Promise<void> {
   const table = input.level === "library" ? "libraries" : input.level === "collection" ? "collections" : "documents";
-  const { error } = await supabase.from(table).update({ doc_class: input.docClass }).eq("id", input.id);
+  // SAF-18 class (a): the class IS the decision — a write that matched no
+  // row throws below (DocClassControl says it); the database's error keeps
+  // its pre-migration classification on the whole error, as before.
+  const { data: saved, error } = await supabase.from(table).update({ doc_class: input.docClass }).eq("id", input.id).select("id");
+  const matched = (saved ?? []).length;
   if (error) {
     if (isMissingDocClassSchema(error)) {
       docClassSchemaMissing = true;
@@ -128,6 +133,8 @@ export async function setDocClass(input: {
   // A successful write PROVES the columns exist — un-latch the missing-schema
   // flag so resolvers work immediately when the migration was applied
   // mid-session (otherwise a declared 'drawing' class would save while the
-  // MOC gate stayed silently off until the next full reload).
+  // MOC gate stayed silently off until the next full reload). (A write that
+  // matched no row answered without an error too — the columns exist.)
   docClassSchemaMissing = false;
+  if (matched === 0) throw new Error(`The document class was not saved. ${CHECKED_WRITE_REFUSED}`);
 }

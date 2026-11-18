@@ -24,6 +24,9 @@
 
 import { supabase } from "@/lib/supabase";
 import { logHoldEvent } from "@/lib/audit";
+// SAF-18 (J15a): the release and the re-date read their matched row.
+import { checkedWrite } from "@/lib/checkedWrite";
+import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { loadCapabilityPolicy, policyAllows, tokensFor, heldMatchesTokens, grantActive, holdOpenerTokenOn, type CapabilityPolicy } from "@/lib/capabilityPolicy";
 import { isControllerRole } from "@/lib/permissions";
 import { heldRoles, holdsReadOnlyRole } from "@/lib/roleHeld";
@@ -608,7 +611,12 @@ export async function releaseHold(input: ReleaseHoldInput): Promise<HoldRecord> 
   }
 
   const now = new Date().toISOString();
-  const { data, error } = await supabase
+  // SAF-18 class (a): the release IS the decision. Zero rows (released
+  // already, or refused) is the not-found refusal in words — never
+  // PostgREST's raw single-row text (PGRST116); any other error keeps the
+  // database's own sentence, as before.
+  const kept = keptAnswer();
+  const released = await checkedWrite(answered(supabase
     .from("document_holds")
     .update({
       released_at: now,
@@ -619,10 +627,11 @@ export async function releaseHold(input: ReleaseHoldInput): Promise<HoldRecord> 
     .eq("id", input.holdId)
     .is("released_at", null)   // safety: don't double-release
     .select("*")
-    .single();
+    .single(), kept));
+  const data = released.ok ? kept.data : null;
 
-  if (error || !data) {
-    const failure = error?.message || "Hold already released or not found.";
+  if (!data) {
+    const failure = holdWriteFailure(kept.error);
     // the opener was told it was happening — tell them it did not
     if (openerTold) {
       await noticeOpenerOfRelease({
@@ -689,15 +698,28 @@ export async function updateHoldExpectedRelease(holdId: string, expectedReleaseA
   const holdRow = await readHoldOrg(holdId, "The hold's expected date was not changed");
   await assertHoldCapability(holdRow.orgId, "holds.release", { action: "redate", openedBy: holdRow.openedBy });
 
-  const { data, error } = await supabase
+  // SAF-18 class (a): the re-date IS the decision (a closed or refused hold
+  // matches no row — said in words, never PGRST116's raw text).
+  const kept = keptAnswer();
+  const redated = await checkedWrite(answered(supabase
     .from("document_holds")
     .update({ expected_release_at: expectedReleaseAt })
     .eq("id", holdId)
     .is("released_at", null)   // an open hold only; a released one is closed history
     .select("*")
-    .single();
-  if (error || !data) throw new Error(error?.message || "Hold already released or not found.");
+    .single(), kept));
+  const data = redated.ok ? kept.data : null;
+  if (!data) throw new Error(holdWriteFailure(kept.error));
   return rowToHold(data as HoldRow);
+}
+
+/** SAF-18 (J15a): what a release / re-date that changed nothing says. Zero
+ *  rows — `.single()` answers PostgREST's PGRST116 ("JSON object requested,
+ *  multiple (or no) rows returned") — is the hold's own refusal sentence;
+ *  any other database error keeps its own words, as before. */
+function holdWriteFailure(error: { code?: string | null; message?: string } | null): string {
+  if (!error || error.code === "PGRST116") return "Hold already released or not found.";
+  return error.message || "Hold already released or not found.";
 }
 
 // ─── Audience (HLD-10 / DEC-35) ─────────────────────────────────

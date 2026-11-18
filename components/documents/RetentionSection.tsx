@@ -132,12 +132,16 @@ export default function RetentionSection({ doc, orgId, canManage }: {
     try {
       await setRetentionPolicy({ level: scope, id: targetId, orgId, policy: { enabled, years, basis, action }, actorId: uid, actorName: userEmail });
       setMode("view"); await load();
+    } catch (e) {
+    // SAF-18 (J15a): a refused save or re-clock is said, never an unhandled rejection.
+      await appAlert({ message: (e as Error)?.message || "The retention policy could not be saved.", tone: "danger" });
     } finally { setBusy(false); }
   };
   const clearPolicy = async () => {
     if (!targetId) return;
     setBusy(true);
     try { await setRetentionPolicy({ level: scope, id: targetId, orgId, policy: null, actorId: uid, actorName: userEmail }); setMode("view"); await load(); }
+    catch (e) { await appAlert({ message: (e as Error)?.message || "The retention policy could not be removed.", tone: "danger" }); }
     finally { setBusy(false); }
   };
 

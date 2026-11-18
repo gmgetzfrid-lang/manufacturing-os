@@ -77,8 +77,11 @@ function chain(table: string) {
     }
     if (op === "update") {
       const hit = all.filter((r) => matches(r, filters));
+      const refusal = state.writeError?.(table, op, hit);
+      if (refusal) return { data: null, error: refusal };
       for (const r of hit) { Object.assign(r, payload as Record<string, unknown>); state.onWrite?.(table, op, r); }
-      if (single) return hit[0] ? { data: hit[0], error: null } : { data: null, error: { message: "0 rows" } };
+      // (SAF-18, J15a: `.single()` over zero rows answers as PostgREST does — PGRST116)
+      if (single) return hit[0] ? { data: hit[0], error: null } : { data: null, error: { code: "PGRST116", message: "JSON object requested, multiple (or no) rows returned", details: "The result contains 0 rows" } };
       return { data: hit, error: null };
     }
     const hit = all.filter((r) => matches(r, filters));
@@ -651,7 +654,7 @@ describe("HLD-14 — expectedReleaseIso and scanStaleHolds", () => {
     const m73 = mig("20261073_dc_roundF_document_holds_integrity.sql");
     expect(m73).toMatch(/-- Still open and staying open: notes, expected_release_at and/);
     // (admin-and-org P9 review fix: the hold row is read CHECKED and the gate's sentence says "re-date")
-    expect(lib).toMatch(/await assertHoldCapability\(holdRow\.orgId, "holds\.release", \{ action: "redate", openedBy: holdRow\.openedBy \}\);\s*\n\s*\n\s*const \{ data, error \} = await supabase\s*\n\s*\.from\("document_holds"\)\s*\n\s*\.update\(\{ expected_release_at: expectedReleaseAt \}\)/);
+    expect(lib).toMatch(/await assertHoldCapability\(holdRow\.orgId, "holds\.release", \{ action: "redate", openedBy: holdRow\.openedBy \}\);\s*\n\s*\n(?:\s*\/\/[^\n]*\n)*\s*const kept = keptAnswer\(\);\s*\n\s*const redated = await checkedWrite\(answered\(supabase\s*\n\s*\.from\("document_holds"\)\s*\n\s*\.update\(\{ expected_release_at: expectedReleaseAt \}\)/); // (SAF-18, J15a: the same write, now checked)
   });
   it("rides the EXISTING maintenance route as a compliance scan — no third vercel.json cron", () => {
     const route = src("app/api/cron/maintenance/route.ts");
@@ -953,5 +956,34 @@ describe("DF-P25 — openHold writes what its opener examined in the hold's own 
   it("any other refusal of the insert is the hold's own (thrown, as before) — the record never hides it", async () => {
     state.writeError = (table) => (table === "document_holds" ? { code: "23505", message: "duplicate key" } : null);
     await expect(openHold({ orgId: "o1", documentId: DOC, reason: "Client Review", openedBy: "opener", examination: REC })).rejects.toThrow(/already open on this document/);
+  });
+});
+
+describe("SAF-18 (J15a) — a release or re-date that changed nothing says so in words, never PostgREST's PGRST116 text", () => {
+  const release = () => releaseHold({
+    holdId: HOLD, releasedBy: "opener", releasedByName: "Opal Opener", releasedByEmail: "o@x.io", releasedByRole: "Drafter",
+    releasedReason: "Vendor data received",
+  } as Parameters<typeof releaseHold>[0]);
+  it("zero rows (already released, or refused): the hold's own sentence, no HOLD_RELEASED row, nothing written", async () => {
+    state.rows.document_holds = [openHoldRow({ released_at: "2026-09-10T00:00:00Z", released_reason: "earlier" })];
+    state.rows.org_members = [{ uid: "opener", role: "Admin", roles: ["Admin"], org_id: "o1", status: "active" }];
+    await expect(release()).rejects.toThrow(/^Hold already released or not found\.$/);
+    await expect(updateHoldExpectedRelease(HOLD, "2026-10-17T23:59:59.999Z")).rejects.toThrow(/^Hold already released or not found\.$/);
+    expect(audit.logHoldEvent).not.toHaveBeenCalled();
+    expect(state.rows.document_holds[0]).toMatchObject({ released_reason: "earlier", expected_release_at: null });
+  });
+  it("any other database error keeps its own words, as before", async () => {
+    state.rows.document_holds = [openHoldRow()];
+    state.rows.org_members = [{ uid: "opener", role: "Admin", roles: ["Admin"], org_id: "o1", status: "active" }];
+    state.writeError = (table, op) => (table === "document_holds" && op === "update" ? { code: "P0001", message: "A hold's identity cannot change." } : null);
+    await expect(release()).rejects.toThrow("A hold's identity cannot change.");
+    await expect(updateHoldExpectedRelease(HOLD, null)).rejects.toThrow("A hold's identity cannot change.");
+    expect(state.rows.document_holds[0].released_at).toBeNull();
+    expect(audit.logHoldEvent).not.toHaveBeenCalled();
+  });
+  it("the release and the re-date read their matched row through checkedWrite (the census's shape)", () => {
+    const src = readFileSync(join(process.cwd(), "lib/holds.ts"), "utf8");
+    expect(src).toMatch(/const released = await checkedWrite\(answered\(supabase\s*\.from\("document_holds"\)\s*\.update\(/);
+    expect(src).toMatch(/const redated = await checkedWrite\(answered\(supabase\s*\.from\("document_holds"\)\s*\.update\(\{ expected_release_at: expectedReleaseAt \}\)/);
   });
 });

@@ -107,6 +107,10 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
       await markReviewed({ orgId, documentId: doc.id, userId: uid, userName, outcome, note: note.trim() || undefined });
       setMode("view"); setNote("");
       await load(); onChanged?.();
+    } catch (e) {
+      // SAF-18 (J15a): a review mark the database refused (or a certification
+      // event that could not be written) is said — never a silent no-op.
+      await appAlert({ message: (e as Error)?.message || "The review could not be recorded.", tone: "danger" });
     } finally { setBusy(false); }
   };
 
