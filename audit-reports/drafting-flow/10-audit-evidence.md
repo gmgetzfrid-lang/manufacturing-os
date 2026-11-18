@@ -1250,7 +1250,8 @@ app/api/admin/purge/route.ts:24 — const MIN_DAYS = 7;
 ## EVID-14 · drawing_audit_logs keeps one row per (sheet, revision) and is upserted — a 'broken_connectors' verdict can be overwritten with 'passed', including by an AI orchestrator tool
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED *(2026-11-18, drafting-flow Round G F5 DRAWING AUDIT HISTORY — done-whens 1, 3 and 4 hold as written; done-when 2 holds once the F5 app is deployed and `20261270` is pasted (DEC-30); see the Resolution at the end)*
+- **Assigned:** drafting-flow Round G F5 DRAWING AUDIT HISTORY (done-whens 1, 2 and 4: the append-only verdict history, the source column, the re-record test; migration `20261270`) — by the integrator, 2026-11-18 (DEC-31: the owner named below, intelligence, had no package, and the J15 pointer described `EVID-15`'s sites).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260929_mention_engine.sql:139-153`, `lib/orchestrator/tools.ts:544-548`, `app/api/knowledge/drawing/route.ts:453-456`, `lib/drawingAuditLog.ts:139-149`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — one row per (org, sheet, revision) with an overwriting upsert, and no history table, so a prior broken_connectors verdict plus its audit_details defect list is destroyed by any later 'passed' write. Notably the route at 443-451 builds a RANK map so 'a clean sheet must never mask a broken one' — but that severity ranking is applied only within the incoming batch, never against the already-stored row. The orchestrator path does go through `proposal()` (tools.ts:415-426) for human confirmation, but the confirmation text is only "Record <sheet> rev <rev> as passed" — it never discloses that an existing broken_connectors finding will be overwritten.
@@ -1306,6 +1307,78 @@ lib/drawingAuditLog.ts:141-148 (no audited_at emitted) —
 **Scope / residual.** Done-whens 1, 2 (the source column) and 4 → intelligence (the drawing-audit owner): an append-only history (or a superseded-rows table) and a source column. Not built here (`DEC-31`).
 
 *Cross-note (2026-11-18, projects-joint J15c CHECKED-WRITE SWEEP; DEC-29): stays OPEN, owner unchanged (intelligence, the drawing-audit owner).* The J15 plan entry (`audit-reports/fleet-plans/projects-joint.json`) carries an "EVID-14" pointer. It describes the copy record and VIEW row written by `components/assets/FileReferenceModal.tsx` and `components/viewers/SecureDocViewer.tsx`. Those are [`EVID-15`](#evid-15)'s sites, not this finding's subject, which is the `drawing_audit_logs` upsert with no history or source column. J15c resolved `EVID-15` and changed nothing here.
+
+*Assigned (2026-11-18, the integrator, DEC-31): drafting-flow Round G F5 DRAWING AUDIT HISTORY (key `F5-drawing-audit-history`, migration `20261270`).* The owner recorded above, "intelligence (the drawing-audit owner)", had no package, and the J15 mapping was wrong (see the cross-note). F5 owns done-whens 1, 2 and 4 now.
+
+**Resolution (2026-11-18, drafting-flow Round G).** Package F5 DRAWING AUDIT HISTORY, under the integrator's rulings for it (DEC-90: industry best practice, fail safe, no regression). Code half landed; migration `20261270_df_roundG_drawing_audit_history.sql` is PENDING paste (DEC-30).
+
+*Reproduced on `b88651d1`* (DEC-29), on the replay's snapshot taken just before `20261270` (`lib/__tests__/rls/replayKnownDefects.ts` CHECKPOINTS): `lib/__tests__/rls/f5DrawingAuditHistory.test.ts` "reproduced on the base". Two service-role upserts of the same (library, sheet, revision) at `broken_connectors` leave one row holding only the second findings list, and no table keeps the first. A write that names `source` is refused 42703 and writes nothing.
+
+*What landed.*
+- **The history (done-whens 1 and 4).** `drawing_audit_log_history` (`20261270:178`) gets one row for each verdict that a write replaced (`change` = `replaced`: an UPDATE that changed the verdict, through the upsert's conflict path) or that a delete removed (`deleted`: a document delete cascades to its verdicts). The replaced row is kept whole: key, `library_id`, `document_id`, `status`, `source`, `audit_details` (the findings) and `audited_at`. The row also records what replaced it (`replaced_by_status`, `replaced_by_source`), when (`changed_at`), and the signed-in uid (`changed_by`, NULL for a server write). Only the AFTER trigger `drawing_audit_logs_record_history()` writes it (`:220`), in the same statement as the change. So every writer keeps working unchanged, and `drawing_audit_logs` keeps its one current row per key. `log_id` and `document_id` have no foreign key, so the history outlives the row and its document. `org_id` cascades with the workspace: deleting a workspace deletes its history, and the cascading verdict deletes write none (the trigger skips a workspace that is gone, in either cascade order).
+- **What counts as a change.** The integrator ruled at the F5 reviews that an audit history records changes of substance, not timestamps. Both writers stamp `audited_at` on every write, and the route writes a still-waiting provisional row again on every record. Measured on the route (two records of the same library, the unknown-revision and the still-waiting cases), an identical re-record differs only in `audited_at`.
+
+  The history update trigger's condition (`20261270:285`) keeps a row only when one of these changed:
+  - **The row less `id`, `audited_at` and `audit_details`**, compared as jsonb (`to_jsonb(OLD) - '{id,audited_at,audit_details}'`). Every column of the table is compared, so a column added later is compared with nothing to maintain.
+  - **`audit_details` through `drawing_audit_verdict_details(jsonb)`** (`:264`). This helper is IMMUTABLE, SECURITY INVOKER, with search_path pinned. EXECUTE is granted to authenticated and service_role, because the condition runs in the writing session; PUBLIC and anon are revoked. The helper removes exactly the bookkeeping, `lib/drawingAuditLog.ts` `VERDICT_BOOKKEEPING_DETAILS`, pinned equal to the SQL:
+    - `by` and `byName`: who pressed record;
+    - `set.sheets`: the sheet list, which only the first row of a run carries.
+
+  The helper never raises. It strips only when `audit_details` is an object, and `set.sheets` only when `set` is an object. Any other shape (a scalar, an array, a `set` that is an array) is compared whole, so an odd row never refuses a write or a batched upsert.
+
+  Everything else in `audit_details` is compared:
+  - the seven findings lists;
+  - `provisional` and `waitingFindings`;
+  - `note`;
+  - `coverage`: the index fingerprints the verdict was computed from. It changes only when an input changed (`verdictBasis`), so a pass against one index and a pass against the next are two verdicts, and the earlier one is kept (the second review ruling);
+  - the set's scope (`count`, `digest`, `truncated`, `seriesNotJudged`);
+  - `knowledgeDocumentId` and `libraryId`;
+  - any key a later writer adds.
+
+  An older run's sheet list is found by `set.digest`, on any row (current or history) that carries `set.sheets` under the same digest. It is not found through the same run's `audited_at`, which moves on every re-record. So the history grows only on a change of substance. An identical re-record keeps nothing: its earlier `audited_at` and recorder are not kept, and the current row carries the newest `audited_at`. A delete is always kept. All of it is removed with its workspace.
+
+  The history copies the columns as of `20261270`. A column added to `drawing_audit_logs` later is compared by the condition automatically, but it must be added to the history table and to `drawing_audit_logs_record_history()`. The test:db catalog test fails until it is, because it reads the live columns of both tables.
+- **Who may read and write it.** Reading uses the same expression as `drawing_audit_logs_read`, an active member of the org (`:214`), and is never wider: the paste's final SELECT compares the two `pg_policies` expressions, and `lib/__tests__/f5DrawingAuditHistoryMigration.test.ts` compares the file with the newest definition, found by scanning `supabase/migrations`. Nobody writes it: INSERT, UPDATE, DELETE and TRUNCATE are revoked from anon, authenticated and service_role, and there is no write policy. DRLS-16: the trigger function is SECURITY DEFINER with search_path pinned, and EXECUTE is revoked from PUBLIC, anon, authenticated and service_role. It has a `trigger-only` row in the definer census (`lib/__tests__/rls/definerDecisions.ts`).
+- **The source (done-when 2).** `drawing_audit_logs.source` is nullable, with a CHECK over (`engine`, `orchestrator`, `human`) (`20261270:145`). The drawing route writes `engine` (`app/api/knowledge/drawing/route.ts:1681`), and `log_audit_completion` writes `orchestrator` (`lib/orchestrator/tools.ts:1494`). A signed-in session that writes the row directly (the SURF-7 controller INSERT / UPDATE policies, `20261048`) is stamped `human` by the BEFORE trigger `drawing_audit_logs_stamp_source()` (`:152`, SECURITY INVOKER), whatever it sent. No app path writes `human`. `source` names the writer of the row's last write. When `log_audit_completion` re-records an org-wide row, it merges the stored audit_details into its write (`lib/orchestrator/tools.ts:1480-1484`, `keptDetails`). One such row is a `20261124`-backfilled library row whose mirror is gone; its findings were the engine's and are kept. After the merge that row says `orchestrator`, while some of its findings came from the engine. The history keeps the row as it was before the merge, with its own source. Existing rows keep NULL ("recorded before the column"). None is backfilled, because who wrote an existing row is only suggested by its details; inventory row 4 counts the suggestions.
+- **Before the paste.** Both writers go through `writeWithSourceFallback` (`lib/drawingAuditLog.ts:81`). The first try names `source`; a database without the column answers 42703 / PGRST204 and writes nothing, and the writer then sends today's write, byte for byte. Any other answer is the first write's own, with no second try. The legacy-key writes (a database without `20261124`) are unchanged and never name `source`: `20261270` refuses to run without `20261124`.
+
+*Done-when.*
+1. ✓ Every overwrite is recorded in a history table (`drawing_audit_log_history`), the finding's second option: the replaced verdict whole, and a deleted one too. PENDING paste.
+2. ✓ once the F5 app is deployed (and the paste is in). `audited_at` is written on every write (DWG-6). Every upsert also writes `source`: `engine` (the route), `orchestrator` (the tool), or `human` (a signed-in session's direct write, which the database stamps). In two windows an upsert sends no `source`: between the paste and the deploy, and while PostgREST's schema cache has not reloaded after the paste (it answers PGRST204, and the writer falls back to today's write). That upsert leaves the source already on the row in place. A row re-recorded then can carry an earlier writer's label, or NULL on a row first written before the paste. The migration header says the same. PENDING paste.
+3. ✓ (stricter, DF-P11) Unchanged.
+4. ✓ `lib/__tests__/rls/f5DrawingAuditHistory.test.ts` "done-when 4" (PostgreSQL 16, `npm run test:db`): a same-severity re-record with changed findings (`broken_connectors` over `broken_connectors`) keeps the earlier verdict and its findings in the history, and the current row is the new one. So does a raise (`flagged` → `broken_connectors`). A same-severity re-record with the same findings has no earlier findings to lose, and keeps no row (the review ruling above).
+
+*No regression.* Each reader's own select reads back the same current rows after the paste as before it, for the same writes (A/B on the base snapshot against the replay: the drawing route's two `readPrior` selects, `check_audit_history`, `storedOrgWideVerdict`, and the row count; "NO REGRESSION (A/B)"). The route answers the same, with the same rows, with or without the column (`lib/__tests__/intelRoundGDrawingRoutes.test.ts`, "EVID-14"), and so does the tool (`lib/__tests__/orchestratorExecute.test.ts`, "EVID-14"). No reader selects `source`, and nothing in `app/`, `lib/` or `components/` names the history table (`f5DrawingAuditHistoryMigration.test.ts`). The full export (`lib/dataExport.ts`, `select *`) carries the new `source` column after the paste. Its backup decision for the history table is the integrator's at the merge (`lib/__tests__/exportCoverage.test.ts` DECISION_AT_MERGE).
+
+*Tests.* `lib/__tests__/rls/f5DrawingAuditHistory.test.ts` (16, PostgreSQL 16) covers:
+- the reproduction on the base;
+- one paste on the base and a re-paste on the replay, with 9 probes true and 6 inventory rows;
+- done-when 4;
+- what counts as a change (review fix pass):
+  - an identical re-record (new `audited_at`, another recorder, no sheet list) keeps none;
+  - a coverage-only change keeps one row, holding the earlier fingerprint;
+  - an odd `audit_details` never raises: a `set` that is an array, details as a scalar or as an array. Each write lands; a change of shape keeps one row, and the same odd shape again keeps none;
+  - a batched upsert with one row whose details are an array and one whose `set` is an array writes every row;
+  - the live catalog: every column of `drawing_audit_logs` has a column in the history, and a direct change to a column the upsert never sets (`library_id`) keeps a row, while an `audited_at`-only change keeps none;
+  - a still-waiting provisional rewrite keeps none, and its settling keeps one;
+  - each of these keeps exactly one row: changed findings, a status change, a source change, a note, a changed scope;
+- done-when 2, including the 23514 refusal and the `human` stamp;
+- the A/B;
+- who reads the history (member yes; another workspace's Admin, a suspended member and anon no);
+- nobody writes it (42501 for a member, a controller and the service role);
+- a document delete;
+- a workspace delete in both cascade orders.
+
+The suite deletes every workspace and person it seeds and drops its copies. `lib/__tests__/f5DrawingAuditHistoryMigration.test.ts` (12) checks the paste's shape, the history condition (the row as jsonb less `id`, `audited_at` and `audit_details`; audit_details through the never-raising helper, which strips exactly `VERDICT_BOOKKEEPING_DETAILS`, `coverage` not among them), the whole-row copy against the column list derived at test time from the CREATE TABLE and every ADD COLUMN in the sequence, that drawing_audit_logs keeps everything it has (no policy, index or function of it is re-created), the history policy against the newest definition, DRLS-16, the whole-row copy, the writers' and readers' source pins, and the fallback helper. Mutation-checked: each of fifteen SQL mutations and six code mutations fails at least one test. The second review fix pass added four SQL mutations: the helper strips `coverage` again; the helper has no shape guard (the first-pass expression); the row's columns are not compared; authenticated loses EXECUTE on the helper (the controller path is then refused). It also added one code mutation, the TS list gaining `coverage`. The first review fix pass added five SQL mutations and one code mutation:
+  - the reviewed row-changed condition;
+  - `coverage` not stripped;
+  - audit_details not compared;
+  - `source` not compared;
+  - the TS list drifting from the SQL.
+
+*Paste / deploy.* Paste after `20261124` (the file refuses without it, and changes nothing). Either order with the deploy is safe. Recommended: deploy first, then paste, so that every write after the paste names its source.
+
+**Scope / residual.** PENDING paste `20261270` (the integrator at that paste-back). Rows recorded before the paste keep `source` NULL, and their earlier verdicts (overwritten before the history existed) are not recoverable. A re-record that changes only bookkeeping keeps no history: its earlier `audited_at`, recorder and fingerprints are not kept, as ruled. The history keeps a verdict replaced by any writer, the SQL editor included. A TRUNCATE of `drawing_audit_logs` is not captured (PostgREST exposes no TRUNCATE; only a direct database connection can issue one). The history's own TRUNCATE is revoked from every client role. Nothing reads the history in the product yet: a reader (for example the drawing panel's "earlier verdicts") is not a done-when here and is not opened as a finding.
 
 ---
 

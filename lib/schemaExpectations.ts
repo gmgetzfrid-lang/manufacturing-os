@@ -111,6 +111,7 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "documents", migration: "schema.sql (base schema)" },
   { table: "download_audits", migration: "schema.sql (base schema)" },
   { table: "drawing_audit_logs", migration: "20260929_mention_engine.sql" },
+  { table: "drawing_audit_log_history", migration: "20261270_df_roundG_drawing_audit_history.sql" },
   { table: "e_signatures", migration: "20260720_e_signatures.sql" },
   { table: "email_notifications", migration: "20260529_phase_b_notifications.sql" },
   { table: "entity_mentions", migration: "20260929_mention_engine.sql" },
@@ -318,6 +319,7 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   { table: "codebook_config", column: "codebook_version", migration: "20261178_intel_roundG_codebook_lifecycle.sql", feature: "The Site Codebook's version, moved once per change (CB-6)" },
   { table: "codebook_entries", column: "codebook_version", migration: "20261178_intel_roundG_codebook_lifecycle.sql", feature: "The codebook version each code was written in (CB-6)" },
   { table: "assets", column: "codebook_version", migration: "20261178_intel_roundG_codebook_lifecycle.sql", feature: "The codebook version an asset's site code was filed under — what a re-decode compares (CB-6)" },
+  { table: "drawing_audit_logs", column: "source", migration: "20261270_df_roundG_drawing_audit_history.sql", feature: "Who produced a drawing audit verdict (engine / orchestrator / human) — drafting-flow EVID-14" },
 ];
 
 export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [

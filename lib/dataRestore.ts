@@ -180,6 +180,7 @@ export const IMMUTABLE_TABLES: Record<string, string> = {
   e_signatures: "e-signatures are minted only by the signing ceremony's server route, after re-authentication",
   audit_logs: "the audit trail is append-only — restored history would be indistinguishable from real",
   drawing_audit_logs: "drawing audit completions are written only by the reviewing path",
+  drawing_audit_log_history: "the history of replaced drawing audit verdicts is written only by the database's trigger on drawing_audit_logs; restored history would be indistinguishable from real",
   document_acknowledgments: "read-and-understood acknowledgments are the assignee's own act",
   distribution_acks: "distribution acknowledgments are the recipient's own act",
   document_review_signoffs: "review sign-offs are bound to the reviewer's e-signature",

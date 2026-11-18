@@ -45,6 +45,48 @@ export function wouldLowerSeverity(stored: string | null | undefined, next: Audi
   return was === undefined ? true : RANK[next] < was;
 }
 
+/** Who produced a verdict — drawing_audit_logs.source (20261270, drafting-flow
+ *  EVID-14): `engine` the drawing route's connector audit, `orchestrator` the
+ *  log_audit_completion tool (a controller confirmed it), `human` a signed-in
+ *  session writing the row directly (the database stamps it; no app path
+ *  writes it). Every verdict a write replaces is kept whole in
+ *  drawing_audit_log_history by the database's own trigger, so no writer
+ *  does anything for the history. */
+export type AuditSource = "engine" | "orchestrator" | "human";
+
+/** The bookkeeping in a verdict row's audit_details that a re-record may
+ *  change without changing the verdict: who pressed record (`by`,
+ *  `byName`) and the set's sheet list, which only the first row of a run
+ *  carries (`set.sheets`; an older run's list is found by `set.digest`).
+ *  `coverage` is NOT bookkeeping: it changes only when an input changed, so
+ *  it is evidence of what the verdict was computed from. 20261270's history
+ *  trigger keeps a row only when the verdict changed — any column but id,
+ *  audited_at and audit_details, or audit_details without these paths
+ *  (drawing_audit_verdict_details; the same list, pinned equal by
+ *  lib/__tests__/f5DrawingAuditHistoryMigration.test.ts). */
+export const VERDICT_BOOKKEEPING_DETAILS: readonly string[] = ["by", "byName", "set.sheets"];
+
+type WriteError = { code?: string | null; message?: string | null } | null;
+
+/** A database without 20261270 has no `source` column: PostgREST answers
+ *  PGRST204 (Postgres 42703) and writes nothing. */
+export function isMissingSourceColumn(e: WriteError): boolean {
+  return !!e && (e.code === "42703" || e.code === "PGRST204"
+    || /column .* does not exist|could not find the .* column/i.test(e.message ?? ""));
+}
+
+/** A verdict write that names its source, and on a database without
+ *  20261270 (the column is missing: nothing was written) the write sent
+ *  before it, unchanged. Any other answer is the first write's. */
+export async function writeWithSourceFallback<E extends WriteError>(
+  withSource: () => PromiseLike<{ error: E }>,
+  today: () => PromiseLike<{ error: E }>,
+): Promise<{ error: E }> {
+  const first = await withSource();
+  if (isMissingSourceColumn(first.error)) return await today();
+  return first;
+}
+
 /** One sheet as the auditor sees it. `name` must be the same string the
  *  findings refer to it by — the audit reports by display name. */
 export interface AuditSheet {
@@ -798,8 +840,11 @@ export const AUDIT_SET_LIST_MAX = 500;
  *  The set is stored ONCE per run: every row carries its count and digest
  *  (`set.digest`, of the sorted list), and the first row alone carries the
  *  list itself — a 600-sheet library no longer writes 600 copies of a
- *  500-entry list in one request. A reader finds a row's list on the row of
- *  the same run (`audited_at`) with the same digest. */
+ *  500-entry list in one request. A reader finds a row's list by its digest:
+ *  on a row that carries `set.sheets` under the same `set.digest` (a current
+ *  row, or a drawing_audit_log_history row of an earlier run — 20261270
+ *  keeps no history row for the list alone, and `audited_at` moves on every
+ *  re-record). */
 export function verdictRows(
   orgId: string, verdicts: readonly SheetVerdict[], byUserId: string,
   scope: AuditScope, auditedAt: string = new Date().toISOString(),

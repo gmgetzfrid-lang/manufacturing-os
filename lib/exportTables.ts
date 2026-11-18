@@ -40,6 +40,12 @@ export const ORG_SCOPED_TABLES = [
   // Audit memory. Losing it doesn't lose data, it loses the knowledge that
   // the work was already done — every sheet gets re-audited from scratch.
   "drawing_audit_logs",
+  // drafting-flow F5 (20261270, EVID-14): the append-only history of drawing
+  // audit verdicts a re-record replaced or a delete removed — decided at the
+  // merge (the integrator, 2026-11-18, DEC-90): EXPORTED after
+  // drawing_audit_logs; never imported (IMMUTABLE_TABLES, written only by the
+  // database's trigger).
+  "drawing_audit_log_history",
   // Document control
   "documents",
   "document_versions",

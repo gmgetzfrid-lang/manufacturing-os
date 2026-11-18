@@ -29,7 +29,7 @@ import { flowsToLineEdges, FLOW_EDGE_CEILING, FLOW_READ_OUT_OF_TIME } from "@/li
 import { READ_PAGE, type PgErr } from "@/lib/knowledgeAskGuards";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { holdsReadOnlyRole } from "@/lib/roleHeld";
-import { RANK, replaceDecision, storedProvisional, type AuditStatus } from "@/lib/drawingAuditLog";
+import { RANK, replaceDecision, storedProvisional, writeWithSourceFallback, type AuditStatus } from "@/lib/drawingAuditLog";
 
 export interface ToolContext {
   orgId: string;
@@ -1484,9 +1484,16 @@ const logAuditCompletion: ToolDef = {
         note: details, by: ctx.userId, byName: ctx.actorName, source: "orchestrator",
       },
     };
+    // On 20261124's key the row names its source (20261270, EVID-14); a
+    // database without that column refuses the write whole (42703 /
+    // PGRST204) and today's write is sent instead. 20261270 needs 20261124,
+    // so the legacy key never has the column.
     const { error } = stored.legacy
       ? await supabaseAdmin.from("drawing_audit_logs").upsert(row, { onConflict: "org_id,sheet_number,revision_code" })
-      : await supabaseAdmin.from("drawing_audit_logs").upsert({ ...row, library_id: null }, { onConflict: "org_id,library_id,sheet_number,revision_code" });
+      : await writeWithSourceFallback(
+        () => supabaseAdmin.from("drawing_audit_logs").upsert({ ...row, library_id: null, source: "orchestrator" }, { onConflict: "org_id,library_id,sheet_number,revision_code" }),
+        () => supabaseAdmin.from("drawing_audit_logs").upsert({ ...row, library_id: null }, { onConflict: "org_id,library_id,sheet_number,revision_code" }),
+      );
     if (error) return { data: { error: error.message } };
     return { data: { status: "logged" } };
   },

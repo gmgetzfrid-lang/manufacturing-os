@@ -68,7 +68,7 @@ import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
 import {
   verdictsForSheets, verdictRows, sheetsNeedingAudit, seriesHeldBySet, seriesNotJudged,
   missingWithinHeldSeries, missingUnreadInScope, replaceDecision, storedProvisional, mergeVerdictsByKey, awaitingFiled, settledFromStored,
-  capWaitingOn, indexFingerprint, verdictBasis, digest, WAITING_NAMES_MAX,
+  capWaitingOn, indexFingerprint, verdictBasis, digest, WAITING_NAMES_MAX, writeWithSourceFallback,
   type AuditSheet, type SheetVerdict,
 } from "@/lib/drawingAuditLog";
 
@@ -1666,14 +1666,23 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
     };
     const rows = verdictRows(orgId, [...deduped, ...settledInPlace], userId, scope);
     // Before 20261124: the org-wide key that database has, and no
-    // library_id column (the library stays in audit_details).
+    // library_id column (the library stays in audit_details). After it, the
+    // rows name their source (20261270, EVID-14: the engine's verdict); a
+    // database without that column refuses the write whole (42703 /
+    // PGRST204) and today's write is sent instead. 20261270 needs
+    // 20261124, so the legacy key never has the column.
     const { error: writeError } = legacyKey
       ? await supabaseAdmin
         .from("drawing_audit_logs")
         .upsert(rows.map(({ library_id: _library, ...row }) => row), { onConflict: "org_id,sheet_number,revision_code" })
-      : await supabaseAdmin
-        .from("drawing_audit_logs")
-        .upsert(rows, { onConflict: "org_id,library_id,sheet_number,revision_code" });
+      : await writeWithSourceFallback(
+        () => supabaseAdmin
+          .from("drawing_audit_logs")
+          .upsert(rows.map((row) => ({ ...row, source: "engine" as const })), { onConflict: "org_id,library_id,sheet_number,revision_code" }),
+        () => supabaseAdmin
+          .from("drawing_audit_logs")
+          .upsert(rows, { onConflict: "org_id,library_id,sheet_number,revision_code" }),
+      );
     if (writeError) {
       return bad(
         isMissingTable(writeError)

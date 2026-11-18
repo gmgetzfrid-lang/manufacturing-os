@@ -69,6 +69,8 @@ export const OPERATOR_SWITCHES: Readonly<Record<string, Record<string, string>>>
  * supersession reads the same rows before and after its read rail); 20261131
  * (document control's documents rails) is there for I-34 too: 20261261 pasted
  * before 20261131 refuses and changes nothing, so 20261131 still reads every
- * check true.
+ * check true. 20261270 is drafting-flow F5's (EVID-14: a drawing audit
+ * verdict's history and source; every reader of drawing_audit_logs answers
+ * the same before and after it — lib/__tests__/rls/f5DrawingAuditHistory.test.ts).
  */
-export const CHECKPOINTS: readonly string[] = ["20261131", "20261217", "20261224", "20261261"];
+export const CHECKPOINTS: readonly string[] = ["20261131", "20261217", "20261224", "20261261", "20261270"];
