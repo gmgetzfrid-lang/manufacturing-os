@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabase";
 import { checkedWrite, CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
 import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { notLandedReason } from "@/lib/checkedWriteReason";
+import { COLUMN_WIDTH_VIEW_ONLY_TITLE, createColumnWidthSaver, saveLibraryColumnWidths, type ColumnWidthSaver, type ColumnWidths } from "@/lib/libraryColumnWidths";
 import { stateStyle, documentState } from "@/lib/stateColors";
 import { useRole } from "@/components/providers/RoleContext";
 import { holdsReadOnlyRole } from "@/lib/roleHeld";
@@ -1333,10 +1334,14 @@ export default function LibraryExplorerPage() {
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
 
   // Column resize state — read from libraries.column_widths (and live-synced
-  // below); this page never writes it: document-control REV-38 (a resize
-  // and its reset are kept for this view only).
+  // below). document-control REV-38 (DEC-90): a controller's resize or reset
+  // is saved as the library's shared width (debounced, checked —
+  // lib/libraryColumnWidths); anyone else's applies to this view only.
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
   const resizingRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null);
+  const widthSaverRef = useRef<ColumnWidthSaver | null>(null);
+  /** What the width saver reads when it fires (kept current by an effect). */
+  const widthSaverLiveRef = useRef<{ canSave: boolean; uid: string | null; widths: ColumnWidths }>({ canSave: false, uid: null, widths: {} });
 
   const [activeColumns, setActiveColumns] = useState<string[]>([]);
   const [columnDefs, setColumnDefs] = useState<MetadataFieldDefinition[]>([]);
@@ -1677,7 +1682,12 @@ export default function LibraryExplorerPage() {
         { event: "UPDATE", schema: "public", table: "libraries", filter: `id=eq.${libraryId}` },
         (payload) => {
           const next = (payload.new as { column_widths?: Record<string, number> } | null)?.column_widths;
-          if (next && !resizingRef.current) setColWidths(next);
+          // REV-38: never during the person's own drag, while their own save
+          // waits or is in flight, nor the echo of a save they sent.
+          if (!next) return;
+          const resizing = !!resizingRef.current;
+          const take = widthSaverRef.current ? widthSaverRef.current.acceptRemote(next, resizing) : !resizing;
+          if (take) setColWidths(next);
         }
       )
       .subscribe();
@@ -1880,6 +1890,38 @@ export default function LibraryExplorerPage() {
       isActiveMember: true,
     };
   }, [uid, activeRole, roles, activeOrgId, myTeamIds]);
+
+  // document-control REV-38 (DEC-90): who saves the library's SHARED column
+  // width — the controller tier (Admin / DocCtrl by the role collection,
+  // mirroring is_org_controller), the tier every other library-layout write
+  // on this page is offered to. (libraries' row-level security,
+  // libraries_org_access, admits any active member to UPDATE the row, and no
+  // trigger judges column_widths — the database does not hold the shared
+  // width to controllers: document-control REV-39.) Anyone else resizes for
+  // this view only, and nothing is written.
+  const canSaveColumnWidths = !!principal && isControllerPrincipal(principal);
+  useEffect(() => {
+    widthSaverLiveRef.current = { canSave: canSaveColumnWidths, uid: uid ?? null, widths: colWidths };
+  }, [canSaveColumnWidths, uid, colWidths]);
+  useEffect(() => {
+    if (!libraryId) return;
+    const saver = createColumnWidthSaver({
+      canSave: () => widthSaverLiveRef.current.canSave,
+      current: () => widthSaverLiveRef.current.widths,
+      write: (widths) => saveLibraryColumnWidths(supabase, libraryId, widths, widthSaverLiveRef.current.uid),
+      // A save sent as the library or page was left is said where it can
+      // still be seen (the app's dialog), never dropped silently.
+      notSaved: (message, afterClose) => {
+        if (afterClose) void appAlert({ message, tone: "danger" });
+        else setError(message);
+      },
+    });
+    widthSaverRef.current = saver;
+    return () => {
+      saver.dispose();
+      if (widthSaverRef.current === saver) widthSaverRef.current = null;
+    };
+  }, [libraryId]);
 
   // May this user publish revisions in THIS library? True for Admin/DocCtrl
   // (broad tier) and for anyone the library's ACL grants the "publish" action
@@ -3509,7 +3551,8 @@ export default function LibraryExplorerPage() {
     return `${d}px`;
   }, [colWidths, getDefaultColWidth]);
 
-  // Starts a column resize drag. Admin/DocCtrl only.
+  // Starts a column resize drag. Anyone may resize; a controller's is saved
+  // as the shared width when the drag ends (REV-38).
   const handleResizeStart = useCallback((e: React.PointerEvent, colKey: string) => {
     e.preventDefault();
     e.stopPropagation();
@@ -3538,9 +3581,10 @@ export default function LibraryExplorerPage() {
       document.removeEventListener("pointerup", onUp);
       document.removeEventListener("pointercancel", onUp);
       resizingRef.current = null;
-      // projects-tab SAF-22 (J15e, the integrator's ruling R1): the width
-      // save that stood here built an update and never awaited it, so it was
-      // never sent — removed, nothing written before or after (REV-38).
+      // REV-38: a controller's width is saved ~500 ms after the drag ends
+      // (checked; a save that does not land is said). Anyone else's is not
+      // written — schedule() answers false and asks nothing of the database.
+      widthSaverRef.current?.schedule();
     };
 
     document.addEventListener("pointermove", onMove);
@@ -3555,9 +3599,10 @@ export default function LibraryExplorerPage() {
     setColWidths(prev => {
       const next = { ...prev };
       delete next[colKey];
-      // (SAF-22 / REV-38: the never-sent width save removed here too.)
       return next;
     });
+    // REV-38: the reset is saved as the drag is (a controller's only).
+    widthSaverRef.current?.schedule();
   }, []);
 
   const renderDocCell = (docRecord: DocumentRecord, key: string) => {
@@ -4801,22 +4846,24 @@ export default function LibraryExplorerPage() {
                                   )}
                                 </div>
 
-                                {/* Right-edge resize handle — admin/DocCtrl only.
+                                {/* Right-edge resize handle — everyone (REV-38): a
+                                    controller's width is saved for the library; anyone
+                                    else's applies to this view only, and the title says so.
                                     Always-visible vertical bar with a wide hit zone. Brightens on hover. */}
-                                {isController && (
-                                  <div
-                                    onPointerDown={(e) => handleResizeStart(e, colKey)}
-                                    onDoubleClick={(e) => handleResizeReset(e, colKey)}
-                                    onClick={(e) => e.stopPropagation()}
-                                    title={isResized ? "Drag to resize · double-click to reset" : "Drag to resize column"}
-                                    style={{ touchAction: "none" }}
-                                    className={`absolute top-0 right-0 h-full w-2.5 cursor-col-resize flex items-center justify-center group/grip ${ZC.raised} hover:bg-blue-100/60`}
-                                  >
-                                    <div className={`h-2/3 w-[3px] rounded-full transition-colors ${
-                                      isResized ? "bg-blue-600" : "bg-slate-400 group-hover/grip:bg-blue-600"
-                                    }`} />
-                                  </div>
-                                )}
+                                <div
+                                  onPointerDown={(e) => handleResizeStart(e, colKey)}
+                                  onDoubleClick={(e) => handleResizeReset(e, colKey)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  title={canSaveColumnWidths
+                                    ? (isResized ? "Drag to resize · double-click to reset" : "Drag to resize column")
+                                    : `${COLUMN_WIDTH_VIEW_ONLY_TITLE} · ${isResized ? "drag to resize · double-click to reset" : "drag to resize"}`}
+                                  style={{ touchAction: "none" }}
+                                  className={`absolute top-0 right-0 h-full w-2.5 cursor-col-resize flex items-center justify-center group/grip ${ZC.raised} hover:bg-blue-100/60`}
+                                >
+                                  <div className={`h-2/3 w-[3px] rounded-full transition-colors ${
+                                    isResized ? "bg-blue-600" : "bg-slate-400 group-hover/grip:bg-blue-600"
+                                  }`} />
+                                </div>
                               </th>
                             );
                           })}
