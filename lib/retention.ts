@@ -22,7 +22,7 @@ import { describeWriteError } from "@/lib/checkedWrite";
 import { userFacingError } from "@/lib/userFacingError";
 import { effectiveOwnerForDocument, getOrgControllers, isEffectiveOwnerOfDocument } from "@/lib/ownership";
 import { resolveActorPrincipal } from "@/lib/principal";
-import { isControllerPrincipal } from "@/lib/permissions";
+import { isControllerPrincipal, knownInactive, NOT_ACTIVE_MEMBER_MESSAGE } from "@/lib/permissions";
 import { resolveCanControlLibrary } from "@/lib/documentGuards";
 import { readActiveHolds, decideHoldGate, HoldBlockedError } from "@/lib/holdGate";
 import {
@@ -205,8 +205,11 @@ async function assertRetentionAuthority(input: { orgId: string; actorId?: string
   if (!input.actorId) throw new Error("Retention settings can only be changed by a controller, the document's owner, or a publisher of its library.");
   const p = await resolveActorPrincipal({ uid: input.actorId, orgId: input.orgId });
   if (isControllerPrincipal(p)) return;
-  if (input.documentId && await isEffectiveOwnerOfDocument(input.documentId, input.actorId)) return;
+  // ORG-23: the owner rung is a member's — a principal known not to be an
+  // active member is not asked about ownership, and is told why.
+  if (input.documentId && !knownInactive(p) && await isEffectiveOwnerOfDocument(input.documentId, input.actorId)) return;
   if (input.libraryId && await resolveCanControlLibrary(input.libraryId, p)) return;
+  if (knownInactive(p)) throw new Error(NOT_ACTIVE_MEMBER_MESSAGE);
   throw new Error("Retention settings can only be changed by a controller, the document's owner, or a publisher of its library.");
 }
 

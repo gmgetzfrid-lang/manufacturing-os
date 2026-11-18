@@ -34,7 +34,7 @@ import { getActiveEpisode, postEpisodeSystemMessage } from "@/lib/checkoutEpisod
 import { notify } from "@/lib/inAppNotifications";
 import { getMyEditBase, recordIntent } from "@/lib/intents";
 import { announceBranchOpened } from "@/lib/branches";
-import { isControllerPrincipal, type Principal } from "@/lib/permissions";
+import { isControllerPrincipal, knownInactive, NOT_ACTIVE_MEMBER_MESSAGE, type Principal } from "@/lib/permissions";
 import type { DocumentRecord, DocumentVersion, ReviewControl } from "@/types/schema";
 import { letterLabelFor, openReviewRoster, invalidateDraftSignoffs, effectiveReviewControlForDocument, draftRosterCompleteChecked } from "@/lib/reviewControl";
 import { applyEffectiveDate } from "@/lib/effectiveDate";
@@ -351,13 +351,13 @@ export async function authorizePublish(opts: {
   });
   let canControlLibrary = await resolveCanControlLibrary(opts.libraryId, principal);
   // The document's effective owner may publish it even without library authority.
-  if (!canControlLibrary) {
+  // ORG-23: the owner rung is a member's (lib/permissions knownInactive).
+  if (!canControlLibrary && !knownInactive(principal)) {
     canControlLibrary = await isEffectiveOwnerOfDocument(opts.documentId, opts.actorUserId);
   }
   if (!canControlLibrary) {
-    throw new Error(
-      "You don't have authority to publish revisions in this library. Ask an Admin or Doc Control to grant it.",
-    );
+    throw new Error(knownInactive(principal) ? NOT_ACTIVE_MEMBER_MESSAGE
+      : "You don't have authority to publish revisions in this library. Ask an Admin or Doc Control to grant it.");
   }
   const state = await fetchPublishGuardState(opts.documentId);
   const lockedByOther =
@@ -1930,9 +1930,10 @@ export async function correctRevisionLabel(input: CorrectRevLabelInput):
   // effective ownership of this document.
   const principal: Principal = await resolveActorPrincipal({ uid: actorUserId, orgId, headlineRole: actorRole });
   let authorized = await resolveCanControlLibrary(libraryId, principal);
-  if (!authorized) authorized = await isEffectiveOwnerOfDocument(doc.id, actorUserId);
+  // ORG-23: the owner rung is a member's (lib/permissions knownInactive).
+  if (!authorized && !knownInactive(principal)) authorized = await isEffectiveOwnerOfDocument(doc.id, actorUserId);
   if (!authorized) {
-    throw new Error("You don't have authority to correct revision labels here. Ask an Admin or Doc Control.");
+    throw new Error(knownInactive(principal) ? NOT_ACTIVE_MEMBER_MESSAGE : "You don't have authority to correct revision labels here. Ask an Admin or Doc Control.");
   }
   // HLD-1: a held document's revision label is what every hold card printed —
   // it does not move until the hold is released (the shared gate; fails
@@ -2273,9 +2274,10 @@ export async function authorizeArchive(opts: {
   });
   if (!isControllerPrincipal(principal)) {
     let canArchive = await resolveCanControlLibrary(opts.libraryId, principal);
-    if (!canArchive) canArchive = await isEffectiveOwnerOfDocument(opts.documentId, opts.actorUserId);
+    // ORG-23: the owner rung is a member's (lib/permissions knownInactive).
+    if (!canArchive && !knownInactive(principal)) canArchive = await isEffectiveOwnerOfDocument(opts.documentId, opts.actorUserId);
     if (!canArchive) {
-      throw new Error("The document was NOT archived — archiving takes publish authority in this library (Doc Control, a granted publisher or the document's owner). Nothing was changed.");
+      throw new Error(knownInactive(principal) ? NOT_ACTIVE_MEMBER_MESSAGE : "The document was NOT archived — archiving takes publish authority in this library (Doc Control, a granted publisher or the document's owner). Nothing was changed.");
     }
     await assertNotOnHold(opts.documentId, { action: "archiving it" });
   }
@@ -4401,9 +4403,10 @@ export async function backfillVersion(input: BackfillInput): Promise<DocumentVer
   // this document. Checked before anything is hashed or uploaded.
   const principal: Principal = await resolveActorPrincipal({ uid: actorUserId, orgId, headlineRole: actorRole });
   let authorized = await resolveCanControlLibrary(libraryId, principal);
-  if (!authorized) authorized = await isEffectiveOwnerOfDocument(doc.id, actorUserId);
+  // ORG-23: the owner rung is a member's (lib/permissions knownInactive).
+  if (!authorized && !knownInactive(principal)) authorized = await isEffectiveOwnerOfDocument(doc.id, actorUserId);
   if (!authorized) {
-    throw new Error("You don't have authority to backfill revisions here. Ask an Admin or Doc Control to grant publish authority on this library.");
+    throw new Error(knownInactive(principal) ? NOT_ACTIVE_MEMBER_MESSAGE : "You don't have authority to backfill revisions here. Ask an Admin or Doc Control to grant publish authority on this library.");
   }
 
   // Hash + upload to a revision-scoped path. Suffix marks the file as

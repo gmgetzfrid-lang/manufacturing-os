@@ -101,7 +101,7 @@ import { logRevisionEvent, logAuditAction } from "@/lib/audit";
 import { checkedWrite } from "@/lib/checkedWrite";
 import { answered, keptAnswer } from "@/lib/checkedWriteAnswer";
 import { resolveActorPrincipal } from "@/lib/principal";
-import { isControllerPrincipal } from "@/lib/permissions";
+import { isControllerPrincipal, knownInactive, NOT_ACTIVE_MEMBER_MESSAGE } from "@/lib/permissions";
 import { resolveCanControlLibrary } from "@/lib/documentGuards";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
 import { assertNotOnHold, holdReasonLabel } from "@/lib/holdGate";
@@ -1137,9 +1137,10 @@ export async function reverseRenumber(input: ReverseRenumberInput): Promise<Reve
   // were printed with; fails closed) — before anything is written.
   const principal = await resolveActorPrincipal({ uid: input.actorUserId, orgId: input.orgId, headlineRole: input.actorRole });
   let authorized = libraryId ? await resolveCanControlLibrary(libraryId, principal) : false;
-  if (!authorized) authorized = await isEffectiveOwnerOfDocument(docId, input.actorUserId);
+  // ORG-23: the owner rung is a member's (lib/permissions knownInactive).
+  if (!authorized && !knownInactive(principal)) authorized = await isEffectiveOwnerOfDocument(docId, input.actorUserId);
   if (!authorized) {
-    throw new Error("You don't have authority to renumber this document, so you can't reverse its renumber either. Ask an Admin or Doc Control.");
+    throw new Error(knownInactive(principal) ? NOT_ACTIVE_MEMBER_MESSAGE : "You don't have authority to renumber this document, so you can't reverse its renumber either. Ask an Admin or Doc Control.");
   }
   await assertNotOnHold(docId, { action: "reversing its renumber" });
   const warnings: string[] = [];

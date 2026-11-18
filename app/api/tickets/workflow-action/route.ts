@@ -16,7 +16,7 @@ import {
 import { loadPickerMembers } from "@/lib/ticketPickerMembers";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { isSafeStorageKey } from "@/lib/storageKey";
-import { ticketFolder, underFolder, restoredFromNumber, restoreRenumberingConfirmed, renumberedRequestListsKey } from "@/lib/ticketFilePrefix";
+import { ticketFolder, underFolder, restoredFromNumberHolding, restoreRenumberingConfirmed, renumberedRequestListsKey } from "@/lib/ticketFilePrefix";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { plainMentions, wrapEmailBody } from "@/lib/emailRender";
 import {
@@ -331,7 +331,8 @@ async function vetTicketAttachment(
   // the restore renumbered, the number confirmed by the restore's audit row.
   let underOriginal = false;
   if (url && name && ctx.ticketNumber && isSafeStorageKey(url) && !underOwn && ctx.listed.some((x) => x?.url === url)) {
-    const from = restoredFromNumber({ ticketNumber: ctx.ticketNumber, history: ctx.history });
+    // EDGE-20: every restore line is tried — the one whose folder holds the key.
+    const from = restoredFromNumberHolding({ ticketNumber: ctx.ticketNumber, history: ctx.history }, ctx.orgId, url);
     if (from && underFolder(url, ticketFolder(ctx.orgId, from))) {
       const confirmed = await restoreRenumberingConfirmed(supabaseAdmin, { orgId: ctx.orgId, ticketRowId: ctx.ticketRowId, from, to: ctx.ticketNumber });
       if (confirmed === "unknown") return { ok: false, status: 503, error: "Couldn't confirm where this request's files are stored — try again in a moment" };
