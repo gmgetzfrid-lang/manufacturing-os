@@ -6,13 +6,25 @@
 // first row that actually looks like headers, and we drop fully-empty rows
 // rather than minting blank documents from them.
 //
-// XEDGE-12: the parser is the npm-registry xlsx 0.18.5 — the last registry
-// release; the prototype-pollution (0.19.3) and ReDoS (0.20.2) fixes exist
-// only on the vendor CDN — and it runs in the server process beside the
-// service-role client. Until the dependency is moved, every parse runs on
-// HARDENED input: a byte cap, a per-sheet row cap, unsafe sheet names
-// ignored, and a prototype guard that detects and reverts any own property
-// the parse adds to Object.prototype / Array.prototype, refusing the file.
+// XEDGE-12: the parser is SheetJS 0.20.3, vendored (`vendor/xlsx-0.20.3.tgz`,
+// pinned by its lockfile integrity hash) — the npm registry stops at 0.18.5,
+// and the prototype-pollution (0.19.3) and ReDoS (0.20.2) fixes exist only on
+// the vendor's CDN. It runs in the server process beside the service-role
+// client, so every parse still runs on HARDENED input: a byte cap, a per-sheet
+// row cap, unsafe sheet names ignored, and a prototype guard that detects and
+// reverts any own property the parse adds to Object.prototype /
+// Array.prototype, refusing the file.
+//
+// The move from 0.18.5 changed how SheetJS guesses the type of a cell typed
+// as TEXT — a CSV field or an HTML-table cell (the ".xls" many systems export
+// is an HTML table): "15-Mar-2026" stopped being a date, "13:45" became a
+// date, "#N/A" became a blank error cell, and an HTML "1:45 PM" became an
+// Invalid Date that refused the whole file. Every one of those reads worked
+// a person's way before, so text-typed cells are re-typed here from the text
+// SheetJS keeps for them (`cell.w`) with the 0.18.5 rules
+// (`legacyTextCell`) — the same values every import made before the move.
+// Cells a binary workbook (xlsx / xls / xlsb) types are SheetJS's own; an
+// OpenDocument sheet keeps 0.18.5's error text and calendar dates (below).
 //
 // The row cap REFUSES, never truncates: the draft action reports
 // `rows.length` as the sheet's row count and the modal drafts "N rows left"
@@ -81,6 +93,124 @@ export function withPrototypeGuard<T>(fn: () => T): T {
   return result;
 }
 
+// ── 0.18.5 text-cell typing (XEDGE-12) ─────────────────────────────────────
+// A port of SheetJS 0.18.5's `fuzzynum` / `fuzzydate` and of the cell typing
+// its CSV and HTML readers applied to a text cell, kept exact except that the
+// one super-linear regex (`/[(](.*)[)]/` in fuzzynum, the ReDoS class 0.20.2
+// removed) is replaced by a linear scan with the same match.
+
+/** `ss.replace(/[(](.*)[)]/, $1)` without the regex: the leftmost "(" that a
+ *  ")" follows on the same line, through the LAST such ")" (greedy `.*`,
+ *  which stops at a line terminator). Null when nothing matches. */
+function unparenOnce(ss: string): string | null {
+  const isLineEnd = (c: string) => c === "\n" || c === "\r" || c === "\u2028" || c === "\u2029";
+  let i = ss.indexOf("(");
+  while (i !== -1) {
+    let end = i + 1;
+    while (end < ss.length && !isLineEnd(ss[end])) end++;
+    for (let j = end - 1; j > i; j--) {
+      if (ss[j] === ")") return ss.slice(0, i) + ss.slice(i + 1, j) + ss.slice(j + 1);
+    }
+    // No ")" after this "(" on its line, so none after any later "(" on it either.
+    i = ss.indexOf("(", end);
+  }
+  return null;
+}
+
+/** SheetJS 0.18.5 `fuzzynum`: "1,234", "$5", "50%", "(12)" as numbers; NaN otherwise. */
+function legacyFuzzyNum(s: string): number {
+  let v = Number(s);
+  if (!isNaN(v)) return isFinite(v) ? v : NaN;
+  if (!/\d/.test(s)) return v;
+  let wt = 1;
+  let ss = s.replace(/([\d]),([\d])/g, "$1$2").replace(/[$]/g, "").replace(/[%]/g, () => { wt *= 100; return ""; });
+  if (!isNaN(v = Number(ss))) return v / wt;
+  const unparened = unparenOnce(ss);
+  if (unparened !== null) { wt = -wt; ss = unparened; }
+  if (!isNaN(v = Number(ss))) return v / wt;
+  return v;
+}
+
+const LEGACY_MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+
+/** SheetJS 0.18.5 `fuzzydate`: whether the text reads as a date (to the
+ *  engine's own Date parser, local time). */
+function legacyFuzzyDate(s: string): boolean {
+  const o = new Date(s);
+  const y = o.getFullYear() - 1900, m = o.getMonth(), d = o.getDate();
+  if (isNaN(d)) return false;
+  let lower = s.toLowerCase();
+  if (lower.match(/jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/)) {
+    lower = lower.replace(/[^a-z]/g, "").replace(/([^a-z]|^)[ap]m?([^a-z]|$)/, "");
+    if (lower.length > 3 && LEGACY_MONTHS.indexOf(lower) === -1) return false;
+  } else if (lower.match(/[a-z]/)) return false;
+  if (y < 0 || y > 8099) return false;
+  if ((m > 0 || d > 1) && y !== 101) return true;
+  if (s.match(/[^-0-9:,\/\\]/)) return false;
+  return true;
+}
+
+/** The cell SheetJS 0.18.5 made of one text cell. A date is stored as the
+ *  text `cellToText` made of 0.18.5's Date (`new Date(text)`, local time),
+ *  so no later UTC / local conversion can move it; a CSV formula is a value-
+ *  less formula cell, which reads as blank — exactly as before. */
+function legacyTextCell(s: string, family: "dsv" | "html"): XLSX.CellObject {
+  if (s.trim().length === 0) return { t: "s", v: s };
+  if (family === "dsv" && s.charCodeAt(0) === 0x3d) {
+    if (s.charCodeAt(1) === 0x22 && s.charCodeAt(s.length - 1) === 0x22) return { t: "s", v: s.slice(2, -1).replace(/""/g, '"') };
+    if (s.length > 1) return { t: "n", f: s.slice(1) };
+    return { t: "s", v: s };
+  }
+  if (s === "TRUE") return { t: "b", v: true };
+  if (s === "FALSE") return { t: "b", v: false };
+  const n = legacyFuzzyNum(s);
+  if (!isNaN(n)) return { t: "n", v: n };
+  if (legacyFuzzyDate(s)) return { t: "s", v: cellToText(new Date(s)) };
+  return { t: "s", v: s };
+}
+
+/** Which of SheetJS's text readers built this workbook: "dsv" (CSV / TSV /
+ *  any delimited or single-column text, UTF-8 / UTF-16), "html" (an HTML
+ *  table, often saved as .xls), or null for a typed format whose cells are
+ *  left as SheetJS read them. */
+function textFamily(wb: XLSX.WorkBook, bytes: Uint8Array): "dsv" | "html" | null {
+  if (wb.bookType === "html") return "html";
+  // The delimited-text reader returns a bare { SheetNames, Sheets } with no
+  // bookType; so do only the Lotus (first byte 0x00, or FF 00) and SocialCalc
+  // readers, which are told apart by their first bytes.
+  const keys = Object.keys(wb).sort().join(",");
+  if (wb.bookType !== undefined || keys !== "SheetNames,Sheets") return null;
+  if (bytes[0] === 0x00 || (bytes[0] === 0xff && bytes[1] === 0x00)) return null;
+  const head = bytes[0] === 0xff && bytes[1] === 0xfe
+    ? Buffer.from(bytes.subarray(2, 2 + 40)).toString("utf16le")
+    : Buffer.from(bytes.subarray(0, 24)).toString("latin1").replace(/^\xef\xbb\xbf/, "");
+  if (head.startsWith("socialcalc:version:")) return null;
+  return "dsv";
+}
+
+/** Re-type every text cell of `ws` with the 0.18.5 rules, from the text
+ *  SheetJS keeps for it. A CRLF inside a quoted CSV field reads as LF, as
+ *  0.18.5 (which normalised line ends before splitting) read it. */
+function retypeTextCells(ws: XLSX.WorkSheet, family: "dsv" | "html"): void {
+  for (const key of Object.keys(ws)) {
+    if (key.charAt(0) === "!") continue;
+    const cell = ws[key] as XLSX.CellObject | undefined;
+    if (!cell || typeof cell.w !== "string" || cell.w.length === 0) continue;
+    const text = family === "dsv" ? cell.w.replace(/\r\n/g, "\n") : cell.w;
+    ws[key] = legacyTextCell(text, family);
+  }
+}
+
+/** An error cell read as the error's text ("#DIV/0!"), as 0.18.5 read an
+ *  OpenDocument error. */
+function keepErrorText(ws: XLSX.WorkSheet): void {
+  for (const key of Object.keys(ws)) {
+    if (key.charAt(0) === "!") continue;
+    const cell = ws[key] as XLSX.CellObject | undefined;
+    if (cell?.t === "e" && typeof cell.w === "string") ws[key] = { t: "s", v: cell.w };
+  }
+}
+
 /** Rows spanned by an A1-style range string; 0 when absent or unparseable. */
 function rangeRows(ref: unknown): number {
   if (typeof ref !== "string" || !ref) return 0;
@@ -110,6 +240,14 @@ export function parseWorkbook(bytes: Uint8Array | Buffer, sheet?: string): Sheet
   if (!sheetName) return { sheetName: "", headers: [], rows: [], sheetNames };
 
   const ws = wb.Sheets[sheetName];
+  const family = textFamily(wb, bytes);
+  if (family) retypeTextCells(ws, family);
+  // An OpenDocument sheet (.ods / flat .fods): 0.18.5 kept a formula's error
+  // ("#DIV/0!", "#N/A") as its text and read a date as the calendar date the
+  // file states; 0.20.3 makes the error a blank error cell and shifts the
+  // date to the server's local midnight. Keep both as they were.
+  const openDocument = wb.bookType === "ods" || wb.bookType === "fods";
+  if (openDocument) keepErrorText(ws);
   // A read the window cut is refused outright: `!fullref` (xlsx/xls) keeps
   // the sheet's whole used range when `sheetRows` trimmed it, and a `!ref`
   // that fills the window (csv leaves no `!fullref`) may have been trimmed.
@@ -119,11 +257,11 @@ export function parseWorkbook(bytes: Uint8Array | Buffer, sheet?: string): Sheet
       `Sheet "${sheetName}" runs to row ${seenRows.toLocaleString("en-US")} or beyond; the generator reads at most ${MAX_SHEET_ROWS.toLocaleString("en-US")} data rows per sheet. Remove the trailing rows or split it into smaller workbooks.`,
     );
   }
-  const matrix = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, blankrows: false, defval: "" });
+  const matrix = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, blankrows: false, defval: "", UTC: openDocument });
   // The same rows keyed by column letter: SheetJS applies its one blank-row
   // rule to both reads and stamps each keyed row with its 0-based sheet row
   // (__rowNum__, non-enumerable) — which array rows do not carry.
-  const stamped = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { header: "A", blankrows: false, defval: "" });
+  const stamped = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { header: "A", blankrows: false, defval: "", UTC: openDocument });
   const sheetRowOf = (i: number): number | null => {
     if (stamped.length !== matrix.length) return null;
     const n = (stamped[i] as { __rowNum__?: unknown } | undefined)?.__rowNum__;

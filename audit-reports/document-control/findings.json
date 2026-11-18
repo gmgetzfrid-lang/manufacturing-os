@@ -24,8 +24,8 @@
       "LOW": 33
     },
     "by_status": {
-      "RESOLVED": 170,
-      "OPEN": 13,
+      "RESOLVED": 171,
+      "OPEN": 12,
       "RESOLVED (as split under `DEC-31`; ruled by the integrator at the P27 merge, 2026-10-20 (`DEC-90`) — the access-control door, a member reading `portal_token` over REST, stays open until `DIST-18` lands)": 1,
       "RESOLVED (2026-10-21, the integrator's fix pass at the P28 merge — ruled by the integrator at the P28 merge, 2026-10-21 (`DEC-90`): done-when 2 landed; the restore hooks beyond the brief's ruling (4) ratified)": 1,
       "RESOLVED by record (pending migrations — `20261257`, `20261259` pasted AFTER `20261219`, and `20261160` for `nudgeAcknowledgment`'s browser re-send — DEC-30)": 1,
@@ -4130,7 +4130,7 @@
       "id": "XEDGE-12",
       "title": "The server-side workbook parser is xlsx@0.18.5 — the last npm release, carrying unpatched prototype-pollution and ReDoS advisories — and it is reachable with an attacker-chosen bucket object",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,

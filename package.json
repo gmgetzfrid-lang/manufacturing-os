@@ -36,7 +36,7 @@
     "three": "^0.185.1",
     "unpdf": "^1.8.0",
     "web-push": "3.6.7",
-    "xlsx": "^0.18.5"
+    "xlsx": "file:vendor/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
