@@ -8,13 +8,17 @@
 // The listener is in the app shell from mount; the ceremony (and the
 // signature library it records through) is fetched when the browser is
 // first idle, or at the first request, and shows as soon as it lands
-// (projects-tab PERF-12, projects-joint J18).
+// (projects-tab PERF-12, projects-joint J18). A failed fetch closes the
+// request — as Cancel does: nothing is signed, nothing is announced (the
+// request is a fire-and-forget event with no reply channel; a requester
+// hears only `signature-recorded`) — and the signer is told in a toast that
+// it did not open; the next request fetches again.
 
 import React from "react";
 import type { SignatureIntent, SigningCredential } from "@/lib/eSignatures";
 import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
-import { lazyModule, usePreloadWhenIdle } from "@/lib/lazyModule";
+import { lazyModule, loadFailedToast, usePreloadWhenIdle } from "@/lib/lazyModule";
 
 export const signatureCeremonyModule = lazyModule(
   async () => {
@@ -46,18 +50,28 @@ export default function SignatureCaptureHost() {
   const { showToast } = useToast();
   const [req, setReq] = React.useState<RequestSignatureDetail | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [attempt, setAttempt] = React.useState(0);
   usePreloadWhenIdle(signatureCeremonyModule);
 
   React.useEffect(() => {
     const onReq = (e: Event) => {
       const d = (e as CustomEvent<RequestSignatureDetail>).detail;
-      if (d?.resourceId) setReq(d);
+      if (d?.resourceId) {
+        setReq(d);
+        setAttempt((n) => n + 1);
+      }
     };
     window.addEventListener("request-signature", onReq as EventListener);
     return () => window.removeEventListener("request-signature", onReq as EventListener);
   }, []);
 
-  const loaded = signatureCeremonyModule.useLoaded(!!req);
+  const loaded = signatureCeremonyModule.useLoaded(!!req, {
+    attempt,
+    onError: () => {
+      setReq(null);
+      showToast({ ...loadFailedToast("signature ceremony"), message: "Nothing was signed. Check your connection and try again." });
+    },
+  });
   if (!req || !loaded) return null;
   const { SignatureCeremony, recordSignature } = loaded;
   // RG-9: the name the signer types to confirm is their membership display

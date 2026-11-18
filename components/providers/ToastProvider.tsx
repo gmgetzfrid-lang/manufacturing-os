@@ -48,6 +48,13 @@ export const COALESCE_WINDOW_MS = 10_000;
 
 const ToastContext = createContext<ToastContextValue | undefined>(undefined);
 
+/** The toast API when a ToastProvider is above, else null — for a shell
+ *  host that also renders in isolation (its failure falls back to the
+ *  console there). */
+export function useOptionalToast(): ToastContextValue | null {
+  return useContext(ToastContext) ?? null;
+}
+
 export function useToast() {
   const context = useContext(ToastContext);
   if (!context) {

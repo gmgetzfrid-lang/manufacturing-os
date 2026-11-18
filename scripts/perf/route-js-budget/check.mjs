@@ -16,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
-import { parseClientReferenceManifest, measureRoute, routeChunks, pageEntryKey, checkBudgets } from "./budget.mjs";
+import { parseClientReferenceManifest, measureRoute, routeChunks, pageEntryKey, checkBudgets, budgetFor } from "./budget.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -79,7 +79,7 @@ if (asJson) {
   const kb = (n) => (n / 1024).toFixed(1).padStart(8);
   console.log("route".padEnd(48), "total KB", "shell KB", "  own KB", "budget KB");
   for (const m of rows) {
-    const b = m.route in named ? named[m.route] : budgets.defaultRouteMaxBytes;
+    const b = budgetFor(m, budgets);
     console.log(m.route.padEnd(48), kb(m.totalBytes), kb(m.shellBytes), kb(m.ownBytes), kb(b));
   }
   const p = measurements.find((m) => m.route === "/projects/[id]");

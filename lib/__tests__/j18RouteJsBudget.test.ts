@@ -22,6 +22,7 @@ import {
   routeChunks,
   measureRoute,
   checkBudgets,
+  budgetFor,
 } from "../../scripts/perf/route-js-budget/budget.mjs";
 
 const manifestSource = (key: string, entryJSFiles: Record<string, string[]>) =>
@@ -146,6 +147,21 @@ describe("PERF-12 — when the budget fails", () => {
       "/inbox: its shell is 1661 bytes, over the shell budget of 1660",
     ]);
   });
+  it("an unnamed public route (outside the (protected) layout) is held to the public default, not the protected one", () => {
+    const pub = (route: string, totalBytes: number) => ({ route, key: `${route}/page`, chunks: 1, totalBytes, shellBytes: 400, ownBytes: totalBytes - 400 });
+    const prot = (route: string, totalBytes: number) => ({ route, key: `/(protected)${route}/page`, chunks: 1, totalBytes, shellBytes: 1400, ownBytes: totalBytes - 1400 });
+    const b = { ...budgets, publicDefaultRouteMaxBytes: 800 };
+    expect(budgetFor(pub("/submit/[token]", 1), b)).toBe(800);
+    expect(budgetFor(prot("/inbox", 1), b)).toBe(1500);
+    expect(budgetFor(pub("/projects/[id]", 1), b)).toBe(1700); // a named route keeps its own
+    const named = prot("/projects/[id]", 1700);
+    expect(checkBudgets([named, pub("/submit/[token]", 800), prot("/inbox", 1500)], b)).toEqual([]);
+    expect(checkBudgets([named, pub("/submit/[token]", 801), prot("/inbox", 1500)], b)).toEqual([
+      "/submit/[token]: 801 bytes of first-load JavaScript, over its budget of 800",
+    ]);
+    // with no public default, a public route falls back to the default (as before)
+    expect(budgetFor(pub("/submit/[token]", 1), budgets)).toBe(1500);
+  });
   it("a budgeted route with no built manifest fails (a rename must not drop its budget)", () => {
     expect(checkBudgets([m("/inbox", 10, 10)], budgets)).toEqual([
       "/projects/[id]: has a budget but no built manifest (renamed or removed? update the budget file)",
@@ -211,6 +227,7 @@ describe("PERF-12 — the command over a built .next (a fixture, no build)", () 
     expect(Number.isFinite(b.routes["/projects/[id]"])).toBe(true);
     expect(Number.isFinite(b.defaultRouteMaxBytes)).toBe(true);
     expect(Number.isFinite(b.shellMaxBytes)).toBe(true);
+    expect(b.publicDefaultRouteMaxBytes).toBeLessThan(b.defaultRouteMaxBytes);
     const pkg = JSON.parse(readFileSync(resolve(process.cwd(), "package.json"), "utf8"));
     expect(pkg.scripts["perf:budget"]).toBe("node scripts/perf/route-js-budget/check.mjs");
     const ci = readFileSync(resolve(process.cwd(), ".github/workflows/ci.yml"), "utf8");

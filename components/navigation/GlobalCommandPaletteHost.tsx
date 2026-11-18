@@ -11,12 +11,15 @@
 // and what they import — the evidence pack, the feature atlas) is a module
 // of its own, fetched when the browser is first idle after the page is up,
 // or at the first press, whichever comes first. A press before it has
-// arrived is kept: the palette opens as soon as it lands. The header's
+// arrived is kept: the palette opens as soon as it lands. If the fetch fails
+// (offline before it was ever fetched), the palette closes and a toast says
+// it could not load; the next press fetches again. The header's
 // search button and the cockpit's QuickLaunch dispatch the same Cmd+K
 // keydown, so they reach this listener too.
 
 import React, { useEffect, useRef, useState } from "react";
-import { lazyModule, usePreloadWhenIdle } from "@/lib/lazyModule";
+import { lazyModule, loadFailedToast, usePreloadWhenIdle } from "@/lib/lazyModule";
+import { useOptionalToast } from "@/components/providers/ToastProvider";
 
 export const commandPaletteModule = lazyModule(
   () => import("@/components/navigation/GlobalCommandPalette"),
@@ -55,6 +58,10 @@ export default function GlobalCommandPaletteHost() {
   // Set when the palette is opened via the global `?` so it lands directly
   // on the shortcuts cheatsheet (the palette's open effect reads + clears it).
   const wantShortcutsRef = useRef(false);
+  // Every press that may open the palette is a new attempt: after a failed
+  // fetch, the next one fetches again.
+  const [attempt, setAttempt] = useState(0);
+  const toast = useOptionalToast();
 
   usePreloadWhenIdle(commandPaletteModule);
 
@@ -66,10 +73,12 @@ export default function GlobalCommandPaletteHost() {
       const action = paletteKeyAction(e, open);
       if (action === "toggle") {
         e.preventDefault();
+        setAttempt((n) => n + 1);
         setOpen((v) => !v);
       } else if (action === "help") {
         e.preventDefault();
         wantShortcutsRef.current = true;
+        setAttempt((n) => n + 1);
         setOpen(true);
       } else if (action === "close") {
         setOpen(false);
@@ -80,7 +89,14 @@ export default function GlobalCommandPaletteHost() {
   }, [open]);
 
   // Opening fetches the palette if the idle preload has not yet.
-  const loaded = commandPaletteModule.useLoaded(open);
+  const loaded = commandPaletteModule.useLoaded(open, {
+    attempt,
+    onError: () => {
+      wantShortcutsRef.current = false;
+      setOpen(false);
+      toast?.showToast(loadFailedToast("command palette"));
+    },
+  });
   if (!loaded) return null;
   const Palette = loaded.default;
   return <Palette open={open} setOpen={setOpen} wantShortcutsRef={wantShortcutsRef} />;

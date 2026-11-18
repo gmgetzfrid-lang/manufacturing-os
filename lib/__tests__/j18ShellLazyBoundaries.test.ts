@@ -34,7 +34,11 @@ import { dirname, join, resolve } from "node:path";
 const fx = vi.hoisted(() => ({
   pushed: [] as string[],
   recorded: [] as Array<Record<string, unknown>>,
-  toasts: [] as Array<{ type: string; title: string }>,
+  toasts: [] as Array<{ type: string; title: string; message?: string }>,
+  /** While true, the next fetch of a lazily loaded module fails, as a chunk
+   *  fetch does offline. */
+  offline: false,
+  fetches: 0,
   searches: 0,
 }));
 
@@ -48,9 +52,10 @@ vi.mock("@/components/providers/RoleContext", () => ({
     member: { displayName: "Pat Doe" },
   }),
 }));
-vi.mock("@/components/providers/ToastProvider", () => ({
-  useToast: () => ({ showToast: (t: { type: string; title: string }) => { fx.toasts.push(t); } }),
-}));
+vi.mock("@/components/providers/ToastProvider", () => {
+  const api = { showToast: (t: { type: string; title: string }) => { fx.toasts.push(t); } };
+  return { useToast: () => api, useOptionalToast: () => api };
+});
 vi.mock("@/lib/globalSearch", () => ({ globalSearch: async () => { fx.searches++; return []; } }));
 vi.mock("@/lib/evidencePack", () => ({ openEvidencePack: async () => {}, openProjectEvidencePack: async () => {} }));
 // The map and the ceremony are stand-ins: what is pinned is how the hosts
@@ -100,7 +105,7 @@ beforeEach(() => {
   (window as unknown as { requestIdleCallback: (cb: () => void) => number }).requestIdleCallback = (cb) => { idleQueue.set(++idleIds, cb); return idleIds; };
   (window as unknown as { cancelIdleCallback: (id: number) => void }).cancelIdleCallback = (id) => { idleQueue.delete(id); };
   vi.resetModules(); // every test starts from a cold shell: nothing fetched yet
-  fx.pushed = []; fx.recorded = []; fx.toasts = []; fx.searches = 0;
+  fx.pushed = []; fx.recorded = []; fx.toasts = []; fx.searches = 0; fx.offline = false; fx.fetches = 0;
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -299,6 +304,32 @@ describe("PERF-12 — lib/lazyModule", () => {
     expect(host.textContent).toBe("loaded");
   });
 
+  it("useLoaded: a failed fetch reports to onError once; a new attempt, with want still true, fetches again", async () => {
+    const { lazyModule } = await import("@/lib/lazyModule");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let calls = 0;
+    let fail = true;
+    const mod = lazyModule(async () => { calls++; if (fail) throw new Error("offline"); return { label: "x" }; }, "probe");
+    const errors: unknown[] = [];
+    let attempt = 0;
+    const Probe = () => React.createElement("span", null, mod.useLoaded(true, { attempt, onError: (e) => errors.push(e) })?.label ?? "none");
+    await act(async () => { root.render(React.createElement(Probe)); });
+    await until(() => errors.length === 1, "the failure");
+    expect(calls).toBe(1);
+    await tick();
+    expect(calls).toBe(1); // no retry loop on its own
+    fail = false;
+    await act(async () => { root.render(React.createElement(Probe)); }); // same attempt: no new fetch
+    await tick();
+    expect(calls).toBe(1);
+    attempt = 1;
+    await act(async () => { root.render(React.createElement(Probe)); });
+    await until(() => host.textContent === "x", "the module");
+    expect(calls).toBe(2);
+    expect(errors).toHaveLength(1);
+    warn.mockRestore();
+  });
+
   it("useLoaded(false) never fetches; useLoaded(true) does, and re-renders when it lands", async () => {
     const { lazyModule } = await import("@/lib/lazyModule");
     let calls = 0;
@@ -388,7 +419,7 @@ describe("PERF-12 — the census: the shell's static imports stop at the lazy bo
       ["components/signatures/SignatureCaptureHost.tsx", 'import type { SignatureIntent, SigningCredential } from "@/lib/eSignatures";', 'import { recordSignature, type SignatureIntent, type SigningCredential } from "@/lib/eSignatures";'],
       ["components/providers/KnowledgeIndexIndicator.tsx", 'import { lazyModule } from "@/lib/lazyModule";', 'import { lazyModule } from "@/lib/lazyModule";\nimport { ingestKnowledgeDocument, isIngestActive } from "@/lib/knowledge";'],
       ["components/cockpit/AttentionFeed.tsx", 'import { formatAgo } from "@/lib/formatAgo";', 'import { formatAgo } from "@/components/cockpit/CommandDeck";'],
-      ["components/navigation/Sidebar.tsx", "import { lazyModule, usePreloadWhenIdle } from '@/lib/lazyModule';", "import { lazyModule, usePreloadWhenIdle } from '@/lib/lazyModule';\nimport LogoUploadModal from '@/components/branding/LogoUploadModal';"],
+      ["components/navigation/Sidebar.tsx", "import { lazyModule, loadFailedToast, usePreloadWhenIdle } from '@/lib/lazyModule';", "import { lazyModule, loadFailedToast, usePreloadWhenIdle } from '@/lib/lazyModule';\nimport LogoUploadModal from '@/components/branding/LogoUploadModal';"],
     ];
     for (const [file, from, to] of cases) {
       const src = readFileSync(join(ROOT, file), "utf8");
@@ -416,5 +447,125 @@ describe("PERF-12 — the census: the shell's static imports stop at the lazy bo
     expect(deck.formatAgo).toBe(lib.formatAgo);
     expect(lib.formatAgo(undefined)).toBe("—");
     expect(lib.formatAgo(new Date(Date.now() - 5 * 60_000).toISOString())).toBe("5m");
+  });
+});
+
+// Last in the file: these re-register the lazily loaded modules (vi.doMock)
+// so a fetch can fail, as a chunk fetch does offline.
+const FETCH_FAILED = "Failed to fetch dynamically imported module";
+function failingWhileOffline<M>(load: () => M | Promise<M>) {
+  return async () => {
+    fx.fetches++;
+    if (fx.offline) throw new Error(FETCH_FAILED);
+    return load();
+  };
+}
+
+describe("PERF-12 — a fetch that fails never leaves a dead surface: the request closes, a toast says so, the next open fetches again", () => {
+  beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => {}); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it("the command palette: Ctrl+K offline closes it and says so; the next Ctrl+K, back online, opens it", async () => {
+    vi.doMock("@/components/navigation/GlobalCommandPalette", failingWhileOffline(() => vi.importActual("@/components/navigation/GlobalCommandPalette")));
+    const { default: Host, commandPaletteModule } = await import("@/components/navigation/GlobalCommandPaletteHost");
+    await act(async () => { root.render(React.createElement(Host)); });
+    fx.offline = true;
+    await press({ key: "k", ctrlKey: true });
+    await until(() => fx.toasts.length === 1, "the failure toast");
+    expect(fx.toasts[0]).toEqual({ type: "error", title: "Couldn't load the command palette", message: "Check your connection and try again." });
+    expect(paletteInput()).toBeNull();
+    expect(commandPaletteModule.peek()).toBeUndefined();
+    fx.offline = false;
+    // the request was closed: a later fetch (the idle preload, say) does not pop it open
+    await act(async () => { await commandPaletteModule.preload(); });
+    expect(paletteInput()).toBeNull();
+    // one press opens it (the failed open was closed, not left half-open)
+    await press({ key: "k", ctrlKey: true });
+    await until(() => !!paletteInput(), "the palette, fetched again");
+    expect(fx.fetches).toBe(2);
+    expect(fx.toasts).toHaveLength(1);
+    await until(() => document.activeElement === paletteInput(), "the input to take focus");
+  });
+
+  it("the relationship map: an open offline closes and says so; the next open fetches again and shows", async () => {
+    vi.doMock("@/components/documents/RelationshipGraph", failingWhileOffline(() => ({
+      default: ({ documentId }: { documentId: string }) => React.createElement("div", { "data-graph": documentId }),
+    })));
+    const { default: GraphHost, openRelationshipGraph, relationshipGraphModule } = await import("@/components/documents/RelationshipGraphHost");
+    await act(async () => { root.render(React.createElement(GraphHost)); });
+    fx.offline = true;
+    await act(async () => { openRelationshipGraph("doc-1"); });
+    await until(() => fx.toasts.length === 1, "the failure toast");
+    expect(fx.toasts[0]).toEqual({ type: "error", title: "Couldn't load the relationship map", message: "Check your connection and try again." });
+    expect(document.querySelector("[data-graph]")).toBeNull();
+    fx.offline = false;
+    // the request was closed: a later fetch does not pop the map open
+    await act(async () => { await relationshipGraphModule.preload(); });
+    expect(document.querySelector("[data-graph]")).toBeNull();
+    await act(async () => { openRelationshipGraph("doc-1"); }); // the same document again: a new open
+    await until(() => !!document.querySelector('[data-graph="doc-1"]'), "the map, fetched again");
+    expect(fx.fetches).toBe(2);
+  });
+
+  it("the relationship map, reopened while still offline: each open tries again and says so again", async () => {
+    vi.doMock("@/components/documents/RelationshipGraph", failingWhileOffline(() => ({
+      default: ({ documentId }: { documentId: string }) => React.createElement("div", { "data-graph": documentId }),
+    })));
+    const { default: GraphHost, openRelationshipGraph } = await import("@/components/documents/RelationshipGraphHost");
+    await act(async () => { root.render(React.createElement(GraphHost)); });
+    fx.offline = true;
+    await act(async () => { openRelationshipGraph("doc-1"); });
+    await until(() => fx.toasts.length === 1, "the first failure toast");
+    await act(async () => { openRelationshipGraph("doc-1"); });
+    await until(() => fx.toasts.length === 2, "the second failure toast");
+    expect(fx.fetches).toBe(2);
+    fx.offline = false;
+    await act(async () => { openRelationshipGraph("doc-1"); });
+    await until(() => !!document.querySelector('[data-graph="doc-1"]'), "the map");
+  });
+
+  it("the signature ceremony: a request offline closes as a cancel would — nothing signed, nothing announced — and the signer is told; the next request opens", async () => {
+    vi.doMock("@/components/signatures/SignatureCeremony", failingWhileOffline(() => ({
+      default: ({ resourceLabel }: { resourceLabel?: string }) => React.createElement("div", { "data-ceremony": resourceLabel ?? "" }),
+    })));
+    const { default: SigHost, requestSignature, signatureCeremonyModule } = await import("@/components/signatures/SignatureCaptureHost");
+    const announced: unknown[] = [];
+    const onRecorded = (e: Event) => announced.push((e as CustomEvent).detail);
+    window.addEventListener("signature-recorded", onRecorded);
+    try {
+      await act(async () => { root.render(React.createElement(SigHost)); });
+      fx.offline = true;
+      await act(async () => { requestSignature({ resourceType: "document", resourceId: "doc-9", resourceLabel: "this document" }); });
+      await until(() => fx.toasts.length === 1, "the failure toast");
+      expect(fx.toasts[0]).toEqual({ type: "error", title: "Couldn't load the signature ceremony", message: "Nothing was signed. Check your connection and try again." });
+      expect(document.querySelector("[data-ceremony]")).toBeNull();
+      expect(fx.recorded).toEqual([]);
+      expect(announced).toEqual([]);
+      fx.offline = false;
+      // the request was closed: a later fetch does not pop the ceremony open
+      await act(async () => { await signatureCeremonyModule.preload(); });
+      expect(document.querySelector("[data-ceremony]")).toBeNull();
+      await act(async () => { requestSignature({ resourceType: "document", resourceId: "doc-9", resourceLabel: "this document" }); });
+      await until(() => !!document.querySelector('[data-ceremony="this document"]'), "the ceremony, fetched again");
+    } finally {
+      window.removeEventListener("signature-recorded", onRecorded);
+    }
+  });
+
+  it("a failed idle preload is quiet: no toast; the first open fetches again and opens", async () => {
+    vi.doMock("@/components/documents/RelationshipGraph", failingWhileOffline(() => ({
+      default: ({ documentId }: { documentId: string }) => React.createElement("div", { "data-graph": documentId }),
+    })));
+    const { default: GraphHost, openRelationshipGraph } = await import("@/components/documents/RelationshipGraphHost");
+    await act(async () => { root.render(React.createElement(GraphHost)); });
+    fx.offline = true;
+    await browserIdle();
+    await until(() => fx.fetches === 1, "the idle preload");
+    await tick();
+    expect(fx.toasts).toEqual([]);
+    fx.offline = false;
+    await act(async () => { openRelationshipGraph("doc-3"); });
+    await until(() => !!document.querySelector('[data-graph="doc-3"]'), "the map");
+    expect(fx.fetches).toBe(2);
   });
 });

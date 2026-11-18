@@ -91,12 +91,27 @@ export function measureRoute({ key, manifest, rootMainFiles, sizeOf }) {
   };
 }
 
+/** Whether a measured route sits under the signed-in `(protected)` layout. */
+export const isProtectedRoute = (m) => String(m.key).startsWith("/(protected)/");
+
+/** A route's budget: its named one, else the default for its side — the
+ *  protected default, or `publicDefaultRouteMaxBytes` for a route outside
+ *  the `(protected)` layout (a public page is a third the size of a
+ *  protected one, so the protected default would let it grow unnoticed). */
+export function budgetFor(m, budgets) {
+  const named = budgets.routes ?? {};
+  if (Object.prototype.hasOwnProperty.call(named, m.route)) return named[m.route];
+  if (!isProtectedRoute(m) && Number.isFinite(budgets.publicDefaultRouteMaxBytes)) return budgets.publicDefaultRouteMaxBytes;
+  return budgets.defaultRouteMaxBytes;
+}
+
 /** Checks measurements against the budgets:
  *    { routes: { "/projects/[id]": maxTotalBytes, … },
- *      defaultRouteMaxBytes, shellMaxBytes }
- *  Every measured route is held to its named budget, else the default; every
- *  route's shell share is held to `shellMaxBytes`. A named route that was not
- *  measured fails too (a renamed route must not silently drop its budget). */
+ *      defaultRouteMaxBytes, publicDefaultRouteMaxBytes, shellMaxBytes }
+ *  Every measured route is held to its named budget, else its side's default
+ *  (budgetFor); every route's shell share is held to `shellMaxBytes`. A named
+ *  route that was not measured fails too (a renamed route must not silently
+ *  drop its budget). */
 export function checkBudgets(measurements, budgets) {
   const failures = [];
   const named = budgets.routes ?? {};
@@ -105,7 +120,7 @@ export function checkBudgets(measurements, budgets) {
     if (!seen.has(r)) failures.push(`${r}: has a budget but no built manifest (renamed or removed? update the budget file)`);
   }
   for (const m of measurements) {
-    const max = Object.prototype.hasOwnProperty.call(named, m.route) ? named[m.route] : budgets.defaultRouteMaxBytes;
+    const max = budgetFor(m, budgets);
     if (Number.isFinite(max) && m.totalBytes > max) {
       failures.push(`${m.route}: ${m.totalBytes} bytes of first-load JavaScript, over its budget of ${max}`);
     }

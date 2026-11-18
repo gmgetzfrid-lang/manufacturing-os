@@ -12,9 +12,23 @@
 // (which suspends for a tick on every fresh mount).
 //
 // A failed fetch (offline before the module was ever fetched) is not kept:
-// the next use or idle preload tries again.
+// the next fetch starts afresh. A host never leaves a surface it was asked to
+// open silently dead: `useLoaded` reports a failed fetch for an open through
+// `onError` (each host then closes its request and says "couldn't load —
+// check your connection and try again" in a toast), and a new open passes a
+// new `attempt`, which fetches again. A failed idle preload is quiet; the
+// first open fetches again and reports.
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
+
+export interface UseLoadedOptions {
+  /** Changes on every open: a new value fetches again if the module has not
+   *  loaded (after a failed fetch, the next open retries). */
+  attempt?: number;
+  /** Called when a fetch this open started (or joined) fails, while the open
+   *  still wants the module. */
+  onError?: (e: unknown) => void;
+}
 
 export interface LazyModule<T> {
   /** Starts the fetch (once) and resolves with the module. */
@@ -22,9 +36,10 @@ export interface LazyModule<T> {
   /** The module if it has loaded, else undefined. */
   peek: () => T | undefined;
   /** In a component: the module once loaded (re-renders when it arrives).
-   *  With `want` true it starts the fetch if it has not started. On the
-   *  server, and during hydration, it is always undefined. */
-  useLoaded: (want: boolean) => T | undefined;
+   *  With `want` true it starts the fetch if it has not started (again for
+   *  each new `attempt`), and reports a failure to `onError`. On the server,
+   *  and during hydration, it is always undefined. */
+  useLoaded: (want: boolean, opts?: UseLoadedOptions) => T | undefined;
 }
 
 export function lazyModule<T>(load: () => Promise<T>, label = "module"): LazyModule<T> {
@@ -53,15 +68,29 @@ export function lazyModule<T>(load: () => Promise<T>, label = "module"): LazyMod
     return pending;
   };
   const peek = () => value;
-  const useLoaded = (want: boolean): T | undefined => {
+  const useLoaded = (want: boolean, opts?: UseLoadedOptions): T | undefined => {
     const v = useSyncExternalStore(subscribe, peek, () => undefined);
+    const onErrorRef = useRef(opts?.onError);
+    useEffect(() => { onErrorRef.current = opts?.onError; });
+    const attempt = opts?.attempt ?? 0;
     useEffect(() => {
       if (!want || value !== undefined) return;
-      preload().catch((e) => console.warn(`[lazyModule] could not load the ${label}; the next use tries again`, e));
-    }, [want]);
+      let live = true;
+      preload().catch((e) => {
+        console.warn(`[lazyModule] could not load the ${label}; the next open tries again`, e);
+        if (live) onErrorRef.current?.(e);
+      });
+      return () => { live = false; };
+    }, [want, attempt]);
     return v;
   };
   return { preload, peek, useLoaded };
+}
+
+/** The toast a host shows when what someone opened could not be fetched:
+ *  the request is closed, and the next open fetches again. */
+export function loadFailedToast(what: string): { type: "error"; title: string; message: string } {
+  return { type: "error", title: `Couldn't load the ${what}`, message: "Check your connection and try again." };
 }
 
 /** Runs `fn` once the browser is idle (requestIdleCallback, at most

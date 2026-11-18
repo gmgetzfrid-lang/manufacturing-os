@@ -13,7 +13,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 const fx = vi.hoisted(() => {
-  const st = { canEdit: true };
+  const st = { canEdit: true, offline: false, fetches: 0, toasts: [] as Array<Record<string, unknown>> };
   // One role object for every render (as RoleContext's memoised value is):
   // a fresh one each render would re-run every effect that depends on it.
   const role = {
@@ -55,6 +55,10 @@ vi.mock("@/lib/inAppNotifications", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   listMyNotifications: async () => [],
 }));
+vi.mock("@/components/providers/ToastProvider", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  useOptionalToast: () => ({ showToast: (t: Record<string, unknown>) => { fx.toasts.push(t); } }),
+}));
 vi.mock("@/components/branding/LogoUploadModal", () => ({
   default: ({ onClose }: { onClose: () => void }) =>
     React.createElement("div", { "data-logo-modal": "" },
@@ -85,7 +89,7 @@ beforeEach(() => {
   (window as unknown as { requestIdleCallback: (cb: () => void) => number }).requestIdleCallback = (cb) => { idleQueue.set(++idleIds, cb); return idleIds; };
   (window as unknown as { cancelIdleCallback: (id: number) => void }).cancelIdleCallback = (id) => { idleQueue.delete(id); };
   vi.resetModules();
-  fx.canEdit = true;
+  fx.canEdit = true; fx.offline = false; fx.fetches = 0; fx.toasts = [];
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -119,10 +123,39 @@ describe("PERF-12 — the sidebar's logo modal loads on use", () => {
     expect(document.body.textContent).toContain("Plant One"); // the switcher is up, with no logo button
     expect(logoButton()).toBeNull();
     expect(logoUploadModalModule.peek()).toBeUndefined();
-    fx.canEdit = true;
+    fx.canEdit = true; fx.offline = false; fx.fetches = 0; fx.toasts = [];
     await act(async () => { root.render(React.createElement(Sidebar)); });
     await browserIdle();
     await until(() => logoUploadModalModule.peek() !== undefined, "the idle preload");
     expect(modal()).toBeNull(); // fetched, not opened
+  });
+
+  // Last: it re-registers the modal (vi.doMock) so its fetch can fail.
+  it("a click offline closes the request and says so; the next click, back online, fetches again and opens", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.doMock("@/components/branding/LogoUploadModal", async () => {
+      fx.fetches++;
+      if (fx.offline) throw new Error("Failed to fetch dynamically imported module");
+      return { default: () => React.createElement("div", { "data-logo-modal": "" }) };
+    });
+    try {
+      const { default: Sidebar, logoUploadModalModule } = await import("@/components/navigation/Sidebar");
+      await act(async () => { root.render(React.createElement(Sidebar)); });
+      await until(() => !!logoButton(), "the workspace switcher");
+      fx.offline = true;
+      await act(async () => { logoButton()!.click(); });
+      await until(() => fx.toasts.length === 1, "the failure toast");
+      expect(fx.toasts[0]).toEqual({ type: "error", title: "Couldn't load the logo upload", message: "Check your connection and try again." });
+      expect(modal()).toBeNull();
+      fx.offline = false;
+      // the request was closed: a later fetch does not pop the modal open
+      await act(async () => { await logoUploadModalModule.preload(); });
+      expect(modal()).toBeNull();
+      await act(async () => { logoButton()!.click(); });
+      await until(() => !!modal(), "the logo modal, fetched again");
+      expect(fx.fetches).toBe(2);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
