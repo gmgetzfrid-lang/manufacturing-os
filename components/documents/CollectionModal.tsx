@@ -25,6 +25,8 @@ import {
 } from "@/lib/collections";
 import { supabase } from "@/lib/supabase";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import { ZC } from "@/lib/zLayers";
+import { useDockAvoidRow } from "@/components/ui/CornerDock";
 
 type Mode = "create" | "view" | "edit";
 
@@ -61,6 +63,11 @@ export default function CollectionModal({
   mode: initialMode, collectionId, orgId, libraryId, folderId, folders = [], userId, isAdmin,
   libraryDocs, onClose, onChanged, onOpenAsBook,
 }: CollectionModalProps) {
+  // STACK-14 (notifications N13): declare the modal's action row and its
+  // picker's, so the corner dock keeps clear of them while raised (nothing
+  // changes at rest).
+  const pickerDockRowRef = useDockAvoidRow();
+  const dockRowRef = useDockAvoidRow();
   const [mode, setMode] = useState<Mode>(initialMode);
   // Render the modal in a <body> portal so it escapes the documents page's
   // isolated stacking context (the body wrapper uses `isolate`), which would
@@ -294,7 +301,7 @@ export default function CollectionModal({
 
   // ── Render ────────────────────────────────────────────────────
   const modalTree = (
-    <div className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
+    <div className={`fixed inset-0 ${ZC.overlay} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto`}>
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
         {/* Header */}
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
@@ -450,7 +457,7 @@ export default function CollectionModal({
 
               {/* Doc picker overlay */}
               {showPicker && collection && (
-                <div className="fixed inset-0 z-[310] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+                <div className={`fixed inset-0 ${ZC.overlayPopover} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4`}>
                   <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[80vh] animate-in fade-in zoom-in-95">
                     <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
                       <div className="text-sm font-black text-[var(--color-text)]">Add documents</div>
@@ -486,7 +493,7 @@ export default function CollectionModal({
                         ))
                       )}
                     </div>
-                    <div className="px-4 py-2 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] text-right">
+                    <div ref={pickerDockRowRef} className="px-4 py-2 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] text-right">
                       <button onClick={() => setShowPicker(false)} className="text-xs font-bold text-[var(--color-text)] px-3 py-1.5 rounded hover:bg-[var(--color-surface-2)]">Done</button>
                     </div>
                   </div>
@@ -503,7 +510,7 @@ export default function CollectionModal({
         )}
 
         {/* Footer actions */}
-        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
+        <div ref={dockRowRef} className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
           <div>
             {mode === "view" && canEdit && collection && (
               <button onClick={onDelete} disabled={busy} className="text-xs font-bold text-red-600 hover:text-red-700 inline-flex items-center gap-1">

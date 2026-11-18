@@ -39,6 +39,7 @@ import {
   uploadTemplateFile, draftDocuments, renderDocuments, fileDocumentsToLibrary,
   type OutputTemplate, type DraftedDocument, type Placeholder, type DraftResult,
 } from "@/lib/outputTemplates";
+import { ZC } from "@/lib/zLayers";
 
 /** PR-6: the AI-written fields of a drafted document that are genuinely
  *  empty (missing, or nothing but whitespace) — in the template's order. */
@@ -280,10 +281,10 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
+    <div className={`fixed inset-0 ${ZC.pagePopover} bg-black/50 flex items-start justify-center p-4 overflow-y-auto`} onClick={onClose}>
       <div className="w-full max-w-3xl bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-xl mt-8 mb-8"
         onClick={(e) => e.stopPropagation()}>
-        <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between sticky top-0 bg-[var(--color-surface)] rounded-t-2xl z-10">
+        <div className={`px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between sticky top-0 bg-[var(--color-surface)] rounded-t-2xl ${ZC.raised}`}>
           <div>
             <h2 className="text-base font-black text-[var(--color-text)] flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-orange-600" /> Generate — {template.name}

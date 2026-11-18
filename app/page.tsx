@@ -7,6 +7,7 @@ import { normalizeEmail } from '@/lib/identity';
 import { isProviderReturn, resolveSignInNext, signInDestination, stashSignInNext } from '@/lib/signInNext';
 import { useRouter } from 'next/navigation';
 import { Layout, Lock, Mail, Loader2, AlertCircle } from 'lucide-react';
+import { ZC } from "@/lib/zLayers";
 
 /** Microsoft's four-square logo (lucide has no brand marks). */
 function MicrosoftLogo({ className }: { className?: string }) {
@@ -298,10 +299,10 @@ export default function LoginPage() {
   // ─── Login ──────────────────────────────────────────────────────
   return (
     <div className="min-h-dvh bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-black z-0" />
-      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-orange-900/50 to-transparent z-10" />
+      <div className={`absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-black ${ZC.base}`} />
+      <div className={`absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-orange-900/50 to-transparent ${ZC.raised}`} />
 
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden relative z-20 border border-slate-800">
+      <div className={`w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden relative ${ZC.raisedHigher} border border-slate-800`}>
         <div className="bg-slate-900 p-8 text-center border-b border-slate-800">
           <div className="inline-flex items-center justify-center w-14 h-14 bg-gradient-to-br from-orange-500 to-orange-700 rounded-xl mb-4 shadow-lg shadow-orange-900/40 ring-1 ring-white/10">
             <Layout className="w-7 h-7 text-white" />

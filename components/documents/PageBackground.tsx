@@ -11,6 +11,7 @@
 import React, { useEffect, useState } from "react";
 import { peekSignedUrl, subscribeSignedUrl } from "@/lib/storage";
 import type { ResolvedBackground } from "@/lib/pageHeader";
+import { ZC } from "@/lib/zLayers";
 
 export default function PageBackground({ bg }: { bg: ResolvedBackground }) {
   const [src, setSrc] = useState<string | undefined>(bg.imagePath ? peekSignedUrl(bg.imagePath)?.url : undefined);
@@ -27,12 +28,12 @@ export default function PageBackground({ bg }: { bg: ResolvedBackground }) {
     : "var(--color-surface-2)";
 
   if (bg.type === "tint") {
-    return <div className="absolute inset-0 -z-10 pointer-events-none" style={{ background: tintBase }} aria-hidden />;
+    return <div className={`absolute inset-0 ${ZC.underlay} pointer-events-none`} style={{ background: tintBase }} aria-hidden />;
   }
 
   // image
   return (
-    <div className="absolute inset-0 -z-10 pointer-events-none overflow-hidden" style={{ background: "var(--color-canvas)" }} aria-hidden>
+    <div className={`absolute inset-0 ${ZC.underlay} pointer-events-none overflow-hidden`} style={{ background: "var(--color-canvas)" }} aria-hidden>
       {src && (
         <div
           className="absolute inset-0 bg-center bg-cover"

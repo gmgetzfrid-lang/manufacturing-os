@@ -18,6 +18,7 @@ import { logAuditAction } from "@/lib/audit";
 import { invalidateProjectSnapshot } from "@/lib/projectSnapshot";
 import type { Project, ProjectVisibility } from "@/types/schema";
 import { DECISION_TARGET } from "@/components/projects/decisionTarget";
+import { ZC } from "@/lib/zLayers";
 
 interface WizardFields {
   purpose: string;
@@ -198,7 +199,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
   const inputClass = "mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none";
 
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+    <div className={`fixed inset-0 ${ZC.modalRaised} flex items-center justify-center p-4`}>
       <div className="absolute inset-0 bg-black/45 backdrop-blur-[2px] animate-in fade-in" onClick={close} />
       <div className="relative w-full max-w-lg max-h-[85dvh] overflow-y-auto bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-2xl animate-in fade-in zoom-in-95 duration-150">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-2">

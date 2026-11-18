@@ -38,6 +38,7 @@ import FirstRunHint from "@/components/ui/FirstRunHint";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
 import { translatePostgresError } from "@/lib/inputValidation";
+import { ZC } from "@/lib/zLayers";
 
 interface SplitWizardProps {
   doc: DocumentRecord;
@@ -191,7 +192,7 @@ export default function SplitWizard(props: SplitWizardProps) {
   if (followUps) return <LifecycleFollowUps operation="split" items={followUps.items} unitCodeNote={followUps.unitCodeNote} onDone={onSuccess} />;
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start justify-center p-4 overflow-y-auto">
+    <div className={`fixed inset-0 ${ZC.workflowModal} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start justify-center p-4 overflow-y-auto`}>
       <form
         onSubmit={(e) => { e.preventDefault(); }}
         className="w-full max-w-4xl bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden my-8 animate-in fade-in zoom-in-95"

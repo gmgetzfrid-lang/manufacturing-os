@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import type { GraphNode } from "@/lib/orgGraph";
 import { mentionsForAsset, mentionsForDocument, type MentionEvidence } from "@/lib/mentions";
+import { ZC } from "@/lib/zLayers";
 
 export interface NodePeekProps {
   node: GraphNode;
@@ -111,7 +112,7 @@ export default function NodePeek({
 
   return (
     <div role="dialog" aria-label={`${labelFor(node.type)}: ${node.label}`}
-      className="absolute bottom-12 right-3 w-80 max-w-[calc(100%-1.5rem)] max-h-[70%] flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl z-10">
+      className={`absolute bottom-12 right-3 w-80 max-w-[calc(100%-1.5rem)] max-h-[70%] flex flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl ${ZC.raised}`}>
       {/* Header */}
       <div className="flex items-start gap-2 p-3 pb-2 shrink-0">
         {historyDepth > 0 && (

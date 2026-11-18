@@ -47,6 +47,7 @@ import { buildProgressIndex, type ProgressInfo } from "@/lib/scheduleProgress";
 import RebaseScheduleModal from "@/components/projects/RebaseScheduleModal";
 import { ClipboardList, PlayCircle } from "lucide-react";
 import type { MoveOutcome } from "@/components/projects/ExecutionView";
+import { ZC } from "@/lib/zLayers";
 const ExecutionView = dynamic(() => import("@/components/projects/ExecutionView"), {
   ssr: false,
   loading: () => <div role="status" className="py-10 text-center text-xs text-[var(--color-text-muted)]">Loading the execution board…</div>,
@@ -784,8 +785,8 @@ function StatusMenu({ current, onPick, disabled }: { current: MilestoneStatus; o
       </button>
       {open && typeof document !== "undefined" && createPortal(
         <>
-          <div className="fixed inset-0 z-[190]" onClick={() => setOpen(false)} />
-          <div className="fixed z-[200] bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg py-1 w-36 animate-in fade-in zoom-in-95 duration-150" style={{ top: pos.top, left: pos.left }}>
+          <div className={`fixed inset-0 ${ZC.scheduleMenuCatcher}`} onClick={() => setOpen(false)} />
+          <div className={`fixed ${ZC.workflowModal} bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg py-1 w-36 animate-in fade-in zoom-in-95 duration-150`} style={{ top: pos.top, left: pos.left }}>
             {STATUS_OPTIONS.map((s) => (
               <button
                 key={s}

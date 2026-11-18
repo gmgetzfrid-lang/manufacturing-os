@@ -38,6 +38,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { publicOrigin } from "@/lib/publicOrigin";
 import QrBadge from "@/components/ui/QrBadge";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import { ZC } from "@/lib/zLayers";
 
 interface Props {
   isOpen: boolean;
@@ -194,7 +195,7 @@ export default function ShareLinkModal({
     : "couldn't confirm which revision it serves";
 
   return (
-    <div className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div className={`fixed inset-0 ${ZC.overlay} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4`}>
       <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 rounded-lg bg-teal-100 text-teal-700"><LinkIcon className="w-5 h-5" /></div>

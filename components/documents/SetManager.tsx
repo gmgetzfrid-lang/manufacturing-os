@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { DocumentSet, DocumentRecord } from '@/types/schema';
+import { ZC } from "@/lib/zLayers";
 
 interface SetManagerProps {
   isOpen: boolean;
@@ -133,7 +134,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className={`fixed inset-0 ${ZC.modal} flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200`}>
       <div className="w-full max-w-4xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col h-[80vh] animate-in fade-in zoom-in-95">
         
         {/* HEADER */}
@@ -225,7 +226,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                     </div>
                     {/* DROPDOWN RESULTS */}
                     {searchResults.length > 0 && (
-                      <div className="absolute top-full right-0 w-80 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-xl mt-2 p-1 z-50 animate-in fade-in zoom-in-95 duration-150">
+                      <div className={`absolute top-full right-0 w-80 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-xl mt-2 p-1 ${ZC.pagePopover} animate-in fade-in zoom-in-95 duration-150`}>
                         {searchResults.map(res => (
                           <div key={res.id} onClick={() => addToSet(res)} className="p-2 hover:bg-[var(--color-accent-soft)] rounded cursor-pointer flex justify-between items-center group">
                             <div className="flex flex-col truncate">

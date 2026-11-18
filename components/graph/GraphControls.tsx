@@ -27,6 +27,7 @@ import {
 import {
   NODE_COLORS, UNIT_VARIANT_COLORS, UNIT_VARIANT_LABELS, type UnitVariant,
 } from "@/components/graph/graphTheme";
+import { ZC } from "@/lib/zLayers";
 
 const TYPE_LABELS: Record<GraphNodeType, string> = {
   document: "Documents", asset: "Equipment", unit: "Units",
@@ -128,7 +129,7 @@ export default function GraphControls({
   };
 
   return (
-    <div className="absolute top-2 right-3 z-10 flex flex-col items-end gap-2 max-h-[calc(100%-1rem)]">
+    <div className={`absolute top-2 right-3 ${ZC.raised} flex flex-col items-end gap-2 max-h-[calc(100%-1rem)]`}>
       <div className="flex items-center gap-1.5">
         {/* 2D / 3D — the switch people will reach for first. */}
         <div className="inline-flex rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)]/90 backdrop-blur p-0.5 shadow-sm">

@@ -4,6 +4,7 @@ import React, { useMemo, useState } from "react";
 import { X, CheckCircle2 } from "lucide-react";
 import type { LibraryCollection } from "@/types/schema";
 import FolderTree from "@/components/documents/FolderTree";
+import { ZC } from "@/lib/zLayers";
 
 export default function MoveModal(props: {
   isOpen: boolean;
@@ -25,7 +26,7 @@ export default function MoveModal(props: {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4">
+    <div className={`fixed inset-0 ${ZC.drawerModal} flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4`}>
       <div className="w-full max-w-3xl rounded-2xl bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between">
           <div>

@@ -11,6 +11,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { ChevronRight, MoreHorizontal, Home, ChevronDown } from "lucide-react";
 import { NodeIcon } from "@/lib/nodeIcons";
 import { safeNodeColor } from "@/lib/nodeColor";
+import { ZC } from "@/lib/zLayers";
 
 export interface PathSegment {
   id: string;
@@ -124,7 +125,7 @@ export default function PathBar({ library, segments, onNavigate, onDropItems }: 
               <ChevronDown className="w-2.5 h-2.5 -ml-0.5" />
             </button>
             {menuOpen && (
-              <div className="absolute left-0 top-full mt-1 z-50 min-w-44 max-w-64 py-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg ring-1 ring-black/5 animate-in fade-in zoom-in-95 duration-150 origin-top-left">
+              <div className={`absolute left-0 top-full mt-1 ${ZC.pagePopover} min-w-44 max-w-64 py-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg ring-1 ring-black/5 animate-in fade-in zoom-in-95 duration-150 origin-top-left`}>
                 {hidden.map((seg, i) => (
                   <button
                     key={seg.id}

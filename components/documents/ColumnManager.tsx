@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, Eye, EyeOff, X, Trash2, Pencil, Check, Loader2, KeyRound, GripVertical } from "lucide-react";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import { ZC } from "@/lib/zLayers";
 
 export type ColumnOption = {
   key: string;
@@ -153,7 +154,7 @@ export default function ColumnManager(props: {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4">
+    <div className={`fixed inset-0 ${ZC.drawerPanel} flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4`}>
       <div className="w-full max-w-2xl rounded-2xl bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between">
           <div>

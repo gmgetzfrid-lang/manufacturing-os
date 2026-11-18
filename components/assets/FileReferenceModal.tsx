@@ -26,6 +26,7 @@ import {
 import DocumentLinkPicker from "@/components/documents/DocumentLinkPicker";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { userFacingCaughtError } from "@/lib/userFacingError";
+import { ZC } from "@/lib/zLayers";
 
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
@@ -259,7 +260,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
   };
 
   return (
-    <div ref={rootRef} className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-3 sm:p-6" onClick={onClose}>
+    <div ref={rootRef} className={`fixed inset-0 ${ZC.assetModal} flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-3 sm:p-6`} onClick={onClose}>
       <div
         className={`bg-slate-900 shadow-2xl border border-slate-700 overflow-hidden flex flex-col ${isFull ? "w-screen h-dvh rounded-none" : "w-[94vw] sm:w-[80vw] h-[85dvh] max-w-[1400px] rounded-2xl"}`}
         onClick={(e) => e.stopPropagation()}

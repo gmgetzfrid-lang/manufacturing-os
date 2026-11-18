@@ -2,6 +2,7 @@
 
 import React from "react";
 import { FileText, Folder, Layers, Command, Activity } from "lucide-react";
+import { ZC } from "@/lib/zLayers";
 
 interface StatusFooterProps {
   docCount: number;
@@ -26,7 +27,7 @@ export default function StatusFooter({
 }: StatusFooterProps) {
   return (
     <div
-      className="h-7 shrink-0 border-t border-slate-200 bg-white/80 flex items-center gap-4 px-4 text-[10px] font-mono text-slate-500 z-20"
+      className={`h-7 shrink-0 border-t border-slate-200 bg-white/80 flex items-center gap-4 px-4 text-[10px] font-mono text-slate-500 ${ZC.raisedHigher}`}
       style={{ backdropFilter: "blur(12px)" }}
     >
       <div className="flex items-center gap-1.5">

@@ -27,6 +27,7 @@ import { Input, Select } from '@/components/ui/Field';
 import { Spinner } from '@/components/ui/Spinner';
 import UserAvatar from '@/components/ui/UserAvatar';
 import { appAlert, appConfirm } from '@/components/providers/DialogProvider';
+import { ZC } from "@/lib/zLayers";
 
 interface MemberRow {
   id: string;
@@ -614,7 +615,7 @@ export default function AdminUsersPage() {
 
       {/* Add User Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
+        <div className={`fixed inset-0 ${ZC.pagePopover} flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in`}>
           <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95">
             <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex justify-between items-center">
               <h3 className="text-lg font-bold text-[var(--color-text)]">Add Team Member</h3>
@@ -743,8 +744,8 @@ function RoleAddPicker({
       </button>
       {open && !disabled && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 z-50 mt-1 w-72 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg py-1 max-h-72 overflow-auto animate-in fade-in zoom-in-95 duration-150">
+          <div className={`fixed inset-0 ${ZC.pageFloat}`} onClick={() => setOpen(false)} />
+          <div className={`absolute left-0 ${ZC.pagePopover} mt-1 w-72 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg py-1 max-h-72 overflow-auto animate-in fade-in zoom-in-95 duration-150`}>
             {groups.map((g) => (
               <React.Fragment key={g.title}>
                 <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)] border-b border-[var(--color-border)]" title={g.hint ?? undefined}>

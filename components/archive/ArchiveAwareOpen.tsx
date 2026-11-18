@@ -17,6 +17,7 @@ import { X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { appAlert } from "@/components/providers/DialogProvider";
 import BackupViewer, { type ArchiveTarget } from "@/components/archive/BackupViewer";
+import { ZC } from "@/lib/zLayers";
 
 export function useArchiveAwareOpen() {
   const [target, setTarget] = useState<ArchiveTarget | null>(null);
@@ -64,7 +65,7 @@ export function useArchiveAwareOpen() {
 
   const modal = target && typeof document !== "undefined"
     ? createPortal(
-        <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className={`fixed inset-0 ${ZC.workflowModal} bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4`}>
           <div className="w-full max-w-4xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 max-h-[90vh] flex flex-col">
             <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
               <div className="text-sm font-black text-[var(--color-text)]">Archived file</div>

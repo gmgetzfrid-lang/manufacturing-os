@@ -30,9 +30,13 @@
 import React from "react";
 import { RefreshCw, WifiOff } from "lucide-react";
 import {
-  UPDATE_PROMPT_BUTTON_CLASS, UPDATE_PROMPT_TEXT, UPDATE_PROMPT_WRAP_CLASS, loadLatestBuildInThisTab,
+  UPDATE_PROMPT_BUTTON_CLASS, UPDATE_PROMPT_TEXT, UPDATE_PROMPT_WRAP_CLASS, loadLatestBuildInThisTab, reloadDuringUploadConfirmText,
   reportWaitingWorker, subscribeUpdatePromptShell, subscribeWaitingWorker, updatePromptShellMounted, waitingWorkerSnapshot,
 } from "@/components/pwa/swUpdate";
+// The upload counters' leaf module (no Supabase import, so nothing heavy joins
+// every page's root bundle): the fallback asks over an upload too (TAX-15).
+import { hasUploadsInFlight, releaseUploadUnloadGuard } from "@/lib/uploadInFlight";
+import { ZC } from "@/lib/zLayers";
 
 // The update's state and reload path moved to the leaf module (TAX-15);
 // re-exported so existing callers and tests keep their import.
@@ -73,17 +77,46 @@ export function networkSignal(data: unknown): boolean | null {
 /** The update prompt when UpdatePill's chunk cannot load (a deploy has
  *  removed the old build's chunks, or the network dropped): the same words,
  *  the same place and the same reload path (`loadLatestBuild`), so a newer
- *  build is still announced and the page around it survives. It skips the
- *  in-app question over an upload in flight — that lives in UpdatePill's
- *  chunk — but the reload still meets the browser's own leave-page prompt,
- *  which lib/uploadActivity holds exactly while an upload is on the wire. Like
+ *  build is still announced and the page around it survives. Over an upload
+ *  in flight it asks UpdatePill's question first (`confirmReloadFromFallback`
+ *  — through `window.confirm`, because the app's dialog host is in the chunk
+ *  that failed; TAX-15, notifications N13), and on yes releases the
+ *  browser's own leave-page prompt so the person is not asked twice. Like
  *  the stand-in, it stands down while the shell's prompt is mounted. */
+/** The fallback's question over an upload in flight (TAX-15 done-when 2's
+ *  fallback limb): no upload → go; an upload → `window.confirm` in
+ *  UpdatePill's words, and on OK the leave-page guard is released (as
+ *  UpdatePill's "Reload anyway" does). A confirm that throws (a blocked
+ *  dialog) answers "wait": the upload is never stopped without a yes. */
+export function confirmReloadFromFallback(deps: {
+  inFlight: () => boolean;
+  confirm: (text: string) => boolean;
+  release: () => void;
+} = {
+  inFlight: hasUploadsInFlight,
+  confirm: (text) => (typeof window !== "undefined" && typeof window.confirm === "function" ? window.confirm(text) : false),
+  release: releaseUploadUnloadGuard,
+}): boolean {
+  if (!deps.inFlight()) return true;
+  let ok = false;
+  try { ok = deps.confirm(reloadDuringUploadConfirmText()); } catch { ok = false; }
+  if (ok) deps.release();
+  return ok;
+}
+
 export function UpdatePromptFallback() {
   const shellUp = React.useSyncExternalStore(subscribeUpdatePromptShell, updatePromptShellMounted, () => false);
   if (shellUp) return null;
   return (
     <div className={UPDATE_PROMPT_WRAP_CLASS} data-update-prompt data-update-prompt-fallback>
-      <button type="button" onClick={() => { void loadLatestBuildInThisTab(); }} className={UPDATE_PROMPT_BUTTON_CLASS}>
+      <button
+        type="button"
+        onClick={() => {
+          if (!confirmReloadFromFallback()) return;
+          void loadLatestBuildInThisTab();
+        }}
+        className={UPDATE_PROMPT_BUTTON_CLASS}
+      >
         <RefreshCw className="w-3.5 h-3.5" aria-hidden />
         {UPDATE_PROMPT_TEXT}
       </button>
@@ -187,7 +220,7 @@ export default function ServiceWorkerManager() {
 
   return (
     <>
-      <div className="fixed bottom-4 left-4 z-[200] flex flex-col gap-2 pointer-events-none">
+      <div className={`fixed bottom-4 left-4 ${ZC.workflowModal} flex flex-col gap-2 pointer-events-none`}>
         {offline && (
           <div className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-amber-500 text-white text-xs font-bold px-3 py-1.5 shadow-lg">
             <WifiOff className="w-3.5 h-3.5" />

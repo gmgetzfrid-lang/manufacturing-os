@@ -64,6 +64,7 @@ import { loadRequesterRoles } from '@/lib/ticketRequesterRoles';
 import { readQueueScope, foldHistoryChunk, historySearchFilter, historyBeforeCursor, HISTORY_CHUNK, HISTORY_SEARCH_MAX, type HistoryState, type QueueQuery, type QueueReadResult } from '@/lib/ticketQueueRead';
 import { OUTCOME_LABEL, isTicketOutcome } from '@/lib/ticketOutcome';
 import { reasonForOutcome } from '@/components/requests/RequestOutcomes';
+import { ZC } from "@/lib/zLayers";
 
 // =========================================================================================
 // SECTION 1: TYPES & CONFIGURATION INTERFACES
@@ -1398,7 +1399,7 @@ export default function RequestPortal() {
       {/* 1. TOP METRICS DASHBOARD */}
       {/* Wide canvas (matches the ticket page + libraries) — this portal was
           born at 1920px; a narrower wrap strands it in dead margins. */}
-      <div className="bg-[var(--color-surface)] border-b border-[var(--color-border)] sticky top-0 z-20 shadow-sm">
+      <div className={`bg-[var(--color-surface)] border-b border-[var(--color-border)] sticky top-0 ${ZC.raisedHigher} shadow-sm`}>
         <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
             <div>
@@ -1455,11 +1456,11 @@ export default function RequestPortal() {
               onClick={() => { setFilters({ ...filters, status: 'ALL' }); pickAttentionView('needs_me'); }}
               title={actionItems === null ? `Unknown — permissions could not be read: ${policyFault}` : undefined}
             >
-              <div className="flex justify-between items-start z-10">
+              <div className={`flex justify-between items-start ${ZC.raised}`}>
                 <span className={`text-[10px] font-bold uppercase ${hasActionItems ? 'text-orange-600' : 'text-[var(--color-text-faint)]'}`}>Action Required</span>
                 <Zap className={`w-4 h-4 ${hasActionItems ? 'text-orange-500 fill-orange-500 animate-pulse' : 'text-slate-300'}`} />
               </div>
-              <div className="flex items-end justify-between mt-1 z-10">
+              <div className={`flex items-end justify-between mt-1 ${ZC.raised}`}>
                 {actionItems === null ? (
                   <div className="flex flex-col">
                     <div data-testid="tile-action-required-count" className="text-2xl font-black text-[var(--color-text-muted)]">—</div>
@@ -1919,8 +1920,8 @@ export default function RequestPortal() {
                                   <button onClick={() => setOpenRowMenu(openRowMenu === ticket.id ? null : ticket.id!)} className="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors p-2 hover:bg-[var(--color-surface-2)] rounded-full"><MoreVertical className="w-4 h-4" /></button>
                                   {openRowMenu === ticket.id && (
                                     <>
-                                      <div className="fixed inset-0 z-40" onClick={() => setOpenRowMenu(null)}></div>
-                                      <div className="absolute right-0 mt-2 w-48 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg z-50 origin-top-right animate-in fade-in zoom-in-95 duration-150">
+                                      <div className={`fixed inset-0 ${ZC.pageFloat}`} onClick={() => setOpenRowMenu(null)}></div>
+                                      <div className={`absolute right-0 mt-2 w-48 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg ${ZC.pagePopover} origin-top-right animate-in fade-in zoom-in-95 duration-150`}>
                                         <div className="py-1">
                                           <button onClick={() => handleQuickMarkUrgent(ticket.id!)} className="flex w-full items-center px-4 py-2 text-xs text-amber-600 hover:bg-amber-50 font-bold"><AlertCircle className="w-3 h-3 mr-2" /> Mark Urgent</button>
                                           {hasAnyRole(['Manager', 'Admin']) && (!policyFault && <button onClick={() => handleQuickForceClose(ticket.id!)} className="flex w-full items-center px-4 py-2 text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] font-medium"><Trash2 className="w-3 h-3 mr-2" /> Force Close</button>)}

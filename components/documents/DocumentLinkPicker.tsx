@@ -15,6 +15,8 @@ import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 import { createFolder, createLibrary, listLibraryFoldersOnce, type PickerFolder } from "@/lib/libraryCollections";
 import { appPrompt, appAlert } from "@/components/providers/DialogProvider";
 import { useRole } from "@/components/providers/RoleContext";
+import { ZC } from "@/lib/zLayers";
+import { useDockAvoidRow } from "@/components/ui/CornerDock";
 
 export default function DocumentLinkPicker({ orgId, userId, canManage = false, excludeIds = [], onPick, onClose }: {
   orgId: string;
@@ -24,6 +26,9 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
   onPick: (documentId: string) => void | Promise<void>;
   onClose: () => void;
 }) {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const [tab, setTab] = useState<"browse" | "upload">("browse");
   const [libraries, setLibraries] = useState<{ id: string; name: string }[]>([]);
   // OWN-22: the creator's display name rides along as the owner-name cache
@@ -148,7 +153,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
   const fieldCls = "text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2.5 py-1.5 outline-none focus:border-[var(--color-accent)]";
 
   return (
-    <div className="fixed inset-0 z-[520] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className={`fixed inset-0 ${ZC.policyModal} flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4`} onClick={onClose}>
       <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[82vh]" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
           <FileText className="w-5 h-5 text-orange-600" />
@@ -249,7 +254,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
 
             {upError && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">{upError}</div>}
 
-            <div className="flex justify-end pt-1">
+            <div ref={dockRowRef} className="flex justify-end pt-1">
               <button onClick={createAndLink} disabled={creating || !upLibraryId || !file || !docNum.trim()} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed">
                 {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Create &amp; link
               </button>

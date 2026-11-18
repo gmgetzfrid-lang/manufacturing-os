@@ -18,6 +18,7 @@ import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl from "@/components/projects/ProgressControl";
 import { GROUP_PALETTE } from "@/lib/scheduleColors";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
+import { ZC } from "@/lib/zLayers";
 
 // Use the shared palette so a group is the SAME hue here and on the
 // timeline. `.rail` is the solid accent (was `.bar` locally).
@@ -427,7 +428,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
 
       {/* Overflow day popover */}
       {overflowDay && (
-        <div className="fixed inset-0 z-[160] flex items-start sm:items-center justify-center overflow-y-auto p-4" onClick={() => setOverflowDay(null)}>
+        <div className={`fixed inset-0 ${ZC.calendarPopover} flex items-start sm:items-center justify-center overflow-y-auto p-4`} onClick={() => setOverflowDay(null)}>
           <div className="absolute inset-0 bg-slate-900/30" />
           <div className="relative w-full max-w-sm bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden animate-in fade-in zoom-in-95 duration-150" onClick={(e) => e.stopPropagation()}>
             <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
@@ -473,7 +474,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
           task's steps with date, status, and move buttons. Nothing
           leaves the grid; this is the Outlook 'click → small window'. */}
       {subPopover && (
-        <div className="fixed inset-0 z-[160]" onClick={() => setSubPopover(null)}>
+        <div className={`fixed inset-0 ${ZC.calendarPopover}`} onClick={() => setSubPopover(null)}>
           <div
             className="absolute w-[300px] max-w-[92vw] max-h-[60dvh] overflow-y-auto bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg animate-in fade-in zoom-in-95 duration-150"
             style={{ top: subPopover.top, left: subPopover.left }}
@@ -516,7 +517,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
       {/* Floating ghost that follows the finger during a touch drag. */}
       {touchDrag && (
         <div
-          className="fixed z-[300] pointer-events-none px-2 py-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-bold shadow-2xl -translate-x-1/2 -translate-y-1/2 max-w-[180px] truncate"
+          className={`fixed ${ZC.overlay} pointer-events-none px-2 py-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[11px] font-bold shadow-2xl -translate-x-1/2 -translate-y-1/2 max-w-[180px] truncate`}
           style={{ left: touchDrag.x, top: touchDrag.y }}
         >
           {touchDrag.label}
@@ -596,7 +597,7 @@ function Chip({
           type="button"
           onClick={(e) => { e.stopPropagation(); onToggleSelect?.(); }}
           title={selected ? "Deselect" : "Select for bulk actions"}
-          className={`absolute top-0.5 right-0.5 z-10 w-4 h-4 rounded border flex items-center justify-center transition-opacity ${selected ? "bg-[var(--color-accent)] border-[var(--color-accent)] text-[var(--color-accent-fg)] opacity-100" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-transparent opacity-0 group-hover/chip:opacity-100"}`}
+          className={`absolute top-0.5 right-0.5 ${ZC.raised} w-4 h-4 rounded border flex items-center justify-center transition-opacity ${selected ? "bg-[var(--color-accent)] border-[var(--color-accent)] text-[var(--color-accent-fg)] opacity-100" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-transparent opacity-0 group-hover/chip:opacity-100"}`}
         >
           <CheckSquare className="w-3 h-3" />
         </button>

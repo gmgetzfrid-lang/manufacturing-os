@@ -23,6 +23,7 @@ import { loadCodebook, EMPTY_CODEBOOK, type Codebook } from "@/lib/codebook";
 import { Button } from "@/components/ui/Button";
 import CoverageReport from "@/components/assets/CoverageReport";
 import type { BridgeConfig, BridgeSuggestion, BridgeSheet } from "@/lib/equipmentBridgeServer";
+import { ZC } from "@/lib/zLayers";
 
 interface SuggestionRow {
   document_id: string;
@@ -317,7 +318,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
   const sweepOutcomes = sweepProgress?.outcomes;
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 animate-in fade-in">
+    <div className={`fixed inset-0 ${ZC.workflowModal} bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 animate-in fade-in`}>
       <div className="w-full max-w-3xl bg-[var(--color-surface)] rounded-2xl shadow-2xl flex flex-col max-h-[90vh] animate-in zoom-in-95">
         <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2.5">
           <ScanSearch className="w-4 h-4 text-orange-600" />

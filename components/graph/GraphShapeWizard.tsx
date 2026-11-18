@@ -37,6 +37,7 @@ import {
   FileText, Wrench, Plus, BrainCircuit, CheckCircle2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { ZC } from "@/lib/zLayers";
 
 interface Candidate {
   ref: string;
@@ -239,7 +240,7 @@ export default function GraphShapeWizard({
   const acceptedCount = rows.filter((r) => r.accepted).length;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+    <div className={`fixed inset-0 ${ZC.pagePopover} flex items-center justify-center bg-black/50 p-4`} onClick={onClose}>
       <div className="w-full max-w-xl max-h-[92vh] flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}>
         <div className="h-1.5 bg-gradient-to-r from-violet-500 via-fuchsia-500 to-violet-500 motion-safe:animate-[shimmer_6s_linear_infinite]" style={{ backgroundSize: "200% 100%" }} />

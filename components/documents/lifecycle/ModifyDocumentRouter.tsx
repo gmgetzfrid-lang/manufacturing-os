@@ -24,6 +24,7 @@ import MergeWizard from "@/components/documents/lifecycle/MergeWizard";
 import RenumberModal from "@/components/documents/lifecycle/RenumberModal";
 import SetRevUpModal from "@/components/documents/lifecycle/SetRevUpModal";
 import FirstRunHint from "@/components/ui/FirstRunHint";
+import { ZC } from "@/lib/zLayers";
 
 interface ModifyDocumentRouterProps {
   isOpen: boolean;
@@ -188,7 +189,7 @@ export default function ModifyDocumentRouter(props: ModifyDocumentRouterProps) {
   // Router landing page
   const hasSet = !!doc.setId;
   return (
-    <div className="fixed inset-0 z-[180] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div className={`fixed inset-0 ${ZC.lifecycleRouter} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4`}>
       <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
           <div>

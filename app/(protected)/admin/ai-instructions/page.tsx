@@ -25,6 +25,8 @@ import {
 } from "@/lib/aiInstructions";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import { ZC } from "@/lib/zLayers";
+import { useDockAvoidRow } from "@/components/ui/CornerDock";
 
 const SCOPES: AiInstructionScope[] = ["global", "knowledge", "codebook", "equipment"];
 
@@ -37,6 +39,9 @@ export default function AiInstructionsPage() {
 }
 
 function AiInstructionsInner() {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const { activeOrgId, hasAnyRole, uid, userEmail } = useRole();
   // ADD-1: authority by the role COLLECTION, never the headline alone.
   const canWrite = hasAnyRole(["Admin", "DocCtrl"]);
@@ -189,7 +194,7 @@ function AiInstructionsInner() {
       )}
 
       {editing && (
-        <div className="fixed inset-0 z-[400] bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4" onClick={() => setEditing(null)}>
+        <div className={`fixed inset-0 ${ZC.sharedModal} bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4`} onClick={() => setEditing(null)}>
           <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl max-h-[90vh] flex flex-col">
             <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2.5">
               <GraduationCap className="w-4 h-4 text-violet-600" />
@@ -223,7 +228,7 @@ function AiInstructionsInner() {
                   className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y" />
               </div>
             </div>
-            <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-b-2xl flex items-center justify-end gap-2">
+            <div ref={dockRowRef} className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-b-2xl flex items-center justify-end gap-2">
               <button onClick={() => setEditing(null)} disabled={busy}
                 className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
               <button onClick={() => void save()} disabled={busy}

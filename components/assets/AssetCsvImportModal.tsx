@@ -23,6 +23,8 @@ import { loadCodebook, tagKey, EMPTY_CODEBOOK, type Codebook } from "@/lib/codeb
 import { planAssetImport, type ImportMode, type ImportPlan, type ImportRowInput } from "@/lib/assetCategorize";
 import { translatePostgresError } from "@/lib/inputValidation";
 import { supabase } from "@/lib/supabase";
+import { ZC } from "@/lib/zLayers";
+import { useDockAvoidRow } from "@/components/ui/CornerDock";
 
 interface Props {
   isOpen: boolean;
@@ -77,6 +79,9 @@ function splitLine(line: string): string[] {
 export default function AssetCsvImportModal({
   isOpen, onClose, orgId, actorUserId, onImported,
 }: Props) {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const [step, setStep] = useState<Step>("paste");
   const [raw, setRaw] = useState("");
   const [headers, setHeaders] = useState<string[]>([]);
@@ -264,7 +269,7 @@ export default function AssetCsvImportModal({
   const unitName = (code: string | null) => (code ? (book.units.find((u) => u.code === code)?.label ?? null) : null);
 
   return (
-    <div className="fixed inset-0 z-[400] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div className={`fixed inset-0 ${ZC.sharedModal} bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4`}>
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 rounded-lg bg-purple-100 text-purple-700"><KeyRound className="w-5 h-5" /></div>
@@ -448,7 +453,7 @@ export default function AssetCsvImportModal({
           )}
         </div>
 
-        <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between gap-2">
+        <div ref={dockRowRef} className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between gap-2">
           {step !== "paste" && step !== "done" && (
             <button onClick={() => setStep(step === "preview" ? "map" : "paste")} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
               <ArrowLeft className="w-3.5 h-3.5" /> Back

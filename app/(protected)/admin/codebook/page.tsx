@@ -36,6 +36,7 @@ import {
 } from "@/lib/codebook";
 import { listAssetIdentities } from "@/lib/assets";
 import { entryAssetReferences, rederivationImpact } from "@/lib/assetCategorize";
+import { ZC } from "@/lib/zLayers";
 
 /** CB-6 / CB-7: the confirm a codebook edit shows BEFORE it is saved when
  *  existing assets carry codes the current rule derived that the edited rule
@@ -986,7 +987,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
   const KIND_LABEL: Record<string, string> = { unit: "Unit", equipment_type: "Equipment", drawing_type: "Drawing" };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 animate-in fade-in">
+    <div className={`fixed inset-0 ${ZC.workflowModal} bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 animate-in fade-in`}>
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl flex flex-col max-h-[88vh] animate-in zoom-in-95">
         <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2.5">
           <Sparkles className="w-4 h-4 text-violet-600" />

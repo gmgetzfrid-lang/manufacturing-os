@@ -62,6 +62,7 @@ import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import { ZC } from "@/lib/zLayers";
 
 const ADMIN_ROLES = new Set(["Admin", "Manager", "Supervisor", "DocCtrl"]);
 
@@ -816,7 +817,7 @@ function EditScopeRowModal({
   const kindLabel = target.kind === "plant" ? "Plant" : target.kind === "unit" ? "Unit" : "System";
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div className={`fixed inset-0 ${ZC.workflowModal} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4`}>
       <form onSubmit={onSubmit} className="bg-[var(--color-surface)] rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-3 animate-in fade-in zoom-in-95">
         <div className="flex items-center justify-between">
           <h2 className="font-black text-[var(--color-text)]">Edit {kindLabel}</h2>

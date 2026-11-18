@@ -11,6 +11,7 @@ import {
   METADATA_EDITOR_STATUS_OPTIONS, statusSelectOptions, notOfferedStatusNote, isUnguardedEntryIntoForce, ENTRY_INTO_FORCE_ACTION,
 } from "@/lib/documentStatusOptions";
 import { assertNotOnHold, isHoldBlockedError } from "@/lib/holdGate";
+import { ZC } from "@/lib/zLayers";
 
 // ── Inline pill editor used for tags/multi columns ──────────────────────────
 function TagInput({
@@ -362,7 +363,7 @@ export default function MetadataEditor(props: {
   const fieldClass = "mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-muted)]";
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4">
+    <div className={`fixed inset-0 ${ZC.libraryModal} flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4`}>
       <div className="w-full max-w-3xl rounded-2xl bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
 
         {/* Header */}

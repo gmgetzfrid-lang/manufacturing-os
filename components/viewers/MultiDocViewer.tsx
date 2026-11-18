@@ -47,6 +47,7 @@ import { bakeMarkupIntoPdf } from "@/lib/markupExport";
 import { stashDraft, type DraftHandoffFile } from "@/lib/draftHandoff";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { useRouter } from "next/navigation";
+import { ZC } from "@/lib/zLayers";
 
 // Same self-hosted worker the single viewer uses (copied to /public on prebuild).
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
@@ -1032,7 +1033,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
   return (
     <div
       ref={rootRef}
-      className="fixed inset-0 z-[85] bg-slate-950 animate-in fade-in duration-200 flex"
+      className={`fixed inset-0 ${ZC.viewerOverlay} bg-slate-950 animate-in fade-in duration-200 flex`}
     >
       {/* ── THUMBNAIL RAIL (push panel; never overlaps the page) ── */}
       <div className={`${sidebarOpen ? "w-52" : "w-0"} shrink-0 bg-slate-900 border-r border-slate-800 overflow-hidden transition-[width] duration-200 flex flex-col`}>
@@ -1094,7 +1095,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             {/* Slim, translucent per-sheet header — keeps Markup + pin reachable
                 without eating the page. Rides just below the toolbar when it's
                 shown, slides to the very top when the toolbar hides. */}
-            <div className="sticky z-10 bg-slate-900/80 backdrop-blur-sm border-y border-slate-800/80 px-4 py-1.5 flex items-center gap-3 transition-[top] duration-200" style={{ top: showChrome ? 52 : 0 }}>
+            <div className={`sticky ${ZC.raised} bg-slate-900/80 backdrop-blur-sm border-y border-slate-800/80 px-4 py-1.5 flex items-center gap-3 transition-[top] duration-200`} style={{ top: showChrome ? 52 : 0 }}>
               <div className="w-5 h-5 rounded-full bg-orange-500 flex items-center justify-center text-[9px] font-black text-white shrink-0">{idx + 1}</div>
               <span className="text-[11px] font-mono font-bold text-orange-400 shrink-0">{entry.doc.documentNumber || "—"}</span>
               <span className="text-[11px] text-slate-300 font-medium truncate">{entry.doc.title || entry.doc.name}</span>
@@ -1194,7 +1195,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
       </div>
 
       {/* ── FLOATING TOP TOOLBAR (overlay, always visible) ── */}
-      <div className={`absolute top-0 inset-x-0 z-50 transition-transform duration-200 ${showChrome ? "translate-y-0" : "-translate-y-full"}`}>
+      <div className={`absolute top-0 inset-x-0 ${ZC.pagePopover} transition-transform duration-200 ${showChrome ? "translate-y-0" : "-translate-y-full"}`}>
         {/* Wraps on phones so every control stays reachable — a scroll
             container would clip the download/print dropdown menus. */}
         <div className="m-2 rounded-xl bg-slate-900/90 backdrop-blur border border-slate-700/80 shadow-2xl shadow-black/40 px-2 py-1.5 flex items-center gap-2 flex-wrap md:flex-nowrap">
@@ -1248,7 +1249,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             </div>
 
             {showSuggest && results.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 z-50 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl shadow-black/50 overflow-hidden py-1 max-h-80 overflow-y-auto">
+              <div className={`absolute top-full left-0 right-0 mt-1 ${ZC.pagePopover} bg-slate-900 border border-slate-700 rounded-lg shadow-2xl shadow-black/50 overflow-hidden py-1 max-h-80 overflow-y-auto`}>
                 {results.map((r, i) => {
                   const e = entries[r.idx];
                   const id = e?.doc.id ?? "";
@@ -1301,8 +1302,8 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
               </button>
               {tagMenuOpen && (
                 <>
-                  <div className="fixed inset-0 z-40" onClick={() => setTagMenuOpen(false)} />
-                  <div className="absolute top-full right-0 mt-1 z-50 w-64 max-h-[70vh] overflow-y-auto bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/60 py-1 custom-scrollbar">
+                  <div className={`fixed inset-0 ${ZC.pageFloat}`} onClick={() => setTagMenuOpen(false)} />
+                  <div className={`absolute top-full right-0 mt-1 ${ZC.pagePopover} w-64 max-h-[70vh] overflow-y-auto bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/60 py-1 custom-scrollbar`}>
                     {collectionTags.map((g) => (
                       <div key={g.label}>
                         <div className="px-3 pt-2 pb-1 text-[9px] font-black uppercase tracking-widest text-slate-500">{g.label}</div>
@@ -1354,8 +1355,8 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             </button>
             {exportMenu === "download" && (
               <>
-                <div className="fixed inset-0 z-40" onClick={() => setExportMenu(null)} />
-                <div className="absolute top-full right-0 mt-1 z-50 w-60 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/60 py-1.5">
+                <div className={`fixed inset-0 ${ZC.pageFloat}`} onClick={() => setExportMenu(null)} />
+                <div className={`absolute top-full right-0 mt-1 ${ZC.pagePopover} w-60 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/60 py-1.5`}>
                   <div className="px-3 pt-1 pb-1 text-[9px] font-black uppercase tracking-widest text-slate-500">Download as PDF</div>
                   <button onClick={() => { setExportMenu(null); requestDocDownload(); }} disabled={!activeEntry?.resolvedUrl || !currentUserId || docBusy} title="The sheet you're viewing. Stamped UNCONTROLLED unless you hold its checkout." className={MENU_ITEM}><FileText className="w-3.5 h-3.5 text-slate-400" /> This sheet</button>
                   <button onClick={() => { setExportMenu(null); requestBookDownload("pinned"); }} disabled={bookBusy || !currentUserId || pinnedReadyEntries.length === 0} title="Merge your pinned sheets into one stamped, uncontrolled PDF" className={MENU_ITEM}><Pin className="w-3.5 h-3.5 text-orange-400" /> Pinned sheets ({pinnedReadyEntries.length}) <span className="ml-auto text-[9px] text-slate-500 font-bold">UNCONTROLLED</span></button>
@@ -1372,8 +1373,8 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             </button>
             {exportMenu === "print" && (
               <>
-                <div className="fixed inset-0 z-40" onClick={() => setExportMenu(null)} />
-                <div className="absolute top-full right-0 mt-1 z-50 w-60 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/60 py-1.5">
+                <div className={`fixed inset-0 ${ZC.pageFloat}`} onClick={() => setExportMenu(null)} />
+                <div className={`absolute top-full right-0 mt-1 ${ZC.pagePopover} w-60 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/60 py-1.5`}>
                   <div className="px-3 pt-1 pb-1 text-[9px] font-black uppercase tracking-widest text-slate-500">Send to printer</div>
                   <button onClick={() => { setExportMenu(null); requestDocPrint(); }} disabled={!activeEntry?.resolvedUrl || !currentUserId || docBusy} title="The sheet you're viewing. Stamped UNCONTROLLED unless you hold its checkout." className={MENU_ITEM}><FileText className="w-3.5 h-3.5 text-slate-400" /> This sheet</button>
                   <button onClick={() => { setExportMenu(null); requestBookPrint("pinned"); }} disabled={bookBusy || !currentUserId || pinnedReadyEntries.length === 0} title="Merge your pinned sheets into one stamped, uncontrolled PDF and print" className={MENU_ITEM}><Pin className="w-3.5 h-3.5 text-orange-400" /> Pinned sheets ({pinnedReadyEntries.length}) <span className="ml-auto text-[9px] text-slate-500 font-bold">UNCONTROLLED</span></button>
@@ -1388,8 +1389,8 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             <button onClick={() => setMoreOpen((v) => !v)} className={`${iconBtn} ${moreOpen ? "bg-white/10 text-white" : ""}`} title="More actions"><MoreHorizontal className="w-4 h-4" /></button>
             {moreOpen && (
               <>
-                <div className="fixed inset-0 z-40" onClick={() => setMoreOpen(false)} />
-                <div className="absolute top-full right-0 mt-1 z-50 w-52 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/60 py-1.5">
+                <div className={`fixed inset-0 ${ZC.pageFloat}`} onClick={() => setMoreOpen(false)} />
+                <div className={`absolute top-full right-0 mt-1 ${ZC.pagePopover} w-52 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/60 py-1.5`}>
                   <button onClick={() => { setMoreOpen(false); setShowBulkCheckout(true); }} disabled={!currentUserId || docs.length === 0} className="w-full px-3 py-2 text-left text-xs font-medium text-slate-200 hover:bg-slate-800 flex items-center gap-2.5 disabled:opacity-40"><Briefcase className="w-3.5 h-3.5 text-indigo-400" /> Checkout all to project</button>
                 </div>
               </>
@@ -1407,7 +1408,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
 
       {/* ── MARKUP SUB-TOOLBAR (compact tools; appears when Markup is on) ── */}
       {markupMode && showChrome && (
-        <div className="absolute top-[3.6rem] left-1/2 -translate-x-1/2 z-50 flex items-center gap-1 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl shadow-2xl shadow-black/50 px-2 py-1.5">
+        <div className={`absolute top-[3.6rem] left-1/2 -translate-x-1/2 ${ZC.pagePopover} flex items-center gap-1 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl shadow-2xl shadow-black/50 px-2 py-1.5`}>
           {([
             ["select", "Select / move", MousePointer2],
             ["pen", "Pen", Pen],
@@ -1440,14 +1441,14 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
       {/* ── PER-PAGE TAG PILLS (floating overlay at the top of the page) ── */}
       {orgId && !markupMode && activeEntry?.doc && activeTagGroups.length > 0 && (
         tagsBarOpen ? (
-          <div className="absolute top-[3.4rem] left-1/2 -translate-x-1/2 z-40 max-w-[92vw] w-auto bg-slate-900/85 backdrop-blur border border-slate-700/80 rounded-xl shadow-2xl shadow-black/40 px-2.5 py-1.5 flex items-center gap-2">
+          <div className={`absolute top-[3.4rem] left-1/2 -translate-x-1/2 ${ZC.pageFloat} max-w-[92vw] w-auto bg-slate-900/85 backdrop-blur border border-slate-700/80 rounded-xl shadow-2xl shadow-black/40 px-2.5 py-1.5 flex items-center gap-2`}>
             <div className="min-w-0">
               <EquipmentTagsStrip metadata={activeEntry.doc.metadata as Record<string, unknown>} customColumns={customColumns} orgId={orgId} userId={currentUserId} canManage={false} variant="ribbon" documentId={activeEntry.doc.id ?? null} assetTags={activeEntry.doc.assetTags} />
             </div>
             <button onClick={() => setTagsBarOpen(false)} title="Hide tags for this sheet" className="shrink-0 p-1 rounded text-white/50 hover:text-white hover:bg-white/10"><X className="w-3.5 h-3.5" /></button>
           </div>
         ) : (
-          <button onClick={() => setTagsBarOpen(true)} className="absolute top-[3.4rem] left-1/2 -translate-x-1/2 z-40 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900/85 backdrop-blur border border-slate-700 text-white/80 hover:text-white text-[11px] font-bold shadow-xl" title="Show tags for this sheet">
+          <button onClick={() => setTagsBarOpen(true)} className={`absolute top-[3.4rem] left-1/2 -translate-x-1/2 ${ZC.pageFloat} inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900/85 backdrop-blur border border-slate-700 text-white/80 hover:text-white text-[11px] font-bold shadow-xl`} title="Show tags for this sheet">
             <Camera className="w-3.5 h-3.5" /> Tags
           </button>
         )
@@ -1468,7 +1469,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
 
       {/* Uncontrolled confirmation modal */}
       {downloadConfirm && (
-        <div className="fixed inset-0 z-[120] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-6">
+        <div className={`fixed inset-0 ${ZC.modalRaised} bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-6`}>
           <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
               <div className="p-2 bg-amber-100 rounded-lg"><ShieldAlert className="w-5 h-5 text-amber-700" /></div>

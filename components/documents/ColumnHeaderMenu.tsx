@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { MetadataFieldType } from "@/types/schema";
+import { ZC } from "@/lib/zLayers";
 
 interface ColumnHeaderMenuProps {
   onAdd: (type: MetadataFieldType) => void;
@@ -59,7 +60,7 @@ export default function ColumnHeaderMenu({ onAdd, isController }: ColumnHeaderMe
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 top-full mt-2 w-56 origin-top-right rounded-xl bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] shadow-lg ring-1 ring-black/5 focus:outline-none z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        <div className={`absolute right-0 top-full mt-2 w-56 origin-top-right rounded-xl bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] shadow-lg ring-1 ring-black/5 focus:outline-none ${ZC.pagePopover} overflow-hidden animate-in fade-in zoom-in-95 duration-150`}>
           <div className="p-2">
             <h4 className="px-3 py-2 text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider">Select Type</h4>
             <div className="space-y-1">

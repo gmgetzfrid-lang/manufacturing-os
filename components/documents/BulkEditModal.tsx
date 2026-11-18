@@ -186,6 +186,8 @@ import { assertNotOnHold } from "@/lib/holdGate";
 import type { DocumentRecord, LibraryConfig, MetadataFieldDefinition } from "@/types/schema";
 import { changeDocumentStatus, recallsCopyHolders, finishRetirementDuties, gateStatusEditorRetirement, type StatusIssueOutcome, type StatusEditorRetirementGate } from "@/lib/revisions";
 import { useRole } from "@/components/providers/RoleContext";
+import { ZC } from "@/lib/zLayers";
+import { useDockAvoidRow } from "@/components/ui/CornerDock";
 
 interface BulkEditModalProps {
   isOpen: boolean;
@@ -208,6 +210,9 @@ const STATUS_OPTIONS = BULK_EDIT_STATUS_OPTIONS;
 export default function BulkEditModal({
   isOpen, onClose, docs, library, actorUserId, onApplied,
 }: BulkEditModalProps) {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const [target, setTarget] = useState<TargetField>({ kind: "status" });
   const [newValue, setNewValue] = useState<string>(STATUS_OPTIONS[0]);
   // REV-31 (P28 integrator fix pass): one reason for a change to Archived —
@@ -571,7 +576,7 @@ export default function BulkEditModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div className={`fixed inset-0 ${ZC.overlay} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4`}>
       <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 rounded-lg bg-violet-100 text-violet-700"><Pencil className="w-5 h-5" /></div>
@@ -778,7 +783,7 @@ export default function BulkEditModal({
           )}
         </div>
 
-        <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
+        <div ref={dockRowRef} className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">
             {results ? "Close" : "Cancel"}
           </button>

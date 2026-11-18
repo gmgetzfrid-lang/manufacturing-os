@@ -12,6 +12,8 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import { ZC } from "@/lib/zLayers";
+import { useDockAvoidRow } from "@/components/ui/CornerDock";
 
 interface DocItem {
   id: string;
@@ -32,6 +34,9 @@ interface LibraryOrderModalProps {
 export default function LibraryOrderModal({
   isOpen, orgId, libraryId, onClose, onSaved,
 }: LibraryOrderModalProps) {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const [docs, setDocs] = useState<DocItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -148,7 +153,7 @@ export default function LibraryOrderModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[320] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
+    <div className={`fixed inset-0 ${ZC.overlayNested} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto`}>
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">
@@ -223,7 +228,7 @@ export default function LibraryOrderModal({
           </div>
         )}
 
-        <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
+        <div ref={dockRowRef} className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-between shrink-0">
           <button onClick={reset} disabled={busy} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] inline-flex items-center gap-1">
             <RotateCcw className="w-3 h-3" /> Clear custom order
           </button>

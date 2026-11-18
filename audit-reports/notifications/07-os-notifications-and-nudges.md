@@ -423,6 +423,8 @@ components/ui/CornerDock.tsx:24 (no max-height / overflow) —
 
 **Scope / residual.** As `RT-11`. No migration.
 
+*Landed (2026-11-18, notifications N13 LAYERS SWEEP): the newest-words merge handed to `ToastProvider`'s next holder — see `RT-11`'s Landed line (`05-realtime-and-lifecycle.md`). Status unchanged (RESOLVED on the ratified reading).*
+
 ---
 
 <a id="os-5"></a>

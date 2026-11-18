@@ -32,6 +32,7 @@ import { WIDGET_CATALOG } from "./widgets";
 import WidgetFrame from "./WidgetFrame";
 import AddWidgetModal from "./AddWidgetModal";
 import LibrarySettingsModal from "./LibrarySettingsModal";
+import { ZC, Z } from "@/lib/zLayers";
 
 // Grid geometry. ROW_UNIT is the height of one `h` unit; GAP is the grid gap.
 const ROW_UNIT = 84; // px — matches gridAutoRows
@@ -404,7 +405,7 @@ export default function DashboardGrid() {
                 <div
                   key={`bg-${r}-${c}`}
                   aria-hidden
-                  style={{ gridColumn: `${c + 1} / span 1`, gridRow: `${r + 1} / span 1`, zIndex: 0 }}
+                  style={{ gridColumn: `${c + 1} / span 1`, gridRow: `${r + 1} / span 1`, zIndex: Z.base }}
                   className="rounded-lg border border-dashed border-[var(--color-border)]/70 bg-[var(--color-surface-2)]/25 pointer-events-none"
                 />
               )),
@@ -414,7 +415,7 @@ export default function DashboardGrid() {
           {drag && (
             <div
               aria-hidden
-              style={{ gridColumn: `${drag.x + 1} / span ${drag.w}`, gridRow: `${drag.y + 1} / span ${drag.h}`, zIndex: 5 }}
+              style={{ gridColumn: `${drag.x + 1} / span ${drag.w}`, gridRow: `${drag.y + 1} / span ${drag.h}`, zIndex: Z.lift }}
               className="rounded-2xl border-2 border-dashed border-[var(--color-accent)] bg-[var(--color-accent)]/10 pointer-events-none transition-all"
             />
           )}
@@ -435,7 +436,7 @@ export default function DashboardGrid() {
                   gridColumn: `${widget.x + 1} / span ${liveW}`,
                   gridRow: `${widget.y + 1} / span ${liveH}`,
                   transform: isDragging ? `translate(${drag!.dx}px, ${drag!.dy}px)` : undefined,
-                  zIndex: isDragging ? 30 : 10,
+                  zIndex: isDragging ? Z.raisedTop : Z.raised,
                   cursor: editing && !isResizingThis ? (isDragging ? "grabbing" : "grab") : undefined,
                 }}
                 className={`group/tile relative min-w-0 ${isDragging ? "scale-[1.02] shadow-2xl shadow-slate-900/30 rounded-2xl" : ""} ${
@@ -464,7 +465,7 @@ export default function DashboardGrid() {
                     onPointerMove={onResizeMove}
                     onPointerUp={onResizeEnd}
                     onPointerCancel={onResizeEnd}
-                    className={`absolute -bottom-1 -right-1 w-6 h-6 z-20 cursor-nwse-resize touch-none flex items-end justify-end p-1 ${isResizingThis ? "scale-110" : ""}`}
+                    className={`absolute -bottom-1 -right-1 w-6 h-6 ${ZC.raisedHigher} cursor-nwse-resize touch-none flex items-end justify-end p-1 ${isResizingThis ? "scale-110" : ""}`}
                     title="Drag to resize"
                   >
                     <span className="block w-4 h-4 rounded-br-lg rounded-tl-sm bg-[var(--color-accent)] shadow-md border border-white/60" style={{ clipPath: "polygon(100% 0, 100% 100%, 0 100%)" }} />
@@ -473,14 +474,14 @@ export default function DashboardGrid() {
 
                 {/* Live size badge while resizing. */}
                 {isResizingThis && (
-                  <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 px-2 py-0.5 rounded-md bg-[var(--color-accent)] text-white text-[11px] font-black tabular-nums shadow pointer-events-none">
+                  <div className={`absolute top-2 left-1/2 -translate-x-1/2 ${ZC.raisedTop} px-2 py-0.5 rounded-md bg-[var(--color-accent)] text-white text-[11px] font-black tabular-nums shadow pointer-events-none`}>
                     {liveW} × {liveH}
                   </div>
                 )}
 
                 {/* Drag hint chip (edit mode, idle). */}
                 {editing && !isDragging && !isResizingThis && (
-                  <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 px-1.5 py-0.5 rounded-md bg-black/35 backdrop-blur text-white/90 text-[10px] font-bold inline-flex items-center gap-1 opacity-0 group-hover/tile:opacity-100 transition-opacity pointer-events-none">
+                  <div className={`absolute top-2 left-1/2 -translate-x-1/2 ${ZC.raised} px-1.5 py-0.5 rounded-md bg-black/35 backdrop-blur text-white/90 text-[10px] font-bold inline-flex items-center gap-1 opacity-0 group-hover/tile:opacity-100 transition-opacity pointer-events-none`}>
                     <Move className="w-3 h-3" /> drag
                   </div>
                 )}
@@ -494,7 +495,7 @@ export default function DashboardGrid() {
             <button
               type="button"
               onClick={() => setAddOpen(true)}
-              style={{ gridColumn: `${addSlot.x + 1} / span 3`, gridRow: `${addSlot.y + 1} / span 2`, zIndex: 10 }}
+              style={{ gridColumn: `${addSlot.x + 1} / span 3`, gridRow: `${addSlot.y + 1} / span 2`, zIndex: Z.raised }}
               className="min-w-0 rounded-2xl border-2 border-dashed border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors flex flex-col items-center justify-center gap-2"
             >
               <Plus className="w-6 h-6" />

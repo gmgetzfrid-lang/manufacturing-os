@@ -15,6 +15,7 @@ import {
   saveLibraryAiFeatures, listKnowledgeDocuments,
   type KnowledgeLibrary, type KnowledgeDocument,
 } from "@/lib/knowledge";
+import { ZC } from "@/lib/zLayers";
 
 const DECODER_PLACEHOLDER =
   `e.g. "Drawing numbers: first two digits = unit (20 = Crude Unit, 25 = Vacuum Unit). Tag prefixes: X- = Exchanger, V- = Vessel, ZZ- = Sample station. Line numbers read size-service-number-spec."`;
@@ -102,7 +103,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
+    <div className={`fixed inset-0 ${ZC.pagePopover} bg-black/50 flex items-start justify-center p-4 overflow-y-auto`} onClick={onClose}>
       <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-xl mt-10"
         onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">

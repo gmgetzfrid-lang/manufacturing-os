@@ -23,6 +23,7 @@ import { isDormantRole, roleDisplayNote } from "@/lib/roleCapabilities";
 import { ALL_ROLES } from "@/types/schema";
 import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
 import { wizardUploadRolesSeed } from "@/lib/libraryAccess";
+import { ZC } from "@/lib/zLayers";
 
 interface LibraryWizardProps {
   orgId: string;
@@ -120,7 +121,7 @@ function Tooltip({ text }: { text: string }) {
         onMouseLeave={() => setShow(false)}
       />
       {show && (
-        <span className="absolute left-5 top-0 z-50 w-48 bg-slate-900 text-white text-xs rounded-lg px-3 py-2 shadow-xl">
+        <span className={`absolute left-5 top-0 ${ZC.pagePopover} w-48 bg-slate-900 text-white text-xs rounded-lg px-3 py-2 shadow-xl`}>
           {text}
         </span>
       )}
@@ -349,7 +350,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
   const STEPS = ["Library Info", "Document Fields", "Permissions"];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/80 backdrop-blur-sm p-4">
+    <div className={`fixed inset-0 ${ZC.pagePopover} flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/80 backdrop-blur-sm p-4`}>
       <div className="bg-[var(--color-surface)] w-full max-w-3xl rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-[var(--color-border)] max-h-[92vh]">
 
         {/* Header */}
@@ -449,7 +450,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
                         className="w-full px-4 py-3 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-xl text-[var(--color-text)] focus:ring-2 focus:ring-orange-500 focus:bg-[var(--color-surface)] outline-none transition-all placeholder:text-slate-300"
                       />
                       {ownerHits.length > 0 && (
-                        <div className="absolute z-10 mt-1 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg overflow-hidden">
+                        <div className={`absolute ${ZC.raised} mt-1 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg overflow-hidden`}>
                           {ownerHits.map((u) => (
                             <button
                               key={u.uid}

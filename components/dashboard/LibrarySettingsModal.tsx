@@ -5,6 +5,7 @@ import { X, Loader2, FileStack } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import type { DashboardWidget, DocControlSettings } from "@/lib/dashboard/types";
+import { ZC } from "@/lib/zLayers";
 
 interface Props {
   open: boolean;
@@ -48,7 +49,7 @@ export default function LibrarySettingsModal({ open, widget, onClose, onSave }: 
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+    <div className={`fixed inset-0 ${ZC.drawer} flex items-center justify-center p-4`}>
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden max-h-[85vh] flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">

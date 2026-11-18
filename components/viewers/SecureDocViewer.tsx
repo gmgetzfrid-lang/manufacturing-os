@@ -9,6 +9,7 @@ import { recordIntent } from '@/lib/intents';
 import { appAlert } from '@/components/providers/DialogProvider';
 import BackupViewer from '@/components/archive/BackupViewer';
 import { inlineTypeForKey, viewerRenderKind } from '@/lib/presignedDisposition';
+import { ZC } from "@/lib/zLayers";
 
 type RenderKind = 'pdf' | 'image';
 type Granted = { disposition?: string; contentType?: string | null };
@@ -274,7 +275,7 @@ export default function SecureDocViewer({
       className="relative w-full h-full bg-slate-900 overflow-hidden flex flex-col group select-none print:hidden"
     >
       {/* SECURITY WATERMARK OVERLAY */}
-      <div className="absolute inset-0 z-50 pointer-events-none overflow-hidden flex items-center justify-center">
+      <div className={`absolute inset-0 ${ZC.pagePopover} pointer-events-none overflow-hidden flex items-center justify-center`}>
         <div className="w-full h-full flex flex-col items-center justify-center opacity-[0.03] transform -rotate-12 select-none">
            {Array.from({ length: 10 }).map((_, i) => (
              <div key={i} className="text-4xl font-black text-white whitespace-nowrap mb-24">
@@ -285,7 +286,7 @@ export default function SecureDocViewer({
       </div>
 
       {/* HEADER BAR */}
-      <div className="h-10 bg-slate-800 border-b border-slate-700 flex items-center justify-between px-4 shrink-0 z-50 shadow-md">
+      <div className={`h-10 bg-slate-800 border-b border-slate-700 flex items-center justify-between px-4 shrink-0 ${ZC.pagePopover} shadow-md`}>
         <div className="flex items-center space-x-3 overflow-hidden min-w-0">
             <span className="text-xs font-mono font-bold text-orange-500 bg-orange-950/30 px-1.5 py-0.5 rounded border border-orange-500/20 whitespace-nowrap">
               {docNumber}
@@ -308,7 +309,7 @@ export default function SecureDocViewer({
 
       {/* AMBIENT LOCK BANNER — someone else is mid-change on this document. */}
       {lockHolder && (
-        <div className="bg-amber-500/15 border-b border-amber-500/40 px-4 py-1.5 flex items-center gap-2 text-[11px] text-amber-300 shrink-0 z-50">
+        <div className={`bg-amber-500/15 border-b border-amber-500/40 px-4 py-1.5 flex items-center gap-2 text-[11px] text-amber-300 shrink-0 ${ZC.pagePopover}`}>
           <Lock className="w-3.5 h-3.5 shrink-0" />
           <span className="truncate">
             <b>{lockHolder.name || 'Another user'}</b> has this checked out
@@ -322,7 +323,7 @@ export default function SecureDocViewer({
       {/* CONTENT AREA */}
       <div className="flex-1 relative bg-slate-950">
         {archivedInfo ? (
-          <div className="absolute inset-0 overflow-y-auto bg-slate-100 p-4 z-20">
+          <div className={`absolute inset-0 overflow-y-auto bg-slate-100 p-4 ${ZC.raisedHigher}`}>
             <BackupViewer
               target={{
                 storageKey: url,
@@ -334,12 +335,12 @@ export default function SecureDocViewer({
             />
           </div>
         ) : loading ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 bg-slate-900/90 z-20">
+          <div className={`absolute inset-0 flex flex-col items-center justify-center text-slate-400 bg-slate-900/90 ${ZC.raisedHigher}`}>
             <Loader2 className="w-10 h-10 animate-spin mb-3 text-blue-500" />
             <span className="text-xs font-mono font-bold animate-pulse text-blue-400">DECRYPTING STREAM...</span>
           </div>
         ) : error ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center text-red-400 bg-slate-900 z-20">
+          <div className={`absolute inset-0 flex flex-col items-center justify-center text-red-400 bg-slate-900 ${ZC.raisedHigher}`}>
             <AlertTriangle className="w-16 h-16 mb-4 opacity-50" />
             <h3 className="text-lg font-bold text-red-500">Access Denied</h3>
             <p className="text-sm font-mono mt-2 text-red-300/70 max-w-md text-center">{error}</p>
@@ -382,7 +383,7 @@ export default function SecureDocViewer({
       </div>
 
       {/* PRINT PROTECTION CURTAIN */}
-      <div className="hidden print:flex fixed inset-0 z-[9999] bg-white flex-col items-center justify-center p-10 text-center">
+      <div className={`hidden print:flex fixed inset-0 ${ZC.print} bg-white flex-col items-center justify-center p-10 text-center`}>
         <div className="border-4 border-red-600 p-10 rounded-3xl">
           <ShieldAlert className="w-32 h-32 text-red-600 mb-8 mx-auto" />
           <h1 className="text-5xl font-black text-red-600 mb-4">SECURITY VIOLATION</h1>

@@ -51,6 +51,7 @@ import { isControllerPrincipal } from "@/lib/permissions";
 import { readActiveHolds, holdReasonLabel } from "@/lib/holdGate";
 import HeldSourceNotice from "@/components/documents/lifecycle/HeldSourceNotice";
 import type { DocumentRecord } from "@/types/schema";
+import { ZC } from "@/lib/zLayers";
 
 /** One of UNARCHIVE_RESTORE_STATUSES, or (REV-27) the archive's own stamped
  *  status no gate reads as in force — the put-back of what it was. */
@@ -273,7 +274,7 @@ export default function ArchiveConfirmModal({
     const n = followUps.clockErrors.length + (followUps.recordError ? 1 : 0);
     const done = () => { onSuccess(restoreStatus); setReason(""); setFollowUps(null); onClose(); };
     return (
-      <div className="fixed inset-0 z-[210] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+      <div className={`fixed inset-0 ${ZC.confirmOverModal} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4`}>
         <div role="alertdialog" aria-label="The restore completed with follow-up steps outstanding" className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden">
           <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2">
             <AlertTriangle className="w-5 h-5 text-amber-600" />
@@ -302,7 +303,7 @@ export default function ArchiveConfirmModal({
   }
 
   return (
-    <div className="fixed inset-0 z-[210] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div className={`fixed inset-0 ${ZC.confirmOverModal} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4`}>
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className={`p-2 ${isArchive ? "bg-[var(--color-surface-2)]" : "bg-emerald-100"} rounded-lg`}>

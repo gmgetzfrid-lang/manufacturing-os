@@ -5,6 +5,8 @@ import React, { useState } from "react";
 import { Type, Hash, Calendar, CheckSquare, List, User, Link as LinkIcon, Tags, X, ArrowRight, Plus, Trash2, CheckCircle2, Settings2, Camera, Zap, MousePointerClick, Image as ImageIcon, FileText, CalendarClock, ClipboardCheck, CalendarCheck, Archive, Globe } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { MetadataFieldDefinition, MetadataFieldType } from "@/types/schema";
+import { ZC } from "@/lib/zLayers";
+import { useDockAvoidRow } from "@/components/ui/CornerDock";
 
 interface CreateColumnWizardProps {
   isOpen: boolean;
@@ -48,6 +50,9 @@ function FeatureMini({ icon, bg, title, body }: { icon: React.ReactNode; bg: str
 }
 
 export default function CreateColumnWizard({ isOpen, onClose, onSave, initialType = 'text', initialStep = 1, onOpenColumnManager }: CreateColumnWizardProps) {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const { showToast } = useToast();
   const [step, setStep] = useState<1 | 2>(initialStep);
   const [selectedType, setSelectedType] = useState<MetadataFieldType>(initialType);
@@ -121,7 +126,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[400] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 p-4 animate-in fade-in">
+    <div className={`fixed inset-0 ${ZC.sharedModal} flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 p-4 animate-in fade-in`}>
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
         
         {/* HEADER */}
@@ -310,7 +315,7 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
         </div>
 
         {/* FOOTER */}
-        <div className="px-6 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex justify-between items-center gap-3">
+        <div ref={dockRowRef} className="px-6 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex justify-between items-center gap-3">
           {onOpenColumnManager ? (
             <button
               onClick={() => { onOpenColumnManager(); onClose(); }}

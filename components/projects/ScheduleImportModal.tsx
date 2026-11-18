@@ -31,6 +31,7 @@ import { importMilestonesFromParsed, type ImportResult, type ImportPlan } from "
 import type { MilestoneSource } from "@/types/schema";
 import { Select } from "@/components/ui/Field";
 import Spinner from "@/components/ui/Spinner";
+import { ZC } from "@/lib/zLayers";
 
 interface Props {
   orgId: string;
@@ -294,7 +295,7 @@ export default function ScheduleImportModal({
   const moreCount = (parseResult?.rows.length ?? 0) - previewRows.length;
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div className={`fixed inset-0 ${ZC.workflowModal} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4`}>
       <div className="w-full max-w-3xl bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh] animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-gradient-to-r from-[var(--color-accent-soft)] via-white to-slate-50">
           <div className="flex items-center gap-3">

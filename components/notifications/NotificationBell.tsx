@@ -33,6 +33,7 @@ import { Bell, CheckCheck, Loader2 } from "lucide-react";
 import { useTicketNotifications, useAttentionStatus, type AttentionItem } from "@/hooks/useTicketNotifications";
 import { useNotificationCenter } from "@/components/notifications/NotificationCenter";
 import { iconForKind } from "@/components/notifications/kindIcon";
+import { ZC } from "@/lib/zLayers";
 
 interface NotificationBellProps {
   /** The header bell is the only bell (TopBar). The prop is kept so the
@@ -184,7 +185,7 @@ export default function NotificationBell(_props: NotificationBellProps) {
           role="dialog"
           aria-label="Notifications"
           tabIndex={-1}
-          className="absolute right-0 top-full mt-2 origin-top-right w-96 max-h-[70vh] bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl shadow-lg border border-[var(--color-border)] ring-1 ring-black/5 z-[90] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 outline-none"
+          className={`absolute right-0 top-full mt-2 origin-top-right w-96 max-h-[70vh] bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl shadow-lg border border-[var(--color-border)] ring-1 ring-black/5 ${ZC.libraryModal} flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 outline-none`}
         >
             <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
               <div>

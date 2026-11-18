@@ -44,6 +44,7 @@ import type { DocumentRecord, DocumentVersion, ReviewControl } from "@/types/sch
 import IsoGuidance from "@/components/ui/IsoGuidance";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { APPROVAL_CLAIM_LABEL } from "@/lib/versionApproval";
+import { ZC } from "@/lib/zLayers";
 
 interface RevUpModalProps {
   isOpen: boolean;
@@ -512,7 +513,7 @@ export default function RevUpModal({
   // ─── CONFLICT SCREEN ───────────────────────────────────────────────────
   if (conflict) {
     return (
-      <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
+      <div className={`fixed inset-0 ${ZC.workflowModal} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto`}>
         <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border-2 border-amber-400 overflow-hidden my-8 animate-in fade-in zoom-in-95">
           <div className="px-6 py-4 border-b border-amber-200 bg-amber-50 flex items-center gap-3">
             <div className="p-2 bg-amber-500 rounded-lg">
@@ -675,7 +676,7 @@ export default function RevUpModal({
 
   // ─── NORMAL FORM ───────────────────────────────────────────────────────
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
+    <div className={`fixed inset-0 ${ZC.workflowModal} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto`}>
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95">
         {/* Header */}
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">

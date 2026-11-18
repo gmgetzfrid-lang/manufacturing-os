@@ -37,6 +37,7 @@ import { ScoreDial, scoreBandColor } from "@/components/ui/ChartKit";
 import { fmtMoney } from "@/lib/costs";
 import { StatusMark, StatusLegend, RUBRIC_MARKS } from "@/components/projects/StatusMark";
 import { useAiReadiness, aiBlocked, AiPreconditionNote } from "@/components/projects/AiPrecondition";
+import { useDockAvoidRow } from "@/components/ui/CornerDock";
 
 async function authHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
@@ -544,6 +545,9 @@ function HistoryPanels({ profile }: { profile: CompanyProfileData | null }) {
 function EditCompanyModal({ company, actorId, onClose, onSaved }: {
   company: Company; actorId: string; onClose: () => void; onSaved: () => void;
 }) {
+  // STACK-14 (notifications N13): declares this overlay's action row, so the
+  // corner dock keeps clear of it while raised (nothing changes at rest).
+  const dockRowRef = useDockAvoidRow();
   const [name, setName] = useState(company.name);
   const [kind, setKind] = useState<Company["kind"]>(company.kind);
   const [trade, setTrade] = useState(company.trade ?? "");
@@ -624,7 +628,7 @@ function EditCompanyModal({ company, actorId, onClose, onSaved }: {
             </div>
           )}
         </div>
-        <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2 shrink-0">
+        <div ref={dockRowRef} className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2 shrink-0">
           <button onClick={() => void dismiss()} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
           <button onClick={() => void submit()} disabled={busy || !name.trim()}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60">

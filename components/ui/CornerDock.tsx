@@ -60,7 +60,7 @@
 // (public routes), it falls back to its own fixed positioning, so a widget
 // never disappears just because the shell isn't there.
 
-import React, { useEffect, useId, useLayoutEffect, useState, useSyncExternalStore } from "react";
+import React, { useCallback, useEffect, useId, useLayoutEffect, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, ChevronUp, Loader2, AlertCircle, Bell, CheckCircle2 } from "lucide-react";
 import { Z } from "@/lib/zLayers";
@@ -535,11 +535,42 @@ export function dockAvoidOffset(g: DockGeometry, rows: DockAvoidRect[]): number 
   return moved ? offset : 0;
 }
 
+/** Declare `el` as an action row under `id` and keep its rect current: on
+ *  resize, on any scroll (a scrolling overlay moves its modal), when the row
+ *  or its panel changes size, and when an entrance animation settles.
+ *  Returns the cleanup. */
+function declareAvoid(id: string, el: HTMLElement): () => void {
+  const measure = () => {
+    const r = el.getBoundingClientRect();
+    const next = { top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right) };
+    const prev = avoids.get(id);
+    if (!prev || prev.top !== next.top || prev.bottom !== next.bottom || prev.left !== next.left || prev.right !== next.right) {
+      avoids.set(id, next);
+      emit();
+    }
+  };
+  measure();
+  const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+  ro?.observe(el);
+  if (el.parentElement) ro?.observe(el.parentElement);
+  window.addEventListener("resize", measure);
+  window.addEventListener("scroll", measure, true);
+  document.addEventListener("animationend", measure, true);
+  document.addEventListener("transitionend", measure, true);
+  return () => {
+    ro?.disconnect();
+    window.removeEventListener("resize", measure);
+    window.removeEventListener("scroll", measure, true);
+    document.removeEventListener("animationend", measure, true);
+    document.removeEventListener("transitionend", measure, true);
+    avoids.delete(id);
+    emit();
+  };
+}
+
 /**
  * While `active`, declare `ref`'s element as a modal action row the dock's
- * cards must not cover (STACK-10). Its rect is kept current: on resize, on
- * any scroll (a scrolling overlay moves its modal), when the row or its
- * panel changes size, and when an entrance animation settles.
+ * cards must not cover (STACK-10). Its rect is kept current (`declareAvoid`).
  */
 export function useDockAvoid(ref: React.RefObject<HTMLElement | null>, active: boolean) {
   const id = useId();
@@ -547,33 +578,22 @@ export function useDockAvoid(ref: React.RefObject<HTMLElement | null>, active: b
     if (!active) return;
     const el = ref.current;
     if (!el) return;
-    const measure = () => {
-      const r = el.getBoundingClientRect();
-      const next = { top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right) };
-      const prev = avoids.get(id);
-      if (!prev || prev.top !== next.top || prev.bottom !== next.bottom || prev.left !== next.left || prev.right !== next.right) {
-        avoids.set(id, next);
-        emit();
-      }
-    };
-    measure();
-    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
-    ro?.observe(el);
-    if (el.parentElement) ro?.observe(el.parentElement);
-    window.addEventListener("resize", measure);
-    window.addEventListener("scroll", measure, true);
-    document.addEventListener("animationend", measure, true);
-    document.addEventListener("transitionend", measure, true);
-    return () => {
-      ro?.disconnect();
-      window.removeEventListener("resize", measure);
-      window.removeEventListener("scroll", measure, true);
-      document.removeEventListener("animationend", measure, true);
-      document.removeEventListener("transitionend", measure, true);
-      avoids.delete(id);
-      emit();
-    };
+    return declareAvoid(id, el);
   }, [id, active, ref]);
+}
+
+/**
+ * The callback-ref form of `useDockAvoid` (notifications N13, STACK-14):
+ * put the returned ref on an overlay's action row, and the row is declared
+ * exactly while it is in the document — rendered at once, after a load, or
+ * on one step of a wizard — with no state and no extra render (React 19 runs
+ * the returned cleanup when the row leaves). Like `useDockAvoid`, it changes
+ * nothing at rest: the dock keeps clear of a declared row only while it is
+ * raised (`avoidSnapshot`), and at rest it is under every overlay from 300 up.
+ */
+export function useDockAvoidRow(): (el: HTMLElement | null) => (() => void) | undefined {
+  const id = useId();
+  return useCallback((el: HTMLElement | null) => (el ? declareAvoid(id, el) : undefined), [id]);
 }
 
 function avoidSnapshot(): number {

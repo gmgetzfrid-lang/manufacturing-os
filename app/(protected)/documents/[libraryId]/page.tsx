@@ -188,6 +188,7 @@ import {
   Image as ImageIcon,
   Link as LinkIcon,
 } from "lucide-react";
+import { ZC } from "@/lib/zLayers";
 
 const BUILTIN_COLUMNS = [
   { key: "title", label: "Title" },
@@ -3975,7 +3976,7 @@ export default function LibraryExplorerPage() {
 
       {/* ── SLIM GLASS TOP BAR ───────────────────────────────────────── */}
       <div
-        className="h-11 shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)]/70 z-30 flex items-center gap-2 px-3"
+        className={`h-11 shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)]/70 ${ZC.raisedTop} flex items-center gap-2 px-3`}
         style={{ backdropFilter: "blur(20px) saturate(180%)", WebkitBackdropFilter: "blur(20px) saturate(180%)" }}
       >
         <button
@@ -4090,9 +4091,9 @@ export default function LibraryExplorerPage() {
           </button>
           {actionsMenuOpen && (
             <>
-              <div className="fixed inset-0 z-30" onClick={() => setActionsMenuOpen(false)} />
+              <div className={`fixed inset-0 ${ZC.raisedTop}`} onClick={() => setActionsMenuOpen(false)} />
               <div
-                className="absolute right-0 top-full mt-1 w-48 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg z-40 overflow-hidden animate-in fade-in zoom-in-95 duration-150 origin-top-right"
+                className={`absolute right-0 top-full mt-1 w-48 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg ${ZC.pageFloat} overflow-hidden animate-in fade-in zoom-in-95 duration-150 origin-top-right`}
               >
                 {isController && (
                   <button
@@ -4376,7 +4377,7 @@ export default function LibraryExplorerPage() {
             >
               {/* Drag overlay */}
               {isDragOver && (
-                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-blue-50/95 pointer-events-none">
+                <div className={`absolute inset-0 ${ZC.pagePopover} flex flex-col items-center justify-center bg-blue-50/95 pointer-events-none`}>
                   <div className="w-20 h-20 rounded-2xl bg-blue-100 border-2 border-blue-400 border-dashed flex items-center justify-center mb-4">
                     <UploadCloud className="w-9 h-9 text-blue-500" />
                   </div>
@@ -4526,8 +4527,8 @@ export default function LibraryExplorerPage() {
                       </button>
                       {viewMenuOpen && (
                         <>
-                          <div className="fixed inset-0 z-40" onClick={() => setViewMenuOpen(false)} />
-                          <div className="absolute right-0 top-full mt-1.5 z-50 w-72 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-xl py-2">
+                          <div className={`fixed inset-0 ${ZC.pageFloat}`} onClick={() => setViewMenuOpen(false)} />
+                          <div className={`absolute right-0 top-full mt-1.5 ${ZC.pagePopover} w-72 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-xl py-2`}>
                             <div className="px-3 pb-2 border-b border-[var(--color-border)]">
                               <div className="text-[11px] font-black text-[var(--color-text)]">
                                 {currentFolder ? `Folder: ${currentFolder.name}` : `Library: ${library?.name ?? ""}`}
@@ -4757,7 +4758,7 @@ export default function LibraryExplorerPage() {
                                     onClick={(e) => e.stopPropagation()}
                                     title={isResized ? "Drag to resize · double-click to reset" : "Drag to resize column"}
                                     style={{ touchAction: "none" }}
-                                    className="absolute top-0 right-0 h-full w-2.5 cursor-col-resize flex items-center justify-center group/grip z-10 hover:bg-blue-100/60"
+                                    className={`absolute top-0 right-0 h-full w-2.5 cursor-col-resize flex items-center justify-center group/grip ${ZC.raised} hover:bg-blue-100/60`}
                                   >
                                     <div className={`h-2/3 w-[3px] rounded-full transition-colors ${
                                       isResized ? "bg-blue-600" : "bg-slate-400 group-hover/grip:bg-blue-600"
@@ -5107,7 +5108,7 @@ export default function LibraryExplorerPage() {
       {/* MARQUEE (rubber-band) selection rectangle */}
       {marquee && (
         <div
-          className="fixed z-[85] border border-blue-400 bg-blue-400/10 pointer-events-none rounded-sm"
+          className={`fixed ${ZC.viewerOverlay} border border-blue-400 bg-blue-400/10 pointer-events-none rounded-sm`}
           style={{ left: marquee.x1, top: marquee.y1, width: marquee.x2 - marquee.x1, height: marquee.y2 - marquee.y1 }}
         />
       )}
@@ -5126,7 +5127,7 @@ export default function LibraryExplorerPage() {
           shown only when nothing's selected and there are rows to act on. The
           full action bar (below) takes over the moment a row is checked. */}
       {selectedDocIds.size === 0 && sortedDocs.length > 0 && (
-        <div className={`fixed left-1/2 -translate-x-1/2 z-30 ${stagedDocs.length > 0 ? "bottom-16" : "bottom-10"} pointer-events-none`}>
+        <div className={`fixed left-1/2 -translate-x-1/2 ${ZC.raisedTop} ${stagedDocs.length > 0 ? "bottom-16" : "bottom-10"} pointer-events-none`}>
           <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/80 text-slate-300 text-[11px] font-bold shadow-lg" style={{ backdropFilter: "blur(12px)" }}>
             <CheckSquare className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Select rows for bulk actions
           </div>
@@ -5135,7 +5136,7 @@ export default function LibraryExplorerPage() {
 
       {/* FLOATING BULK ACTION BAR — slides up from bottom when items selected */}
       <div
-        className={`fixed left-1/2 -translate-x-1/2 z-40 transition-all duration-300 ${
+        className={`fixed left-1/2 -translate-x-1/2 ${ZC.pageFloat} transition-all duration-300 ${
           selectedDocIds.size > 0
             ? `opacity-100 ${stagedDocs.length > 0 ? "bottom-16" : "bottom-10"} pointer-events-auto`
             : "opacity-0 -bottom-20 pointer-events-none"
@@ -5355,7 +5356,7 @@ export default function LibraryExplorerPage() {
 
       {/* Phase 4: saved views — floating panel anchored top-right */}
       {showViewSelector && activeOrgId && uid && (
-        <div className="fixed top-16 right-4 z-[100] bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg p-3 animate-in fade-in zoom-in-95 duration-150 origin-top-right">
+        <div className={`fixed top-16 right-4 ${ZC.modal} bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg p-3 animate-in fade-in zoom-in-95 duration-150 origin-top-right`}>
           <ViewSelector
             orgId={activeOrgId}
             libraryId={libraryId}
@@ -5559,7 +5560,7 @@ export default function LibraryExplorerPage() {
       )}
 
       {creatingFolder && (
-        <div className="fixed inset-0 z-[90] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4">
+        <div className={`fixed inset-0 ${ZC.libraryModal} flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4`}>
           <div className="w-full max-w-md rounded-2xl bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
             <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between">
               <div>
@@ -5599,7 +5600,7 @@ export default function LibraryExplorerPage() {
 
       {/* RECENTLY DELETED FOLDERS — the 30-day delete hold. */}
       {trashFolders !== null && (
-        <div className="fixed inset-0 z-[90] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4" onClick={() => setTrashFolders(null)}>
+        <div className={`fixed inset-0 ${ZC.libraryModal} flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4`} onClick={() => setTrashFolders(null)}>
           <div className="w-full max-w-lg rounded-2xl bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
             <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between">
               <div>
@@ -5641,7 +5642,7 @@ export default function LibraryExplorerPage() {
       )}
 
       {renameFolderId && !showMoveModal && !showPermissions && (
-        <div className="fixed inset-0 z-[90] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4">
+        <div className={`fixed inset-0 ${ZC.libraryModal} flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-4`}>
           <div className="w-full max-w-md rounded-2xl bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
             <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between">
               <div>
@@ -5713,7 +5714,7 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
   const preview = cfg ? `${cfg.prefix}${String(cfg.next_number).padStart(cfg.pad, "0")}` : "";
 
   return (
-    <div className="fixed inset-0 z-[95] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className={`fixed inset-0 ${ZC.libraryModalOver} flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm p-4`} onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)]">
         <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2.5">
           <Hash className="w-4 h-4 text-[var(--color-accent)]" />

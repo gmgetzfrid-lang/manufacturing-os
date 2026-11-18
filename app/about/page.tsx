@@ -29,6 +29,7 @@ import { Reveal, RotatingWord } from "@/components/marketing/Reveal";
 import { ChipCloud } from "@/components/marketing/ChipCloud";
 import { RoleDayTabs } from "@/components/marketing/RoleDayTabs";
 import { TourTabs } from "@/components/marketing/TourTabs";
+import { ZC } from "@/lib/zLayers";
 
 export const metadata = {
   title: "Manufacturing OS — Document control your facility can audit",
@@ -64,7 +65,7 @@ export default function MarketingPage() {
 
 function Nav() {
   return (
-    <header className="sticky top-0 z-50 bg-white/80 backdrop-blur border-b border-slate-200">
+    <header className={`sticky top-0 ${ZC.pagePopover} bg-white/80 backdrop-blur border-b border-slate-200`}>
       <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2.5">
           <div className="w-8 h-8 bg-gradient-to-br from-orange-500 to-orange-700 rounded-lg flex items-center justify-center shadow-sm">

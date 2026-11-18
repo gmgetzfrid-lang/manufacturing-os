@@ -89,7 +89,7 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
                 them. */}
             <CornerDock onOpenCenter={openCenter} occupiedRightPx={centerOpen ? NOTIFICATION_CENTER_RAIL_PX : 0} />
             <CentreDock />
-            <NotificationListener />
+            <NotificationListener onOpenCenter={openCenter} />
             <UpdatePill />
             <UploadIndicator />
             <BackupIndicator />

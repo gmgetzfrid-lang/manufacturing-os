@@ -56,6 +56,7 @@ import UserAvatar from '@/components/ui/UserAvatar';
 import {
   DOCUMENT_VIEWS, EQUIPMENT_VIEWS, HOME_VIEWS, ACTIVITY_VIEWS, INTELLIGENCE_VIEWS,
 } from '@/components/navigation/ViewTabs';
+import { ZC } from "@/lib/zLayers";
 
 // A consolidated tool stays highlighted on any of its views. DERIVED from
 // the ViewTabs arrays so the two surfaces can never drift again (a new view
@@ -323,7 +324,7 @@ export default function Sidebar({
       {/* Off-canvas backdrop (mobile only). */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 z-[60] bg-slate-950/60 backdrop-blur-sm md:hidden"
+          className={`fixed inset-0 ${ZC.drawer} bg-slate-950/60 backdrop-blur-sm md:hidden`}
           onClick={onMobileClose}
           aria-hidden
         />
@@ -331,7 +332,7 @@ export default function Sidebar({
       <aside
         aria-hidden={isMobile && !mobileOpen}
         className={`${collapsed ? 'w-16' : 'w-64'} bg-gradient-to-b from-[var(--color-surface)] to-[var(--color-surface-2)] h-full flex flex-col border-r border-[var(--color-border)] text-[var(--color-text-muted)] shrink-0 md:shadow-[10px_0_30px_-22px_rgba(2,6,23,0.35)]
-          fixed inset-y-0 left-0 z-[70] md:relative md:inset-auto md:z-auto
+          fixed inset-y-0 left-0 ${ZC.drawerPanel} md:relative md:inset-auto md:z-auto
           transition-[transform,width] duration-200 ease-out
           ${mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'} md:translate-x-0`}
       >

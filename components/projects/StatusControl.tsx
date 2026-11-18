@@ -22,6 +22,7 @@ import { Circle, Loader2, CircleCheck, PauseCircle, AlertTriangle, XCircle } fro
 import type { MilestoneStatus } from "@/types/schema";
 import { ProgressSlider } from "@/components/projects/ProgressControl";
 import { DECISION_TARGET } from "@/components/projects/decisionTarget";
+import { ZC } from "@/lib/zLayers";
 
 export const STATUS_ORDER: MilestoneStatus[] = ["planned", "in_progress", "completed", "on_hold", "blocked", "missed"];
 
@@ -152,9 +153,9 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
 
       {open && typeof document !== "undefined" && createPortal(
         <>
-          <div className="fixed inset-0 z-[300]" onClick={() => setOpen(false)} />
+          <div className={`fixed inset-0 ${ZC.overlay}`} onClick={() => setOpen(false)} />
           <div
-            className="fixed z-[310] w-[180px] bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg py-1 animate-in fade-in zoom-in-95 duration-150"
+            className={`fixed ${ZC.overlayPopover} w-[180px] bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg py-1 animate-in fade-in zoom-in-95 duration-150`}
             style={{ top: pos.top, left: pos.left }}
             onClick={(e) => e.stopPropagation()}
           >

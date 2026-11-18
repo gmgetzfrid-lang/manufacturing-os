@@ -14,6 +14,7 @@
 import React, { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { DECISION_TARGET } from "@/components/projects/decisionTarget";
+import { ZC } from "@/lib/zLayers";
 
 function clamp(p: number): number {
   return Math.max(0, Math.min(100, Math.round(p || 0)));
@@ -130,9 +131,9 @@ export default function ProgressControl({ percent, onPick, disabled, onDisabledC
 
       {open && typeof document !== "undefined" && createPortal(
         <>
-          <div className="fixed inset-0 z-[300]" onClick={() => setOpen(false)} />
+          <div className={`fixed inset-0 ${ZC.overlay}`} onClick={() => setOpen(false)} />
           <div
-            className="fixed z-[310] w-[224px] bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg p-3 animate-in fade-in zoom-in-95 duration-150"
+            className={`fixed ${ZC.overlayPopover} w-[224px] bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg p-3 animate-in fade-in zoom-in-95 duration-150`}
             style={{ top: pos.top, left: pos.left }}
             onClick={(e) => e.stopPropagation()}
           >

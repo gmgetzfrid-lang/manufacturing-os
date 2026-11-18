@@ -13,6 +13,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { AtSign } from "lucide-react";
 import { searchOrgUsers, extractMentionUids, type OrgUser } from "@/lib/notifications";
 import { Textarea } from "@/components/ui/Field";
+import { ZC } from "@/lib/zLayers";
 
 interface MentionableTextareaProps {
   value: string;
@@ -142,7 +143,7 @@ export default function MentionableTextarea({
       </div>
 
       {open && users.length > 0 && (
-        <div className="absolute z-[300] mt-1 w-full max-w-xs bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150 origin-top">
+        <div className={`absolute ${ZC.overlay} mt-1 w-full max-w-xs bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150 origin-top`}>
           <div className="px-3 py-1.5 text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest bg-[var(--color-surface-2)] border-b border-[var(--color-border)]">
             Mention a user
           </div>

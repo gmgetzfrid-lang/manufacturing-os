@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import type { DocumentRecord, LibraryCollection } from "@/types/schema";
 import { searchDocuments, type DocumentRow } from "@/lib/search";
+import { ZC } from "@/lib/zLayers";
 
 type CommandAction =
   | { kind: "navigate"; id: string | null; label: string; path?: string }
@@ -221,7 +222,7 @@ export default function CommandPalette({
 
   return (
     <div
-      className="fixed inset-0 z-[120] flex items-start justify-center pt-[12vh] px-4 bg-slate-900/50 backdrop-blur-[3px] animate-in fade-in duration-150"
+      className={`fixed inset-0 ${ZC.modalRaised} flex items-start justify-center pt-[12vh] px-4 bg-slate-900/50 backdrop-blur-[3px] animate-in fade-in duration-150`}
       onClick={onClose}
     >
       <div

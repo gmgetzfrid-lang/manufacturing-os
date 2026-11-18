@@ -6,6 +6,7 @@ import { writeStoredOrgId } from '@/lib/workspaceDeviceState';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Layout, ArrowRight, Loader2, Building2, User, Mail, Lock, AlertCircle, Users } from 'lucide-react';
+import { ZC } from "@/lib/zLayers";
 
 type Mode = "new-org" | "request-access";
 
@@ -116,10 +117,10 @@ export default function SignupPage() {
 
   return (
     <div className="min-h-dvh bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-black z-0" />
-      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-orange-900/50 to-transparent z-10" />
+      <div className={`absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-black ${ZC.base}`} />
+      <div className={`absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-orange-900/50 to-transparent ${ZC.raised}`} />
 
-      <div className="w-full max-w-lg relative z-20">
+      <div className={`w-full max-w-lg relative ${ZC.raisedHigher}`}>
         {/* Header */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-14 h-14 bg-gradient-to-br from-orange-500 to-orange-700 rounded-2xl mb-4 shadow-lg shadow-orange-900/40 ring-1 ring-white/10">

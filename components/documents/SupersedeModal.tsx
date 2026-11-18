@@ -10,6 +10,7 @@ import { X, Layers, AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
 import { supersedeDocument, UnresolvedReplacementsError } from "@/lib/revisions";
 import type { DocumentRecord } from "@/types/schema";
 import IsoGuidance from "@/components/ui/IsoGuidance";
+import { ZC } from "@/lib/zLayers";
 
 interface SupersedeModalProps {
   isOpen: boolean;
@@ -82,7 +83,7 @@ export default function SupersedeModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[210] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div className={`fixed inset-0 ${ZC.confirmOverModal} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4`}>
       <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 bg-amber-100 rounded-lg">

@@ -63,6 +63,7 @@ import { isControllerPrincipal } from "@/lib/permissions";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { holdReasonLabel } from "@/lib/holdGate";
 import type { Role } from "@/types/schema";
+import { ZC } from "@/lib/zLayers";
 
 /** The picker's PostgREST filter for the shared not-current set (TRX-3) —
  *  built from NOT_CURRENT_STATUSES, never an inline list. */
@@ -792,7 +793,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, policy, policy
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-0 sm:p-4" onClick={onClose}>
+    <div className={`fixed inset-0 ${ZC.pagePopover} flex items-end sm:items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-0 sm:p-4`} onClick={onClose}>
       <div className="bg-[var(--color-surface)] w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl shadow-2xl max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
           <h2 className="text-base font-black text-[var(--color-text)] flex items-center gap-2">

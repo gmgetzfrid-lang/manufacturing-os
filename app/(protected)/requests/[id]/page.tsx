@@ -113,6 +113,7 @@ import {
   QrCode,
 } from 'lucide-react';
 import { effectiveReviewControlForDocument } from '@/lib/reviewControl';
+import { ZC } from "@/lib/zLayers";
 
 // =========================================================================================
 // UTILITY: SAFE DATE CONVERTER & FORMATTERS
@@ -226,7 +227,7 @@ const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description,
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className={`fixed inset-0 ${ZC.modal} flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200`}>
       <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-[var(--color-border)] animate-in fade-in zoom-in-95">
         <div className={`px-6 py-4 border-b ${isDestructive ? 'bg-red-50 border-red-100' : 'bg-[var(--color-surface-2)] border-[var(--color-border)]'}`}>
           <h3 className={`text-lg font-bold ${isDestructive ? 'text-red-900' : 'text-[var(--color-text)]'}`}>{title}</h3>
@@ -407,7 +408,7 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, is
   const currentUnit = ticketUnitDisplay(ticket.unit, ticket.metadata);
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className={`fixed inset-0 ${ZC.modal} flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200`}>
       <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-[var(--color-border)] animate-in fade-in zoom-in-95">
         <div className={`px-6 py-4 border-b ${isReassignment ? 'bg-orange-50 border-orange-200' : 'bg-[var(--color-surface-2)] border-[var(--color-border)]'}`}>
           <h3 className={`text-lg font-bold ${isReassignment ? 'text-orange-900' : 'text-[var(--color-text)]'}`}>{isReassignment ? 'Reassign Ticket' : 'Assign Ticket'}</h3>
@@ -509,7 +510,7 @@ const UploadIFCModal = ({ isOpen, onClose, onSubmit, isLoading }: UploadIFCModal
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className={`fixed inset-0 ${ZC.modal} flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200`}>
       <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-[var(--color-border)] animate-in fade-in zoom-in-95">
         <div className="px-6 py-4 bg-teal-50 border-b border-teal-100">
           <h3 className="text-lg font-bold text-teal-900 flex items-center">
@@ -565,7 +566,7 @@ const DownloadComplianceModal = ({ isOpen, onClose, onConfirm, fileName }: Downl
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className={`fixed inset-0 ${ZC.workflowModal} flex items-start sm:items-center justify-center overflow-y-auto p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200`}>
       <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl max-w-sm w-full overflow-hidden border-2 border-amber-300 animate-in fade-in zoom-in-95">
         <div className="p-6 text-center">
           <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -602,7 +603,7 @@ const DownloadComplianceModal = ({ isOpen, onClose, onConfirm, fileName }: Downl
 // preliminary sheet, instead of a few giant garish words stamped across it.
 // Low opacity + letter-spaced caps reads as a real document watermark.
 const WatermarkOverlay = () => (
-  <div className="absolute inset-0 z-50 pointer-events-none overflow-hidden select-none" aria-hidden>
+  <div className={`absolute inset-0 ${ZC.pagePopover} pointer-events-none overflow-hidden select-none`} aria-hidden>
     <div className="absolute inset-[-25%] flex flex-col justify-around -rotate-[24deg]">
       {Array.from({ length: 9 }).map((_, i) => (
         <div key={i} className="flex justify-around whitespace-nowrap opacity-[0.07]">
@@ -648,7 +649,7 @@ function RedlineEditorMount({
   }, [file.url]);
   if (error) {
     return (
-      <div className="fixed inset-0 z-[200] bg-slate-900/80 flex items-start sm:items-center justify-center overflow-y-auto p-6">
+      <div className={`fixed inset-0 ${ZC.workflowModal} bg-slate-900/80 flex items-start sm:items-center justify-center overflow-y-auto p-6`}>
         <div className="bg-[var(--color-surface)] rounded-2xl p-6 max-w-md text-center">
           <p className="text-sm text-red-700 font-bold">Couldn&apos;t load the file: {error}</p>
           <button onClick={onClose} className="mt-3 px-3 py-2 rounded-lg bg-slate-900 text-white text-xs font-bold">Close</button>
@@ -658,7 +659,7 @@ function RedlineEditorMount({
   }
   if (!resolvedUrl) {
     return (
-      <div className="fixed inset-0 z-[200] bg-slate-900/80 flex items-center justify-center">
+      <div className={`fixed inset-0 ${ZC.workflowModal} bg-slate-900/80 flex items-center justify-center`}>
         <div className="text-white text-sm inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Preparing redline editor…</div>
       </div>
     );
@@ -1037,8 +1038,8 @@ const FileViewerModal = ({
         fileName={file.name}
       />
       
-      <div className="fixed inset-0 z-[100] bg-slate-950/95 backdrop-blur-md flex flex-col animate-in fade-in duration-300">
-        <div className="flex items-center justify-between px-6 py-4 bg-slate-900 border-b border-slate-800 text-white shadow-md relative z-50">
+      <div className={`fixed inset-0 ${ZC.modal} bg-slate-950/95 backdrop-blur-md flex flex-col animate-in fade-in duration-300`}>
+        <div className={`flex items-center justify-between px-6 py-4 bg-slate-900 border-b border-slate-800 text-white shadow-md relative ${ZC.pagePopover}`}>
           <div className="flex items-center space-x-4">
             <div className={`p-2 rounded-lg border ${file.type === 'Draft' ? 'bg-amber-900/50 border-amber-500/50 text-amber-500' : 'bg-slate-800 border-slate-700 text-teal-500'}`}>
                {file.type === 'Draft' ? <AlertTriangle className="w-6 h-6" /> : <FileCheck className="w-6 h-6" />}
@@ -1088,7 +1089,7 @@ const FileViewerModal = ({
         {/* EVID-16 done-when 2 (DF-P15): a file that keeps the browser path says so,
             and an unstamped server preview is marked. */}
         {!archived && (serverNote || previewFallbackNote || copyPath?.kind === 'browser' || previewStamped === false || (viaServer && !printViaServer && file.type !== 'Draft')) && (
-          <div role="note" className="px-6 py-2 bg-amber-900/60 border-b border-amber-700 text-amber-100 text-xs relative z-50">
+          <div role="note" className={`px-6 py-2 bg-amber-900/60 border-b border-amber-700 text-amber-100 text-xs relative ${ZC.pagePopover}`}>
             {previewStamped === false
               ? 'Unstamped preview: the watermark / QR stamp could not be applied to this file, so this is the original. Treat it as uncontrolled.'
               : previewFallbackNote && !serverNote
@@ -1107,7 +1108,7 @@ const FileViewerModal = ({
           {file.type === 'Draft' && <WatermarkOverlay />}
 
           {archived ? (
-            <div className="text-center p-12 bg-[var(--color-surface)] rounded-xl shadow-2xl max-w-md border border-sky-200 relative z-10">
+            <div className={`text-center p-12 bg-[var(--color-surface)] rounded-xl shadow-2xl max-w-md border border-sky-200 relative ${ZC.raised}`}>
               <div className="w-24 h-24 bg-sky-50 rounded-full flex items-center justify-center mx-auto mb-6 border border-sky-200">
                 <Archive className="w-12 h-12 text-sky-500" />
               </div>
@@ -1120,7 +1121,7 @@ const FileViewerModal = ({
             </div>
           ) : isPdf ? (
             resolvedUrl ? (
-              <iframe src={`${resolvedUrl}#toolbar=0&navpanes=0`} className="w-full h-full rounded-lg shadow-2xl bg-[var(--color-surface)] border border-slate-700 relative z-0" title="PDF Viewer" />
+              <iframe src={`${resolvedUrl}#toolbar=0&navpanes=0`} className={`w-full h-full rounded-lg shadow-2xl bg-[var(--color-surface)] border border-slate-700 relative ${ZC.base}`} title="PDF Viewer" />
             ) : resolveError ? (
               <div className="text-red-300 text-sm">Couldn&apos;t load the file: {resolveError}</div>
             ) : (
@@ -1129,14 +1130,14 @@ const FileViewerModal = ({
           ) : isImage ? (
             resolvedUrl ? (
               // eslint-disable-next-line @next/next/no-img-element -- ephemeral signed-URL preview; optimizer can't cache short-lived URLs and intrinsic size is unknown
-              <img src={resolvedUrl} alt="Preview" className="max-w-full max-h-full object-contain shadow-2xl rounded-lg border border-slate-700 relative z-0" />
+              <img src={resolvedUrl} alt="Preview" className={`max-w-full max-h-full object-contain shadow-2xl rounded-lg border border-slate-700 relative ${ZC.base}`} />
             ) : resolveError ? (
               <div className="text-red-300 text-sm">Couldn&apos;t load the file: {resolveError}</div>
             ) : (
               <div className="text-slate-300 text-sm flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Preparing preview…</div>
             )
           ) : (
-            <div className="text-center p-12 bg-[var(--color-surface)] rounded-xl shadow-2xl max-w-md border border-[var(--color-border)] relative z-10">
+            <div className={`text-center p-12 bg-[var(--color-surface)] rounded-xl shadow-2xl max-w-md border border-[var(--color-border)] relative ${ZC.raised}`}>
               <div className="w-24 h-24 bg-[var(--color-surface-2)] rounded-full flex items-center justify-center mx-auto mb-6 border border-[var(--color-border)]">
                 <FileIcon className="w-12 h-12 text-slate-300" />
               </div>
@@ -2753,7 +2754,7 @@ export default function TicketDetailView() {
       )}
 
       {/* HEADER */}
-      <div className="bg-[var(--color-surface)] border-b border-[var(--color-border)] sticky top-0 z-20 shadow-sm px-4 sm:px-6 lg:px-8 py-4">
+      <div className={`bg-[var(--color-surface)] border-b border-[var(--color-border)] sticky top-0 ${ZC.raisedHigher} shadow-sm px-4 sm:px-6 lg:px-8 py-4`}>
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 max-w-[1920px] mx-auto">
           <div className="flex items-center gap-4">
             <button onClick={() => router.back()} className="p-2 hover:bg-[var(--color-surface-2)] rounded-full text-[var(--color-text-muted)] transition-colors"><ArrowLeft className="w-5 h-5" /></button>
@@ -2872,7 +2873,7 @@ export default function TicketDetailView() {
                 </label>
 
                 {fileToUpload && !isUploading && (
-                  <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
+                  <div className={`fixed inset-0 ${ZC.modal} flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in`}>
                     <div className="bg-[var(--color-surface)] p-6 rounded-2xl shadow-2xl max-w-sm w-full animate-in fade-in zoom-in-95 border border-[var(--color-border)]">
                       <div className="flex items-center justify-between mb-4">
                         <h3 className="font-bold text-lg text-[var(--color-text)]">Classify Upload</h3>
@@ -2987,7 +2988,7 @@ export default function TicketDetailView() {
 
       {/* NOTIFICATION: Staged Files Warning */}
       {hasStagedFiles && (
-        <div className="bg-orange-600 text-white px-4 py-3 shadow-md relative z-10 animate-in slide-in-from-top-2">
+        <div className={`bg-orange-600 text-white px-4 py-3 shadow-md relative ${ZC.raised} animate-in slide-in-from-top-2`}>
           <div className="max-w-[1920px] mx-auto flex items-center justify-between px-4 sm:px-6 lg:px-8">
              <div className="flex items-center">
                <AlertTriangle className="w-5 h-5 mr-3 " />
@@ -3317,7 +3318,7 @@ export default function TicketDetailView() {
                       {latestDraft && (
                          <div className="bg-orange-50/50 border border-orange-200 rounded-lg p-4 shadow-sm relative overflow-hidden group">
                            <div className="absolute top-0 right-0 bg-orange-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-bl-lg uppercase tracking-wider">Latest Revision</div>
-                           <div className="flex items-center justify-between relative z-10">
+                           <div className={`flex items-center justify-between relative ${ZC.raised}`}>
                               <div className="flex items-center space-x-4 min-w-0">
                                 <div className="p-2.5 bg-orange-100 text-orange-600 rounded-lg">
                                   <FileText className="w-6 h-6" />
@@ -3384,7 +3385,7 @@ export default function TicketDetailView() {
                    <span className="ml-2 px-1.5 py-0.5 bg-teal-600 text-white text-[9px] font-black rounded normal-case tracking-normal">Rev {ticket.deliverableRev}</span>
                  )}
                </h3>
-               <div className="space-y-2 relative z-10">
+               <div className={`space-y-2 relative ${ZC.raised}`}>
                  {finalFiles.length === 0 ? <div className="text-center py-6 text-[var(--color-text-faint)] text-xs border-2 border-dashed border-[var(--color-border)] rounded-lg">Nothing issued for construction yet.</div> : finalFiles.map((file, idx) => (
                    <div key={idx} className={`flex items-center justify-between bg-[var(--color-surface)] p-3 rounded-lg border shadow-sm ${['FINAL_DRAFT', 'PENDING_FINAL_APPROVAL', 'CLOSED'].includes(ticket.status) ? 'border-teal-300 ring-1 ring-teal-100' : 'border-teal-200'}`}>
                      <div className="flex items-center space-x-4 min-w-0">
@@ -3403,7 +3404,7 @@ export default function TicketDetailView() {
                    where its deliverable stands in the register, and the offer to publish it
                    as a new document there (to someone who may). */}
                {newDocLibraryId && (deliverable || canOfferNewDocument || canRecordExistingNewDocument) && (
-                 <div className="mt-3 flex flex-wrap items-center gap-2 relative z-10">
+                 <div className={`mt-3 flex flex-wrap items-center gap-2 relative ${ZC.raised}`}>
                    {deliverable?.state === 'published' && (
                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1">
                        <CheckCircle2 className="w-3 h-3" /> {deliverable.in_review ? `Draft ${deliverable.revision_label} in document review` : (deliverable as { filed_as_draft?: boolean }).filed_as_draft ? 'Filed in the register as a Draft document' : `Published as Rev ${deliverable.revision_label}`}
@@ -3446,7 +3447,7 @@ export default function TicketDetailView() {
                    source document nor a library — where its deliverable stands, and the offer to
                    publish it as a new document in a library the publisher chooses. */}
                {chooseNewDocLibrary && (deliverable?.state === 'published' || deliverable?.state === 'not_in_register' || canOfferChosenLibraryDocument || canRecordExistingChosenLibraryDocument) && (
-                 <div className="mt-3 flex flex-wrap items-center gap-2 relative z-10">
+                 <div className={`mt-3 flex flex-wrap items-center gap-2 relative ${ZC.raised}`}>
                    {/* DCW-4 remainder (DF-P8): the close recorded that the register does not have it. */}
                    {deliverable?.state === 'not_in_register' && (
                      <span data-testid="deliverable-not-in-register" className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
@@ -3622,7 +3623,7 @@ export default function TicketDetailView() {
                  {historyShown.map((event, idx) => (
                    <div key={`history-${idx}`} className="flex gap-4 relative animate-in fade-in slide-in-from-left-2">
                      {idx !== historyShown.length - 1 && <div className="absolute left-[11px] top-8 bottom-[-24px] w-0.5 bg-slate-200" />}
-                     <div className="relative z-10"><div className="w-6 h-6 rounded-full bg-[var(--color-surface)] border-2 border-[var(--color-border)] flex items-center justify-center"><div className="w-2 h-2 rounded-full bg-slate-400" /></div></div>
+                     <div className={`relative ${ZC.raised}`}><div className="w-6 h-6 rounded-full bg-[var(--color-surface)] border-2 border-[var(--color-border)] flex items-center justify-center"><div className="w-2 h-2 rounded-full bg-slate-400" /></div></div>
                      <div className="flex-1 pb-1">
                        <div className="flex items-center justify-between"><span className="text-xs font-bold text-[var(--color-text)]">{event.action.replace(/_/g, ' ')}</span><span className="text-[10px] text-[var(--color-text-faint)] font-mono">{toDate(event.date).toLocaleDateString()}</span></div>
                        <p className="text-xs text-[var(--color-text-muted)] mt-0.5">by <span className="font-semibold text-[var(--color-text)]">{event.user?.split('@')[0]}</span></p>

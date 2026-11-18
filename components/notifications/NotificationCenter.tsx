@@ -51,7 +51,7 @@ import { isDockRaised, useOccupyRightRail } from "@/components/ui/CornerDock";
 import { Button } from "@/components/ui/Button";
 import { supabase } from "@/lib/supabase";
 import { hasUploadsInFlight } from "@/lib/uploadActivity";
-import { Z } from "@/lib/zLayers";
+import { Z, ZC } from "@/lib/zLayers";
 
 /** The section names a scoped header says — the Sidebar rows' labels. */
 export const SECTION_LABELS: Record<AttentionSection, string> = {
@@ -347,7 +347,7 @@ function CenterPanel({
         aria-hidden
         data-center-backdrop
         style={layer}
-        className={`fixed inset-0 z-[240] bg-slate-900/30 backdrop-blur-[2px] transition-opacity duration-300 motion-reduce:transition-none ${
+        className={`fixed inset-0 ${ZC.centerBackdrop} bg-slate-900/30 backdrop-blur-[2px] transition-opacity duration-300 motion-reduce:transition-none ${
           isOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
       />
@@ -360,7 +360,7 @@ function CenterPanel({
         tabIndex={-1}
         inert={!isOpen}
         data-center-panel
-        className={`fixed top-0 right-0 bottom-0 z-[241] w-[480px] max-w-[94vw] bg-[var(--color-surface)] border-l border-[var(--color-border)] shadow-2xl flex flex-col transition-transform duration-500 motion-reduce:transition-none outline-none ${
+        className={`fixed top-0 right-0 bottom-0 ${ZC.centerPanel} w-[480px] max-w-[94vw] bg-[var(--color-surface)] border-l border-[var(--color-border)] shadow-2xl flex flex-col transition-transform duration-500 motion-reduce:transition-none outline-none ${
           isOpen ? "translate-x-0" : "translate-x-full"
         }`}
         style={{ transitionTimingFunction: "var(--ease-spring)", ...layer }}
@@ -467,7 +467,7 @@ function CenterPanel({
 
 /** The panel's layer at rest — its `z-[241]` class (opened above a raising
  *  modal it is `Z.dialog`, inline). */
-export const CENTER_PANEL_Z_AT_REST = 241;
+export const CENTER_PANEL_Z_AT_REST: number = Z.centerPanel;
 
 /** Whether `dialog` paints above the center's panel, so that an Escape inside
  *  it is that dialog's to answer (N3 fourth review fix). The center declares

@@ -1014,7 +1014,7 @@ supabase/migrations/20260724_ticket_numbering.sql:4-6
 ## EDGE-14 · notification_preferences.inapp_enabled / push_enabled were added for 'the unified dispatcher to honor' and no code reads them
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260723_notifications_unify.sql:83-87`, `supabase/schema.sql:658-659`, `lib/notify/dispatch.ts:4-6`, `lib/inAppNotifications.ts:81-96`
 - **Re-verified:** hardening pass — **SURVIVES**, by census. `inapp_enabled` and `push_enabled` have **0 references** anywhere in `app/`, `lib/` or `components/`. The migration that added them says they exist *"for the unified dispatcher to honor"* (`20260723_notifications_unify.sql:83`).
@@ -1057,6 +1057,20 @@ export async function notify(input: NotificationInput): Promise<void> {
 - ✗ (in part) `push_enabled` is now read by the push channel (`lib/push/sendPush.ts:389-397`, fail closed). `inapp_enabled` is marked deprecated and kept (`20261148` §2), read by nothing and not written by the settings page (`lib/notificationPrefs.ts:49-51`) — neither honoured nor dropped — and `lib/notify/dispatch.ts:6` still says "per-channel preferences".
 
 **Scope / residual.** → notifications N13 LAYERS SWEEP, with TAX-9 (assigned by the integrator at the DF-P11 merge, 2026-10-21, DEC-31): drop `inapp_enabled` (or honour it) and correct the docblock. Not built here (`DEC-31`).
+
+**Resolution (2026-11-18, notifications N13 LAYERS SWEEP, with notifications `TAX-9`).** Reproduced first on `b138efc7`: `inapp_enabled` is read and written by no code (only `lib/notificationPrefs.ts:50`'s comment and tests name it), the settings page offers no switch for it, and `lib/notify/dispatch.ts:4-6` still said every channel honours "per-user, per-channel preferences".
+
+The integrator's ruling 4 at the N13 launch (`DEC-90`): honour the preference only if it is wired end to end today — it is not (no reader, no writer, no switch) — otherwise drop the dead field and correct the docblock, whichever changes no delivered notification. What landed:
+- **No dead field in the app.** No type, read or write in app/, components/, hooks/ or lib/ carries `inapp_enabled` (none did at base; a test now refuses one). The COLUMN stays: `DEC-74` keeps it deprecated, not dropped ("a dropped column cannot be restored and older backup envelopes carry it"), ratified by the integrator at the N3 merge as `TAX-9` done-when 1's reading (`DEC-90`); dropping it is a migration this package has no number for and no decision to make.
+- **The docblock says what each channel honours** (`lib/notify/dispatch.ts`): the bell, none — a bell row is always written, never suppressible (`DEC-74` §7); the member's in-app switch is the pop-up toast (`toast_enabled` and its categories), honoured by `NotificationListener`; `inapp_enabled` deprecated and read by nothing; email, the recipient's preferences through `email_gate()`; push, `push_enabled` and the device, in the sender.
+- **No delivered notification changed** — no code path was touched.
+
+Tests: `lib/__tests__/n13InappEnabledDead.test.ts` — no code token in app/, components/, hooks/ or lib/ names `inapp_enabled`; `emit()` writes the bell row whether the preference row says `inapp_enabled` false, true or there is no row (as before: nothing read it); the docblock no longer claims per-channel preferences for every channel. Mutation-checked: a code read of the name, and the old docblock, each fail.
+
+**Done-when.**
+- ✓ on the ratified reading: the dispatcher's docblock stops claiming per-channel preferences, and the app carries no `inapp_enabled` field; the column itself is kept by `DEC-74` (ratified, `DEC-90`), so "both columns are dropped" is superseded for `inapp_enabled` by that ruling — `push_enabled` is now honoured by the push channel (`lib/push/sendPush.ts`, the Partial above).
+
+**Scope / residual.** The deprecated column remains in the schema, commented DEPRECATED (`20261148`); a later drop needs a migration and a backup-envelope reader that tolerates its absence (`DEC-74`'s Reversal). No migration here.
 
 ---
 

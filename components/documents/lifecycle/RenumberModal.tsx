@@ -7,6 +7,7 @@ import React, { useState } from "react";
 import { X, Hash, Loader2, AlertTriangle, Check } from "lucide-react";
 import { renumberDocument } from "@/lib/documentLifecycle";
 import type { DocumentRecord } from "@/types/schema";
+import { ZC } from "@/lib/zLayers";
 
 interface RenumberModalProps {
   doc: DocumentRecord;
@@ -52,7 +53,7 @@ export default function RenumberModal(props: RenumberModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div className={`fixed inset-0 ${ZC.workflowModal} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4`}>
       <form onSubmit={submit} className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
           <div className="flex items-center gap-2">

@@ -17,6 +17,7 @@
 
 import React from "react";
 import { AlertTriangle, Check } from "lucide-react";
+import { ZC } from "@/lib/zLayers";
 
 export default function LifecycleFollowUps({ operation, items, unitCodeNote = null, onDone }: {
   operation: "split" | "merge";
@@ -28,7 +29,7 @@ export default function LifecycleFollowUps({ operation, items, unitCodeNote = nu
 }) {
   const n = items.length + (unitCodeNote ? 1 : 0);
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start justify-center p-4 overflow-y-auto">
+    <div className={`fixed inset-0 ${ZC.workflowModal} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start justify-center p-4 overflow-y-auto`}>
       <div role="alertdialog" aria-label={`The ${operation} completed with follow-up steps outstanding`} className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden my-8">
         <div className="px-5 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2">
           <AlertTriangle className="w-5 h-5 text-amber-600" />

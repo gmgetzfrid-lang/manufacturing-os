@@ -27,11 +27,19 @@
 //     status ("Approve" then "Release" on DR-12 read "Approve ×2"), a second
 //     message ("hey" then the real question read "hey ×2"), another person's
 //     sign-off. With the words in the key, every card shows exactly what each
-//     row it stands for said (third review fix).
+//     row it stands for said (third review fix). Since notifications N13 the
+//     merge shows the NEWEST arrival's words (ToastProvider mergeToast), so a
+//     producer key without the words would no longer hide a newer row; the
+//     key keeps them all the same — DEC-94 item 4's ratified reading (a card
+//     ×N stands for N rows that said the same thing). Keying on kind +
+//     resource alone is now the one-line reversal, not a defect.
 //   * A burst is summarized: at most BURST_SHOWN_MAX informational cards
 //     per BURST_WINDOW_MS; the rest of that window's rows become one
 //     "N more notifications" card when it closes (TAX-9 dw4 — two cards plus
-//     one summary, not one summary alone). A repeat of an event already on
+//     one summary, ratified, DEC-94). The summary carries "Open
+//     notifications", which opens the Notification Center (TAX-9's
+//     click-through, N13; the action summary's "Open actions" opens it on
+//     Action) — the layout passes the opener. A repeat of an event already on
 //     screen in the window joins its card (a count, no new card) and is not
 //     held. Action rows are never folded into the informational summary:
 //     they have their own cap (notifications N4 review fix) — at most
@@ -60,7 +68,7 @@
 //     (lib/notificationKinds.ts KIND_META.category) are on — `toastAllowed`.
 //     Before 20261200 is pasted every category reads on.
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { isActionRow as isActionNotification } from "@/lib/notificationReconcile";
 import { kindMeta } from "@/lib/notificationKinds";
@@ -68,7 +76,7 @@ import {
   readToastPreferences, normalizeToastPreference, toastAllowed, type ToastPreference,
 } from "@/lib/notificationPrefs";
 import { useRole } from "./RoleContext";
-import { toastCoalesceKey, useToast, type ToastType } from "./ToastProvider";
+import { toastCoalesceKey, useToast, type ToastAction, type ToastType } from "./ToastProvider";
 
 /** The columns of a `notifications` INSERT the toast reads. */
 export interface ListenedRow {
@@ -87,7 +95,16 @@ export interface ToastSpec {
   message: string;
   duration: number;
   coalesceKey?: string;
+  /** The summary cards' click-through to the Notification Center (TAX-9). */
+  action?: ToastAction;
 }
+
+/** Which view of the Notification Center a summary card opens. */
+export type SummaryCenterFilter = "all" | "action";
+
+/** The summary cards' button (TAX-9 done-when 4's click-through). */
+export const OPEN_CENTER_LABEL = "Open notifications";
+export const OPEN_ACTIONS_LABEL = "Open actions";
 
 /** An informational notification toast's time on screen (as before). */
 export const NOTIFICATION_TOAST_MS = 6000;
@@ -144,8 +161,8 @@ export function toastForRow(row: ListenedRow): ToastSpec {
     message: row.body ?? "",
     // Action-required stays until dismissed (TAX-3 dw3): 0 = no timer.
     duration: action ? 0 : NOTIFICATION_TOAST_MS,
-    // One card per statement (RT-11 dw2 / OS-4 dw2): the merged card keeps
-    // the first row's words, so only rows with the same words may merge.
+    // One card per statement (RT-11 dw2 / OS-4 dw2, DEC-94 item 4): only rows
+    // with the same words merge (the merged card shows the newest's).
     coalesceKey: notificationCoalesceKey(row),
   };
 }
@@ -179,6 +196,11 @@ export interface ToasterDeps {
   now?: () => number;
   setTimer?: (cb: () => void, ms: number) => unknown;
   clearTimer?: (t: unknown) => void;
+  /** Opens the Notification Center (the protected layout's
+   *  useNotificationCenter().open). With it, the window's summary card
+   *  carries a button that opens the center — the burst summary on All, the
+   *  action summary on Action (TAX-9). Without it, the cards are as before. */
+  openCenter?: (filter: SummaryCenterFilter) => void;
 }
 
 /** The listener's decisions — preference, dedupe, burst — without React or
@@ -248,6 +270,13 @@ export function createNotificationToaster(deps: ToasterDeps) {
     return p;
   };
 
+  /** A summary card's click-through, when the center can be opened. */
+  const centerAction = (filter: SummaryCenterFilter): { action?: ToastAction } => {
+    const open = deps.openCenter;
+    if (!open) return {};
+    return { action: { label: filter === "action" ? OPEN_ACTIONS_LABEL : OPEN_CENTER_LABEL, onClick: () => open(filter) } };
+  };
+
   const flush = () => {
     timer = null;
     windowOpen = false;
@@ -260,7 +289,7 @@ export function createNotificationToaster(deps: ToasterDeps) {
     if (stopped || rows.length === 0) return;
     // Each summary is its own card: two windows' "3 more" never read as one
     // "3 more ×2".
-    deps.show(rows.length === 1 ? toastForRow(rows[0]) : { ...burstSummary(rows.length), coalesceKey: `notification-burst:${++burstSeq}` });
+    deps.show(rows.length === 1 ? toastForRow(rows[0]) : { ...burstSummary(rows.length), coalesceKey: `notification-burst:${++burstSeq}`, ...centerAction("all") });
   };
 
   const flushActions = () => {
@@ -270,7 +299,7 @@ export function createNotificationToaster(deps: ToasterDeps) {
     const rows = pref ? heldActions.filter((r) => toastAllowed(pref!.value, r.kind)) : heldActions;
     heldActions = [];
     if (stopped || rows.length === 0) return;
-    deps.show(rows.length === 1 ? toastForRow(rows[0]) : { ...actionSummary(rows.length), coalesceKey: `notification-action-burst:${++burstSeq}` });
+    deps.show(rows.length === 1 ? toastForRow(rows[0]) : { ...actionSummary(rows.length), coalesceKey: `notification-action-burst:${++burstSeq}`, ...centerAction("action") });
   };
 
   const routeAction = (row: ListenedRow, spec: ToastSpec) => {
@@ -353,9 +382,13 @@ export function createNotificationToaster(deps: ToasterDeps) {
   };
 }
 
-export function NotificationListener() {
+export function NotificationListener({ onOpenCenter }: { onOpenCenter?: (filter: SummaryCenterFilter) => void }) {
   const { activeOrgId, userEmail, uid } = useRole();
   const { showToast } = useToast();
+  // Read when a summary card's button is clicked, so a new opener never
+  // re-subscribes the channel.
+  const openRef = useRef(onOpenCenter);
+  useEffect(() => { openRef.current = onOpenCenter; }, [onOpenCenter]);
 
   useEffect(() => {
     if (!activeOrgId || !userEmail || !uid) return;
@@ -363,6 +396,8 @@ export function NotificationListener() {
     const toaster = createNotificationToaster({
       show: (t) => showToast(t),
       readPreference: () => readToastPreferences(uid),
+      // Read at each summary: the opener the layout passes now, if any.
+      get openCenter() { return openRef.current; },
     });
     // The pop-up switch: read now, and again whenever the tab comes back
     // (the settings page is one tab away).

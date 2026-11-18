@@ -9,6 +9,7 @@ import { Package, Loader2, Check, Plus } from "lucide-react";
 import { listWorkPackages, addDocumentToPackage, createWorkPackage } from "@/lib/workPackages";
 import { appAlert, appPrompt } from "@/components/providers/DialogProvider";
 import type { DocumentRecord } from "@/types/schema";
+import { ZC } from "@/lib/zLayers";
 
 export default function AddToPackageButton({ doc, orgId, userId, userName }: {
   doc: DocumentRecord; orgId: string; userId: string; userName?: string | null;
@@ -76,7 +77,7 @@ export default function AddToPackageButton({ doc, orgId, userId, userName }: {
         <Package className="w-3.5 h-3.5" /> Add to work package
       </button>
       {open && (
-        <div className="absolute z-30 mt-1 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-1.5 space-y-0.5">
+        <div className={`absolute ${ZC.raisedTop} mt-1 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-1.5 space-y-0.5`}>
           {addedTo ? (
             <div className="px-2 py-2 text-xs font-bold text-emerald-700 inline-flex items-center gap-1.5">
               <Check className="w-3.5 h-3.5" /> Added to {addedTo}

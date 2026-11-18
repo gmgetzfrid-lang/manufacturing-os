@@ -73,6 +73,7 @@ import { useViewerPanZoom } from "@/lib/useViewerPanZoom";
 
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
+import { ZC } from "@/lib/zLayers";
 
 // Serve the pdfjs worker from our own /public so the viewer doesn't depend
 // on a CDN at all. The file is copied from node_modules during build via
@@ -1232,9 +1233,9 @@ export default function FullScreenViewer({
   ));
 
   return (
-    <div className="fixed inset-0 z-[100] bg-slate-900 flex flex-col" onPointerUp={onCanvasMouseUp} onPointerCancel={onCanvasMouseUp} onMouseLeave={onCanvasMouseUp}>
+    <div className={`fixed inset-0 ${ZC.modal} bg-slate-900 flex flex-col`} onPointerUp={onCanvasMouseUp} onPointerCancel={onCanvasMouseUp} onMouseLeave={onCanvasMouseUp}>
       {committing && (
-        <div className="absolute inset-0 z-[200] bg-slate-950/85 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
+        <div className={`absolute inset-0 ${ZC.workflowModal} bg-slate-950/85 backdrop-blur-sm flex flex-col items-center justify-center gap-3`}>
           <Loader2 className="w-9 h-9 animate-spin text-emerald-400" />
           <span className="text-sm font-bold text-white">Applying your markups…</span>
         </div>
@@ -1244,7 +1245,7 @@ export default function FullScreenViewer({
           pull up equipment photos while studying the drawing — without
           closing the viewer. Collapsible to reclaim screen real estate. */}
       {orgId && docRecord && hasAnyTags && tagsBarOpen && (
-        <div className="absolute top-16 left-3 right-3 z-40 bg-slate-900/85 backdrop-blur border border-slate-700 rounded-xl px-3 py-2 shadow-lg flex items-center gap-2">
+        <div className={`absolute top-16 left-3 right-3 ${ZC.pageFloat} bg-slate-900/85 backdrop-blur border border-slate-700 rounded-xl px-3 py-2 shadow-lg flex items-center gap-2`}>
           <div className="flex-1 min-w-0 overflow-x-auto">
             <EquipmentTagsStrip
               metadata={docRecord.metadata as Record<string, unknown>}
@@ -1270,7 +1271,7 @@ export default function FullScreenViewer({
       {orgId && docRecord && hasAnyTags && !tagsBarOpen && (
         <button
           onClick={(e) => { e.stopPropagation(); setTagsBarOpen(true); }}
-          className="absolute top-16 right-3 z-40 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900/85 backdrop-blur border border-slate-700 text-white/80 hover:text-white text-[11px] font-bold shadow-lg"
+          className={`absolute top-16 right-3 ${ZC.pageFloat} inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900/85 backdrop-blur border border-slate-700 text-white/80 hover:text-white text-[11px] font-bold shadow-lg`}
           title="Show equipment tag bar"
         >
           <Camera className="w-3.5 h-3.5" /> Equipment tags
@@ -1281,7 +1282,7 @@ export default function FullScreenViewer({
       {/* On phones the control row is wider than the screen — it WRAPS onto
           extra lines so every action stays reachable (a scroll container
           would clip the dropdown menus). Desktop keeps the single row. */}
-      <div className="min-h-14 px-3 py-1.5 md:py-0 bg-slate-900 border-b border-slate-800 flex items-center gap-2 md:gap-3 shrink-0 z-50 flex-wrap md:flex-nowrap">
+      <div className={`min-h-14 px-3 py-1.5 md:py-0 bg-slate-900 border-b border-slate-800 flex items-center gap-2 md:gap-3 shrink-0 ${ZC.pagePopover} flex-wrap md:flex-nowrap`}>
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div className="min-w-0">
             <h2 className="text-white font-bold text-sm truncate">{title}</h2>
@@ -1377,7 +1378,7 @@ export default function FullScreenViewer({
               <Smartphone className="w-3.5 h-3.5" /> <span className="hidden lg:inline">Phone</span>
             </button>
             {phoneQrOpen && (
-              <div className="absolute right-0 top-full mt-2 z-[60] bg-white rounded-xl shadow-2xl border border-slate-200 p-3 animate-in fade-in zoom-in-95">
+              <div className={`absolute right-0 top-full mt-2 ${ZC.drawer} bg-white rounded-xl shadow-2xl border border-slate-200 p-3 animate-in fade-in zoom-in-95`}>
                 {/* Built on publicOrigin() like every other QR (PHYS-13): a
                     preview deploy's host would dead-end the phone on Vercel's
                     login. Rendered only after the click, so client-side. */}
@@ -1455,7 +1456,7 @@ export default function FullScreenViewer({
           <div className="relative">
             <button onClick={() => setStampMenuOpen((v) => !v)} className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${stampMenuOpen ? "bg-orange-600 text-white" : "text-slate-300 hover:text-white hover:bg-slate-700"}`} title="Stamp"><StampIcon className="w-5 h-5" /></button>
             {stampMenuOpen && (
-              <div className="absolute left-12 top-0 w-64 rounded-xl bg-slate-900 border border-slate-700 shadow-2xl p-2 z-50 max-h-[80vh] overflow-y-auto">
+              <div className={`absolute left-12 top-0 w-64 rounded-xl bg-slate-900 border border-slate-700 shadow-2xl p-2 ${ZC.pagePopover} max-h-[80vh] overflow-y-auto`}>
                 <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-2 pb-2">Standard</div>
                 <div className="grid grid-cols-1 gap-1">
                   {STAMPS.map((s) => (
@@ -1557,7 +1558,7 @@ export default function FullScreenViewer({
                 show the provide-the-zip prompt + in-memory viewer instead of a
                 dead stream. */}
             {archivedInfo && (
-              <div className="absolute inset-0 overflow-y-auto bg-slate-100 p-4 sm:p-6 z-10">
+              <div className={`absolute inset-0 overflow-y-auto bg-slate-100 p-4 sm:p-6 ${ZC.raised}`}>
                 <div className="max-w-4xl mx-auto">
                   <BackupViewer
                     target={{
@@ -1588,7 +1589,7 @@ export default function FullScreenViewer({
 
             <div className="min-w-full min-h-full flex items-center justify-center">
               <div className="relative shadow-2xl border border-slate-300 bg-white">
-                <div className="relative z-0" style={{ pointerEvents: "none", userSelect: "none" }}>
+                <div className={`relative ${ZC.base}`} style={{ pointerEvents: "none", userSelect: "none" }}>
                   {resolvedUrl && (
                     <Document options={PDF_DOC_OPTIONS}
                       file={resolvedUrl}
@@ -1608,13 +1609,13 @@ export default function FullScreenViewer({
                     </Document>
                   )}
                 </div>
-                <div className="absolute top-0 left-0 z-[50]" style={{ width: "100%", height: "100%" }}>
+                <div className={`absolute top-0 left-0 ${ZC.pagePopover}`} style={{ width: "100%", height: "100%" }}>
                   <canvas ref={canvasRef} />
                 </div>
                 {/* Snap point indicator — green dot, pointer-events-none */}
                 {snapDot && (
                   <div
-                    className="absolute z-[60] pointer-events-none rounded-full bg-emerald-400 ring-2 ring-emerald-300/60"
+                    className={`absolute ${ZC.drawer} pointer-events-none rounded-full bg-emerald-400 ring-2 ring-emerald-300/60`}
                     style={{ left: snapDot.x - 5, top: snapDot.y - 5, width: 10, height: 10 }}
                   />
                 )}
@@ -1626,7 +1627,7 @@ export default function FullScreenViewer({
 
       {/* ─── Uncontrolled-copy confirmation modal ────────────────────── */}
       {pending && (
-        <div className="fixed inset-0 z-[110] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-6">
+        <div className={`fixed inset-0 ${ZC.viewerDialog} bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-6`}>
           <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-200 flex items-center gap-3">
               <div className="p-2 bg-amber-100 rounded-lg"><ShieldAlert className="w-5 h-5 text-amber-700" /></div>

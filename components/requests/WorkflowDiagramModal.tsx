@@ -16,6 +16,7 @@ import type { TicketStatus } from "@/types/schema";
 // one source, so the map and the chip never disagree. UI-2: the map opens
 // from the ticket, the queue and the new-request form.
 import { TICKET_STATUS_LABELS } from "@/lib/ticketStatusLabels";
+import { ZC } from "@/lib/zLayers";
 
 interface StageDef {
   status: TicketStatus;
@@ -64,7 +65,7 @@ export default function WorkflowDiagramModal({
 
   return (
     <div
-      className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4"
+      className={`fixed inset-0 ${ZC.overlay} bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4`}
       onClick={onClose}
     >
       <div

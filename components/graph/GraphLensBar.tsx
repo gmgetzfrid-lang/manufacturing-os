@@ -16,6 +16,7 @@ import { Bookmark, Copy, Undo2, X, Check } from "lucide-react";
 import {
   GRAPH_LENSES, matchLens, type GraphLens, type GraphSettings, type SavedGraphView,
 } from "@/lib/graphSettings";
+import { ZC } from "@/lib/zLayers";
 
 export interface GraphLensBarProps {
   settings: Pick<GraphSettings, "hiddenTypes" | "showLibraryEdges" | "savedViews">;
@@ -100,7 +101,7 @@ export default function GraphLensBar({
         </button>
         {viewsOpen && (
           <div role="dialog" aria-label="Saved views"
-            className="absolute left-0 top-full mt-1 w-64 max-w-[calc(100vw-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-2 space-y-2 z-30">
+            className={`absolute left-0 top-full mt-1 w-64 max-w-[calc(100vw-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-2 space-y-2 ${ZC.raisedTop}`}>
             {settings.savedViews.length === 0 ? (
               <div className="text-[10px] text-[var(--color-text-faint)]">No saved views yet. Name this one below.</div>
             ) : (
