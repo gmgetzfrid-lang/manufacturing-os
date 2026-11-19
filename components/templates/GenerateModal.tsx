@@ -195,6 +195,9 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
     try {
       const up = await uploadTemplateFile(orgId, file, "data");
       setSource(up);
+      // A new spreadsheet: the last one's sheets (and the sheet picked from
+      // them) no longer apply.
+      setSheetNames([]); setSheet("");
       setDocs([]); setMapping(null); setNextOffset(null); setCost(0);
       setStoppedNote(null); setSkipped([]); setKeepBlank({});
     } catch (e) {
