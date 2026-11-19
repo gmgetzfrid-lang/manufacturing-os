@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+	
+	<meta http-equiv="content-type" content="text/html; charset=utf-8"/>
+	<title></title>
+	<meta name="generator" content="LibreOffice 24.2.7.2 (Linux)"/>
+	<meta name="created" content="00:00:00"/>
+	<meta name="changed" content="00:00:00"/>
+	
+	<style type="text/css">
+		body,div,table,thead,tbody,tfoot,tr,th,td,p { font-family:"Liberation Sans"; font-size:x-small }
+		a.comment-indicator:hover + comment { background:#ffd; position:absolute; display:block; border:1px solid black; padding:0.5em;  } 
+		a.comment-indicator { background:red; display:inline-block; border:1px solid black; width:0.5em; height:0.5em;  } 
+		comment { display:none;  } 
+	</style>
+	
+</head>
+
+<body>
+<table cellspacing="0" border="0">
+	<colgroup width="62"></colgroup>
+	<colgroup width="78"></colgroup>
+	<colgroup width="39"></colgroup>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;Title row&quot;}">Title row</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;&quot;}"><br></td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;&quot;}"><br></td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;&quot;}"><br></td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;&quot;}"><br></td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;&quot;}"><br></td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;Tag&quot;}">Tag</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;Value&quot;}">Value</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;Note&quot;}">Note</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R0&quot;}">R0</td>
+		<td align="right" sdval="46096" sdnum="1033;0;YYYY-MM-DD" data-sheets-value="{ &quot;1&quot;: 3, &quot;3&quot;: 46096}" data-sheets-numberformat="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;YYYY-MM-DD&quot;, &quot;3&quot;: 1}">2026-03-15</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n0&quot;}">n0</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R1&quot;}">R1</td>
+		<td align="right" sdval="46096" sdnum="1033;0;MM/DD/YY" data-sheets-value="{ &quot;1&quot;: 3, &quot;3&quot;: 46096}" data-sheets-numberformat="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;MM\/DD\/YY&quot;, &quot;3&quot;: 1}">03/15/26</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n1&quot;}">n1</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R2&quot;}">R2</td>
+		<td align="right" sdval="46096" sdnum="1033;0;MM/DD/YY" data-sheets-value="{ &quot;1&quot;: 3, &quot;3&quot;: 46096}" data-sheets-numberformat="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;MM\/DD\/YY&quot;, &quot;3&quot;: 1}">03/15/26</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n2&quot;}">n2</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R3&quot;}">R3</td>
+		<td align="right" sdval="46096" sdnum="1033;0;MM/DD/YY" data-sheets-value="{ &quot;1&quot;: 3, &quot;3&quot;: 46096}" data-sheets-numberformat="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;MM\/DD\/YY&quot;, &quot;3&quot;: 1}">03/15/26</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n3&quot;}">n3</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R4&quot;}">R4</td>
+		<td align="right" sdval="46096.5729166667" sdnum="1033;0;YYYY-MM-DD HH:MM:SS" data-sheets-value="{ &quot;1&quot;: 3, &quot;3&quot;: 46096}" data-sheets-numberformat="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;YYYY-MM-DD HH:MM:SS&quot;, &quot;3&quot;: 1}">2026-03-15 13:45:00</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n4&quot;}">n4</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R5&quot;}">R5</td>
+		<td align="right" sdval="0.572916666666667" sdnum="1033;0;HH:MM:SS AM/PM" data-sheets-value="{ &quot;1&quot;: 3, &quot;3&quot;: 0}" data-sheets-numberformat="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;HH:MM:SS AM\/PM&quot;, &quot;3&quot;: 1}">01:45:00 PM</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n5&quot;}">n5</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R6&quot;}">R6</td>
+		<td align="right" sdval="0.572916666666667" sdnum="1033;0;HH:MM:SS AM/PM" data-sheets-value="{ &quot;1&quot;: 3, &quot;3&quot;: 0}" data-sheets-numberformat="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;HH:MM:SS AM\/PM&quot;, &quot;3&quot;: 1}">01:45:00 PM</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n6&quot;}">n6</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R7&quot;}">R7</td>
+		<td align="right" sdval="0" sdnum="1033;0;HH:MM:SS AM/PM" data-sheets-value="{ &quot;1&quot;: 3, &quot;3&quot;: 0}" data-sheets-numberformat="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;HH:MM:SS AM\/PM&quot;, &quot;3&quot;: 1}">12:00:00 AM</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n7&quot;}">n7</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R8&quot;}">R8</td>
+		<td align="right" sdval="0.999988425925926" sdnum="1033;0;HH:MM:SS AM/PM" data-sheets-value="{ &quot;1&quot;: 3, &quot;3&quot;: 0}" data-sheets-numberformat="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;HH:MM:SS AM\/PM&quot;, &quot;3&quot;: 1}">11:59:59 PM</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n8&quot;}">n8</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R9&quot;}">R9</td>
+		<td align="right" sdval="1.5" sdnum="1033;">1.5</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n9&quot;}">n9</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R10&quot;}">R10</td>
+		<td align="right" sdval="7" sdnum="1033;">7</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n10&quot;}">n10</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R11&quot;}">R11</td>
+		<td align="right" sdval="1234.5" sdnum="1033;0;[$$-409]#,##0.00;[RED]-[$$-409]#,##0.00" data-sheets-value="{ &quot;1&quot;: 3, &quot;3&quot;: 1234}" data-sheets-numberformat="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;[$$-409]#,##0.00;[RED]-[$$-409]#,##0.00&quot;, &quot;3&quot;: 1}">$1,234.50</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n11&quot;}">n11</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R12&quot;}">R12</td>
+		<td align="right" sdval="-123" sdnum="1033;">-123</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n12&quot;}">n12</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R13&quot;}">R13</td>
+		<td align="right" sdval="0.5" sdnum="1033;0;0.00%" data-sheets-value="{ &quot;1&quot;: 3, &quot;3&quot;: 0}" data-sheets-numberformat="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;0.00%&quot;, &quot;3&quot;: 1}">50.00%</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n13&quot;}">n13</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R14&quot;}">R14</td>
+		<td align="right" sdval="1" sdnum="1033;0;BOOLEAN" data-sheets-value="{ &quot;1&quot;: 4, &quot;4&quot;: 1}">TRUE</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n14&quot;}">n14</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R15&quot;}">R15</td>
+		<td align="right" sdval="0" sdnum="1033;0;BOOLEAN" data-sheets-value="{ &quot;1&quot;: 4, &quot;4&quot;: 0}">FALSE</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n15&quot;}">n15</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R16&quot;}">R16</td>
+		<td align="right" sdval="3" sdnum="1033;" data-sheets-formula="=SUM(1,2)">3</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n16&quot;}">n16</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R17&quot;}">R17</td>
+		<td align="right" sdval="0" sdnum="1033;" data-sheets-formula="=1/0">#DIV/0!</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n17&quot;}">n17</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R18&quot;}">R18</td>
+		<td align="right" sdval="0" sdnum="1033;" data-sheets-formula="=NA()">#N/A</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n18&quot;}">n18</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R19&quot;}">R19</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;txt&quot;}">txt</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n19&quot;}">n19</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R20&quot;}">R20</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;#N\/A&quot;}">#N/A</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n20&quot;}">n20</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R21&quot;}">R21</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;N\/A&quot;}">N/A</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n21&quot;}">n21</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R22&quot;}">R22</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;PSV-101&quot;}">PSV-101</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n22&quot;}">n22</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R23&quot;}">R23</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;1 2&quot;}">1 2</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n23&quot;}">n23</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R24&quot;}">R24</td>
+		<td align="right" sdval="0" sdnum="1033;0;YYYY-MM-DD" data-sheets-value="{ &quot;1&quot;: 3, &quot;3&quot;: 0}" data-sheets-numberformat="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;YYYY-MM-DD&quot;, &quot;3&quot;: 1}">1899-12-30</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n24&quot;}">n24</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R25&quot;}">R25</td>
+		<td align="right" sdval="2" sdnum="1033;0;YYYY-MM-DD" data-sheets-value="{ &quot;1&quot;: 3, &quot;3&quot;: 2}" data-sheets-numberformat="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;YYYY-MM-DD&quot;, &quot;3&quot;: 1}">1900-01-01</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n25&quot;}">n25</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R26&quot;}">R26</td>
+		<td align="right" sdval="60" sdnum="1033;0;YYYY-MM-DD" data-sheets-value="{ &quot;1&quot;: 3, &quot;3&quot;: 60}" data-sheets-numberformat="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;YYYY-MM-DD&quot;, &quot;3&quot;: 1}">1900-02-28</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n26&quot;}">n26</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R27&quot;}">R27</td>
+		<td align="right" sdval="61" sdnum="1033;0;YYYY-MM-DD" data-sheets-value="{ &quot;1&quot;: 3, &quot;3&quot;: 61}" data-sheets-numberformat="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;YYYY-MM-DD&quot;, &quot;3&quot;: 1}">1900-03-01</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n27&quot;}">n27</td>
+	</tr>
+	<tr>
+		<td height="17" align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;R28&quot;}">R28</td>
+		<td align="right" sdval="2958465" sdnum="1033;0;YYYY-MM-DD" data-sheets-value="{ &quot;1&quot;: 3, &quot;3&quot;: 2958465}" data-sheets-numberformat="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;YYYY-MM-DD&quot;, &quot;3&quot;: 1}">9999-12-31</td>
+		<td align="left" data-sheets-value="{ &quot;1&quot;: 2, &quot;2&quot;: &quot;n28&quot;}">n28</td>
+	</tr>
+</table>
+<!-- ************************************************************************** -->
+</body>
+
+</html>

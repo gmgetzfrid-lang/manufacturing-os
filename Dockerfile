@@ -24,6 +24,9 @@
 FROM node:22-bookworm-slim AS web
 WORKDIR /app
 COPY package.json package-lock.json ./
+# The vendored SheetJS tarball the lockfile installs from (document-control
+# XEDGE-12: `"xlsx": "file:vendor/xlsx-0.20.3.tgz"`); npm ci needs it here.
+COPY vendor ./vendor
 RUN npm ci
 COPY . .
 # Public env is inlined at build time. Pass real values as build args.

@@ -73,6 +73,11 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     // parseWorkbook refuses (never truncates) an over-cap sheet, and refuses a
     // file that tried to alter the runtime — its message says how to fix it.
+    // A refusal of one sheet still names the workbook's sheets, so the
+    // person can pick another one.
+    if (e instanceof Error && Array.isArray((e as { sheetNames?: unknown }).sheetNames)) {
+      return NextResponse.json({ error: e.message, sheetName: (e as { sheetName?: string }).sheetName, sheetNames: (e as { sheetNames?: string[] }).sheetNames }, { status: 422, headers: { "Cache-Control": "no-store" } });
+    }
     return bad((e as Error).message || "The spreadsheet could not be parsed.", 422);
   }
 }

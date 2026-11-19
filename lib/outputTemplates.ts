@@ -81,8 +81,14 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   });
-  const data = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
-  if (!res.ok || !data) throw new Error(data?.error || `HTTP ${res.status}`);
+  const data = (await res.json().catch(() => null)) as (T & { error?: string; sheetNames?: unknown }) | null;
+  if (!res.ok || !data) {
+    // A refusal of one sheet names the workbook's sheets (XEDGE-12), so the
+    // caller can offer another one.
+    const err = new Error(data?.error || `HTTP ${res.status}`) as Error & { sheetNames?: string[] };
+    if (Array.isArray(data?.sheetNames)) err.sheetNames = data.sheetNames as string[];
+    throw err;
+  }
   return data;
 }
 

@@ -195,6 +195,9 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
     try {
       const up = await uploadTemplateFile(orgId, file, "data");
       setSource(up);
+      // A new spreadsheet: the last one's sheets (and the sheet picked from
+      // them) no longer apply.
+      setSheetNames([]); setSheet("");
       setDocs([]); setMapping(null); setNextOffset(null); setCost(0);
       setStoppedNote(null); setSkipped([]); setKeepBlank({});
     } catch (e) {
@@ -229,6 +232,9 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
       setCost((c) => c + (res.estCostUsd ?? 0));
       setExpanded(0);
     } catch (e) {
+      // A sheet refused for its size still names the workbook's sheets: offer them.
+      const names = (e as { sheetNames?: string[] }).sheetNames;
+      if (Array.isArray(names) && names.length) setSheetNames(names);
       showToast({ type: "error", title: (e as Error).message });
     } finally { setBusy(null); }
   };
