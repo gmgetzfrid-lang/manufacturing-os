@@ -47,6 +47,10 @@ export interface PlanCheck {
   ok: boolean;
   /** Steps replayed at their real length. */
   steps: number;
+  /** Off by more than a shift: where the job and the replay part ways most
+   *  on the replay's finish path (a step that started this long after what
+   *  came before it was done, where the replay starts it right away). */
+  gap: { name: string; order: string; after: string; readyAt: number; start: number; hours: number } | null;
 }
 
 /** This year's real lengths, as changes to the plan made from it: each
@@ -71,10 +75,31 @@ export function checkPlan(input: Omit<PlanInput, "changes">): PlanCheck {
   const actual = input.built.finish;
   const changes = replayChanges({ ...input, changes: [] });
   const steps = changes.filter((c) => c.kind === "set").length;
-  if (actual == null || !steps) return { can: false, replay: null, actual, offH: null, ok: false, steps };
+  if (actual == null || !steps) return { can: false, replay: null, actual, offH: null, ok: false, steps, gap: null };
   const p = nextPlan({ ...input, changes, withFound: true });
   const offH = r1((p.finish - actual) / H);
-  return { can: true, replay: p.finish, actual, offH, ok: Math.abs(offH) <= CHECK_H, steps };
+  const ok = Math.abs(offH) <= CHECK_H;
+  return { can: true, replay: p.finish, actual, offH, ok, steps, gap: ok ? null : partWays(input.built, p, offH) };
+}
+
+/** Along the replay's finish path, the step whose real start lagged what
+ *  came before it most against the replay (or ran ahead, when the replay
+ *  is the slow one). */
+function partWays(built: PlanInput["built"], p: NextPlan, offH: number): PlanCheck["gap"] {
+  const steps = new Map(built.orders.flatMap((o) => o.steps.map((s) => [s.id, { s, o }] as const)));
+  const acts = new Map(p.acts.map((a) => [a.id, a]));
+  const path = [...p.driving].reverse();
+  let best: PlanCheck["gap"] = null; let most = 0;
+  for (let i = 1; i < path.length; i++) {
+    const a = acts.get(path[i]), b = acts.get(path[i - 1]);
+    const x = steps.get(path[i]), y = steps.get(path[i - 1]);
+    if (!a || !b || !x || !y || x.s.start == null || y.s.finish == null) continue;
+    const lost = ((x.s.start - y.s.finish) - (a.start - b.finish)) / H;
+    if (Math.sign(lost) !== Math.sign(-offH) || Math.abs(lost) <= Math.abs(most)) continue;
+    most = lost;
+    best = { name: x.s.name, order: x.o.name, after: y.s.name, readyAt: y.s.finish, start: x.s.start, hours: r1((x.s.start - y.s.finish) / H) };
+  }
+  return Math.abs(most) >= 1 ? best : null;
 }
 
 export interface PlanRisk {

@@ -24,14 +24,14 @@ import { shiftKey } from "@/lib/asBuiltWork";
 import type { ShiftTimes } from "@/lib/shiftReport";
 import { crewFlows, overloaded, type CrewFlow } from "@/lib/crewFlow";
 import { causeOfText } from "@/lib/postEventReview";
-import { nextPlan, type NextPlan, type PlanChange } from "@/lib/nextPlan";
+import { nextPlan, OFFSITE_STEP, type NextPlan, type PlanChange } from "@/lib/nextPlan";
+export { OFFSITE_STEP };
 
 const H = 3_600_000;
 const r1 = (n: number) => Math.round(n * 10) / 10;
 const ms = (v: unknown): number => (v == null ? NaN : typeof v === "number" ? v : Date.parse(String(v)));
 
 /** A step that is the trip itself: out for service, hot-shotted to a shop. */
-export const OFFSITE_STEP = /\b(out for (service|repair|calibration|cal)|hot\s*-?\s*shot|(send|sent|ship|shipped|haul|hauled|truck|trucked)\s+(it\s+)?(out|off|to)\b|to (the )?(shop|vendor)\b|at (the )?(shop|vendor)\b|off[- ]?site)/i;
 /** The shutdown itself ("Transmix-2 - Shutdown"), not work that needs one
  *  ("Shutdown-Required Inspection ..."). */
 const isShutdown = (name: string) => /shut\s*-?\s*down\s*$/i.test(name.trim()) && !/required/i.test(name);

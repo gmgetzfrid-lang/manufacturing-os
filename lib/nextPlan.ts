@@ -139,17 +139,21 @@ export function snapStart(t: number, cal: Cal, tz: string, times: ShiftTimes): n
   return t;
 }
 
+/** A step that is the trip itself ("Hotshot Exchanger to Redman", "Meter Out
+ *  for Service"): clock time away, not crew time. */
+export const OFFSITE_STEP = /\b(out for (service|repair|calibration|cal)|hot\s*-?\s*shot|(send|sent|ship|shipped|haul|hauled|truck|trucked)\s+(it\s+)?(out|off|to)\b|to (the )?(shop|vendor)\b|at (the )?(shop|vendor)\b|off[- ]?site)/i;
 const isStartUp = (name: string) => /start\s*-?\s*up/i.test(name);
 /** The shutdown itself ("Transmix-2 - Shutdown"), not work that needs one
  *  ("Shutdown-Required Inspection ..."). */
 const isShutdown = (name: string) => /shut\s*-?\s*down\s*$/i.test(name.trim()) && !/required/i.test(name);
 
 /** How a step runs next time, from how its work order's crew really ran it
- *  this year (null: never worked, the file's calendar). Two or more nights
+ *  this year (null: never worked, the file's calendar). A trip off site and
+ *  the shutdown and start-up run on the clock. Two or more nights
  *  is a night crew (the as-built's own rule): days and nights. One night
  *  that finished day work is overtime: days. */
-function calOf(orderName: string, ran: { days: Set<string>; nights: Set<string> } | undefined, worked: string[]): Cal | null {
-  if (isShutdown(orderName) || isStartUp(orderName)) return "both";
+function calOf(orderName: string, stepName: string, ran: { days: Set<string>; nights: Set<string> } | undefined, worked: string[]): Cal | null {
+  if (isShutdown(orderName) || isStartUp(orderName) || OFFSITE_STEP.test(stepName)) return "both";
   if (!ran || !(ran.days.size + ran.nights.size)) return null;
   if (ran.nights.size >= 2) return ran.days.size ? "both" : "night";
   if (worked.length && worked.every((k) => k.endsWith(":night"))) return "night";
@@ -185,7 +189,7 @@ export function planActivities(input: { built: AsBuilt; work: AsBuiltWork; miles
     const m = byId.get(s.id); const w = work.steps.get(s.id);
     if (!m || !w) continue;
     const plan = Math.max(0, s.plannedH);
-    const cal: Cal = calOf(o.name, ran.get(`${o.key}|${w.crew}`), w.worked) ?? calendarShift(m, times) ?? (m.shift === "day" ? "day" : m.shift === "night" ? "night" : "both");
+    const cal: Cal = calOf(o.name, s.name, ran.get(`${o.key}|${w.crew}`), w.worked) ?? calendarShift(m, times) ?? (m.shift === "day" ? "day" : m.shift === "night" ? "night" : "both");
     let hours = plan, kind: ActKind = "same", basis = "";
     if (w.found) { kind = "found"; basis = kindOf(discoveryOf(m)) === "added" ? "missed scope, added this year" : "found this year"; }
     const bound = w.worked.length * 12;

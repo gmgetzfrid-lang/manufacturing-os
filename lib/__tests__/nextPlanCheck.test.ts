@@ -98,6 +98,25 @@ describe("the check: this year replayed through the rules", () => {
     (x.built as { finish: number | null }).finish = null;
     expect(checkPlan(x).can).toBe(false);
   });
+  it("off by more than a shift: not trusted, and it says where the job and the replay part ways", () => {
+    const x = job([
+      shutdown,
+      { key: "e", name: "E-22", steps: [
+        { id: "pull", crew: "Schultz", plannedH: 4, deps: ["sd"], start: t(26, 12), finish: t(26, 16), worked: [`${D26}:day`] },
+        // Started two days after the pull with nothing on the schedule in between.
+        { id: "blinds", name: "Pull Blinds", crew: "Schultz", plannedH: 2, deps: ["pull"], start: t(28, 14), finish: t(28, 16), worked: ["2026-10-28:day"] },
+      ] },
+      { key: "u", name: "Unit - Start-Up", steps: [{ id: "u1", crew: "Operations", plannedH: 2, start: t(28, 16), finish: t(28, 18), worked: ["2026-10-28:day"], deps: ["blinds"] }] },
+    ]);
+    const c = checkPlan(x);
+    expect(c.ok).toBe(false);
+    expect(c.offH!).toBeLessThan(-CHECK_H);
+    expect(c.gap).toMatchObject({ name: "Pull Blinds", order: "E-22", after: "pull", hours: 46 });
+  });
+  it("a trip off site runs on the clock", () => {
+    const x = job([shutdown, { key: "e", name: "E-22", steps: [{ id: "trip", name: "Hotshot Exchanger to Redman", crew: "Maintenance", plannedH: 6, deps: ["sd"], start: t(26, 12), finish: t(28, 12), worked: [`${D26}:day`] }] }]);
+    expect(planActivities(x).find((a) => a.id === "trip")!.cal).toBe("both");
+  });
   it("a job that ran long is a risk, with what it does to the finish", () => {
     const x = ran();
     const plan = nextPlan({ ...x, changes: [] });
