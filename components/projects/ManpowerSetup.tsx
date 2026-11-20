@@ -22,7 +22,9 @@ export function useManpowerSettings(projectId: string | null | undefined) {
   const [s, setS] = useState<ManpowerSettings | null>(() => (projectId ? cache.get(projectId) ?? null : null));
   const load = useCallback(() => {
     if (!projectId) return;
-    void loadManpowerSettings(projectId).then((x) => { cache.set(projectId, x); setS(x); }).catch(() => setS({}));
+    // A failed read stays "not known" (null), never "no plans": nothing is
+    // shown as empty that wasn't read.
+    void loadManpowerSettings(projectId).then((x) => { cache.set(projectId, x); setS(x); }).catch((e) => { console.warn("[manpower] settings read failed", e); setS(null); });
   }, [projectId]);
   useEffect(() => {
     load();
