@@ -1275,7 +1275,6 @@ export default function ExecutionView({
     <ShiftClockContext.Provider value={shiftClock}>
     <JobStartContext.Provider value={jobStart}>
     <div className="space-y-3">
-      {mode === "work" && <ExecutionGuide userId={userId} worked={worked} />}
 
       {/* Non-member feedback: the status dots and bars still render (they
           signal state), but edits are disabled — say why so it doesn't feel
@@ -1342,10 +1341,12 @@ export default function ExecutionView({
             )}
           </div>
         )}
+        <span className="ml-auto" />
+        <ExecutionGuide userId={userId} worked={worked} />
         {canEdit && (
           <button onClick={() => setBulkMode("replace")}
             title="Swap a contractor, crew, company or location on every task at once"
-            className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
             <Replace className="w-3.5 h-3.5" /> Change on many
           </button>
         )}

@@ -70,10 +70,10 @@ export default function ExecutionGuide({ userId, worked }: {
       {/* Toolbar trigger — always present. */}
       <button
         onClick={() => { setOpen(true); markSeen(); }}
-        className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] bg-[var(--color-accent-soft)] border border-[var(--color-accent-ring)]/40 px-2.5 py-1.5 rounded-lg transition-colors"
-        title="How this view works"
+        className="inline-flex items-center justify-center w-8 h-8 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+        title="How this view works" aria-label="How this view works"
       >
-        <HelpCircle className="w-3.5 h-3.5" /> How it works
+        <HelpCircle className="w-4 h-4" />
       </button>
 
       {/* First-run banner. */}

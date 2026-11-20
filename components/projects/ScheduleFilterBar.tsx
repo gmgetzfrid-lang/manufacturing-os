@@ -78,26 +78,14 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
           )}
         </div>
 
-        {/* Quick filters: each narrows what's shown, together they narrow
-            each other (critical and behind = critical steps behind). */}
-        <div role="group" aria-label="Quick filters" className="flex items-center gap-1.5 sm:flex-wrap max-sm:w-full max-sm:overflow-x-auto max-sm:pb-0.5 scroll-quiet">
-          {classSelects}
-          {quick("Critical path", <Flame className="w-3.5 h-3.5" />, !!filter.criticalOnly, "rose", () => onChange({ ...filter, criticalOnly: !filter.criticalOnly }))}
-          {quick("Behind", <TrendingDown className="w-3.5 h-3.5" />, !!filter.behindOnly, "amber", () => onChange({ ...filter, behindOnly: !filter.behindOnly }))}
-          {quick("Overdue", <AlertTriangle className="w-3.5 h-3.5" />, filter.overdueOnly, "rose", () => onChange({ ...filter, overdueOnly: !filter.overdueOnly }))}
-          {quick("Not started", <Circle className="w-3.5 h-3.5" />, !!filter.notStartedOnly, "slate", () => onChange({ ...filter, notStartedOnly: !filter.notStartedOnly }))}
-          {quick("Needs attention", <PauseCircle className="w-3.5 h-3.5" />, filter.blockedOnly, "rose", () => onChange({ ...filter, blockedOnly: !filter.blockedOnly }))}
-          {/* Work added after the plan: discovery and added scope. */}
-          {quick(filter.added?.length === 1 ? ADDED[filter.added[0]].word : "Discovery & added", <PlusCircle className="w-3.5 h-3.5" />, !!filter.added?.length, "violet",
-            () => onChange({ ...filter, added: filter.added?.length ? [] : ["discovery", "added"] }))}
+        {/* One Filter button: the quick filters, units, status and groups are
+            in its panel, so the work itself is on screen. */}
           <button
             onClick={() => setShowMore((v) => !v)}
             className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${showMore || filter.statuses.length || filter.groupIds.length || filter.shifts.length ? "bg-[var(--color-accent-soft)] border-[var(--color-accent-ring)]/50 text-[var(--color-accent)]" : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}
           >
-            {(() => { const n = filter.statuses.length + filter.groupIds.length + filter.shifts.length; return <><SlidersHorizontal className="w-3.5 h-3.5" /> Filters{n > 0 ? ` (${n})` : ""}</>; })()}
+            {(() => { const n = filter.statuses.length + filter.groupIds.length + filter.shifts.length + [filter.criticalOnly, filter.behindOnly, filter.overdueOnly, filter.notStartedOnly, filter.blockedOnly, !!filter.added?.length].filter(Boolean).length + (filter.units?.length ?? 0) + (filter.types?.length ?? 0); return <><SlidersHorizontal className="w-3.5 h-3.5" /> Filter{n > 0 ? ` (${n})` : ""}</>; })()}
           </button>
-        </div>
-
         {/* Match count + clear */}
         <span className="text-[11px] text-[var(--color-text-muted)] font-mono ml-auto">
           {active ? <><b className="text-[var(--color-text)]">{matchCount}</b> of {totalCount}</> : <>{totalCount} tasks</>}
@@ -112,6 +100,18 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
       {/* Expanded: status + group chips */}
       {showMore && (
         <div className="pt-1 space-y-2 border-t border-[var(--color-border)]">
+          <div role="group" aria-label="Show only" className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[12px] font-semibold text-[var(--color-text-faint)] mr-1">Show only</span>
+          {classSelects}
+          {quick("Critical path", <Flame className="w-3.5 h-3.5" />, !!filter.criticalOnly, "rose", () => onChange({ ...filter, criticalOnly: !filter.criticalOnly }))}
+          {quick("Behind", <TrendingDown className="w-3.5 h-3.5" />, !!filter.behindOnly, "amber", () => onChange({ ...filter, behindOnly: !filter.behindOnly }))}
+          {quick("Overdue", <AlertTriangle className="w-3.5 h-3.5" />, filter.overdueOnly, "rose", () => onChange({ ...filter, overdueOnly: !filter.overdueOnly }))}
+          {quick("Not started", <Circle className="w-3.5 h-3.5" />, !!filter.notStartedOnly, "slate", () => onChange({ ...filter, notStartedOnly: !filter.notStartedOnly }))}
+          {quick("Needs attention", <PauseCircle className="w-3.5 h-3.5" />, filter.blockedOnly, "rose", () => onChange({ ...filter, blockedOnly: !filter.blockedOnly }))}
+          {/* Work added after the plan: discovery and added scope. */}
+          {quick(filter.added?.length === 1 ? ADDED[filter.added[0]].word : "Discovery & added", <PlusCircle className="w-3.5 h-3.5" />, !!filter.added?.length, "violet",
+            () => onChange({ ...filter, added: filter.added?.length ? [] : ["discovery", "added"] }))}
+          </div>
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-[12px] font-semibold text-[var(--color-text-faint)] mr-1">Status</span>
             {STATUS_CHIPS.map(({ s, label, dot }) => {

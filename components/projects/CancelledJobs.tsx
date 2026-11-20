@@ -109,11 +109,11 @@ export function CancelledJobsBar({ jobs, canEdit, userId, userEmail, onChanged }
   const [open, setOpen] = useState(false);
   const n = jobs.length;
   return (
-    <div className="rounded-xl border border-amber-300 dark:border-amber-800/70 bg-amber-50 dark:bg-amber-950/30">
+    <div className={open ? "rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]" : ""}>
       <button onClick={() => setOpen((v) => !v)} aria-expanded={open}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left text-[12.5px] text-amber-900 dark:text-amber-200">
-        <Ban className="w-4 h-4 shrink-0" />
-        <span className="flex-1 min-w-0"><b>{n} job{n === 1 ? "" : "s"} cancelled</b> from this schedule - still to be done elsewhere</span>
+        className="w-full flex items-center gap-2 px-1 py-1 text-left text-[12.5px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+        <Ban className="w-4 h-4 shrink-0 text-amber-600" />
+        <span className="flex-1 min-w-0"><b>{n} job{n === 1 ? "" : "s"} cancelled</b> from this schedule, still to be done elsewhere</span>
         {open ? <ChevronDown className="w-4 h-4 shrink-0" /> : <ChevronRight className="w-4 h-4 shrink-0" />}
       </button>
       {open && (

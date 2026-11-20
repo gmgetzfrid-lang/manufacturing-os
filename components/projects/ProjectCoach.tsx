@@ -24,7 +24,8 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
 }) {
   const [health, setHealth] = useState<ProjectHealth | null>(null);
   const [items, setItems] = useState<CoachItem[]>([]);
-  const [open, setOpen] = useState(true);
+  // Folded to one line: the job's own results lead the Plan tab.
+  const [open, setOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
@@ -57,15 +58,15 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
       <button onClick={() => setOpen((v) => !v)} className="w-full px-4 py-2.5 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
         {open ? <ChevronDown className="w-4 h-4 text-[var(--color-text-faint)]" /> : <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)]" />}
         <Sparkles className="w-4 h-4 text-[var(--color-accent)]" />
-        <span className="text-sm font-bold text-[var(--color-text)]">Project health &amp; coach</span>
+        <span className="text-sm font-bold text-[var(--color-text)]">Health</span>
         {health.score != null && (
-          <span className="text-[11px] font-black tabular-nums" style={{ color: scoreBandColor(health.score) }}>
+          <span className="text-[12px] font-black tabular-nums" style={{ color: scoreBandColor(health.score) }}>
             {health.score} · {band}
           </span>
         )}
         {items.length > 0 && (
-          <span className="ml-auto text-[10px] font-bold text-[var(--color-text-muted)]">
-            {items.length} suggestion{items.length === 1 ? "" : "s"}
+          <span className="ml-auto text-[12px] font-semibold text-[var(--color-text-muted)]">
+            {items.length} thing{items.length === 1 ? "" : "s"} not set up yet
           </span>
         )}
       </button>

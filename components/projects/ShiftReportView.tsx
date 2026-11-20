@@ -1006,7 +1006,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
         {!meetingFixed && <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-lg p-0.5 gap-0.5" role="tablist" aria-label="Meeting">
           {MEETINGS.map(({ id, label, Icon }) => (
             <button key={id} role="tab" aria-selected={meeting === id} onClick={() => { setMeetingPick(id); setPresenting(null); }}
-              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${meeting === id ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${meeting === id ? "bg-[var(--color-text)] text-[var(--color-surface)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
               <Icon className="w-3 h-3" /> {label}
             </button>
           ))}
@@ -1018,7 +1018,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             {([["report", "Report"], ["meeting", "Meeting"]] as const).map(([id, label]) => (
               <button key={id} type="button" role="tab" aria-selected={(id === "meeting") === inMeetingView}
                 onClick={() => { setScreenState(id); setPresenting(null); }}
-                className={`px-3 py-1 rounded-md text-[12px] font-bold transition-colors ${(id === "meeting") === inMeetingView ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                className={`px-3 py-1 rounded-md text-[12px] font-bold transition-colors ${(id === "meeting") === inMeetingView ? "bg-[var(--color-text)] text-[var(--color-surface)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                 {label}
               </button>
             ))}
@@ -1211,7 +1211,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
                 const on = crew === x.who;
                 return (
                   <button key={x.who ?? "__all"} type="button" aria-pressed={on} onClick={() => setCrewPick(x.who)}
-                    className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${on ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-[var(--color-accent)]" : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                    className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${on ? "bg-[var(--color-text)] text-[var(--color-surface)] border-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                     {x.who ?? "All"}
                     {x.who && <span className="font-mono opacity-60">{x.steps}</span>}
                   </button>
@@ -1503,7 +1503,7 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
                 <span className="inline-flex rounded-lg border border-[var(--color-border-strong)] overflow-hidden" role="group" aria-label="Format">
                   {([["form", "Required (shift table)"], ["detail", "Detailed"]] as const).map(([k, l]) => (
                     <button key={k} type="button" aria-pressed={format === k} onClick={() => setFormat(k)}
-                      className={`h-8 px-3 text-[12px] font-bold ${format === k ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>{l}</button>
+                      className={`h-8 px-3 text-[12px] font-bold ${format === k ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>{l}</button>
                   ))}
                 </span>
               </div>
@@ -2955,21 +2955,23 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
       ? <>{kickoff.start != null ? <>Job starts <b>{c.DL(kickoff.start)} {c.T(kickoff.start)}</b> · {kickoff.daysTotal} days</> : "No dated work yet"}</>
       : <>{closeout.finish != null ? <>Planned finish <b>{c.DT(closeout.finish)}</b></> : null}</>;
   return (
-    <header className={print ? "pb-1.5 border-b-2 border-slate-900" : "px-4 sm:px-5 py-2.5 bg-slate-900 text-white"}>
+    // On paper: the project's name in a dark band. On screen the page header
+    // already names the project, so the shift itself is the headline.
+    <header className={print ? "pb-1.5 border-b-2 border-slate-900" : "px-4 sm:px-5 pt-3 pb-1"}>
       <div className="flex items-center gap-3 flex-wrap">
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2 flex-wrap">
-            <span className={`text-[11px] font-semibold ${print ? "text-slate-500" : "text-slate-400"}`}>{title}</span>
-            <h2 className={`${print ? "text-[14pt]" : "text-[18px]"} font-bold tracking-tight leading-tight truncate`}>{projectName ?? "Schedule"}</h2>
+            <span className={`text-[11px] font-semibold ${print ? "text-slate-500" : "text-[var(--color-text-muted)]"}`}>{title}</span>
+            <h2 className={`${print ? "text-[14pt]" : "text-[18px] text-[var(--color-text)]"} font-bold tracking-tight leading-tight ${print ? "truncate" : ""}`}>{print ? (projectName ?? "Schedule") : when}</h2>
           </div>
-          <div className={`text-[11px] ${print ? "text-slate-700" : "text-slate-300"}`}>
-            {when} · as of {c.T(meeting === "turnover" ? asOf : now)} {tzAbbrev(c.tz, now)}
-            {crew && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-slate-700 text-slate-900" : "bg-white text-slate-900"}`}>{crew} only</span>}
+          <div className={`text-[11px] ${print ? "text-slate-700" : "text-[var(--color-text-muted)]"}`}>
+            {print ? <>{when} · </> : null}as of {c.T(meeting === "turnover" ? asOf : now)} {tzAbbrev(c.tz, now)}
+            {crew && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-slate-700 text-slate-900" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}>{crew} only</span>}
             {criticalOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-rose-700 text-rose-900" : "bg-rose-200 text-rose-950"}`}>Critical path only</span>}
             {addedOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-violet-700 text-violet-900" : "bg-violet-200 text-violet-950"}`}>Discovery &amp; added only</span>}
             {classOnly && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-slate-700 text-slate-900" : "bg-slate-200 text-slate-950"}`}>{classOnly} only</span>}
             {rehearsal && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-amber-700 text-amber-800" : "bg-amber-400 text-slate-900"}`}>Rehearsal - shift not started</span>}
-            {historyNote && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold ${print ? "border border-slate-500 text-slate-700" : "bg-slate-700 text-slate-100"}`}>Earlier shift - {historyNote}</span>}
+            {historyNote && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold ${print ? "border border-slate-500 text-slate-700" : "bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}>Earlier shift: {historyNote}</span>}
           </div>
         </div>
       </div>

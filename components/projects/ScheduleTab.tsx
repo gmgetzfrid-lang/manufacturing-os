@@ -504,14 +504,17 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
         />
       )}
 
-      {/* Jobs taken off this schedule — still to be done elsewhere. */}
-      {!loading && cancelled.length > 0 && (mode === "plan" || mode === "work") && (
-        <CancelledJobsBar jobs={cancelled} canEdit={canEdit} userId={userId} userEmail={userEmail} onChanged={refresh} />
-      )}
-
-      {/* Update by note: type or say what happened; checked before it saves. Optional. */}
-      {!loading && milestones.length > 0 && canEdit && (mode === "today" || mode === "work") && (
-        <QuickUpdate milestones={milestones} tz={tz} times={shiftTimes} orgId={orgId} projectId={projectId} userId={userId} userName={userName} onSaved={() => void refresh()} />
+      {/* One row: Update by note (type or say what happened; checked before
+          it saves), and the jobs taken off this schedule. */}
+      {!loading && ((cancelled.length > 0 && (mode === "plan" || mode === "work")) || (milestones.length > 0 && canEdit && (mode === "today" || mode === "work"))) && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 empty:hidden">
+          {milestones.length > 0 && canEdit && (mode === "today" || mode === "work") && (
+            <QuickUpdate milestones={milestones} tz={tz} times={shiftTimes} orgId={orgId} projectId={projectId} userId={userId} userName={userName} onSaved={() => void refresh()} />
+          )}
+          {cancelled.length > 0 && (mode === "plan" || mode === "work") && (
+            <div className="flex-1 min-w-[240px]"><CancelledJobsBar jobs={cancelled} canEdit={canEdit} userId={userId} userEmail={userEmail} onChanged={refresh} /></div>
+          )}
+        </div>
       )}
 
       {/* Active view */}

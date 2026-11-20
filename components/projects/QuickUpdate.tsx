@@ -369,18 +369,13 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
   }
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm">
+    <div className={open ? "basis-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm" : ""}>
       {!open ? (
-        <div className="flex items-center gap-2 px-3 py-2">
-          <button type="button" onClick={() => setOpen(true)} className="flex-1 min-w-0 flex items-center gap-2 text-left">
-            <NotebookPen className="w-4 h-4 shrink-0 text-[var(--color-accent)]" />
-            <span className="min-w-0">
-              <span className="block text-[13px] font-bold text-[var(--color-text)]">Update by note</span>
-              <span className="block text-[11.5px] text-[var(--color-text-muted)] truncate">Type or say what happened on the job. You check every line before it saves.</span>
-            </span>
-          </button>
-          <button type="button" onClick={() => { setHidden(true); store.set(HIDE_KEY, "1"); }} className="shrink-0 text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Hide</button>
-        </div>
+        // One quiet button until it's wanted: the work stays on screen.
+        <button type="button" onClick={() => setOpen(true)} title="Type or say what happened on the job. You check every line before it saves."
+          className="inline-flex items-center gap-2 h-10 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[13px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+          <NotebookPen className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" /> Update by note
+        </button>
       ) : (
         <div className="p-3 space-y-2">
           <div className="flex items-center gap-2">

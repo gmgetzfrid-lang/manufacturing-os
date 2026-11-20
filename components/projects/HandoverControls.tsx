@@ -82,12 +82,14 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
       </div>
     );
   }
+  // Open: one quiet line and a quiet Lock button (the report's one orange
+  // button is Email / Print).
   return (
-    <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-[12px] text-amber-900 dark:text-amber-100 print:hidden">
-      <span className="rounded bg-amber-500 text-white text-[10px] font-black tracking-wider px-1.5 py-0.5">OPEN</span>
-      <span className="flex-1 min-w-[200px]">This shift&apos;s report can be changed{tries ? ` (${tries} asked to try)` : ""}. Lock it when the turnover is done so nobody changes it by mistake.</span>
+    <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 text-[12px] text-[var(--color-text-muted)] print:hidden">
+      <Unlock className="w-3.5 h-3.5 shrink-0" />
+      <span className="flex-1 min-w-[200px]">Open: this report can still be changed{tries ? ` (${tries} asked to try)` : ""}. Lock it when the turnover is done.</span>
       {canShip ? (
-        <button onClick={onShip} disabled={busy} className="inline-flex items-center gap-1.5 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 text-[12px] font-bold shadow-sm disabled:opacity-50">
+        <button onClick={onShip} disabled={busy} className="inline-flex items-center gap-1.5 h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-3 text-[12px] font-bold disabled:opacity-50">
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />} Lock report
         </button>
       ) : <span className="text-[11px]">Only someone who can edit the schedule can lock it.</span>}

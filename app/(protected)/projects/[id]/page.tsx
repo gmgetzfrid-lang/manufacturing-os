@@ -20,7 +20,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   Briefcase, ArrowLeft, Lock, Globe, Loader2, AlertTriangle, Pause, Play,
-  CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Calendar, Send, Settings2,
+  CheckCircle2, XCircle, Archive as ArchiveIcon, Layers, Send, Settings2,
   User as UserIcon, MessageSquare, Users, FileText, Activity as ActivityIcon,
   ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck, Pencil, CircleDollarSign, Package,
   UploadCloud, ClipboardList, Sun, FileBarChart, RotateCcw, ListChecks,
@@ -68,7 +68,7 @@ import { workState } from "@/lib/closeoutStatus";
 import { phaseOnDay } from "@/lib/projectPhases";
 import { dayKey } from "@/lib/scheduleTz";
 import { fetchAllRows } from "@/lib/fetchAllRows";
-import { PhasesSetup, PhaseBar, usePhasePick } from "@/components/projects/PhasesSetup";
+import { PhasesSetup, usePhasePick } from "@/components/projects/PhasesSetup";
 import { MEMBER_ROLES, projectAccess, roleLabel, needsCoOwnerSql } from "@/lib/projectAccess";
 
 const COOWNER_SQL_NOTE = "Co-owner needs a database change first: run supabase/migrations/20261113_project_co_owners.sql in the Supabase SQL editor. Editor and Viewer work now.";
@@ -397,48 +397,43 @@ export default function ProjectDetailPage() {
             </div>
           )}
 
-          <div className="flex items-start gap-2 sm:gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 min-h-11">
             <button onClick={() => { if (window.history.length > 1) router.back(); else router.push("/projects"); }} aria-label="Back to projects" title="Back to projects"
-              className="mt-0.5 shrink-0 w-9 h-9 rounded-lg inline-flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              className="shrink-0 w-9 h-9 rounded-lg inline-flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <ArrowLeft className="w-5 h-5" />
             </button>
-            <div className="min-w-0 flex-1">
-              <h1 className="text-[19px] sm:text-[24px] leading-tight font-black text-[var(--color-text)] break-words">{project.name}</h1>
-              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-[var(--color-text-muted)]">
-                <StatusBadge status={project.status} />
-                {project.visibility === "private" && <span className="inline-flex items-center gap-1"><Lock className="w-3.5 h-3.5" /> Private</span>}
-                {project.ownerUserName && <span className="inline-flex items-center gap-1 max-sm:hidden"><UserIcon className="w-3.5 h-3.5" /> {project.ownerUserName}</span>}
-                {(project.startedAt || project.targetCompletionDate) && (
-                  <span className="inline-flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />{project.startedAt ? ` Started ${formatDate(project.startedAt)}` : ""}{project.startedAt && project.targetCompletionDate ? "," : ""}{project.targetCompletionDate ? ` target ${formatDate(project.targetCompletionDate)}` : ""}</span>
-                )}
-                {project.mocReference && <span className="inline-flex items-center gap-1 font-mono"><Layers className="w-3.5 h-3.5" /> {project.mocReference}</span>}
-                {project.cancelledReason && <span className="inline-flex items-center gap-1 text-red-600"><AlertTriangle className="w-3.5 h-3.5" /> Cancelled: {project.cancelledReason}</span>}
-                {project.linkedTicketId && (
-                  <Link href={`/requests/${project.linkedTicketId}`} className="inline-flex items-center gap-1 text-[var(--color-accent)] hover:underline">
-                    <Hash className="w-3.5 h-3.5" /> Linked ticket
-                  </Link>
-                )}
-              </div>
-              {project.description && <p className="mt-1 text-[13px] text-[var(--color-text-muted)] max-w-3xl truncate max-sm:hidden" title={project.description}>{project.description}</p>}
+            {/* The project in one line: its name, how it stands, the phase. Dates,
+                owner and details are under Project › Edit. */}
+            <div className="min-w-0 flex-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <h1 className="min-w-0 max-w-full text-[18px] sm:text-[20px] leading-tight font-black text-[var(--color-text)] truncate" title={project.name}>{project.name}</h1>
+              <StatusBadge status={project.status} />
+              {project.visibility === "private" && <span className="inline-flex items-center gap-1 text-[13px] text-[var(--color-text-muted)]"><Lock className="w-3.5 h-3.5" /> Private</span>}
+              {project.cancelledReason && <span className="inline-flex items-center gap-1 text-[13px] text-red-600"><AlertTriangle className="w-3.5 h-3.5" /> Cancelled: {project.cancelledReason}</span>}
+              {phases.length > 0 && (isScheduleTab(tab) || tab === "costs") && (
+                <label className="inline-flex items-center">
+                  <span className="sr-only">Phase</span>
+                  <select value={phase ?? ""} onChange={(e) => setPhase(e.target.value || null)}
+                    className="h-9 pl-3 pr-8 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-bold text-[var(--color-text)] cursor-pointer">
+                    <option value="">All phases</option>
+                    {phases.map((ph) => <option key={ph.id} value={ph.id}>{ph.name}</option>)}
+                  </select>
+                </label>
+              )}
             </div>
 
-            {/* Setup and Phases in sight; the rest in More. On a phone: Setup and More. */}
+            {/* Everything about the project itself in one menu. */}
             <div className="shrink-0 flex items-center gap-1.5">
-              {canManage && (
-                <ActionButton phoneIcon icon={<Settings2 className="w-4 h-4" />} label="Setup" onClick={() => { if (!isScheduleTab(tab)) goTab("plan"); requestSetup(); }} />
-              )}
-              {canManage && (
-                <span className="max-md:hidden"><ActionButton icon={<Layers className="w-4 h-4" />} label={phases.length ? "Phases" : "Split into phases"} onClick={() => setShowPhases(true)} /></span>
-              )}
               {project.id && project.orgId && uid && (
                 <span className="max-md:hidden inline-flex items-center gap-1.5">
                   <WatchButton orgId={project.orgId} userId={uid} resourceType="project" resourceId={project.id} />
                   <PresenceIndicator resourceType="project" resourceId={project.id} userId={uid} userName={userEmail?.split("@")[0]} role={activeRole || undefined} />
                 </span>
               )}
-              <MoreMenu iconOnly={narrow} items={[
+              <MoreMenu label="Project" iconOnly={narrow} items={[
+                ...(canManage ? [{ icon: <Settings2 className="w-4 h-4" />, label: "Setup", onClick: () => { if (!isScheduleTab(tab)) goTab("plan"); requestSetup(); } }] : []),
+                ...(canManage ? [{ icon: <Layers className="w-4 h-4" />, label: phases.length ? "Phases" : "Split into phases", onClick: () => setShowPhases(true) }] : []),
                 ...(canManage ? [{ icon: <Pencil className="w-4 h-4" />, label: "Edit name, dates and details", onClick: () => setShowEdit(true) }] : []),
-                ...(canManage && narrow ? [{ icon: <Layers className="w-4 h-4" />, label: phases.length ? "Phases" : "Split into phases", onClick: () => setShowPhases(true) }] : []),
+                ...(project.linkedTicketId ? [{ icon: <Hash className="w-4 h-4" />, label: "Linked drafting request", onClick: () => router.push(`/requests/${project.linkedTicketId}`) }] : []),
                 { icon: <FileText className="w-4 h-4" />, label: "Report", onClick: async () => {
                   if (!project.id || !project.orgId) return;
                   try { await openProjectReport(project.orgId, project.id); }
@@ -493,13 +488,12 @@ export default function ProjectDetailPage() {
                 {t.id === "closeout" && workDone && <span className="w-2 h-2 rounded-full bg-emerald-500" aria-label="work done" />}
               </TabButton>
             ))}
-            <span className="shrink-0 self-center w-px h-5 mx-2 bg-[var(--color-border)] max-lg:hidden" aria-hidden />
-            {RECORD_TABS.map((t) => (
-              <TabButton key={t.id} active={tab === t.id} onClick={() => setTab(t.id)} className={tab === t.id ? "" : "max-lg:hidden"}>
+            {RECORD_TABS.filter((t) => t.id === tab).map((t) => (
+              <TabButton key={t.id} active onClick={() => setTab(t.id)}>
                 {t.label}{t.id === "documents" && checkouts.length > 0 && <span className="text-[11px] text-[var(--color-text-faint)]">{checkouts.length}</span>}
               </TabButton>
             ))}
-            <span className="lg:hidden shrink-0 self-center ml-1">
+            <span className="shrink-0 self-center ml-1">
               <MoreMenu label="More" iconOnly={narrow} triggerClass="inline-flex items-center justify-center gap-1 h-9 min-w-9 px-2 rounded-lg text-[14px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                 items={RECORD_TABS.map((t) => ({ icon: <t.icon className="w-4 h-4" />, label: t.label, current: tab === t.id, onClick: () => setTab(t.id) }))} />
             </span>
@@ -528,9 +522,6 @@ export default function ProjectDetailPage() {
             project's life, visible from every tab. */}
         {project.id && project.orgId && tab === "plan" && (
           <ProjectCoach orgId={project.orgId} projectId={project.id} refreshKey={coachKey} />
-        )}
-        {(isScheduleTab(tab) || tab === "costs") && (
-          <PhaseBar phases={phases} pick={phase} onPick={setPhase} />
         )}
         {tab === "documents" && (
           <div className="space-y-4">
@@ -809,21 +800,6 @@ function StatusBadge({ status }: { status: ProjectStatus }) {
   );
 }
 
-function ActionButton({ icon, label, onClick, color, phoneIcon }: { icon: React.ReactNode; label: string; onClick: () => void; color?: "red" | "emerald";
-  /** On a phone: the icon alone (the label read out). */
-  phoneIcon?: boolean }) {
-  const cls = color === "red"
-    ? "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
-    : color === "emerald"
-    ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-    : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]";
-  return (
-    <button onClick={onClick} aria-label={phoneIcon ? label : undefined} title={phoneIcon ? label : undefined} className={`inline-flex items-center justify-center gap-1.5 h-9 ${phoneIcon ? "max-sm:w-9 max-sm:px-0" : ""} px-3 rounded-lg border text-[13px] font-semibold transition-colors ${cls}`}>
-      {icon}<span className={phoneIcon ? "max-sm:hidden" : ""}>{label}</span>
-    </button>
-  );
-}
-
 function TabButton({ active, onClick, children, main, className = "" }: { active: boolean; onClick: () => void; children: React.ReactNode;
   /** One of the five tabs for running the job: darker when not picked. */
   main?: boolean; className?: string }) {
@@ -841,7 +817,7 @@ function TabButton({ active, onClick, children, main, className = "" }: { active
       onClick={onClick}
       aria-current={active ? "page" : undefined}
       className={`shrink-0 px-2 sm:px-3 h-11 text-[14px] inline-flex items-center gap-1.5 border-b-2 whitespace-nowrap transition-colors ${className} ${
-        active ? "border-[var(--color-accent)] text-[var(--color-text)] font-bold" : main ? "border-transparent text-[var(--color-text)] font-semibold hover:border-[var(--color-border-strong)]" : "border-transparent text-[var(--color-text-muted)] font-medium hover:text-[var(--color-text)]"
+        active ? "border-[var(--color-text)] text-[var(--color-text)] font-bold" : main ? "border-transparent text-[var(--color-text)] font-semibold hover:border-[var(--color-border-strong)]" : "border-transparent text-[var(--color-text-muted)] font-medium hover:text-[var(--color-text)]"
       }`}
     >
       {children}
@@ -1168,10 +1144,6 @@ function MembersTab({
   );
 }
 
-function formatDate(ts: Timestamp): string {
-  if (!ts) return "";
-  try { return new Date(ts as string).toLocaleDateString(); } catch { return String(ts); }
-}
 function formatRelative(ts: Timestamp | undefined): string {
   if (!ts) return "-";
   try {
