@@ -240,7 +240,7 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
           {!running && onRun && (
             <div className="flex flex-wrap gap-1">
               <label className="inline-flex items-center gap-1 cursor-pointer" title="For sheets whose tags are drawn as lines: every page goes through AI vision. Costs per page on your key.">
-                <input type="checkbox" checked={status.ai.visionAllPages} disabled={!status.ai.hasKey} onChange={(e) => onRun({ visionAllPages: e.target.checked })} className="w-3.5 h-3.5 accent-[var(--color-accent)]" />
+                <input type="checkbox" checked={status.ai.visionAllPages} disabled={!status.ai.hasKey} onChange={(e) => onRun({ visionAllPages: e.target.checked })} className="w-3.5 h-3.5 accent-[var(--color-text)]" />
                 Read every page with AI vision
               </label>
               {onReadAll && <button onClick={onReadAll} disabled={!status.ai.hasKey} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-0.5 font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50">Read all drawings with AI</button>}
@@ -280,7 +280,7 @@ function AutoReadSwitch({ auto, hasKey, onChange }: { auto: ConnectStatus["ai"][
   return (
     <div className="rounded-md border border-[var(--color-border)] px-2 py-1.5 space-y-1">
       <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-[var(--color-text)]" title="Every page of a new drawing is read by the drawing reader (the same one as Read with AI) and its equipment tagged. Every automatic change can be undone from Undo a run.">
-        <input type="checkbox" checked={auto.on} disabled={!hasKey && !auto.on} onChange={(e) => onChange(e.target.checked, capNum)} className="w-3.5 h-3.5 accent-[var(--color-accent)]" />
+        <input type="checkbox" checked={auto.on} disabled={!hasKey && !auto.on} onChange={(e) => onChange(e.target.checked, capNum)} className="w-3.5 h-3.5 accent-[var(--color-text)]" />
         Read new drawings automatically
       </label>
       <div className="flex flex-wrap items-center gap-1">

@@ -268,25 +268,25 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
           <div className="flex border-b border-[var(--color-border)] mb-6">
             <button
               onClick={() => setTab('timeline')}
-              className={`flex-1 pb-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${tab === 'timeline' ? 'border-[var(--color-border-strong)] text-[var(--color-accent)]' : 'border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}
+              className={`flex-1 pb-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${tab === 'timeline' ? 'border-[var(--color-text)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}
             >
               Timeline
             </button>
             <button
               onClick={() => setTab('history')}
-              className={`flex-1 pb-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${tab === 'history' ? 'border-[var(--color-border-strong)] text-[var(--color-accent)]' : 'border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}
+              className={`flex-1 pb-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${tab === 'history' ? 'border-[var(--color-text)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}
             >
               Revision History
             </button>
             <button
               onClick={() => setTab('checkouts')}
-              className={`flex-1 pb-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${tab === 'checkouts' ? 'border-[var(--color-border-strong)] text-[var(--color-accent)]' : 'border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}
+              className={`flex-1 pb-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${tab === 'checkouts' ? 'border-[var(--color-text)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}
             >
               Checkout Log
             </button>
             <button
               onClick={() => setTab('audit')}
-              className={`flex-1 pb-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${tab === 'audit' ? 'border-[var(--color-border-strong)] text-[var(--color-accent)]' : 'border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}
+              className={`flex-1 pb-3 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${tab === 'audit' ? 'border-[var(--color-text)] text-[var(--color-text)]' : 'border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]'}`}
             >
               Audit Log
             </button>

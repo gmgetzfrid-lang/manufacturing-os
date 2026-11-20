@@ -12,7 +12,7 @@
 // distinct brand colors. ONE source of truth for brand color.
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { rolesOf, bandFor, sideTokens, onColor, mix, luminance, actionText, DEFAULT_ROLES } from "@/lib/themeRoles";
+import { rolesOf, bandFor, sideTokens, buttonText, mix, luminance, actionText, DEFAULT_ROLES } from "@/lib/themeRoles";
 
 export type ThemeMode = "light" | "dark";
 
@@ -80,11 +80,11 @@ function applyTheme(mode: ThemeMode, p: Palette) {
   set("--color-accent", r.action);
   set("--color-accent-text", actionText(mode, r.action));
   set("--color-accent-hover", mix(r.action, "#000000", 0.15));
-  set("--color-accent-fg", onColor(r.action));
+  set("--color-accent-fg", buttonText(r.action));
   set("--color-accent-ring", mix(r.action, "#ffffff", 0.35));
   set("--color-accent-2", r.action);
   set("--color-accent-2-hover", mix(r.action, "#000000", 0.15));
-  set("--color-accent-2-fg", onColor(r.action));
+  set("--color-accent-2-fg", buttonText(r.action));
   // Folder and cover fills that used the brand gradient: the main color, flat.
   set("--brand-gradient", `linear-gradient(135deg, ${r.main}, ${r.main})`);
 

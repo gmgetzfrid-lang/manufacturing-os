@@ -25,13 +25,13 @@ function pathFor(values: number[], width: number, height: number, pad = 1): stri
 }
 
 /** Inline trend line. Pass a series of numbers; the last point gets a dot.
- *  `tone` maps to a CSS color (defaults to the brand accent). */
+ *  `tone` maps to a CSS color (defaults to ink). */
 export function Sparkline({
   values,
   width = 96,
   height = 28,
   strokeWidth = 1.5,
-  color = "var(--color-accent)",
+  color = "var(--color-text)",
   fill = true,
   className = "",
   ariaLabel,

@@ -821,7 +821,7 @@ export default function StorageBackupPage() {
         sub={stats ? (
           <>
             Using <b className="text-white">{fmtBytes(usedBytes)}</b> of {fmtBytes(budgetBytes)}.{" "}
-            <span className={health === "crit" ? "font-bold text-rose-300" : health === "warn" ? "font-bold text-amber-300" : ""}>
+            <span className={health === "crit" ? "font-bold text-rose-200" : health === "warn" ? "font-bold text-amber-300" : ""}>
               {health === "crit" ? "Act now: take a full backup, then free up space." : health === "warn" ? "Time to take a full backup and free up space." : "Plenty of room. Take a full backup every quarter."}
             </span>
           </>

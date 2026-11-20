@@ -43,7 +43,7 @@ export function dayBuckets(isoDates: Array<string | null | undefined>, days: num
 // ── Sparkline — change-over-time in a whisper ───────────────────────────────
 
 export function Sparkline({
-  values, labels, height = 36, stroke = "var(--color-accent)", className = "",
+  values, labels, height = 36, stroke = "var(--color-text)", className = "",
 }: {
   values: number[];
   /** Per-point hover labels (same length as values). */
@@ -91,7 +91,7 @@ export function Sparkline({
 // ── MiniBars — daily activity columns with per-bar hover ────────────────────
 
 export function MiniBars({
-  values, labels, height = 40, fill = "var(--color-accent)", className = "",
+  values, labels, height = 40, fill = "var(--color-text)", className = "",
 }: {
   values: number[];
   labels?: string[];
@@ -141,7 +141,7 @@ export function TrendChip({ current, previous, unit = "" }: { current: number; p
 // ── ProgressRing — one value of a whole ─────────────────────────────────────
 
 export function ProgressRing({
-  value, total, size = 56, strokeWidth = 6, color = "var(--color-accent)", children,
+  value, total, size = 56, strokeWidth = 6, color = "var(--color-text)", children,
 }: {
   value: number;
   total: number;

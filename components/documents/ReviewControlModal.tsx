@@ -235,9 +235,9 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
 
             <div className="space-y-1.5">
               {MODES.map((m) => (
-                <label key={m.value} className={`block rounded-lg border p-2.5 cursor-pointer ${mode === m.value ? "border-[var(--color-accent)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)]"}`}>
+                <label key={m.value} className={`block rounded-lg border p-2.5 cursor-pointer ${mode === m.value ? "border-[var(--color-text)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)]"}`}>
                   <div className="flex items-center gap-2">
-                    <input type="radio" checked={mode === m.value} onChange={() => setMode(m.value)} className="accent-[var(--color-accent)]" />
+                    <input type="radio" checked={mode === m.value} onChange={() => setMode(m.value)} className="accent-[var(--color-text)]" />
                     <span className="text-sm font-bold text-[var(--color-text)]">{m.label}</span>
                   </div>
                   <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 ml-6">{m.hint}</div>

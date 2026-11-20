@@ -350,7 +350,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
                 </select>
               </label>
               <label className="flex items-start gap-2 cursor-pointer">
-                <input type="checkbox" checked={bridge.autoApply === true} onChange={(e) => void saveSettings({ autoApply: e.target.checked })} className="mt-0.5 w-4 h-4 accent-[var(--color-accent)]" />
+                <input type="checkbox" checked={bridge.autoApply === true} onChange={(e) => void saveSettings({ autoApply: e.target.checked })} className="mt-0.5 w-4 h-4 accent-[var(--color-text)]" />
                 <span><b className="text-[var(--color-text)]">Add on its own after each drawing is read</b>
                   <span className="block text-[11.5px] text-[var(--color-text-muted)]">Only equipment whose ID is printed on the sheet and reads as a unit and type in the site codebook. Everything else waits here for you.</span></span>
               </label>
@@ -417,7 +417,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
 
               {canAdd && (
                 <label className="flex items-start gap-2 text-[12.5px] cursor-pointer">
-                  <input type="checkbox" checked={overwriteAll} onChange={(e) => { setOverwriteAll(e.target.checked); setChoice((cur) => Object.fromEntries(Object.entries(cur).map(([k, v]) => [k, { ...v, overwrite: undefined }]))); }} className="mt-0.5 w-4 h-4 accent-[var(--color-accent)]" />
+                  <input type="checkbox" checked={overwriteAll} onChange={(e) => { setOverwriteAll(e.target.checked); setChoice((cur) => Object.fromEntries(Object.entries(cur).map(([k, v]) => [k, { ...v, overwrite: undefined }]))); }} className="mt-0.5 w-4 h-4 accent-[var(--color-text)]" />
                   <span><b className="text-[var(--color-text)]">Overwrite the registry with what the sheets say</b>
                     <span className="block text-[11.5px] text-[var(--color-text-muted)]">Where this unit already has the name with another ID, the sheet&apos;s ID goes on it instead of adding a second one; listed equipment takes the sheet&apos;s service name.{clashes ? ` ${clashes} ID${clashes === 1 ? "" : "s"} differ here.` : ""}</span></span>
                 </label>
@@ -448,7 +448,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
                             {x.applied ? <span aria-hidden /> : (
                               <input type="checkbox" checked={x.on} disabled={!x.actionable} onChange={(e) => set(x.k, { on: e.target.checked })}
                                 aria-label={`${x.kind === "listed" ? "Link" : "Add"} ${x.s.tag}`} title={x.actionable ? undefined : x.kind === "needs" ? "Enter its ID first" : x.kind === "new" ? "Only admins add equipment" : "Check this one first"}
-                                className="mt-0.5 w-4 h-4 accent-[var(--color-accent)] disabled:opacity-30" />
+                                className="mt-0.5 w-4 h-4 accent-[var(--color-text)] disabled:opacity-30" />
                             )}
                             <div className="min-w-0">
                               <div className="font-mono font-black text-[13px] text-[var(--color-text)]">{x.s.tag}</div>
@@ -495,7 +495,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
                               {x.kind === "update" && x.s.clash && <div className="text-[11px] text-amber-800 dark:text-amber-300">{x.s.clash.code} becomes {x.s.code}{x.s.name ? `, named ${x.s.name}` : ""}</div>}
                               {canAdd && !x.applied && x.s.clash && x.s.code && !x.typed && (
                                 <label className="mt-0.5 inline-flex items-center gap-1 text-[11.5px] font-bold text-[var(--color-text)] cursor-pointer">
-                                  <input type="checkbox" checked={x.kind === "update"} onChange={(e) => set(x.k, { overwrite: e.target.checked, on: e.target.checked })} className="w-3.5 h-3.5 accent-[var(--color-accent)]" />
+                                  <input type="checkbox" checked={x.kind === "update"} onChange={(e) => set(x.k, { overwrite: e.target.checked, on: e.target.checked })} className="w-3.5 h-3.5 accent-[var(--color-text)]" />
                                   It&apos;s that one: change its ID to {x.s.code}
                                 </label>
                               )}

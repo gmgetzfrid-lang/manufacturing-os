@@ -1,29 +1,26 @@
-// app/about/page.tsx — public marketing landing.
+// app/about/page.tsx: the public front door.
 //
-// Structure is deliberate: grab attention with the promise + policy
-// (no lock-in, honest compliance), then sell to the PERSON (role-based
-// before/after day), then walk business priorities in order — library,
-// AI, workflow, site map, field bridge, collaboration — with an
-// interactive tour, and close on trust/compliance/security. Concise on
-// the surface, complete underneath (chip clouds expand to the full
-// feature inventory).
+// Same identity as the app: charcoal and royal blue cover the big areas,
+// orange only on the call to action. Each section has ONE huge headline and
+// everything else is small (15 px body, 11 px labels). Depth in three layers:
+// a band at the back, white cards overlapping its bottom edge, the orange
+// action raised on top.
 //
-// Facility-agnostic on purpose: refineries, chemical, food & beverage,
-// pharma, power, mills — the copy never assumes one industry.
+// Story order is deliberate: the promise and the policy (no lock-in, honest
+// compliance), then the PERSON (their day, before and after), then the six
+// pillars in business order, a tour of the real screens, and trust,
+// compliance and security to close.
 //
-// Compliance language is deliberately honest — we support documentation
-// requirements; we are not a certifier and using the product does not
-// make a customer compliant. See "What we are, what we aren't".
-//
-// Product tour mockups are styled React mirroring the live product's
-// layout language — not screenshots, but the same UI DNA.
+// Facility-agnostic on purpose: refineries, chemical, food and beverage,
+// pharma, power, mills. Compliance language stays honest: we support the
+// documentation; we are not a certifier.
 
 import Link from "next/link";
 import {
   Layout, ShieldCheck, FileCheck2, GitBranch, Database, Workflow, Users,
-  Lock, Server, ArrowRight, CheckCircle2, KeyRound, Factory, Wrench,
-  ClipboardCheck, ExternalLink, Download, Zap, XCircle, Webhook,
-  FileArchive, Eye, Sparkles, Map as MapIcon, QrCode, AtSign, PenLine,
+  Lock, Server, ArrowRight, Check, KeyRound, Factory, Wrench,
+  ClipboardCheck, Download, XCircle, CheckCircle2, Webhook,
+  FileArchive, Sparkles, Map as MapIcon, QrCode, AtSign, PenLine,
 } from "lucide-react";
 import { Reveal, RotatingWord } from "@/components/marketing/Reveal";
 import { ChipCloud } from "@/components/marketing/ChipCloud";
@@ -38,59 +35,100 @@ export const metadata = {
 
 export const revalidate = 86400;
 
+// ─── The few pieces every section shares ────────────────────────────────────
+
+/** The one orange action (only on calls to action). */
+const cta =
+  "inline-flex items-center justify-center gap-2 h-12 px-6 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-extrabold hover:bg-[var(--color-accent-hover)] shadow-[0_14px_28px_-12px_var(--color-accent)] transition-colors";
+/** A quiet button on the blue band. */
+const quietOnBand =
+  "inline-flex items-center justify-center gap-2 h-12 px-5 rounded-xl border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-white text-[15px] font-bold hover:bg-[var(--color-ink-line)] transition-colors";
+/** A quiet button on paper or a card. */
+const quietOnPaper =
+  "inline-flex items-center justify-center gap-2 h-11 px-4 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-[14px] font-bold hover:border-[var(--color-text-muted)] transition-colors";
+/** The one huge line of a section. */
+const huge = "text-[36px] sm:text-[48px] lg:text-[60px] leading-[1.02] font-black tracking-[-0.035em]";
+/** Small all-caps label. */
+const label = "text-[11px] font-extrabold uppercase tracking-[0.16em]";
+/** A white card on the paper: soft depth, no outline. */
+const card = "rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)]";
+const wrap = "max-w-[1200px] mx-auto px-4 sm:px-6";
+
+function SectionHead({ kicker, title, children, onDark = false }: {
+  kicker: string; title: React.ReactNode; children?: React.ReactNode; onDark?: boolean;
+}) {
+  return (
+    <Reveal className="max-w-3xl">
+      <div className={`${label} ${onDark ? "text-[var(--color-ink-muted)]" : "text-[var(--color-text-muted)]"}`}>{kicker}</div>
+      <h2 className={`mt-4 ${huge} ${onDark ? "text-white" : "text-[var(--color-text)]"}`}>{title}</h2>
+      {children && (
+        <p className={`mt-5 text-[15px] sm:text-[16px] leading-relaxed max-w-2xl ${onDark ? "text-[var(--color-ink-text)]" : "text-[var(--color-text-muted)]"}`}>
+          {children}
+        </p>
+      )}
+    </Reveal>
+  );
+}
+
+function IconTile({ children }: { children: React.ReactNode }) {
+  return <div className="w-10 h-10 rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text)] grid place-items-center shrink-0">{children}</div>;
+}
+
 export default function MarketingPage() {
   return (
-    <div className="min-h-dvh bg-white text-slate-900">
-      {/* No JS (crawlers, blocked chunks): reveal everything — a blank
-          front door is worse than an unanimated one. */}
+    <div className="min-h-dvh bg-[var(--color-canvas)] text-[var(--color-text)]">
+      {/* No JS (crawlers, blocked chunks): reveal everything. A blank front
+          door is worse than an unanimated one. */}
       <noscript><style>{"[data-reveal]{opacity:1 !important}"}</style></noscript>
       <Nav />
-      <Hero />
-      <PromiseStrip />
-      <DaySection />
-      <PillarsSection />
-      <TourSection />
-      <TrustSection />
-      <ComplianceHonestySection />
-      <SecuritySection />
-      <AudienceSection />
-      <FinalCta />
+      <main>
+        <Hero />
+        <DaySection />
+        <PillarsSection />
+        <TourSection />
+        <TrustSection />
+        <ComplianceHonestySection />
+        <SecuritySection />
+        <AudienceSection />
+        <FinalCta />
+      </main>
       <Footer />
     </div>
   );
 }
 
-// ─── Nav ──────────────────────────────────────────────────────
+// ─── Nav ────────────────────────────────────────────────────────────────────
+
+function Logo({ onDark = false }: { onDark?: boolean }) {
+  return (
+    <span className="flex items-center gap-2.5">
+      <span className={`w-8 h-8 rounded-lg grid place-items-center ${onDark ? "bg-white text-[var(--color-ink)]" : "bg-[var(--color-ink)] text-white"}`}>
+        <Layout className="w-4 h-4" />
+      </span>
+      <span className={`whitespace-nowrap text-[15px] font-black tracking-tight ${onDark ? "text-white" : "text-[var(--color-text)]"}`}>Manufacturing OS</span>
+    </span>
+  );
+}
 
 function Nav() {
+  const links = [
+    ["#day", "Your day"], ["#capabilities", "What's inside"], ["#tour", "See it"],
+    ["#trust", "Your data"], ["#honesty", "Compliance"], ["#security", "Security"],
+  ];
   return (
-    <header className="sticky top-0 z-50 bg-white/80 backdrop-blur border-b border-slate-200">
-      <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
-        <Link href="/" className="flex items-center gap-2.5">
-          <div className="w-8 h-8 bg-gradient-to-br from-orange-500 to-orange-700 rounded-lg flex items-center justify-center shadow-sm">
-            <Layout className="w-4 h-4 text-white" />
-          </div>
-          <div className="font-black text-slate-900 text-sm tracking-tight">
-            Manufacturing<span className="text-orange-600">OS</span>
-          </div>
-        </Link>
-        <nav className="hidden md:flex items-center gap-5 text-sm font-bold text-slate-600">
-          <a href="#day" className="hover:text-slate-900">Your Day</a>
-          <a href="#capabilities" className="hover:text-slate-900">What&apos;s Inside</a>
-          <a href="#tour" className="hover:text-slate-900">See It</a>
-          <a href="#trust" className="hover:text-slate-900">Your Data</a>
-          <a href="#honesty" className="hover:text-slate-900">Compliance</a>
-          <a href="#security" className="hover:text-slate-900">Security</a>
+    <header className="sticky top-0 z-50 bg-[color-mix(in_srgb,var(--color-canvas)_88%,transparent)] backdrop-blur border-b border-[var(--color-border)]">
+      <div className={`${wrap} h-16 flex items-center gap-6`}>
+        <Link href="/about" aria-label="Manufacturing OS home"><Logo /></Link>
+        <nav aria-label="Sections" className="hidden lg:flex items-center gap-5 text-[14px] font-semibold text-[var(--color-text-muted)]">
+          {links.map(([href, text]) => <a key={href} href={href} className="hover:text-[var(--color-text)]">{text}</a>)}
         </nav>
-        <div className="flex items-center gap-2">
-          <Link href="/" className="text-sm font-bold text-slate-700 hover:text-slate-900 px-3 py-1.5">
+        <div className="ml-auto flex items-center gap-1 sm:gap-2">
+          <Link href="/" className="h-10 px-3 inline-flex items-center whitespace-nowrap text-[14px] font-bold text-[var(--color-text)] hover:underline underline-offset-4">
             Sign in
           </Link>
-          <Link
-            href="/signup"
-            className="inline-flex items-center gap-1.5 text-sm font-black text-white bg-slate-900 hover:bg-slate-800 px-4 py-2 rounded-lg shadow"
-          >
-            Get Started <ArrowRight className="w-3.5 h-3.5" />
+          <Link href="/signup"
+            className="max-sm:hidden h-10 px-4 inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl bg-[var(--color-ink)] text-white text-[14px] font-bold hover:opacity-90 transition-opacity">
+            Get started <ArrowRight className="w-4 h-4" />
           </Link>
         </div>
       </div>
@@ -98,86 +136,64 @@ function Nav() {
   );
 }
 
-// ─── Hero ───────────────────────────────────────────────────────
+// ─── Hero: the blue band, the promises overlapping it ───────────────────────
 
 function Hero() {
-  return (
-    <section className="relative overflow-hidden bg-slate-950 text-white">
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-black" />
-      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-orange-700/60 to-transparent" />
-      <div className="relative max-w-6xl mx-auto px-6 py-24 md:py-32">
-        <div className="max-w-3xl">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-orange-500/10 border border-orange-500/30 text-orange-300 text-xs font-bold uppercase tracking-widest mb-6"
-            style={{ animation: "rise 0.6s var(--ease-fluid) both" }}>
-            <Zap className="w-3.5 h-3.5" /> For every facility that runs on drawings
-          </div>
-          <h1 className="text-4xl md:text-6xl font-black tracking-tight leading-[1.05] mb-5"
-            style={{ animation: "rise 0.6s var(--ease-fluid) 80ms both" }}>
-            Your{" "}
-            <RotatingWord
-              words={["refinery", "chemical plant", "mill", "food plant", "pharma site", "power station", "facility"]}
-              className="text-orange-500"
-            />
-            <br />finally in one system.
-          </h1>
-          <p className="text-lg md:text-xl text-slate-300 leading-relaxed mb-8 max-w-2xl"
-            style={{ animation: "rise 0.6s var(--ease-fluid) 160ms both" }}>
-            Manufacturing OS replaces shared drives, scattered email threads, and three-binders-deep
-            revision tracking with a single source of truth - <b className="text-white">plus an AI that
-            has actually read your documents</b>. Designed to support OSHA PSM 1910.119 and ISO 9001
-            documentation, and engineered so you own your data, every byte, end-to-end.
-          </p>
-          <div className="flex flex-wrap gap-3" style={{ animation: "rise 0.6s var(--ease-fluid) 240ms both" }}>
-            <Link
-              href="/signup"
-              className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-sm font-black shadow-lg shadow-orange-900/30"
-            >
-              Start a workspace <ArrowRight className="w-4 h-4" />
-            </Link>
-            <Link
-              href="#tour"
-              className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-white/10 hover:bg-white/15 border border-white/20 text-white text-sm font-bold backdrop-blur"
-            >
-              <Eye className="w-4 h-4" /> See it in action
-            </Link>
-          </div>
-          <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-slate-400"
-            style={{ animation: "rise 0.6s var(--ease-fluid) 320ms both" }}>
-            <span className="inline-flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> Full export, any time</span>
-            <span className="inline-flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> Your own AI key</span>
-            <span className="inline-flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> Public schema, no lock-in</span>
-            <span className="inline-flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> Encrypted at rest</span>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-// ─── Promise strip — the policy, up front ───────────────────────────────────
-
-function PromiseStrip() {
+  const keeps = ["Full export, any time", "Your own AI key", "Public schema, no lock-in", "Encrypted at rest"];
   const promises = [
-    { icon: <ShieldCheck className="w-5 h-5 text-emerald-700" />, title: "No lock-in, ever", body: "Three self-serve exit paths. Your whole dataset in standard formats, one click.", href: "#trust" },
-    { icon: <KeyRound className="w-5 h-5 text-orange-700" />, title: "Your AI, your key", body: "The AI runs on your own provider key with per-user caps. Your documents never train anyone's model.", href: "#capabilities" },
-    { icon: <ClipboardCheck className="w-5 h-5 text-blue-700" />, title: "Honest compliance", body: "We support the documentation; we don't sell certification. The line is drawn explicitly.", href: "#honesty" },
-    { icon: <FileCheck2 className="w-5 h-5 text-violet-700" />, title: "Everything audited", body: "Every login, download, approval, and export in an append-only log you can hand to an auditor.", href: "#security" },
+    { icon: <ShieldCheck className="w-5 h-5" />, title: "No lock-in, ever", body: "Three self-serve ways out. Your whole dataset in standard formats, one click.", href: "#trust" },
+    { icon: <KeyRound className="w-5 h-5" />, title: "Your AI, your key", body: "The AI runs on your own provider key with per-user caps. Your documents never train anyone's model.", href: "#capabilities" },
+    { icon: <ClipboardCheck className="w-5 h-5" />, title: "Honest compliance", body: "We support the documentation. We don't sell certification, and we draw the line plainly.", href: "#honesty" },
+    { icon: <FileCheck2 className="w-5 h-5" />, title: "Everything on the record", body: "Every sign-in, download, approval and export in a log nothing can edit, ready for an auditor.", href: "#security" },
   ];
   return (
-    <section className="bg-slate-50 border-b border-slate-200">
-      <div className="max-w-6xl mx-auto px-6 py-10">
-        <h2 className="sr-only">Our commitments</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {promises.map((p, i) => (
-            <Reveal key={p.title} delay={i * 80}>
-              <a href={p.href} className="block h-full bg-white border border-slate-200 rounded-2xl p-4 shadow-sm hover:shadow-md hover:border-slate-300 hover:-translate-y-0.5 transition-all">
-                <div className="p-1.5 bg-slate-100 rounded-lg w-fit mb-2.5">{p.icon}</div>
-                <h3 className="text-sm font-black text-slate-900 mb-1">{p.title}</h3>
-                <p className="text-xs text-slate-600 leading-relaxed">{p.body}</p>
-              </a>
-            </Reveal>
-          ))}
+    <section className={`${wrap} pt-4 sm:pt-6`}>
+      <div className="rounded-[28px] bg-[var(--color-band)] text-white px-5 sm:px-10 lg:px-14 pt-10 sm:pt-16 pb-36 sm:pb-40">
+        <div className="grid lg:grid-cols-[1fr_300px] gap-x-12 gap-y-10 items-end">
+          <div className="min-w-0">
+            <div className={`${label} text-[var(--color-ink-muted)]`} style={{ animation: "rise 0.6s var(--ease-fluid) both" }}>
+              For every facility that runs on drawings
+            </div>
+            {/* Room for three lines, so the words below don't jump as the
+                facility word changes length. */}
+            <h1 className="mt-5 min-h-[3lh] text-[42px] sm:text-[64px] lg:text-[84px] leading-[0.98] font-black tracking-[-0.04em]"
+              style={{ animation: "rise 0.6s var(--ease-fluid) 80ms both" }}>
+              Your{" "}
+              <RotatingWord
+                words={["refinery", "chemical plant", "mill", "food plant", "pharma site", "power station", "facility"]}
+              />
+              <br />in one system.
+            </h1>
+            <p className="mt-6 text-[16px] sm:text-[17px] leading-relaxed text-[var(--color-ink-text)] max-w-2xl"
+              style={{ animation: "rise 0.6s var(--ease-fluid) 160ms both" }}>
+              One place for your drawings, revisions and requests, plus an AI that has actually read them.
+              Designed to support OSHA PSM 1910.119 and ISO 9001 documentation. You own every byte.
+            </p>
+            <div className="mt-8 flex flex-wrap gap-3" style={{ animation: "rise 0.6s var(--ease-fluid) 240ms both" }}>
+              <Link href="/signup" className={cta}>Start a workspace <ArrowRight className="w-4 h-4" /></Link>
+              <a href="#tour" className={quietOnBand}>See it in action</a>
+            </div>
+          </div>
+          <ul className="border-t border-[var(--color-ink-line)] lg:mb-1" style={{ animation: "rise 0.6s var(--ease-fluid) 320ms both" }}>
+            {keeps.map((k) => (
+              <li key={k} className="flex items-center gap-2.5 py-3 border-b border-[var(--color-ink-line)] text-[14px] font-semibold text-white">
+                <Check className="w-4 h-4 shrink-0 text-[var(--color-ink-muted)]" /> {k}
+              </li>
+            ))}
+          </ul>
         </div>
+      </div>
+      <h2 className="sr-only">Our commitments</h2>
+      <div className="relative -mt-24 sm:-mt-28 px-2 sm:px-6 lg:px-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        {promises.map((p, i) => (
+          <Reveal key={p.title} delay={i * 80}>
+            <a href={p.href} className={`${card} group block h-full p-5 hover:-translate-y-0.5 transition-transform`}>
+              <IconTile>{p.icon}</IconTile>
+              <h3 className="mt-4 text-[15px] font-extrabold text-[var(--color-text)]">{p.title}</h3>
+              <p className="mt-1.5 text-[14px] leading-relaxed text-[var(--color-text-muted)]">{p.body}</p>
+            </a>
+          </Reveal>
+        ))}
       </div>
     </section>
   );
@@ -187,526 +203,407 @@ function PromiseStrip() {
 
 function DaySection() {
   return (
-    <section id="day" className="bg-white">
-      <div className="max-w-6xl mx-auto px-6 py-20">
-        <Reveal className="max-w-3xl mb-10">
-          <div className="text-xs font-black uppercase tracking-widest text-orange-600 mb-3">Your day, easier</div>
-          <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-4">Pick your job. Watch it get lighter.</h2>
-          <p className="text-base text-slate-600 leading-relaxed">
-            Software pitches love feature lists. Your team lives in moments - the fifth &quot;FINAL_rev3&quot;
-            PDF, the audit question nobody can answer, the walk across the site to see what a vessel looks
-            like. Here&apos;s what those moments become.
-          </p>
-        </Reveal>
-        <Reveal delay={100}>
-          <RoleDayTabs />
-        </Reveal>
-      </div>
+    <section id="day" className={`${wrap} pt-24 sm:pt-32 scroll-mt-16`}>
+      <SectionHead kicker="Your day, easier" title="Pick your job. Watch it get lighter.">
+        Your team lives in moments: the fifth &quot;FINAL_rev3&quot; PDF, the audit question nobody can
+        answer, the walk across site to see a vessel. Here is what those moments become.
+      </SectionHead>
+      <Reveal delay={100} className="mt-10">
+        <RoleDayTabs />
+      </Reveal>
     </section>
   );
 }
 
-// ─── Pillars — business priorities, in order ───────────────────────────────
+// ─── The six pillars, in business order ─────────────────────────────────────
 
-function Pillar({
-  n, icon, iconBg, accent, title, tagline, bullets, chips, delay = 0,
-}: {
-  n: string;
-  icon: React.ReactNode;
-  iconBg: string;
-  accent: string;
-  title: string;
-  tagline: string;
-  bullets: string[];
-  chips: string[];
-  delay?: number;
+function Pillar({ n, icon, title, tagline, bullets, chips, delay = 0 }: {
+  n: number; icon: React.ReactNode; title: string; tagline: string;
+  bullets: string[]; chips: string[]; delay?: number;
 }) {
   return (
     <Reveal delay={delay}>
-      <div className="bg-white border border-slate-200 rounded-3xl p-6 md:p-8 shadow-sm hover:shadow-md transition-shadow h-full">
-        <div className="flex items-start gap-4 mb-4">
-          <div className={`p-3 rounded-2xl ${iconBg} shrink-0`}>{icon}</div>
-          <div>
-            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-0.5">{n}</div>
-            <h3 className="text-xl md:text-2xl font-black text-slate-900 leading-tight">{title}</h3>
+      <article className={`${card} h-full p-6 sm:p-7 flex flex-col`}>
+        <div className="flex items-center gap-3">
+          <IconTile>{icon}</IconTile>
+          <div className="min-w-0">
+            <div className={`${label} text-[var(--color-text-muted)]`}>Pillar {n}</div>
+            <h3 className="mt-0.5 text-[15px] font-extrabold text-[var(--color-text)]">{title}</h3>
           </div>
         </div>
-        <p className="text-sm text-slate-600 leading-relaxed mb-4">{tagline}</p>
-        <ul className="space-y-2 mb-5">
+        <p className="mt-4 text-[15px] leading-relaxed text-[var(--color-text)]">{tagline}</p>
+        <ul className="mt-4 space-y-2.5">
           {bullets.map((b) => (
-            <li key={b} className="flex items-start gap-2 text-[13px] text-slate-800 font-medium">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+            <li key={b} className="flex items-start gap-2.5 text-[14px] leading-relaxed text-[var(--color-text-muted)]">
+              <Check className="w-4 h-4 shrink-0 mt-0.5 text-[var(--color-text)]" />
               <span>{b}</span>
             </li>
           ))}
         </ul>
-        <div className="pt-4 border-t border-slate-100">
-          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Everything inside</div>
-          <ChipCloud chips={chips} accent={accent} />
+        <div className="mt-auto pt-5">
+          <div className="pt-4 border-t border-[var(--color-border)]">
+            <div className={`${label} text-[var(--color-text-muted)] mb-2.5`}>Everything inside</div>
+            <ChipCloud chips={chips} />
+          </div>
         </div>
-      </div>
+      </article>
     </Reveal>
   );
 }
 
 function PillarsSection() {
   return (
-    <section id="capabilities" className="bg-slate-50 border-y border-slate-200">
-      <div className="max-w-6xl mx-auto px-6 py-20">
-        <Reveal className="max-w-3xl mb-12">
-          <div className="text-xs font-black uppercase tracking-widest text-orange-600 mb-3">What&apos;s inside</div>
-          <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-4">Six pillars, in the order they matter to your business.</h2>
-          <p className="text-base text-slate-600 leading-relaxed">
-            Each one is deep - tap <b>&quot;+ more&quot;</b> on any pillar for the full inventory. None of it
-            assumes what your facility makes.
-          </p>
-        </Reveal>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Pillar
-            n="Pillar 1"
-            icon={<FileCheck2 className="w-6 h-6 text-blue-700" />}
-            iconBg="bg-blue-100"
-            accent="blue"
-            title="One source of truth for every document"
-            tagline="The current revision is unambiguous, provable, and the only one anyone can print. That single fact ends most of the chaos."
-            bullets={[
-              "Full revision history - superseded copies visibly marked and recalled from everyone who downloaded them",
-              "Every issued PDF stamped with status, watermark, and a QR anyone can verify by phone",
-              "Bulk-import legacy files: metadata parses from filenames, AI reads the title blocks, you confirm one staging grid",
-            ]}
-            chips={[
-              "Revision history & compare", "Supersession marking", "Status-stamped PDFs",
-              "Checkout locks (ad-hoc holds auto-release in 24h)", "Live editing-now chips", "Metadata-first bulk upload",
-              "AI title-block ingest", "Auto document numbering", "Short links (/d/DOC-001)",
-              "Custom columns & terminology", "Saved views & favorites", "Curated playbooks",
-              "Library subscriptions", "Stale-copy recall", "Where-used impact panel", "Full-text search",
-            ]}
-          />
-          <Pillar
-            n="Pillar 2"
-            icon={<Sparkles className="w-6 h-6 text-orange-700" />}
-            iconBg="bg-orange-100"
-            accent="orange"
-            title="An AI that has read your library"
-            tagline="Ask in plain language; the answer comes back cited to the exact page with the highlighted proof one click away. It can only reference documents you gave it - nothing invented."
-            bullets={[
-              "Reads scanned and CAD-exported drawings with vision - extracts equipment tags, audits cross-references, even traces lines",
-              "Runs on your own AI key (Claude or OpenAI - providers that never train on your data) with per-user spend caps and full usage metering",
-              "You draw the boundary: exclude any document from AI reading with one switch; sources sync from document control with your ACLs intact",
-            ]}
-            chips={[
-              "Bring-your-own AI key", "Page-cited answers", "Highlighted proof viewer",
-              "Vision reading of scans", "Equipment tag extraction", "Drawing census & reference audit",
-              "Line tracing on drawings", "Semantic search", "Org playbooks in every answer",
-              "Buildable, shareable AI skills", "Answer-to-graph shaping (admins)", "Per-user caps & metering",
-              "Per-document AI exclusion", "ACL-aware source sync", "Assistant that knows the app's map",
-            ]}
-            delay={80}
-          />
-          <Pillar
-            n="Pillar 3"
-            icon={<Workflow className="w-6 h-6 text-emerald-700" />}
-            iconBg="bg-emerald-100"
-            accent="emerald"
-            title="Workflow with authority built in"
-            tagline="Requests route through review, drafting, and approval - and the system enforces who is allowed to sign. A non-engineer cannot approve engineering work, period."
-            bullets={[
-              "MOC, RFI, as-built, and inspection tickets with SLA targets and past-due chips that keep nothing lost",
-              "Distribution that proves receipt: acknowledgments tracked per person, transmittals with a recipient portal",
-              "External teams work through a tokened intake portal and scoped projects - never inside your library",
-            ]}
-            chips={[
-              "MOC / RFI / As-built / Inspection tickets", "Engineer-routed sign-off", "Redline markup",
-              "Revision request loops", "Deliverable rev ladder (1A→1→2A→2)", "SLA targets & past-due chips",
-              "Work packages", "Acknowledged distribution", "Transmittals + recipient portal",
-              "Tokened intake portal", "Contractor redline round-trip", "Legacy transition-in wizard",
-              "Scheduler", "Cost tracking", "Projects with scoped membership",
-            ]}
-            delay={80}
-          />
-          <Pillar
-            n="Pillar 4"
-            icon={<MapIcon className="w-6 h-6 text-violet-700" />}
-            iconBg="bg-violet-100"
-            accent="violet"
-            title="A living map of your site"
-            tagline="Teach it your numbering system once, and imports categorize and file themselves. Documents, equipment, and operating areas become one navigable graph."
-            bullets={[
-              "Equipment registry with date-stamped photo galleries - tap any tag, anywhere, and see the physical thing",
-              "Interactive 2D/3D graph with lenses: process flow, equipment, documents - or everything at once",
-              "The AI reads process flows straight off your flow diagrams and proposes them for human confirmation",
-            ]}
-            chips={[
-              "Site Codebook (your numbering, taught once)", "Operating areas hub", "Equipment registry & photos",
-              "Auto-categorize from tags & site codes", "Process flow map (drawn or AI-read)",
-              "Plot plans with placed markers", "2D/3D interactive graph", "Process / equipment / document lenses",
-              "Path finding between any two nodes", "Per-tag backlinks",
-              "Guided facility setup navigator",
-            ]}
-            delay={160}
-          />
-          <Pillar
-            n="Pillar 5"
-            icon={<QrCode className="w-6 h-6 text-cyan-700" />}
-            iconBg="bg-cyan-100"
-            accent="cyan"
-            title="The paper-to-plant bridge"
-            tagline="Paper doesn't disappear from industrial sites - so every print carries a QR that answers the only question that matters: is this still current?"
-            bullets={[
-              "Anyone scans a stamped print and gets current-or-superseded instantly - no login, no app install",
-              "Equipment labels, hold cards, and job travelers printed straight from the system, each with live status",
-              "Start on a workstation, continue on your phone with one scan",
-            ]}
-            chips={[
-              "QR-stamped prints", "Public verify pages (docs, holds, packages, tickets)",
-              "Equipment labels", "Hold cards with live status", "Ticket traveler sheets",
-              "Print packs with QR covers", "Continue-on-phone", "Scan-landing quick actions",
-            ]}
-            delay={160}
-          />
-          <Pillar
-            n="Pillar 6"
-            icon={<AtSign className="w-6 h-6 text-rose-700" />}
-            iconBg="bg-rose-100"
-            accent="rose"
-            title="A team that stays in sync"
-            tagline="Mentions, watching, and dashboards replace the reply-all thread - and a command palette that knows every feature means nobody hunts for anything."
-            bullets={[
-              "@-mention a teammate and they're notified in-app and by email, with per-user preferences",
-              "Watch any document, ticket, or library and hear about every change",
-              "Live dashboards show past-due work, unacknowledged distributions, and the protection record at a glance",
-            ]}
-            chips={[
-              "@-mentions with notifications", "Watch documents / tickets / libraries",
-              "Email + in-app delivery", "Per-user notification preferences", "Recently viewed",
-              "Personal desk panel", "Live dashboards", "Command palette with built-in app map",
-            ]}
-            delay={240}
-          />
-        </div>
+    <section id="capabilities" className={`${wrap} pt-24 sm:pt-32 scroll-mt-16`}>
+      <SectionHead kicker="What's inside" title="Six pillars, in the order they matter.">
+        Each one is deep: open &quot;Show more&quot; on any pillar for the full list. None of it assumes
+        what your facility makes.
+      </SectionHead>
+      <div className="mt-10 grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5">
+        <Pillar n={1} icon={<FileCheck2 className="w-5 h-5" />}
+          title="One source of truth for every document"
+          tagline="The current revision is plain, provable, and the only one anyone can print. That one fact ends most of the chaos."
+          bullets={[
+            "Full revision history. Superseded copies are marked and recalled from everyone who downloaded them.",
+            "Every issued PDF is stamped with its status and a QR code anyone can check by phone.",
+            "Bulk-import old files: details read from file names, AI reads the title blocks, you confirm one grid.",
+          ]}
+          chips={[
+            "Revision history & compare", "Supersession marking", "Status-stamped PDFs",
+            "Checkout locks (quick holds release in 24 h)", "Who's editing now", "Metadata-first bulk upload",
+            "AI title-block reading", "Automatic numbering", "Short links (/d/DOC-001)",
+            "Your own columns and terms", "Saved views & favorites", "Playbooks",
+            "Library subscriptions", "Stale-copy recall", "Where-used impact", "Full-text search",
+          ]} />
+        <Pillar n={2} icon={<Sparkles className="w-5 h-5" />} delay={80}
+          title="An AI that has read your library"
+          tagline="Ask in plain words. The answer comes back cited to the exact page, with the proof one click away. It can only cite documents you gave it."
+          bullets={[
+            "Reads scanned and CAD-exported drawings: pulls equipment tags, checks cross-references, traces lines.",
+            "Runs on your own AI key (Claude or OpenAI, providers that don't train on your data) with per-user spend caps.",
+            "You draw the line: keep any document out of AI reading with one switch. Access rules carry over from document control.",
+          ]}
+          chips={[
+            "Your own AI key", "Page-cited answers", "Highlighted proof",
+            "Reads scans", "Equipment tag extraction", "Drawing census & reference check",
+            "Line tracing on drawings", "Search by meaning", "Your playbooks in every answer",
+            "Shareable AI skills", "Answer-to-graph shaping (admins)", "Per-user caps & metering",
+            "Per-document AI exclusion", "Access-aware sources", "An assistant that knows the app",
+          ]} />
+        <Pillar n={3} icon={<Workflow className="w-5 h-5" />} delay={80}
+          title="Workflow with authority built in"
+          tagline="Requests route through review, drafting and approval, and the system enforces who may sign. A non-engineer cannot approve engineering work."
+          bullets={[
+            "MOC, RFI, as-built and inspection requests with target dates, so nothing goes quietly late.",
+            "Distribution that proves receipt: acknowledgments per person, transmittals with a recipient portal.",
+            "Outside teams work through a tokened intake portal and scoped projects, never inside your library.",
+          ]}
+          chips={[
+            "MOC / RFI / As-built / Inspection requests", "Engineer-routed sign-off", "Redline markup",
+            "Revision request loops", "Deliverable rev ladder (1A, 1, 2A, 2)", "Target dates & past-due flags",
+            "Work packages", "Acknowledged distribution", "Transmittals + recipient portal",
+            "Tokened intake portal", "Contractor redline round-trip", "Legacy transition wizard",
+            "Scheduler", "Cost tracking", "Projects with scoped membership",
+          ]} />
+        <Pillar n={4} icon={<MapIcon className="w-5 h-5" />} delay={160}
+          title="A living map of your site"
+          tagline="Teach it your numbering once, and imports file themselves. Documents, equipment and operating areas become one map you can walk."
+          bullets={[
+            "Equipment registry with dated photos. Tap any tag, anywhere, and see the real thing.",
+            "A 2D/3D graph with lenses: process flow, equipment, documents, or everything at once.",
+            "The AI reads process flow off your flow diagrams and proposes it for a person to confirm.",
+          ]}
+          chips={[
+            "Site codebook (your numbering, taught once)", "Operating areas", "Equipment registry & photos",
+            "Auto-filing from tags & site codes", "Process flow map (drawn or AI-read)",
+            "Plot plans with placed markers", "2D/3D graph", "Process / equipment / document lenses",
+            "Path between any two items", "Per-tag backlinks", "Guided facility setup",
+          ]} />
+        <Pillar n={5} icon={<QrCode className="w-5 h-5" />} delay={160}
+          title="The paper-to-plant bridge"
+          tagline="Paper doesn't leave industrial sites, so every print carries a QR code that answers the one question that matters: is this still current?"
+          bullets={[
+            "Anyone scans a stamped print and sees current or superseded at once. No login, no app.",
+            "Equipment labels, hold cards and job travelers print straight from the system, each with live status.",
+            "Start at a workstation, carry on from your phone with one scan.",
+          ]}
+          chips={[
+            "QR-stamped prints", "Public check pages (documents, holds, packages, requests)",
+            "Equipment labels", "Hold cards with live status", "Request traveler sheets",
+            "Print packs with QR covers", "Continue on phone", "Scan-landing quick actions",
+          ]} />
+        <Pillar n={6} icon={<AtSign className="w-5 h-5" />} delay={240}
+          title="A team that stays in sync"
+          tagline="Mentions, watching and dashboards replace the reply-all thread, and a command palette that knows every feature means nobody hunts."
+          bullets={[
+            "@-mention a teammate and they hear about it in the app and by email, their way.",
+            "Watch any document, request or library and hear about every change.",
+            "Live dashboards show late work, unacknowledged distributions and the protection record.",
+          ]}
+          chips={[
+            "@-mentions with notifications", "Watch documents / requests / libraries",
+            "Email + in-app delivery", "Per-person notification settings", "Recently viewed",
+            "Personal desk", "Live dashboards", "Command palette with the app's map",
+          ]} />
       </div>
     </section>
   );
 }
 
-// ─── Product tour ───────────────────────────────────────────────────────────
+// ─── The tour: tabs on the band, the screen rising out of it ────────────────
 
 function TourSection() {
   return (
-    <section id="tour" className="bg-white border-b border-slate-200">
-      <div className="max-w-6xl mx-auto px-6 py-20">
-        <Reveal className="max-w-3xl mb-8">
-          <div className="text-xs font-black uppercase tracking-widest text-orange-600 mb-3">See it in action</div>
-          <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-4">Six stations. One screen. Click around.</h2>
-          <p className="text-base text-slate-600 leading-relaxed">
-            Built with the same design language as the live app - these aren&apos;t marketing renders,
-            they&apos;re the real UI with generic industrial data dropped in.
-          </p>
-        </Reveal>
-        <Reveal delay={100}>
-          <TourTabs />
-        </Reveal>
-      </div>
+    <section id="tour" className={`${wrap} pt-24 sm:pt-32 scroll-mt-16`}>
+      <TourTabs header={
+        <SectionHead onDark kicker="See it in action" title="Six stations. One screen.">
+          Built with the live app&apos;s own look, with generic industrial data dropped in. Click around.
+        </SectionHead>
+      } />
     </section>
   );
 }
 
-// ─── Trust / Data Portability ────────────────────────────────────────
+// ─── Trust: no lock-in ──────────────────────────────────────────────────────
 
 function TrustSection() {
+  const paths = [
+    { icon: <Download className="w-5 h-5" />, title: "1. Direct download", body: "One click. A single JSON file with every record, plus a manifest with 24-hour links to every file. Or one ZIP with the files inside." },
+    { icon: <Server className="w-5 h-5" />, title: "2. Scheduled push", body: "Point us at your own S3 or R2 bucket. A fresh export lands there daily, weekly or monthly. Credentials encrypted with AES-256-GCM." },
+    { icon: <Webhook className="w-5 h-5" />, title: "3. Webhook delivery", body: "An HMAC-signed POST of the ZIP to your endpoint. Build your own pipeline or pipe it into your data lake." },
+  ];
+  const files = ["/manifest.json", "/README.md", "/schema/schema.sql", "/tables/*.json", "/files/<storage-path>"];
   return (
-    <section id="trust" className="bg-gradient-to-b from-emerald-50 to-white border-b border-emerald-200">
-      <div className="max-w-6xl mx-auto px-6 py-24">
-        <Reveal className="max-w-3xl">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs font-bold uppercase tracking-widest mb-5">
-            <ShieldCheck className="w-3.5 h-3.5" /> Your data, your choice
-          </div>
-          <h2 className="text-3xl md:text-5xl font-black tracking-tight mb-5">No lock-in. Not now, not ever.</h2>
-          <p className="text-base md:text-lg text-slate-700 leading-relaxed mb-8">
-            Industrial document control is critical infrastructure. You can&apos;t afford to wonder whether a
-            vendor outage or a contract dispute will cost you years of engineering work. So we built three
-            independent paths off this platform - and your administrators can use any of them, any time,
-            with no special tooling, no support ticket, and no per-export cost.
-          </p>
-        </Reveal>
-
-        <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
-          {[
-            { icon: <Download className="w-5 h-5 text-blue-700" />, title: "1. Direct download", body: "One click. A single JSON file with every record, plus a manifest with 24-hour presigned URLs for every file. Or a full ZIP with the binaries inline." },
-            { icon: <Server className="w-5 h-5 text-emerald-700" />, title: "2. Scheduled push", body: "Point us at your own S3 / R2 bucket. We push a fresh export there daily, weekly, or monthly. Credentials encrypted with AES-256-GCM. You own the backups." },
-            { icon: <Webhook className="w-5 h-5 text-purple-700" />, title: "3. Webhook delivery", body: "HMAC-signed POST to your endpoint with the ZIP body. Build your own pipeline. Re-export to anywhere. Pipe into your data lake." },
-          ].map((p, i) => (
-            <Reveal key={p.title} delay={i * 90}>
-              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm h-full">
-                <div className="p-2 bg-slate-100 rounded-lg w-fit mb-3">{p.icon}</div>
-                <h3 className="text-sm font-black text-slate-900 mb-1.5">{p.title}</h3>
-                <p className="text-xs text-slate-600 leading-relaxed">{p.body}</p>
-              </div>
-            </Reveal>
-          ))}
-        </div>
-
-        <Reveal delay={150}>
-          <div className="mt-12 bg-white border-2 border-emerald-200 rounded-2xl p-6 shadow-sm">
-            <div className="flex flex-col md:flex-row items-start md:items-center gap-5">
-              <div className="p-3 bg-emerald-100 rounded-xl shrink-0">
-                <FileArchive className="w-8 h-8 text-emerald-700" />
-              </div>
-              <div className="flex-1">
-                <h3 className="text-lg font-black text-slate-900 mb-1">Everything you&apos;d need to rebuild from scratch.</h3>
-                <p className="text-sm text-slate-600 leading-relaxed mb-3">
-                  The export is a portable ZIP: manifest, README, the database schema DDL, one JSON file per
-                  table, and every binary file path-preserved. Unzip it, point a fresh Postgres at the schema, apply the included migrations in order,
-                  bulk-load the JSON, and you&apos;re back online - with any document-control vendor, or none.
-                </p>
-                <div className="flex flex-wrap gap-2 text-[11px] text-slate-500 font-mono">
-                  <Chip>/manifest.json</Chip>
-                  <Chip>/README.md</Chip>
-                  <Chip>/schema/schema.sql</Chip>
-                  <Chip>/tables/*.json</Chip>
-                  <Chip>/files/&lt;storage-path&gt;</Chip>
-                </div>
-              </div>
-              <Link
-                href="/data-portability"
-                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-black shadow shrink-0"
-              >
-                Read the full commitment <ExternalLink className="w-4 h-4" />
-              </Link>
+    <section id="trust" className={`${wrap} pt-24 sm:pt-32 scroll-mt-16`}>
+      <SectionHead kicker="Your data, your choice" title="No lock-in. Not now, not ever.">
+        Document control is critical infrastructure. You shouldn&apos;t have to wonder whether an outage or a
+        contract dispute costs you years of engineering work. So there are three separate ways off this
+        platform, and your admins can use any of them, any time, with no ticket and no fee.
+      </SectionHead>
+      <div className="mt-10 grid grid-cols-1 md:grid-cols-3 gap-4">
+        {paths.map((p, i) => (
+          <Reveal key={p.title} delay={i * 90}>
+            <div className={`${card} h-full p-5 sm:p-6`}>
+              <IconTile>{p.icon}</IconTile>
+              <h3 className="mt-4 text-[15px] font-extrabold text-[var(--color-text)]">{p.title}</h3>
+              <p className="mt-1.5 text-[14px] leading-relaxed text-[var(--color-text-muted)]">{p.body}</p>
+            </div>
+          </Reveal>
+        ))}
+      </div>
+      <Reveal delay={150} className="mt-4">
+        <div className={`${card} p-5 sm:p-7 flex flex-col md:flex-row md:items-center gap-5`}>
+          <IconTile><FileArchive className="w-5 h-5" /></IconTile>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-[15px] font-extrabold text-[var(--color-text)]">Everything you&apos;d need to rebuild from scratch.</h3>
+            <p className="mt-1.5 text-[14px] leading-relaxed text-[var(--color-text-muted)]">
+              A portable ZIP: manifest, README, the database schema, one JSON file per table, and every file
+              with its path kept. Point a fresh Postgres at the schema, apply the included migrations, load the
+              JSON, and you&apos;re back online with any vendor, or none.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {files.map((f) => (
+                <span key={f} className="inline-flex items-center h-7 px-2.5 rounded-lg bg-[var(--color-surface-2)] text-[12px] font-mono text-[var(--color-text)]">{f}</span>
+              ))}
             </div>
           </div>
-        </Reveal>
-      </div>
+          <Link href="/data-portability" className={`${quietOnPaper} shrink-0`}>
+            Read the full commitment <ArrowRight className="w-4 h-4" />
+          </Link>
+        </div>
+      </Reveal>
     </section>
   );
 }
 
-function Chip({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-700">{children}</span>
-  );
-}
-
-// ─── Compliance Honesty ──────────────────────────────────────────────
-
-function ComplianceHonestySection() {
-  return (
-    <section id="honesty" className="bg-white border-b border-slate-200">
-      <div className="max-w-6xl mx-auto px-6 py-20">
-        <Reveal className="max-w-3xl mb-10">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-100 border border-slate-300 text-slate-700 text-xs font-bold uppercase tracking-widest mb-4">
-            <ClipboardCheck className="w-3.5 h-3.5" /> Honest about compliance
-          </div>
-          <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-4">What we are, and what we aren&apos;t.</h2>
-          <p className="text-base text-slate-600 leading-relaxed">
-            Manufacturing OS is <b>software that supports compliance documentation</b>. It is not a
-            certification. Running this product does not, by itself, make your organization compliant with
-            any standard. Your QMS coordinator, PSM officer, or compliance lead remains responsible for the
-            overall program. We&apos;re the system of record they rely on - not a substitute for their
-            judgment. Here&apos;s the line, drawn explicitly.
-          </p>
-        </Reveal>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <Reveal>
-            <div className="bg-emerald-50 border-2 border-emerald-200 rounded-2xl p-6 h-full">
-              <div className="flex items-center gap-2 mb-4">
-                <CheckCircle2 className="w-5 h-5 text-emerald-700" />
-                <h3 className="text-base font-black text-emerald-900">What we do support</h3>
-              </div>
-              <ul className="space-y-2.5 text-sm text-slate-700">
-                <Honesty title="Document control infrastructure" body="Revision history, current-vs-superseded clarity, status stamping - the documentation backbone called for by ISO 9001 §7.5 and OSHA PSM §(d)." />
-                <Honesty title="Management of Change (MOC) tickets" body="Dedicated MOC ticket type with engineer-routed sign-off, addressing the documentation OSHA PSM §(l) requires when modifying covered processes." />
-                <Honesty title="Immutable audit trail" body="Every login, download, approval, status change written to an append-only log that nothing in the app can edit or delete. Exportable as evidence for internal or external audits." />
-                <Honesty title="Engineer-routed approval enforcement" body="Non-engineer requesters cannot self-approve engineering work; the system enforces routing to a qualified engineer." />
-                <Honesty title="Customer-owned data" body="Full data export anytime, in standard formats. Supports vendor risk management policies and disaster recovery requirements." />
-              </ul>
-            </div>
-          </Reveal>
-
-          <Reveal delay={90}>
-            <div className="bg-slate-50 border-2 border-slate-300 rounded-2xl p-6 h-full">
-              <div className="flex items-center gap-2 mb-4">
-                <XCircle className="w-5 h-5 text-slate-600" />
-                <h3 className="text-base font-black text-slate-900">What stays your responsibility</h3>
-              </div>
-              <ul className="space-y-2.5 text-sm text-slate-700">
-                <Honesty title="Certification" body="We are not auditors and we do not certify your organization. ISO 9001 certification and PSM compliance audits are conducted by independent third parties, not by us." />
-                <Honesty title="Process Hazard Analysis (PHA)" body="OSHA PSM §(e) requires PHA studies (HAZOP, what-if, etc.). We don't run them; your safety team does. We store the resulting documents." />
-                <Honesty title="Mechanical Integrity programs" body="PM schedules, inspection records, RBI - outside this product's scope. We're a complement to your CMMS / inspection tool, not a replacement." />
-                <Honesty title="Training records & competency" body="Personnel training matrices and competency assessments are managed in your HR or LMS system, not here." />
-                <Honesty title="Operating procedures, incident investigation, emergency planning" body="PSM elements §(f), §(m), §(n). We can store the documents; your team produces and maintains them." />
-              </ul>
-            </div>
-          </Reveal>
-        </div>
-
-        <Reveal delay={120}>
-          <div className="mt-8 p-4 bg-slate-900 text-slate-300 rounded-xl text-sm leading-relaxed">
-            <b className="text-white">In plain English:</b> Manufacturing OS makes it dramatically easier to
-            <b className="text-white"> produce </b>the documentation an auditor would accept. It does not
-            <b className="text-white"> grant </b>compliance, and using it does not absolve you of running your
-            program. Final compliance posture is yours.
-          </div>
-        </Reveal>
-      </div>
-    </section>
-  );
-}
+// ─── Compliance, honestly ───────────────────────────────────────────────────
 
 function Honesty({ title, body }: { title: string; body: string }) {
   return (
-    <li className="flex flex-col gap-0.5">
-      <span className="text-sm font-black text-slate-900">{title}</span>
-      <span className="text-xs text-slate-600 leading-relaxed">{body}</span>
+    <li className="py-3.5 border-t first:border-t-0 border-[var(--color-border)]">
+      <div className="text-[14px] font-bold text-[var(--color-text)]">{title}</div>
+      <div className="mt-0.5 text-[14px] leading-relaxed text-[var(--color-text-muted)]">{body}</div>
     </li>
   );
 }
 
-// ─── Security ──────────────────────────────────────────────────────
+function ComplianceHonestySection() {
+  return (
+    <section id="honesty" className={`${wrap} pt-24 sm:pt-32 scroll-mt-16`}>
+      <SectionHead kicker="Honest about compliance" title="What we are, and what we aren't.">
+        Manufacturing OS is software that supports compliance documentation. It is not a certification,
+        and running it does not by itself make you compliant with any standard. Your QMS coordinator or PSM
+        lead still owns the program. We are the system of record they rely on. Here is the line.
+      </SectionHead>
+      <div className="mt-10 grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
+        <Reveal>
+          <div className={`${card} h-full p-5 sm:p-7`}>
+            <div className={`${label} flex items-center gap-2 text-emerald-700 dark:text-emerald-400`}>
+              <CheckCircle2 className="w-4 h-4" /> What we support
+            </div>
+            <ul className="mt-2">
+              <Honesty title="Document control" body="Revision history, current-versus-superseded clarity and status stamping: the backbone ISO 9001 §7.5 and OSHA PSM §(d) call for." />
+              <Honesty title="Management of Change requests" body="A dedicated MOC request type with engineer-routed sign-off, for the records OSHA PSM §(l) requires when a covered process changes." />
+              <Honesty title="An audit trail nothing can edit" body="Every sign-in, download, approval and status change in an append-only log. Export it as evidence for internal or outside audits." />
+              <Honesty title="Approval only by a qualified engineer" body="Requesters who aren't engineers can't approve engineering work. The system routes it to one." />
+              <Honesty title="Data you own" body="Full export any time, in standard formats, for vendor-risk and disaster-recovery policies." />
+            </ul>
+          </div>
+        </Reveal>
+        <Reveal delay={90}>
+          <div className={`${card} h-full p-5 sm:p-7`}>
+            <div className={`${label} flex items-center gap-2 text-[var(--color-text-muted)]`}>
+              <XCircle className="w-4 h-4" /> What stays yours
+            </div>
+            <ul className="mt-2">
+              <Honesty title="Certification" body="We are not auditors and we don't certify anyone. ISO 9001 certification and PSM audits are done by independent third parties." />
+              <Honesty title="Process hazard analysis" body="OSHA PSM §(e) requires PHA studies (HAZOP, what-if). Your safety team runs them. We store the results." />
+              <Honesty title="Mechanical integrity" body="PM schedules, inspection records and RBI are outside this product. We sit next to your CMMS, not in place of it." />
+              <Honesty title="Training and competency" body="Training matrices and competency records live in your HR or learning system, not here." />
+              <Honesty title="Procedures, incidents, emergency planning" body="PSM elements §(f), §(m) and §(n). We can store the documents; your team writes and keeps them." />
+            </ul>
+          </div>
+        </Reveal>
+      </div>
+      <Reveal delay={120} className="mt-4">
+        <p className="rounded-2xl bg-[var(--color-ink)] text-white/80 px-5 sm:px-7 py-5 text-[15px] leading-relaxed">
+          <b className="text-white">In plain words:</b> Manufacturing OS makes it much easier to <b className="text-white">produce</b> the
+          documentation an auditor would accept. It does not <b className="text-white">grant</b> compliance, and using it
+          doesn&apos;t replace running your program. Your compliance standing is yours.
+        </p>
+      </Reveal>
+    </section>
+  );
+}
+
+// ─── Security: the charcoal band, the controls overlapping it ───────────────
 
 function SecuritySection() {
   const items = [
-    { icon: <Lock className="w-5 h-5 text-blue-300" />, title: "HTTPS-only transport", body: "All traffic over TLS. No HTTP fallback." },
-    { icon: <Database className="w-5 h-5 text-blue-300" />, title: "Encryption at rest", body: "Postgres encrypted at rest by Supabase. File storage encrypted at rest by Cloudflare R2." },
-    { icon: <Server className="w-5 h-5 text-blue-300" />, title: "Row-level isolation", body: "Postgres RLS scopes every query to its org. No cross-tenant leakage possible at the database layer." },
-    { icon: <KeyRound className="w-5 h-5 text-blue-300" />, title: "AES-256-GCM for secrets", body: "Customer S3 credentials and personal AI provider keys encrypted at rest - never stored in the clear." },
-    { icon: <Users className="w-5 h-5 text-blue-300" />, title: "Roles + per-node access control", body: "Eighteen roles - from Admin and Doc Control to Contractor, Auditor, and four Engineer tiers - plus ACLs on libraries, folders, and documents, evaluated as one chain." },
-    { icon: <PenLine className="w-5 h-5 text-blue-300" />, title: "Signature ceremony", body: "Approvals that matter require fresh authentication at the moment of signing - password re-entry, or a recent sign-in for SSO accounts - recorded with the signature." },
-    { icon: <GitBranch className="w-5 h-5 text-blue-300" />, title: "Configurable authority policies", body: "What each role may do - approve, issue, hold, export - is policy your admins set, enforced server-side, with a view-as simulator to preview it." },
-    { icon: <Factory className="w-5 h-5 text-blue-300" />, title: "Governed AI boundary", body: "AI reads only what document-control ACLs allow for the person asking. Excluded documents are never indexed, retrieved, or cited." },
-    { icon: <ClipboardCheck className="w-5 h-5 text-blue-300" />, title: "Server-side privileged access", body: "Browser clients never hold keys that bypass RLS. Privileged server routes re-check membership and role on every call, and data exports log themselves to your audit trail." },
+    { icon: <Lock className="w-5 h-5" />, title: "HTTPS only", body: "All traffic over TLS. No plain-HTTP fallback." },
+    { icon: <Database className="w-5 h-5" />, title: "Encrypted at rest", body: "The database is encrypted at rest by Supabase, file storage by Cloudflare R2." },
+    { icon: <Server className="w-5 h-5" />, title: "Row-level isolation", body: "Postgres row-level security scopes every query to its organization, at the database itself." },
+    { icon: <KeyRound className="w-5 h-5" />, title: "AES-256-GCM for secrets", body: "Your S3 credentials and personal AI keys are encrypted at rest, never stored in the clear." },
+    { icon: <Users className="w-5 h-5" />, title: "Roles and per-item access", body: "Eighteen roles, from Admin and Doc Control to Contractor, Auditor and four engineer tiers, plus access rules on libraries, folders and documents." },
+    { icon: <PenLine className="w-5 h-5" />, title: "Signing that proves it's you", body: "Approvals that matter ask you to sign in again at the moment of signing, and record it with the signature." },
+    { icon: <GitBranch className="w-5 h-5" />, title: "Authority your admins set", body: "What each role may approve, issue, hold or export is policy, enforced on the server, with a view-as preview." },
+    { icon: <Factory className="w-5 h-5" />, title: "An AI with a fence", body: "The AI reads only what the person asking may read. Excluded documents are never indexed, retrieved or cited." },
+    { icon: <ClipboardCheck className="w-5 h-5" />, title: "Privileged work stays on the server", body: "Browsers never hold keys that skip access rules. Server routes re-check membership and role on every call, and exports log themselves." },
   ];
   return (
-    <section id="security" className="bg-slate-950 text-white">
-      <div className="max-w-6xl mx-auto px-6 py-24">
+    <section id="security" className={`${wrap} pt-24 sm:pt-32 scroll-mt-16`}>
+      <div className="rounded-[28px] bg-[var(--color-ink)] px-5 sm:px-10 lg:px-14 pt-10 sm:pt-14 pb-32 sm:pb-36">
         <Reveal className="max-w-3xl">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-300 text-xs font-bold uppercase tracking-widest mb-5">
-            <Lock className="w-3.5 h-3.5" /> Security posture
-          </div>
-          <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-5">The same things your IT auditor is going to ask about.</h2>
-          <p className="text-base text-slate-300 leading-relaxed mb-12">No vague marketing. The specific technical controls, named.</p>
-        </Reveal>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {items.map((s, i) => (
-            <Reveal key={s.title} delay={(i % 3) * 80}>
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 h-full">
-                <div className="p-1.5 bg-blue-500/10 rounded-lg w-fit mb-3">{s.icon}</div>
-                <h3 className="text-sm font-black text-white mb-1.5">{s.title}</h3>
-                <p className="text-xs text-slate-400 leading-relaxed">{s.body}</p>
-              </div>
-            </Reveal>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-// ─── Audience ──────────────────────────────────────────────────────
-
-function AudienceSection() {
-  return (
-    <section className="bg-white">
-      <div className="max-w-6xl mx-auto px-6 py-20">
-        <Reveal className="max-w-3xl mb-12">
-          <div className="text-xs font-black uppercase tracking-widest text-orange-600 mb-3">Who runs on it</div>
-          <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-4">Built for sites where the drawings matter.</h2>
-          <p className="text-base text-slate-600 leading-relaxed">
-            If your facility runs on controlled documents - whatever it makes - this is for you.
+          <div className={`${label} text-white/60`}>Security</div>
+          <h2 className={`mt-4 ${huge} text-white`}>What your IT auditor will ask about.</h2>
+          <p className="mt-5 text-[15px] sm:text-[16px] leading-relaxed text-white/70 max-w-2xl">
+            No vague promises. The specific controls, named.
           </p>
         </Reveal>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          {[
-            { icon: <Factory className="w-6 h-6 text-orange-700" />, title: "Process industries", body: "Refineries, chemical plants, power generation, water treatment. Captures the documentation OSHA PSM 1910.119 §(l) calls for in Management of Change - engineer-routed approvals and revision lineage that survives audits." },
-            { icon: <ClipboardCheck className="w-6 h-6 text-orange-700" />, title: "Manufacturing & batch plants", body: "Mills, food & beverage, pharma, discrete manufacturing. One system for the drawings, procedures, and change records ISO 9001 surveillance keeps asking about - that the floor actually uses." },
-            { icon: <Wrench className="w-6 h-6 text-orange-700" />, title: "EPC & engineering teams", body: "Project containers scope work per client. Contractors submit through a tokened portal without ever touching the rest of your library - and redlines round-trip cleanly." },
-          ].map((a, i) => (
-            <Reveal key={a.title} delay={i * 90}>
-              <div className="bg-gradient-to-b from-orange-50 to-white border border-orange-200 rounded-2xl p-6 h-full">
-                <div className="p-2.5 bg-white rounded-lg w-fit mb-4 shadow-sm border border-orange-100">{a.icon}</div>
-                <h3 className="text-base font-black text-slate-900 mb-2">{a.title}</h3>
-                <p className="text-sm text-slate-600 leading-relaxed">{a.body}</p>
+      </div>
+      <div className="relative -mt-20 sm:-mt-24 px-2 sm:px-6 lg:px-10 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+        {items.map((s, i) => (
+          <Reveal key={s.title} delay={(i % 3) * 80}>
+            <div className={`${card} h-full p-5`}>
+              <div className="flex items-center gap-3">
+                <IconTile>{s.icon}</IconTile>
+                <h3 className="text-[15px] font-extrabold text-[var(--color-text)]">{s.title}</h3>
               </div>
-            </Reveal>
-          ))}
-        </div>
+              <p className="mt-3 text-[14px] leading-relaxed text-[var(--color-text-muted)]">{s.body}</p>
+            </div>
+          </Reveal>
+        ))}
       </div>
     </section>
   );
 }
 
-// ─── Final CTA ───────────────────────────────────────────────────────
+// ─── Who it's for ───────────────────────────────────────────────────────────
+
+function AudienceSection() {
+  const who = [
+    { icon: <Factory className="w-5 h-5" />, title: "Process industries", body: "Refineries, chemical plants, power, water treatment. The records OSHA PSM 1910.119 §(l) asks for in Management of Change: engineer-routed approvals and a revision trail that survives audits." },
+    { icon: <ClipboardCheck className="w-5 h-5" />, title: "Manufacturing and batch plants", body: "Mills, food and beverage, pharma, discrete manufacturing. One system for the drawings, procedures and change records ISO 9001 surveillance keeps asking about, that the floor actually uses." },
+    { icon: <Wrench className="w-5 h-5" />, title: "EPC and engineering teams", body: "Projects scope work per client. Contractors submit through a tokened portal without ever touching the rest of your library, and redlines come back clean." },
+  ];
+  return (
+    <section className={`${wrap} pt-24 sm:pt-32`}>
+      <SectionHead kicker="Who runs on it" title="Built for sites where the drawings matter.">
+        If your facility runs on controlled documents, whatever it makes, this is for you.
+      </SectionHead>
+      <div className="mt-10 grid grid-cols-1 md:grid-cols-3 gap-4">
+        {who.map((a, i) => (
+          <Reveal key={a.title} delay={i * 90}>
+            <div className={`${card} h-full p-5 sm:p-6`}>
+              <IconTile>{a.icon}</IconTile>
+              <h3 className="mt-4 text-[15px] font-extrabold text-[var(--color-text)]">{a.title}</h3>
+              <p className="mt-1.5 text-[14px] leading-relaxed text-[var(--color-text-muted)]">{a.body}</p>
+            </div>
+          </Reveal>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// ─── The last word ──────────────────────────────────────────────────────────
 
 function FinalCta() {
   return (
-    <section className="bg-gradient-to-br from-orange-600 to-orange-700 text-white">
-      <div className="max-w-4xl mx-auto px-6 py-20 text-center">
-        <Reveal>
-          <h2 className="text-3xl md:text-5xl font-black tracking-tight mb-5">Stop running your facility off a shared drive.</h2>
-          <p className="text-base md:text-lg text-orange-50 leading-relaxed mb-8 max-w-2xl mx-auto">
-            Stand up a workspace, import your documents, teach it your numbering system, and let the guided
-            setup walk you the rest of the way. And the day you decide to leave, you take everything with you.
+    <section className={`${wrap} pt-24 sm:pt-32 pb-16 sm:pb-24`}>
+      <Reveal>
+        <div className="rounded-[28px] bg-[var(--color-band)] text-white px-5 sm:px-10 lg:px-14 py-12 sm:py-16">
+          <div className={`${label} text-[var(--color-ink-muted)]`}>Start today</div>
+          <h2 className={`mt-4 ${huge} max-w-4xl`}>Stop running your facility off a shared drive.</h2>
+          <p className="mt-5 text-[15px] sm:text-[16px] leading-relaxed text-[var(--color-ink-text)] max-w-2xl">
+            Set up a workspace, bring in your documents, teach it your numbering, and let the guided setup walk
+            you the rest of the way. The day you leave, you take everything with you.
           </p>
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            <Link href="/signup" className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-white hover:bg-slate-50 text-orange-700 text-sm font-black shadow-lg">
-              Create your workspace <ArrowRight className="w-4 h-4" />
-            </Link>
-            <Link href="/" className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-white/10 hover:bg-white/15 border border-white/30 text-white text-sm font-bold backdrop-blur">
-              Sign in to existing workspace
-            </Link>
+          <div className="mt-8 flex flex-wrap gap-3">
+            <Link href="/signup" className={cta}>Create your workspace <ArrowRight className="w-4 h-4" /></Link>
+            <Link href="/" className={quietOnBand}>Sign in</Link>
           </div>
-        </Reveal>
-      </div>
+        </div>
+      </Reveal>
     </section>
   );
 }
 
-// ─── Footer ───────────────────────────────────────────────────────
+// ─── Footer ─────────────────────────────────────────────────────────────────
 
 function Footer() {
   return (
-    <footer className="bg-slate-950 text-slate-400 border-t border-slate-800">
-      <div className="max-w-6xl mx-auto px-6 py-12 grid grid-cols-2 md:grid-cols-4 gap-8">
+    <footer className="bg-[var(--color-ink)] text-white/70">
+      <div className={`${wrap} py-12 grid grid-cols-2 md:grid-cols-4 gap-8`}>
         <div className="col-span-2">
-          <div className="flex items-center gap-2.5 mb-3">
-            <div className="w-7 h-7 bg-gradient-to-br from-orange-500 to-orange-700 rounded-md flex items-center justify-center">
-              <Layout className="w-3.5 h-3.5 text-white" />
-            </div>
-            <div className="font-black text-white text-sm">Manufacturing<span className="text-orange-500">OS</span></div>
-          </div>
-          <p className="text-xs leading-relaxed max-w-sm">
-            Industrial document control, drafting workflow, and an AI that has read your library. Built so
-            your data is yours, your audit trail is real, and your exit story is one click.
+          <Logo onDark />
+          <p className="mt-4 text-[14px] leading-relaxed max-w-sm">
+            Document control, drafting workflow and an AI that has read your library. Your data is yours, your
+            audit trail is real, and leaving takes one click.
           </p>
         </div>
         <div>
-          <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3">Product</div>
-          <ul className="space-y-2 text-xs">
-            <li><a href="#day" className="hover:text-white">Your Day</a></li>
-            <li><a href="#capabilities" className="hover:text-white">What&apos;s Inside</a></li>
-            <li><a href="#tour" className="hover:text-white">See It</a></li>
-            <li><a href="#trust" className="hover:text-white">Your Data</a></li>
+          <div className={`${label} text-white/50 mb-3`}>Product</div>
+          <ul className="space-y-2 text-[14px]">
+            <li><a href="#day" className="hover:text-white">Your day</a></li>
+            <li><a href="#capabilities" className="hover:text-white">What&apos;s inside</a></li>
+            <li><a href="#tour" className="hover:text-white">See it</a></li>
+            <li><a href="#trust" className="hover:text-white">Your data</a></li>
             <li><a href="#honesty" className="hover:text-white">Compliance</a></li>
             <li><a href="#security" className="hover:text-white">Security</a></li>
-            <li><Link href="/data-portability" className="hover:text-white">Data Portability</Link></li>
+            <li><Link href="/data-portability" className="hover:text-white">Data portability</Link></li>
           </ul>
         </div>
         <div>
-          <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3">Account</div>
-          <ul className="space-y-2 text-xs">
+          <div className={`${label} text-white/50 mb-3`}>Account</div>
+          <ul className="space-y-2 text-[14px]">
             <li><Link href="/" className="hover:text-white">Sign in</Link></li>
-            <li><Link href="/signup" className="hover:text-white">Create workspace</Link></li>
+            <li><Link href="/signup" className="hover:text-white">Create a workspace</Link></li>
           </ul>
         </div>
       </div>
-      <div className="border-t border-slate-800">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex flex-col md:flex-row items-center justify-between gap-2 text-[11px]">
-          <span>&copy; {new Date().getFullYear()} Manufacturing OS. All rights reserved.</span>
-          <span className="font-mono text-slate-600">built for industrial workloads</span>
+      <div className="border-t border-white/10">
+        <div className={`${wrap} py-4 text-[12px] text-white/50`}>
+          &copy; {new Date().getFullYear()} Manufacturing OS. All rights reserved.
         </div>
       </div>
     </footer>

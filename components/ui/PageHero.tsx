@@ -171,7 +171,7 @@ export function StepLine({ steps, onDark = false }: {
             </div>
             <div className={`mt-2.5 pr-3 text-[13px] sm:text-[14px] font-bold truncate ${onDark ? "text-white" : "text-[var(--color-text)]"}`}>{s.label}</div>
             {s.note && (
-              <div className={`pr-3 text-[12px] mt-0.5 ${s.tone === "bad" ? (onDark ? "text-rose-300 font-semibold" : "text-rose-700 font-semibold") : onDark ? "text-[var(--color-ink-muted)]" : "text-[var(--color-text-muted)]"}`}>{s.note}</div>
+              <div className={`pr-3 text-[12px] mt-0.5 ${s.tone === "bad" ? (onDark ? "text-rose-200 font-semibold" : "text-rose-700 font-semibold") : onDark ? "text-[var(--color-ink-muted)]" : "text-[var(--color-text-muted)]"}`}>{s.note}</div>
             )}
           </li>
         );

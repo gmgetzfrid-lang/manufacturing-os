@@ -483,7 +483,7 @@ function CategoryCard({
           placeholder="Category label"
         />
         <label className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
-          <input type="checkbox" checked={cat.enabled} onChange={(e) => onChange({ enabled: e.target.checked })} className="accent-[var(--color-accent)]" />
+          <input type="checkbox" checked={cat.enabled} onChange={(e) => onChange({ enabled: e.target.checked })} className="accent-[var(--color-text)]" />
           Enabled
         </label>
         <button onClick={onMoveUp} disabled={!canMoveUp} className="p-1.5 rounded hover:bg-[var(--color-surface-2)] disabled:opacity-30 transition-colors"><ArrowUp className="w-3.5 h-3.5" /></button>
@@ -548,7 +548,7 @@ function FieldEditor({
           {FIELD_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
         </select>
         <label className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
-          <input type="checkbox" checked={!!field.required} onChange={(e) => onChange({ required: e.target.checked })} className="accent-[var(--color-accent)]" />
+          <input type="checkbox" checked={!!field.required} onChange={(e) => onChange({ required: e.target.checked })} className="accent-[var(--color-text)]" />
           Required
         </label>
         <button onClick={onRemove} className="p-1 rounded text-[var(--color-text-faint)] hover:text-red-600 hover:bg-[var(--color-surface-2)] transition-colors">

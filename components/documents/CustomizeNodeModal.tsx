@@ -212,7 +212,7 @@ export default function CustomizeNodeModal({
               <div className="mt-2 flex items-center gap-1.5">
                 {([["neutral", "Neutral"], ["brand", "Brand"]] as const).map(([key, label]) => (
                   <button key={key} onClick={() => set({ bgTint: key })}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border ${(v.bgTint ?? "neutral") === key ? "border-[var(--color-accent)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border ${(v.bgTint ?? "neutral") === key ? "border-[var(--color-text)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
                     {label} tint
                   </button>
                 ))}
@@ -233,7 +233,7 @@ export default function CustomizeNodeModal({
                   Strength {Math.round((v.bgOpacity ?? 0.18) * 100)}%
                   <input type="range" min={5} max={35} value={Math.round((v.bgOpacity ?? 0.18) * 100)}
                     onChange={(e) => set({ bgOpacity: Number(e.target.value) / 100 })}
-                    className="w-full mt-1 accent-[var(--color-accent)]" />
+                    className="w-full mt-1 accent-[var(--color-text)]" />
                 </label>
               </div>
             )}

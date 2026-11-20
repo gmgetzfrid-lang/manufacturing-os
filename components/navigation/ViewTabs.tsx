@@ -67,14 +67,14 @@ export default function ViewTabs({
               aria-current={active ? "page" : undefined}
               className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-3 h-8 rounded-lg text-xs font-bold transition-colors ${
                 active
-                  ? (dark ? "bg-[var(--color-ink-line)] text-white" : "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm")
+                  ? (dark ? "bg-white text-[var(--color-ink)] shadow-sm" : "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm")
                   : (dark ? "text-[var(--color-ink-muted)] hover:text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]")
               }`}
             >
               {Icon && <Icon className="w-3.5 h-3.5" />}
               {t.label}
               {typeof t.badge === "number" && t.badge > 0 && (
-                <span className={`ml-0.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-[11px] font-black ${active ? (dark ? "bg-white text-[var(--color-ink)]" : "bg-[var(--color-text)] text-[var(--color-surface)]") : (dark ? "bg-[var(--color-ink-line)] text-[var(--color-ink-fg)]" : "bg-[var(--color-border)] text-[var(--color-text-muted)]")}`}>
+                <span className={`ml-0.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-[11px] font-black ${active ? (dark ? "bg-[var(--color-ink)] text-white" : "bg-[var(--color-text)] text-[var(--color-surface)]") : (dark ? "bg-[var(--color-ink-line)] text-[var(--color-ink-fg)]" : "bg-[var(--color-border)] text-[var(--color-text-muted)]")}`}>
                   {badgeText(t.badge)}
                 </span>
               )}

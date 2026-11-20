@@ -198,7 +198,7 @@ export default function SkillLibraryPage() {
           <>
             {!loading && !notInstalled && <>{stats.custom} written here, {stats.mine} by you. </>}
             Connection skills grow the org graph; reasoning skills shape how the AI answers. Describe either in plain words and your AI drafts it.
-            {error && <span role="alert" className="block mt-1 text-rose-300 font-semibold"><AlertTriangle className="inline w-3.5 h-3.5 -mt-0.5 mr-1" />{error}</span>}
+            {error && <span role="alert" className="block mt-1 text-rose-200 font-semibold"><AlertTriangle className="inline w-3.5 h-3.5 -mt-0.5 mr-1" />{error}</span>}
           </>
         }
       >

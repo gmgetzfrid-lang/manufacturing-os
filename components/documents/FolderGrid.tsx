@@ -353,7 +353,7 @@ export default function FolderGrid({
               : selectedIds?.has(folder.id!)
               ? 'bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border-[var(--color-border)] ring-1 ring-[var(--color-border-strong)]'
               : contextMenu?.id === folder.id
-              ? 'bg-[var(--color-surface-2)] border-[var(--color-border-strong)] shadow-md ring-1 ring-[var(--color-accent)]/30'
+              ? 'bg-[var(--color-surface-2)] border-[var(--color-border-strong)] shadow-md ring-1 ring-[var(--color-border-strong)]'
               : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]'}
           `}
         >

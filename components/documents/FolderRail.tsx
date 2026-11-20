@@ -19,7 +19,7 @@ function FolderGlyph({ folder, active }: { folder: LibraryCollection; active: bo
       </span>
     );
   }
-  return <Folder className={`w-3.5 h-3.5 shrink-0 ${active ? "text-[var(--color-text)]" : "text-amber-500"}`} />;
+  return <Folder className={`w-3.5 h-3.5 shrink-0 ${active ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`} />;
 }
 
 export interface RailDropPayload {
@@ -181,10 +181,10 @@ export default function FolderRail({
       className="group/rail relative z-30 h-full shrink-0 max-md:hidden"
     >
       {/* COLLAPSED RAIL — always visible, theme-toned */}
-      <div className={`w-12 h-full bg-[var(--color-surface-2)] border-r flex flex-col items-center py-2 gap-1 overflow-y-auto transition-colors ${hovered ? "border-[var(--color-accent)]/40" : "border-[var(--color-border)]"}`}>
+      <div className={`w-12 h-full bg-[var(--color-surface-2)] border-r flex flex-col items-center py-2 gap-1 overflow-y-auto transition-colors ${hovered ? "border-[var(--color-border-strong)]" : "border-[var(--color-border)]"}`}>
         {/* Discoverability: an obvious "open folders" affordance at the top. */}
         <div
-          className={`flex flex-col items-center gap-1 mb-1 transition-colors ${hovered ? "text-[var(--color-accent)]" : "text-[var(--color-text-faint)]"}`}
+          className={`flex flex-col items-center gap-1 mb-1 transition-colors ${hovered ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}
           title="Folders: hover to browse"
         >
           <PanelLeftOpen className="w-4 h-4" />
@@ -216,7 +216,7 @@ export default function FolderRail({
               className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all relative ${
                 isActive
                   ? "bg-[var(--color-surface-2)] text-[var(--color-text)] ring-1 ring-[var(--color-border-strong)]"
-                  : "text-amber-500 hover:bg-[var(--color-surface)] hover:text-amber-600"
+                  : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)]"
               }`}
               title={folder.name}
             >

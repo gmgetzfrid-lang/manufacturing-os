@@ -44,7 +44,7 @@ export default function IntelligenceSetupPage() {
         kicker="Intelligence · Setup"
         title={answer}
         sub={loadError
-          ? <span className="text-rose-300 font-semibold">Couldn&apos;t load your AI setup: {loadError}</span>
+          ? <span className="text-rose-200 font-semibold">Couldn&apos;t load your AI setup: {loadError}</span>
           : data ? (data.personal?.keyLast4 ? "Caps and models are below." : "Add your AI key below to start asking questions.") : "Your keys, spending caps and models."}
       >
         <ViewTabs tabs={INTELLIGENCE_VIEWS} variant="dark" />

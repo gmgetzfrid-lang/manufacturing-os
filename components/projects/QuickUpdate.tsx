@@ -500,7 +500,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                   const on = !skip.has(p.key);
                   return (
                     <label key={p.key} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-semibold cursor-pointer ${on ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)] line-through"}`}>
-                      <input type="checkbox" checked={on} onChange={() => setSkip((s0) => { const n = new Set(s0); if (n.has(p.key)) n.delete(p.key); else n.add(p.key); return n; })} className="h-3.5 w-3.5 accent-[var(--color-accent)]" />
+                      <input type="checkbox" checked={on} onChange={() => setSkip((s0) => { const n = new Set(s0); if (n.has(p.key)) n.delete(p.key); else n.add(p.key); return n; })} className="h-3.5 w-3.5 accent-[var(--color-text)]" />
                       {partLabel(p.window, tz)}
                     </label>
                   );
@@ -514,7 +514,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                       const on = !omit.has(f.kind);
                       return (
                         <label key={f.kind} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 cursor-pointer ${on ? "border-[var(--color-text)] bg-[var(--color-surface-2)] font-semibold text-[var(--color-text)]" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
-                          <input type="checkbox" checked={on} onChange={() => flipOmit(f.kind)} className="h-3.5 w-3.5 accent-[var(--color-accent)]" />
+                          <input type="checkbox" checked={on} onChange={() => flipOmit(f.kind)} className="h-3.5 w-3.5 accent-[var(--color-text)]" />
                           {SECTION_WORD[f.kind]} <span className="opacity-70">· {f.lines}</span>
                         </label>
                       );
@@ -687,7 +687,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
     <li className={`px-4 py-3 ${needs.length ? "bg-rose-50/60 dark:bg-rose-950/20" : ""} ${l.include ? "" : "opacity-70"}`}>
       <div className="flex items-start gap-3">
         <input type="checkbox" checked={l.include} onChange={(e) => onEdit({ include: e.target.checked })} aria-label="Include this line"
-          className="mt-1 h-5 w-5 shrink-0 accent-[var(--color-accent)]" />
+          className="mt-1 h-5 w-5 shrink-0 accent-[var(--color-text)]" />
         <div className="min-w-0 flex-1 space-y-1.5">
           {/* The step */}
           {step ? (

@@ -76,6 +76,12 @@ function hueGap(a: string, b: string): number {
 export function onColor(fill: string): string {
   return contrast(fill, "#ffffff") >= contrast(fill, "#0b1220") ? "#ffffff" : "#0b1220";
 }
+/** Text on a button filled with the action color: white, as in the
+ *  reference (white on tangerine), unless the fill is too light for it
+ *  (yellow, lime), then ink. */
+export function buttonText(fill: string): string {
+  return contrast(fill, "#ffffff") >= 3 ? "#ffffff" : "#0b1220";
+}
 /** A color across the wheel from `hex`, strong enough to be a button. */
 export function complement(hex: string): string {
   const [h] = hsl(hex);

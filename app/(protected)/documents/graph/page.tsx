@@ -604,7 +604,7 @@ function GraphPageInner() {
       <PageHero size="md" overlap={false} className="!mb-3 !pb-6" kicker="Document control · File map" title={mapAnswer} sub={mapSub}>
         <ViewTabs tabs={DOCUMENT_VIEWS} variant="dark" />
         {error && (
-          <div role="alert" className={`mt-3 text-[13px] flex items-center gap-2 ${data ? "text-amber-300" : "text-rose-300"}`}>
+          <div role="alert" className={`mt-3 text-[13px] flex items-center gap-2 ${data ? "text-amber-300" : "text-rose-200"}`}>
             <AlertTriangle className="w-4 h-4 shrink-0" /> <span className="flex-1">{error}</span>
             <button onClick={() => { setError(null); void refresh(); }} className="font-bold text-white hover:underline">Retry</button>
             <button aria-label="Dismiss" onClick={() => setError(null)} className="text-[var(--color-ink-muted)] hover:text-white"><X className="w-4 h-4" /></button>
@@ -618,7 +618,7 @@ function GraphPageInner() {
           <div className="flex border-b border-[var(--color-border)] text-xs font-bold">
             {([["search", "Find", Search], ["links", "Links", Link2], ["drives", "Drives", HardDrive], ["aliases", "Aliases", Tag]] as const).map(([k, label, Icon]) => (
               <button key={k} onClick={() => setPanel(k)}
-                className={`flex-1 px-2 py-2 inline-flex items-center justify-center gap-1 border-b-2 ${panel === k ? "border-[var(--color-accent)] text-[var(--color-text)]" : "border-transparent text-[var(--color-text-muted)]"}`}>
+                className={`flex-1 px-2 py-2 inline-flex items-center justify-center gap-1 border-b-2 ${panel === k ? "border-[var(--color-text)] text-[var(--color-text)]" : "border-transparent text-[var(--color-text-muted)]"}`}>
                 <Icon className="w-3.5 h-3.5" /> {label}
                 {k === "drives" && listings.length > 0 && <span className="ml-1 px-1.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">{badgeText(listings.length)}</span>}
                 {k === "links" && (data?.edges.length ?? 0) > 0 && <span className="ml-1 px-1.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">{badgeText(data!.edges.length)}</span>}

@@ -482,7 +482,7 @@ export default function ScheduleImportModal({
                       const cfg = colConfig[k] ?? { include: true, rename: k, mapTo: "" };
                       return (
                         <div key={k} className={`flex items-center gap-2 ${cfg.include ? "" : "opacity-50"}`}>
-                          <input type="checkbox" checked={cfg.include} onChange={(e) => setColConfig((p) => ({ ...p, [k]: { ...cfg, include: e.target.checked } }))} className="w-3.5 h-3.5 accent-[var(--color-accent)] shrink-0" title="Include this column" />
+                          <input type="checkbox" checked={cfg.include} onChange={(e) => setColConfig((p) => ({ ...p, [k]: { ...cfg, include: e.target.checked } }))} className="w-3.5 h-3.5 accent-[var(--color-text)] shrink-0" title="Include this column" />
                           <span className="font-mono text-[11px] text-[var(--color-text-muted)] w-28 truncate shrink-0" title={k}>{k}</span>
                           <ArrowRight className="w-3 h-3 text-slate-300 shrink-0" />
                           <input

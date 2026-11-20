@@ -130,7 +130,7 @@ export default function HoldsPage() {
         title={answer}
         sub={metrics ? (
           <span className="inline-flex items-center gap-x-2 gap-y-1 flex-wrap">
-            {onHold > 0 && <span className="inline-flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> Longest <b className={metrics.longestActiveDays > 14 ? "text-rose-300" : "text-white"}>{metrics.longestActiveDays} days</b> ·</span>}
+            {onHold > 0 && <span className="inline-flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> Longest <b className={metrics.longestActiveDays > 14 ? "text-rose-200" : "text-white"}>{metrics.longestActiveDays} days</b> ·</span>}
             <span className="inline-flex items-center gap-1"><TrendingUp className="w-3.5 h-3.5" /> closed in {metrics.avgClosedDurationDays} days on average (90 days)</span>
             <span>· last 7 days: {metrics.openedLast7Days} opened, {metrics.releasedLast7Days} released</span>
           </span>

@@ -151,7 +151,7 @@ export function PathSteps({ rows }: { rows: PathRow[] }) {
               <div className="flex items-start gap-2 flex-wrap">
                 <div className="min-w-0 flex-1 basis-48">
                   <div className={`text-[14px] leading-snug ${r.state === "todo" ? "font-semibold text-[var(--color-text-muted)]" : "font-bold text-[var(--color-text)]"}`}>
-                    {r.title}{r.state === "next" && <span className="text-[12px] font-semibold text-amber-700 dark:text-amber-400"> · next</span>}
+                    {r.title}{r.state === "next" && <span className="text-[12px] font-bold text-[var(--color-text)]"> · next</span>}
                   </div>
                   {r.detail && <div className="text-[13px] text-[var(--color-text-muted)] leading-snug">{r.detail}</div>}
                 </div>

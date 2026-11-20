@@ -218,7 +218,7 @@ export default function AuditLogPage() {
             <>
               {kpis.total > 0 && (
                 <>
-                  <span className={kpis.deletes > 0 ? "font-semibold text-rose-300" : ""}>{kpis.deletes} delete{kpis.deletes === 1 ? "" : "s"}, undo{kpis.deletes === 1 ? "" : "s"} or forced change{kpis.deletes === 1 ? "" : "s"}</span>
+                  <span className={kpis.deletes > 0 ? "font-semibold text-rose-200" : ""}>{kpis.deletes} delete{kpis.deletes === 1 ? "" : "s"}, undo{kpis.deletes === 1 ? "" : "s"} or forced change{kpis.deletes === 1 ? "" : "s"}</span>
                   {kpis.topAction && <> · most common: <b className="text-white">{prettyAction(kpis.topAction[0])}</b> ({kpis.topAction[1]})</>}
                   {kpis.topUser && <> · most active: <b className="text-white">{kpis.topUser[0]}</b> ({kpis.topUser[1]})</>}
                   {" · "}

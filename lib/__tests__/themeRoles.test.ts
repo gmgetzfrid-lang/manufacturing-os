@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { rolesOf, rolesFromLogo, contrast, DEFAULT_ROLES, sideTokens, bandFor, actionText } from "@/lib/themeRoles";
+import { rolesOf, rolesFromLogo, contrast, DEFAULT_ROLES, sideTokens, bandFor, actionText, buttonText } from "@/lib/themeRoles";
 
 describe("theme roles", () => {
   it("gives the default pair and orange third with nothing saved", () => {
@@ -44,5 +44,10 @@ describe("theme roles", () => {
     expect(contrast(actionText("light", "#f5b700"), "#f4f3f0")).toBeGreaterThanOrEqual(4.5);
     expect(contrast(actionText("dark", "#1c3fbd"), "#111827")).toBeGreaterThanOrEqual(4.5);
     expect(actionText("light", "#0b1220")).toBe("#0b1220");
+  });
+
+  it("keeps white text on orange buttons and uses ink on yellow ones", () => {
+    expect(buttonText("#ea580c")).toBe("#ffffff");
+    expect(buttonText("#f5b700")).toBe("#0b1220");
   });
 });

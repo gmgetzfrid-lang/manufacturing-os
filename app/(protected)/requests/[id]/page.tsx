@@ -1590,7 +1590,7 @@ export default function TicketDetailView() {
           <>
             <span className="text-white font-semibold">{ticket.title}</span>
             {meta && <span> · {meta}</span>}
-            {pastDue && <span className="font-bold text-rose-300"> · Past due {toDate(ticket.targetCompletionAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>}
+            {pastDue && <span className="font-bold text-rose-200"> · Past due {toDate(ticket.targetCompletionAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>}
             {hasStagedFiles && (availableActions.some((a) => a.action === 'submit_draft')
               ? <span className="block mt-1 text-white">Your drafts aren&apos;t sent to the requester yet: Submit draft for review sends them.</span>
               : <span className="block mt-1">Drafts are added but not sent to the requester yet.</span>)}

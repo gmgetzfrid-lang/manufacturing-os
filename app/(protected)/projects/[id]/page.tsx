@@ -497,7 +497,7 @@ export default function ProjectDetailPage() {
       state: (s.state === "finished" ? "done" : s.state === "running" ? "now" : "next") as "done" | "now" | "next",
       note: <>
         {ph && <span className="block max-sm:hidden">{phaseDates(ph).replace(" – ", " to ")}</span>}
-        <span className={`block ${ph ? "sm:mt-1" : ""} ${bad ? "font-semibold text-rose-300" : ""}`}>{where}</span>
+        <span className={`block ${ph ? "sm:mt-1" : ""} ${bad ? "font-semibold text-rose-200" : ""}`}>{where}</span>
       </>,
     };
   });
@@ -598,7 +598,7 @@ export default function ProjectDetailPage() {
         </>}
       >
         {actionError && (
-          <div role="alert" className="mb-4 flex items-start gap-2 text-[13px] font-semibold text-rose-300">
+          <div role="alert" className="mb-4 flex items-start gap-2 text-[13px] font-semibold text-rose-200">
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
             <span className="flex-1">{actionError}</span>
             <button onClick={() => setActionError(null)} className="shrink-0 p-1 rounded text-[var(--color-ink-muted)] hover:text-white" aria-label="Dismiss">

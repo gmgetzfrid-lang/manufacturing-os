@@ -88,7 +88,7 @@ export default function CompaniesPage() {
     : companies.length === 0 ? "No companies yet." : `${plural(companies.length, "company", "companies")}.`;
   const sub = loading
     ? "Contractors, vendors and crews, scored only on recorded work."
-    : <>{doNotUse > 0 && <><span className="font-semibold text-rose-300">{doNotUse} marked do not use</span>. </>}Scored only on recorded work, never on opinion.</>;
+    : <>{doNotUse > 0 && <><span className="font-semibold text-rose-200">{doNotUse} marked do not use</span>. </>}Scored only on recorded work, never on opinion.</>;
   const [limit, setLimit] = useState(20);
 
   return (

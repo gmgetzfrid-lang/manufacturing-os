@@ -94,7 +94,7 @@ export default function PillCell({
         {canEdit && (
           <button
             onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-            className="shrink-0 flex items-center gap-0.5 text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] bg-[var(--color-surface-2)] border border-[var(--color-accent)]/25 hover:border-[var(--color-accent)]/50 px-1.5 py-0.5 rounded-full transition-colors mt-0.5"
+            className="shrink-0 flex items-center gap-0.5 text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] hover:border-[var(--color-border-strong)] px-1.5 py-0.5 rounded-full transition-colors mt-0.5"
             title={`Edit ${label}`}
           >
             <Plus className="w-2.5 h-2.5" />
@@ -122,7 +122,7 @@ export default function PillCell({
               {pill}
               <button
                 onClick={() => removePill(pill)}
-                className="text-[var(--color-accent)] hover:text-red-500 transition-colors ml-0.5"
+                className="text-[var(--color-text-muted)] hover:text-red-600 transition-colors ml-0.5"
               >
                 <X className="w-2.5 h-2.5" />
               </button>
@@ -154,7 +154,7 @@ export default function PillCell({
             if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); handleSave(); }
           }}
           placeholder={`Add ${label}…`}
-          className="flex-1 min-w-0 text-[11px] px-2 py-1.5 rounded-lg border border-[var(--color-accent)]/40 focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder-slate-400"
+          className="flex-1 min-w-0 text-[11px] px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent-ring)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder-slate-400"
         />
         {input.trim() && (
           <button

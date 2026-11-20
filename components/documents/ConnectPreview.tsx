@@ -75,7 +75,7 @@ export default function ConnectPreview({ orgId, plan, loading, canChange, onStar
                 <li key={l.id} className={`rounded-xl border ${l.neverAi ? "border-rose-200 bg-rose-50/40" : "border-[var(--color-border)]"} p-2`}>
                   <div className="flex items-center gap-2 flex-wrap">
                     <label className={`inline-flex items-center gap-1.5 font-bold ${l.neverAi ? "opacity-60" : "cursor-pointer"}`}>
-                      <input type="checkbox" checked={tick} disabled={l.neverAi} onChange={(e) => setPicked((s) => { const n = new Set(s); if (e.target.checked) n.add(l.id); else n.delete(l.id); return n; })} className="w-3.5 h-3.5 accent-[var(--color-accent)]" />
+                      <input type="checkbox" checked={tick} disabled={l.neverAi} onChange={(e) => setPicked((s) => { const n = new Set(s); if (e.target.checked) n.add(l.id); else n.delete(l.id); return n; })} className="w-3.5 h-3.5 accent-[var(--color-text)]" />
                       {l.neverAi ? <ShieldOff className="w-3.5 h-3.5 text-rose-600" /> : <FileText className="w-3.5 h-3.5" />} {l.name}
                     </label>
                     <span className="text-[var(--color-text-muted)]">{l.files} file{l.files === 1 ? "" : "s"}{l.drawings ? " · drawings" : ""}</span>

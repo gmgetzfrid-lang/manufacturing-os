@@ -66,7 +66,7 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
       case "toggle":
         return (
           <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text)] cursor-pointer">
-            <input type="checkbox" checked={(v as boolean) ?? f.default} onChange={(e) => set(f.key, e.target.checked)} className="w-4 h-4 accent-[var(--color-accent)]" />
+            <input type="checkbox" checked={(v as boolean) ?? f.default} onChange={(e) => set(f.key, e.target.checked)} className="w-4 h-4 accent-[var(--color-text)]" />
             {(v as boolean) ?? f.default ? "On" : "Off"}
           </label>
         );
@@ -92,7 +92,7 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
           <div className="max-h-52 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
             {docLibs.map((l) => (
               <label key={l.id} className="flex items-center gap-2.5 px-3 py-2 hover:bg-[var(--color-surface-2)] cursor-pointer">
-                <input type="checkbox" checked={sel.has(l.id)} className="w-4 h-4 accent-[var(--color-accent)]"
+                <input type="checkbox" checked={sel.has(l.id)} className="w-4 h-4 accent-[var(--color-text)]"
                   onChange={() => { const n = new Set(sel); if (n.has(l.id)) n.delete(l.id); else n.add(l.id); set(f.key, [...n]); }} />
                 <span className="text-sm text-[var(--color-text)]">{l.name}</span>
               </label>

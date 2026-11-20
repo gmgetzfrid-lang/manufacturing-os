@@ -138,7 +138,7 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
         <button
           onClick={submit}
           disabled={!body.trim() || busy}
-          className="p-2 rounded bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] transition-colors disabled:opacity-50"
+          className="p-2 rounded bg-[var(--color-ink)] hover:opacity-90 text-white transition-opacity disabled:opacity-50"
           title="Post note"
           aria-label="Post note"
         >

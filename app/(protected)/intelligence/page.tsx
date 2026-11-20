@@ -190,7 +190,7 @@ export default function IntelligencePage() {
         kicker="Intelligence · Status"
         title={lead ? lead.text : error ? "Couldn't check the AI." : "Checking the AI…"}
         sub={error
-          ? <span className="text-rose-300 font-semibold">Couldn&apos;t load the AI status: {error}</span>
+          ? <span className="text-rose-200 font-semibold">Couldn&apos;t load the AI status: {error}</span>
           : s.countsKnown ? `${s.docs.toLocaleString()} document${s.docs === 1 ? "" : "s"} across ${s.libraries} librar${s.libraries === 1 ? "y" : "ies"}${s.chunksTotal > 0 ? `, ${coveragePct}% of passages in the meaning index` : ""}.` : undefined}
         primary={lead ? (
           <Link href={lead.href} className={heroPrimary}>

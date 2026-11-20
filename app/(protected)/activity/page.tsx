@@ -223,7 +223,7 @@ export default function ActivityFeedPage() {
                 ? <>{rows.length.toLocaleString()} loaded, {pulse.actors} {pulse.actors === 1 ? "person" : "people"} active{kinds.length ? `: ${kinds.join(", ")}` : ""}. </>
                 : null}
               What happened in the workspace, in plain words. The Audit log has the raw detail.
-              {error && <span role="alert" className="block mt-1 text-rose-300 font-semibold"><AlertTriangle className="inline w-3.5 h-3.5 -mt-0.5 mr-1" />{error}</span>}
+              {error && <span role="alert" className="block mt-1 text-rose-200 font-semibold"><AlertTriangle className="inline w-3.5 h-3.5 -mt-0.5 mr-1" />{error}</span>}
             </>
           }
           tools={

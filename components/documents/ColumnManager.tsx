@@ -223,7 +223,7 @@ export default function ColumnManager(props: {
                 // now governs deletion only (system columns can't be removed).
                 const isLastVisible = on && draft.length <= 1;
                 return (
-                  <div key={col.key} className={`flex items-center gap-1 ${isEditing ? "p-1.5 rounded-lg bg-[var(--color-surface-2)] ring-1 ring-[var(--color-accent)]/30" : ""}`}>
+                  <div key={col.key} className={`flex items-center gap-1 ${isEditing ? "p-1.5 rounded-lg bg-[var(--color-surface-2)] ring-1 ring-[var(--color-border-strong)]" : ""}`}>
                     {isEditing ? (
                       <>
                         <input

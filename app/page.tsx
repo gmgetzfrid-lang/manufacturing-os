@@ -4,6 +4,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { supabase, setRememberSession, setPreferMicrosoft, prefersMicrosoft } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { PageHero, PageBody, Card } from '@/components/ui/PageHero';
 import { Layout, Lock, Mail, Loader2, AlertCircle, Building2, LogOut } from 'lucide-react';
 import { SlowNotice, useElapsed, startOver } from '@/components/system/SlowNotice';
 
@@ -230,13 +232,21 @@ export default function LoginPage() {
     setView("login");
   };
 
+  // The front door wears the app's identity: the blue band holds the
+  // answer, a white card overlaps it, and the one orange button signs in.
+  const input = "w-full h-12 pl-11 pr-4 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-xl text-[15px] text-[var(--color-text)] focus:ring-2 focus:ring-[var(--color-accent-ring)] focus:border-transparent outline-none transition-all placeholder:text-[var(--color-text-faint)]";
+  const fieldLabel = "block text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.12em] mb-1.5";
+  const primaryBtn = "w-full h-12 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[15px] font-extrabold rounded-xl shadow-[0_12px_24px_-12px_var(--color-accent)] transition-colors flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed";
+  const quietBtn = "w-full h-12 bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-[15px] font-bold rounded-xl border border-[var(--color-border-strong)] transition-colors flex items-center justify-center gap-3 disabled:opacity-70 disabled:cursor-not-allowed";
+  const kicker = <span className="inline-flex items-center gap-2"><Layout className="w-3.5 h-3.5" /> Manufacturing OS</span>;
+
   // ─── Checking / OAuth redirect in progress ──────────────────────
   if (view === "checking") {
     return (
-      <div className="min-h-dvh bg-slate-950 flex flex-col items-center justify-center p-4">
-        <Loader2 className="w-8 h-8 text-orange-500 animate-spin mb-4" />
-        <p className="text-slate-400 text-sm font-medium tracking-wide">Signing you in…</p>
-        <div className="w-full max-w-sm"><SlowNotice secs={slowSecs} onStartOver={() => startOver()} dark /></div>
+      <div className="min-h-dvh bg-[var(--color-canvas)] flex flex-col items-center justify-center p-4">
+        <Loader2 className="w-8 h-8 text-[var(--color-text-muted)] animate-spin mb-4" />
+        <p role="status" className="text-[14px] font-medium text-[var(--color-text-muted)]">Signing you in…</p>
+        <div className="w-full max-w-sm"><SlowNotice secs={slowSecs} onStartOver={() => startOver()} /></div>
       </div>
     );
   }
@@ -244,39 +254,27 @@ export default function LoginPage() {
   // ─── Authenticated, but not attached to any workspace ───────────
   if (view === "no-workspace") {
     return (
-      <div className="min-h-dvh bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-black z-0" />
-        <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden relative z-20 border border-slate-800">
-          <div className="bg-slate-900 p-8 text-center border-b border-slate-800">
-            <div className="inline-flex items-center justify-center w-14 h-14 bg-gradient-to-br from-orange-500 to-orange-700 rounded-xl mb-4 shadow-lg shadow-orange-900/40 ring-1 ring-white/10">
-              <Building2 className="w-7 h-7 text-white" />
-            </div>
-            <h1 className="text-xl font-black text-white tracking-tight">No workspace found</h1>
-            {authedEmail && (
-              <p className="text-slate-400 text-xs mt-2 font-medium break-all">{authedEmail}</p>
-            )}
-          </div>
-          <div className="p-8 bg-white">
-            <p className="text-sm text-slate-600 leading-relaxed">
-              Your Microsoft account isn&rsquo;t linked to a workspace yet. Ask your
-              organization&rsquo;s admin to add you using this email address - once they do,
-              just sign in with Microsoft again and you&rsquo;ll go straight in.
-            </p>
-            <div className="mt-6 space-y-3">
-              <a
-                href="/signup"
-                className="w-full py-3.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl shadow-lg transition-all flex items-center justify-center"
-              >
-                Request access or create a workspace
-              </a>
-              <button
-                onClick={handleSignOut}
-                className="w-full py-3 text-slate-500 hover:text-slate-900 font-semibold rounded-xl transition-all flex items-center justify-center gap-2"
-              >
-                <LogOut className="w-4 h-4" /> Sign out
-              </button>
-            </div>
-          </div>
+      <div className="min-h-dvh bg-[var(--color-canvas)] px-4 py-6 sm:py-10">
+        <div className="w-full max-w-md mx-auto">
+          <PageHero kicker={kicker} title="No workspace yet." sub={authedEmail ?? undefined} size="md" />
+          <PageBody>
+            <Card className="sm:p-7">
+              <div className="flex items-start gap-3">
+                <Building2 className="w-5 h-5 shrink-0 mt-0.5 text-[var(--color-text-muted)]" />
+                <p className="text-[14px] text-[var(--color-text-muted)] leading-relaxed">
+                  Your Microsoft account isn&rsquo;t linked to a workspace yet. Ask your
+                  organization&rsquo;s admin to add you with this email address. Once they do,
+                  sign in with Microsoft again and you&rsquo;ll go straight in.
+                </p>
+              </div>
+              <div className="mt-6 space-y-2">
+                <a href="/signup" className={primaryBtn}>Ask for access or create a workspace</a>
+                <button onClick={handleSignOut} className="w-full h-11 text-[14px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] rounded-xl transition-colors flex items-center justify-center gap-2">
+                  <LogOut className="w-4 h-4" /> Sign out
+                </button>
+              </div>
+            </Card>
+          </PageBody>
         </div>
       </div>
     );
@@ -284,125 +282,97 @@ export default function LoginPage() {
 
   // ─── Login ──────────────────────────────────────────────────────
   return (
-    <div className="min-h-dvh bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-black z-0" />
-      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-orange-900/50 to-transparent z-10" />
-
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden relative z-20 border border-slate-800">
-        <div className="bg-slate-900 p-8 text-center border-b border-slate-800">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-gradient-to-br from-orange-500 to-orange-700 rounded-xl mb-4 shadow-lg shadow-orange-900/40 ring-1 ring-white/10">
-            <Layout className="w-7 h-7 text-white" />
-          </div>
-          <h1 className="text-2xl font-black text-white tracking-tight">Manufacturing<span className="text-orange-500">OS</span></h1>
-          <p className="text-slate-400 text-xs uppercase tracking-widest mt-2 font-medium">Enterprise Control System</p>
-        </div>
-
-        <div className="p-8 bg-white">
-          {error && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-xl flex items-start animate-in fade-in slide-in-from-top-2 shadow-sm">
-              <AlertCircle className="w-5 h-5 text-red-600 mr-3 shrink-0 mt-0.5" />
-              <div className="flex-1">
-                <h4 className="text-sm font-bold text-red-900">Access Denied</h4>
-                <p className="text-sm text-red-700 mt-0.5">{error}</p>
+    <div className="min-h-dvh bg-[var(--color-canvas)] px-4 py-6 sm:py-10">
+      <div className="w-full max-w-md mx-auto">
+        <PageHero kicker={kicker} title="Sign in." sub="Your site's drawings, equipment and work, in one place." size="md" />
+        <PageBody>
+          <Card className="sm:p-7">
+            {/* A problem sits where it happened: right above the form it's about. */}
+            {error && (
+              <div role="alert" className="mb-5 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                <p className="text-[14px] text-red-700 dark:text-red-400 font-medium">{error}</p>
               </div>
-            </div>
-          )}
+            )}
 
-          <form onSubmit={handleLogin} className="space-y-6">
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 ml-1">Email Address</label>
-              <div className="relative group">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                  <Mail className="w-5 h-5 text-slate-400 group-focus-within:text-orange-500 transition-colors" />
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div>
+                <label htmlFor="si-email" className={fieldLabel}>Email</label>
+                <div className="relative">
+                  <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
+                  <input
+                    id="si-email"
+                    type="email"
+                    autoComplete="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className={input}
+                    placeholder="name@company.com"
+                    required
+                  />
                 </div>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-orange-500 focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
-                  placeholder="name@company.com"
-                  required
-                />
               </div>
-            </div>
 
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 ml-1">Password</label>
-              <div className="relative group">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                  <Lock className="w-5 h-5 text-slate-400 group-focus-within:text-orange-500 transition-colors" />
+              <div>
+                <label htmlFor="si-password" className={fieldLabel}>Password</label>
+                <div className="relative">
+                  <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--color-text-faint)] pointer-events-none" />
+                  <input
+                    id="si-password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className={input}
+                    placeholder="Your password"
+                    required
+                  />
                 </div>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:ring-2 focus:ring-orange-500 focus:bg-white focus:border-transparent outline-none transition-all placeholder:text-slate-400"
-                  placeholder="••••••••"
-                  required
-                />
               </div>
+
+              <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={keepSignedIn}
+                  onChange={(e) => setKeepSignedIn(e.target.checked)}
+                  className="w-4 h-4 rounded cursor-pointer accent-[var(--color-text)]"
+                />
+                <span className="text-[14px] text-[var(--color-text-muted)]">Keep me signed in on this device</span>
+              </label>
+
+              <button type="submit" disabled={loading || oauthLoading} className={primaryBtn}>
+                {loading ? <><Loader2 className="w-5 h-5 animate-spin" /> Signing in…</> : "Sign in"}
+              </button>
+              {loading && <SlowNotice secs={slowSecs} onStartOver={() => startOver()} />}
+            </form>
+
+            <div className="flex items-center gap-3 my-5">
+              <div className="h-px bg-[var(--color-border)] flex-1" />
+              <span className="text-[11px] font-bold text-[var(--color-text-faint)] uppercase tracking-[0.12em]">or</span>
+              <div className="h-px bg-[var(--color-border)] flex-1" />
             </div>
 
-            <label className="flex items-center gap-2.5 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={keepSignedIn}
-                onChange={(e) => setKeepSignedIn(e.target.checked)}
-                className="w-4 h-4 rounded border-slate-300 text-orange-600 focus:ring-orange-500 cursor-pointer"
-              />
-              <span className="text-sm font-medium text-slate-600">Keep me signed in on this device</span>
-            </label>
-
-            <button
-              type="submit"
-              disabled={loading || oauthLoading}
-              className="w-full py-4 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl shadow-xl hover:shadow-2xl hover:scale-[1.01] active:scale-[0.99] cursor-pointer transition-all flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed disabled:transform-none"
-            >
-              {loading ? (
-                <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Signing in…</>
+            {/* Microsoft / Azure single sign-on */}
+            <button type="button" onClick={handleMicrosoft} disabled={oauthLoading || loading} className={quietBtn}>
+              {oauthLoading ? (
+                <><Loader2 className="w-5 h-5 animate-spin" /> Opening Microsoft…</>
               ) : (
-                "Sign In to Dashboard"
+                <><MicrosoftLogo className="w-5 h-5" /> Sign in with Microsoft</>
               )}
             </button>
-            {loading && <SlowNotice secs={slowSecs} onStartOver={() => startOver()} />}
-          </form>
+          </Card>
 
-          <div className="flex items-center gap-3 my-6">
-            <div className="h-px bg-slate-200 flex-1" />
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">or</span>
-            <div className="h-px bg-slate-200 flex-1" />
+          <div className="pt-2 pb-6 text-center space-y-2">
+            <p className="text-[14px] text-[var(--color-text-muted)]">
+              No workspace yet?{" "}
+              <Link href="/signup" className="text-[var(--color-text)] font-bold underline underline-offset-2">Create one</Link>
+            </p>
+            <p className="text-[14px]">
+              <Link href="/about" className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline underline-offset-2">About Manufacturing OS</Link>
+            </p>
+            <p className="text-[11px] text-[var(--color-text-faint)]">v2.1.0 · Authorized use only</p>
           </div>
-
-          {/* Microsoft / Azure single sign-on */}
-          <button
-            type="button"
-            onClick={handleMicrosoft}
-            disabled={oauthLoading || loading}
-            className="w-full py-3.5 bg-white hover:bg-slate-100 text-slate-800 font-bold rounded-xl border border-slate-300 hover:border-slate-500 shadow-sm hover:shadow-lg hover:scale-[1.01] active:scale-[0.99] cursor-pointer transition-all flex items-center justify-center gap-3 disabled:opacity-70 disabled:cursor-not-allowed disabled:transform-none"
-          >
-            {oauthLoading ? (
-              <><Loader2 className="w-5 h-5 animate-spin" /> Redirecting to Microsoft…</>
-            ) : (
-              <><MicrosoftLogo className="w-5 h-5" /> Sign in with Microsoft</>
-            )}
-          </button>
-        </div>
-
-        <div className="bg-slate-50 p-6 text-center border-t border-slate-100 flex flex-col items-center gap-3">
-          <p className="text-sm text-slate-600 font-medium">
-            Don&rsquo;t have a workspace?{' '}
-            <a href="/signup" className="text-orange-600 hover:text-orange-700 font-bold hover:underline">
-              Create Account
-            </a>
-          </p>
-          <div className="flex items-center gap-4 text-[11px] font-medium pt-1">
-            <a href="/about" className="text-slate-500 hover:text-slate-900 hover:underline">About this product</a>
-          </div>
-          <div className="flex justify-between w-full px-2 mt-2">
-            <p className="text-[10px] text-slate-400 font-medium">v2.1.0 (Enterprise)</p>
-            <p className="text-[10px] text-slate-400 font-medium">Authorized Use Only</p>
-          </div>
-        </div>
+        </PageBody>
       </div>
     </div>
   );

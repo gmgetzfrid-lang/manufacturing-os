@@ -446,7 +446,7 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
           <p className="text-[11px] text-[var(--color-text-muted)]">Is it the tag&apos;s number (E-5 is 2030.05)? If not, equipment IDs are never worked out from the name: they come from the schedule or are typed in.</p>
         </div>
         <label className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5">
-          <input type="checkbox" checked={mirrors} disabled={!canWrite} onChange={(e) => setMirrors(e.target.checked)} className="w-4 h-4 accent-[var(--color-accent)]" /> it&apos;s the tag&apos;s number
+          <input type="checkbox" checked={mirrors} disabled={!canWrite} onChange={(e) => setMirrors(e.target.checked)} className="w-4 h-4 accent-[var(--color-text)]" /> it&apos;s the tag&apos;s number
         </label>
         <label className={`text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5 ${mirrors ? "" : "opacity-40"}`}>
           pad to <Input type="number" value={padTo} disabled={!canWrite || !mirrors} min={0} max={6}
@@ -861,7 +861,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                   const k = keyOf(p);
                   return (
                     <label key={k} className="flex items-center gap-2.5 px-3 py-2 text-xs cursor-pointer hover:bg-[var(--color-surface-2)]/60">
-                      <input type="checkbox" checked={accepted.has(k)} onChange={() => toggle(k)} className="w-3.5 h-3.5 accent-[var(--color-accent)]" />
+                      <input type="checkbox" checked={accepted.has(k)} onChange={() => toggle(k)} className="w-3.5 h-3.5 accent-[var(--color-text)]" />
                       <span className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-faint)] w-16">{KIND_LABEL[p.kind]}</span>
                       <span className="font-mono font-black text-[var(--color-text)] w-14">{p.code}</span>
                       <span className="font-bold text-[var(--color-text)] flex-1">{p.label}</span>

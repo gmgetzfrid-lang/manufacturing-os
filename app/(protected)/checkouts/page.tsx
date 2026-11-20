@@ -203,14 +203,14 @@ export default function CheckoutsPage() {
             <button
               onClick={() => setView("grouped")}
               aria-pressed={view === "grouped"}
-              className={`h-8 px-3 text-[13px] font-semibold rounded-lg transition-colors ${view === "grouped" ? "bg-[var(--color-ink-line)] text-white" : "text-[var(--color-ink-muted)] hover:text-white"}`}
+              className={`h-8 px-3 text-[13px] font-semibold rounded-lg transition-colors ${view === "grouped" ? "bg-white text-[var(--color-ink)] shadow-sm" : "text-[var(--color-ink-muted)] hover:text-white"}`}
             >
               By project
             </button>
             <button
               onClick={() => setView("flat")}
               aria-pressed={view === "flat"}
-              className={`h-8 px-3 text-[13px] font-semibold rounded-lg transition-colors ${view === "flat" ? "bg-[var(--color-ink-line)] text-white" : "text-[var(--color-ink-muted)] hover:text-white"}`}
+              className={`h-8 px-3 text-[13px] font-semibold rounded-lg transition-colors ${view === "flat" ? "bg-white text-[var(--color-ink)] shadow-sm" : "text-[var(--color-ink-muted)] hover:text-white"}`}
             >
               One list
             </button>

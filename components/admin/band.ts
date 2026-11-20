@@ -18,10 +18,11 @@ export const bandSelect =
 export const bandSeg =
   "inline-flex items-center gap-1 p-1 rounded-xl border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden";
 
-/** One toggle in a band row (matches ViewTabs' dark tabs). */
+/** One toggle in a band row (matches ViewTabs' dark tabs). The one you're
+ *  on is a white pill with charcoal text, so it reads on the blue band. */
 export function bandSegItem(on: boolean): string {
   return `shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-[13px] font-semibold transition-colors ${
-    on ? "bg-[var(--color-ink-line)] text-white" : "text-[var(--color-ink-muted)] hover:text-white"
+    on ? "bg-white text-[var(--color-ink)] shadow-sm" : "text-[var(--color-ink-muted)] hover:text-white"
   }`;
 }
 

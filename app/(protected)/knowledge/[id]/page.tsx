@@ -481,7 +481,7 @@ export default function KnowledgeLibraryPage() {
             {library.description || `${readyDocs} of ${docs.length} documents indexed and searchable.`}
             {indexingDocs > 0 && <span className="block mt-1">{indexingDocs} in progress. Asking works on what&apos;s done.</span>}
             {loadError && (
-              <span role="alert" className="block mt-1 text-rose-300 font-semibold">
+              <span role="alert" className="block mt-1 text-rose-200 font-semibold">
                 Couldn&apos;t refresh the library: {loadError} <button type="button" onClick={() => void refresh()} className="font-bold underline text-white">Try again</button>
               </span>
             )}
