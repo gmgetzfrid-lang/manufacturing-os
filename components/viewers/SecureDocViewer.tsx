@@ -6,7 +6,6 @@ import { useRole } from '@/components/providers/RoleContext';
 import { logFileView } from '@/lib/audit';
 import { supabase } from '@/lib/supabase';
 import { recordIntent } from '@/lib/intents';
-import { appAlert } from '@/components/providers/DialogProvider';
 import BackupViewer from '@/components/archive/BackupViewer';
 
 interface SecureDocViewerProps {
@@ -40,6 +39,11 @@ export default function SecureDocViewer({
   const containerRef = useRef<HTMLDivElement>(null);
   const blobUrlRef = useRef<string | null>(null);
   const loggedRef = useRef(false);
+
+  // Print/save pressed while the preview is open: said on the preview itself.
+  const [blockedNote, setBlockedNote] = useState(false);
+  const blockedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (blockedTimer.current) clearTimeout(blockedTimer.current); }, []);
 
   // Ambient lock signal: who (else) holds the checkout on this document.
   const [lockHolder, setLockHolder] = useState<{ name: string | null; note: string | null; since: string | null } | null>(null);
@@ -167,12 +171,14 @@ export default function SecureDocViewer({
 
   // --- 2. SECURITY: ANTI-EXFILTRATION ---
   useEffect(() => {
-    const handleKeydown = async (e: KeyboardEvent) => {
+    const handleKeydown = (e: KeyboardEvent) => {
       // Block Print (Ctrl+P) and Save (Ctrl+S)
       if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 's')) {
         e.preventDefault();
         e.stopPropagation();
-        await appAlert({ title: "Print and save are off here", message: "Controlled documents don't print or save from the browser. Open the full view and use Print or Download there: it stamps the copy." });
+        setBlockedNote(true);
+        if (blockedTimer.current) clearTimeout(blockedTimer.current);
+        blockedTimer.current = setTimeout(() => setBlockedNote(false), 6000);
       }
     };
 
@@ -195,15 +201,15 @@ export default function SecureDocViewer({
   }, []);
 
   return (
-    <div 
-      ref={containerRef} 
-      className="relative w-full h-full bg-slate-900 overflow-hidden flex flex-col group select-none print:hidden"
+    <div
+      ref={containerRef}
+      className="surface-charcoal relative w-full h-full bg-[var(--color-ink)] overflow-hidden flex flex-col group select-none print:hidden"
     >
       {/* SECURITY WATERMARK OVERLAY */}
       <div className="absolute inset-0 z-50 pointer-events-none overflow-hidden flex items-center justify-center">
         <div className="w-full h-full flex flex-col items-center justify-center opacity-[0.03] transform -rotate-12 select-none">
            {Array.from({ length: 10 }).map((_, i) => (
-             <div key={i} className="text-4xl font-black text-white whitespace-nowrap mb-24">
+             <div key={i} className="text-4xl font-black text-[var(--color-text)] whitespace-nowrap mb-24">
                 {watermarkText || "UNCONTROLLED COPY"} | {viewerId} | {new Date().toLocaleDateString()}
              </div>
            ))}
@@ -211,16 +217,25 @@ export default function SecureDocViewer({
       </div>
 
       {/* One quiet line: which file and revision this is. The host (side
-          panel, history drawer) already shows the title, so it isn't repeated. */}
-      <div className="h-8 bg-slate-800 border-b border-slate-700 flex items-center gap-2 px-3 shrink-0 z-50 min-w-0" title={title}>
-        <span className="text-xs font-mono font-bold text-slate-200 truncate">{docNumber}</span>
-        <span className="text-[11px] font-bold text-slate-400 shrink-0">Rev {rev}</span>
-        <Lock className="w-3 h-3 text-slate-500 shrink-0 ml-auto" aria-label="Print and save are off in this preview" />
+          panel, history drawer) already shows the title big, so it isn't
+          repeated. */}
+      <div className="h-9 border-b border-[var(--color-border)] flex items-center gap-2 px-3 shrink-0 z-50 min-w-0" title={title}>
+        <span className="text-[12px] font-bold text-[var(--color-text)] truncate">{docNumber}</span>
+        <span className="text-[12px] text-[var(--color-text-muted)] shrink-0">Rev {rev}</span>
+        <Lock className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0 ml-auto" aria-label="Print and save are off in this preview" />
       </div>
+
+      {/* Print or save pressed: why nothing happened, said right here. */}
+      {blockedNote && (
+        <div role="status" className="px-3 py-1.5 border-b border-[var(--color-border)] text-[12px] text-[var(--color-text)] shrink-0 z-50">
+          Print and save are off in this preview. Open the drawing and use Print or Download there: it stamps the copy.
+        </div>
+      )}
 
       {/* Someone else is mid-change on this document: a plain line. */}
       {lockHolder && (
-        <div className="border-l-2 border-amber-500 bg-slate-900 px-3 py-1 flex items-center gap-2 text-[11px] text-amber-300 shrink-0 z-50">
+        <div className="px-3 py-1.5 border-b border-[var(--color-border)] flex items-center gap-2 text-[12px] text-amber-300 shrink-0 z-50">
+          <Lock className="w-3.5 h-3.5 shrink-0" />
           <span className="truncate">
             <b>{lockHolder.name || 'Another user'}</b> has this checked out
             {lockHolder.since ? <> since {new Date(lockHolder.since).toLocaleDateString()}</> : null}
@@ -231,9 +246,9 @@ export default function SecureDocViewer({
       )}
 
       {/* CONTENT AREA */}
-      <div className="flex-1 relative bg-slate-950">
+      <div className="flex-1 relative bg-[var(--color-surface)]">
         {archivedInfo ? (
-          <div className="absolute inset-0 overflow-y-auto bg-slate-100 p-4 z-20">
+          <div className="absolute inset-0 overflow-y-auto bg-[var(--color-canvas)] p-4 z-20">
             <BackupViewer
               target={{
                 storageKey: url,
@@ -245,31 +260,31 @@ export default function SecureDocViewer({
             />
           </div>
         ) : loading ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 bg-slate-900/90 z-20">
-            <Loader2 className="w-7 h-7 animate-spin mb-2 text-slate-400" />
-            <span className="text-xs font-semibold text-slate-300">Loading the preview…</span>
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-[var(--color-text-muted)] z-20">
+            <Loader2 className="w-7 h-7 animate-spin mb-2" />
+            <span className="text-[13px] font-semibold">Loading the preview…</span>
           </div>
         ) : error ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center text-red-400 bg-slate-900 z-20">
-            <AlertTriangle className="w-8 h-8 mb-3 opacity-60" />
-            <h3 className="text-sm font-bold text-red-400">Couldn&apos;t open the preview</h3>
-            <p className="text-xs mt-1 text-red-300/80 max-w-md text-center">{error}</p>
+          <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center z-20 px-6 text-center">
+            <AlertTriangle className="w-8 h-8 mb-3 text-rose-400" />
+            <h3 className="text-[14px] font-bold text-[var(--color-text)]">Couldn&apos;t open the preview</h3>
+            <p className="text-[13px] mt-1 text-[var(--color-text-muted)] max-w-md">{error}</p>
           </div>
         ) : blobUrl ? (
-          <iframe 
-            src={`${blobUrl}#toolbar=0&navpanes=0&scrollbar=0&zoom=${zoomLevel}`} 
-            className="w-full h-full border-none bg-slate-200" 
+          <iframe
+            src={`${blobUrl}#toolbar=0&navpanes=0&scrollbar=0&zoom=${zoomLevel}`}
+            className="w-full h-full border-none bg-[var(--color-surface)]"
             title={`Secure View - ${docNumber}`}
           />
         ) : (
-          <div className="flex flex-col items-center justify-center h-full text-slate-600">
-            <XCircle className="w-8 h-8 mb-2 opacity-30" />
-            <p className="text-xs">No file to show.</p>
+          <div className="flex flex-col items-center justify-center h-full text-[var(--color-text-muted)]">
+            <XCircle className="w-8 h-8 mb-2 opacity-40" />
+            <p className="text-[13px]">No file to show.</p>
           </div>
         )}
       </div>
 
-      {/* PRINT PROTECTION CURTAIN */}
+      {/* PRINT PROTECTION CURTAIN (on paper, so plain black on white) */}
       <div className="hidden print:flex fixed inset-0 z-[9999] bg-white flex-col items-center justify-center p-10 text-center">
         <div className="border-2 border-slate-900 p-10 rounded-2xl">
           <ShieldAlert className="w-16 h-16 text-slate-900 mb-6 mx-auto" />

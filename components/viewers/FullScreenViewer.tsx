@@ -6,7 +6,6 @@ import {
   Download,
   Printer,
   Camera,
-  ShieldCheck,
   ShieldAlert,
   Loader2,
   Pen,
@@ -47,7 +46,12 @@ import BackupViewer from "@/components/archive/BackupViewer";
 import { listVersions } from "@/lib/revisions";
 import { recordIntent } from "@/lib/intents";
 import QrBadge from "@/components/ui/QrBadge";
-import MoreMenu from "@/components/ui/MoreMenu";
+import MoreMenu, { type MoreItem } from "@/components/ui/MoreMenu";
+import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
+import { Button } from "@/components/ui/Button";
+import { useEscapeClose } from "@/hooks/useEscapeClose";
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { vDim, vPanel, vKicker, vTitle, vIcon, vTool, vQuiet, vGroup, vPrimary, vClose, vNote } from "@/components/viewers/viewerChrome";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
 import { bakeMarkupIntoPdf } from "@/lib/markupExport";
@@ -152,6 +156,7 @@ export default function FullScreenViewer({
   const canManageAssets = userRole === 'Admin' || userRole === 'Manager' || userRole === 'Supervisor'
     || (userRole?.includes('Engineer') ?? false) || userRole === 'Drafter' || userRole === 'DocCtrl';
   const router = useRouter();
+  const isMobile = useIsMobile();
   const [tagsBarOpen, setTagsBarOpen] = useState(true);
   // ─── Pre-fetched PDF bytes (one fetch for view AND save) ──────────────
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
@@ -530,6 +535,9 @@ export default function FullScreenViewer({
   };
 
   const goPage = (n: number) => { if (n < 1 || n > numPages) return; saveCurrentPage(); setCurrentPage(n); };
+  // The arrow keys turn the page (left goes back a page, right forward).
+  const pageStepRef = useRef<(d: number) => void>(() => {});
+  useEffect(() => { pageStepRef.current = (d: number) => goPage(currentPage + d); });
   const setZoom = (n: number) => { saveCurrentPage(); setScale(Math.min(3, Math.max(0.5, n))); };
 
   // Ctrl+wheel zoom via the shared viewer hook — smoothed + throttled, and
@@ -802,24 +810,37 @@ export default function FullScreenViewer({
   };
 
   // ─── Keyboard shortcuts ───────────────────────────────────────────────
-  // Escape steps out one layer: a confirm, then the stamp menu or a drawing
-  // tool, and once nothing is open it closes the viewer (same as the X).
+  // Escape steps out one layer: the stamp menu or a drawing tool, then the
+  // phone code, and once nothing is open it closes the viewer (same as the X).
+  // It shares the dialog stack, so a dialog opened over the viewer (the
+  // stamped-copy question, a confirm) closes first.
   const escState = useRef({ tool, stampMenuOpen, pending: !!pending, diffOpen, phoneQrOpen });
   useEffect(() => { escState.current = { tool, stampMenuOpen, pending: !!pending, diffOpen, phoneQrOpen }; });
+  const closeBtnRef = useRef<HTMLButtonElement>(null);
+  // A menu open in the chrome closes itself on Escape; the viewer stays. The
+  // menu is gone by the time the close below runs, so look before it goes.
+  const menuOpenAtEsc = useRef(false);
+  useEffect(() => {
+    if (!isOpen) return;
+    const look = (e: KeyboardEvent) => {
+      if (e.key === "Escape") menuOpenAtEsc.current = !!document.querySelector("[data-fullscreen-viewer] [role=menu]");
+    };
+    window.addEventListener("keydown", look, true);
+    return () => window.removeEventListener("keydown", look, true);
+  }, [isOpen]);
+  useEscapeClose(() => {
+    const st = escState.current;
+    if (st.diffOpen) return; // the compare window handles its own Escape
+    if (menuOpenAtEsc.current) return;
+    if (st.phoneQrOpen) { setPhoneQrOpen(false); return; }
+    if (st.stampMenuOpen || st.tool !== "pan") { setStampMenuOpen(false); setTool("pan"); return; }
+    const active = document.activeElement;
+    if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return;
+    closeBtnRef.current?.click();
+  }, isOpen);
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        const st = escState.current;
-        if (st.diffOpen) return; // the compare window handles its own Escape
-        if (st.pending) { setPending(null); return; }
-        if (st.phoneQrOpen) { setPhoneQrOpen(false); return; }
-        if (st.stampMenuOpen || st.tool !== "pan") { setStampMenuOpen(false); setTool("pan"); return; }
-        const active = document.activeElement;
-        if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return;
-        document.querySelector<HTMLButtonElement>("[data-fullscreen-viewer] [data-viewer-close]")?.click();
-        return;
-      }
       const meta = e.ctrlKey || e.metaKey;
       if (meta && e.key.toLowerCase() === "z" && !e.shiftKey) { e.preventDefault(); void undo(); return; }
       if (meta && (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))) { e.preventDefault(); void redo(); return; }
@@ -828,7 +849,10 @@ export default function FullScreenViewer({
         if (act && (act.type === "i-text" || act.type === "textbox") && (act as unknown as { isEditing?: boolean }).isEditing) return;
         deleteSelected(); return;
       }
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      if (escState.current.pending || escState.current.diffOpen) return;
+      if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); pageStepRef.current(-1); return; }
+      if (e.key === "ArrowRight" || e.key === "PageDown") { e.preventDefault(); pageStepRef.current(1); return; }
       const k = e.key.toLowerCase();
       if (k === "v") setTool("select");
       else if (k === "h") setTool("pan");
@@ -1121,14 +1145,15 @@ export default function FullScreenViewer({
     onClose();
   };
 
-  const ToolBtn = ({ value, icon: Icon, label }: { value: Tool; icon: LucideIcon; label: string }) => (
-    <button onClick={() => setTool(value)} title={label} aria-label={label} aria-pressed={tool === value}
-      className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${
-        tool === value ? "bg-white text-slate-900" : "text-slate-300 hover:text-white hover:bg-slate-700"
-      }`}>
+  // A drawing tool: quiet, or a white pill when chosen.
+  const toolBtn = (value: Tool, Icon: LucideIcon, label: string) => (
+    <button key={value} type="button" onClick={() => setTool(value)} title={label} aria-label={label} aria-pressed={tool === value}
+      className={vTool(tool === value)}>
       <Icon className="w-5 h-5" />
     </button>
   );
+  const railBtn = "w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-[10px] grid place-items-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)] transition-colors";
+  const railLine = <div className="w-7 h-px shrink-0 bg-[var(--color-border)] my-1" aria-hidden="true" />;
 
   // Detect whether the doc has any equipment tags worth showing — if
   // not we don't render the floating bar at all (cleaner viewer).
@@ -1136,183 +1161,397 @@ export default function FullScreenViewer({
     (v) => Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "string")
   ));
 
+  // The drawing's state in words, on the line over its name. Status colors
+  // keep their meanings: green issued, amber not yet / not current, red void.
+  const vb = docRecord ? viewerStatusBadge({ status: docRecord.status, rev: docRecord.rev ?? rev }) : null;
+  const statusWord = vb ? vb.label.replace(/\s·\sRev\s.*$/, "") : null;
+  const statusTone: Record<ViewBadgeTone, string> = {
+    controlled: "text-emerald-400",
+    caution: "text-amber-400",
+    danger: "text-rose-400",
+    muted: "text-[var(--color-text-muted)]",
+  };
+  const lockedByOther = !!(docRecord?.checkedOutBy && currentUserId && String(docRecord.checkedOutBy) !== String(currentUserId));
+  const canDocAction = !!docRecord && !!currentUserId;
+
+  // Less-used actions live in More. On a phone, Download and Print move in too.
+  const moreItems: MoreItem[] = [
+    ...(isMobile && canDocAction ? [
+      { icon: <Download className="w-4 h-4" />, label: isControlled ? "Download" : "Download a stamped copy", onClick: requestDownload },
+      { icon: <Printer className="w-4 h-4" />, label: isControlled ? "Print" : "Print a stamped copy", onClick: requestPrint },
+    ] : []),
+    ...(resolvedUrl ? [{ icon: <FileDown className="w-4 h-4" />, label: markupBusy ? "Preparing your copy…" : "Download with markups", onClick: requestMarkupDownload }] : []),
+    ...(docRecord ? [{ icon: <GitCompare className="w-4 h-4" />, label: "Compare revisions", onClick: () => setDiffOpen(true), line: true }] : []),
+    ...(docRecord?.id && docRecord.libraryId ? [{ icon: <Smartphone className="w-4 h-4" />, label: phoneQrOpen ? "Hide the phone code" : "Open on your phone", onClick: () => setPhoneQrOpen((v) => !v) }] : []),
+  ];
+
+  const closePending = () => { setPending(null); setActionError(null); setMarkupError(null); };
+  const pendingBusy = actionBusy || markupBusy;
+  // A failed download or print says so here, next to the drawing, unless the
+  // stamped-copy question is open (then it says so in there).
+  const chromeError = !pending ? (actionError || markupError) : null;
+
   return (
-    <div data-fullscreen-viewer className="fixed inset-0 z-[100] bg-slate-900 flex flex-col" onPointerUp={onCanvasMouseUp} onPointerCancel={onCanvasMouseUp} onMouseLeave={onCanvasMouseUp}>
-      {committing && (
-        <div className="absolute inset-0 z-[200] bg-slate-950/85 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
-          <Loader2 className="w-9 h-9 animate-spin text-slate-300" />
-          <span className="text-sm font-bold text-white">Applying your markups…</span>
-        </div>
-      )}
-      {/* ─── EQUIPMENT TAGS FLOATING BAR ──────────────────────────────
-          Sits below the top chrome, above the PDF canvas. Lets users
-          pull up equipment photos while studying the drawing — without
-          closing the viewer. Collapsible to reclaim screen real estate. */}
-      {orgId && docRecord && hasAnyTags && tagsBarOpen && (
-        <div className="absolute top-16 left-3 right-3 z-40 bg-slate-900/85 backdrop-blur border border-slate-700 rounded-xl px-3 py-2 shadow-lg flex items-center gap-2">
-          <div className="flex-1 min-w-0 overflow-x-auto">
-            <EquipmentTagsStrip
-              metadata={docRecord.metadata as Record<string, unknown>}
-              customColumns={customColumns}
-              orgId={orgId}
-              userId={currentUserId}
-              canManage={canManageAssets}
-              variant="ribbon"
-            />
-          </div>
-          <button
-            onClick={(e) => { e.stopPropagation(); setTagsBarOpen(false); }}
-            title="Hide equipment tags"
-            aria-label="Hide equipment tags"
-            className="shrink-0 p-1 rounded text-white/60 hover:text-white hover:bg-white/10"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-      {/* Collapsed re-open button */}
-      {orgId && docRecord && hasAnyTags && !tagsBarOpen && (
-        <button
-          onClick={(e) => { e.stopPropagation(); setTagsBarOpen(true); }}
-          className="absolute top-16 right-3 z-40 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900/85 backdrop-blur border border-slate-700 text-white/80 hover:text-white text-[11px] font-bold shadow-lg"
-          title="Show equipment tag bar"
-        >
-          <Camera className="w-3.5 h-3.5" /> Equipment tags
-        </button>
-      )}
+    <div data-fullscreen-viewer role="dialog" aria-modal="true" aria-label={title}
+      className="fixed inset-0 z-[100]" onPointerUp={onCanvasMouseUp} onPointerCancel={onCanvasMouseUp} onMouseLeave={onCanvasMouseUp}>
+      {/* The page behind stays in view at the edges, dimmed. */}
+      <div className={vDim} aria-hidden="true" />
 
-      {/* ─── TOP CHROME ──────────────────────────────────────────────── */}
-      {/* On phones the control row is wider than the screen — it WRAPS onto
-          extra lines so every action stays reachable (a scroll container
-          would clip the dropdown menus). Desktop keeps the single row. */}
-      <div className="min-h-14 px-3 py-1.5 md:py-0 bg-slate-900 border-b border-slate-800 flex items-center gap-2 md:gap-3 shrink-0 z-50 flex-wrap md:flex-nowrap">
-        <div className="flex items-center gap-3 min-w-0 flex-1">
-          <div className="min-w-0">
-            <h2 className="text-white font-bold text-sm truncate">{title}</h2>
-            <p className="text-slate-400 text-[11px] font-mono truncate">{docNumber} • Rev {rev || "-"}</p>
+      <div className={vPanel}>
+        {committing && (
+          <div className="absolute inset-0 z-[200] bg-[color-mix(in_srgb,var(--color-ink)_85%,transparent)] backdrop-blur-sm flex flex-col items-center justify-center gap-3">
+            <Loader2 className="w-9 h-9 animate-spin text-[var(--color-text-muted)]" />
+            <span className="text-[14px] font-bold text-[var(--color-text)]">Applying your markups…</span>
           </div>
-          {docRecord && onCheckout && (
-            <div className="pl-3 border-l border-slate-700 shrink-0">
-              <CheckoutStatusCell docRecord={docRecord} currentUserId={currentUserId} currentUserEmail={currentUserEmail} userRole={userRole} onCheckout={onCheckout} />
+        )}
+
+        {/* ─── TOP CHROME ──────────────────────────────────────────────
+            Which drawing, big. Then the few controls used every time, the
+            rest in More, one orange action, and the X. On a phone the
+            controls drop to their own row under the name. */}
+        <header className="relative z-[60] shrink-0 border-b border-[var(--color-border)] px-3 sm:px-5 py-2.5 sm:py-3 flex flex-wrap lg:flex-nowrap items-center gap-x-3 gap-y-2">
+          <div className="min-w-0 flex-1 basis-[calc(100%-56px)] lg:basis-auto">
+            <div className={vKicker}>
+              {docNumber && docNumber !== title ? <>{docNumber} · </> : null}Rev {rev || "-"}
+              {vb && statusWord && (
+                <> · <span className={statusTone[vb.tone]} title="Status of the live version you're viewing. A copy you download or print is stamped separately.">{statusWord}</span></>
+              )}
             </div>
-          )}
-          {docRecord && (() => {
-            const vb = viewerStatusBadge({ status: docRecord.status, rev: docRecord.rev ?? rev });
-            const tone: Record<ViewBadgeTone, string> = {
-              controlled: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
-              caution: "bg-amber-500/10 text-amber-400 border-amber-500/30",
-              danger: "bg-red-500/10 text-red-400 border-red-500/30",
-              muted: "bg-slate-500/10 text-slate-300 border-slate-500/30",
-            };
-            return (
-              <div className={`hidden md:inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-bold border ${tone[vb.tone]}`} title="Status of the live version you're viewing. A copy you download or print is stamped separately.">
-                {vb.tone === "controlled" ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
-                {vb.label}
+            <h2 className={vTitle} title={title}>{title}</h2>
+          </div>
+
+          <button ref={closeBtnRef} type="button" data-viewer-close onClick={() => void handleClose()} disabled={committing}
+            title="Close (Esc)" aria-label="Close" className={`${vClose} lg:order-last`}>
+            <X className="w-5 h-5" />
+          </button>
+
+          <div className="w-full lg:w-auto flex items-center gap-1.5 sm:gap-2 min-w-0">
+            {docRecord && onCheckout && (
+              <div className="shrink-0 max-sm:hidden">
+                <CheckoutStatusCell docRecord={docRecord} currentUserId={currentUserId} currentUserEmail={currentUserEmail} userRole={userRole} onCheckout={onCheckout} />
               </div>
-            );
-          })()}
-        </div>
+            )}
+            {/* Pages: left goes back a page (the arrow keys too) */}
+            <div className={vGroup}>
+              <button type="button" onClick={() => goPage(currentPage - 1)} disabled={currentPage <= 1} aria-label="Previous page" title="Previous page (Left arrow)" className={vIcon}><ChevronLeft className="w-4 h-4" /></button>
+              <span className="px-1 min-w-[3.25rem] text-center" aria-live="polite">{currentPage} / {numPages || "-"}</span>
+              <button type="button" onClick={() => goPage(currentPage + 1)} disabled={currentPage >= numPages} aria-label="Next page" title="Next page (Right arrow)" className={vIcon}><ChevronRight className="w-4 h-4" /></button>
+            </div>
+            {/* Zoom */}
+            <div className={vGroup}>
+              <button type="button" onClick={() => setZoom(scale - 0.25)} aria-label="Zoom out" title="Zoom out" className={vIcon}><ZoomOut className="w-4 h-4" /></button>
+              <span className="px-0.5 min-w-[2.75rem] text-center">{Math.round(scale * 100)}%</span>
+              <button type="button" onClick={() => setZoom(scale + 0.25)} aria-label="Zoom in" title="Zoom in" className={vIcon}><ZoomIn className="w-4 h-4" /></button>
+            </div>
 
-        {/* Page nav */}
-        <div className="flex items-center bg-slate-800 rounded-lg px-2 py-1 text-xs font-mono text-slate-300">
-          <button onClick={() => goPage(currentPage - 1)} disabled={currentPage <= 1} className="p-1 hover:text-white disabled:opacity-30"><ChevronLeft className="w-4 h-4" /></button>
-          <span className="mx-2">{currentPage} / {numPages || "-"}</span>
-          <button onClick={() => goPage(currentPage + 1)} disabled={currentPage >= numPages} className="p-1 hover:text-white disabled:opacity-30"><ChevronRight className="w-4 h-4" /></button>
-        </div>
-        {/* Zoom */}
-        <div className="flex items-center bg-slate-800 rounded-lg px-2 py-1 text-xs font-mono text-slate-300">
-          <button onClick={() => setZoom(scale - 0.25)} className="p-1 hover:text-white"><ZoomOut className="w-4 h-4" /></button>
-          <span className="mx-2">{Math.round(scale * 100)}%</span>
-          <button onClick={() => setZoom(scale + 0.25)} className="p-1 hover:text-white"><ZoomIn className="w-4 h-4" /></button>
-        </div>
+            <div className="flex-1" />
 
-        {/* Download original (stamped if uncontrolled) */}
-        <button onClick={requestDownload} disabled={!docRecord || !currentUserId || actionBusy}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
-          title={isControlled ? "Download original PDF" : "Download stamped (uncontrolled) PDF"}>
-          <Download className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Download</span>
-        </button>
-        {/* Download with markup */}
-        <button
-          data-test="download-with-markup-btn"
-          onClick={() => { console.warn("[FullScreenViewer] Download w/ Markup CLICK"); requestMarkupDownload(); }}
-          disabled={!resolvedUrl || markupBusy}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Download a copy with your markups in the PDF">
-          {markupBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
-          <span className="hidden sm:inline">Download with markups</span>
-        </button>
+            {/* Download and print the original (stamped if uncontrolled) */}
+            {!isMobile && (
+              <>
+                <button type="button" onClick={requestDownload} disabled={!canDocAction || actionBusy}
+                  className={vQuiet} aria-label="Download"
+                  title={isControlled ? "Download the original PDF" : "Download a stamped (uncontrolled) PDF"}>
+                  {actionBusy && pending?.type !== "print" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                  <span className="hidden xl:inline">Download</span>
+                </button>
+                <button type="button" onClick={requestPrint} disabled={!canDocAction || actionBusy}
+                  className={vQuiet} aria-label="Print" title={isControlled ? "Print" : "Print a stamped (uncontrolled) copy"}>
+                  <Printer className="w-4 h-4" /> <span className="hidden xl:inline">Print</span>
+                </button>
+              </>
+            )}
 
-        {/* Send to drafting — pre-fills a new request with this doc (and any
-            markups baked in) as the Source attachment. */}
-        <button onClick={() => void sendToDrafting()} disabled={!docRecord || sendingDraft}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Start a drafting request for this document. Your markups go with it.">
-          {sendingDraft ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} <span className="hidden xl:inline">Send to drafting</span>
-        </button>
+            {/* Less-used: markup download, compare revisions, open on a phone. */}
+            <div className="relative shrink-0">
+              <MoreMenu label="More" iconOnly triggerClass={vQuiet} items={moreItems} />
+              {phoneQrOpen && docRecord?.id && docRecord.libraryId && (
+                <div className="absolute right-0 top-full mt-2 z-[60] w-[184px] flex justify-center rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl p-3 pt-8">
+                  <button type="button" onClick={() => setPhoneQrOpen(false)} aria-label="Hide the phone code" className="absolute top-1 right-1 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-4 h-4" /></button>
+                  <QrBadge
+                    value={`${window.location.origin}/documents/${docRecord.libraryId}?doc=${docRecord.id}`}
+                    size={150}
+                    caption="Scan to open this drawing on your phone"
+                  />
+                </div>
+              )}
+            </div>
 
-        {/* Print */}
-        <button onClick={requestPrint} disabled={!docRecord || !currentUserId || actionBusy}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
-          title="Print PDF">
-          <Printer className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Print</span>
-        </button>
-
-        {/* Continue on phone — scan and walk to the unit with the same
-            drawing open. Zero setup: it's just this document's URL. */}
-        {/* Less-used: compare revisions, open on a phone. */}
-        <div className="relative">
-          <MoreMenu
-            label="More"
-            iconOnly
-            triggerClass="inline-flex items-center justify-center h-8 w-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200"
-            items={[
-              ...(docRecord ? [{ icon: <GitCompare className="w-4 h-4" />, label: "Compare revisions", onClick: () => setDiffOpen(true) }] : []),
-              ...(docRecord?.id && docRecord.libraryId ? [{ icon: <Smartphone className="w-4 h-4" />, label: phoneQrOpen ? "Hide the phone code" : "Open on your phone", onClick: () => setPhoneQrOpen((v) => !v) }] : []),
-            ]}
-          />
-          {docRecord?.id && docRecord.libraryId && (
-            phoneQrOpen && (
-              <div className="absolute right-0 top-full mt-2 z-[60] bg-white rounded-xl shadow-2xl border border-slate-200 p-3 animate-in fade-in zoom-in-95">
-                <button onClick={() => setPhoneQrOpen(false)} aria-label="Close" className="absolute top-1 right-1 p-1 rounded text-slate-500 hover:text-slate-900"><X className="w-3.5 h-3.5" /></button>
-                <QrBadge
-                  value={`${window.location.origin}/documents/${docRecord.libraryId}?doc=${docRecord.id}`}
-                  size={150}
-                  caption="Scan to open this drawing on your phone"
-                />
-              </div>
-            )
-          )}
-        </div>
-
-        <button data-viewer-close onClick={() => void handleClose()} disabled={committing} title="Close" aria-label="Close" className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-full disabled:opacity-50">
-          <X className="w-5 h-5" />
-        </button>
-      </div>
-
-      {/* ─── AMBIENT LOCK BANNER ─────────────────────────────────────────
-          The viewer is where eyes actually are — if someone ELSE holds the
-          checkout, say so here, passively (no click-through, no blocking):
-          who, why, since when, one click into the checkout thread. */}
-      {docRecord?.checkedOutBy && currentUserId && String(docRecord.checkedOutBy) !== String(currentUserId) && (
-        <div className="border-l-2 border-amber-500 bg-slate-900 px-4 py-1.5 flex items-center gap-2 text-[11px] text-amber-300 shrink-0">
-          <Lock className="w-3.5 h-3.5 shrink-0" />
-          <span className="truncate">
-            <b>{docRecord.checkedOutByName || "Another user"}</b> is working on this document
-            {docRecord.checkedOutAt ? <> since {new Date(String(docRecord.checkedOutAt)).toLocaleDateString()}</> : null}
-            {docRecord.checkoutNote ? <>: <i>{docRecord.checkoutNote}</i></> : null}
-            . Talk to them before you change it.
-          </span>
-          {onCheckout && (
-            <button
-              onClick={() => onCheckout(docRecord)}
-              className="ml-auto shrink-0 px-2 py-0.5 rounded-md border border-slate-600 text-slate-200 hover:bg-slate-800 font-bold"
-            >
-              Open checkout thread
+            {/* The one action: a drafting request for this drawing, markups
+                included as the Source file. */}
+            <button type="button" onClick={() => void sendToDrafting()} disabled={!docRecord || sendingDraft}
+              className={vPrimary} aria-label="Send to drafting"
+              title="Start a drafting request for this drawing. Your markups go with it.">
+              {sendingDraft ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              <span className="max-md:hidden">Send to drafting</span>
             </button>
-          )}
+          </div>
+        </header>
+
+        {/* On a phone the checkout sits on its own line under the controls. */}
+        {docRecord && onCheckout && (
+          <div className="sm:hidden shrink-0 px-3 py-1.5 border-b border-[var(--color-border)]">
+            <CheckoutStatusCell docRecord={docRecord} currentUserId={currentUserId} currentUserEmail={currentUserEmail} userRole={userRole} onCheckout={onCheckout} />
+          </div>
+        )}
+
+        {/* Someone ELSE holds the checkout: said here, on the drawing it's
+            about, passively (who, why, since when, one tap to their thread). */}
+        {lockedByOther && docRecord && (
+          <div className={`${vNote} text-amber-300`}>
+            <Lock className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">
+              <b>{docRecord.checkedOutByName || "Another user"}</b> is working on this drawing
+              {docRecord.checkedOutAt ? <> since {new Date(String(docRecord.checkedOutAt)).toLocaleDateString()}</> : null}
+              {docRecord.checkoutNote ? <>: <i>{docRecord.checkoutNote}</i></> : null}
+              . Talk to them before you change it.
+            </span>
+            {onCheckout && (
+              <button type="button" onClick={() => onCheckout(docRecord)}
+                className="ml-auto shrink-0 h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] text-[var(--color-text)] hover:bg-[var(--color-ink-line)] text-[12px] font-bold">
+                Open checkout thread
+              </button>
+            )}
+          </div>
+        )}
+
+        {chromeError && (
+          <p role="alert" className={`${vNote} text-rose-300`}>
+            <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">{chromeError}</span>
+            <button type="button" onClick={() => { setActionError(null); setMarkupError(null); }} aria-label="Dismiss"
+              className="ml-auto shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-3.5 h-3.5" /></button>
+          </p>
+        )}
+
+        {/* ─── BODY: Tool rail | Canvas ─────────────────────────────────── */}
+        <div className="flex-1 min-h-0 overflow-hidden flex">
+          {/* TOOL RAIL */}
+          <div className="relative z-[60] w-12 sm:w-14 border-r border-[var(--color-border)] flex flex-col items-center py-2 gap-1 shrink-0" role="toolbar" aria-label="Markup tools" aria-orientation="vertical">
+            {toolBtn("pan", Move, "Pan / move page (H or Esc)")}
+            {toolBtn("select", MousePointer2, "Select markups (V)")}
+            {railLine}
+            {toolBtn("pen", Pen, "Pen (P)")}
+            {toolBtn("highlight", Highlighter, "Highlighter")}
+            {toolBtn("line", Minus, "Line (L)")}
+            {toolBtn("arrow", ArrowUpRight, "Arrow (A)")}
+            {toolBtn("rect", Square, "Rectangle (R)")}
+            {toolBtn("cloud", Cloud, "Rev cloud (drag to draw the box)")}
+            <button type="button" onClick={addText} className={railBtn} title="Text (T)" aria-label="Text"><Type className="w-5 h-5" /></button>
+            <button type="button" onClick={addStickyNote} className={railBtn} title="Sticky note (N)" aria-label="Sticky note"><StickyNote className="w-5 h-5" /></button>
+            <div className="relative">
+              <button type="button" onClick={() => setStampMenuOpen((v) => !v)} aria-expanded={stampMenuOpen} aria-label="Stamp" title="Stamp" className={vTool(stampMenuOpen)}><StampIcon className="w-5 h-5" /></button>
+              {stampMenuOpen && (
+                <div className="absolute left-12 bottom-0 w-64 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl p-2 z-50 max-h-[min(52vh,30rem)] overflow-y-auto">
+                  <div className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.14em] px-2 pb-2">Standard</div>
+                  {/* Each stamp shown as it lands on the sheet: its color on paper. */}
+                  <div className="grid grid-cols-1 gap-1">
+                    {STAMPS.map((s) => (
+                      <button type="button" key={s.label} onClick={() => addStamp(s.label, s.tone)} className="text-left px-1.5 py-1 rounded-md hover:bg-[var(--color-ink-2)]">
+                        <span className="inline-block px-2 py-0.5 rounded border-2 bg-[var(--color-ink-fg)] text-[11px] font-black tracking-wide" style={{ color: COLOR_HEX[s.tone], borderColor: COLOR_HEX[s.tone] }}>{s.label}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="mt-3 pt-2 border-t border-[var(--color-border)] flex items-center justify-between px-2 pb-2">
+                    <span className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.14em]">Custom</span>
+                    <button
+                      type="button"
+                      onClick={() => stampFileInputRef.current?.click()}
+                      className="text-[12px] font-bold h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-[var(--color-text)]"
+                    >+ Upload</button>
+                    <input
+                      ref={stampFileInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) onUploadStamp(f);
+                        e.target.value = "";
+                      }}
+                    />
+                  </div>
+                  {customStamps.length === 0 ? (
+                    <div className="text-[12px] text-[var(--color-text-muted)] px-2 pb-2">Upload PNG, JPG or SVG stamps. They&apos;re kept on this device.</div>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-1 px-1 pb-1">
+                      {customStamps.map((s) => (
+                        <div key={s.id} className="relative group">
+                          <button
+                            type="button"
+                            onClick={() => void addCustomStamp(s.src)}
+                            className="w-full h-14 rounded-md bg-[var(--color-ink-fg)] border border-[var(--color-border)] hover:border-[var(--color-text-muted)] overflow-hidden p-1"
+                            title={s.name}
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element -- user-uploaded stamp thumbnails are data/storage URLs the optimizer can't process */}
+                            <img src={s.src} alt={s.name} className="w-full h-full object-contain" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeCustomStamp(s.id)}
+                            className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white rounded-full text-[11px] font-bold opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Remove" aria-label={`Remove ${s.name}`}
+                          >×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            {railLine}
+            {toolBtn("eraser", Eraser, "Eraser (E)")}
+            <button type="button" onClick={deleteSelected} className={`${railBtn} hover:text-rose-400`} title="Delete what's selected" aria-label="Delete what's selected"><Trash2 className="w-5 h-5" /></button>
+            {railLine}
+            <button type="button" onClick={() => void undo()} className={railBtn} title="Undo (Ctrl+Z)" aria-label="Undo"><Undo2 className="w-5 h-5" /></button>
+            <button type="button" onClick={() => void redo()} className={railBtn} title="Redo (Ctrl+Y)" aria-label="Redo"><Redo2 className="w-5 h-5" /></button>
+          </div>
+
+          {/* PROPERTY BAR + CANVAS */}
+          <div className="relative flex-1 min-w-0 flex flex-col">
+            <div className="h-10 border-b border-[var(--color-border)] flex items-center px-3 gap-3 shrink-0 overflow-x-auto">
+              {/* Pen colors stay the markup colors drawn on the sheet. */}
+              <div className="flex items-center gap-1.5 shrink-0" role="radiogroup" aria-label="Markup color">
+                {(Object.keys(COLOR_HEX) as ColorKey[]).map((c) => (
+                  <button type="button" key={c} onClick={() => setColor(c)} role="radio" aria-checked={color === c} aria-label={`${c} pen`}
+                    className={`w-5 h-5 rounded-full border-2 ring-1 ring-[var(--color-ink-line)] transition-transform ${color === c ? "border-[var(--color-ink-fg)] scale-110" : "border-transparent hover:scale-105"}`}
+                    style={{ backgroundColor: COLOR_HEX[c] }} title={c} />
+                ))}
+              </div>
+              <div className="w-px h-5 shrink-0 bg-[var(--color-border)]" />
+              <label className="flex items-center gap-2 shrink-0">
+                <span className="text-[11px] font-bold text-[var(--color-text-muted)] uppercase tracking-[0.14em]">Width</span>
+                <input type="range" min={1} max={12} value={strokeWidth} onChange={(e) => setStrokeWidth(Number(e.target.value))}
+                  className="w-24 h-1 rounded-lg accent-[var(--color-ink-fg)] cursor-pointer" />
+                <span className="text-[12px] tabular-nums text-[var(--color-text)] w-5 text-right">{strokeWidth}</span>
+              </label>
+            </div>
+
+            {/* EQUIPMENT TAGS: pull up an item's photos while studying the
+                drawing, without closing it. Hide it to see more sheet. */}
+            {orgId && docRecord && hasAnyTags && (tagsBarOpen ? (
+              <div className="absolute top-12 left-3 right-3 z-40 rounded-xl bg-[color-mix(in_srgb,var(--color-ink)_88%,transparent)] backdrop-blur border border-[var(--color-border)] px-3 py-2 shadow-lg flex items-center gap-2">
+                <div className="flex-1 min-w-0 overflow-x-auto">
+                  <EquipmentTagsStrip
+                    metadata={docRecord.metadata as Record<string, unknown>}
+                    customColumns={customColumns}
+                    orgId={orgId}
+                    userId={currentUserId}
+                    canManage={canManageAssets}
+                    variant="ribbon"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setTagsBarOpen(false); }}
+                  title="Hide equipment tags"
+                  aria-label="Hide equipment tags"
+                  className="shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setTagsBarOpen(true); }}
+                className="absolute top-12 right-3 z-40 inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[color-mix(in_srgb,var(--color-ink)_88%,transparent)] backdrop-blur border border-[var(--color-border)] text-[var(--color-text)] text-[12px] font-bold shadow-lg"
+                title="Show the equipment tags"
+              >
+                <Camera className="w-3.5 h-3.5" /> Equipment tags
+              </button>
+            ))}
+
+            <div ref={canvasScrollRef} className={`flex-1 overflow-auto relative bg-[var(--color-surface)] p-4 sm:p-6 ${panZoom.cursorClass}`}
+                 onPointerDown={(e) => { panZoom.panHandlers.onPointerDown(e); if (tool !== "pan") onCanvasMouseDown(e); }}
+                 onPointerMove={(e) => { panZoom.panHandlers.onPointerMove(e); if (tool !== "pan") onCanvasMouseMove(e); }}
+                 onPointerUp={(e) => panZoom.panHandlers.onPointerUp(e)}
+                 onPointerCancel={(e) => panZoom.panHandlers.onPointerCancel(e)}
+                 onPointerLeave={(e) => panZoom.panHandlers.onPointerLeave(e)}
+                 style={{
+                   // When a pan/draw tool is active, claim touch gestures so the
+                   // browser doesn't steal them for scroll/zoom — this is what
+                   // makes finger-drawing and one-finger pan work on a tablet.
+                   // In select/none/pen mode we leave native scroll intact (Fabric
+                   // handles pen drawing on its own canvas).
+                   touchAction:
+                     tool === "pan" || tool === "line" || tool === "arrow" ||
+                     tool === "rect" || tool === "cloud" || tool === "eraser"
+                       ? "none"
+                       : "auto",
+                 }}>
+              {/* Archived-offline: this revision's binary was shed for space —
+                  show the provide-the-zip prompt + in-memory viewer instead of a
+                  dead stream. */}
+              {archivedInfo && (
+                <div className="absolute inset-0 overflow-y-auto bg-[var(--color-canvas)] p-4 sm:p-6 z-10">
+                  <div className="max-w-4xl mx-auto">
+                    <BackupViewer
+                      target={{
+                        storageKey: url,
+                        fileName: archivedInfo.fileName,
+                        archiveId: archivedInfo.archiveId,
+                        root: archivedInfo.root,
+                        kind: "space",
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+              {/* Couldn't open it / opening: said in place of the drawing */}
+              {!archivedInfo && fetchError && (
+                <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
+                  <ShieldAlert className="w-10 h-10 text-rose-400 mb-3" />
+                  <div className="text-[15px] font-bold text-[var(--color-text)] mb-1">Couldn&apos;t open this drawing</div>
+                  <div className="text-[13px] text-[var(--color-text-muted)] max-w-md">{fetchError}</div>
+                </div>
+              )}
+              {!archivedInfo && !fetchError && !resolvedUrl && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-[var(--color-text-muted)]">
+                  <Loader2 className="w-9 h-9 animate-spin mb-3" />
+                  <div className="text-[13px] font-semibold">Opening the drawing…</div>
+                </div>
+              )}
+
+              <div className="min-w-full min-h-full flex items-center justify-center">
+                <div className="relative shadow-2xl shadow-black/40 bg-white">
+                  <div className="relative z-0" style={{ pointerEvents: "none", userSelect: "none" }}>
+                    {resolvedUrl && (
+                      <Document options={PDF_DOC_OPTIONS}
+                        file={resolvedUrl}
+                        onLoadSuccess={({ numPages }) => setNumPages(numPages)}
+                        onLoadError={(err) => setFetchError(err.message || "PDF parse failed")}
+                        loading={null}
+                        className="block"
+                      >
+                        <Page
+                          pageNumber={currentPage}
+                          scale={scale}
+                          onRenderSuccess={onPageLoaded}
+                          renderAnnotationLayer={false}
+                          renderTextLayer={false}
+                          className="block"
+                        />
+                      </Document>
+                    )}
+                  </div>
+                  <div className="absolute top-0 left-0 z-[50]" style={{ width: "100%", height: "100%" }}>
+                    <canvas ref={canvasRef} />
+                  </div>
+                  {/* Snap point indicator — green dot, pointer-events-none */}
+                  {snapDot && (
+                    <div
+                      className="absolute z-[60] pointer-events-none rounded-full bg-emerald-400 ring-2 ring-emerald-300/60"
+                      style={{ left: snapDot.x - 5, top: snapDot.y - 5, width: 10, height: 10 }}
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-      )}
+      </div>
 
       {/* Phase 4 — revision compare (true overlay, with version pickers) */}
       {diffOpen && docRecord && (
@@ -1325,226 +1564,37 @@ export default function FullScreenViewer({
         />
       )}
 
-      {markupError && <p role="alert" className="border-l-2 border-rose-500 bg-slate-900 text-rose-300 text-xs px-4 py-1.5">{markupError}</p>}
-
-      {/* ─── BODY: Tool rail | Canvas ─────────────────────────────────── */}
-      <div className="flex-1 overflow-hidden flex">
-        {/* TOOL RAIL */}
-        <div className="w-14 bg-slate-900 border-r border-slate-800 flex flex-col items-center py-2 gap-1 shrink-0">
-          <ToolBtn value="pan" icon={Move} label="Pan / move page (H or Esc)" />
-          <ToolBtn value="select" icon={MousePointer2} label="Select markups (V)" />
-          <div className="w-8 h-px bg-slate-800 my-1" />
-          <ToolBtn value="pen" icon={Pen} label="Pen (P)" />
-          <ToolBtn value="highlight" icon={Highlighter} label="Highlighter" />
-          <ToolBtn value="line" icon={Minus} label="Line (L)" />
-          <ToolBtn value="arrow" icon={ArrowUpRight} label="Arrow (A)" />
-          <ToolBtn value="rect" icon={Square} label="Rectangle (R)" />
-          <ToolBtn value="cloud" icon={Cloud} label="Rev Cloud (drag to define box)" />
-          <button onClick={addText} className="w-10 h-10 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-700" title="Text (T)"><Type className="w-5 h-5" /></button>
-          <button onClick={addStickyNote} className="w-10 h-10 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-700" title="Sticky Note (N)"><StickyNote className="w-5 h-5" /></button>
-          <div className="relative">
-            <button onClick={() => setStampMenuOpen((v) => !v)} aria-expanded={stampMenuOpen} aria-label="Stamp" className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${stampMenuOpen ? "bg-white text-slate-900" : "text-slate-300 hover:text-white hover:bg-slate-700"}`} title="Stamp"><StampIcon className="w-5 h-5" /></button>
-            {stampMenuOpen && (
-              <div className="absolute left-12 top-0 w-64 rounded-xl bg-slate-900 border border-slate-700 shadow-2xl p-2 z-50 max-h-[80vh] overflow-y-auto">
-                <div className="text-[11px] font-black text-slate-500 uppercase tracking-widest px-2 pb-2">Standard</div>
-                <div className="grid grid-cols-1 gap-1">
-                  {STAMPS.map((s) => (
-                    <button key={s.label} onClick={() => addStamp(s.label, s.tone)} className="text-left px-2 py-1.5 rounded-md text-xs font-bold hover:bg-slate-800" style={{ color: COLOR_HEX[s.tone] }}>{s.label}</button>
-                  ))}
-                </div>
-
-                <div className="mt-3 pt-2 border-t border-slate-800 flex items-center justify-between px-2 pb-2">
-                  <span className="text-[11px] font-black text-slate-500 uppercase tracking-widest">Custom</span>
-                  <button
-                    onClick={() => stampFileInputRef.current?.click()}
-                    className="text-[11px] font-bold px-2 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-white"
-                  >+ Upload</button>
-                  <input
-                    ref={stampFileInputRef}
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp,image/svg+xml"
-                    className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) onUploadStamp(f);
-                      e.target.value = "";
-                    }}
-                  />
-                </div>
-                {customStamps.length === 0 ? (
-                  <div className="text-[11px] text-slate-500 px-2 pb-2">Upload PNG/JPG/SVG stamps: saved on this device.</div>
-                ) : (
-                  <div className="grid grid-cols-3 gap-1 px-1 pb-1">
-                    {customStamps.map((s) => (
-                      <div key={s.id} className="relative group">
-                        <button
-                          onClick={() => void addCustomStamp(s.src)}
-                          className="w-full h-14 rounded-md bg-white border border-slate-700 hover:border-slate-300 overflow-hidden p-1"
-                          title={s.name}
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element -- user-uploaded stamp thumbnails are data/storage URLs the optimizer can't process */}
-                          <img src={s.src} alt={s.name} className="w-full h-full object-contain" />
-                        </button>
-                        <button
-                          onClick={() => removeCustomStamp(s.id)}
-                          className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white rounded-full text-[11px] font-bold opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="Remove"
-                        >×</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-          <div className="w-8 h-px bg-slate-800 my-1" />
-          <ToolBtn value="eraser" icon={Eraser} label="Eraser (E)" />
-          <button onClick={deleteSelected} className="w-10 h-10 rounded-lg flex items-center justify-center text-slate-300 hover:text-red-400 hover:bg-slate-700" title="Delete selected"><Trash2 className="w-5 h-5" /></button>
-          <div className="w-8 h-px bg-slate-800 my-1" />
-          <button onClick={() => void undo()} className="w-10 h-10 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-700" title="Undo (Ctrl+Z)"><Undo2 className="w-5 h-5" /></button>
-          <button onClick={() => void redo()} className="w-10 h-10 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-slate-700" title="Redo (Ctrl+Y)"><Redo2 className="w-5 h-5" /></button>
-        </div>
-
-        {/* PROPERTY BAR + CANVAS */}
-        <div className="flex-1 flex flex-col">
-          <div className="h-10 bg-slate-800/95 border-b border-slate-800 flex items-center px-3 gap-3 shrink-0">
-            <div className="flex items-center gap-1.5">
-              {(Object.keys(COLOR_HEX) as ColorKey[]).map((c) => (
-                <button key={c} onClick={() => setColor(c)} className={`w-5 h-5 rounded-full border-2 transition-transform ${color === c ? "border-white scale-110" : "border-transparent hover:scale-105"}`} style={{ backgroundColor: COLOR_HEX[c] }} title={c} />
-              ))}
-            </div>
-            <div className="w-px h-5 bg-slate-700" />
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Width</span>
-              <input type="range" min={1} max={12} value={strokeWidth} onChange={(e) => setStrokeWidth(Number(e.target.value))} className="w-24 h-1 bg-slate-700 rounded-lg accent-orange-500 cursor-pointer" />
-              <span className="text-[11px] font-mono text-slate-300 w-5 text-right">{strokeWidth}</span>
-            </div>
-
-          </div>
-
-          <div ref={canvasScrollRef} className={`flex-1 overflow-auto relative bg-slate-200 p-6 ${panZoom.cursorClass}`}
-               onPointerDown={(e) => { panZoom.panHandlers.onPointerDown(e); if (tool !== "pan") onCanvasMouseDown(e); }}
-               onPointerMove={(e) => { panZoom.panHandlers.onPointerMove(e); if (tool !== "pan") onCanvasMouseMove(e); }}
-               onPointerUp={(e) => panZoom.panHandlers.onPointerUp(e)}
-               onPointerCancel={(e) => panZoom.panHandlers.onPointerCancel(e)}
-               onPointerLeave={(e) => panZoom.panHandlers.onPointerLeave(e)}
-               style={{
-                 // When a pan/draw tool is active, claim touch gestures so the
-                 // browser doesn't steal them for scroll/zoom — this is what
-                 // makes finger-drawing and one-finger pan work on a tablet.
-                 // In select/none/pen mode we leave native scroll intact (Fabric
-                 // handles pen drawing on its own canvas).
-                 touchAction:
-                   tool === "pan" || tool === "line" || tool === "arrow" ||
-                   tool === "rect" || tool === "cloud" || tool === "eraser"
-                     ? "none"
-                     : "auto",
-               }}>
-            {/* Archived-offline: this revision's binary was shed for space —
-                show the provide-the-zip prompt + in-memory viewer instead of a
-                dead stream. */}
-            {archivedInfo && (
-              <div className="absolute inset-0 overflow-y-auto bg-slate-100 p-4 sm:p-6 z-10">
-                <div className="max-w-4xl mx-auto">
-                  <BackupViewer
-                    target={{
-                      storageKey: url,
-                      fileName: archivedInfo.fileName,
-                      archiveId: archivedInfo.archiveId,
-                      root: archivedInfo.root,
-                      kind: "space",
-                    }}
-                  />
-                </div>
-              </div>
-            )}
-            {/* Loading / Error overlay */}
-            {!archivedInfo && fetchError && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-red-700 bg-slate-100 p-8">
-                <ShieldAlert className="w-12 h-12 text-red-400 mb-3" />
-                <div className="text-sm font-bold mb-1">Failed to load PDF</div>
-                <div className="text-xs font-mono text-slate-500 max-w-md text-center">{fetchError}</div>
-              </div>
-            )}
-            {!archivedInfo && !fetchError && !resolvedUrl && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
-                <Loader2 className="w-10 h-10 animate-spin text-[var(--color-text-muted)] mb-3" />
-                <div className="text-xs font-mono">Loading PDF…</div>
-              </div>
-            )}
-
-            <div className="min-w-full min-h-full flex items-center justify-center">
-              <div className="relative shadow-2xl border border-slate-300 bg-white">
-                <div className="relative z-0" style={{ pointerEvents: "none", userSelect: "none" }}>
-                  {resolvedUrl && (
-                    <Document options={PDF_DOC_OPTIONS}
-                      file={resolvedUrl}
-                      onLoadSuccess={({ numPages }) => setNumPages(numPages)}
-                      onLoadError={(err) => setFetchError(err.message || "PDF parse failed")}
-                      loading={null}
-                      className="block"
-                    >
-                      <Page
-                        pageNumber={currentPage}
-                        scale={scale}
-                        onRenderSuccess={onPageLoaded}
-                        renderAnnotationLayer={false}
-                        renderTextLayer={false}
-                        className="block"
-                      />
-                    </Document>
-                  )}
-                </div>
-                <div className="absolute top-0 left-0 z-[50]" style={{ width: "100%", height: "100%" }}>
-                  <canvas ref={canvasRef} />
-                </div>
-                {/* Snap point indicator — green dot, pointer-events-none */}
-                {snapDot && (
-                  <div
-                    className="absolute z-[60] pointer-events-none rounded-full bg-emerald-400 ring-2 ring-emerald-300/60"
-                    style={{ left: snapDot.x - 5, top: snapDot.y - 5, width: 10, height: 10 }}
-                  />
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ─── Uncontrolled-copy confirmation modal ────────────────────── */}
+      {/* ─── Uncontrolled-copy question ─────────────────────────────── */}
       {pending && (
-        <div className="fixed inset-0 z-[110] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] flex items-start sm:items-center justify-center overflow-y-auto p-6">
-          <div className="w-full max-w-md rounded-2xl bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl border border-[var(--color-border)] overflow-hidden">
-            <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
-              <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-black">This copy will be stamped uncontrolled</div>
-                <div className="text-xs text-[var(--color-text-muted)]">You don&apos;t have this document checked out.</div>
-              </div>
-              <button onClick={() => { setPending(null); setActionError(null); }} disabled={actionBusy || markupBusy} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
-            </div>
-            <div className="px-6 py-4 text-sm text-[var(--color-text-muted)] space-y-3">
-              <p>Each page gets an &quot;UNCONTROLLED - FOR REVIEW ONLY&quot; mark and a footer with your email and the time. It&apos;s logged.</p>
-              {actionError && <p role="alert" className="text-xs text-rose-700 dark:text-rose-300 border-l-2 border-rose-500 pl-2">{actionError}</p>}
-            </div>
-            <div className="px-6 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-              <button onClick={() => { setPending(null); setActionError(null); }} disabled={actionBusy || markupBusy} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Cancel</button>
-              <button
-                onClick={() => {
-                  if (pending.type === "markup") void downloadWithMarkup();
-                  else void runDocAction(pending.type);
-                }}
-                disabled={actionBusy || markupBusy}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-60"
-              >
-                {(actionBusy || markupBusy) && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                {pending.type === "download" ? "Download stamped copy" :
-                 pending.type === "print" ? "Print stamped copy" :
-                 "Download stamped markup"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <Modal onClose={closePending} dismissable={!pendingBusy} size="sm" zIndex={400}>
+          <ModalHeader
+            icon={ShieldAlert}
+            iconClassName="bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+            title="This copy will be stamped uncontrolled"
+            subtitle="You don't have this document checked out."
+            onClose={pendingBusy ? undefined : closePending}
+          />
+          <ModalBody className="space-y-3">
+            <p className="text-[14px] text-[var(--color-text-muted)]">Each page gets an &quot;UNCONTROLLED - FOR REVIEW ONLY&quot; mark and a footer with your email and the time. It&apos;s logged.</p>
+            {(pending.type === "markup" ? markupError : actionError) && (
+              <p role="alert" className="text-[13px] font-semibold text-rose-700 dark:text-rose-300">{pending.type === "markup" ? markupError : actionError}</p>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="secondary" onClick={closePending} disabled={pendingBusy}>Cancel</Button>
+            <Button
+              loading={pendingBusy}
+              onClick={() => {
+                if (pending.type === "markup") void downloadWithMarkup();
+                else void runDocAction(pending.type);
+              }}
+            >
+              {pending.type === "download" ? "Download stamped copy" :
+               pending.type === "print" ? "Print stamped copy" :
+               "Download stamped markup"}
+            </Button>
+          </ModalFooter>
+        </Modal>
       )}
     </div>
   );

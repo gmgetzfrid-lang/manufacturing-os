@@ -64,6 +64,7 @@ import { isDocumentCheckedOut } from "@/lib/documentGuards";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import WatchButton from "@/components/ui/WatchButton";
+import { useFileDrag } from "@/hooks/useFileDrag";
 import CommandPalette from "@/components/documents/CommandPalette";
 import DocThumb from "@/components/documents/DocThumb";
 import StatusFooter from "@/components/documents/StatusFooter";
@@ -498,20 +499,12 @@ export default function LibraryExplorerPage() {
     else { setSortKey(key); setSortDir("asc"); }
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    // The upload overlay is for FILES from the OS. Internal drags (a folder
-    // tile, a document row) carry their own MIME keys and their own drop
-    // targets — flashing "Drop files to upload" over them reads as the app
-    // asking you to re-upload the thing you're organizing.
-    if (e.dataTransfer.types.includes("Files")) setIsDragOver(true);
-  };
-  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
-    if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragOver(false);
-  };
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(false);
+  // The drop area answers back like every other drop box (useFileDrag): it
+  // lights up and says "Let go to add …". Only FILES from the OS count:
+  // internal drags (a folder tile, a document row) carry their own MIME keys
+  // and their own drop targets, so they never light it up. The whole drop
+  // comes here, so a dropped folder keeps its subfolders.
+  const handleDropEvent = (e: React.DragEvent) => {
     // Entries must be captured SYNCHRONOUSLY — the DataTransferItemList is
     // dead once the handler returns. Dropped FOLDERS are traversed and their
     // subtree recreated; plain files take the classic path.
@@ -543,6 +536,9 @@ export default function LibraryExplorerPage() {
     }
     handleUploadFiles(e.dataTransfer.files);
   };
+  // onFiles is not used: with the third argument the hook hands over the
+  // whole drop (files and folders) to handleDropEvent.
+  const fileDrag = useFileDrag(() => undefined, false, handleDropEvent);
 
   /** Stage a batch that carries subfolder structure (folder drop or the
    *  Upload-folder picker). The tree is only CREATED at upload-confirm time —
@@ -1212,7 +1208,6 @@ export default function LibraryExplorerPage() {
   const [bulkMoreOpen, setBulkMoreOpen] = useState(false);
 
   // UX enhancements
-  const [isDragOver, setIsDragOver] = useState(false);
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
   // Explorer selection companions: the shift-range anchor and the keyboard
   // focus. Together with selectedDocIds they form the ExplorerSelection the
@@ -4084,20 +4079,20 @@ export default function LibraryExplorerPage() {
 
             {/* Files dropped anywhere on the folders, map or list upload here. */}
             <div
-              className="relative flex flex-col gap-4"
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
+              {...fileDrag.bind}
+              className={`relative flex flex-col gap-4 rounded-2xl transition-shadow ${fileDrag.ring}`}
             >
-              {isDragOver && (
-                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center rounded-2xl bg-[var(--color-surface)]/95 ring-4 ring-[var(--color-accent-ring)] pointer-events-none">
-                  <div className="w-20 h-20 rounded-2xl bg-[var(--color-surface-2)] border-2 border-[var(--color-border-strong)] border-dashed flex items-center justify-center mb-4">
-                    <UploadCloud className="w-9 h-9 text-[var(--color-text-muted)]" />
+              {fileDrag.over && (
+                // Lit up while files are over it, saying what letting go does.
+                // The line rides in view however long the list below is.
+                <div className="absolute inset-0 z-[35] rounded-2xl bg-[color-mix(in_srgb,var(--color-surface)_82%,transparent)] pointer-events-none" aria-live="polite">
+                  <div className="sticky top-[38vh] flex flex-col items-center text-center px-4 py-8">
+                    <UploadCloud className="w-8 h-8 text-[var(--color-text-muted)] mb-2" />
+                    <p className="text-[15px] font-bold text-[var(--color-text)]">
+                      {fileDrag.say} to {currentFolder ? `"${currentFolder.name}"` : "this library"}
+                    </p>
+                    <p className="text-[13px] text-[var(--color-text-muted)] mt-1">A dropped folder keeps its subfolders.</p>
                   </div>
-                  <p className="text-[15px] font-bold text-[var(--color-text)]">Drop files or folders to upload</p>
-                  <p className="text-[13px] text-[var(--color-text-muted)] mt-1 text-center px-4">
-                    Release to add to {currentFolder ? `"${currentFolder.name}"` : "this library"}. A dropped folder keeps its subfolder structure.
-                  </p>
                 </div>
               )}
 

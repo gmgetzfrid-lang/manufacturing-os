@@ -11,9 +11,12 @@ import {
   ZoomIn,
   ZoomOut,
   Move,
+  MousePointer2,
   Trash2,
   ChevronLeft,
   ChevronRight,
+  RotateCcw,
+  AlertTriangle,
   Minus // For Line Tool
 } from 'lucide-react';
 import { Document, Page, pdfjs } from 'react-pdf';
@@ -24,7 +27,10 @@ import { PDFDocument } from 'pdf-lib';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
-import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
+import { appConfirm } from "@/components/providers/DialogProvider";
+import { useDraft } from "@/hooks/useDraft";
+import { useEscapeClose } from "@/hooks/useEscapeClose";
+import { vDim, vPanel, vKicker, vIcon, vTool, vGroup, vPrimary, vClose, vNote } from "@/components/viewers/viewerChrome";
 
 // Configure PDF Worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
@@ -88,6 +94,11 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<fabric.Canvas | null>(null);
   
+  // A save that couldn't happen, said here in the editor (not in a popup).
+  const [saveMsg, setSaveMsg] = useState<{ tone: "info" | "bad"; text: string } | null>(null);
+  const pageReadyRef = useRef(false);
+  const [restoredSeen, setRestoredSeen] = useState(false);
+
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
@@ -156,6 +167,54 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
     }
   };
 
+  // --- AUTOSAVE ---
+  // Every mark (and any note typed on the sheet) is kept on this device as
+  // you go, so a reload or a closed tab doesn't lose it. It comes back the
+  // next time this file is opened for redlines, and is cleared once saved.
+  const draftKey = fileUrl ? `redline:${fileUrl.split('?')[0]}` : null;
+  const hasObjects = (v: Record<number, RedlineCanvasJson>) =>
+    Object.values(v).some((st) => Array.isArray(st?.objects) && st.objects.length > 0);
+  const draft = useDraft<Record<number, RedlineCanvasJson>>(
+    draftKey,
+    pageStates,
+    (v) => {
+      pageStatesRef.current = v;
+      setPageStates(v);
+      // The sheet may already be on screen: draw the restored marks on it now.
+      const canvas = fabricRef.current;
+      const st = v[currentPage];
+      if (canvas && pageReadyRef.current && st) {
+        pageReadyRef.current = false;
+        canvas.loadFromJSON(denormalizeState(st, scale))
+          .then(() => canvas.requestRenderAll())
+          .catch(() => undefined)
+          .finally(() => { pageReadyRef.current = true; });
+      }
+    },
+    (v) => !hasObjects(v),
+  );
+  // Keep the saved copy current: after each mark, and while typing on the sheet.
+  const syncRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    syncRef.current = () => {
+      if (!pageReadyRef.current) return;
+      saveCurrentPageState();
+      setSaveMsg((m) => (m?.tone === 'info' ? null : m)); // "no marks yet" is answered
+    };
+  });
+  useEffect(() => {
+    const canvas = fabricRef.current;
+    if (!canvas) return;
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const h = () => {
+      if (!pageReadyRef.current) return; // a page loading or turning, not a mark
+      clearTimeout(t); t = setTimeout(() => syncRef.current(), 250);
+    };
+    const evs = ['object:added', 'object:modified', 'object:removed', 'path:created', 'text:changed', 'text:editing:exited'] as const;
+    evs.forEach((ev) => canvas.on(ev, h));
+    return () => { clearTimeout(t); evs.forEach((ev) => canvas.off(ev, h)); };
+  }, []);
+
   // --- TOOL STATE MANAGEMENT ---
   useEffect(() => {
     const canvas = fabricRef.current;
@@ -216,6 +275,9 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
     
     // 2. Force CSS Styles on the wrapper element to match (Fabric handles the canvas tag)
     canvas.calcOffset();
+    // Until this page's marks are back on the canvas, the canvas and the saved
+    // states disagree: the autosave waits (it would save a half-loaded page).
+    pageReadyRef.current = false;
     
     // Load JSON state for this page if exists. Read the synchronous ref first
     // — React state may not have committed the save that immediately preceded
@@ -229,22 +291,29 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
       canvas.loadFromJSON(stateToLoad).then(() => {
         console.log("State loaded successfully. Rendering...");
         canvas.requestRenderAll();
+        pageReadyRef.current = true;
       }).catch(err => {
         console.error("Error loading fabric state:", err);
+        pageReadyRef.current = true;
       });
     } else {
         console.log(`No saved state for page ${currentPage}.`);
+        pageReadyRef.current = true;
     }
   };
 
   const handlePageChange = (newPage: number) => {
+    if (newPage < 1 || (numPages && newPage > numPages) || newPage === currentPage) return;
     saveCurrentPageState(); // Save current page before switch
+    pageReadyRef.current = false; // the canvas holds the old page until the new one renders
     setCurrentPage(newPage);
   };
 
   // --- ZOOM HANDLING ---
   const handleZoom = (newScale: number) => {
+    if (newScale === scale) return;
     saveCurrentPageState(); // Save current page before zoom
+    pageReadyRef.current = false; // the canvas holds the old scale until the page re-renders
     setScale(newScale);
   };
 
@@ -321,6 +390,7 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
         activeLine.set('selectable', true); // Make editable after drawing
       }
       setActiveLine(null);
+      syncRef.current(); // the line's end point is set without an event
     }
   };
 
@@ -342,8 +412,10 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
         currentNormalizedState = normalizeState(fabricRef.current.toJSON(), scale);
     }
 
-    if (Object.keys(pageStatesRef.current).length === 0 && !currentNormalizedState) {
-      await appAlert({ message: "There are no marks to save yet." });
+    setSaveMsg(null);
+    const anyMarks = hasObjects(pageStatesRef.current) || (fabricRef.current?.getObjects().length ?? 0) > 0;
+    if (!anyMarks) {
+      setSaveMsg({ tone: "info", text: "There are no marks to save yet. Draw on the sheet first." });
       return;
     }
 
@@ -396,11 +468,22 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
       const pdfBytes = await pdfDoc.save();
       const blob = new Blob([pdfBytes as BlobPart], { type: 'application/pdf' });
       await onSave(blob);
+      draft.clear(); // saved: the copy kept on this device is done with
 
     } catch (e) {
       console.error("Save Failed:", e);
-      await appAlert({ message: `The redlines weren't saved: ${e instanceof Error ? e.message : String(e)}. Your marks are still here.`, tone: "danger" });
+      setSaveMsg({ tone: "bad", text: `The redlines weren't saved: ${e instanceof Error ? e.message : String(e)}. Your marks are still here.` });
     }
+  };
+
+  // Start over: wipe the marks on every page (and the copy kept on this device).
+  const startOver = async () => {
+    if (!(await appConfirm({ title: "Start over?", message: "All your marks on this file are removed.", tone: "danger", confirmLabel: "Start over" }))) return;
+    fabricRef.current?.clear();
+    pageStatesRef.current = {};
+    setPageStates({});
+    draft.clear();
+    setSaveMsg(null);
   };
 
   // Closing never drops marks without asking.
@@ -412,128 +495,194 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
     });
   const requestClose = async () => {
     if (isSaving) return;
-    if (hasMarks() && !(await appConfirm({ title: "Close without saving?", message: "Your marks on this file will be lost.", tone: "danger", confirmLabel: "Close" }))) return;
+    if (hasMarks()) {
+      if (!(await appConfirm({ title: "Close without saving?", message: "Your marks on this file will be lost.", tone: "danger", confirmLabel: "Close" }))) return;
+      draft.clear();
+    }
     onClose();
   };
-  const closeRef = useRef(requestClose);
-  useEffect(() => { closeRef.current = requestClose; });
+  // Escape closes the editor (asking first if there are marks). It shares the
+  // dialog stack: with that question open, Escape closes only the question.
+  useEscapeClose(() => {
+    const active = document.activeElement;
+    // Typing a note on the sheet: Escape ends the typing, not the editor.
+    if (active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement) { active.blur(); return; }
+    void requestClose();
+  });
+  // The arrow keys turn the page (left goes back a page).
+  const pageKeyRef = useRef<(d: number) => void>(() => {});
+  useEffect(() => { pageKeyRef.current = (d) => handlePageChange(currentPage + d); });
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") void closeRef.current(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]:not([data-redline-editor])')) return;
+      if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); pageKeyRef.current(-1); }
+      else if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); pageKeyRef.current(1); }
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // --- HELPERS ---
+  // A friendly name for the file: its name from the link, minus the upload stamp.
+  const fileName = (() => {
+    try {
+      const last = decodeURIComponent(fileUrl.split('?')[0].split('/').pop() || '');
+      return last.replace(/^\d{10,}_/, '') || 'Drawing';
+    } catch { return 'Drawing'; }
+  })();
+  const markCount = Object.entries(pageStates).reduce((n, [, st]) => n + (st?.objects?.length ?? 0), 0);
+
+  const toolBtn = (value: Tool, Icon: typeof Pen, label: string) => (
+    <button type="button" onClick={() => setTool(value)} className={vTool(tool === value, 'w-9 h-9')} title={label} aria-label={label} aria-pressed={tool === value}>
+      <Icon className="w-[18px] h-[18px]" />
+    </button>
+  );
+
   return (
     <div
       role="dialog"
       aria-modal="true"
       aria-label="Mark up the drawing"
-      className="fixed inset-0 z-[200] bg-slate-200 flex flex-col"
+      data-redline-editor
+      className="fixed inset-0 z-[200]"
       onMouseUp={handleMouseUp} // Global mouse up for dragging safety
       onMouseLeave={handleMouseUp}
     >
-      {/* TOOLBAR */}
-      <div className="h-16 bg-slate-900 flex items-center justify-between px-4 shrink-0 shadow-xl z-50">
-        <div className="flex items-center space-x-4">
-          <span className="text-slate-400 text-xs font-bold uppercase tracking-widest hidden md:block">Redline</span>
-          <div className="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
-             <button onClick={() => setTool('pan')} className={`p-2 rounded ${tool === 'pan' ? 'bg-white text-slate-900' : 'text-slate-400 hover:text-white'}`} title="Move the sheet" aria-label="Move the sheet" aria-pressed={tool === 'pan'}><Move className="w-5 h-5"/></button>
-             <div className="w-px h-6 bg-slate-700 mx-1 self-center"/>
-             <button onClick={() => setTool('pen')} className={`p-2 rounded ${tool === 'pen' ? 'bg-white text-slate-900' : 'text-slate-400 hover:text-white'}`} title="Pen" aria-label="Pen" aria-pressed={tool === 'pen'}><Pen className="w-5 h-5"/></button>
-             <button onClick={() => setTool('line')} className={`p-2 rounded ${tool === 'line' ? 'bg-white text-slate-900' : 'text-slate-400 hover:text-white'}`} title="Straight line" aria-label="Straight line" aria-pressed={tool === 'line'}><Minus className="w-5 h-5"/></button>
-             <button onClick={() => setTool('highlight')} className={`p-2 rounded ${tool === 'highlight' ? 'bg-white text-slate-900' : 'text-slate-400 hover:text-white'}`} title="Highlighter" aria-label="Highlighter" aria-pressed={tool === 'highlight'}><Highlighter className="w-5 h-5"/></button>
-             <button onClick={addText} className={`p-2 rounded ${tool === 'text' ? 'bg-white text-slate-900' : 'text-slate-400 hover:text-white'}`} title="Add text" aria-label="Add text"><Type className="w-5 h-5"/></button>
-             <button onClick={deleteSelected} className="p-2 text-slate-400 hover:text-red-500" title="Delete what's selected" aria-label="Delete what's selected"><Trash2 className="w-5 h-5"/></button>
+      {/* The page behind stays in view at the edges, dimmed. */}
+      <div className={vDim} aria-hidden="true" />
+
+      <div className={vPanel}>
+        {/* TOOL BAR: charcoal. Tools are quiet; the chosen one is a white pill.
+            One orange action (Save), and the X. */}
+        <header className="shrink-0 z-50 border-b border-[var(--color-border)] px-3 sm:px-5 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <div className="min-w-0 flex-1 basis-[calc(100%-200px)] xl:basis-auto xl:max-w-[260px]">
+            <div className={vKicker}>Redline{markCount > 0 ? ` · ${markCount} mark${markCount === 1 ? '' : 's'}` : ''}</div>
+            <div className="truncate text-[15px] font-bold text-[var(--color-text)]" title={fileName}>{fileName}</div>
           </div>
-          
-          <div className="flex items-center space-x-3 bg-slate-800 rounded-lg p-1.5 border border-slate-700">
-             <div className="flex space-x-1">
-              {(['red', 'blue', 'black', 'yellow', 'green'] as Color[]).map(c => (
-                <button 
-                  key={c}
-                  onClick={() => setColor(c)}
-                  aria-label={`${c} pen`}
-                  aria-pressed={color === c}
-                  className={`w-5 h-5 rounded-full border-2 ${color === c ? 'border-white scale-110' : 'border-transparent hover:scale-105'}`}
-                  style={{ backgroundColor: getColorHex(c) }}
-                />
-              ))}
-             </div>
-             <div className="w-px h-6 bg-slate-700 mx-1"/>
-             <input 
-               type="range" 
-               min="1" 
-               max="10" 
-               step="1" 
-               value={strokeWidth} 
-               onChange={(e) => setStrokeWidth(Number(e.target.value))}
-               className="w-16 h-1 bg-slate-600 rounded-lg appearance-none cursor-pointer"
-               title={`Line width: ${strokeWidth}px`}
-               aria-label="Line width"
-             />
+
+          <div className="xl:order-last flex items-center gap-2 shrink-0">
+            <button type="button" onClick={handleSave} disabled={isSaving} className={vPrimary}>
+              {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} {isSaving ? 'Saving…' : 'Save'}
+            </button>
+            <button type="button" onClick={() => void requestClose()} disabled={isSaving} aria-label="Close" title="Close (Esc)" className={vClose}><X className="w-5 h-5" /></button>
           </div>
-        </div>
 
-        <div className="flex items-center space-x-4">
-           {/* ZOOM */}
-           <div className="flex items-center bg-slate-800 rounded px-2 py-1 text-xs font-mono text-slate-300">
-              <button onClick={() => handleZoom(Math.max(0.5, scale - 0.25))} aria-label="Zoom out" className="p-1 hover:text-white"><ZoomOut className="w-4 h-4"/></button>
-              <span className="mx-2">{(scale * 100).toFixed(0)}%</span>
-              <button onClick={() => handleZoom(Math.min(3, scale + 0.25))} aria-label="Zoom in" className="p-1 hover:text-white"><ZoomIn className="w-4 h-4"/></button>
-           </div>
+          <div className="w-full xl:w-auto xl:flex-1 flex flex-wrap items-center gap-2 min-w-0">
+            {/* Tools */}
+            <div className={`${vGroup} px-0.5 gap-0.5`} role="toolbar" aria-label="Markup tools">
+              {toolBtn('select', MousePointer2, 'Select marks')}
+              {toolBtn('pan', Move, 'Move the sheet')}
+              <div className="w-px h-5 bg-[var(--color-ink-line)] mx-0.5" aria-hidden="true" />
+              {toolBtn('pen', Pen, 'Pen')}
+              {toolBtn('line', Minus, 'Straight line')}
+              {toolBtn('highlight', Highlighter, 'Highlighter')}
+              <button type="button" onClick={addText} className={vTool(false, 'w-9 h-9')} title="Add text" aria-label="Add text"><Type className="w-[18px] h-[18px]" /></button>
+              <button type="button" onClick={deleteSelected} className="w-9 h-9 shrink-0 rounded-[10px] grid place-items-center text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-[var(--color-ink-2)] transition-colors" title="Delete what's selected" aria-label="Delete what's selected"><Trash2 className="w-[18px] h-[18px]" /></button>
+            </div>
 
-           {/* PAGES */}
-           <div className="flex items-center bg-slate-800 rounded px-2 py-1 text-xs font-mono text-slate-300">
-              <button onClick={() => handlePageChange(Math.max(1, currentPage - 1))} disabled={currentPage <= 1} aria-label="Previous page" className="p-1 hover:text-white disabled:opacity-30"><ChevronLeft className="w-4 h-4"/></button>
-              <span className="mx-2">{currentPage} / {numPages || '-'}</span>
-              <button onClick={() => handlePageChange(Math.min(numPages, currentPage + 1))} disabled={currentPage >= numPages} aria-label="Next page" className="p-1 hover:text-white disabled:opacity-30"><ChevronRight className="w-4 h-4"/></button>
-           </div>
+            {/* Pen color (the markup colors on the sheet) and line width */}
+            <div className={`${vGroup} px-2 gap-2`}>
+              <div className="flex gap-1.5" role="radiogroup" aria-label="Pen color">
+                {(['red', 'blue', 'black', 'yellow', 'green'] as Color[]).map(c => (
+                  <button
+                    type="button"
+                    key={c}
+                    onClick={() => setColor(c)}
+                    role="radio"
+                    aria-label={`${c} pen`}
+                    aria-checked={color === c}
+                    className={`w-5 h-5 rounded-full border-2 ring-1 ring-[var(--color-ink-line)] transition-transform ${color === c ? 'border-[var(--color-ink-fg)] scale-110' : 'border-transparent hover:scale-105'}`}
+                    style={{ backgroundColor: getColorHex(c) }}
+                  />
+                ))}
+              </div>
+              <div className="w-px h-5 bg-[var(--color-ink-line)]" aria-hidden="true" />
+              <input
+                type="range"
+                min="1"
+                max="10"
+                step="1"
+                value={strokeWidth}
+                onChange={(e) => setStrokeWidth(Number(e.target.value))}
+                className="w-16 h-1 rounded-lg cursor-pointer accent-[var(--color-ink-fg)]"
+                title={`Line width: ${strokeWidth}px`}
+                aria-label="Line width"
+              />
+            </div>
 
-           <button onClick={handleSave} disabled={isSaving} className="flex items-center px-4 py-2 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] font-bold rounded-lg transition-colors disabled:opacity-50">
-             {isSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Save className="w-4 h-4 mr-2"/>} {isSaving ? 'Saving…' : 'Save'}
-           </button>
-           
-           <button onClick={() => void requestClose()} aria-label="Close" className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-full"><X className="w-6 h-6"/></button>
-        </div>
-      </div>
+            <div className="flex-1 max-xl:hidden" />
 
-      {/* WORKSPACE AREA */}
-      <div 
-        className={`flex-1 overflow-hidden bg-slate-200 relative p-8 ${tool === 'pan' ? 'cursor-grab active:cursor-grabbing' : ''}`}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-      >
-        {/* CENTERED CONTENT WRAPPER WITH TRANSFORM */}
-        <div 
-          className="min-w-full min-h-full flex items-center justify-center transition-transform duration-75 ease-out will-change-transform"
-          style={{ transform: `translate(${panOffset.x}px, ${panOffset.y}px)` }}
+            {/* Zoom */}
+            <div className={vGroup}>
+              <button type="button" onClick={() => handleZoom(Math.max(0.5, scale - 0.25))} aria-label="Zoom out" title="Zoom out" className={vIcon}><ZoomOut className="w-4 h-4"/></button>
+              <span className="px-0.5 min-w-[2.75rem] text-center">{(scale * 100).toFixed(0)}%</span>
+              <button type="button" onClick={() => handleZoom(Math.min(3, scale + 0.25))} aria-label="Zoom in" title="Zoom in" className={vIcon}><ZoomIn className="w-4 h-4"/></button>
+            </div>
+
+            {/* Pages: left goes back a page (the arrow keys too) */}
+            <div className={vGroup}>
+              <button type="button" onClick={() => handlePageChange(currentPage - 1)} disabled={currentPage <= 1} aria-label="Previous page" title="Previous page (Left arrow)" className={vIcon}><ChevronLeft className="w-4 h-4"/></button>
+              <span className="px-1 min-w-[3.25rem] text-center" aria-live="polite">{currentPage} / {numPages || '-'}</span>
+              <button type="button" onClick={() => handlePageChange(currentPage + 1)} disabled={!numPages || currentPage >= numPages} aria-label="Next page" title="Next page (Right arrow)" className={vIcon}><ChevronRight className="w-4 h-4"/></button>
+            </div>
+          </div>
+        </header>
+
+        {/* What happened, said here: a save that couldn't go, or marks brought back. */}
+        {saveMsg ? (
+          <p role="alert" className={`${vNote} ${saveMsg.tone === 'bad' ? 'text-rose-300' : 'text-[var(--color-text)]'}`}>
+            {saveMsg.tone === 'bad' && <AlertTriangle className="w-3.5 h-3.5 shrink-0" />}
+            <span className="min-w-0">{saveMsg.text}</span>
+            <button type="button" onClick={() => setSaveMsg(null)} aria-label="Dismiss" className="ml-auto shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-3.5 h-3.5" /></button>
+          </p>
+        ) : draft.restored && !restoredSeen && markCount > 0 ? (
+          <p className={`${vNote} text-[var(--color-text)]`}>
+            <RotateCcw className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
+            <span className="min-w-0">Your marks from last time are back. They were kept on this device.</span>
+            <button type="button" onClick={() => void startOver()} className="ml-auto shrink-0 h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-[12px] font-bold">Start over</button>
+            <button type="button" onClick={() => setRestoredSeen(true)} aria-label="Dismiss" className="shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-3.5 h-3.5" /></button>
+          </p>
+        ) : null}
+
+        {/* WORKSPACE AREA */}
+        <div
+          className={`flex-1 min-h-0 overflow-hidden bg-[var(--color-surface)] relative p-4 sm:p-8 ${tool === 'pan' ? 'cursor-grab active:cursor-grabbing' : ''}`}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
         >
-          <div className="relative shadow-2xl border border-slate-300 bg-white">
-             {/* 1. PDF LAYER (Background) */}
-             {/* We use !important styles to ensure nothing in react-pdf captures events */}
-             <div className="relative z-0" style={{ pointerEvents: 'none', userSelect: 'none' }}>
-               <Document options={PDF_DOC_OPTIONS} 
-                 file={fileUrl} 
-                 onLoadSuccess={({ numPages }) => setNumPages(numPages)} 
-                 className="block"
-               >
-                 <Page 
-                    pageNumber={currentPage} 
-                    scale={scale} 
-                    onRenderSuccess={onPageLoadSuccess}
-                    renderAnnotationLayer={false} 
-                    renderTextLayer={false} 
-                    className="block"
-                 />
-               </Document>
-             </div>
-             
-             {/* 2. FABRIC LAYER (Foreground) */}
-             {/* Force high z-index to sit ON TOP of PDF canvas */}
-             <div className="absolute top-0 left-0 z-[50]" style={{ width: '100%', height: '100%' }}>
-                <canvas ref={canvasRef} />
-             </div>
+          {/* CENTERED CONTENT WRAPPER WITH TRANSFORM */}
+          <div
+            className="min-w-full min-h-full flex items-center justify-center transition-transform duration-75 ease-out will-change-transform"
+            style={{ transform: `translate(${panOffset.x}px, ${panOffset.y}px)` }}
+          >
+            <div className="relative shadow-2xl shadow-black/40 bg-white">
+               {/* 1. PDF LAYER (Background) */}
+               {/* We use !important styles to ensure nothing in react-pdf captures events */}
+               <div className="relative z-0" style={{ pointerEvents: 'none', userSelect: 'none' }}>
+                 <Document options={PDF_DOC_OPTIONS}
+                   file={fileUrl}
+                   onLoadSuccess={({ numPages }) => setNumPages(numPages)}
+                   loading={<div className="w-[min(80vw,720px)] h-[60vh] grid place-items-center bg-[var(--color-surface)] text-[var(--color-text-muted)] text-[13px]"><span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Opening the sheet…</span></div>}
+                   error={<div role="alert" className="w-[min(80vw,720px)] h-[40vh] grid place-items-center bg-[var(--color-surface)] text-rose-300 text-[13px] font-semibold px-6 text-center">Couldn&apos;t open this file for redlines. Close and try again.</div>}
+                   className="block"
+                 >
+                   <Page
+                      pageNumber={currentPage}
+                      scale={scale}
+                      onRenderSuccess={onPageLoadSuccess}
+                      renderAnnotationLayer={false}
+                      renderTextLayer={false}
+                      className="block"
+                   />
+                 </Document>
+               </div>
+
+               {/* 2. FABRIC LAYER (Foreground) */}
+               {/* Force high z-index to sit ON TOP of PDF canvas */}
+               <div className="absolute top-0 left-0 z-[50]" style={{ width: '100%', height: '100%' }}>
+                  <canvas ref={canvasRef} />
+               </div>
+            </div>
           </div>
         </div>
       </div>

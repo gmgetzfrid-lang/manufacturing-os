@@ -40,6 +40,7 @@ import { Loader2, AlertTriangle, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Han
 import { pdfjs } from "react-pdf";
 import { PDFJS_VERBOSITY } from "@/lib/pdfjsConfig";
 import { useViewerPanZoom } from "@/lib/useViewerPanZoom";
+import { vIcon, vTool, vGroup } from "@/components/viewers/viewerChrome";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 
@@ -486,59 +487,72 @@ export default function PdfRevisionDiff({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [changesOnly]);
 
+  // The arrow keys turn the page (left goes back a page).
+  useEffect(() => {
+    if (pageCount <= 1) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      if (e.key === "ArrowLeft") setCurrentPage((p) => Math.max(1, p - 1));
+      else if (e.key === "ArrowRight") setCurrentPage((p) => Math.min(pageCount, p + 1));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pageCount]);
+
   const pct = (n: number) => stats && stats.totalInkPixels > 0 ? ((n / stats.totalInkPixels) * 100).toFixed(1) : "0.0";
 
+  // A switch on the charcoal: quiet, or a white pill while on (never orange).
   const toggleBtn = (active: boolean) =>
-    `px-2 py-1 rounded text-[11px] font-bold transition-colors ${active ? "bg-white text-slate-900" : "text-slate-400 hover:text-slate-200"}`;
+    `inline-flex items-center gap-1.5 h-9 px-3 shrink-0 rounded-[10px] text-[13px] font-semibold transition-colors ${active
+      ? "bg-[var(--color-ink-fg)] text-[var(--color-ink)]"
+      : "bg-[var(--color-ink-2)] text-[var(--color-text)] hover:bg-[var(--color-ink-line)]"}`;
 
   const regLabel = regInfo
     ? `registered ${regInfo.sx !== 1 || regInfo.sy !== 1 ? `${(regInfo.sx * 100).toFixed(1)}%/${(regInfo.sy * 100).toFixed(1)}% ` : ""}${regInfo.dx >= 0 ? "+" : ""}${Math.round(regInfo.dx)},${regInfo.dy >= 0 ? "+" : ""}${Math.round(regInfo.dy)}px`
     : null;
 
+  const swatch = (rgb: [number, number, number]) => (
+    <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: `rgb(${rgb.join(",")})` }} aria-hidden="true" />
+  );
+
   return (
-    <div className="flex flex-col h-full bg-slate-900 text-slate-100 select-none">
-      {/* Header: legend + controls */}
-      <div className="min-h-12 bg-slate-800 border-b border-slate-700 flex items-center justify-between gap-3 px-4 py-1.5 shrink-0 flex-wrap">
-        <div className="flex items-center gap-x-3 gap-y-1 text-xs flex-wrap">
-          <span className="inline-flex items-center gap-1.5 text-slate-300">
-            <span className="w-2.5 h-2.5 rounded-sm" style={{ background: `rgb(${COLOR_UNCHANGED.join(",")})` }} /> Unchanged
-          </span>
-          <span className="inline-flex items-center gap-1.5 text-red-300">
-            <span className="w-2.5 h-2.5 rounded-sm bg-red-600" /> Removed · only in {baseLabel}
-          </span>
-          <span className="inline-flex items-center gap-1.5 text-emerald-300">
-            <span className="w-2.5 h-2.5 rounded-sm bg-green-700" /> Added · only in {compareLabel}
-          </span>
+    <div className="surface-charcoal flex flex-col h-full bg-[var(--color-ink)] text-[var(--color-text)] select-none">
+      {/* Header: what the colors mean, then the controls */}
+      <div className="min-h-12 border-b border-[var(--color-border)] flex items-center justify-between gap-3 px-4 py-2 shrink-0 flex-wrap">
+        <div className="flex items-center gap-x-4 gap-y-1 text-[12px] flex-wrap text-[var(--color-text)]">
+          <span className="inline-flex items-center gap-1.5">{swatch(COLOR_UNCHANGED)} Unchanged</span>
+          <span className="inline-flex items-center gap-1.5">{swatch(COLOR_REMOVED)} Removed · only in {baseLabel}</span>
+          <span className="inline-flex items-center gap-1.5">{swatch(COLOR_ADDED)} Added · only in {compareLabel}</span>
           {regLabel && (
-            <span className="inline-flex items-center gap-1 text-[11px] text-slate-300" title="Registration warped the base layer (scale + shift) to line up with the compare layer before diffing">
+            <span className="inline-flex items-center gap-1 text-[12px] text-[var(--color-text-muted)]" title="Registration warped the base layer (scale + shift) to line up with the compare layer before diffing">
               <Crosshair className="w-3 h-3" /> {regLabel}
             </span>
           )}
         </div>
 
-        <div className="flex items-center gap-2 text-xs flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
           {/* The eye: hide unchanged linework, see only the changes. */}
           <button
+            type="button"
             onClick={() => setChangesOnly((v) => !v)}
-            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border inline-flex items-center gap-1.5 transition-colors ${changesOnly
-              ? "bg-amber-500/20 border-amber-400/60 text-amber-300"
-              : "border-slate-600 text-slate-300 hover:text-white hover:border-slate-400"}`}
+            aria-pressed={changesOnly}
+            className={toggleBtn(changesOnly)}
             title={changesOnly
               ? "Showing changes only - unchanged linework is hidden. Click to show everything."
               : "Hide unchanged (grey) linework and see only what changed"}
           >
-            {changesOnly ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            {changesOnly ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             Changes only
           </button>
-          <button onClick={() => setAutoAlign((v) => !v)} className={toggleBtn(autoAlign)} title="Register the two revisions (scale + shift from ink profiles) before diffing">
-            <Crosshair className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />Auto-align
+          <button type="button" onClick={() => setAutoAlign((v) => !v)} aria-pressed={autoAlign} className={toggleBtn(autoAlign)} title="Register the two revisions (scale + shift from ink profiles) before diffing">
+            <Crosshair className="w-4 h-4" />Auto-align
           </button>
-          <label className="flex items-center gap-1 text-[11px] text-slate-400">
+          <label className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
             Precision
             <select
               value={tolerance}
               onChange={(e) => setTolerance(parseInt(e.target.value))}
-              className="bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-slate-200"
+              className="h-9 rounded-[10px] bg-[var(--color-ink-2)] border border-[var(--color-ink-line)] px-2 text-[13px] font-semibold normal-case tracking-normal text-[var(--color-text)]"
               title="How far counterpart ink may sit and still count as unchanged (±1 / ±2 / ±5 px)"
             >
               <option value={0}>Strict</option>
@@ -547,51 +561,58 @@ export default function PdfRevisionDiff({
             </select>
           </label>
           {pageCount > 1 && (
-            <div className="flex items-center gap-1 bg-slate-900 rounded px-1">
+            <div className={vGroup}>
               <button
+                type="button"
                 onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                 disabled={currentPage <= 1 || loading}
-                className="p-1 disabled:opacity-30 hover:text-white"
-                title="Previous page"
-              ><ChevronLeft className="w-3.5 h-3.5" /></button>
-              <span className="font-mono">{currentPage} / {pageCount}</span>
+                className={vIcon}
+                title="Previous page (Left arrow)"
+                aria-label="Previous page"
+              ><ChevronLeft className="w-4 h-4" /></button>
+              <span className="px-1 min-w-[3rem] text-center" aria-live="polite">{currentPage} / {pageCount}</span>
               <button
+                type="button"
                 onClick={() => setCurrentPage((p) => Math.min(pageCount, p + 1))}
                 disabled={currentPage >= pageCount || loading}
-                className="p-1 disabled:opacity-30 hover:text-white"
-                title="Next page"
-              ><ChevronRight className="w-3.5 h-3.5" /></button>
+                className={vIcon}
+                title="Next page (Right arrow)"
+                aria-label="Next page"
+              ><ChevronRight className="w-4 h-4" /></button>
             </div>
           )}
-          <div className="flex items-center gap-1 bg-slate-900 rounded px-1">
-            <button onClick={() => setZoom((z) => Math.max(0.05, z / 1.25))} className="p-1 hover:text-white" title="Zoom out"><ZoomOut className="w-3.5 h-3.5" /></button>
-            <span className="font-mono w-12 text-center" title="Ctrl + scroll to zoom">{Math.round(zoom * 100)}%</span>
-            <button onClick={() => setZoom((z) => Math.min(6, z * 1.25))} className="p-1 hover:text-white" title="Zoom in"><ZoomIn className="w-3.5 h-3.5" /></button>
-            <button onClick={() => fitToScreen()} className="p-1 hover:text-white" title="Fit the whole sheet on screen">
-              <Maximize className="w-3.5 h-3.5" />
+          <div className={vGroup}>
+            <button type="button" onClick={() => setZoom((z) => Math.max(0.05, z / 1.25))} className={vIcon} title="Zoom out" aria-label="Zoom out"><ZoomOut className="w-4 h-4" /></button>
+            <span className="w-12 text-center" title="Ctrl + scroll to zoom">{Math.round(zoom * 100)}%</span>
+            <button type="button" onClick={() => setZoom((z) => Math.min(6, z * 1.25))} className={vIcon} title="Zoom in" aria-label="Zoom in"><ZoomIn className="w-4 h-4" /></button>
+            <button type="button" onClick={() => fitToScreen()} className={vIcon} title="Fit the whole sheet on screen" aria-label="Fit the whole sheet on screen">
+              <Maximize className="w-4 h-4" />
             </button>
             <button
+              type="button"
               onClick={() => panZoom.setPanMode((v) => !v)}
-              className={`p-1 hover:text-white ${panZoom.panMode ? "text-white bg-white/10 rounded" : ""}`}
+              className={vTool(panZoom.panMode, "w-9 h-9")}
+              aria-pressed={panZoom.panMode}
+              aria-label="Pan tool"
               title={panZoom.panMode ? "Pan tool (drag to move) - click for cursor" : "Cursor - click for the pan/grab hand"}
-            >{panZoom.panMode ? <Hand className="w-3.5 h-3.5" /> : <MousePointer2 className="w-3.5 h-3.5" />}</button>
+            >{panZoom.panMode ? <Hand className="w-4 h-4" /> : <MousePointer2 className="w-4 h-4" />}</button>
           </div>
         </div>
       </div>
 
       {/* Diff canvas */}
-      <div ref={scrollRef} className={`flex-1 overflow-auto bg-slate-950 relative ${panZoom.cursorClass}`} style={{ touchAction: "pan-x pan-y" }} {...panZoom.panHandlers}>
+      <div ref={scrollRef} className={`flex-1 overflow-auto bg-[var(--color-surface)] relative ${panZoom.cursorClass}`} style={{ touchAction: "pan-x pan-y" }} {...panZoom.panHandlers}>
         {loading && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-slate-950/80">
-            <Loader2 className="w-8 h-8 animate-spin text-slate-300 mb-2" />
-            <span className="text-xs text-slate-300">Lining up the two revisions…</span>
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_80%,transparent)]">
+            <Loader2 className="w-8 h-8 animate-spin text-[var(--color-text-muted)] mb-2" />
+            <span className="text-[13px] text-[var(--color-text)]">Lining up the two revisions…</span>
           </div>
         )}
         {error && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-red-400">
-            <AlertTriangle className="w-10 h-10 mb-2 opacity-60" />
-            <span className="text-sm font-bold">Diff failed</span>
-            <span className="text-xs font-mono mt-1 max-w-md text-center text-red-300/70">{error}</span>
+          <div role="alert" className="absolute inset-0 z-10 flex flex-col items-center justify-center px-6 text-center">
+            <AlertTriangle className="w-9 h-9 mb-2 text-rose-400" />
+            <span className="text-[14px] font-bold text-[var(--color-text)]">Couldn&apos;t compare these revisions</span>
+            <span className="text-[13px] mt-1 max-w-md text-[var(--color-text-muted)]">{error}</span>
           </div>
         )}
         <div className="min-w-full min-h-full w-max flex items-center justify-center p-4">
@@ -602,19 +623,19 @@ export default function PdfRevisionDiff({
               height: canvasSize.h ? canvasSize.h * zoom : undefined,
               imageRendering: zoom >= 2 ? "pixelated" : "auto",
             }}
-            className="bg-white shadow-2xl"
+            className="bg-white shadow-2xl shadow-black/40"
           />
         </div>
       </div>
 
-      {/* Footer stats */}
+      {/* Footer: how much changed on this page */}
       {stats && !loading && !error && (
-        <div className="min-h-9 bg-slate-800 border-t border-slate-700 flex items-center flex-wrap px-4 py-1.5 text-[11px] font-mono shrink-0 gap-x-4 gap-y-0.5">
-          <span className="text-emerald-300">+ {stats.addedPixels.toLocaleString()} px added ({pct(stats.addedPixels)}%)</span>
-          <span className="text-red-300">− {stats.removedPixels.toLocaleString()} px removed ({pct(stats.removedPixels)}%)</span>
-          <span className="text-slate-400">≡ {stats.unchangedPixels.toLocaleString()} unchanged</span>
+        <div className="min-h-9 border-t border-[var(--color-border)] flex items-center flex-wrap px-4 py-1.5 text-[12px] tabular-nums shrink-0 gap-x-5 gap-y-0.5 text-[var(--color-text-muted)]">
+          <span className="inline-flex items-center gap-1.5">{swatch(COLOR_ADDED)} {stats.addedPixels.toLocaleString()} px added ({pct(stats.addedPixels)}%)</span>
+          <span className="inline-flex items-center gap-1.5">{swatch(COLOR_REMOVED)} {stats.removedPixels.toLocaleString()} px removed ({pct(stats.removedPixels)}%)</span>
+          <span className="inline-flex items-center gap-1.5">{swatch(COLOR_UNCHANGED)} {stats.unchangedPixels.toLocaleString()} unchanged</span>
           {stats.addedPixels === 0 && stats.removedPixels === 0 && (
-            <span className="text-emerald-300">No differences on this page.</span>
+            <span className="font-semibold text-emerald-300">No differences on this page.</span>
           )}
         </div>
       )}
