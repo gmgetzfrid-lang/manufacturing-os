@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
+import { emailUrl } from "@/lib/emailUrl";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -368,7 +369,7 @@ export async function POST(req: NextRequest) {
       .map((m) => ({
         org_id: orgId, to_user_id: m.uid, to_email: m.email as string,
         subject: intakeTitle,
-        body_text: `${intakeBody}\n\nOpen the project: /projects/${projectId}`,
+        body_text: `${intakeBody}\n\nOpen the project: ${emailUrl(`/projects/${projectId}?tab=intake`)}`,
         resource_type: "document", resource_id: documentId,
         event_type: "watcher_activity", status: "queued",
         metadata: { intake: true, versionId },

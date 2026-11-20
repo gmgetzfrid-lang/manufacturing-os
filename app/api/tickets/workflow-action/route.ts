@@ -11,6 +11,7 @@ import {
 } from "@/lib/ticketTransitions";
 import type { Role, TicketAttachment } from "@/types/schema";
 import { TICKET_INTENT_TTL_MS } from "@/lib/intents";
+import { emailUrl } from "@/lib/emailUrl";
 
 // POST /api/tickets/workflow-action
 //
@@ -311,6 +312,7 @@ async function fanOut(params: {
 
   const ticketLabel = `${ticket.ticketId || ""} ${ticket.title}`.trim();
   const link = `/requests/${ticketId}`;
+  const mailLink = emailUrl(link);
   const cls = classifyTransitionNotification({ actionType: action.type, actionLabel: action.label, ticketLabel });
   const actorName = actorEmail.split("@")[0];
 
@@ -386,12 +388,12 @@ async function fanOut(params: {
       to_user_id: uid,
       to_email: emailByUid.get(uid)!,
       subject: cls.emailSubject,
-      body_text: `${actorEmail} performed: ${action.label}\n\nStatus is now: ${newStatus}\n${comment ? `\nNote: ${comment}\n` : ""}\n${link}`,
+      body_text: `${actorEmail} performed: ${action.label}\n\nStatus is now: ${newStatus}\n${comment ? `\nNote: ${comment}\n` : ""}\nOpen it: ${mailLink}`,
       body_html: `
-        <p><b>${escapeHtml(actorEmail)}</b> performed <b>${escapeHtml(action.label)}</b> on <a href="${link}">${escapeHtml(ticketLabel)}</a>.</p>
+        <p><b>${escapeHtml(actorEmail)}</b> performed <b>${escapeHtml(action.label)}</b> on <a href="${mailLink}">${escapeHtml(ticketLabel)}</a>.</p>
         <p>Status: <b>${escapeHtml(newStatus)}</b></p>
         ${comment ? `<blockquote style="border-left:3px solid #cbd5e1;padding-left:12px;color:#475569;white-space:pre-wrap">${escapeHtml(comment)}</blockquote>` : ""}
-        <p><a href="${link}">Open ticket</a></p>`,
+        <p><a href="${mailLink}">Open it</a></p>`,
       resource_type: "ticket",
       resource_id: ticketId,
       event_type: cls.eventType,

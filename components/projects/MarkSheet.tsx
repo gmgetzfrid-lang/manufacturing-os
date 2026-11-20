@@ -47,7 +47,7 @@ export default function MarkSheet({ names, status, tz, times, now: clockNow, ahe
   };
 
   return (
-    <div className="fixed inset-0 z-[185] bg-black/30" onClick={onClose}>
+    <div className="fixed inset-0 z-[185] bg-black/50" onClick={onClose}>
       <div role="dialog" aria-label={`Mark ${word}`} onClick={(e) => e.stopPropagation()}
         className="absolute left-1/2 top-16 -translate-x-1/2 w-[440px] max-w-[96vw] max-h-[86dvh] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-xl text-[12px] max-sm:left-0 max-sm:right-0 max-sm:top-auto max-sm:bottom-0 max-sm:translate-x-0 max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none">
         <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2">

@@ -183,7 +183,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   const btn = "inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
   const pri = "inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12.5px] font-black whitespace-nowrap disabled:opacity-50";
 
-  if (!ms || !work) return <div className="py-16 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
+  if (!ms || !work) return <div className="py-16 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-muted)]" /></div>;
 
   const nav = (
     <div className="flex gap-1.5 flex-wrap" role="tablist" aria-label="Close-out">
@@ -431,7 +431,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
               )}
               {stats.lines.length > 0 && <LinesChart rows={stats.lines} cur="USD" />}
             </div>
-          ) : <div className="py-10 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>}
+          ) : <div className="py-10 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-muted)]" /></div>}
         </div>
       </div>
 

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
+import { useDraft } from "@/hooks/useDraft";
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { uploadTicketAttachment } from '@/lib/storage';
@@ -94,6 +95,19 @@ export default function NewTicketPage() {
   // Per-category, per-field values. Keyed as customValues[categoryId][fieldKey].
   const [customValues, setCustomValues] = useState<Record<string, Record<string, unknown>>>({});
   
+  // What you've typed is kept on this device until it's sent (not when the
+  // form was opened with values from a document).
+  const draftPriority = React.useRef(false);
+  type FormDraft = { title: string; description: string; targetDate: string; unit: string; requestType: string; priority: number; customValues: Record<string, Record<string, unknown>> };
+  const prefilled = !!(prefillTitle || prefillDescription || sourceDocId || draftKey || prefillUnit);
+  const formDraft: FormDraft = React.useMemo(() => ({ title, description, targetDate, unit, requestType, priority, customValues }), [title, description, targetDate, unit, requestType, priority, customValues]);
+  const draft = useDraft<FormDraft>(
+    !prefilled && activeOrgId ? `request:new:${activeOrgId}` : null,
+    formDraft,
+    (d) => { setTitle(d.title ?? ""); setDescription(d.description ?? ""); setTargetDate(d.targetDate ?? ""); if (d.unit) setUnit(d.unit); if (d.requestType) setRequestType(d.requestType); if (d.priority) { draftPriority.current = true; setPriority(d.priority); } setCustomValues(d.customValues ?? {}); },
+    (d) => !d.title.trim() && !d.description.trim(),
+  );
+
   // File State
   const [files, setFiles] = useState<File[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -149,9 +163,10 @@ export default function NewTicketPage() {
           } catch { /* codebook optional — free-text unit input remains */ }
         }
         setConfig(cfg);
-        if (cfg.requestTypes?.options?.length > 0) setRequestType(String(cfg.requestTypes.options[0].value));
-        if (cfg.units?.options?.length > 0) setUnit(String(cfg.units.options[0].value));
-        if (cfg.priorities?.options?.length > 0) {
+        // Defaults fill only what a restored draft didn't.
+        if (cfg.requestTypes?.options?.length > 0) setRequestType((t) => t || String(cfg.requestTypes.options[0].value));
+        if (cfg.units?.options?.length > 0) setUnit((u) => u || String(cfg.units.options[0].value));
+        if (cfg.priorities?.options?.length > 0 && !draftPriority.current) {
           const mid = Math.floor(cfg.priorities.options.length / 2);
           setPriority(Number(cfg.priorities.options[mid].value));
         }
@@ -383,6 +398,7 @@ export default function NewTicketPage() {
       })();
 
       setUploadStatus('Done!');
+      draft.clear();
       setTimeout(() => {
         router.push('/requests'); // Redirect to new route
       }, 500);
@@ -420,7 +436,7 @@ export default function NewTicketPage() {
           title="New Request"
           subtitle={
             <>
-              Submit a new job ticket.{" "}
+              {draft.restored ? <>Your unsent draft is back. <button type="button" className="font-bold underline" onClick={() => { draft.clear(); setTitle(""); setDescription(""); setTargetDate(""); setCustomValues({}); }}>Start over</button>{" "}</> : <>Submit a new job ticket.{" "}</>}
               <IsoGuidance topic="drafting_request_intent" />
             </>
           }

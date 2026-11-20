@@ -176,7 +176,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
   const inp = "h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent-ring)]";
   const lbl = "block font-bold text-[var(--color-text)] mb-1";
   return (
-    <div className="fixed inset-0 z-[185] bg-black/30" onClick={onClose}>
+    <div className="fixed inset-0 z-[185] bg-black/50" onClick={onClose}>
       <div role="dialog" aria-label="Add work to the schedule" onClick={(e) => e.stopPropagation()}
         className="absolute left-1/2 top-10 -translate-x-1/2 w-[560px] max-w-[96vw] max-h-[88dvh] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-xl text-[12px] max-sm:left-0 max-sm:right-0 max-sm:top-auto max-sm:bottom-0 max-sm:translate-x-0 max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none max-sm:max-h-[92dvh]">
         <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2">

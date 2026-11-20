@@ -544,7 +544,7 @@ export default function KnowledgeLibraryPage() {
 
           {uploadState && (
             <div className="mb-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 flex items-center gap-2 text-xs">
-              <Loader2 className="w-4 h-4 animate-spin text-orange-600 shrink-0" />
+              <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
               <span className="font-bold truncate">{uploadState.name}</span>
               <span className="text-[var(--color-text-muted)] shrink-0 ml-auto">{uploadState.phase}</span>
             </div>
@@ -552,7 +552,7 @@ export default function KnowledgeLibraryPage() {
           {autoIndexing && (
             <div className="mb-2 rounded-xl border border-orange-300 dark:border-orange-800 bg-orange-50/60 dark:bg-orange-950/20 px-3 py-2.5 text-xs">
               <div className="flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin text-orange-600 shrink-0" />
+                <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
                 <span className="font-bold truncate">Indexing {autoIndexing.name}</span>
                 <span className="text-[var(--color-text-muted)] shrink-0 ml-auto">
                   {autoIndexing.remaining} in queue - continues anywhere in the app

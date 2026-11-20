@@ -83,7 +83,7 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
         </div>
 
         {loading ? (
-          <div className="p-8 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-accent)]" /></div>
+          <div className="p-8 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" /></div>
         ) : (
           <div className="p-5 space-y-4 overflow-y-auto">
             {/* Status */}

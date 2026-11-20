@@ -431,7 +431,7 @@ export default function RestorePage() {
           {applying && (
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <div className="flex items-center gap-2 text-sm font-bold text-[var(--color-text)] mb-2">
-                <Loader2 className="w-4 h-4 animate-spin text-[var(--color-accent)]" />
+                <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" />
                 {applyProgress.phase === "begin" ? "Reconciling users…" : <>Restoring <span className="font-mono">{applyProgress.currentTable}</span> - table {Math.min(applyProgress.tablesDone + 1, applyProgress.tablesTotal)} of {applyProgress.tablesTotal}</>}
               </div>
               <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">

@@ -17,6 +17,7 @@ import {
   type ResourceRef,
   type ResourceType,
 } from "./recipients";
+import { emailUrl } from "@/lib/emailUrl";
 export type NotifChannel = "inapp" | "email";
 export type NotifCategory = "mention" | "assignment" | "status" | "watched" | "sla" | "system";
 
@@ -118,8 +119,9 @@ export async function emit(input: EmitInput): Promise<void> {
           toUserId: uid,
           toEmail: to,
           subject: input.email?.subject ?? input.title,
-          bodyText: input.email?.bodyText ?? input.body ?? input.title,
-          bodyHtml: input.email?.bodyHtml,
+          bodyText: withLink(input.email?.bodyText ?? input.body ?? input.title, input.link),
+          bodyHtml: input.email?.bodyHtml && input.link && !input.email.bodyHtml.includes("href=")
+            ? `${input.email.bodyHtml}<p><a href="${emailUrl(input.link)}">Open it</a></p>` : input.email?.bodyHtml,
           resourceType,
           resourceId: input.resource.id,
           eventType: categoryToEventType(input.category),
@@ -129,6 +131,13 @@ export async function emit(input: EmitInput): Promise<void> {
     );
   }
 
+}
+
+/** The email says where to go: the exact item, as a full address. */
+function withLink(text: string, link?: string): string {
+  if (!link) return text;
+  const url = emailUrl(link);
+  return text.includes(url) ? text : `${text}\n\nOpen it: ${url}`;
 }
 
 /** uid → email lookup for an org, limited to the given recipients. */

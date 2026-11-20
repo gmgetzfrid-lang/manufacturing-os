@@ -32,7 +32,7 @@ export default function EventOrganization({ projectId, canManage, actor, people 
     return () => { live = false; };
   }, [projectId]);
   const st = useMemo(() => orgStanding(roles), [roles]);
-  if (!roles) return <div className="py-6 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
+  if (!roles) return <div className="py-6 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-muted)]" /></div>;
 
   const change = (id: string, patch: Partial<OrgRole>) => { setRoles((rs) => (rs ?? []).map((r) => (r.id === id ? { ...r, ...patch } : r))); setDirty(true); };
   const add = () => { setRoles((rs) => [...(rs ?? []), { id: `r${Date.now()}`, role: "", does: "", person: "", required: true }]); setDirty(true); };

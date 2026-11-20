@@ -313,7 +313,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       : (res.error ?? "Couldn't flag the collision."));
   };
 
-  if (loading) return <div className="py-10 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
+  if (loading) return <div className="py-10 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-muted)]" /></div>;
 
   return (
     <div className="space-y-4">

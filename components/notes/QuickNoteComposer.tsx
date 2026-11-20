@@ -13,6 +13,7 @@ import { createNote, deleteNote, listNotes, type Note } from "@/lib/notes";
 import MentionableTextarea from "@/components/requests/MentionableTextarea";
 import CommentBody from "@/components/requests/CommentBody";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import { useDraft } from "@/hooks/useDraft";
 
 interface Props {
   orgId: string;
@@ -25,6 +26,8 @@ interface Props {
 export default function QuickNoteComposer({ orgId, userId, userEmail, userName, scope }: Props) {
   const { showToast } = useToast();
   const [body, setBody] = useState("");
+  const noteOn = scope.documentId ?? scope.projectId ?? scope.assetId ?? null;
+  useDraft<string>(noteOn ? `note:${noteOn}` : null, body, setBody, (v) => !v.trim());
   const [notes, setNotes] = useState<Note[]>([]);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);

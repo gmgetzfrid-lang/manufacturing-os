@@ -230,7 +230,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
             <div className="absolute left-[15px] top-8 bottom-[-20px] w-0.5 bg-slate-200" />
             <div className="flex items-start relative">
               <div className="w-8 h-8 rounded-full bg-green-100 border-2 border-green-500 flex items-center justify-center shrink-0 z-10 mr-4 shadow-sm ring-4 ring-white">
-                <div className="w-2.5 h-2.5 bg-green-600 rounded-full animate-pulse" />
+                <div className="w-2.5 h-2.5 bg-green-600 rounded-full" />
               </div>
               <div className="flex-1 bg-[var(--color-surface)] border border-green-200 rounded-xl p-4 shadow-sm">
                 <div className="flex justify-between items-start mb-2">

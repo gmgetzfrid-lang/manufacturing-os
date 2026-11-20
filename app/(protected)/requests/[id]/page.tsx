@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useDraft } from '@/hooks/useDraft';
 import dynamic from 'next/dynamic';
 import MoreMenu from '@/components/ui/MoreMenu';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
@@ -286,7 +287,7 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, is
 
           <div className="max-h-[300px] overflow-y-auto custom-scrollbar border border-[var(--color-border)] rounded-lg">
             {loadingList ? (
-              <div className="flex justify-center py-8"><Loader2 className="w-8 h-8 animate-spin text-orange-500" /></div>
+              <div className="flex justify-center py-8"><Loader2 className="w-8 h-8 animate-spin text-[var(--color-text-muted)]" /></div>
             ) : drafters.length === 0 ? (
               <div className="p-4 text-center text-[var(--color-text-muted)] italic">No drafters found in the system.</div>
             ) : (
@@ -857,6 +858,8 @@ export default function TicketDetailView() {
   // Chat State
   const [newComment, setNewComment] = useState('');
   const [newCommentMentions, setNewCommentMentions] = useState<string[]>([]);
+  // Unsent comment survives a reload or leaving the page.
+  useDraft<string>(ticketId ? `request-comment:${ticketId}` : null, newComment, setNewComment, (v) => !v.trim());
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const [viewerFile, setViewerFile] = useState<TicketAttachment | null>(null);
   const [showArchiveViewer, setShowArchiveViewer] = useState(false);
@@ -1244,6 +1247,8 @@ export default function TicketDetailView() {
     } catch (err) {
       // Roll back the optimistic state and surface the error.
       setTicket((prev) => prev ? { ...prev, comments: prevComments } : prev);
+      // Give the words back so nothing typed is lost.
+      setNewComment((cur) => cur || text);
       console.error('Failed to post comment', err);
       await appAlert({ message: err instanceof Error ? err.message : 'Couldn\'t post comment.', tone: "danger" });
     }
@@ -1342,7 +1347,7 @@ export default function TicketDetailView() {
   if (loading || !ticket) {
     return (
       <div className="flex h-full w-full flex-col items-center justify-center gap-4">
-        <Loader2 className="w-16 h-16 animate-spin text-orange-600" />
+        <Loader2 className="w-16 h-16 animate-spin text-[var(--color-text-muted)]" />
         <div className="flex flex-col items-center"><h2 className="text-xl font-bold text-[var(--color-text)]">Loading Ticket Details...</h2><p className="text-[var(--color-text-muted)] text-sm">Retrieving latest workflow state and assets.</p></div>
       </div>
     );

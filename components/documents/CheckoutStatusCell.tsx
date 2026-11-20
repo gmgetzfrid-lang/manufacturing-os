@@ -450,7 +450,6 @@ export default function CheckoutStatusCell({
       >
         {/* Pulsing Dot */}
         <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
-          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isLockedByMe ? 'bg-green-400' : 'bg-orange-400'}`}></span>
           <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${isLockedByMe ? 'bg-green-500' : 'bg-orange-500'}`}></span>
         </span>
 

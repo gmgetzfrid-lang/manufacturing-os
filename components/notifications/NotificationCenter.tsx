@@ -90,7 +90,7 @@ function CenterPanel({
       <div
         onClick={onClose}
         aria-hidden
-        className={`fixed inset-0 z-[240] bg-slate-900/30 backdrop-blur-[2px] transition-opacity duration-300 ${
+        className={`fixed inset-0 z-[240] bg-slate-900/50 transition-opacity duration-300 ${
           isOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
       />

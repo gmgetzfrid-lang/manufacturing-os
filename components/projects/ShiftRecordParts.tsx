@@ -25,6 +25,7 @@ import { dayKey, toDateTimeInput } from "@/lib/scheduleTz";
 import { TimeChip } from "@/components/projects/DateTimePicker";
 import { useRole } from "@/components/providers/RoleContext";
 import { appConfirm } from "@/components/providers/DialogProvider";
+import { useDraft } from "@/hooks/useDraft";
 
 type RecordWriter = (shiftKey: string, change: (r: ShiftRecord) => ShiftRecord) => Promise<void>;
 
@@ -133,6 +134,8 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
   const [removed, setRemoved] = useState<Incident | null>(null);
   const { write, by } = useRecordWriter();
   const key = handoverKey(shift);
+  // A new incident being written survives a reload (not one being edited).
+  useDraft<string>(edit && !editingId ? `incident:${key}` : null, text, (v) => { setText(v); setOpen(true); }, (v) => !v.trim());
   const reset = () => { setClock(""); setText(""); setMsg(null); setOpen(false); setEditingId(null); setKind("Near miss"); };
   const add = () => {
     const r = clockOnShift(shift, clock, tz);
@@ -245,6 +248,8 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
   // The note being edited (the line below fills with it), the one just
   // removed, and the follow-up just cleared (each can be undone).
   const [editing, setEditing] = useState<(ShiftNote & { shiftKey: string }) | null>(null);
+  // A new note being written survives a reload (not one being edited).
+  useDraft<string>(edit && !editing ? `shift-note:${handoverKey(shift)}` : null, text, setText, (v) => !v.trim());
   const [removed, setRemoved] = useState<(ShiftNote & { shiftKey: string }) | null>(null);
   const [cleared, setCleared] = useState<(ShiftNote & { shiftKey: string; from?: string }) | null>(null);
   const { write, by } = useRecordWriter();

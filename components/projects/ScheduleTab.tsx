@@ -495,6 +495,19 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       )}
 
       {/* Zero-state onboarding — the front door for a new user. */}
+      {/* Loading: the shape of the schedule, never a blank area. */}
+      {loading && (
+        <div aria-busy="true" aria-label="Loading the schedule" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 space-y-2.5">
+          {[72, 58, 64, 46, 68, 52, 60].map((w, i) => (
+            <div key={i} className="flex items-center gap-3">
+              <div className="h-3.5 w-3.5 rounded bg-[var(--color-surface-2)]" />
+              <div className="h-3.5 rounded bg-[var(--color-surface-2)] animate-pulse" style={{ width: `${w * 0.45}%` }} />
+              <div className="h-3 ml-auto rounded bg-[var(--color-surface-2)] animate-pulse" style={{ width: `${w * 0.4}%` }} />
+            </div>
+          ))}
+          <p className="text-[12px] text-[var(--color-text-muted)]">Loading the schedule…</p>
+        </div>
+      )}
       {!loading && milestones.length === 0 && (
         <ScheduleEmptyState
           canEdit={canEdit}

@@ -191,7 +191,7 @@ export default function CompareRevisionsModal({
         <div className="flex-1 min-h-0 relative">
           {loading ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400">
-              <Loader2 className="w-8 h-8 animate-spin text-orange-400 mb-2" />
+              <Loader2 className="w-8 h-8 animate-spin text-[var(--color-text-muted)] mb-2" />
               <span className="text-xs font-mono">Loading revisions…</span>
             </div>
           ) : error ? (
@@ -211,7 +211,7 @@ export default function CompareRevisionsModal({
             </div>
           ) : !baseVersion || !compareVersion || !urls ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400">
-              <Loader2 className="w-8 h-8 animate-spin text-orange-400 mb-2" />
+              <Loader2 className="w-8 h-8 animate-spin text-[var(--color-text-muted)] mb-2" />
               <span className="text-xs font-mono">Resolving files…</span>
             </div>
           ) : (

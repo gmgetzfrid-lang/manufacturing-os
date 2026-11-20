@@ -137,7 +137,7 @@ function CoordinationInner() {
   }, [snap?.checkouts]);
 
   if (loading && !snap) {
-    return <div className="min-h-full bg-[var(--color-canvas)] flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-accent)]" /></div>;
+    return <div className="min-h-full bg-[var(--color-canvas)] flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" /></div>;
   }
   if (!snap) {
     return (
@@ -342,7 +342,7 @@ function CoordinationRadar({
         <Radar className="w-5 h-5 text-[var(--color-accent)]" />
         <span className="text-base font-black text-[var(--color-text)]">Collision radar</span>
         <span className="ml-auto inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-          <span className="relative flex h-1.5 w-1.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75" /><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-orange-500" /></span>
+          <span className="relative flex h-1.5 w-1.5"><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-orange-500" /></span>
           live
         </span>
       </div>

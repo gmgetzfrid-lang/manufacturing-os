@@ -906,7 +906,7 @@ export default function RequestPortal() {
                             <div className={`group rounded-lg border p-2.5 transition-colors hover:border-orange-300 hover:bg-orange-50/40 ${actionNeeded ? 'border-red-200 bg-red-50/30' : 'border-[var(--color-border)] bg-[var(--color-surface)]'}`}>
                               <div className="flex items-center justify-between gap-2">
                                 <div className="flex items-center gap-1.5 min-w-0">
-                                  {actionNeeded && <span className="shrink-0 w-2 h-2 rounded-full bg-red-500 animate-pulse" title="Action needed" />}
+                                  {actionNeeded && <span className="shrink-0 w-2 h-2 rounded-full bg-red-500" title="Action needed" />}
                                   <span className="font-mono text-[11px] font-bold text-[var(--color-text)] truncate">{t.ticketId}</span>
                                 </div>
                                 <span className={`shrink-0 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border ${getStatusColor(t.status)}`}>{t.status.replace(/_/g, ' ')}</span>
@@ -966,7 +966,7 @@ export default function RequestPortal() {
                               <div className="flex flex-col">
                                 <div className="flex items-center">
                                   {/* DUAL BADGE LOGIC: Show Action OR Unread OR Both if room permits */}
-                                  {isActionNeeded && <div className="w-2.5 h-2.5 bg-red-500 rounded-full mr-2 animate-pulse" title="Action Required" />}
+                                  {isActionNeeded && <div className="w-2.5 h-2.5 bg-red-500 rounded-full mr-2" title="Action Required" />}
                                   {!isActionNeeded && isUnread && <div className="w-2.5 h-2.5 bg-blue-500 rounded-full mr-2" title="New Updates" />}
                                   <Link href={`/requests/${ticket.id}`} className={`text-sm ${isUnread || isActionNeeded ? 'font-black text-[var(--color-text)]' : 'font-bold text-[var(--color-text)]'} hover:text-orange-600 hover:underline`}>{ticket.ticketId}</Link>
                                 </div>
@@ -1067,7 +1067,7 @@ export default function RequestPortal() {
                       {/* Grid Badges: Stacked */}
                       <div className="absolute top-2 right-2 flex flex-col gap-1 items-end">
                         {isActionNeeded && (
-                           <div className="flex items-center bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full border border-red-200 animate-pulse shadow-sm">
+                           <div className="flex items-center bg-red-100 text-red-600 text-[10px] font-bold px-2 py-0.5 rounded-full border border-red-200">
                              <MousePointerClick className="w-3 h-3 mr-1" /> Action
                            </div>
                         )}

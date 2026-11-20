@@ -148,7 +148,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
             </div>
             <div className="flex-1 overflow-y-auto border-t border-[var(--color-border)]">
               {loading ? (
-                <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-orange-500" /></div>
+                <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" /></div>
               ) : visible.length === 0 ? (
                 <div className="text-center py-12 text-xs text-[var(--color-text-muted)]">No documents found.</div>
               ) : (
@@ -159,7 +159,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
                       <div className="text-xs font-bold text-[var(--color-text)] truncate">{r.document_number || r.title || r.name || "Document"}</div>
                       <div className="text-[10px] text-[var(--color-text-muted)] truncate">{r.title || r.name || ""}{r.rev ? ` · Rev ${r.rev}` : ""}</div>
                     </div>
-                    {linking === r.id ? <Loader2 className="w-4 h-4 animate-spin text-orange-500 shrink-0" /> : <Check className="w-4 h-4 text-emerald-600 opacity-60 sm:opacity-0 group-hover:opacity-100 shrink-0" />}
+                    {linking === r.id ? <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" /> : <Check className="w-4 h-4 text-emerald-600 opacity-60 sm:opacity-0 group-hover:opacity-100 shrink-0" />}
                   </button>
                 ))
               )}

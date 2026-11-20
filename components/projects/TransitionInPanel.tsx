@@ -132,7 +132,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
   };
 
   if (loading && candidates.length === 0) {
-    return <div className="py-6 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
+    return <div className="py-6 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-muted)]" /></div>;
   }
   if (candidates.length === 0) return null; // nothing to transition — stay out of the way
 

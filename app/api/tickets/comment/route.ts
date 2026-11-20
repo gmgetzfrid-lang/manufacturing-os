@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { extractMentionUids } from "@/lib/notifications";
 import { rowToTicket, escapeHtml } from "@/lib/ticketTransitions";
+import { emailUrl } from "@/lib/emailUrl";
 
 // POST /api/tickets/comment
 //
@@ -261,6 +262,7 @@ async function fanOut(params: {
 
   const ticketLabel = `${ticket.ticketId || ""} ${ticket.title}`.trim();
   const link = `/requests/${ticketId}?c=${comment.id}`;
+  const mailLink = emailUrl(link);
   const actorName = actorEmail.split("@")[0];
   const snippet = comment.text.length > 140 ? comment.text.slice(0, 137) + "…" : comment.text;
   const mentionSet = new Set(mentions);
@@ -306,11 +308,11 @@ async function fanOut(params: {
       to_user_id: uid,
       to_email: emailByUid.get(uid)!,
       subject: mentionSet.has(uid) ? `You were mentioned: ${ticketLabel}` : `New comment on ${ticketLabel}`,
-      body_text: `${actorEmail} commented on ${ticketLabel}:\n\n${comment.text}\n\n${link}`,
+      body_text: `${actorEmail} commented on ${ticketLabel}:\n\n${comment.text}\n\nOpen it: ${mailLink}`,
       body_html: `
-        <p><b>${escapeHtml(actorEmail)}</b> commented on <a href="${link}">${escapeHtml(ticketLabel)}</a>:</p>
+        <p><b>${escapeHtml(actorEmail)}</b> commented on <a href="${mailLink}">${escapeHtml(ticketLabel)}</a>:</p>
         <blockquote style="border-left:3px solid #cbd5e1;padding-left:12px;color:#475569;white-space:pre-wrap">${escapeHtml(comment.text)}</blockquote>
-        <p><a href="${link}">Open ticket</a></p>`,
+        <p><a href="${mailLink}">Open it</a></p>`,
       resource_type: "ticket",
       resource_id: ticketId,
       event_type: mentionSet.has(uid) ? "comment_mention" : "watcher_activity",

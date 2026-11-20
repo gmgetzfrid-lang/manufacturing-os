@@ -24,6 +24,7 @@ import { NotificationCenterProvider } from "@/components/notifications/Notificat
 import UpdatePill from "@/components/system/UpdatePill";
 import { Spinner } from "@/components/ui/Spinner";
 import { SlowNotice, useElapsed, startOver } from "@/components/system/SlowNotice";
+import { useKeepScroll } from "@/hooks/useKeepScroll";
 
 const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
   const { loading, uid, userEmail, membershipState } = useRole();
@@ -33,6 +34,8 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
   const openMobileNav = React.useCallback(() => setMobileNavOpen(true), []);
   const closeMobileNav = React.useCallback(() => setMobileNavOpen(false), []);
   const waited = useElapsed(loading);
+  const [mainEl, setMainEl] = React.useState<HTMLElement | null>(null);
+  useKeepScroll(mainEl);
 
   if (loading) {
     return (
@@ -61,7 +64,7 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
           <TopBar onOpenMobileNav={openMobileNav} />
           {/* Never scrolls sideways (a phone would let the page drift and
               bounce): wide content scrolls in its own strip or table. */}
-          <main className="flex-1 overflow-y-auto overflow-x-hidden overscroll-x-none relative">
+          <main ref={setMainEl} className="flex-1 overflow-y-auto overflow-x-hidden overscroll-x-none relative">
             <NotificationListener />
             <UpdatePill />
             <CornerDock />

@@ -996,7 +996,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
             <div className="flex flex-col gap-3 py-3 px-1 min-h-[40vh]" style={{ alignItems: "safe center", zoom: cssZoom }}>
               {entry.loading ? (
                 <div className="flex flex-col items-center justify-center gap-4 text-slate-500 py-20">
-                  <Loader2 className="w-10 h-10 animate-spin text-orange-500" />
+                  <Loader2 className="w-10 h-10 animate-spin text-[var(--color-text-muted)]" />
                   <span className="text-sm font-mono text-orange-400/70 animate-pulse">Loading {entry.doc.documentNumber || "document"}…</span>
                 </div>
               ) : entry.error || !entry.resolvedUrl ? (
@@ -1008,7 +1008,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
                 <Document options={PDF_DOC_OPTIONS}
                   file={entry.resolvedUrl}
                   onLoadSuccess={({ numPages }) => setPageCounts((c) => (c[idx] === numPages ? c : { ...c, [idx]: numPages }))}
-                  loading={<div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-orange-500" /></div>}
+                  loading={<div className="flex items-center justify-center py-20"><Loader2 className="w-8 h-8 animate-spin text-[var(--color-text-muted)]" /></div>}
                   error={<div className="flex flex-col items-center gap-2 text-slate-600 py-20"><FileText className="w-12 h-12 opacity-20" /><span className="text-xs">Couldn’t render this PDF</span></div>}
                   className="flex flex-col items-center gap-3"
                 >

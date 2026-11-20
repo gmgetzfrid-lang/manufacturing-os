@@ -1459,7 +1459,7 @@ export default function FullScreenViewer({
             )}
             {!archivedInfo && !fetchError && !resolvedUrl && (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
-                <Loader2 className="w-10 h-10 animate-spin text-orange-500 mb-3" />
+                <Loader2 className="w-10 h-10 animate-spin text-[var(--color-text-muted)] mb-3" />
                 <div className="text-xs font-mono">Loading PDF…</div>
               </div>
             )}

@@ -193,7 +193,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
       )}
 
       {loading ? (
-        <div className="px-4 py-8 flex justify-center"><Loader2 className="w-4 h-4 animate-spin text-[var(--color-accent)]" /></div>
+        <div className="px-4 py-8 flex justify-center"><Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" /></div>
       ) : rows.length === 0 ? (
         <div className="px-4 py-8 text-center text-xs text-[var(--color-text-muted)]">
           No documents linked yet. Checking a document out under this project links it automatically{canManage ? ", or use Attach document above" : ""}.

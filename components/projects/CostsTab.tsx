@@ -199,7 +199,7 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   const basisDoc = basis?.docId ? docs.find((d) => d.id === basis.docId) ?? null : null;
 
 
-  if (loading) return <div className="py-12 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
+  if (loading) return <div className="py-12 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-muted)]" /></div>;
 
   return (
     <div className="space-y-4">

@@ -52,7 +52,7 @@ export default function UploadIndicator() {
       {list.map((u) => (
         <div key={u.id} className="bg-[var(--color-surface)] rounded-xl shadow-lg border border-[var(--color-border)] px-3 py-2.5 animate-in slide-in-from-bottom-2 fade-in">
           <div className="flex items-center gap-2">
-            {u.status === "uploading" && <Loader2 className="w-4 h-4 animate-spin text-orange-500 shrink-0" />}
+            {u.status === "uploading" && <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />}
             {u.status === "done" && <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />}
             {u.status === "error" && <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />}
             <span className="text-xs font-bold text-[var(--color-text)] truncate flex-1" title={u.name}>{u.name}</span>

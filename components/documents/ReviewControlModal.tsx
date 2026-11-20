@@ -200,7 +200,7 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
         </div>
 
         {loading ? (
-          <div className="p-8 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-accent)]" /></div>
+          <div className="p-8 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" /></div>
         ) : (
           <div className="p-5 space-y-3 overflow-y-auto">
             {/* DOCUMENT CLASS — the declaration that drives change-control

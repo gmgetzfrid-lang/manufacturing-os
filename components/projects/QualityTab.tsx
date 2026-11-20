@@ -101,7 +101,7 @@ export default function QualityTab({ orgId, projectId, canManage, canEditPunch, 
   }, [orgId, projectId]);
   useEffect(() => { void refresh(); }, [refresh]);
 
-  if (loading) return <div className="py-12 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
+  if (loading) return <div className="py-12 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-muted)]" /></div>;
 
   return (
     <div className="space-y-4">
@@ -511,7 +511,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
           )}
 
           {items == null ? (
-            <div className="py-4 flex justify-center"><Loader2 className="w-4 h-4 animate-spin text-[var(--color-accent)]" /></div>
+            <div className="py-4 flex justify-center"><Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" /></div>
           ) : (
             <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
               {sections.map(([section, secItems]) => (
@@ -610,7 +610,7 @@ function ChecklistItemRow({ orgId, projectId, item, canManage, actor, onChanged,
             )}
           </span>
         )}
-        {busy && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-accent)] shrink-0" />}
+        {busy && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)] shrink-0" />}
       </div>
     </li>
   );
@@ -776,7 +776,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
                     )}
                   </span>
                 )}
-                {busy === it.id && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-accent)] ml-auto" />}
+                {busy === it.id && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)] ml-auto" />}
               </div>
               <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
                 {[
@@ -1058,7 +1058,7 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
                     <RotateCcw className="w-3 h-3" /> Reopen
                   </button>
                 )}
-                {busy === it.id && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-accent)] ml-auto" />}
+                {busy === it.id && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)] ml-auto" />}
               </li>
             );
           })}

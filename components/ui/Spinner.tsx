@@ -15,7 +15,7 @@ export function Spinner({
   size?: keyof typeof SIZES;
   className?: string;
 }) {
-  return <Loader2 className={`animate-spin text-[var(--color-accent)] ${SIZES[size]} ${className}`} />;
+  return <Loader2 className={`animate-spin text-[var(--color-text-muted)] ${SIZES[size]} ${className}`} />;
 }
 
 export default Spinner;

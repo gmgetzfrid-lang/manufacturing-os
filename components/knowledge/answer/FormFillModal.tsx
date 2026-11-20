@@ -75,7 +75,7 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
       <ModalBody className="max-h-[70vh] space-y-4">
         {busy === "draft" && (
           <div className="py-16 flex flex-col items-center gap-3 text-[var(--color-text-muted)]">
-            <Loader2 className="w-6 h-6 animate-spin text-orange-600" />
+            <Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" />
             <div className="text-sm font-bold text-[var(--color-text)]">Drafting every field from the answer and its proof</div>
             <div className="text-xs">Names, signatures and numbers are left for you - never invented.</div>
           </div>

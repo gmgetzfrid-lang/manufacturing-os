@@ -297,7 +297,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   };
   const saveHeld = async () => { if (held && (await saveFile(held.data, held.name, held.mime))) setHeld(null); };
 
-  if (!review) return <div className="py-16 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" /></div>;
+  if (!review) return <div className="py-16 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-muted)]" /></div>;
   const m = review.metrics;
   const pt = pointOf(review, phase?.name ?? projectName, tz);
   const bk = bookOf(review, phase?.name ?? projectName, tz, scoreIn);

@@ -18,6 +18,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation";
 import { PanelLeftOpen, Square, BookOpen, Waypoints, GitPullRequest, Puzzle, Gauge, Settings2 } from "lucide-react";
 import MoreMenu from "@/components/ui/MoreMenu";
+import { useDraft, clearDraft } from "@/hooks/useDraft";
 import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -84,6 +85,9 @@ export default function ChatShell() {
 
   // ── Composer + run ──
   const [value, setValue] = useState("");
+  // An unsent question survives a reload or leaving the page.
+  const chatDraftKey = orgId ? `chat:${orgId}:${active?.id ?? "new"}` : null;
+  useDraft<string>(chatDraftKey, value, setValue, (v) => !v.trim());
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   // The Web switch. Off on every page load — documents only is the default
   // a user can rely on; turning the web on is a choice made each session.
@@ -384,6 +388,7 @@ export default function ChatShell() {
     }]);
     setStreaming({ status: "Starting", draft: "", question: q, attachmentsCount: atts.length });
     setValue(""); setPast(null); dismissedRef.current = "";
+    if (chatDraftKey) clearDraft(chatDraftKey);
     const controller = new AbortController();
     abortRef.current = controller;
 
@@ -495,7 +500,7 @@ export default function ChatShell() {
       return;
     }
     overloadRetried.current = false;
-  }, [orgId, uid, scope, libraryId, streaming, attachments, active, draftInstructions, userName, showToast, threadParam, libraryFilterId, router, useWeb, pickedMode, pickedSkills]);
+  }, [chatDraftKey, orgId, uid, scope, libraryId, streaming, attachments, active, draftInstructions, userName, showToast, threadParam, libraryFilterId, router, useWeb, pickedMode, pickedSkills]);
 
   // ── Asked from the library page: "?ask=" runs the question as soon as the
   //    library it was asked of is selected. Once — the URL is rewritten to

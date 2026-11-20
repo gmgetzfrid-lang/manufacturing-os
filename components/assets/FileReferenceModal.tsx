@@ -252,7 +252,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
 
           <div ref={scrollRef} className={`flex-1 overflow-auto bg-slate-950 min-w-0 ${panZoom.cursorClass}`} style={{ touchAction: "pan-x pan-y" }} {...panZoom.panHandlers}>
             {loading ? (
-              <Centered><Loader2 className="w-8 h-8 animate-spin text-orange-500" /></Centered>
+              <Centered><Loader2 className="w-8 h-8 animate-spin text-[var(--color-text-muted)]" /></Centered>
             ) : !activeFile ? (
               <Centered>
                 <div className="text-center text-slate-500">
@@ -261,7 +261,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
                 </div>
               </Centered>
             ) : resolving ? (
-              <Centered><Loader2 className="w-8 h-8 animate-spin text-orange-500" /></Centered>
+              <Centered><Loader2 className="w-8 h-8 animate-spin text-[var(--color-text-muted)]" /></Centered>
             ) : !resolvedUrl ? (
               <Centered><div className="text-slate-500 text-sm">Couldn’t load this drawing.</div></Centered>
             ) : (
@@ -269,7 +269,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
                 <Document options={PDF_DOC_OPTIONS}
                   file={resolvedUrl}
                   onLoadSuccess={({ numPages }) => setPageCount(numPages)}
-                  loading={<Centered><Loader2 className="w-8 h-8 animate-spin text-orange-500" /></Centered>}
+                  loading={<Centered><Loader2 className="w-8 h-8 animate-spin text-[var(--color-text-muted)]" /></Centered>}
                   error={<Centered><div className="text-slate-500 text-sm">Couldn’t render this PDF</div></Centered>}
                   className="flex flex-col items-center gap-3"
                 >

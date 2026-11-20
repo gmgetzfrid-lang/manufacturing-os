@@ -414,7 +414,7 @@ function InvoiceDrop({ orgId, projectId, actor, onDone, setErr }: {
         onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && !progress) input.current?.click(); }}
         className={`rounded-lg border border-dashed px-3 py-2 flex items-center gap-2 text-xs cursor-pointer transition-colors ${
           over ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]/60" : "border-[var(--color-border-strong)] hover:border-[var(--color-accent-ring)] bg-[var(--color-surface-2)]/30"}`}>
-        {progress ? <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-accent)]" /> : <UploadCloud className="w-3.5 h-3.5 text-[var(--color-accent)]" />}
+        {progress ? <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-muted)]" /> : <UploadCloud className="w-3.5 h-3.5 text-[var(--color-accent)]" />}
         <span className="text-[var(--color-text-muted)] truncate">
           {progress ?? "Drop invoices here (PDF or photo - several at once is fine), or click to choose"}
         </span>

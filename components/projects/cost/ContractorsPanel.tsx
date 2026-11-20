@@ -128,7 +128,7 @@ export default function ContractorsPanel(p: ContractorsProps) {
     }).sort((a, b) => b.c.crews.reduce((n, x) => n + (work.get(x) ?? 0), 0) - a.c.crews.reduce((n, x) => n + (work.get(x) ?? 0), 0) || a.c.company.localeCompare(b.c.company));
   }, [settings, crews, work, records, p.parties, p.docs, p.entries, p.accounts, p.tz, times, now, inScope]);
 
-  if (!settings) return <div className="py-12 flex justify-center">{err ? <span className="text-[13px] text-rose-700">{err}</span> : <Loader2 className="w-5 h-5 animate-spin text-[var(--color-accent)]" />}</div>;
+  if (!settings) return <div className="py-12 flex justify-center">{err ? <span className="text-[13px] text-rose-700">{err}</span> : <Loader2 className="w-5 h-5 animate-spin text-[var(--color-text-muted)]" />}</div>;
   const cur = open ? list.find((x) => x.c.company === open) ?? null : null;
   const setS = (f: (s: CrewSettings) => CrewSettings) => setSettings((s) => (s ? f(s) : s));
   const phasePills = p.mode === "staffing" && p.phases.length > 1 ? (

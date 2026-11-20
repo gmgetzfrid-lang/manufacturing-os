@@ -1375,7 +1375,7 @@ function RowEditor({ id, milestones, progress, planNow, tz, times, shift, canEdi
   const others = parent ? milestones.filter((m) => m.parentId === parent.id && m.id !== id && m.id && !parents.has(m.id)) : [];
   const label = `${shift.kind === "day" ? "Day shift" : "Night shift"} ${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })}`;
   return (
-    <div className="fixed inset-0 z-[180] bg-black/30 print:hidden" onClick={onClose}>
+    <div className="fixed inset-0 z-[180] bg-black/50 print:hidden" onClick={onClose}>
       <div role="dialog" aria-label={`Update ${step.name}`} onClick={(e) => e.stopPropagation()}
         className="absolute left-1/2 top-16 -translate-x-1/2 w-[440px] max-w-[94vw] max-h-[82dvh] overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-xl max-sm:left-0 max-sm:right-0 max-sm:top-auto max-sm:bottom-0 max-sm:translate-x-0 max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none max-sm:max-h-[88dvh]">
         <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] pl-3 pr-1.5 py-1">

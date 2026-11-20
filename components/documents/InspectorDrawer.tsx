@@ -52,7 +52,6 @@ export default function InspectorDrawer({ isOpen, onClose, children, title }: In
         {/* Header */}
         <div className="shrink-0 px-4 py-3 border-b border-slate-200/80 flex items-center justify-between bg-gradient-to-r from-slate-50 to-white">
           <div className="text-xs font-black text-[var(--color-text-muted)] uppercase tracking-widest flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
             {title ?? "Inspector"}
           </div>
           <button
