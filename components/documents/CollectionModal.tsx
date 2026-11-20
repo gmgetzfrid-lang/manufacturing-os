@@ -298,7 +298,7 @@ export default function CollectionModal({
 
   // ── Render ────────────────────────────────────────────────────
   const modalTree = (
-    <div className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
+    <div className="fixed inset-0 z-[300] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
         {/* Header */}
         <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
@@ -454,7 +454,7 @@ export default function CollectionModal({
 
               {/* Doc picker overlay */}
               {showPicker && collection && (
-                <div className="fixed inset-0 z-[310] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+                <div className="fixed inset-0 z-[310] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
                   <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[80vh] animate-in fade-in zoom-in-95">
                     <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
                       <div className="text-sm font-black text-[var(--color-text)]">Add documents</div>

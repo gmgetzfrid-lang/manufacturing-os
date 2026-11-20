@@ -86,7 +86,7 @@ export default function ReverseConfirmModal({
   const description = describeReversal(event);
 
   return (
-    <div className="fixed inset-0 z-[210] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div className="fixed inset-0 z-[210] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
           <div className="flex items-center gap-2">

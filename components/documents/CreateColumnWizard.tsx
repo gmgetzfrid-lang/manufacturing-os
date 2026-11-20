@@ -124,13 +124,13 @@ export default function CreateColumnWizard({ isOpen, onClose, onSave, initialTyp
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[400] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 p-4 animate-in fade-in">
+    <div className="fixed inset-0 z-[400] flex items-start sm:items-center justify-center overflow-y-auto bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] p-4 animate-in fade-in">
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
         
         {/* HEADER */}
         <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-bold text-[var(--color-text)]">{step === 1 ? "Add a Column" : `Configure ${currentTypeLabel}`}</h2>
+            <h2 className="text-[15px] font-extrabold text-[var(--color-text)]">{step === 1 ? "Add a column" : `Set up ${currentTypeLabel}`}</h2>
             <p className="text-xs text-[var(--color-text-muted)]">{step === 1 ? "Choose the type of data to store." : "Define settings and validation."}</p>
           </div>
           <button aria-label="Close" onClick={onClose} className="p-2 hover:bg-slate-200 rounded-lg text-[var(--color-text-muted)] transition-colors"><X className="w-5 h-5" /></button>

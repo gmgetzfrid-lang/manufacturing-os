@@ -18,11 +18,12 @@ import React, { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
-  Loader2, Search, Waypoints, X, ArrowUpRight, Info, Lightbulb,
+  Loader2, Search, X, ArrowUpRight, Info, Lightbulb,
   CircleDashed, Flame, Spline, Sparkles, Route, Maximize2, CornerDownLeft, Quote, Link2,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
+import { PageHero } from "@/components/ui/PageHero";
 import {
   buildOrgGraph, type OrgGraph, type GraphNode, type GraphNodeType, type GraphEdge,
 } from "@/lib/orgGraph";
@@ -519,24 +520,36 @@ function GraphPageInner() {
     l.hidden.every((t) => settings.hiddenTypes.includes(t)) &&
     l.libEdges === settings.showLibraryEdges)?.key ?? null;
 
+  // The answer: how much the org's map holds right now.
+  const graphAnswer = error ? "The graph didn't load."
+    : !view ? "Org graph"
+    : view.nodes.length === 0 ? "Nothing on the graph yet."
+    : `${view.nodes.length.toLocaleString()} things, ${view.edges.length.toLocaleString()} links.`;
+  const graphSub = view && view.ghosts.length > 0
+    ? `${view.ghosts.length} proposed link${view.ghosts.length === 1 ? "" : "s"} waiting for review. Type to light up matches; Enter searches what the documents say.`
+    : "Type to light up matches; Enter searches what the documents say.";
+
   return (
     <div className="h-full min-h-0 flex flex-col">
-      {/* Top bar */}
-      <div className="shrink-0 flex items-center gap-2 flex-wrap px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
-        <div className="[&>div]:mb-0 mr-1 min-w-0 max-w-full">
-          <ViewTabs tabs={INTELLIGENCE_VIEWS} />
-        </div>
-        <Waypoints className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-        <h1 className="text-sm font-black text-[var(--color-text)] mr-1">Org graph</h1>
+      {/* The band: where you are, what the map holds, and the controls
+          that steer it. The canvas below keeps its category colors. */}
+      <div className="shrink-0 px-3 sm:px-4 pt-3 sm:pt-4">
+      <PageHero size="md" overlap={false} className="!mb-3 !pb-5"
+        kicker="Intelligence · Org graph"
+        title={graphAnswer}
+        sub={graphSub}
+      >
+        <ViewTabs tabs={INTELLIGENCE_VIEWS} variant="dark" />
+      <div className="mt-3 flex items-center gap-2 flex-wrap">
         <div className="relative">
-          <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
+          <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-[var(--color-ink-muted)]" />
           <input
             value={rawQuery}
             onChange={(e) => setRawQuery(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") void runAsk(); }}
             placeholder="Find E-22, or ask a question…"
             title="Type to light up matching nodes. Press Enter to search what your documents SAY."
-            className="pl-7 pr-16 py-1.5 w-72 max-w-[calc(100vw-4.5rem)] border border-[var(--color-border-strong)] rounded-lg text-xs bg-[var(--color-surface)]"
+            className="pl-7 pr-16 h-9 w-72 max-w-[calc(100vw-5rem)] border border-[var(--color-ink-line)] rounded-[10px] text-base sm:text-[13px] bg-[var(--color-ink-2)] text-white placeholder:text-[var(--color-ink-muted)] focus:outline-none focus:border-[var(--color-ink-muted)]"
           />
           {/* Enter searches the TEXT, not the labels. A label filter can never
               answer "any standards about pipe supports" — the answer lives in
@@ -544,13 +557,13 @@ function GraphPageInner() {
           {rawQuery.trim().length > 2 && (
             <button onClick={() => void runAsk()} disabled={asking}
               title="Search what your documents say"
-              className="absolute right-6 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 text-[11px] font-black text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] disabled:opacity-50">
+              className="absolute right-6 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 text-[11px] font-black text-white underline underline-offset-2 disabled:opacity-50">
               {asking ? <Loader2 className="w-3 h-3 animate-spin" /> : <>Ask <CornerDownLeft className="w-3 h-3" /></>}
             </button>
           )}
           {rawQuery && (
             <button onClick={() => { setRawQuery(""); setAnswer(null); }} aria-label="Clear search"
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[var(--color-ink-muted)] hover:text-white">
               <X className="w-3 h-3" />
             </button>
           )}
@@ -559,20 +572,20 @@ function GraphPageInner() {
         <button onClick={() => { setPathMode((v) => !v); setPathEnds({ from: null, to: null }); }}
           title="Pick two things and see how they connect"
           className={`inline-flex items-center gap-1.5 px-2 py-1.5 rounded-full border text-[11px] font-black ${
-            pathMode ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
-                     : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"
+            pathMode ? "border-white bg-white text-[var(--color-ink)]"
+                     : "border-[var(--color-ink-line)] text-[var(--color-ink-muted)]"
           }`}>
           <Route className="w-3.5 h-3.5" /> Connection path
         </button>
 
         {/* Pivot the whole map with one tap. */}
-        <div className="hidden sm:flex items-center rounded-full border border-[var(--color-border-strong)] overflow-hidden">
+        <div className="hidden sm:flex items-center rounded-full border border-[var(--color-ink-line)] overflow-hidden">
           {LENSES.map((l) => (
             <button key={l.key} title={l.title}
               onClick={() => patchSettings({ hiddenTypes: l.hidden, showLibraryEdges: l.libEdges })}
               className={`px-2.5 py-1.5 text-[11px] font-black transition-colors ${activeLens === l.key
-                ? "bg-[var(--color-text)] text-[var(--color-surface)]"
-                : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                ? "bg-white text-[var(--color-ink)]"
+                : "text-[var(--color-ink-muted)] hover:text-white hover:bg-[var(--color-ink-2)]"}`}>
               {l.label}
             </button>
           ))}
@@ -580,7 +593,7 @@ function GraphPageInner() {
 
         {focusNode && (
           <button onClick={() => setFocusId(null)}
-            className="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[11px] font-black text-[var(--color-text)]">
+            className="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-full border border-[var(--color-ink-line)] bg-[var(--color-ink-line)] text-[11px] font-black text-white">
             <Maximize2 className="w-3.5 h-3.5" />
             Focused: {focusNode.label.slice(0, 18)} · {settings.localDepth} hop{settings.localDepth === 1 ? "" : "s"}
             <X className="w-3 h-3" />
@@ -588,18 +601,20 @@ function GraphPageInner() {
         )}
 
         {view && !layered && (view.foldedTotal > 0 || openHubs.size > 0) && (
-          <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-text-muted)]">
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-ink-muted)]">
             {view.foldedTotal > 0 && <>{view.foldedTotal} documents folded into {view.folded.size} hub{view.folded.size === 1 ? "" : "s"} - click a hub to open it</>}
-            {openHubs.size > 0 && <button onClick={() => setOpenHubs(new Set())} className="rounded-full border border-[var(--color-border-strong)] px-2 py-0.5 hover:bg-[var(--color-surface-2)]">Fold again</button>}
-            {view.foldedTotal > 0 && <button onClick={() => patchSettings({ foldLeaves: false })} className="rounded-full border border-[var(--color-border-strong)] px-2 py-0.5 hover:bg-[var(--color-surface-2)]">Unfold all</button>}
+            {openHubs.size > 0 && <button onClick={() => setOpenHubs(new Set())} className="rounded-full border border-[var(--color-ink-line)] px-2 py-0.5 hover:bg-[var(--color-ink-2)]">Fold again</button>}
+            {view.foldedTotal > 0 && <button onClick={() => patchSettings({ foldLeaves: false })} className="rounded-full border border-[var(--color-ink-line)] px-2 py-0.5 hover:bg-[var(--color-ink-2)]">Unfold all</button>}
           </span>
         )}
         {view && (
-          <span className="text-[11px] font-mono text-[var(--color-text-faint)] ml-auto">
+          <span className="text-[12px] text-[var(--color-ink-muted)] ml-auto tabular-nums">
             {view.nodes.length} nodes · {view.edges.length} links
             {view.ghosts.length > 0 && ` · ${view.ghosts.length} proposed`}
           </span>
         )}
+      </div>
+      </PageHero>
       </div>
 
       {/* Map */}

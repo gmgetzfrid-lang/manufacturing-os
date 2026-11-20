@@ -157,7 +157,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
     <>
       {/* BACKDROP */}
       <div
-        className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] animate-in fade-in duration-300"
+        className="fixed inset-0 bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] z-[60] animate-in fade-in duration-300"
         onClick={onClose}
         aria-hidden="true"
       />
@@ -174,7 +174,7 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
         {/* HEADER */}
         <div className="h-16 border-b border-[var(--color-border)] flex items-center justify-between px-6 bg-slate-50/80 shrink-0">
           <div>
-            <h2 className="text-lg font-bold text-[var(--color-text)] flex items-center gap-1">
+            <h2 className="text-[15px] font-extrabold text-[var(--color-text)] flex items-center gap-1">
               <History className="w-5 h-5 mr-2 text-[var(--color-text-muted)]" />
               Audit Trail
               <HelpTooltip>

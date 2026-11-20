@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch, GitCompare, ShieldCheck, Wrench, StickyNote, Check, Package } from "lucide-react";
+import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch, GitCompare, Wrench, Check, Package, ChevronRight } from "lucide-react";
 import NextLink from "next/link";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
@@ -28,7 +28,6 @@ import EffectivePill from "@/components/documents/EffectivePill";
 import ReviewPill from "@/components/documents/ReviewPill";
 import RetentionPill from "@/components/documents/RetentionPill";
 import OriginBadge from "@/components/documents/OriginBadge";
-import CollapsibleSection from "@/components/ui/CollapsibleSection";
 import DocClassControl from "@/components/documents/DocClassControl";
 import AddToPackageButton from "@/components/documents/AddToPackageButton";
 import MoreMenu, { type MoreItem } from "@/components/ui/MoreMenu";
@@ -118,7 +117,6 @@ export default function InspectorPanel({
   onFullScreen,
   onToggleStage,
   isStaged,
-  folderPath,
   onRevUp,
   canPublish = false,
   onSupersede,
@@ -336,31 +334,38 @@ export default function InspectorPanel({
   const sizeBytes = selectedVersion?.size ?? (typeof meta.size_bytes === "string" ? Number(meta.size_bytes) : undefined);
   const fileType = selectedVersion?.fileType || (typeof meta.mime_type === "string" ? meta.mime_type : undefined) || "-";
   const ext = (typeof meta.extension === "string" ? meta.extension : "") || (selectedDoc.name?.split(".").pop() ?? "");
+  // The big line is the item's number; the title shows under it when it says more.
+  const bigName = selectedDoc.documentNumber || title;
+  const showTitle = !!selectedDoc.documentNumber && title.trim() !== selectedDoc.documentNumber.trim();
+  const statusTone = selectedDoc.status === "Issued" ? "text-emerald-700 dark:text-emerald-400"
+    : selectedDoc.status === "Superseded" ? "text-amber-700 dark:text-amber-400"
+    : selectedDoc.status === "Void" || selectedDoc.status === "Archived" ? "text-rose-700 dark:text-rose-400"
+    : "text-[var(--color-text)]";
+  const sheetRaw = meta.sheet ?? selectedDoc.sheetNumber;
+  const sheet = sheetRaw == null || sheetRaw === "" ? null : String(sheetRaw);
+  const tags = collectTagGroups(selectedDoc.metadata as Record<string, unknown> | null, customColumns).flatMap((g) => g.tags);
+  const tagLine = tags.length === 0 ? null : tags.length <= 3 ? tags.join(", ") : `${tags.slice(0, 3).join(", ")} +${tags.length - 3} more`;
 
   return (
     <div className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300">
 
-      {/* HEADER ─────────────────────────────────────────────────────── */}
-      <div className="rounded-xl border border-[var(--color-border)] p-4 bg-[var(--color-surface-2)]">
-        <div className="text-lg font-black text-[var(--color-text)] leading-tight break-words">{title}</div>
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-          {selectedDoc.documentNumber && (
-            <span className="font-mono font-bold text-[var(--color-text)]">{selectedDoc.documentNumber}</span>
-          )}
-          <span className="text-slate-300">•</span>
-          <span className="text-[var(--color-text-muted)] inline-flex items-center gap-0.5">
-            Rev <span className="font-bold text-[var(--color-text)]">{selectedDoc.rev || "-"}</span>
-          </span>
-          <span className="text-slate-300">•</span>
-          <span className="inline-flex items-center text-[11px] font-bold border px-1.5 py-0.5 rounded-md bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] gap-0.5">
-            {selectedDoc.status || "-"}
-          </span>
-          {selectedDoc.effectiveDate && <EffectivePill effectiveDate={selectedDoc.effectiveDate} />}
-        </div>
-        {folderPath && (
-          <div className="mt-2 text-[11px] text-[var(--color-text-muted)] truncate" title={folderPath}>{folderPath}</div>
+      {/* HEADER: the item, big; its state in words under it. ─────────── */}
+      <div>
+        <h2 className="text-[34px] sm:text-[44px] leading-[1.02] font-black tracking-[-0.03em] text-[var(--color-text)] break-words">
+          {bigName}
+        </h2>
+        {showTitle && (
+          <p className="mt-2 text-[15px] font-semibold text-[var(--color-text)] break-words">{title}</p>
         )}
-        {/* Watch / follow + share + live presence */}
+        <p className="mt-2.5 text-[14px] text-[var(--color-text-muted)] flex flex-wrap items-center gap-x-1.5 gap-y-1">
+          <span>Rev <b className="text-[var(--color-text)]">{selectedDoc.rev || "-"}</b></span>
+          <span aria-hidden="true">·</span>
+          <span className={`font-semibold ${statusTone}`}>{selectedDoc.status || "No status"}</span>
+          {sheet && <><span aria-hidden="true">·</span><span>Sheet {sheet}</span></>}
+          {tagLine && <><span aria-hidden="true">·</span><span>{tagLine}</span></>}
+          {selectedDoc.effectiveDate && <EffectivePill effectiveDate={selectedDoc.effectiveDate} />}
+        </p>
+        {/* Follow + who else is looking */}
         {selectedDoc.id && selectedDoc.orgId && uid && (
           <div className="mt-3 flex items-center gap-2 flex-wrap">
             <WatchButton
@@ -414,7 +419,7 @@ export default function InspectorPanel({
       {staleHolderCount > 0 && (
         <p className="border-l-2 border-amber-500 pl-3 text-xs text-amber-800 dark:text-amber-300">
           <b>{staleHolderCount} {staleHolderCount === 1 ? "person may be" : "people may be"} using an old revision.</b>{" "}
-          They took an older copy in the last 60 days. See who in Distribution &amp; sharing below.
+          They took an older copy in the last 60 days. See who under Who has a copy below.
         </p>
       )}
 
@@ -424,8 +429,8 @@ export default function InspectorPanel({
         const canPub = !!(canPublishEff && onRevUp);
         const pubLocked = selectedDoc.status === "Archived" || (isCheckedOut && !checkedOutByMe);
         const publishMain = canPub && checkedOutByMe && !pubLocked;
-        const main = "inline-flex items-center justify-center gap-1.5 h-10 px-4 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-sm";
-        const quiet = "inline-flex items-center justify-center gap-1.5 h-10 px-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-all";
+        const main = "inline-flex items-center justify-center gap-2 h-[46px] px-6 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[15px] font-extrabold hover:bg-[var(--color-accent-hover)] shadow-[0_12px_24px_-12px_var(--color-accent)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors";
+        const quiet = "inline-flex items-center justify-center gap-1.5 h-[46px] px-4 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[14px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors";
         const publish = (cls: string) => (
           <button onClick={onRevUp} disabled={pubLocked} className={cls}
             title={isCheckedOut && !checkedOutByMe ? `Locked: ${selectedDoc.checkedOutByName || "another user"} has this checked out. Publishing over their work is blocked - coordinate or ask them to check in.` : "Publish a new revision"}>
@@ -436,15 +441,15 @@ export default function InspectorPanel({
           <div className="flex flex-wrap items-center gap-2">
             {publishMain ? publish(main) : (
               <button onClick={onFullScreen} disabled={!selectedVersion?.fileUrl} className={main}>
-                <Maximize2 className="w-3.5 h-3.5" /> Open
+                <Maximize2 className="w-4 h-4" /> Open
               </button>
             )}
             {publishMain && (
-              <button onClick={onFullScreen} disabled={!selectedVersion?.fileUrl} className={quiet}><Maximize2 className="w-3.5 h-3.5" /> Open</button>
+              <button onClick={onFullScreen} disabled={!selectedVersion?.fileUrl} className={quiet}><Maximize2 className="w-4 h-4" /> Open</button>
             )}
             <button onClick={() => onCheckout(selectedDoc)} className={quiet}
               title={checkedOutByMe ? "You have it checked out" : isCheckedOut ? `Checked out by ${selectedDoc.checkedOutByName || "someone else"}` : "Check out"}>
-              {checkedOutByMe ? <LogOut className="w-3.5 h-3.5" /> : <LogIn className="w-3.5 h-3.5" />}
+              {checkedOutByMe ? <LogOut className="w-4 h-4" /> : <LogIn className="w-4 h-4" />}
               {checkedOutByMe ? "Check in" : isCheckedOut ? "Checked out" : "Check out"}
             </button>
             {(() => {
@@ -463,14 +468,14 @@ export default function InspectorPanel({
                 )}
               </>;
             })()}
-            {isCheckedOut && !checkedOutByMe && <span className="basis-full text-[11.5px] text-[var(--color-text-muted)] inline-flex items-center gap-1"><Lock className="w-3 h-3" /> Checked out by {selectedDoc.checkedOutByName || "another user"}. Publishing waits until they check it in.</span>}
+            {isCheckedOut && !checkedOutByMe && <span className="basis-full text-[13px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" /> Checked out by {selectedDoc.checkedOutByName || "another user"}. Publishing waits until they check it in.</span>}
           </div>
         );
       })()}
 
       {/* PREVIEW ────────────────────────────────────────────────────── */}
       {selectedVersion?.fileUrl ? (
-        <div className="relative group rounded-xl border border-[var(--color-border)] overflow-hidden h-[45vh] min-h-72 bg-[var(--color-surface-2)]">
+        <div className="relative group rounded-[14px] overflow-hidden h-[40vh] min-h-72 bg-[var(--color-ink-2)]">
           <SecureDocViewer
             url={selectedVersion.fileUrl}
             title={title}
@@ -489,84 +494,19 @@ export default function InspectorPanel({
           />
         </div>
       ) : (
-        <div className="h-40 rounded-xl border border-[var(--color-border)] border-dashed bg-[var(--color-surface-2)] flex items-center justify-center text-xs text-[var(--color-text-faint)]">
-          No preview available
+        <div className="h-40 rounded-[14px] bg-[var(--color-surface-2)] flex items-center justify-center text-[13px] text-[var(--color-text-muted)]">
+          No preview for this file
         </div>
       )}
 
-      {/* DISTRIBUTION & SHARING — one drawer for the whole "who has this
-          document" story: share links, transmittals (and their trail),
-          read confirmations, and stale-copy recall. */}
-      {selectedDoc.id && selectedDoc.orgId && uid && (
-        <CollapsibleSection
-          id="distribution"
-          title="Distribution & sharing"
-          icon={Send}
-          summary={distSummary && (distSummary.issued > 0 || distSummary.ackTotal > 0)
-            ? <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md">
-                {distSummary.issued > 0 ? `${distSummary.issued}${distSummary.issuedCapped ? "+" : ""} issued` : ""}
-                {distSummary.issued > 0 && distSummary.ackTotal > 0 ? " · " : ""}
-                {distSummary.ackTotal > 0 ? `${distSummary.ackDone}/${distSummary.ackTotal} confirmed` : ""}
-              </span>
-            : undefined}
-        >
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={() => setShareOpen(true)}
-              title="Generate a public share link for someone outside the org"
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
-            >
-              <LinkIcon className="w-3 h-3" /> Share
-            </button>
-            <NextLink
-              href={`/transmittals?compose=1&doc=${selectedDoc.id}`}
-              title="Issue this document on a transmittal: a cover sheet to someone, with a receipt"
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
-            >
-              <Send className="w-3 h-3" /> Transmit
-            </NextLink>
-          </div>
-          <TransmittalTrail orgId={selectedDoc.orgId} documentId={selectedDoc.id} currentRev={selectedDoc.rev ?? null} />
-      {/* DISTRIBUTION CONFIRMATIONS — "8 of 12 confirmed they have Rev 5",
-          plus the recipient's own unmissable confirm bar. */}
-      {selectedDoc.id && selectedDoc.orgId && uid && (
-        <DistributionAcks
-          documentId={selectedDoc.id}
-          orgId={selectedDoc.orgId}
-          libraryId={selectedDoc.libraryId ?? null}
-          docLabel={String(selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "Document")}
-          currentRev={selectedDoc.rev ?? null}
-          currentVersionId={selectedDoc.currentVersionId ?? null}
-          currentUserId={uid}
-          currentUserName={userEmail?.split("@")[0] ?? null}
-          isController={isController}
-        />
-      )}
-
-      {/* DISTRIBUTION — who pulled copies, and are they still current. */}
-      {selectedDoc.id && selectedDoc.orgId && uid && (
-        <DistributionRecall
-          documentId={selectedDoc.id}
-          orgId={selectedDoc.orgId}
-          libraryId={selectedDoc.libraryId ?? null}
-          docLabel={String(selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "Document")}
-          currentRev={selectedDoc.rev ?? null}
-          currentVersionId={selectedDoc.currentVersionId ?? null}
-          currentUserId={uid}
-          currentUserName={userEmail?.split("@")[0] ?? null}
-        />
-      )}
-
-        </CollapsibleSection>
-      )}
-
+      {/* SECTIONS: one line each, opened in place. ───────────────────── */}
+      <div className="border-t border-[var(--color-border)]">
       {/* RELATIONSHIPS & IMPACT — what this document touches: where-used
           impact, AI readability, curated/automatic relations, equipment. */}
       {selectedDoc.id && selectedDoc.orgId && (
-        <CollapsibleSection
+        <PanelSection
           id="relationships"
-          title="Relationships & impact"
-          icon={Layers}
+          title="Equipment and related documents"
           summary={(() => {
             // Cheap synchronous count for the collapsed header — equipment tags
             // come straight from metadata; impact/related counts load on open.
@@ -575,7 +515,7 @@ export default function InspectorPanel({
               customColumns,
             ).reduce((n, g) => n + g.tags.length, 0);
             return tagCount > 0
-              ? <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-md">
+              ? <span>
                   {tagCount} equipment tag{tagCount === 1 ? "" : "s"}
                 </span>
               : undefined;
@@ -629,18 +569,136 @@ export default function InspectorPanel({
         />
       )}
 
-        </CollapsibleSection>
+        </PanelSection>
       )}
+
+      {/* DISTRIBUTION & SHARING — one drawer for the whole "who has this
+          document" story: share links, transmittals (and their trail),
+          read confirmations, and stale-copy recall. */}
+      {selectedDoc.id && selectedDoc.orgId && uid && (
+        <PanelSection
+          id="distribution"
+          title="Who has a copy"
+          summary={distSummary && (distSummary.issued > 0 || distSummary.ackTotal > 0)
+            ? <span>
+                {distSummary.issued > 0 ? `${distSummary.issued}${distSummary.issuedCapped ? "+" : ""} issued` : ""}
+                {distSummary.issued > 0 && distSummary.ackTotal > 0 ? " · " : ""}
+                {distSummary.ackTotal > 0 ? `${distSummary.ackDone}/${distSummary.ackTotal} confirmed` : ""}
+              </span>
+            : undefined}
+        >
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => setShareOpen(true)}
+              title="Generate a public share link for someone outside the org"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+            >
+              <LinkIcon className="w-3 h-3" /> Share
+            </button>
+            <NextLink
+              href={`/transmittals?compose=1&doc=${selectedDoc.id}`}
+              title="Issue this document on a transmittal: a cover sheet to someone, with a receipt"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+            >
+              <Send className="w-3 h-3" /> Transmit
+            </NextLink>
+          </div>
+          <TransmittalTrail orgId={selectedDoc.orgId} documentId={selectedDoc.id} currentRev={selectedDoc.rev ?? null} />
+      {/* DISTRIBUTION CONFIRMATIONS — "8 of 12 confirmed they have Rev 5",
+          plus the recipient's own unmissable confirm bar. */}
+      {selectedDoc.id && selectedDoc.orgId && uid && (
+        <DistributionAcks
+          documentId={selectedDoc.id}
+          orgId={selectedDoc.orgId}
+          libraryId={selectedDoc.libraryId ?? null}
+          docLabel={String(selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "Document")}
+          currentRev={selectedDoc.rev ?? null}
+          currentVersionId={selectedDoc.currentVersionId ?? null}
+          currentUserId={uid}
+          currentUserName={userEmail?.split("@")[0] ?? null}
+          isController={isController}
+        />
+      )}
+
+      {/* DISTRIBUTION — who pulled copies, and are they still current. */}
+      {selectedDoc.id && selectedDoc.orgId && uid && (
+        <DistributionRecall
+          documentId={selectedDoc.id}
+          orgId={selectedDoc.orgId}
+          libraryId={selectedDoc.libraryId ?? null}
+          docLabel={String(selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "Document")}
+          currentRev={selectedDoc.rev ?? null}
+          currentVersionId={selectedDoc.currentVersionId ?? null}
+          currentUserId={uid}
+          currentUserName={userEmail?.split("@")[0] ?? null}
+        />
+      )}
+
+        </PanelSection>
+      )}
+
+      {/* HISTORY & ACTIVITY — the revision record plus the audit tail. */}
+      <PanelSection id="history" title="Revisions and activity">
+        {/* The deep views live HERE, nested — not as a duplicate top-level
+            button showing the same list through a second door. */}
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={() => setCompareOpen(true)}
+            disabled={!selectedDoc.id}
+            title="Overlay any two revisions: grey unchanged, red removed, green added"
+            className="flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <GitCompare className="w-3.5 h-3.5" /> Compare revisions
+          </button>
+          <button
+            onClick={onHistory}
+            title="Open the full history drawer"
+            className="flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-all"
+          >
+            <History className="w-3.5 h-3.5" /> Full history
+          </button>
+        </div>
+      {/* VERSION HISTORY ────────────────────────────────────────────── */}
+      <div className="pt-1">
+        <VersionHistoryPanel
+          doc={selectedDoc}
+          currentUserId={uid ?? undefined}
+          currentUserEmail={userEmail ?? undefined}
+          userRole={activeRole}
+          refreshKey={versionHistoryRefreshKey}
+          onOpenVersion={(v) => onOpenVersion?.(v)}
+          canRevert={canPublishEff}
+          onRevertVersion={onRevertVersion}
+        />
+      </div>
+
+        {auditState === "loading" ? (
+          <div className="text-[13px] text-[var(--color-text-muted)]">Loading recent activity…</div>
+        ) : auditState === "failed" ? (
+          <div className="text-[13px] text-rose-700 dark:text-rose-300">Couldn&apos;t load recent activity.</div>
+        ) : recentAudits.length === 0 ? (
+          <div className="text-[13px] text-[var(--color-text-muted)]">No recent activity.</div>
+        ) : (
+          <div className="space-y-3">
+            {recentAudits.map((log, i) => (
+              <div key={i} className="flex flex-col gap-0.5 border-l-2 border-[var(--color-border)] pl-3">
+                <span className="text-[11px] font-bold text-[var(--color-text)] uppercase">{log.action.replace(/_/g, ' ')}</span>
+                <span className="text-[11px] text-[var(--color-text-muted)]">by {log.userEmail?.split('@')[0]}</span>
+                <span className="text-[11px] text-[var(--color-text-faint)] font-mono">{formatTs(log.timestamp)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </PanelSection>
 
       {/* COMPLIANCE & CONTROL — review cycle, read-&-understood, pre-publish
           review, retention/legal hold, and origin, grouped behind ONE header.
           The header's pills keep the at-a-glance status visible while the
           bodies stay tucked away until needed. */}
       {selectedDoc?.id && orgId && (
-        <CollapsibleSection
+        <PanelSection
           id="compliance"
-          title="Compliance & control"
-          icon={ShieldCheck}
+          title="Review and sign-off"
           summary={
             <>
               <ReviewPill nextReviewDate={selectedDoc.nextReviewDate} compact />
@@ -678,18 +736,17 @@ export default function InspectorPanel({
             orgId={orgId}
             canManage={canManage}
           />
-        </CollapsibleSection>
+        </PanelSection>
       )}
 
       {/* CHECKOUT — status, force release, and the sealed episode record,
           in ONE place instead of three. */}
       {selectedDoc.id && selectedDoc.orgId && (
-        <CollapsibleSection
+        <PanelSection
           id="checkout"
           title="Checkout"
-          icon={Lock}
           summary={isCheckedOut
-            ? <span className="inline-flex items-center text-[11px] font-bold text-amber-800 dark:text-amber-300">
+            ? <span className="inline-flex items-center font-semibold text-amber-800 dark:text-amber-300">
                 {checkedOutByMe ? "Checked out by you" : `Checked out · ${selectedDoc.checkedOutByName || "someone"}`}
               </span>
             : undefined}
@@ -711,98 +768,7 @@ export default function InspectorPanel({
           </button>
         )}
           <CheckoutHistoryPanel orgId={selectedDoc.orgId} documentId={selectedDoc.id} />
-        </CollapsibleSection>
-      )}
-
-      {/* FILE DETAILS ───────────────────────────────────────────────── */}
-      <CollapsibleSection id="filedetails" title="File details" icon={FileText}>
-        <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[11px]">
-          <div className="text-[var(--color-text-muted)]">Type</div>
-          <div className="text-[var(--color-text)] font-mono truncate" title={fileType}>{ext ? `.${ext}` : fileType}</div>
-
-          <div className="text-[var(--color-text-muted)]">Size</div>
-          <div className="text-[var(--color-text)] font-mono">{formatBytes(sizeBytes)}</div>
-
-          <div className="text-[var(--color-text-muted)] flex items-center gap-1"><Calendar className="w-3 h-3" /> Created</div>
-          <div className="text-[var(--color-text)]">{formatTs(selectedDoc.createdAt)}</div>
-
-          <div className="text-[var(--color-text-muted)] flex items-center gap-1"><Calendar className="w-3 h-3" /> Modified</div>
-          <div className="text-[var(--color-text)]">{formatTs(selectedDoc.updatedAt)}</div>
-
-          {selectedVersion?.createdByName && (
-            <>
-              <div className="text-[var(--color-text-muted)] flex items-center gap-1"><User className="w-3 h-3" /> By</div>
-              <div className="text-[var(--color-text)] truncate">{selectedVersion.createdByName}</div>
-            </>
-          )}
-        </div>
-      </CollapsibleSection>
-
-      {/* HISTORY & ACTIVITY — the revision record plus the audit tail. */}
-      <CollapsibleSection id="history" title="History & activity" icon={History}>
-        {/* The deep views live HERE, nested — not as a duplicate top-level
-            button showing the same list through a second door. */}
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            onClick={() => setCompareOpen(true)}
-            disabled={!selectedDoc.id}
-            title="Overlay any two revisions: grey unchanged, red removed, green added"
-            className="flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <GitCompare className="w-3.5 h-3.5" /> Compare revisions
-          </button>
-          <button
-            onClick={onHistory}
-            title="Open the full history drawer"
-            className="flex items-center justify-center gap-1.5 px-2 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-all"
-          >
-            <History className="w-3.5 h-3.5" /> Full history
-          </button>
-        </div>
-      {/* VERSION HISTORY ────────────────────────────────────────────── */}
-      <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-4">
-        <VersionHistoryPanel
-          doc={selectedDoc}
-          currentUserId={uid ?? undefined}
-          currentUserEmail={userEmail ?? undefined}
-          userRole={activeRole}
-          refreshKey={versionHistoryRefreshKey}
-          onOpenVersion={(v) => onOpenVersion?.(v)}
-          canRevert={canPublishEff}
-          onRevertVersion={onRevertVersion}
-        />
-      </div>
-
-        {auditState === "loading" ? (
-          <div className="text-xs text-[var(--color-text-muted)]">Loading recent activity…</div>
-        ) : auditState === "failed" ? (
-          <div className="text-xs text-rose-700 dark:text-rose-300">Couldn&apos;t load recent activity.</div>
-        ) : recentAudits.length === 0 ? (
-          <div className="text-xs text-[var(--color-text-faint)] italic">No recent activity.</div>
-        ) : (
-          <div className="space-y-3">
-            {recentAudits.map((log, i) => (
-              <div key={i} className="flex flex-col gap-0.5 border-l-2 border-[var(--color-border)] pl-3">
-                <span className="text-[11px] font-bold text-[var(--color-text)] uppercase">{log.action.replace(/_/g, ' ')}</span>
-                <span className="text-[11px] text-[var(--color-text-muted)]">by {log.userEmail?.split('@')[0]}</span>
-                <span className="text-[11px] text-[var(--color-text-faint)] font-mono">{formatTs(log.timestamp)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </CollapsibleSection>
-
-      {/* QUICK NOTES — drop ad-hoc context anywhere (collapsed by default) */}
-      {selectedDoc.id && selectedDoc.orgId && uid && (
-        <CollapsibleSection id="quicknote" title="Quick note" icon={StickyNote}>
-          <QuickNoteComposer
-            orgId={selectedDoc.orgId}
-            userId={uid}
-            userEmail={userEmail || undefined}
-            userName={userEmail?.split("@")[0]}
-            scope={{ documentId: selectedDoc.id }}
-          />
-        </CollapsibleSection>
+        </PanelSection>
       )}
 
       {/* HOLDS — placing the FIRST hold. Every hold-authorized role
@@ -812,7 +778,7 @@ export default function InspectorPanel({
           Manage drawer. Collapsed: zero chrome on a healthy document. Once a
           hold is active this disappears and the ALERTS zone takes over. */}
       {selectedDoc.id && selectedDoc.orgId && uid && activeHoldCount === 0 && (canManageAssets || isOwner) && (
-        <CollapsibleSection id="placehold" title="Holds" icon={Shield}>
+        <PanelSection id="placehold" title="Holds">
           <HoldStrip
             documentId={selectedDoc.id}
             orgId={selectedDoc.orgId}
@@ -824,12 +790,12 @@ export default function InspectorPanel({
             refreshKey={holdsRefresh}
             onChange={() => setHoldsRefresh((k) => k + 1)}
           />
-        </CollapsibleSection>
+        </PanelSection>
       )}
 
       {/* MANAGE & LIFECYCLE — admin/owner actions behind one header. */}
       {canManage && (
-        <CollapsibleSection id="manage" title="Manage & lifecycle" icon={Wrench}>
+        <PanelSection id="manage" title="Manage">
           {/* Unified lifecycle entry-point (Rev-Up, Split, Merge, Renumber, etc.) */}
           {selectedDoc.id && selectedDoc.orgId && selectedDoc.libraryId && uid && (
             <button
@@ -926,8 +892,47 @@ export default function InspectorPanel({
               <Trash2 className="w-3.5 h-3.5" /> Request deletion
             </button>
           )}
-        </CollapsibleSection>
+        </PanelSection>
       )}
+
+      {/* FILE DETAILS ───────────────────────────────────────────────── */}
+      <PanelSection id="filedetails" title="File details">
+        <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[13px]">
+          <div className="text-[var(--color-text-muted)]">Type</div>
+          <div className="text-[var(--color-text)] font-mono truncate" title={fileType}>{ext ? `.${ext}` : fileType}</div>
+
+          <div className="text-[var(--color-text-muted)]">Size</div>
+          <div className="text-[var(--color-text)] font-mono">{formatBytes(sizeBytes)}</div>
+
+          <div className="text-[var(--color-text-muted)] flex items-center gap-1"><Calendar className="w-3 h-3" /> Created</div>
+          <div className="text-[var(--color-text)]">{formatTs(selectedDoc.createdAt)}</div>
+
+          <div className="text-[var(--color-text-muted)] flex items-center gap-1"><Calendar className="w-3 h-3" /> Modified</div>
+          <div className="text-[var(--color-text)]">{formatTs(selectedDoc.updatedAt)}</div>
+
+          {selectedVersion?.createdByName && (
+            <>
+              <div className="text-[var(--color-text-muted)] flex items-center gap-1"><User className="w-3 h-3" /> By</div>
+              <div className="text-[var(--color-text)] truncate">{selectedVersion.createdByName}</div>
+            </>
+          )}
+        </div>
+      </PanelSection>
+
+      {/* QUICK NOTES — drop ad-hoc context anywhere (collapsed by default) */}
+      {selectedDoc.id && selectedDoc.orgId && uid && (
+        <PanelSection id="quicknote" title="Quick note">
+          <QuickNoteComposer
+            orgId={selectedDoc.orgId}
+            userId={uid}
+            userEmail={userEmail || undefined}
+            userName={userEmail?.split("@")[0]}
+            scope={{ documentId: selectedDoc.id }}
+          />
+        </PanelSection>
+      )}
+
+      </div>
 
       {modifyOpen && selectedDoc.id && selectedDoc.orgId && selectedDoc.libraryId && uid && (
         <ModifyDocumentRouter
@@ -1028,5 +1033,46 @@ function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; do
         })}
       </ul>
     </div>
+  );
+}
+
+
+// ─── One line per section ────────────────────────────────────────────────
+// A plain row (name, what's in it, ›) that opens in place. Remembers whether
+// it was left open, per section, like the rest of the inspector did.
+function PanelSection({ id, title, summary, defaultOpen = false, children }: {
+  id: string;
+  title: string;
+  summary?: React.ReactNode;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const storageKey = `mfg.inspector.sec.${id}`;
+  const [open, setOpen] = useState(defaultOpen);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const v = localStorage.getItem(storageKey);
+        if (alive && v !== null) setOpen(v === "1");
+      } catch { /* private mode: keep the default */ }
+    })();
+    return () => { alive = false; };
+  }, [storageKey]);
+  const toggle = () => setOpen((o) => {
+    const next = !o;
+    try { localStorage.setItem(storageKey, next ? "1" : "0"); } catch { /* ignore */ }
+    return next;
+  });
+  return (
+    <section className="border-b border-[var(--color-border)] last:border-b-0">
+      <button type="button" onClick={toggle} aria-expanded={open}
+        className="w-full min-h-12 py-2 flex items-center gap-3 text-left group">
+        <span className="flex-1 min-w-0 text-[14px] font-semibold text-[var(--color-text)] group-hover:underline underline-offset-4 decoration-[var(--color-border-strong)]">{title}</span>
+        {summary && <span className="flex items-center gap-1.5 flex-wrap justify-end min-w-0 text-[13px] text-[var(--color-text-muted)]">{summary}</span>}
+        <ChevronRight className={`w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${open ? "rotate-90" : ""}`} />
+      </button>
+      {open && <div className="pb-5 space-y-3">{children}</div>}
+    </section>
   );
 }

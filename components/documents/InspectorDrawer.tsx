@@ -30,51 +30,48 @@ export default function InspectorDrawer({ isOpen, onClose, children, title }: In
 
   return (
     <>
-      {/* Backdrop with frosted blur */}
+      {/* Dim what's behind: the library stays in view, quieter. */}
       <div
         onClick={onClose}
-        className={`fixed inset-0 z-[55] transition-all duration-300 ${
+        className={`fixed inset-0 z-[55] transition-opacity duration-300 ${
           isOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
-        style={{
-          // Same dim as every dialog (slate-900 at 50%).
-          background: "rgba(15, 23, 42, 0.5)",
-          backdropFilter: isOpen ? "blur(3px)" : "none",
-          WebkitBackdropFilter: isOpen ? "blur(3px)" : "none",
-        }}
+        style={{ background: "color-mix(in srgb, var(--color-ink) 58%, transparent)" }}
         aria-hidden="true"
       />
 
-      {/* Drawer panel — slides from right with spring easing */}
+      {/* The panel: white, raised over the dimmed page, from the right. */}
       <aside
         ref={asideRef}
-        className={`fixed top-0 right-0 bottom-0 z-[60] w-[640px] max-w-[92vw] lg:w-[720px] bg-[var(--color-surface)] shadow-2xl border-l border-[var(--color-border)] flex flex-col transition-transform duration-500 ${
-          isOpen ? "translate-x-0" : "translate-x-full"
+        className={`fixed top-0 right-0 bottom-0 sm:top-3.5 sm:right-3.5 z-[60] w-full sm:w-[580px] lg:w-[640px] sm:max-w-[calc(100vw-28px)] bg-[var(--color-surface)] sm:rounded-t-[20px] flex flex-col overflow-hidden transition-transform duration-500 ${
+          isOpen ? "translate-x-0" : "translate-x-[calc(100%+6rem)] pointer-events-none"
         }`}
         style={{
-          transitionTimingFunction: "cubic-bezier(0.34, 1.56, 0.64, 1)",
-          boxShadow: "0 0 60px -10px rgba(0,0,0,0.15), 0 25px 50px -12px rgba(0,0,0,0.25)",
+          transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
+          boxShadow: "-30px 0 60px -30px rgb(0 0 0 / 0.6)",
         }}
         role="dialog"
-        aria-modal="true"
+        aria-modal={isOpen ? "true" : undefined}
+        aria-hidden={!isOpen}
+        aria-label={title ?? "Document"}
       >
-        {/* Header */}
-        <div className="shrink-0 px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-surface-2)]">
-          <div className="text-xs font-black text-[var(--color-text-muted)] uppercase tracking-widest flex items-center gap-2 min-w-0 truncate">
-            {title ?? "Inspector"}
+        {/* Where you are, and the way out */}
+        <div className="shrink-0 px-5 sm:px-7 pt-5 pb-1 flex items-center gap-3">
+          <div className="flex-1 min-w-0 truncate text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--color-text-muted)]" title={title}>
+            {title ?? "Document"}
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+            className="shrink-0 w-9 h-9 rounded-[10px] grid place-items-center bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors"
             title="Close (Esc)"
             aria-label="Close"
           >
-            <X className="w-4 h-4" />
+            <X className="w-4 h-4" strokeWidth={2.4} />
           </button>
         </div>
 
         {/* Scrollable body */}
-        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">{children}</div>
+        <div className="flex-1 overflow-y-auto px-5 sm:px-7 pt-2 pb-8 custom-scrollbar">{children}</div>
       </aside>
     </>
   );

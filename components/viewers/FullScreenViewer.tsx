@@ -1513,7 +1513,7 @@ export default function FullScreenViewer({
 
       {/* ─── Uncontrolled-copy confirmation modal ────────────────────── */}
       {pending && (
-        <div className="fixed inset-0 z-[110] bg-slate-900/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-6">
+        <div className="fixed inset-0 z-[110] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] flex items-start sm:items-center justify-center overflow-y-auto p-6">
           <div className="w-full max-w-md rounded-2xl bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl border border-[var(--color-border)] overflow-hidden">
             <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
               <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0" />

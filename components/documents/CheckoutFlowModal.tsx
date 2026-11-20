@@ -622,14 +622,14 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
   const isIdle = activeSessions.length === 0 && !mySession && !isOrphaned && !episode && !document.checkedOutBy;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
+    <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] p-4 animate-in fade-in">
       <div className={`bg-[var(--color-surface)] w-full rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col md:flex-row animate-in fade-in zoom-in-95 ${isIdle ? "max-w-xl max-h-[88vh]" : "max-w-4xl h-[80vh]"}`}>
 
         {/* LEFT: SESSION & ACTIONS */}
         <div className={`flex-1 flex flex-col bg-[var(--color-surface-2)] ${isIdle ? "" : "border-r border-[var(--color-border)]"}`}>
           <div className="px-6 py-4 border-b border-[var(--color-border)] flex justify-between items-center bg-[var(--color-surface)]">
             <div>
-              <h2 className="text-lg font-bold text-[var(--color-text)]">{mySession ? "Check in" : "Check out"}</h2>
+              <h2 className="text-[15px] font-extrabold text-[var(--color-text)]">{mySession ? "Check in" : "Check out"}</h2>
               <p className="text-xs text-[var(--color-text-muted)] truncate max-w-[200px]">{document.title}</p>
             </div>
             {/* Close button must be visible on every breakpoint — previously

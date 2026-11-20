@@ -140,7 +140,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in duration-200">
       <div className="w-full max-w-4xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col h-[80vh] animate-in fade-in zoom-in-95">
         
         {/* HEADER */}
@@ -148,7 +148,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
           <div className="flex items-center">
             <BookOpen className="w-5 h-5 mr-3 text-[var(--color-text-muted)]" />
             <div>
-              <h2 className="text-lg font-bold text-[var(--color-text)]">Binder Management</h2>
+              <h2 className="text-[15px] font-extrabold text-[var(--color-text)]">Binder management</h2>
               <p className="text-xs text-[var(--color-text-muted)] font-medium">Manage Document Sets & P&ID Packs</p>
             </div>
           </div>
@@ -197,7 +197,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
             {mode === 'create' && (
               <div className="flex flex-col items-center justify-center h-full p-10">
                 <div className="w-full max-w-sm">
-                  <h3 className="text-lg font-bold text-[var(--color-text)] mb-4">Create New Document Set</h3>
+                  <h3 className="text-[14px] font-bold text-[var(--color-text)] mb-4">Create a new document set</h3>
                   <label className="text-xs font-bold text-[var(--color-text-muted)] uppercase mb-1 block">Set Title</label>
                   <input 
                     value={inputValue}

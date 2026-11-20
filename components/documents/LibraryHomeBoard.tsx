@@ -335,8 +335,8 @@ function PartGrid({
 
 function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-xl bg-[var(--color-surface-2)] p-3">
-      <div className="text-2xl font-black text-[var(--color-text)]">{value}</div>
+    <div className="rounded-xl bg-[var(--color-surface-2)] px-3 py-2.5 flex items-baseline gap-2">
+      <div className="text-[15px] font-black tabular-nums text-[var(--color-text)]">{value}</div>
       <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">{label}</div>
     </div>
   );

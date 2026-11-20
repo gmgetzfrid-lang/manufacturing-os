@@ -36,17 +36,17 @@ export default function AlsoFiledHere({ orgId, folderId }: { orgId: string; fold
   }, [orgId, folderId]);
   if (!rows.length) return null;
   return (
-    <div className="mb-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden">
-      <div className="px-4 py-2 border-b border-[var(--color-border)] text-xs font-black inline-flex items-center gap-2"><Link2 className="w-3.5 h-3.5 text-amber-600" /> Also filed here · {rows.length}</div>
+    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+      <h2 className="px-4 sm:px-5 pt-4 pb-2 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] flex items-center gap-2"><Link2 className="w-3.5 h-3.5" /> Also filed here · {rows.length}</h2>
       <ul className="divide-y divide-[var(--color-border)]">
         {rows.map((r) => (
-          <li key={r.docId} className="px-4 py-1.5 text-xs flex items-center gap-2">
+          <li key={r.docId} className="px-4 sm:px-5 py-2 text-[13px] flex items-center gap-2">
             <Link href={`/documents/${r.libraryId}?${r.folderId ? `folderId=${r.folderId}&` : ""}doc=${r.docId}`} className="font-semibold hover:underline truncate">{r.name}</Link>
             <span className="text-[var(--color-text-muted)] truncate">lives in {r.path}</span>
             {r.summary && <span className="text-[var(--color-text-faint)] truncate hidden md:inline">· {r.summary}</span>}
           </li>
         ))}
       </ul>
-    </div>
+    </section>
   );
 }

@@ -97,12 +97,12 @@ export default function CollectionsStrip({
   if (collections.length === 0 && !openCollectionId && !creating) return null;
 
   return (
-    <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
+    <div className="px-4 sm:px-5 py-3.5 border-b border-[var(--color-border)] last:border-b-0">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2 min-w-0">
-          <FolderKanban className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-          <span className="text-[11px] font-black uppercase tracking-widest text-[var(--color-text)] shrink-0">
-            Curated Collections
+          <FolderKanban className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
+          <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)] shrink-0">
+            Collections
           </span>
           {/* Scope chip — makes it obvious these books belong to THIS folder. */}
           <span className="text-[11px] font-bold text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded px-1.5 py-px truncate max-w-[180px]" title={folderId && folderName ? `Books in “${folderName}”` : "Books at the library root"}>
@@ -114,9 +114,9 @@ export default function CollectionsStrip({
         </div>
         <button
           onClick={() => setCreating(true)}
-          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] transition-colors"
+          className="inline-flex items-center gap-1 h-8 px-3 rounded-lg text-[12px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] transition-colors"
         >
-          <Plus className="w-3 h-3" /> New collection
+          <Plus className="w-3.5 h-3.5" /> New collection
         </button>
       </div>
 

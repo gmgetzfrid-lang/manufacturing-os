@@ -305,7 +305,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
   const field = "h-8 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] text-[var(--color-text)]";
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-2 sm:p-4">
+    <div className="fixed inset-0 z-[200] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] flex items-start sm:items-center justify-center overflow-y-auto p-2 sm:p-4">
       <div className="w-full max-w-4xl bg-[var(--color-surface)] rounded-2xl shadow-2xl flex flex-col max-h-[94vh]">
         <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-2.5">
           <ScanSearch className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />

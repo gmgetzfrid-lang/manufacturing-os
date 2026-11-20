@@ -9,8 +9,23 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  FileText, Loader2, AlertTriangle, CheckCircle2, Download, Building2, PenLine,
+  FileText, Loader2, AlertTriangle, CheckCircle2, Download, PenLine,
 } from "lucide-react";
+import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
+
+// The page frame: paper, a band with the answer, cards over its edge. Kept
+// outside the page component so typing in the receipt form doesn't remount
+// everything (and drop the cursor) on each key.
+function Shell({ kicker, title, sub, children }: { kicker: React.ReactNode; title: React.ReactNode; sub?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <main className="min-h-dvh bg-[var(--color-canvas)] px-3 sm:px-6 py-4 sm:py-8">
+      <div className="mx-auto w-full max-w-3xl">
+        <PageHero kicker={kicker} title={title} sub={sub} size="md" />
+        <PageBody>{children}</PageBody>
+      </div>
+    </main>
+  );
+}
 
 interface PortalItem { documentId: string; number: string; title: string | null; rev: string | null }
 interface PortalData {
@@ -75,134 +90,105 @@ export default function TransmittalPortal({ params }: { params: Promise<{ token:
     } finally { setAckBusy(false); }
   };
 
-  const Shell = ({ children }: { children: React.ReactNode }) => (
-    <div className="min-h-dvh bg-slate-100 dark:bg-slate-950 flex items-start justify-center p-4 sm:p-8">
-      <div className="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-lg overflow-hidden">{children}</div>
-    </div>
-  );
-
-  if (state === "loading") return <Shell><div className="p-8 text-center text-slate-500"><Loader2 className="w-5 h-5 animate-spin inline mr-2" />Opening transmittal…</div></Shell>;
+  if (state === "loading") return <Shell kicker="Transmittal" title="Opening the transmittal…"><Card><div className="py-6 text-center text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-5 h-5 animate-spin inline mr-2" />Opening transmittal…</div></Card></Shell>;
   if (state !== "ok" || !data) {
     const text = state === "voided" ? "This transmittal was voided by the issuer - it is no longer a valid record. Contact them for a replacement."
       : state === "notfound" ? "This link doesn't exist - it may have been mistyped."
       : "Something went wrong opening this transmittal. Try again shortly.";
-    return <Shell><div className="p-8 text-center"><AlertTriangle className="w-8 h-8 text-amber-500 mx-auto mb-2" /><p className="text-sm text-slate-500">{text}</p></div></Shell>;
+    const title = state === "voided" ? "This transmittal was voided." : state === "notfound" ? "No transmittal at this link." : "It didn't open.";
+    return <Shell kicker="Transmittal" title={title}><Card><div className="py-4 flex items-start gap-3"><AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" /><p className="text-[14px] text-[var(--color-text)]">{text}</p></div></Card></Shell>;
   }
 
   const acknowledged = data.status === "acknowledged";
+  const n = data.items.length;
+  const from = `${data.orgName ?? "the issuer"}${data.fromName ? ` (${data.fromName})` : ""}`;
+  const to = [data.recipientName, data.recipientCompany].filter(Boolean).join(" · ");
 
   return (
-    <Shell>
-      {/* Official header band */}
-      <div className="px-6 py-5 border-b-4 border-[var(--color-border-strong)] bg-[var(--color-surface-2)]">
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div className="min-w-0">
-            <div className="text-[11px] font-black tracking-[0.2em] text-[var(--color-text)] dark:text-[var(--color-text)] uppercase">Transmittal {data.number}</div>
-            <h1 className="text-xl font-black text-slate-900 dark:text-white mt-0.5">{data.subject || "Document Transmittal"}</h1>
-            <div className="text-xs text-slate-500 mt-1">
-              From <b className="text-slate-700 dark:text-slate-300">{data.orgName ?? "the issuer"}</b>
-              {data.fromName ? ` (${data.fromName})` : ""}{data.issuedAt ? ` · issued ${new Date(data.issuedAt).toLocaleDateString()}` : ""}
-            </div>
-          </div>
-          <div className="shrink-0 text-right">
-            {data.purpose && (
-              <span className="inline-block text-[11px] font-black uppercase tracking-wider text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-full px-3 py-1">{data.purpose}</span>
-            )}
-            <div className="mt-2">
-              {acknowledged
-                ? <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-700"><CheckCircle2 className="w-3.5 h-3.5" /> Acknowledged</span>
-                : <span className="text-[11px] font-black text-amber-700">Awaiting your acknowledgment</span>}
-            </div>
-          </div>
-        </div>
-        {(data.recipientName || data.recipientCompany) && (
-          <div className="mt-3 flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
-            <Building2 className="w-3.5 h-3.5" /> To: <b>{[data.recipientName, data.recipientCompany].filter(Boolean).join(" · ")}</b>
-          </div>
-        )}
-      </div>
-
-      <div className="p-6 space-y-5">
+    <Shell
+      kicker={<>Transmittal {data.number}{data.purpose ? ` · ${data.purpose}` : ""}</>}
+      title={acknowledged ? "Received. It's on the record." : `${n} document${n === 1 ? "" : "s"} for you.`}
+      sub={<>
+        {data.subject || "Document Transmittal"}. From <b className="text-white">{from}</b>{data.issuedAt ? `, issued ${new Date(data.issuedAt).toLocaleDateString()}` : ""}.
+        {to ? <> To {to}.</> : null}
+      </>}
+    >
         {msg && (
-          <p role={msg.tone === "ok" ? "status" : "alert"} className={`border-l-2 pl-3 text-xs font-bold ${msg.tone === "ok" ? "border-emerald-500 text-emerald-800 dark:text-emerald-300" : "border-rose-500 text-rose-700 dark:text-rose-300"}`}>{msg.text}</p>
+          <Card>
+            <p role={msg.tone === "ok" ? "status" : "alert"} className={`text-[14px] font-semibold ${msg.tone === "ok" ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}`}>{msg.text}</p>
+          </Card>
         )}
 
         {/* Document list with downloads */}
-        <div>
-          <div className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-2">Documents transmitted ({data.items.length})</div>
-          <ul className="rounded-xl border border-slate-200 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
+        <Card label={`Documents transmitted (${n})`} pad={false} className="overflow-hidden">
+          <ul className="border-t border-[var(--color-border)] divide-y divide-[var(--color-border)]">
             {data.items.map((i) => (
-              <li key={i.documentId} className="px-3.5 py-2.5 flex items-center gap-3">
+              <li key={i.documentId} className="px-4 sm:px-5 py-3 flex items-center gap-3">
                 <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                  <div className="text-[14px] font-bold text-[var(--color-text)] truncate">
                     <span className="font-mono">{i.number}</span>
-                    {i.rev && <span className="ml-2 text-[11px] font-black text-slate-500 bg-slate-100 dark:bg-slate-800 rounded px-1.5 py-0.5">REV {i.rev}</span>}
+                    {i.rev && <span className="ml-2 text-[12px] font-semibold text-[var(--color-text-muted)]">Rev {i.rev}</span>}
                   </div>
-                  {i.title && <div className="text-[11px] text-slate-500 truncate">{i.title}</div>}
+                  {i.title && i.title !== i.number && <div className="text-[13px] text-[var(--color-text-muted)] truncate">{i.title}</div>}
                 </div>
                 <button
                   onClick={() => void download(i.documentId)}
                   disabled={downloading === i.documentId}
-                  className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white text-[11px] font-black hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 transition-colors"
+                  className="shrink-0 inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] border border-[var(--color-border-strong)] text-[var(--color-text)] text-[13px] font-semibold hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
                 >
                   {downloading === i.documentId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Download
                 </button>
               </li>
             ))}
           </ul>
-          <div className="mt-1.5 text-[11px] text-slate-400">Files download at the revision issued here. A newer revision is not part of this record.</div>
-        </div>
+          <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)] text-[12px] text-[var(--color-text-muted)]">Files download at the revision issued here. A newer revision is not part of this record.</div>
+        </Card>
 
         {data.notes && (
-          <div>
-            <div className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Notes from the issuer</div>
-            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 px-3.5 py-2.5 text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap">{data.notes}</div>
-          </div>
+          <Card label="Notes from the issuer">
+            <div className="text-[14px] text-[var(--color-text)] whitespace-pre-wrap">{data.notes}</div>
+          </Card>
         )}
 
         {/* Acknowledgment */}
         {acknowledged ? (
-          <div className="border-l-2 border-emerald-500 pl-4 py-1">
-            <div className="flex items-center gap-2 text-sm font-black text-emerald-800 dark:text-emerald-300">
+          <Card>
+            <div className="flex items-center gap-2 text-[14px] font-bold text-emerald-700 dark:text-emerald-300">
               <CheckCircle2 className="w-4 h-4" /> Receipt acknowledged
             </div>
-            <div className="text-xs text-emerald-700 dark:text-emerald-400 mt-1">
-              {data.acknowledgedByName ? <>By <b>{data.acknowledgedByName}</b></> : "Recorded"}
-              {data.acknowledgedAt ? <> on {new Date(data.acknowledgedAt).toLocaleString()}</> : null}. It&apos;s kept on the record.
+            <div className="text-[13px] text-[var(--color-text-muted)] mt-1">
+              {data.acknowledgedByName ? <>By <b className="text-[var(--color-text)]">{data.acknowledgedByName}</b></> : "Recorded"}
+              {data.acknowledgedAt ? <> on {new Date(data.acknowledgedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</> : null}. It&apos;s kept on the record.
             </div>
-          </div>
+          </Card>
         ) : (
-          <div className="rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] dark:border-[var(--color-border)] p-4">
-            <div className="flex items-center gap-2 text-sm font-black text-slate-900 dark:text-white mb-1">
-              <PenLine className="w-4 h-4 text-[var(--color-text-muted)]" /> Acknowledge receipt
-            </div>
-            <p className="text-[11px] text-slate-600 dark:text-slate-400 mb-3">
+          <Card label={<span className="inline-flex items-center gap-1.5"><PenLine className="w-3.5 h-3.5" /> Acknowledge receipt</span>}>
+            <p className="text-[14px] text-[var(--color-text-muted)] mb-3">
               This tells {data.orgName ?? "the issuer"} you got these documents at the revisions above. Your name and the time are recorded.
             </p>
             <div className="flex items-end gap-2 flex-wrap">
               <label className="block flex-1 min-w-48">
-                <span className="text-[11px] font-black uppercase tracking-wider text-slate-500">Your name (required)</span>
+                <span className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Your name (required)</span>
                 <input value={ackName} onChange={(e) => setAckName(e.target.value)} placeholder="e.g. Dave Miller, Acme Fabricators"
-                  className="mt-0.5 w-full h-9 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 text-sm text-slate-900 dark:text-white" />
+                  className="mt-1 w-full h-10 rounded-[10px] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-base sm:text-[14px] text-[var(--color-text)]" />
               </label>
               <label className="block flex-1 min-w-48">
-                <span className="text-[11px] font-black uppercase tracking-wider text-slate-500">Note (optional)</span>
+                <span className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">Note (optional)</span>
                 <input value={ackNote} onChange={(e) => setAckNote(e.target.value)} placeholder="e.g. received, distributing to shop"
-                  className="mt-0.5 w-full h-9 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 text-sm text-slate-900 dark:text-white" />
+                  className="mt-1 w-full h-10 rounded-[10px] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-base sm:text-[14px] text-[var(--color-text)]" />
               </label>
               <button onClick={() => void acknowledge()} disabled={ackBusy}
-                className="h-9 inline-flex items-center gap-1.5 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
+                className="h-10 inline-flex items-center gap-1.5 px-5 rounded-xl bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[14px] font-extrabold hover:bg-[var(--color-accent-hover)] shadow-[0_12px_24px_-12px_var(--color-accent)] disabled:opacity-50 transition-colors">
                 {ackBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Acknowledge
               </button>
             </div>
-          </div>
+          </Card>
         )}
 
-        <div className="text-[11px] text-slate-400 border-t border-slate-100 dark:border-slate-800 pt-3">
+        <p className="px-1 text-[12px] text-[var(--color-text-muted)]">
           Transmittal {data.number} · Downloads and the receipt are logged. Only people with this link can see it.
-        </div>
-      </div>
+        </p>
     </Shell>
   );
 }

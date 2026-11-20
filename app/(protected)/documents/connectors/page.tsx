@@ -8,9 +8,10 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Download, FileQuestion, Loader2, Split, Tag, Unplug } from "lucide-react";
+import { Download, FileQuestion, Loader2, Split, Tag } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroQuiet } from "@/components/ui/PageHero";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
@@ -110,55 +111,65 @@ export default function ConnectorChecksPage() {
     { id: "oneway", label: "Only one side shows it", n: rows.oneway.length, Icon: Split, what: "One sheet shows lines to or from another, and the other shows none back. A connector is missing on one of them." },
   ];
   const cur = TABS.find((t) => t.id === view)!;
-  const chip = (on: boolean) => `shrink-0 inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border text-[12.5px] font-bold transition-colors ${on ? "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
+  // Chips on the band: the one in use is white.
+  const chip = (on: boolean) => `shrink-0 inline-flex items-center gap-1.5 h-9 px-3 rounded-full border text-[13px] font-semibold transition-colors ${on ? "bg-white text-[var(--color-ink)] border-white" : "border-[var(--color-ink-line)] text-[var(--color-ink-fg)] hover:bg-[var(--color-ink-2)]"}`;
+  const open = rows.missing.length + rows.tag.length + rows.oneway.length;
+  const answer = error ? "The connectors couldn't be read."
+    : !checks ? "Connector checks"
+    : checks.connectors === 0 ? "No connectors read yet."
+    : open === 0 ? "Every connector checks out."
+    : `${open.toLocaleString()} connector${open === 1 ? "" : "s"} to look at${drawing ? ` on ${drawing}` : ""}.`;
+  const answerSub = !checks ? "Every off-page connector read from the drawings, checked against the sheet it points at."
+    : checks.connectors === 0 ? `${checks.sheets.toLocaleString()} sheets on file, none with a connector read off it yet.`
+    : `${checks.connectors.toLocaleString()} connectors on ${checks.sheets} sheets. ${checks.holds.toLocaleString()} check out: the sheet is on file and carries the tag.`;
 
   return (
     <PageShell width="work">
-      <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
-      <PageHeaderBar icon={Unplug} title="Connector checks"
-        subtitle={<>Every off-page connector read from the drawings, checked against the sheet it points at.</>} />
-
-      {error && <div role="alert" className="mb-3 text-[12.5px] font-bold border-l-2 border-rose-500 pl-3 text-rose-700 dark:text-rose-300">The connectors could not be read: {error}</div>}
-      {!checks && !error && <div className="py-16 flex items-center justify-center gap-2 text-[13px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading the connectors</div>}
-
-      {checks && (
-        <div className="space-y-3" data-connector-checks>
-          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm px-4 py-3 text-[13px] text-[var(--color-text)]">
-            <b>{checks.connectors.toLocaleString()}</b> connectors on <b>{checks.sheets}</b> sheets. <b className="text-emerald-700 dark:text-emerald-300">{checks.holds.toLocaleString()}</b> check out: the sheet is on file and carries the tag.
-            {(checks.unchecked.noTarget + checks.unchecked.noSheetRecorded + checks.unchecked.targetNotRead) > 0 && (
-              <span className="block mt-1 text-[12px] text-[var(--color-text-muted)]">
-                Not checked: {[
-                  checks.unchecked.noTarget ? `${checks.unchecked.noTarget} with no sheet to go to that could be read` : null,
-                  checks.unchecked.noSheetRecorded ? `${checks.unchecked.noSheetRecorded} on ${checks.unchecked.noSheetDrawings.join(", ")}, which has no sheet number recorded` : null,
-                  checks.unchecked.targetNotRead ? `${checks.unchecked.targetNotRead} pointing at sheets not read yet` : null,
-                ].filter(Boolean).join("; ")}.
-              </span>
+      <PageHero
+        kicker="Document control · Connector checks"
+        title={answer}
+        sub={answerSub}
+        tools={checks ? (
+          <button type="button" onClick={download} className={heroQuiet} title="Download the list" aria-label="Download the list">
+            <Download className="w-4 h-4" /><span className="max-sm:hidden">Download</span>
+          </button>
+        ) : undefined}
+      >
+        <ViewTabs tabs={DOCUMENT_VIEWS} variant="dark" />
+        {checks && (
+          <div className="mt-3 space-y-2">
+            <div className="flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none]" role="tablist" aria-label="Checks">
+              {TABS.map((t) => (
+                <button key={t.id} type="button" role="tab" aria-selected={view === t.id} onClick={() => setView(t.id)} className={chip(view === t.id)}>
+                  <t.Icon className="w-3.5 h-3.5" /> {t.label} <span className="tabular-nums opacity-70">{t.n}</span>
+                </button>
+              ))}
+            </div>
+            {drawings.length > 1 && (
+              <div className="flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none]" aria-label="Drawing">
+                <button type="button" aria-pressed={!drawing} onClick={() => setDrawing("")} className={chip(!drawing)}>All drawings</button>
+                {drawings.map(([d, n]) => <button key={d} type="button" aria-pressed={drawing === d} onClick={() => setDrawing(drawing === d ? "" : d)} className={chip(drawing === d)}>{d} <span className="tabular-nums opacity-70">{n}</span></button>)}
+              </div>
             )}
           </div>
+        )}
+      </PageHero>
 
-          <div className="flex gap-1.5 overflow-x-auto pb-0.5" role="tablist" aria-label="Checks">
-            {TABS.map((t) => (
-              <button key={t.id} type="button" role="tab" aria-selected={view === t.id} onClick={() => setView(t.id)} className={chip(view === t.id)}>
-                <t.Icon className="w-3.5 h-3.5" /> {t.label} <span className="tabular-nums text-[var(--color-text-muted)]">{t.n}</span>
-              </button>
-            ))}
-          </div>
-          {drawings.length > 1 && (
-            <div className="flex gap-1.5 overflow-x-auto pb-0.5" aria-label="Drawing">
-              <button type="button" aria-pressed={!drawing} onClick={() => setDrawing("")} className={chip(!drawing)}>All drawings</button>
-              {drawings.map(([d, n]) => <button key={d} type="button" aria-pressed={drawing === d} onClick={() => setDrawing(drawing === d ? "" : d)} className={chip(drawing === d)}>{d} <span className="tabular-nums text-[var(--color-text-muted)]">{n}</span></button>)}
-            </div>
-          )}
+      <PageBody>
+      {error && <Card><div role="alert" className="text-[14px] font-semibold text-rose-700 dark:text-rose-300">The connectors could not be read: {error}</div></Card>}
+      {!checks && !error && <Card><div className="py-10 flex items-center justify-center gap-2 text-[14px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading the connectors</div></Card>}
 
-          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden">
-            <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-start gap-3 flex-wrap">
-              <p className="min-w-0 flex-1 basis-64 text-[12.5px] text-[var(--color-text-muted)]">{cur.what}</p>
-              <button type="button" onClick={download} className="shrink-0 inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[12.5px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Download className="w-3.5 h-3.5" /> Download the list</button>
+      {checks && (
+        <div className="space-y-4" data-connector-checks>
+          <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
+            <div className="px-4 sm:px-5 pt-4 pb-3 border-b border-[var(--color-border)]">
+              <h2 className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{cur.label}</h2>
+              <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">{cur.what}</p>
             </div>
             {cur.n === 0 ? <div className="px-4 py-8 text-center text-[13px] text-[var(--color-text-muted)]">Nothing found{drawing ? ` on ${drawing}` : ""}.</div> : (
               <ul className="divide-y divide-[var(--color-border)] text-[13px]">
                 {view === "missing" && rows.missing.map((m) => (
-                  <li key={`${m.drawing}|${m.sheet}`} className="px-4 py-2.5">
+                  <li key={`${m.drawing}|${m.sheet}`} className="px-4 sm:px-5 py-3">
                     <div className="font-bold text-[var(--color-text)]">{m.drawing} sheet {m.sheet} <span className="font-normal text-[var(--color-text-muted)]">is not on file</span></div>
                     <ul className="mt-1 space-y-0.5 text-[12.5px] text-[var(--color-text-muted)]">
                       {m.askedBy.map((a, i) => <li key={i}><SheetLink s={a.from} /> shows <b className="text-[var(--color-text)]">{a.tag}</b> {a.direction === "to" ? "going to" : "coming from"} it</li>)}
@@ -166,13 +177,13 @@ export default function ConnectorChecksPage() {
                   </li>
                 ))}
                 {view === "tag" && rows.tag.map((t, i) => (
-                  <li key={i} className="px-4 py-2.5">
+                  <li key={i} className="px-4 sm:px-5 py-3">
                     <div className="text-[var(--color-text)]"><SheetLink s={t.from} /> shows <b>{t.tag}</b> {t.direction === "to" ? "going to" : "coming from"} <SheetLink s={t.to} /></div>
                     <div className="mt-0.5 text-[12.5px] text-[var(--color-text-muted)]">{t.tag} was not read on that sheet. On the drawing: <span className="font-mono">{t.raw}</span></div>
                   </li>
                 ))}
                 {view === "oneway" && rows.oneway.map((o, i) => (
-                  <li key={i} className="px-4 py-2.5">
+                  <li key={i} className="px-4 sm:px-5 py-3">
                     <div className="text-[var(--color-text)]"><SheetLink s={o.from} /> {o.direction === "to" ? "sends" : "takes"} {o.count} line{o.count === 1 ? "" : "s"} {o.direction === "to" ? "to" : "from"} <SheetLink s={o.to} /> <span className="text-[var(--color-text-muted)]">({o.tags.join(", ")})</span></div>
                     <div className="mt-0.5 text-[12.5px] text-[var(--color-text-muted)]">That sheet shows nothing {o.direction === "to" ? "coming from" : "going to"} it.</div>
                   </li>
@@ -180,9 +191,21 @@ export default function ConnectorChecksPage() {
               </ul>
             )}
           </div>
-          <p className="text-[11.5px] text-[var(--color-text-muted)]">From what was read off each sheet. A tag the reader missed shows here as not on the sheet: the drawing settles it.</p>
+          <p className="px-1 text-[12px] text-[var(--color-text-muted)]">
+            From what was read off each sheet. A tag the reader missed shows here as not on the sheet: the drawing settles it.
+            {(checks.unchecked.noTarget + checks.unchecked.noSheetRecorded + checks.unchecked.targetNotRead) > 0 && (
+              <span className="block mt-1">
+                Not checked: {[
+                  checks.unchecked.noTarget ? `${checks.unchecked.noTarget} with no sheet to go to that could be read` : null,
+                  checks.unchecked.noSheetRecorded ? `${checks.unchecked.noSheetRecorded} on ${checks.unchecked.noSheetDrawings.join(", ")}, which has no sheet number recorded` : null,
+                  checks.unchecked.targetNotRead ? `${checks.unchecked.targetNotRead} pointing at sheets not read yet` : null,
+                ].filter(Boolean).join("; ")}.
+              </span>
+            )}
+          </p>
         </div>
       )}
+      </PageBody>
     </PageShell>
   );
 }

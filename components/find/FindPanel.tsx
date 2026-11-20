@@ -86,7 +86,7 @@ function DocRow({ d, line, compact, onOpen }: { d: FindDoc; line?: React.ReactNo
   return (
     <div className="flex items-stretch gap-1.5">
       <button type="button" onClick={onOpen} data-find-doc={d.id}
-        className="min-w-0 flex-1 text-left flex items-center gap-2.5 rounded-xl border px-2.5 py-2 bg-[var(--color-surface)] transition-colors border-[var(--color-border)] hover:border-[var(--color-border-strong)]">
+        className="min-w-0 flex-1 text-left flex items-center gap-2.5 rounded-xl px-2.5 py-2 bg-[var(--color-surface-2)]/60 hover:bg-[var(--color-surface-2)] transition-colors">
         {compact ? <FileText className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" /> : <DocThumb documentId={d.id} width={30} />}
         <span className="min-w-0 flex-1">
           <span className="block text-[13px] font-extrabold text-[var(--color-text)] break-words">{docLabel(d)}</span>
@@ -96,7 +96,7 @@ function DocRow({ d, line, compact, onOpen }: { d: FindDoc; line?: React.ReactNo
         <span className="shrink-0 text-[11px] font-bold px-2 py-1 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)]">Open</span>
       </button>
       <Link href={docHref(d)} data-find-doc-folder={d.id} title={`Go to ${d.folderName ?? "where it is filed"}`}
-        className="shrink-0 w-12 flex flex-col items-center justify-center gap-0.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)]">
+        className="shrink-0 w-12 flex flex-col items-center justify-center gap-0.5 rounded-xl bg-[var(--color-surface-2)]/60 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]">
         <Folder className="w-4 h-4" />
         <span className="text-[11px] font-bold leading-none">Folder</span>
       </Link>
@@ -109,7 +109,7 @@ function EquipRow({ e, on, onPick }: { e: FindEquip; on: boolean; onPick: () => 
   // says nothing when three units have one.
   return (
     <button type="button" onClick={onPick} data-find-equip={e.id}
-      className={`w-full text-left flex items-start gap-2.5 rounded-xl px-2.5 py-2 bg-[var(--color-surface)] transition-colors ${on ? "border-2 border-[var(--color-text)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : "border border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>
+      className={`w-full text-left flex items-start gap-2.5 rounded-xl px-2.5 py-2 transition-colors ${on ? "ring-2 ring-[var(--color-text)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : "bg-[var(--color-surface-2)]/60 hover:bg-[var(--color-surface-2)]"}`}>
       <UnitDot e={e} on={on} />
       <span className="min-w-0 flex-1">
         <span className="flex items-start gap-2">
@@ -195,7 +195,7 @@ export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpe
               })}
               {(f.detail?.workOrders ?? []).map((w) => (
                 <Link key={w.id} href={`/projects/${w.projectId}`} data-find-wo={w.id}
-                  className="flex items-center gap-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 hover:border-[var(--color-border-strong)]">
+                  className="flex items-center gap-2.5 rounded-xl bg-[var(--color-surface-2)]/60 px-2.5 py-2 hover:bg-[var(--color-surface-2)]">
                   <Wrench className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />
                   <span className="min-w-0 flex-1">
                     <span className="block text-[13px] font-extrabold text-[var(--color-text)] truncate">{w.wo ? `Work order ${w.wo} · ` : ""}{w.name}</span>
@@ -225,7 +225,7 @@ export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpe
             <Section title="Folders">
               {quick.folders.map((fo) => (
                 <button key={fo.id} type="button" onClick={() => onOpenFolder(fo)}
-                  className="w-full text-left flex items-center gap-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 hover:border-[var(--color-border-strong)]">
+                  className="w-full text-left flex items-center gap-2.5 rounded-xl bg-[var(--color-surface-2)]/60 px-2.5 py-2 hover:bg-[var(--color-surface-2)]">
                   <Folder className="w-4 h-4 shrink-0 text-amber-500" fill="currentColor" fillOpacity={0.25} />
                   <span className="min-w-0 flex-1 text-[13px] font-bold text-[var(--color-text)] truncate">{fo.name}{fo.parentName ? <span className="font-normal text-[var(--color-text-muted)]"> in {fo.parentName}</span> : null}</span>
                 </button>

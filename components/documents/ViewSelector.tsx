@@ -209,7 +209,7 @@ function SaveViewModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[400] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div className="fixed inset-0 z-[400] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
           <div className="text-sm font-black text-[var(--color-text)] flex items-center gap-2">

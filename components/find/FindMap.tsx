@@ -127,11 +127,11 @@ export default function FindMap({ orgId, unit, assetId, docs, candidates, onPick
   const rootUp = useMemo(() => (inFolder && folder?.up && onFolder ? { label: folder.up.name, onUp: () => onFolder(folder.up!.id) } : null), [inFolder, folder?.up, onFolder]);
 
   return (
-    <div className={`relative overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/40 ${className}`} data-find-map={folderMap ? "folder" : "site"}>
+    <div className={`relative overflow-hidden rounded-xl bg-[var(--color-surface-2)] ${className}`} data-find-map={folderMap ? "folder" : "site"}>
       {openDoc && <DocInPlace docId={openDoc} onClose={() => setOpenDoc(null)} />}
       {folderMap ? (
         folderMap.tree.length <= 1 ? (
-          <div className="absolute inset-0 grid place-items-center p-4 text-center text-[11px] text-[var(--color-text-muted)]">Nothing is filed in {folder!.name} yet.</div>
+          <div className="absolute inset-0 grid place-items-center p-4 text-center text-[13px] text-[var(--color-text-muted)]">Nothing is filed in {folder!.name} yet.</div>
         ) : (
           <EstateMap nodes={folderMap.nodes} edges={[]} tree={folderMap.tree} fileNames={folderMap.fileNames} rootUp={rootUp} query="" selectedId={selected?.id ?? null}
             highlightIds={NONE} flyTo={null} compact onSelect={(n) => { setSelected(n); if (n) act(n); }} onOpen={act} />
@@ -139,7 +139,7 @@ export default function FindMap({ orgId, unit, assetId, docs, candidates, onPick
       ) : !graph ? (
         <div className="absolute inset-0 grid place-items-center text-[11px] text-[var(--color-text-faint)]"><Loader2 className="w-4 h-4 animate-spin" /></div>
       ) : graph.nodes.length === 0 ? (
-        <div className="absolute inset-0 grid place-items-center p-4 text-center text-[11px] text-[var(--color-text-muted)]">No equipment in the registry yet, so there is nothing to map.</div>
+        <div className="absolute inset-0 grid place-items-center p-4 text-center text-[13px] text-[var(--color-text-muted)]">No equipment in the registry yet, so there is nothing to map.</div>
       ) : (
         <EstateMap nodes={graph.nodes} edges={graph.edges} query="" selectedId={selected?.id ?? null} highlightIds={highlight}
           flyTo={flyTo} enter={enter} compact

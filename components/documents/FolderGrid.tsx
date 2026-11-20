@@ -15,6 +15,7 @@ import {
   Trash2,} from "lucide-react";
 import { LibraryCollection } from "@/types/schema";
 import NodeCover from "@/components/documents/NodeCover";
+import { CardStrip } from "@/components/ui/PageHero";
 
 interface FolderGridProps {
   folders: LibraryCollection[];
@@ -49,6 +50,9 @@ interface FolderGridProps {
   /** Move SEVERAL folders at once (a drag that started on a selected tile
    *  carries the whole selection). Falls back to per-id onMoveInto. */
   onMoveManyInto?: (ids: string[], targetId: string) => void;
+  /** "strip": one row of white cards that keeps going sideways (the
+   *  library's folders over the band). "grid" (default): wrapped tiles. */
+  layout?: "grid" | "strip";
 }
 
 export default function FolderGrid({
@@ -72,7 +76,9 @@ export default function FolderGrid({
   selectedIds,
   onTileSelect,
   onMoveManyInto,
+  layout = "grid",
 }: FolderGridProps) {
+  const strip = layout === "strip";
   // Spring-loaded folders: hovering a tile mid-drag for ~900ms opens it, so
   // deep drops don't need a separate navigation step first.
   const springRef = useRef<{ id: string; timer: ReturnType<typeof setTimeout> } | null>(null);
@@ -184,10 +190,46 @@ export default function FolderGrid({
     e.dataTransfer.types.includes("application/x-folder-id")
     || e.dataTransfer.types.includes("application/x-doc-ids");
 
-  return (
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+  const metaLine = (folder: LibraryCollection, kids: number | null) => {
+    const n = docTotals?.get(folder.id!);
+    const parts: string[] = [];
+    if (n !== undefined) parts.push(`${n.toLocaleString()} file${n === 1 ? '' : 's'}`);
+    if (kids !== null && kids > 0) parts.push(`${kids} ${strip ? "folder" : "subfolder"}${kids === 1 ? '' : 's'}`);
+    if (parts.length) return parts.join(' · ');
+    return folder.description?.trim()
+      ? folder.description
+      : (folder.pathNames && folder.pathNames.length > 1 ? folder.pathNames.slice(0, -1).join(' / ') : 'Folder');
+  };
+  const tiles = (
+    <>
       {folders.map(folder => {
         const kids = subCount(folder.id);
+        const dropInto = !!dropTarget && dropTarget.id === folder.id && dropTarget.zone === "into";
+        const dropBefore = !!dropTarget && dropTarget.id === folder.id && dropTarget.zone === "before";
+        const dropAfter = !!dropTarget && dropTarget.id === folder.id && dropTarget.zone === "after";
+        const menuButton = (
+          <button
+            type="button"
+            aria-label={`Folder actions: ${folder.name}`}
+            aria-haspopup="menu"
+            aria-expanded={contextMenu?.id === folder.id}
+            onClick={(e) => {
+              e.stopPropagation();
+              // Anchor the menu to the button, but render it FIXED at
+              // the top level — inside the tile it inherits the tile's
+              // hover transform, which makes a new stacking context and
+              // leaves the dropdown flickering under the next section's
+              // header. Same path the right-click menu already uses.
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              setContextMenu(contextMenu?.id === folder.id
+                ? null
+                : { id: folder.id!, x: Math.max(8, r.right - 208), y: r.bottom + 4 });
+            }}
+            className={`p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors ${contextMenu?.id === folder.id ? 'bg-[var(--color-surface-2)] text-[var(--color-text)]' : 'text-[var(--color-text-faint)] opacity-60 sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}`}
+          >
+            <MoreVertical className="w-4 h-4" />
+          </button>
+        );
         return (
         <div
           key={folder.id}
@@ -292,7 +334,15 @@ export default function FolderGrid({
               } catch { /* malformed payload — ignore the drop */ }
             }
           }}
-          className={`
+          className={strip ? `
+            group relative shrink-0 basis-[248px] sm:basis-[280px] flex items-center gap-3 pl-4 pr-2 py-3.5 rounded-[14px] bg-[var(--color-surface)] shadow-[var(--shadow-card)] transition-shadow cursor-pointer
+            ${dropInto ? 'ring-2 ring-[var(--color-border-strong)] bg-[var(--color-surface-2)]'
+              : dropBefore ? 'shadow-[inset_4px_0_0_0_var(--color-border-strong),var(--shadow-card)]'
+              : dropAfter ? 'shadow-[inset_-4px_0_0_0_var(--color-border-strong),var(--shadow-card)]'
+              : selectedIds?.has(folder.id!) ? 'ring-2 ring-[var(--color-border-strong)]'
+              : contextMenu?.id === folder.id ? 'ring-1 ring-[var(--color-border-strong)]'
+              : 'hover:ring-1 hover:ring-[var(--color-border)]'}
+          ` : `
             group relative flex flex-col p-4 rounded-2xl border transition-all duration-200 cursor-pointer hover-lift
             ${(dropTarget && dropTarget.id === folder.id && dropTarget.zone === "into")
               ? 'bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border-[var(--color-border-strong)] ring-2 ring-[var(--color-border-strong)]'
@@ -307,6 +357,26 @@ export default function FolderGrid({
               : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]'}
           `}
         >
+          {strip ? (
+            <>
+              {/* The open target is a real button; its click bubbles to the
+                  tile, which also handles ctrl/shift selection. */}
+              <button type="button" className="flex-1 min-w-0 flex items-center gap-3 text-left rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4">
+                <NodeCover
+                  appearance={{ color: folder.color, icon: folder.icon, coverImageUrl: folder.coverImageUrl, coverTint: folder.coverTint }}
+                  className="w-9 h-9 shrink-0"
+                  rounded="rounded-[9px]"
+                  iconSize="w-4 h-4"
+                />
+                <span className="min-w-0">
+                  <span className="block text-[14px] font-bold text-[var(--color-text)] truncate select-none">{folder.name}</span>
+                  <span className="block text-[12px] text-[var(--color-text-muted)] truncate select-none">{metaLine(folder, kids)}</span>
+                </span>
+              </button>
+              {menuButton}
+            </>
+          ) : (
+          <>
           <div className="flex items-start justify-between mb-3">
             <NodeCover
               appearance={{ color: folder.color, icon: folder.icon, coverImageUrl: folder.coverImageUrl, coverTint: folder.coverTint }}
@@ -316,45 +386,22 @@ export default function FolderGrid({
             />
 
             <div className="relative">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  // Anchor the menu to the button, but render it FIXED at
-                  // the top level — inside the tile it inherits the tile's
-                  // hover transform, which makes a new stacking context and
-                  // leaves the dropdown flickering under the next section's
-                  // header. Same path the right-click menu already uses.
-                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                  setContextMenu(contextMenu?.id === folder.id
-                    ? null
-                    : { id: folder.id!, x: Math.max(8, r.right - 208), y: r.bottom + 4 });
-                                  }}
-                className={`p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors ${contextMenu?.id === folder.id ? 'bg-[var(--color-surface-2)] text-[var(--color-text)]' : 'text-[var(--color-text-faint)] opacity-60 sm:opacity-0 group-hover:opacity-100'}`}
-              >
-                <MoreVertical className="w-4 h-4" />
-              </button>
+              {menuButton}
             </div>
           </div>
 
           <h3 className="text-sm font-bold text-[var(--color-text)] truncate mb-0.5 select-none">{folder.name}</h3>
           <div className="flex items-center justify-between gap-2 min-w-0">
             <p className="text-[11px] text-[var(--color-text-faint)] font-medium truncate select-none min-w-0">
-              {(() => {
-                const n = docTotals?.get(folder.id!);
-                const parts: string[] = [];
-                if (n !== undefined) parts.push(`${n.toLocaleString()} file${n === 1 ? '' : 's'}`);
-                if (kids !== null && kids > 0) parts.push(`${kids} subfolder${kids === 1 ? '' : 's'}`);
-                if (parts.length) return parts.join(' · ');
-                return folder.description?.trim()
-                  ? folder.description
-                  : (folder.pathNames && folder.pathNames.length > 1 ? folder.pathNames.slice(0, -1).join(' / ') : 'Folder');
-              })()}
+              {metaLine(folder, kids)}
             </p>
             {/* Open affordance — appears on hover, keeps the card scannable at rest. */}
             <span className="shrink-0 w-5 h-5 rounded-md grid place-items-center text-[var(--color-text)] bg-[var(--color-surface-2)] opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200">
               <ArrowRight className="w-3 h-3" />
             </span>
           </div>
+          </>
+          )}
 
         </div>
         );
@@ -374,6 +421,9 @@ export default function FolderGrid({
           {renderMenu(contextMenu.id)}
         </div>
       )}
-    </div>
+    </>
   );
+  return strip
+    ? <CardStrip className="!pb-7 -mb-5 pt-0.5 -mt-0.5">{tiles}</CardStrip>
+    : <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">{tiles}</div>;
 }

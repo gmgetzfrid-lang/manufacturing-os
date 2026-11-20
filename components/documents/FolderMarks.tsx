@@ -123,7 +123,7 @@ export function LibrarySetup({ orgId, libraryId, libraryName, onDone, onClose }:
   };
   const counts = rows ? { area: rows.filter((r) => r.kind === "area" && r.status !== "unmatched").length, type: rows.filter((r) => r.kind === "type").length, eq: rows.filter((r) => r.kind === "equipment" && r.status !== "unmatched").length, made: rows.filter((r) => r.status === "new").length, no: rows.filter((r) => r.status === "unmatched").length } : null;
   return (
-    <div className="fixed inset-0 z-[300] bg-slate-900/50 flex items-center justify-center p-3" onClick={onClose}>
+    <div className="fixed inset-0 z-[300] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] flex items-center justify-center p-3" onClick={onClose}>
       <div className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
           <div>

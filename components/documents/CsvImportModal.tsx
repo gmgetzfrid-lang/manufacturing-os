@@ -204,7 +204,7 @@ export default function CsvImportModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[400] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div className="fixed inset-0 z-[400] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)]"><FileText className="w-5 h-5" /></div>

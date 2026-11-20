@@ -62,20 +62,20 @@ export default function VerifyPage() {
 
   return (
     <div className={`min-h-dvh flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
-      loading || error ? "bg-slate-900" : result?.notYetEffective ? "bg-amber-500" : result?.isCurrent ? "bg-emerald-600" : "bg-red-600"
+      loading || error ? "bg-[var(--color-ink)]" : result?.notYetEffective ? "bg-amber-500" : result?.isCurrent ? "bg-emerald-600" : "bg-red-600"
     }`}>
       <div className="w-full max-w-sm text-center">
         {loading ? (
           <div className="text-white/90">
             <Loader2 className="w-14 h-14 mx-auto animate-spin mb-4" />
-            <div className="text-sm font-bold tracking-widest uppercase">Checking revision…</div>
+            <div className="text-[11px] font-bold tracking-[0.16em] uppercase">Checking revision…</div>
           </div>
         ) : error ? (
           <div className="text-white/90">
             <ShieldQuestion className="w-16 h-16 mx-auto mb-4 opacity-80" />
-            <h1 className="text-2xl font-black mb-2">Can&apos;t verify this code</h1>
-            <p className="text-sm opacity-80">{error}</p>
-            <p className="text-xs opacity-60 mt-4">
+            <h1 className="text-[34px] leading-[1.05] tracking-[-0.02em] font-black mb-3">Can&apos;t verify this code</h1>
+            <p className="text-[14px] opacity-80">{error}</p>
+            <p className="text-[13px] opacity-70 mt-4">
               If this QR came from a printed drawing, contact Document Control before using the print.
             </p>
             <button
@@ -95,10 +95,10 @@ export default function VerifyPage() {
             ) : (
               <XCircle className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             )}
-            <h1 className="text-3xl font-black text-white leading-tight mb-1">
+            <h1 className="text-[40px] font-black text-white leading-[1.03] tracking-[-0.03em] mb-3">
               {result.notYetEffective ? "NOT YET IN EFFECT" : result.isCurrent ? "CURRENT" : "DO NOT USE"}
             </h1>
-            <p className="text-white/90 text-sm font-bold mb-6">
+            <p className="text-white/90 text-[15px] font-semibold mb-6">
               {result.notYetEffective
                 ? `This is the latest revision, but it comes into force ${result.effectiveDate ? new Date(result.effectiveDate).toLocaleDateString() : "later"} - until then, keep working to the prior in-force revision.`
                 : result.isCurrent
@@ -109,35 +109,35 @@ export default function VerifyPage() {
             </p>
 
             {/* The facts card */}
-            <div className="bg-white/95 rounded-2xl shadow-2xl p-5 text-left space-y-3">
+            <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl p-5 text-left space-y-3">
               <div>
-                <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">Document</div>
-                <div className="text-sm font-bold text-slate-900">{result.docNumber ?? "-"}</div>
-                {result.title && <div className="text-xs text-slate-500 mt-0.5">{result.title}</div>}
+                <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Document</div>
+                <div className="text-[15px] font-bold text-[var(--color-text)]">{result.docNumber ?? "-"}</div>
+                {result.title && <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5">{result.title}</div>}
               </div>
-              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100">
+              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-[var(--color-border)]">
                 <div>
-                  <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">This print</div>
-                  <div className={`text-lg font-black ${result.isCurrent ? "text-emerald-600" : "text-red-600"}`}>
+                  <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">This print</div>
+                  <div className={`text-[15px] font-black ${result.isCurrent ? "text-emerald-600" : "text-red-600"}`}>
                     Rev {result.printedRev ?? "?"}
                   </div>
-                  <div className="text-[11px] text-slate-400">issued {fmt(result.printedAt)}</div>
+                  <div className="text-[12px] text-[var(--color-text-muted)]">issued {fmt(result.printedAt)}</div>
                 </div>
                 <div>
-                  <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">Current</div>
-                  <div className="text-lg font-black text-slate-900">Rev {result.currentRev ?? "?"}</div>
-                  <div className="text-[11px] text-slate-400">issued {fmt(result.currentIssuedAt)}</div>
+                  <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Current</div>
+                  <div className="text-[15px] font-black text-[var(--color-text)]">Rev {result.currentRev ?? "?"}</div>
+                  <div className="text-[12px] text-[var(--color-text-muted)]">issued {fmt(result.currentIssuedAt)}</div>
                 </div>
               </div>
               {!result.isCurrent && (
-                <div className="pt-2 border-t border-slate-100 text-xs text-slate-600 leading-relaxed">
+                <div className="pt-2 border-t border-[var(--color-border)] text-[13px] text-[var(--color-text)] leading-relaxed">
                   Get the current revision from Document Control before performing any work
                   from this drawing. Mark this print &ldquo;SUPERSEDED&rdquo; or destroy it.
                 </div>
               )}
             </div>
 
-            <div className="mt-5 text-[11px] text-white/60">
+            <div className="mt-5 text-[12px] text-white/70">
               Checked {new Date(result.checkedAt).toLocaleString()} · Refinery OS document control
             </div>
             <button

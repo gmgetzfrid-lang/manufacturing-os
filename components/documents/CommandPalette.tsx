@@ -221,7 +221,7 @@ export default function CommandPalette({
 
   return (
     <div
-      className="fixed inset-0 z-[120] flex items-start justify-center pt-[12vh] px-4 bg-slate-900/50 backdrop-blur-[3px] animate-in fade-in duration-150"
+      className="fixed inset-0 z-[120] flex items-start justify-center pt-[12vh] px-4 bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] backdrop-blur-[3px] animate-in fade-in duration-150"
       onClick={onClose}
     >
       <div

@@ -104,7 +104,7 @@ export default function CustomizeNodeModal({
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[400] grid place-items-center p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-[400] grid place-items-center p-4 bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)]" onClick={onClose}>
       <div className="w-full max-w-lg rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-[var(--color-border)]">
           <h2 className="font-black text-[var(--color-text)]">{title}</h2>

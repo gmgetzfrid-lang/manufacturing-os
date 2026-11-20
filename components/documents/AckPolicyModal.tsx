@@ -101,7 +101,7 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
   const nobody = enabled && people.length === 0 && roles.length === 0 && teamIds.length === 0;
 
   return (
-    <div className="fixed inset-0 z-[520] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[520] flex items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] p-4" onClick={onClose}>
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
           <ClipboardCheck className="w-5 h-5 text-[var(--color-text-muted)]" />

@@ -51,20 +51,20 @@ export default function VerifyHoldPage() {
 
   return (
     <div className={`min-h-dvh flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
-      loading || error ? "bg-slate-900" : result?.active ? "bg-red-600" : "bg-emerald-600"
+      loading || error ? "bg-[var(--color-ink)]" : result?.active ? "bg-red-600" : "bg-emerald-600"
     }`}>
       <div className="w-full max-w-sm text-center">
         {loading ? (
           <div className="text-white/90">
             <Loader2 className="w-14 h-14 mx-auto animate-spin mb-4" />
-            <div className="text-sm font-bold tracking-widest uppercase">Checking hold…</div>
+            <div className="text-[11px] font-bold tracking-[0.16em] uppercase">Checking hold…</div>
           </div>
         ) : error ? (
           <div className="text-white/90">
             <ShieldQuestion className="w-16 h-16 mx-auto mb-4 opacity-80" />
-            <h1 className="text-2xl font-black mb-2">Can&apos;t verify this tag</h1>
-            <p className="text-sm opacity-80">{error}</p>
-            <p className="text-xs opacity-60 mt-4">
+            <h1 className="text-[34px] leading-[1.05] tracking-[-0.02em] font-black mb-3">Can&apos;t verify this tag</h1>
+            <p className="text-[14px] opacity-80">{error}</p>
+            <p className="text-[13px] opacity-70 mt-4">
               Treat the hold as ACTIVE until Document Control confirms otherwise.
             </p>
             <button onClick={() => void check()} className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/15 hover:bg-white/25 text-sm font-bold">
@@ -78,43 +78,43 @@ export default function VerifyHoldPage() {
             ) : (
               <CheckCircle2 className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             )}
-            <h1 className="text-3xl font-black text-white leading-tight mb-1">
+            <h1 className="text-[40px] font-black text-white leading-[1.03] tracking-[-0.03em] mb-3">
               {result.active ? "HOLD ACTIVE" : "RELEASED"}
             </h1>
-            <p className="text-white/90 text-sm font-bold mb-6">
+            <p className="text-white/90 text-[15px] font-semibold mb-6">
               {result.active
                 ? "Do not advance this document or the work it covers."
                 : "This hold has been released - this tag can come down."}
             </p>
 
-            <div className="bg-white/95 rounded-2xl shadow-2xl p-5 text-left space-y-3">
+            <div className="bg-[var(--color-surface)] rounded-2xl shadow-2xl p-5 text-left space-y-3">
               {result.docLabel && (
                 <div>
-                  <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">Document</div>
-                  <div className="text-sm font-bold text-slate-900">
+                  <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Document</div>
+                  <div className="text-[15px] font-bold text-[var(--color-text)]">
                     {result.docLabel}{result.docRev ? ` · Rev ${result.docRev}` : ""}
                   </div>
                 </div>
               )}
-              <div className="pt-2 border-t border-slate-100">
-                <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">Reason</div>
-                <div className={`text-sm font-bold ${result.active ? "text-red-600" : "text-slate-700"}`}>{result.reason ?? "-"}</div>
+              <div className="pt-2 border-t border-[var(--color-border)]">
+                <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Reason</div>
+                <div className={`text-[14px] font-bold ${result.active ? "text-red-700" : "text-[var(--color-text)]"}`}>{result.reason ?? "-"}</div>
               </div>
-              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100 text-xs">
+              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-[var(--color-border)] text-xs">
                 <div>
-                  <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">Placed</div>
-                  <div className="text-slate-700">{fmt(result.openedAt)}</div>
+                  <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Placed</div>
+                  <div className="text-[var(--color-text)]">{fmt(result.openedAt)}</div>
                 </div>
                 {!result.active && (
                   <div>
-                    <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">Released</div>
+                    <div className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Released</div>
                     <div className="text-emerald-700 font-bold">{fmt(result.releasedAt)}</div>
                   </div>
                 )}
               </div>
             </div>
 
-            <div className="mt-5 text-[11px] text-white/60">
+            <div className="mt-5 text-[12px] text-white/70">
               Checked {new Date(result.checkedAt).toLocaleString()} · Refinery OS document control
             </div>
             <button onClick={() => void check()} className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 hover:bg-white/25 text-white text-xs font-bold">

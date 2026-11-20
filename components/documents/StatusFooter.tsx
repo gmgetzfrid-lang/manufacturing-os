@@ -28,7 +28,7 @@ export default function StatusFooter({
 }: StatusFooterProps) {
   return (
     <div
-      className="h-7 shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)]/90 flex items-center gap-4 px-4 text-[11px] font-mono text-[var(--color-text-muted)] z-20"
+      className="h-7 shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)]/90 flex items-center gap-4 px-4 text-[11px] font-mono text-[var(--color-text-muted)] z-20 max-sm:hidden"
       style={{ backdropFilter: "blur(12px)" }}
     >
       {/* Words only while something is loading; no "live" light. */}

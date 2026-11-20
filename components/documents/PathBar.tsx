@@ -8,6 +8,7 @@
 // mode.
 
 import React, { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { ChevronRight, MoreHorizontal, Home, ChevronDown } from "lucide-react";
 import { NodeIcon } from "@/lib/nodeIcons";
 
@@ -32,9 +33,7 @@ function Tile({ icon, color, className = "w-4 h-4" }: {
   );
 }
 
-const Sep = () => <ChevronRight className="w-3 h-3 text-[var(--color-text-faint)] mx-0.5 shrink-0" />;
-
-export default function PathBar({ library, segments, onNavigate, onDropItems }: {
+export default function PathBar({ library, segments, onNavigate, onDropItems, onDark = false, home }: {
   library: { name: string; icon?: string | null; color?: string | null };
   /** Ancestors first, CURRENT node last. Empty = at the library root. */
   segments: PathSegment[];
@@ -43,18 +42,32 @@ export default function PathBar({ library, segments, onNavigate, onDropItems }: 
    *  which is how "move up a level" and "move to root" work without a
    *  dialog, the way every desktop file manager does it. */
   onDropItems?: (targetId: string | null, payload: { folderId?: string; docIds?: string[] }) => void;
+  /** On the page's dark band: small all-caps crumbs, no colored tiles. */
+  onDark?: boolean;
+  /** A first crumb above the library (e.g. Document control → /documents). */
+  home?: { label: string; href: string };
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
+  // The fold menu is placed FIXED from its button: on the band the path sits
+  // in a clipped one-line label, where an absolute menu would be cut off.
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
+  const menuOpen = !!menuAt;
+  const setMenuOpen = (v: boolean) => { if (!v) setMenuAt(null); };
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!menuOpen) return;
     const close = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuAt(null);
     };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setMenuAt(null); };
     document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc); };
   }, [menuOpen]);
+
+  const sep = onDark
+    ? <span aria-hidden="true" className="mx-1.5 shrink-0 opacity-60">/</span>
+    : <ChevronRight className="w-3 h-3 text-[var(--color-text-faint)] mx-0.5 shrink-0" />;
 
   const atRoot = segments.length === 0;
   const current = segments[segments.length - 1];
@@ -63,9 +76,10 @@ export default function PathBar({ library, segments, onNavigate, onDropItems }: 
   const visibleAncestors = ancestors.length > 1 ? ancestors.slice(-1) : ancestors;
   const hidden = ancestors.slice(0, ancestors.length - visibleAncestors.length);
 
-  const chip =
-    "flex items-center gap-1.5 px-1.5 py-1 rounded-lg transition-colors shrink-0 " +
-    "hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]";
+  const chip = onDark
+    ? "flex items-center gap-1.5 py-1 rounded-md transition-colors shrink-0 uppercase hover:text-white"
+    : "flex items-center gap-1.5 px-1.5 py-1 rounded-lg transition-colors shrink-0 " +
+      "hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]";
 
   const [dropOn, setDropOn] = useState<string | "root" | null>(null);
   const acceptsDrag = (e: React.DragEvent) =>
@@ -92,41 +106,59 @@ export default function PathBar({ library, segments, onNavigate, onDropItems }: 
     },
   });
   const dropRing = (key: string) =>
-    dropOn === key ? " bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] ring-2 ring-[var(--color-border-strong)] text-[var(--color-text)]" : "";
+    dropOn !== key ? ""
+    : onDark ? " px-1.5 bg-[var(--color-ink-2)] ring-2 ring-[var(--color-ink-line)] text-white"
+    : " bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] ring-2 ring-[var(--color-border-strong)] text-[var(--color-text)]";
+  const here = onDark ? "text-white" : "text-[var(--color-text)] font-bold";
 
   return (
-    <nav className="flex items-center text-xs font-medium text-[var(--color-text-muted)] overflow-hidden min-w-0" aria-label="Folder path">
+    <nav className={`flex items-center min-w-0 overflow-hidden ${onDark ? "text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--color-ink-muted)]" : "text-xs font-medium text-[var(--color-text-muted)]"}`} aria-label="Folder path">
+      {home && (
+        <>
+          <Link href={home.href} className={`${chip} max-sm:hidden`}>{home.label}</Link>
+          <span className="max-sm:hidden contents">{sep}</span>
+        </>
+      )}
       {/* Library root */}
       <button
         onClick={() => onNavigate(null)}
         {...dropProps(null, "root")}
-        className={`${chip} ${atRoot ? "text-[var(--color-text)] font-bold" : ""}${dropRing("root")}`}
+        className={`${chip} ${atRoot ? here : ""}${dropRing("root")}`}
         title={library.name}
+        aria-current={atRoot ? "page" : undefined}
       >
-        {library.color || library.icon
+        {!onDark && (library.color || library.icon
           ? <Tile icon={library.icon} color={library.color} />
-          : <Home className="w-3.5 h-3.5 shrink-0" />}
+          : <Home className="w-3.5 h-3.5 shrink-0" />)}
         <span className="truncate max-w-[10rem]">{library.name}</span>
       </button>
 
       {/* Folded ancestors */}
       {hidden.length > 0 && (
         <>
-          <Sep />
+          {sep}
           <div className="relative shrink-0" ref={menuRef}>
             <button
-              onClick={() => setMenuOpen((v) => !v)}
-              className={`${chip} ${menuOpen ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : ""}`}
+              onClick={(e) => {
+                if (menuOpen) { setMenuOpen(false); return; }
+                const r = e.currentTarget.getBoundingClientRect();
+                setMenuAt({ x: Math.max(8, Math.min(r.left, window.innerWidth - 264)), y: r.bottom + 4 });
+              }}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-label={`${hidden.length} more level${hidden.length === 1 ? "" : "s"}`}
+              className={`${chip} ${menuOpen ? (onDark ? "text-white" : "bg-[var(--color-surface-2)] text-[var(--color-text)]") : ""}`}
               title={`${hidden.length} more level${hidden.length === 1 ? "" : "s"}`}
             >
               <MoreHorizontal className="w-3.5 h-3.5" />
               <ChevronDown className="w-2.5 h-2.5 -ml-0.5" />
             </button>
-            {menuOpen && (
-              <div className="absolute left-0 top-full mt-1 z-50 min-w-44 max-w-64 py-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg ring-1 ring-black/5 animate-in fade-in zoom-in-95 duration-150 origin-top-left">
+            {menuAt && (
+              <div role="menu" style={{ left: menuAt.x, top: menuAt.y }} className="fixed z-[70] min-w-44 max-w-64 py-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg ring-1 ring-black/5 normal-case tracking-normal animate-in fade-in zoom-in-95 duration-150 origin-top-left">
                 {hidden.map((seg, i) => (
                   <button
                     key={seg.id}
+                    role="menuitem"
                     onClick={() => { setMenuOpen(false); onNavigate(seg.id); }}
                     className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                     style={{ paddingLeft: `${12 + i * 10}px` }}
@@ -144,10 +176,10 @@ export default function PathBar({ library, segments, onNavigate, onDropItems }: 
       {/* Visible ancestors */}
       {visibleAncestors.map((seg) => (
         <React.Fragment key={seg.id}>
-          <Sep />
+          {sep}
           <button onClick={() => onNavigate(seg.id)} {...dropProps(seg.id, seg.id)}
             className={`${chip} min-w-0${dropRing(seg.id)}`} title={seg.name}>
-            <Tile icon={seg.icon} color={seg.color} />
+            {!onDark && <Tile icon={seg.icon} color={seg.color} />}
             <span className="truncate max-w-[9rem]">{seg.name}</span>
           </button>
         </React.Fragment>
@@ -156,9 +188,9 @@ export default function PathBar({ library, segments, onNavigate, onDropItems }: 
       {/* Current folder */}
       {current && (
         <>
-          <Sep />
-          <span className="flex items-center gap-1.5 px-1.5 py-1 font-bold text-[var(--color-text)] min-w-0" title={current.name}>
-            <Tile icon={current.icon} color={current.color} />
+          {sep}
+          <span aria-current="page" className={`flex items-center gap-1.5 py-1 min-w-0 ${onDark ? "text-white" : "px-1.5 font-bold text-[var(--color-text)]"}`} title={current.name}>
+            {!onDark && <Tile icon={current.icon} color={current.color} />}
             <span className="truncate">{current.name}</span>
           </span>
         </>

@@ -13,8 +13,8 @@ import {
   Layers, User as UserIcon, FileText, Briefcase, AlarmClock,
   ExternalLink, Network, Tag, ChevronDown,
 } from "lucide-react";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
-import { Input, Select } from "@/components/ui/Field";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card } from "@/components/ui/PageHero";
 import { Spinner } from "@/components/ui/Spinner";
 import { useRole } from "@/components/providers/RoleContext";
 import { listAllActiveCheckouts, autoReleaseExpiredAdHoc } from "@/lib/projects";
@@ -167,69 +167,92 @@ export default function CheckoutsPage() {
     return Array.from(m.entries());
   }, [rows]);
 
+  // The answer: how many are locked right now, and what needs a word.
+  const mine = rows.filter((r) => r.userId === uid).length;
+  const stale = rows.filter((r) => r.expectedReleaseAt && new Date(r.expectedReleaseAt as string) < new Date()).length;
+  const answer = loading && rows.length === 0 ? "Checkouts"
+    : error ? "Checkouts didn't load."
+    : rows.length === 0 ? "Nothing checked out."
+    : `${rows.length.toLocaleString()} checked out.`;
+  const answerBits: string[] = [];
+  if (!loading && !error && rows.length > 0) {
+    if (mine > 0) answerBits.push(`${mine === rows.length ? "All" : mine} by you.`);
+    if (stale > 0) answerBits.push(`${stale} past ${stale === 1 ? "its" : "their"} expected release.`);
+    if (overlaps.length > 0) answerBits.push(`${overlaps.length} overlap${overlaps.length === 1 ? "" : "s"} to talk through.`);
+  }
+  const darkField = "h-10 w-full rounded-[10px] border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-white placeholder:text-[var(--color-ink-muted)] px-3 text-base sm:text-[14px] focus:outline-none focus:border-[var(--color-ink-muted)] focus:ring-2 focus:ring-[var(--color-accent)]/40 [&_option]:bg-[var(--color-surface)] [&_option]:text-[var(--color-text)]";
+
   return (
     <PageShell width="work">
-        <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
-        <StaleCheckoutBanner userId={uid ?? undefined} />
-        {activeOrgId && uid && (
-          <EditOverlapBanner
-            orgId={activeOrgId}
-            currentUserId={uid}
-            currentUserName={userEmail?.split("@")[0] ?? null}
-            onlyMine={false}
-          />
-        )}
-        <PageHeaderBar
-          icon={KeyRound}
-          title="Active Checkouts"
-          subtitle={
-            <>
-              Every document currently locked, across every library. {rows.length} active.{" "}
-              <HelpTooltip className="align-middle">
-                A <b>checkout</b> declares &ldquo;I&rsquo;m working on this drawing - don&rsquo;t touch.&rdquo;
-                <b className="block mt-1">Project checkouts</b> are tied to an open project and stay until the project closes or the user releases.
-                <b className="block mt-1">Ad-hoc checkouts</b> auto-expire after 24h.
-                <b className="block mt-1">Collaborative sessions</b> share one lockId so multiple people can co-edit.
-              </HelpTooltip>
-            </>
-          }
-          actions={
-            <div className="flex bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-1">
-              <button
-                onClick={() => setView("grouped")}
-                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${view === "grouped" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
-              >
-                By Project
-              </button>
-              <button
-                onClick={() => setView("flat")}
-                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-colors ${view === "flat" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}
-              >
-                Flat
-              </button>
-            </div>
-          }
-        />
-
+      <PageHero
+        kicker="Document control · Checkouts"
+        title={answer}
+        sub={
+          <>
+            {answerBits.length > 0 ? answerBits.join(" ") : "Every document locked right now, across every library."}{" "}
+            <HelpTooltip className="align-middle">
+              A <b>checkout</b> declares &ldquo;I&rsquo;m working on this drawing - don&rsquo;t touch.&rdquo;
+              <b className="block mt-1">Project checkouts</b> are tied to an open project and stay until the project closes or the user releases.
+              <b className="block mt-1">Ad-hoc checkouts</b> auto-expire after 24h.
+              <b className="block mt-1">Collaborative sessions</b> share one lockId so multiple people can co-edit.
+            </HelpTooltip>
+          </>
+        }
+        tools={
+          <div className="inline-flex rounded-[10px] border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] p-0.5" role="group" aria-label="Group the list">
+            <button
+              onClick={() => setView("grouped")}
+              aria-pressed={view === "grouped"}
+              className={`h-8 px-3 text-[13px] font-semibold rounded-lg transition-colors ${view === "grouped" ? "bg-[var(--color-ink-line)] text-white" : "text-[var(--color-ink-muted)] hover:text-white"}`}
+            >
+              By project
+            </button>
+            <button
+              onClick={() => setView("flat")}
+              aria-pressed={view === "flat"}
+              className={`h-8 px-3 text-[13px] font-semibold rounded-lg transition-colors ${view === "flat" ? "bg-[var(--color-ink-line)] text-white" : "text-[var(--color-ink-muted)] hover:text-white"}`}
+            >
+              One list
+            </button>
+          </div>
+        }
+      >
+        <ViewTabs tabs={DOCUMENT_VIEWS} variant="dark" />
         {/* Filters */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-6">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
-            <Input
+        <div className="mt-3 grid grid-cols-2 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2">
+          <div className="relative col-span-2 md:col-span-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-ink-muted)] pointer-events-none" />
+            <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by doc, user, project…"
-              className="pl-9"
+              placeholder="Search by document, person or project"
+              aria-label="Search checkouts"
+              className={`${darkField} pl-9`}
             />
           </div>
-          <Select value={libraryFilter} onChange={(e) => setLibraryFilter(e.target.value)}>
+          <select value={libraryFilter} onChange={(e) => setLibraryFilter(e.target.value)} aria-label="Library" className={darkField}>
             <option value="">All libraries</option>
             {uniqueLibs.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-          </Select>
-          <Select value={userFilter} onChange={(e) => setUserFilter(e.target.value)}>
-            <option value="">All users</option>
+          </select>
+          <select value={userFilter} onChange={(e) => setUserFilter(e.target.value)} aria-label="Person" className={darkField}>
+            <option value="">Everyone</option>
             {uniqueUsers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-          </Select>
+          </select>
+        </div>
+      </PageHero>
+
+      <PageBody>
+        {/* What needs a word: checkouts past their date, edits that overlap. */}
+        <div className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] p-4 sm:p-5 space-y-3 empty:hidden [&>*]:!mb-0">
+          <StaleCheckoutBanner userId={uid ?? undefined} />
+          {activeOrgId && uid && (
+            <EditOverlapBanner
+              orgId={activeOrgId}
+              currentUserId={uid}
+              currentUserName={userEmail?.split("@")[0] ?? null}
+              onlyMine={false}
+            />
+          )}
         </div>
 
         {/* Phase 6 — Coordination signals */}
@@ -276,55 +299,62 @@ export default function CheckoutsPage() {
         )}
 
         {loading ? (
-          <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)] p-8">
-            <Spinner size="sm" /> Loading checkouts…
-          </div>
+          <Card>
+            <div className="flex items-center gap-2 text-[14px] text-[var(--color-text-muted)]">
+              <Spinner size="sm" /> Loading checkouts…
+            </div>
+          </Card>
         ) : error ? (
-          <div role="alert" className="border-l-2 border-rose-500 pl-3 text-sm text-rose-700 dark:text-rose-300 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> Couldn&apos;t load the checkouts: {error}
-          </div>
+          <Card>
+            <div role="alert" className="text-[14px] text-rose-700 dark:text-rose-300 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> Couldn&apos;t load the checkouts: {error}
+            </div>
+          </Card>
         ) : filtered.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-12 text-center">
-            <KeyRound className="w-10 h-10 mx-auto text-[var(--color-text-faint)] mb-3" />
-            <p className="text-sm text-[var(--color-text-muted)]">No active checkouts match your filters.</p>
-          </div>
+          <Card>
+            <div className="py-8 text-center">
+              <KeyRound className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-3" />
+              <p className="text-[14px] text-[var(--color-text-muted)]">
+                {rows.length === 0 ? "No one has a document checked out." : "No checkouts match your filters."}
+              </p>
+            </div>
+          </Card>
         ) : view === "grouped" ? (
-          <div className="space-y-4">
+          <>
             {grouped.map((g, idx) => <ProjectGroup key={idx} project={g.project} items={g.items} />)}
-          </div>
+          </>
         ) : (
           <FlatTable items={filtered} />
         )}
+      </PageBody>
     </PageShell>
   );
 }
 
 function ProjectGroup({ project, items }: { project: Project | null; items: CheckoutWithContext[] }) {
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
-      <div className={`px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between ${
-        project ? "bg-[var(--color-surface-2)]" : "bg-[var(--color-surface-2)]"
-      }`}>
+    <section className="bg-[var(--color-surface)] rounded-2xl overflow-hidden shadow-[var(--shadow-card)]">
+      <div className="px-4 sm:px-5 py-3.5 border-b border-[var(--color-border)] flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           {project ? (
-            <Briefcase className="w-5 h-5 text-[var(--color-text-muted)] shrink-0" />
+            <Briefcase className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
           ) : (
-            <Clock className="w-5 h-5 text-[var(--color-text-faint)] shrink-0" />
+            <Clock className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
           )}
           <div className="min-w-0">
             {project ? (
-              <Link href={`/projects/${project.id}`} className="text-sm font-black text-[var(--color-text)] hover:text-[var(--color-accent)] transition-colors">
+              <Link href={`/projects/${project.id}`} className="text-[14px] font-bold text-[var(--color-text)] hover:underline">
                 {project.name}
               </Link>
             ) : (
-              <div className="text-sm font-black text-[var(--color-text)]">Ad-hoc checkouts</div>
+              <h2 className="text-[14px] font-bold text-[var(--color-text)]">Ad-hoc checkouts</h2>
             )}
-            <div className="text-[11px] text-[var(--color-text-muted)] flex items-center gap-2 mt-0.5">
+            <div className="text-[12px] text-[var(--color-text-muted)] flex items-center gap-2 mt-0.5">
               {project ? (
                 <>
                   <span>{project.ownerUserName}</span>
                   {project.visibility === "private" && <Lock className="w-3 h-3" />}
-                  <span className="px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] font-mono">{project.status}</span>
+                  <span>· {project.status}</span>
                 </>
               ) : (
                 <span>Quick reviews: auto-release after 24h</span>
@@ -332,24 +362,24 @@ function ProjectGroup({ project, items }: { project: Project | null; items: Chec
             </div>
           </div>
         </div>
-        <span className="text-[11px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface)] border border-[var(--color-border)] px-2 py-0.5 rounded-full">
+        <span className="shrink-0 text-[13px] text-[var(--color-text-muted)] tabular-nums">
           {items.length} file{items.length === 1 ? "" : "s"}
         </span>
       </div>
       <div className="divide-y divide-[var(--color-border)]">
         {items.map((r) => <CheckoutRow key={r.id} row={r} />)}
       </div>
-    </div>
+    </section>
   );
 }
 
 function FlatTable({ items }: { items: CheckoutWithContext[] }) {
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
+    <Card pad={false} className="overflow-hidden">
       <div className="divide-y divide-[var(--color-border)]">
         {items.map((r) => <CheckoutRow key={r.id} row={r} showProject />)}
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -357,16 +387,16 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
   const isStale = row.expectedReleaseAt && new Date(row.expectedReleaseAt as string) < new Date();
   const isAdhoc = !row.projectId;
   return (
-    <div className="px-5 py-3 hover:bg-slate-50/60 transition-colors">
+    <div className="px-4 sm:px-5 py-3 hover:bg-[var(--color-surface-2)]/60 transition-colors">
       <div className="flex items-center gap-3">
         <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            <span className="font-mono text-sm font-bold text-[var(--color-text)] truncate">{row.docNumber || "-"}</span>
-            <span className="text-xs text-[var(--color-text-muted)] truncate">{row.docTitle}</span>
-            {row.libraryName && <span className="text-[11px] text-[var(--color-text-faint)] truncate">in {row.libraryName}</span>}
+            <span className="text-[14px] font-bold text-[var(--color-text)] truncate">{row.docNumber || "-"}</span>
+            {row.docTitle && row.docTitle !== row.docNumber && <span className="text-[13px] text-[var(--color-text-muted)] truncate">{row.docTitle}</span>}
+            {row.libraryName && <span className="text-[13px] text-[var(--color-text-muted)] truncate">in {row.libraryName}</span>}
           </div>
-          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-[var(--color-text-muted)]">
             <span className="inline-flex items-center gap-1">
               <UserIcon className="w-3 h-3" /><b className="text-[var(--color-text)] font-medium">{row.userName}</b>
             </span>
@@ -391,16 +421,16 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
             )}
           </div>
           {(row.purpose || row.note) && (
-            <div className="mt-1 text-[11px] text-[var(--color-text-muted)] italic line-clamp-1">&ldquo;{row.purpose || row.note}&rdquo;</div>
+            <div className="mt-1 text-[13px] text-[var(--color-text-muted)] line-clamp-1">&ldquo;{row.purpose || row.note}&rdquo;</div>
           )}
         </div>
         <Link
           href={`/documents/${row.libraryId}?doc=${row.documentId}`}
-          className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+          className="shrink-0 w-9 h-9 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
           title="Open document"
           aria-label="Open document"
         >
-          <ExternalLink className="w-3.5 h-3.5" />
+          <ExternalLink className="w-4 h-4" />
         </Link>
       </div>
     </div>
@@ -445,18 +475,18 @@ function ConsolidationPanel({
   const checkoutById = new Map(checkouts.map((c) => [c.id ?? "", c]));
 
   return (
-    <div className="border-l-2 border-amber-500 mb-6">
+    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
       <button
         onClick={onToggle}
         aria-expanded={isOpen}
-        className="w-full pl-3 pr-2 py-1.5 flex items-center justify-between gap-3 hover:bg-[var(--color-surface-2)] rounded-r-lg transition-colors"
+        className="w-full px-4 sm:px-5 py-3.5 flex items-center justify-between gap-3 text-left hover:bg-[var(--color-surface-2)]/60 transition-colors"
       >
-        <div className="flex items-center gap-2 min-w-0">
-          <Network className="w-4 h-4 text-amber-700 dark:text-amber-400 shrink-0" />
-          <div className="text-sm font-bold text-amber-800 dark:text-amber-300">
+        <div className="flex items-center gap-2 min-w-0 flex-wrap">
+          <Network className="w-4 h-4 text-amber-600 shrink-0" />
+          <h2 className="text-[14px] font-bold text-[var(--color-text)]">
             Checkouts that overlap
-          </div>
-          <div className="text-xs text-amber-700 dark:text-amber-400">
+          </h2>
+          <div className="text-[13px] text-amber-800 dark:text-amber-300">
             {assetCount > 0 && <span className="mr-2">{assetCount} asset overlap{assetCount === 1 ? "" : "s"}</span>}
             {scopeCount > 0 && <span>{scopeCount} scope overlap{scopeCount === 1 ? "" : "s"}</span>}
           </div>
@@ -464,15 +494,13 @@ function ConsolidationPanel({
         <ChevronDown className={`w-4 h-4 text-[var(--color-text-muted)] transition-transform ${isOpen ? "" : "-rotate-90"}`} />
       </button>
       {isOpen && (
-        <div className="pl-3 pt-1 pb-1 space-y-2">
-          <div className="space-y-2">
-            {overlaps.map((o, i) => (
-              <OverlapCard key={i} overlap={o} checkoutById={checkoutById} onNudge={onNudge} />
-            ))}
-          </div>
+        <div className="border-t border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+          {overlaps.map((o, i) => (
+            <OverlapCard key={i} overlap={o} checkoutById={checkoutById} onNudge={onNudge} />
+          ))}
         </div>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -503,9 +531,9 @@ function OverlapCard({
       : <><Layers className="w-3 h-3" /> {overlap.level === "system" ? "System" : "Unit"} <b>{overlap.scopeName}</b></>;
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-3">
+    <div className="px-4 sm:px-5 py-3">
       <div className="flex items-center gap-2">
-        <div className="text-[11px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5 flex-1 min-w-0">
+        <div className="text-[13px] font-bold text-[var(--color-text)] inline-flex items-center gap-1.5 flex-1 min-w-0">
           {heading}
           <span className="text-[var(--color-text-muted)] font-normal">, {involved.length} checkout{involved.length === 1 ? "" : "s"}</span>
         </div>
@@ -514,7 +542,7 @@ function OverlapCard({
             onClick={doNudge}
             disabled={nudging || nudged}
             title="Send everyone here an in-app heads-up to coordinate"
-            className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-bold transition-colors ${
+            className={`shrink-0 inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-[12px] font-bold transition-colors ${
               nudged ? "text-emerald-700 dark:text-emerald-400"
                      : "border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60"
             }`}
@@ -525,7 +553,7 @@ function OverlapCard({
       </div>
       <div className="mt-1.5 space-y-1">
         {involved.map((c) => (
-          <div key={c.id} className="flex items-center gap-2 text-[11px] text-[var(--color-text)]">
+          <div key={c.id} className="flex items-center gap-2 text-[13px] text-[var(--color-text)]">
             <Lock className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" />
             <span className="font-mono text-[var(--color-text-muted)] shrink-0">{c.docNumber || "-"}</span>
             <span className="truncate flex-1 min-w-0">{c.docTitle || "(untitled)"}</span>

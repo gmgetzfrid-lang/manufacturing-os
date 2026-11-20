@@ -14,8 +14,8 @@ import {
   Package, Plus, X, Loader2, CheckCircle2, AlertTriangle,
   RefreshCw, Search, ChevronRight, Archive, Printer,
 } from "lucide-react";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
-import { Button } from "@/components/ui/Button";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary } from "@/components/ui/PageHero";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 import { useDraft } from "@/hooks/useDraft";
@@ -217,38 +217,49 @@ export default function PackagesPage() {
     [packages],
   );
 
+  // The answer: is every job's pack still current?
+  const nPk = packages?.length ?? 0;
+  const answer = packages === null ? (loadErr ? "Packages didn't load." : "Work packages")
+    : nPk === 0 ? (loadErr ? "Packages didn't load." : "No work packages yet.")
+    : staleTotal > 0 ? `${staleTotal} package${staleTotal === 1 ? " has" : "s have"} a drawing that moved on.`
+    : `${nPk} package${nPk === 1 ? "" : "s"}, all current.`;
+  const answerSub = staleTotal > 0
+    ? `${nPk} open. Check what changed, then refresh the pins before the work starts.`
+    : "A job's drawings, pinned at their revisions. You're told when one moves on.";
+
   return (
     <PageShell width="work">
-      <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
-      <PageHeaderBar
-        icon={Package}
-        title="Work Packages"
-        subtitle={
-          staleTotal > 0
-            ? <b className="text-amber-700 dark:text-amber-400">{staleTotal} package{staleTotal === 1 ? " has" : "s have"} a drawing that moved on.</b>
-            : <>A job&apos;s drawings, pinned at their revisions. You&apos;re told when one moves on.</>
+      <PageHero
+        kicker="Document control · Work packages"
+        title={answer}
+        sub={answerSub}
+        primary={
+          <button type="button" onClick={() => setShowCreate(true)} className={heroPrimary}>
+            <Plus className="w-4 h-4" /> New package
+          </button>
         }
-        actions={
-          <Button size="sm" onClick={() => setShowCreate(true)}>
-            <Plus className="w-3.5 h-3.5" /> New package
-          </Button>
-        }
-      />
+      >
+        <ViewTabs tabs={DOCUMENT_VIEWS} variant="dark" />
+      </PageHero>
 
+      <PageBody>
       {loadErr && (
-        <p role="alert" className="mb-3 border-l-2 border-rose-500 pl-3 text-xs text-rose-700 dark:text-rose-300">Couldn&apos;t load the packages: {loadErr}</p>
+        <Card>
+          <p role="alert" className="text-[14px] text-rose-700 dark:text-rose-300">Couldn&apos;t load the packages: {loadErr}</p>
+        </Card>
       )}
       {packages === null ? (
-        <LoadingBlock what="the work packages" rows={4} />
+        <Card><LoadingBlock what="the work packages" rows={4} /></Card>
       ) : packages.length === 0 ? (
         loadErr ? null : (
-        <div className="py-16 text-center">
-          <Package className="w-10 h-10 mx-auto text-[var(--color-text-faint)] opacity-40 mb-3" />
-          <div className="text-sm font-bold text-[var(--color-text)]">No work packages yet</div>
-          <p className="text-xs text-[var(--color-text-muted)] mt-1 max-w-sm mx-auto">
-            Use New package to bundle the drawings for a job.
-          </p>
-        </div>
+        <Card>
+          <div className="py-8 text-center">
+            <Package className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-3" />
+            <p className="text-[14px] text-[var(--color-text-muted)] max-w-sm mx-auto">
+              A package holds the drawings for one job at the revisions they were when you made it. Use New package to bundle the first one.
+            </p>
+          </div>
+        </Card>
         )
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -258,28 +269,28 @@ export default function PackagesPage() {
               <div
                 key={pkg.id}
                 data-package-id={pkg.id}
-                className={`rounded-2xl border overflow-hidden transition-shadow hover:shadow-md bg-[var(--color-surface)] scroll-mt-24 ${
-                  highlightId === pkg.id ? "border-[var(--color-text)] ring-2 ring-[var(--color-text)]" : "border-[var(--color-border)]"
+                className={`rounded-2xl overflow-hidden bg-[var(--color-surface)] shadow-[var(--shadow-card)] scroll-mt-24 ${
+                  highlightId === pkg.id ? "ring-2 ring-[var(--color-text)]" : ""
                 }`}
               >
-                <div className={`px-4 py-3 flex items-center gap-2 border-b border-[var(--color-border)] ${stale ? "border-l-2 border-l-amber-500" : ""}`}>
+                <div className="px-4 sm:px-5 py-3.5 flex items-center gap-2.5 border-b border-[var(--color-border)]">
                   {stale
                     ? <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
                     : <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />}
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-black text-[var(--color-text)] truncate">{pkg.name}</div>
-                    <div className="text-[11px] text-[var(--color-text-muted)]">
+                    <h2 className="text-[14px] font-bold text-[var(--color-text)] truncate">{pkg.name}</h2>
+                    <div className="text-[12px] text-[var(--color-text-muted)]">
                       {pkg.ownerName || "-"} · {new Date(pkg.createdAt).toLocaleDateString()} · {pkg.docs.length} doc{pkg.docs.length === 1 ? "" : "s"}
                     </div>
                   </div>
-                  <span className={`shrink-0 text-[11px] font-black uppercase tracking-wide ${
+                  <span className={`shrink-0 text-[12px] font-bold ${
                     stale ? "text-amber-700 dark:text-amber-400" : "text-emerald-700 dark:text-emerald-400"
                   }`}>
                     {stale ? `${pkg.staleCount} moved on` : "Current"}
                   </span>
                 </div>
 
-                <div className="px-3 py-2 space-y-0.5">
+                <div className="px-2 sm:px-3 py-2 space-y-0.5">
                   {pkg.docs.map((d) => (
                     <Link
                       key={d.id}
@@ -287,49 +298,49 @@ export default function PackagesPage() {
                       className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] group"
                     >
                       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.drifted ? "bg-amber-500" : "bg-[var(--color-border-strong)]"}`} />
-                      <span className="text-xs font-bold text-[var(--color-text)] group-hover:text-[var(--color-text)] truncate flex-1">{d.docLabel}</span>
+                      <span className="text-[13px] font-semibold text-[var(--color-text)] truncate flex-1">{d.docLabel}</span>
                       {d.drifted ? (
-                        <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400 shrink-0">
+                        <span className="text-[12px] font-bold text-amber-700 dark:text-amber-400 shrink-0">
                           pinned Rev {d.pinnedRevLabel ?? "?"}, now Rev {d.currentRev ?? "?"}
                         </span>
                       ) : (
-                        <span className="text-[11px] text-[var(--color-text-faint)] shrink-0">Rev {d.pinnedRevLabel ?? "-"}</span>
+                        <span className="text-[12px] text-[var(--color-text-muted)] shrink-0">Rev {d.pinnedRevLabel ?? "-"}</span>
                       )}
                       <ChevronRight className="w-3 h-3 text-[var(--color-text-faint)] opacity-60 sm:opacity-0 group-hover:opacity-100 shrink-0" />
                     </Link>
                   ))}
                 </div>
 
-                <div className="px-3 pb-3 flex items-center gap-2">
+                <div className="px-4 sm:px-5 pb-4 pt-1 flex items-center gap-2">
                   {/* Print pack: cover sheet + all current drawings, stamped;
                       pins auto-refresh to match the paper. */}
                   <button
                     onClick={() => void handlePrintPack(pkg)}
                     disabled={printing === pkg.id}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                     title="One PDF: a cover sheet with a scan code, then every drawing at its current revision, stamped. The pins move to match."
                   >
-                    {printing === pkg.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Printer className="w-3 h-3" />}
+                    {printing === pkg.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />}
                     Print pack
                   </button>
                   {stale && (
                     <button
                       onClick={() => void handleRefresh(pkg)}
                       disabled={busyId === pkg.id}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                       title="Move every pin to the current revision. Check what changed first."
                     >
-                      {busyId === pkg.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                      {busyId === pkg.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                       Refresh pins
                     </button>
                   )}
                   <button
                     onClick={() => void handleClose(pkg)}
                     disabled={busyId === pkg.id}
-                    className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+                    className="ml-auto inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                     title="Job done: stop watching"
                   >
-                    <Archive className="w-3 h-3" /> Close
+                    <Archive className="w-3.5 h-3.5" /> Close
                   </button>
                 </div>
               </div>
@@ -337,16 +348,17 @@ export default function PackagesPage() {
           })}
         </div>
       )}
+      </PageBody>
 
       {/* CREATE MODAL */}
       {showCreate && (
-        <div className="fixed inset-0 z-[150] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
-          <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
+        <div className="fixed inset-0 z-[150] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] flex items-center justify-center p-4 animate-in fade-in" role="dialog" aria-modal="true" aria-label="New work package">
+          <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
             <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
               <div className="p-2 bg-[var(--color-surface-2)] rounded-lg"><Package className="w-4 h-4 text-[var(--color-text-muted)]" /></div>
               <div className="flex-1">
-                <div className="text-sm font-black text-[var(--color-text)]">New work package</div>
-                <div className="text-[11px] text-[var(--color-text-muted)]">Revisions are pinned as of right now.</div>
+                <h2 className="text-[15px] font-extrabold text-[var(--color-text)]">New work package</h2>
+                <div className="text-[13px] text-[var(--color-text-muted)]">Revisions are pinned as of right now.</div>
               </div>
               <button aria-label="Close" onClick={() => setShowCreate(false)} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
             </div>
@@ -357,13 +369,13 @@ export default function PackagesPage() {
                 onChange={(e) => setName(e.target.value)}
                 placeholder='Job name * (e.g. "E-204 bundle swap")'
                 autoFocus
-                className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                className="w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-[10px] text-base sm:text-[14px] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
               />
               <input
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="One-line scope (optional)"
-                className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-xs focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                className="w-full h-10 px-3 border border-[var(--color-border-strong)] rounded-[10px] text-base sm:text-[14px] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
               />
 
               <div>
@@ -373,7 +385,7 @@ export default function PackagesPage() {
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder="Search drawings by number or title…"
-                    className="w-full pl-8 pr-3 py-2 border border-[var(--color-border)] rounded-lg text-xs focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                    className="w-full h-10 pl-8 pr-3 border border-[var(--color-border-strong)] rounded-[10px] text-base sm:text-[14px] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                   />
                 </div>
                 {results.length > 0 && (
@@ -382,7 +394,7 @@ export default function PackagesPage() {
                       <button
                         key={r.id}
                         onClick={() => { setPicked((prev) => [...prev, r]); setQuery(""); }}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] text-xs"
+                        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] text-[13px]"
                       >
                         <Plus className="w-3 h-3 text-[var(--color-text-muted)]" />
                         <span className="font-bold text-[var(--color-text)]">{r.label}</span>
@@ -394,7 +406,7 @@ export default function PackagesPage() {
                 {picked.length > 0 && (
                   <div className="mt-2 space-y-1">
                     {picked.map((p) => (
-                      <div key={p.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-[var(--color-surface-2)] text-xs">
+                      <div key={p.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-surface-2)] text-[13px]">
                         <span className="font-bold text-[var(--color-text)] flex-1 truncate">{p.label}</span>
                         <span className="text-[11px] text-[var(--color-text-faint)]">pins Rev {p.rev ?? "-"}</span>
                         <button aria-label="Remove" onClick={() => setPicked((prev) => prev.filter((x) => x.id !== p.id))} className="p-0.5 rounded hover:bg-[var(--color-surface)]">
@@ -407,12 +419,12 @@ export default function PackagesPage() {
               </div>
             </div>
 
-            <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex justify-end gap-2">
-              <button onClick={() => setShowCreate(false)} className="px-3 py-2 rounded-lg text-xs font-bold border border-[var(--color-border)]">Cancel</button>
+            <div className="px-5 py-3 border-t border-[var(--color-border)] flex justify-end gap-2">
+              <button onClick={() => setShowCreate(false)} className="h-10 px-4 rounded-xl text-[14px] font-bold border border-[var(--color-border-strong)]">Cancel</button>
               <button
                 onClick={() => void handleCreate()}
                 disabled={creating || !name.trim() || picked.length === 0}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 h-10 px-4 rounded-xl text-[14px] font-extrabold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
               >
                 {creating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Package className="w-3.5 h-3.5" />}
                 Make the package

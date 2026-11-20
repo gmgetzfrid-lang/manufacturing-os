@@ -59,6 +59,8 @@ import { forceReleaseDocument } from "@/lib/checkoutEpisodes";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 import { tryUpload } from "@/lib/uploadRetry";
 import LoadingBlock from "@/components/ui/LoadingBlock";
+import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
+import { isDocumentCheckedOut } from "@/lib/documentGuards";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import WatchButton from "@/components/ui/WatchButton";
@@ -158,8 +160,6 @@ import type {
   ExplorerLayout,
 } from "@/types/schema";
 import {
-  ArrowLeft,
-  ArrowUp,
   FolderUp,
   ArrowUpDown,
   Columns,
@@ -2090,6 +2090,23 @@ export default function LibraryExplorerPage() {
     });
   }, [filteredDocs, sortKey, sortDir]);
 
+  // A wide table shows it keeps going: a fade on the right edge while
+  // columns are still out of sight.
+  const [tableScrollEl, setTableScrollEl] = useState<HTMLDivElement | null>(null);
+  const [tableMoreRight, setTableMoreRight] = useState(false);
+  useEffect(() => {
+    const el = tableScrollEl;
+    if (!el) { setTableMoreRight(false); return; }
+    const check = () => setTableMoreRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+    check();
+    el.addEventListener("scroll", check, { passive: true });
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    const table = el.firstElementChild;
+    if (table) ro.observe(table);
+    return () => { el.removeEventListener("scroll", check); ro.disconnect(); };
+  }, [tableScrollEl]);
+
   // Selection hygiene: when the visible list changes (folder change, filter,
   // move), silently drop selected ids that are no longer on screen so bulk
   // actions can never touch rows the user can't see.
@@ -3306,20 +3323,9 @@ export default function LibraryExplorerPage() {
 
   if (!activeOrgId) {
     return (
-      <div className="min-h-full p-4 sm:p-8">
-        <div className="max-w-3xl mx-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-6 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-slate-900 rounded-xl shadow-lg shadow-slate-900/20">
-              <Shield className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-xl font-black text-[var(--color-text)]">Workspace not selected</h1>
-              <p className="text-sm text-[var(--color-text-muted)] mt-1">
-                Select a workspace in the sidebar to access this library.
-              </p>
-            </div>
-          </div>
-        </div>
+      <div className="min-h-full px-3 sm:px-4 pt-3 sm:pt-4">
+        <PageHero overlap={false} kicker="Document control" title="Pick a workspace."
+          sub="Select a workspace in the sidebar to open this library." back={{ href: "/documents", label: "Back to all libraries" }} />
       </div>
     );
   }
@@ -3332,18 +3338,9 @@ export default function LibraryExplorerPage() {
 
   if (!library) {
     return (
-      <div className="min-h-full p-4 sm:p-8">
-        <div className="max-w-3xl mx-auto bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-6 shadow-sm">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-slate-900 rounded-xl shadow-lg shadow-slate-900/20">
-              <Shield className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-xl font-black text-[var(--color-text)]">Library not found</h1>
-              <p className="text-sm text-[var(--color-text-muted)] mt-1">{error || "Unable to load library."}</p>
-            </div>
-          </div>
-        </div>
+      <div className="min-h-full px-3 sm:px-4 pt-3 sm:pt-4">
+        <PageHero overlap={false} kicker="Document control" title="Library not found."
+          sub={error || "Unable to load library."} back={{ href: "/documents", label: "Back to all libraries" }} />
       </div>
     );
   }
@@ -3509,6 +3506,296 @@ export default function LibraryExplorerPage() {
     return entries;
   };
 
+  // ── The band: the library's answer ─────────────────────────────────
+  // "54 drawings." — the count everything below is about, from the folder
+  // counts already loaded; the line under it says how they stand.
+  const noun = (() => {
+    const n = (library.name || "").trim();
+    const last = n.split(/\s+/).pop() ?? "";
+    if (/^[A-Za-z][A-Za-z ]{0,40}$/.test(n) && n.split(/\s+/).length <= 3 && /[^siu]s$/i.test(last)) {
+      const many = n.toLowerCase();
+      return { one: many.slice(0, -1), many };
+    }
+    return { one: "document", many: "documents" };
+  })();
+  const totalHere = folderCounts
+    ? (currentFolderId ? folderCounts.totals.get(currentFolderId) ?? 0 : folderCounts.libraryTotal)
+    : null;
+  const answer = totalHere === null ? (currentFolder?.name ?? library.name)
+    : totalHere === 0 ? (currentFolderId ? "Nothing filed here yet." : `No ${noun.many} yet.`)
+    : `${totalHere.toLocaleString()} ${totalHere === 1 ? noun.one : noun.many}.`;
+  const answerSub = (() => {
+    if (totalHere === null || (loadingDocs && documents.length === 0)) return undefined;
+    // Filed directly here and readable; a typed filter doesn't change the answer.
+    const list = search.trim() ? documents : filteredDocs;
+    if (list.length === 0) {
+      if (filteredFolders.length > 0) return `In ${filteredFolders.length} folder${filteredFolders.length === 1 ? "" : "s"} below.`;
+      return "Drop files anywhere on this page, or use Upload.";
+    }
+    const parts: string[] = [];
+    const by = new Map<string, number>();
+    for (const d of list) if (d.status) by.set(d.status, (by.get(d.status) ?? 0) + 1);
+    const word = (st: string) => /^[A-Z][a-z]+( [A-Za-z][a-z]+)*$/.test(st) ? st.toLowerCase() : st;
+    const ranked = [...by.entries()].sort((a, b) => b[1] - a[1]);
+    const partial = list.length < (totalHere ?? 0);
+    if (ranked.length === 1 && ranked[0][1] === list.length) {
+      parts.push(partial ? `${list.length.toLocaleString()} filed here, all ${word(ranked[0][0])}.` : `All ${word(ranked[0][0])}.`);
+    } else if (ranked.length > 0) {
+      const shown = ranked.slice(0, 3).map(([st, n]) => `${n.toLocaleString()} ${word(st)}`);
+      const rest = list.length - ranked.slice(0, 3).reduce((n, [, c]) => n + c, 0);
+      if (rest > 0) shown.push(`${rest.toLocaleString()} other`);
+      parts.push(`${partial ? "Filed here: " : ""}${shown.join(", ")}.`);
+    }
+    const out = list.filter((d) => isDocumentCheckedOut(d));
+    const mine = out.filter((d) => d.checkedOutBy === uid).length;
+    parts.push(out.length === 0 ? "None checked out."
+      : mine === out.length ? `${mine.toLocaleString()} checked out by you.`
+      : mine > 0 ? `${out.length.toLocaleString()} checked out, ${mine.toLocaleString()} by you.`
+      : `${out.length.toLocaleString()} checked out.`);
+    return parts.join(" ");
+  })();
+  const libMenuItem = "w-full px-3 min-h-10 py-2 text-left text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2.5";
+  const upTo = currentFolder?.parentId ? folderMap.get(currentFolder.parentId)?.name ?? "parent folder" : library.name;
+
+  // The one orange action. On a phone it rides in the bottom bar, so its
+  // menu opens upward there.
+  const uploadPrimary = (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setUploadMenuOpen((v) => !v)}
+        className={`${heroPrimary} w-full`}
+        title="Upload files or a whole folder"
+        aria-haspopup="menu"
+        aria-expanded={uploadMenuOpen}
+      >
+        <UploadCloud className="w-4 h-4" />
+        Upload {noun.many}
+        <ChevronDown className="w-4 h-4 opacity-80" />
+      </button>
+      {uploadMenuOpen && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setUploadMenuOpen(false)} />
+          <div role="menu" className="absolute right-0 top-full mt-2 max-sm:top-auto max-sm:bottom-full max-sm:mb-2 max-sm:left-0 sm:w-72 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] rounded-xl shadow-xl z-40 overflow-hidden text-left">
+                <button role="menuitem"
+                  onClick={() => { setUploadMenuOpen(false); fileInputRef.current?.click(); }}
+                  className="w-full px-3 py-2.5 text-left hover:bg-[var(--color-surface-2)] flex items-start gap-2.5">
+                  <UploadCloud className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
+                  <span>
+                    <span className="block text-[13px] font-bold">Files…</span>
+                    <span className="block text-[12px] text-[var(--color-text-muted)]">Pick one or many files</span>
+                  </span>
+                </button>
+                <button role="menuitem"
+                  onClick={() => { setUploadMenuOpen(false); folderInputRef.current?.click(); }}
+                  className="w-full px-3 py-2.5 text-left hover:bg-[var(--color-surface-2)] flex items-start gap-2.5 border-t border-[var(--color-border)]">
+                  <FolderUp className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
+                  <span>
+                    <span className="block text-[13px] font-bold">A whole folder…</span>
+                    <span className="block text-[12px] text-[var(--color-text-muted)]">
+                      {isController ? "Every subfolder and file keeps its place" : "Its files are added here (folders need Doc Control)"}
+                    </span>
+                  </span>
+                </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  const libTools = (
+    <>
+      {/* Library quick-jump (folders + sheets in this library, plus
+          in-library actions). ⌘K is the global palette. */}
+      <button type="button" onClick={() => setCommandOpen(true)} className={heroQuiet}
+        title="Jump to a folder or sheet in this library" aria-label="Find in library">
+        <Search className="w-4 h-4" />
+        <span className="max-md:hidden">Find in library</span>
+      </button>
+      {/* Subscribe to this library: watchers get notified when documents
+          are added or revised here. */}
+      {activeOrgId && uid && (
+        <WatchButton orgId={activeOrgId} userId={uid} resourceType="library" resourceId={libraryId} size="sm"
+          className="!w-9 !h-9 !rounded-[10px] border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] hover:!bg-[var(--color-ink-line)]" />
+      )}
+      {/* New folder: creating structure is as basic as adding files.
+          Creates inside whatever folder you're viewing. */}
+      {isController && (
+        <button type="button" onClick={openCreateFolder} className={heroQuiet}
+          title="New folder (created inside the folder you're viewing)" aria-label="New folder">
+          <FolderPlus className="w-4 h-4" />
+          <span className="max-lg:hidden">New folder</span>
+        </button>
+      )}
+      <div className="relative">
+        <button type="button" onClick={() => setActionsMenuOpen((v) => !v)} className={heroQuiet}
+          aria-haspopup="menu" aria-expanded={actionsMenuOpen} aria-label="Library actions" title="Library actions">
+          <span className="max-md:hidden">Library</span>
+          <MoreHorizontal className="w-4 h-4" />
+        </button>
+        {actionsMenuOpen && (
+          <>
+            <div className="fixed inset-0 z-30" onClick={() => setActionsMenuOpen(false)} />
+            <div role="menu"
+              className="absolute right-0 top-full mt-2 w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] overflow-y-auto py-1 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] rounded-xl shadow-xl z-40 animate-in fade-in zoom-in-95 duration-150 origin-top-right"
+            >
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setShowDuplicates(true); }}
+                    role="menuitem" className={libMenuItem}
+                  >
+                    <Copy className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Clean up uploads (duplicates, missing files)…
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setNumberingOpen(true); }}
+                    role="menuitem" className={libMenuItem}
+                  >
+                    <Hash className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Auto-numbering…
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setShowEquipmentSweep(true); }}
+                    role="menuitem" className={libMenuItem}
+                    title="Pull equipment tags the AI read from drawings into the equipment column and the registry"
+                  >
+                    <ScanSearch className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Equipment sweep
+                  </button>
+                )}
+                <button
+                  onClick={() => { setActionsMenuOpen(false); setNewCollection((n) => n + 1); }}
+                  role="menuitem" className={libMenuItem}
+                  title="Combine related documents into one named book you can read end to end"
+                >
+                  <FolderKanban className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> New collection
+                </button>
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setHomeAsk((n) => n + 1); }}
+                    role="menuitem" className={libMenuItem}
+                    title="An about panel, quick folders, recent documents and notices at the top of this library or folder"
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Custom home
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setShowColumnManager(true); }}
+                    role="menuitem" className={libMenuItem}
+                  >
+                    <Columns className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Manage columns
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setShowLibraryOrderModal(true); }}
+                    role="menuitem" className={libMenuItem}
+                  >
+                    <GripVertical className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Reorder documents
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setReviewPolicyTarget({ level: "library", id: libraryId, name: library?.name }); }}
+                    role="menuitem" className={libMenuItem}
+                    title="Set a periodic-review cycle for every document in this library"
+                  >
+                    <CalendarClock className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Review cycle
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setAckPolicyTarget({ level: "library", id: libraryId, name: library?.name }); }}
+                    role="menuitem" className={libMenuItem}
+                    title="Require read-&-understood acknowledgment for every document in this library"
+                  >
+                    <ClipboardCheck className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Read &amp; understood
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setReviewControlTarget({ level: "library", id: libraryId, name: library?.name }); }}
+                    role="menuitem" className={libMenuItem}
+                    title="Require reviewer sign-off before a revision publishes in this library"
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Pre-publish review
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setRetentionTarget({ level: "library", id: libraryId, name: library?.name }); }}
+                    role="menuitem" className={libMenuItem}
+                    title="Set a retention period for records in this library"
+                  >
+                    <Archive className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Retention
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); void openTrash(); }}
+                    role="menuitem" className={libMenuItem}
+                    title="Deleted folders are held for 30 days and can be restored here"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Recently deleted…
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setRecertOpen(true); }}
+                    role="menuitem" className={libMenuItem}
+                    title="Review and re-attest who has access to this library"
+                  >
+                    <KeyRound className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Access recertification
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setShowCsvImport(true); }}
+                    role="menuitem" className={libMenuItem}
+                    title="Bulk-create document records from a pasted CSV"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Import from CSV
+                  </button>
+                )}
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setShowLibraryPerms(true); }}
+                    role="menuitem" className={libMenuItem}
+                    title="Grant who can publish revisions / control documents in this library (e.g. a Drafting Supervisor on drawings only)"
+                  >
+                    <Shield className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Library access
+                  </button>
+                )}
+                <button
+                  onClick={() => { setActionsMenuOpen(false); setShowViewSelector((v) => !v); }}
+                  role="menuitem" className={libMenuItem}
+                >
+                  <Eye className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Views & save current
+                </button>
+                {isController && (
+                  <button
+                    onClick={() => { setActionsMenuOpen(false); setShowArchivedDocs((v) => !v); }}
+                    role="menuitem" className={libMenuItem}
+                  >
+                    <Archive className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
+                    {showArchivedDocs ? "Hide archived docs" : "Show archived docs"}
+                  </button>
+                )}
+                <button
+                  onClick={() => { setActionsMenuOpen(false); window.location.reload(); }}
+                  role="menuitem" className={libMenuItem}
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 text-[var(--color-text-faint)] ${loadingDocs ? "animate-spin" : ""}`} /> Refresh
+                </button>
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  );
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {peekDocId && <DocInPlace docId={peekDocId} onClose={() => setPeekDocId(null)} />}
@@ -3662,344 +3949,6 @@ export default function LibraryExplorerPage() {
         />
       )}
 
-      {/* ── SLIM GLASS TOP BAR ───────────────────────────────────────── */}
-      <div
-        className="h-11 shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)]/70 z-30 flex items-center gap-2 px-3"
-        style={{ backdropFilter: "blur(20px) saturate(180%)", WebkitBackdropFilter: "blur(20px) saturate(180%)" }}
-      >
-        <button
-          onClick={() => router.push("/documents")}
-          className="h-7 w-7 rounded-md hover:bg-[var(--color-surface-2)] flex items-center justify-center shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
-          title="Back to all libraries"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-        </button>
-        {/* Up one level — always where the eye expects it, next to the path. */}
-        {currentFolderId && (
-          <button
-            onClick={() => goUp()}
-            className="h-7 px-2 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] flex items-center gap-1 shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs font-bold transition-colors"
-            title={`Up to ${currentFolder?.parentId ? folderMap.get(currentFolder.parentId)?.name ?? "parent folder" : library.name} (Backspace or Alt+↑)`}
-          >
-            <ArrowUp className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Up</span>
-          </button>
-        )}
-
-        {/* Breadcrumb — each segment wears its folder's own icon + color;
-            deep paths fold their middle into a "…" menu. */}
-        <PathBar
-          library={{ name: library.name, icon: library.icon, color: library.color }}
-          segments={currentFolder ? [
-            ...(currentFolder.pathIds ?? []).map((pid, idx) => {
-              const f = folderMap.get(pid);
-              return {
-                id: pid,
-                name: currentFolder.pathNames?.[idx] ?? f?.name ?? "…",
-                icon: f?.icon, color: f?.color,
-              };
-            }),
-            {
-              id: currentFolder.id!, name: currentFolder.name,
-              icon: currentFolder.icon, color: currentFolder.color,
-            },
-          ] : []}
-          onNavigate={(id) => setCurrentFolderId(id)}
-          onDropItems={isController ? (targetId, payload) => {
-            if (payload.folderId) void dropMoveFolder(payload.folderId, targetId);
-            else if (payload.docIds) void dropMoveDocs(payload.docIds, targetId);
-          } : undefined}
-        />
-
-        <div className="flex-1" />
-
-        {/* Search everything: results stay on this page. */}
-        <form className="relative group flex-1 min-w-[11rem] sm:min-w-[20rem] max-w-xl" role="search" onSubmit={(e) => e.preventDefault()}>
-          <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)] absolute left-2.5 top-1/2 -translate-y-1/2 group-focus-within:text-[var(--color-text)] transition-colors pointer-events-none" />
-          <input
-            value={find}
-            onChange={(e) => setFind(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Escape") setFind(""); }}
-            placeholder="Search tags, IDs, drawings, words"
-            aria-label="Search documents and equipment"
-            data-find-input
-            className="w-full pl-7 pr-7 h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40 focus:border-[var(--color-accent)] text-base sm:text-xs font-medium transition-all"
-          />
-          {find && (
-            <button type="button" onClick={() => setFind("")} title="Clear the search"
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </form>
-
-        {/* Library quick-jump (folders + sheets in this library, plus
-            in-library actions). ⌘K is the global palette. */}
-        <button
-          onClick={() => setCommandOpen(true)}
-          className="hidden sm:flex items-center gap-1.5 h-7 px-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]/60 hover:bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-[11px] font-medium transition-all"
-          title="Jump to a folder or sheet in this library"
-        >
-          <Search className="w-3 h-3" />
-          <span>Find in library</span>
-        </button>
-
-        <div className="h-4 w-px bg-slate-200 mx-0.5" />
-
-        {/* Subscribe to this library: watchers get notified when documents
-            are added or revised here — no more finding out by accident. */}
-        {activeOrgId && uid && (
-          <WatchButton orgId={activeOrgId} userId={uid} resourceType="library" resourceId={libraryId} size="sm" />
-        )}
-
-        {/* ONE Upload button, two choices: the browser's file picker can't
-            pick a folder, so "Upload files" alone left no way to send a
-            whole folder except dragging it. */}
-        <div className="relative">
-          <button
-            onClick={() => setUploadMenuOpen((v) => !v)}
-            className="h-7 px-2.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] flex items-center gap-1 text-xs font-bold transition-colors"
-            title="Upload files or a whole folder"
-            aria-haspopup="menu"
-            aria-expanded={uploadMenuOpen}
-          >
-            <UploadCloud className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Upload</span>
-            <ChevronDown className="w-3 h-3 opacity-70" />
-          </button>
-          {uploadMenuOpen && (
-            <>
-              <div className="fixed inset-0 z-30" onClick={() => setUploadMenuOpen(false)} />
-              <div role="menu" className="absolute right-0 top-full mt-1 w-64 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg z-40 overflow-hidden">
-                <button role="menuitem"
-                  onClick={() => { setUploadMenuOpen(false); fileInputRef.current?.click(); }}
-                  className="w-full px-3 py-2.5 text-left hover:bg-[var(--color-surface-2)] flex items-start gap-2.5">
-                  <UploadCloud className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
-                  <span>
-                    <span className="block text-xs font-bold">Files…</span>
-                    <span className="block text-[11px] text-[var(--color-text-muted)]">Pick one or many files</span>
-                  </span>
-                </button>
-                <button role="menuitem"
-                  onClick={() => { setUploadMenuOpen(false); folderInputRef.current?.click(); }}
-                  className="w-full px-3 py-2.5 text-left hover:bg-[var(--color-surface-2)] flex items-start gap-2.5 border-t border-[var(--color-border)]">
-                  <FolderUp className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
-                  <span>
-                    <span className="block text-xs font-bold">A whole folder…</span>
-                    <span className="block text-[11px] text-[var(--color-text-muted)]">
-                      {isController ? "Every subfolder and file keeps its place" : "Its files are added here (folders need Doc Control)"}
-                    </span>
-                  </span>
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* New folder is a FIRST-CLASS action, right beside Upload — creating
-            structure is as basic as adding files; it must never hide in an
-            overflow menu. Creates inside whatever folder you're viewing. */}
-        {isController && (
-          <button
-            onClick={openCreateFolder}
-            className="h-7 px-2 rounded-md hover:bg-[var(--color-surface-2)] flex items-center gap-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs font-bold transition-colors"
-            title="New folder (created inside the folder you're viewing)"
-          >
-            <FolderPlus className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">New folder</span>
-          </button>
-        )}
-
-        {/* Overflow menu for secondary actions */}
-        <div className="relative">
-          <button
-            onClick={() => setActionsMenuOpen((v) => !v)}
-            className="h-7 w-7 rounded-md hover:bg-[var(--color-surface-2)] flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
-            title="More actions"
-          >
-            <MoreHorizontal className="w-3.5 h-3.5" />
-          </button>
-          {actionsMenuOpen && (
-            <>
-              <div className="fixed inset-0 z-30" onClick={() => setActionsMenuOpen(false)} />
-              <div
-                className="absolute right-0 top-full mt-1 w-48 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg z-40 overflow-hidden animate-in fade-in zoom-in-95 duration-150 origin-top-right"
-              >
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setShowDuplicates(true); }}
-                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
-                  >
-                    <Copy className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Clean up uploads (duplicates, missing files)…
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setNumberingOpen(true); }}
-                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
-                  >
-                    <Hash className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Auto-numbering…
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setShowEquipmentSweep(true); }}
-                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
-                    title="Pull equipment tags the AI read from drawings into the equipment column and the registry"
-                  >
-                    <ScanSearch className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Equipment sweep
-                  </button>
-                )}
-                <button
-                  onClick={() => { setActionsMenuOpen(false); setNewCollection((n) => n + 1); }}
-                  className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
-                  title="Combine related documents into one named book you can read end to end"
-                >
-                  <FolderKanban className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> New collection
-                </button>
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setHomeAsk((n) => n + 1); }}
-                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
-                    title="An about panel, quick folders, recent documents and notices at the top of this library or folder"
-                  >
-                    <LayoutGrid className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Custom home
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setShowColumnManager(true); }}
-                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
-                  >
-                    <Columns className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Manage columns
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setShowLibraryOrderModal(true); }}
-                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
-                  >
-                    <GripVertical className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Reorder documents
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setReviewPolicyTarget({ level: "library", id: libraryId, name: library?.name }); }}
-                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
-                    title="Set a periodic-review cycle for every document in this library"
-                  >
-                    <CalendarClock className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Review cycle
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setAckPolicyTarget({ level: "library", id: libraryId, name: library?.name }); }}
-                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
-                    title="Require read-&-understood acknowledgment for every document in this library"
-                  >
-                    <ClipboardCheck className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Read &amp; understood
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setReviewControlTarget({ level: "library", id: libraryId, name: library?.name }); }}
-                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
-                    title="Require reviewer sign-off before a revision publishes in this library"
-                  >
-                    <ShieldCheck className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Pre-publish review
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setRetentionTarget({ level: "library", id: libraryId, name: library?.name }); }}
-                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
-                    title="Set a retention period for records in this library"
-                  >
-                    <Archive className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Retention
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); void openTrash(); }}
-                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
-                    title="Deleted folders are held for 30 days and can be restored here"
-                  >
-                    <Trash2 className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Recently deleted…
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setRecertOpen(true); }}
-                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
-                    title="Review and re-attest who has access to this library"
-                  >
-                    <KeyRound className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Access recertification
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setShowCsvImport(true); }}
-                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
-                    title="Bulk-create document records from a pasted CSV"
-                  >
-                    <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Import from CSV
-                  </button>
-                )}
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setShowLibraryPerms(true); }}
-                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
-                    title="Grant who can publish revisions / control documents in this library (e.g. a Drafting Supervisor on drawings only)"
-                  >
-                    <Shield className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Library access
-                  </button>
-                )}
-                <button
-                  onClick={() => { setActionsMenuOpen(false); setShowViewSelector((v) => !v); }}
-                  className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
-                >
-                  <Eye className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> Views & save current
-                </button>
-                {isController && (
-                  <button
-                    onClick={() => { setActionsMenuOpen(false); setShowArchivedDocs((v) => !v); }}
-                    className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
-                  >
-                    <Archive className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
-                    {showArchivedDocs ? "Hide archived docs" : "Show archived docs"}
-                  </button>
-                )}
-                <button
-                  onClick={() => { setActionsMenuOpen(false); window.location.reload(); }}
-                  className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 text-[var(--color-text-faint)] ${loadingDocs ? "animate-spin" : ""}`} /> Refresh
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Messages used to be set and never shown while the library was open
-          — failed deletes and partial uploads looked like "nothing happened". */}
-      {(error || notice) && (
-        <div className="shrink-0 px-3 pt-2 space-y-1.5 z-20">
-          {error && (
-            <div role="alert" className="border-l-2 border-rose-500 pl-3 py-1 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2">
-              <span className="flex-1 min-w-0">{error}</span>
-              <button onClick={() => setError(null)} className="shrink-0 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)]" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
-            </div>
-          )}
-          {notice && (
-            <div role="status" className="border-l-2 border-emerald-500 pl-3 py-1 text-xs text-emerald-800 dark:text-emerald-300 flex items-start gap-2">
-              <span className="flex-1 min-w-0">{notice}</span>
-              <button onClick={() => setNotice(null)} className="shrink-0 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)]" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
-            </div>
-          )}
-        </div>
-      )}
-
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => handleUploadFiles(e.target.files)} />
       {/* webkitdirectory isn't in React's input types — spread it through. */}
       <input
@@ -4031,19 +3980,96 @@ export default function LibraryExplorerPage() {
           } : undefined}
         />
 
-        {/* MAIN AREA — full width, no inspector grid */}
-        <div className={`flex-1 overflow-auto p-3 lg:p-4 ${stagedDocs.length > 0 ? "pb-20" : ""}`}>
+        {/* MAIN AREA: the band with the answer, then cards over its edge */}
+        <div className={`flex-1 min-w-0 overflow-auto px-3 sm:px-4 pt-3 sm:pt-4 ${stagedDocs.length > 0 ? "pb-28" : "pb-24 sm:pb-10"}`}>
           <div className="max-w-[1920px] mx-auto">
 
+            <PageHero
+              kicker={
+                <PathBar
+                  onDark
+                  home={{ label: "Document control", href: "/documents" }}
+                  library={{ name: library.name, icon: library.icon, color: library.color }}
+                  segments={currentFolder ? [
+                    ...(currentFolder.pathIds ?? []).map((pid, idx) => {
+                      const f = folderMap.get(pid);
+                      return {
+                        id: pid,
+                        name: currentFolder.pathNames?.[idx] ?? f?.name ?? "…",
+                        icon: f?.icon, color: f?.color,
+                      };
+                    }),
+                    {
+                      id: currentFolder.id!, name: currentFolder.name,
+                      icon: currentFolder.icon, color: currentFolder.color,
+                    },
+                  ] : []}
+                  onNavigate={(id) => setCurrentFolderId(id)}
+                  onDropItems={isController ? (targetId, payload) => {
+                    if (payload.folderId) void dropMoveFolder(payload.folderId, targetId);
+                    else if (payload.docIds) void dropMoveDocs(payload.docIds, targetId);
+                  } : undefined}
+                />
+              }
+              back={currentFolderId
+                ? { onClick: () => goUp(), label: `Up to ${upTo} (Backspace or Alt+Up)` }
+                : { href: "/documents", label: "Back to all libraries" }}
+              title={answer}
+              sub={answerSub}
+              tools={libTools}
+              primary={uploadPrimary}
+            >
+              {/* Search everything: results stay on this page. */}
+              <form className="relative" role="search" onSubmit={(e) => e.preventDefault()}>
+                <Search className="w-4 h-4 text-[var(--color-ink-muted)] absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  value={find}
+                  onChange={(e) => setFind(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Escape") setFind(""); }}
+                  placeholder="Find by number, title, equipment tag (E-22) or words inside"
+                  aria-label="Search documents and equipment"
+                  data-find-input
+                  className="w-full h-12 pl-11 pr-11 rounded-xl border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-white placeholder:text-[var(--color-ink-muted)] text-base sm:text-[15px] focus:outline-none focus:border-[var(--color-ink-muted)] focus:ring-2 focus:ring-[var(--color-accent)]/40 transition-colors"
+                />
+                {find && (
+                  <button type="button" onClick={() => setFind("")} title="Clear the search" aria-label="Clear the search"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 grid place-items-center rounded-lg text-[var(--color-ink-muted)] hover:text-white hover:bg-[var(--color-ink-line)]">
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </form>
+              {/* Messages used to be set and never shown while the library was
+                  open: failed deletes and partial uploads looked like "nothing
+                  happened". They read on the band, right under the search. */}
+              {(error || notice) && (
+                <div className="mt-3 space-y-1.5">
+                  {error && (
+                    <div role="alert" className="text-[13px] text-rose-300 flex items-start gap-2">
+                      <span className="flex-1 min-w-0">{error}</span>
+                      <button onClick={() => setError(null)} className="shrink-0 p-1 rounded text-[var(--color-ink-muted)] hover:text-white" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                  )}
+                  {notice && (
+                    <div role="status" className="text-[13px] text-emerald-300 flex items-start gap-2">
+                      <span className="flex-1 min-w-0">{notice}</span>
+                      <button onClick={() => setNotice(null)} className="shrink-0 p-1 rounded text-[var(--color-ink-muted)] hover:text-white" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </PageHero>
+
+            <PageBody>
             {findOn && activeOrgId && (
-              <div className="mb-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm p-3 lg:p-4">
-                <div className="mb-3 flex items-center gap-2">
-                  <div className="text-sm font-black text-[var(--color-text)] truncate">Search: “{find.trim()}”</div>
+              <Card
+                label={<>Search: “{find.trim()}”</>}
+                action={
                   <button type="button" onClick={() => setFind("")}
-                    className="ml-auto shrink-0 h-7 px-2.5 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                    className="shrink-0 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-[12px] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                     Back to {currentFolder?.name ?? library.name}
                   </button>
-                </div>
+                }
+              >
                 <FindPanel orgId={activeOrgId} f={finder} unit={folderUnitCode}
                   onSearchAsset={searchAsset} onUnit={(code) => void openUnitFolder(code)}
                   onOpenFolder={(fo) => {
@@ -4052,16 +4078,64 @@ export default function LibraryExplorerPage() {
                     else router.push(`/documents/${fo.libraryId}?folderId=${fo.id}`);
                   }}
                   onOpenHref={(href) => router.push(href)} />
-              </div>
+              </Card>
             )}
             <div className={findOn ? "hidden" : "contents"}>
 
-            <WatchdogBanner suggestions={watchdog} busyId={watchdogBusy} onLink={watchdogLink} onDismiss={watchdogDismiss} onClose={() => setWatchdog([])} />
-            {currentFolderId && activeOrgId && <AlsoFiledHere orgId={activeOrgId} folderId={currentFolderId} />}
+            {/* Files dropped anywhere on the folders, map or list upload here. */}
+            <div
+              className="relative flex flex-col gap-4"
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              {isDragOver && (
+                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center rounded-2xl bg-[var(--color-surface)]/95 ring-4 ring-[var(--color-accent-ring)] pointer-events-none">
+                  <div className="w-20 h-20 rounded-2xl bg-[var(--color-surface-2)] border-2 border-[var(--color-border-strong)] border-dashed flex items-center justify-center mb-4">
+                    <UploadCloud className="w-9 h-9 text-[var(--color-text-muted)]" />
+                  </div>
+                  <p className="text-[15px] font-bold text-[var(--color-text)]">Drop files or folders to upload</p>
+                  <p className="text-[13px] text-[var(--color-text-muted)] mt-1 text-center px-4">
+                    Release to add to {currentFolder ? `"${currentFolder.name}"` : "this library"}. A dropped folder keeps its subfolder structure.
+                  </p>
+                </div>
+              )}
 
-            {/* Phase 2 + 3: Curated Collections + Favorites */}
-            {library && activeOrgId && uid && (
-              <div className="mb-3 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm overflow-hidden empty:hidden">
+              {/* FOLDERS: one row of cards that keeps going sideways. */}
+              {filteredFolders.length > 0 && (
+                <nav aria-label="Folders" className="sm:mt-4">
+                  <FolderGrid
+                    layout="strip"
+                    folders={filteredFolders}
+                    allFolders={folders}
+                    docTotals={folderCounts?.totals}
+                    onOpen={(id) => setCurrentFolderId(id)}
+                    onRename={isController ? (id) => { setFolderErr(null); setRenameFolderId(id); setRenameValue(folderMap.get(id)?.name || ""); } : undefined}
+                    onMove={isController ? (id) => { setRenameFolderId(id); setShowMoveModal(true); } : undefined}
+                    onPermissions={isController ? (id) => { setRenameFolderId(id); setShowPermissions(true); } : undefined}
+                    onCustomize={isController ? (id) => { setCustomizeFolderId(id); } : undefined}
+                    onReviewCycle={isController ? (id) => setReviewPolicyTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
+                    onAckPolicy={isController ? (id) => setAckPolicyTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
+                    onReviewControl={isController ? (id) => setReviewControlTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
+                    onRetention={isController ? (id) => setRetentionTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
+                    onMoveInto={isController ? (dragId, targetId) => void dropMoveFolder(dragId, targetId) : undefined}
+                    onMoveManyInto={isController ? (ids, targetId) => void dropMoveFolders(ids, targetId) : undefined}
+                    onDocsDrop={isController ? (docIds, folderId) => void dropMoveDocs(docIds, folderId) : undefined}
+                    onReorder={isController ? (dragId, targetId, pos) => void dropReorderFolder(dragId, targetId, pos) : undefined}
+                    onDelete={isController ? (id) => handleDeleteFolder(id) : undefined}
+                    isController={isController}
+                    selectedIds={selectedFolderIds}
+                    onTileSelect={handleFolderTileSelect}
+                  />
+                </nav>
+              )}
+
+              <WatchdogBanner suggestions={watchdog} busyId={watchdogBusy} onLink={watchdogLink} onDismiss={watchdogDismiss} onClose={() => setWatchdog([])} />
+              {currentFolderId && activeOrgId && <AlsoFiledHere orgId={activeOrgId} folderId={currentFolderId} />}
+
+              {/* Curated collections + favorites */}
+              {library && activeOrgId && uid && (
+                <div className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden empty:hidden">
                 <FavoritesStrip
                   orgId={activeOrgId}
                   userId={uid}
@@ -4111,8 +4185,8 @@ export default function LibraryExplorerPage() {
                     setShowMultiView(true);
                   }}
                 />
-              </div>
-            )}
+                </div>
+              )}
 
             {/* HERO HEADER (library root or folder; only when customized) */}
             {pageHeader && <PageHeader header={pageHeader} />}
@@ -4154,74 +4228,21 @@ export default function LibraryExplorerPage() {
               />
             )}
 
-            {/* BROWSER CARD */}
-            <div
-              className={`bg-[var(--color-surface)] border rounded-2xl shadow-sm overflow-hidden flex flex-col min-h-[500px] relative transition-all duration-150 focus:outline-none ${
-                isDragOver ? "border-[var(--color-accent)] ring-4 ring-[var(--color-accent-ring)]" : "border-[var(--color-border)]"
-              }`}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              tabIndex={0}
-              onKeyDown={handleExplorerKeyDown}
-            >
-              {/* Drag overlay */}
-              {isDragOver && (
-                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[var(--color-surface-2)] pointer-events-none">
-                  <div className="w-20 h-20 rounded-2xl bg-[var(--color-surface-2)] border-2 border-[var(--color-border-strong)] border-dashed flex items-center justify-center mb-4">
-                    <UploadCloud className="w-9 h-9 text-[var(--color-text-muted)]" />
-                  </div>
-                  <p className="text-lg font-bold text-[var(--color-text)]">Drop files or folders to upload</p>
-                  <p className="text-sm text-[var(--color-text-muted)] mt-1">
-                    Release to add to {currentFolder ? `"${currentFolder.name}"` : "this library"} - a dropped folder keeps its subfolder structure
-                  </p>
-                </div>
-              )}
 
-              {/* FOLDERS GRID */}
-              {filteredFolders.length > 0 && (
-                <div className="p-5 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
-                  <h3 className="text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider mb-3 flex items-center">
-                    <LayoutGrid className="w-3 h-3 mr-1.5" /> Folders
-                  </h3>
-                  <FolderGrid
-                    folders={filteredFolders}
-                    allFolders={folders}
-                    docTotals={folderCounts?.totals}
-                    onOpen={(id) => setCurrentFolderId(id)}
-                    onRename={isController ? (id) => { setFolderErr(null); setRenameFolderId(id); setRenameValue(folderMap.get(id)?.name || ""); } : undefined}
-                    onMove={isController ? (id) => { setRenameFolderId(id); setShowMoveModal(true); } : undefined}
-                    onPermissions={isController ? (id) => { setRenameFolderId(id); setShowPermissions(true); } : undefined}
-                    onCustomize={isController ? (id) => { setCustomizeFolderId(id); } : undefined}
-                    onReviewCycle={isController ? (id) => setReviewPolicyTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
-                    onAckPolicy={isController ? (id) => setAckPolicyTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
-                    onReviewControl={isController ? (id) => setReviewControlTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
-                    onRetention={isController ? (id) => setRetentionTarget({ level: "collection", id, name: folderMap.get(id)?.name }) : undefined}
-                    onMoveInto={isController ? (dragId, targetId) => void dropMoveFolder(dragId, targetId) : undefined}
-                    onMoveManyInto={isController ? (ids, targetId) => void dropMoveFolders(ids, targetId) : undefined}
-                    onDocsDrop={isController ? (docIds, folderId) => void dropMoveDocs(docIds, folderId) : undefined}
-                    onReorder={isController ? (dragId, targetId, pos) => void dropReorderFolder(dragId, targetId, pos) : undefined}
-                    onDelete={isController ? (id) => handleDeleteFolder(id) : undefined}
-                    isController={isController}
-                    selectedIds={selectedFolderIds}
-                    onTileSelect={handleFolderTileSelect}
-                  />
-                </div>
-              )}
-
-              {/* THE MAP — under the folders: the unit this folder is in, its
-                  equipment by type, and each one's documents. */}
-              {!findOn && activeOrgId && (
-                <div className="border-b border-[var(--color-border)] bg-[var(--color-surface-2)]/30">
-                  <button type="button" onClick={() => setMapOpen((v) => !v)}
-                    className="w-full px-5 pt-3 pb-2 flex items-center gap-1.5 text-xs font-bold text-[var(--color-text-faint)] uppercase tracking-wider hover:text-[var(--color-text)]">
-                    <ChevronDown className={`w-3 h-3 transition-transform ${mapOpen ? "" : "-rotate-90"}`} /> Map
-                    <span className="normal-case tracking-normal font-medium text-[var(--color-text-muted)]">
-                      · {mapFolder.name} › its files › the equipment on each
+              {/* THE MAP: the unit this folder is in, its equipment by type,
+                  and each one's documents. */}
+              {activeOrgId && (
+                <Card pad={false}>
+                  <button type="button" onClick={() => setMapOpen((v) => !v)} aria-expanded={mapOpen}
+                    className="w-full px-4 sm:px-5 py-3.5 flex items-center gap-2 text-left rounded-2xl hover:bg-[var(--color-surface-2)]/60">
+                    <ChevronDown className={`w-3.5 h-3.5 text-[var(--color-text-muted)] transition-transform ${mapOpen ? "" : "-rotate-90"}`} />
+                    <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Map</span>
+                    <span className="text-[13px] text-[var(--color-text-muted)] truncate">
+                      {mapFolder.name} › its files › the equipment on each
                     </span>
                   </button>
                   {mapOpen && (
-                    <div className="px-5 pb-4">
+                    <div className="px-4 sm:px-5 pb-4">
                       {/* The map follows the list: this folder, its files, the
                           equipment on each. A file opens right here, full
                           size; closing it leaves the folder as it was. */}
@@ -4234,9 +4255,16 @@ export default function LibraryExplorerPage() {
                         }} />
                     </div>
                   )}
-                </div>
+                </Card>
               )}
 
+            {/* THE LIST */}
+            <div
+              className="bg-[var(--color-surface)] rounded-2xl shadow-[var(--shadow-card)] overflow-hidden flex flex-col min-h-[420px] relative focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-strong)]"
+              tabIndex={0}
+              onKeyDown={handleExplorerKeyDown}
+              aria-label="Documents"
+            >
               {/* DOCUMENTS SECTION */}
               <div className="flex-1 flex flex-col">
                 {/* Advisory: someone else has live edit work on a doc I'm
@@ -4261,33 +4289,33 @@ export default function LibraryExplorerPage() {
                     Showing the first <b>10,000</b> documents, newest first. This folder holds more: filter or open a subfolder to narrow it.
                   </div>
                 )}
-                <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3 bg-[var(--color-surface)]">
-                  <h3 className="text-sm font-bold text-[var(--color-text)] flex items-center gap-2 shrink-0">
-                    <FileText className="w-4 h-4 text-[var(--color-text-faint)]" />
-                    Documents
-                    <span className="text-xs font-medium text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-2 py-0.5 rounded-full"
+                <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3 flex-wrap">
+                  <h2 className="flex items-baseline gap-2 shrink-0 min-w-0">
+                    <span className="text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{noun.many === "documents" ? "Documents" : library.name}</span>
+                    <span className="text-[13px] text-[var(--color-text-muted)] tabular-nums"
                       title="Documents filed directly in this folder">{filteredDocs.length.toLocaleString()} here</span>
                     {folderCounts && (() => {
                       const below = currentFolderId ? folderCounts.totals.get(currentFolderId) ?? 0 : folderCounts.libraryTotal;
                       return below > (folderCounts.direct.get(currentFolderId ?? null) ?? 0) ? (
-                        <span className="text-xs font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-2 py-0.5 rounded-full"
+                        <span className="text-[13px] text-[var(--color-text-muted)] tabular-nums"
                           title={currentFolderId ? "Everything in this folder, including all subfolders" : "Every document in this library"}>
-                          {below.toLocaleString()} {currentFolderId ? "incl. subfolders" : "in library"}
+                          · {below.toLocaleString()} {currentFolderId ? "incl. subfolders" : "in library"}
                         </span>
                       ) : null;
                     })()}
-                  </h3>
+                  </h2>
 
                   {/* Live filter — typing instantly narrows the table to just the
                       matching files (acts like autocomplete). Matches the number,
                       title, sheet #, rev, status and any custom column value. */}
-                  <div className="relative flex-1 max-w-md">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)] pointer-events-none" />
+                  <div className="relative flex-1 min-w-[12rem] max-w-md">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)] pointer-events-none" />
                     <input
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
-                      placeholder="Filter this folder: number, title, sheet #, any field…"
-                      className="w-full pl-8 pr-7 py-1.5 text-base sm:text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40 focus:border-[var(--color-accent)] transition-shadow"
+                      placeholder="Filter this folder: number, title, sheet, any field"
+                      aria-label="Filter this folder"
+                      className="w-full h-9 pl-8 pr-8 text-base sm:text-[13px] rounded-[10px] border border-transparent bg-[var(--color-surface-2)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40 focus:bg-[var(--color-surface)] focus:border-[var(--color-border-strong)] transition-shadow"
                     />
                     {search && (
                       <button
@@ -4311,7 +4339,7 @@ export default function LibraryExplorerPage() {
                     )}
                     {/* Layout switcher — Details / List / Grid / Thumbnails.
                         Same selection, same gestures, different geometry. */}
-                    <div className="hidden md:inline-flex items-center rounded-lg border border-[var(--color-border)] overflow-hidden" role="group" aria-label="Layout">
+                    <div className="hidden md:inline-flex items-center rounded-[10px] bg-[var(--color-surface-2)] p-0.5" role="group" aria-label="Layout">
                       {([
                         { key: "details" as ExplorerLayout, icon: <TableIcon className="w-3.5 h-3.5" />, label: "Details" },
                         { key: "list" as ExplorerLayout, icon: <ListIcon className="w-3.5 h-3.5" />, label: "List" },
@@ -4322,11 +4350,12 @@ export default function LibraryExplorerPage() {
                           key={opt.key}
                           onClick={() => setDocLayout(opt.key)}
                           title={opt.label}
+                          aria-label={opt.label}
                           aria-pressed={docLayout === opt.key}
-                          className={`px-2 py-1.5 transition-colors ${
+                          className={`w-8 h-8 grid place-items-center rounded-lg transition-colors ${
                             docLayout === opt.key
-                              ? "bg-[var(--color-text)] text-[var(--color-surface)]"
-                              : "bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"
+                              ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm"
+                              : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                           }`}
                         >
                           {opt.icon}
@@ -4341,7 +4370,9 @@ export default function LibraryExplorerPage() {
                       <button
                         onClick={() => setViewMenuOpen((v) => !v)}
                         title="View defaults for this folder"
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-all ${
+                        aria-haspopup="menu"
+                        aria-expanded={viewMenuOpen}
+                        className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold border transition-all ${
                           viewMenuOpen
                             ? "border-[var(--color-text)] bg-[var(--color-text)] text-[var(--color-surface)]"
                             : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
@@ -4411,7 +4442,7 @@ export default function LibraryExplorerPage() {
                   /* INTERACTIVE EMPTY STATE */
                   <div className="flex-1 flex flex-col items-center justify-center p-12">
                     <UploadCloud className="w-8 h-8 text-[var(--color-text-faint)] mb-3" />
-                    <h3 className="text-base font-bold text-[var(--color-text)] mb-1">Nothing here yet</h3>
+                    <h3 className="text-[14px] font-bold text-[var(--color-text)] mb-1">Nothing here yet</h3>
                     {/* Upload (top right) is the one home for adding files. */}
                     <p className="text-sm text-[var(--color-text-muted)] text-center max-w-xs">
                       Drop files or a folder here, or use Upload.
@@ -4421,7 +4452,7 @@ export default function LibraryExplorerPage() {
                   <>
                   {/* MOBILE CARD LIST — the table is unusable on a phone, so
                       below md we render tappable cards of the same docs. */}
-                  <div className="md:hidden flex-1 overflow-y-auto p-2 space-y-2">
+                  <div className="md:hidden flex-1 overflow-y-auto divide-y divide-[var(--color-border)]">
                     {loadingDocs && sortedDocs.length === 0 ? (
                       <LoadingBlock what="documents" />
                     ) : sortedDocs.length === 0 ? (
@@ -4430,15 +4461,15 @@ export default function LibraryExplorerPage() {
                       <button
                         key={doc.id}
                         onClick={() => setSelectedDoc(doc)}
-                        className="w-full text-left bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-3 shadow-sm active:bg-[var(--color-surface-2)] flex items-start gap-3"
+                        className="w-full text-left px-4 py-3 active:bg-[var(--color-surface-2)] flex items-start gap-3"
                       >
                         <DocThumb documentId={doc.id} width={40} className="mt-0.5" />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="font-mono text-xs font-bold text-[var(--color-text)] truncate flex-1">{doc.documentNumber || doc.title || doc.name || "-"}</span>
+                            <span className="text-[14px] font-bold text-[var(--color-text)] truncate flex-1">{doc.documentNumber || doc.title || doc.name || "-"}</span>
                             {doc.rev && <span className="text-[11px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">Rev {doc.rev}</span>}
                           </div>
-                          {doc.title && doc.documentNumber && <div className="text-xs text-[var(--color-text-muted)] truncate mt-0.5">{doc.title}</div>}
+                          {doc.title && doc.documentNumber && doc.title !== doc.documentNumber && <div className="text-[13px] text-[var(--color-text-muted)] truncate mt-0.5">{doc.title}</div>}
                           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                             {doc.status && <span className={`text-[11px] font-bold uppercase px-1.5 py-0.5 rounded border ${stateStyle(documentState(doc.status)).pill}`}>{doc.status}</span>}
                             {doc.checkedOutBy && <span className="text-[11px] font-bold text-[var(--color-text)]">Checked out{doc.checkedOutByName ? ` · ${doc.checkedOutByName}` : ""}</span>}
@@ -4474,14 +4505,19 @@ export default function LibraryExplorerPage() {
                       />
                     </div>
                   ) : (
+                  <div className="relative flex-1 hidden md:block min-w-0">
+                  {tableMoreRight && (
+                    <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 z-[5] w-16 bg-gradient-to-l from-[var(--color-surface)] to-transparent" />
+                  )}
                   <div
+                    ref={setTableScrollEl}
                     data-doc-marquee
-                    className="flex-1 overflow-x-auto hidden md:block"
+                    className="h-full overflow-x-auto"
                     onClick={(e) => { if (e.target === e.currentTarget) clearSelection(); }}
                     onMouseDown={handleMarqueeMouseDown}
                   >
                     <table className="w-full text-left text-sm table-fixed min-w-[640px]">
-                      <thead className="bg-slate-50/70 border-b border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] uppercase font-black tracking-wider">
+                      <thead className="border-b border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] uppercase font-extrabold tracking-[0.12em]">
                         <tr>
                           <th className={`px-3 ${headerPad}`} style={{ width: "36px" }}>
                             <input
@@ -4817,13 +4853,16 @@ export default function LibraryExplorerPage() {
                       </tbody>
                     </table>
                   </div>
+                  </div>
                   )}
                   </>
                 )}
               </div>
             </div>
+            </div>
 
             </div>
+            </PageBody>
           </div>
         </div>
       </div>
@@ -4832,7 +4871,11 @@ export default function LibraryExplorerPage() {
       <InspectorDrawer
         isOpen={!!selectedDoc}
         onClose={() => setSelectedDoc(null)}
-        title={selectedDoc?.documentNumber || selectedDoc?.title || "Inspector"}
+        title={(() => {
+          // Where the document lives: library · folders.
+          const f = selectedDoc?.collectionId ? folderMap.get(selectedDoc.collectionId) : null;
+          return [library.name, ...(f ? [...(f.pathNames ?? []), f.name] : [])].filter(Boolean).join(" · ");
+        })()}
       >
         {selectedDoc && (
           <InspectorPanel

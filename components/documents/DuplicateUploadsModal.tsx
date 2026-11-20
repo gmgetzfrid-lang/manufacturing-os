@@ -97,7 +97,7 @@ export default function DuplicateUploadsModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+    <div className="fixed inset-0 z-[300] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] flex items-end sm:items-center justify-center p-0 sm:p-4"
       onMouseDown={(e) => { if (e.target === e.currentTarget && !running) onClose(); }}>
       <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-t-2xl sm:rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[90dvh]">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-start gap-3">

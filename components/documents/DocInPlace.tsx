@@ -51,7 +51,7 @@ export default function DocInPlace({ docId, onClose }: { docId: string; onClose:
           orgId={activeOrgId ?? undefined} />
       </div>
     ) : (
-      <div className="fixed inset-0 z-[100] grid place-items-center bg-slate-900/60 p-4" role="dialog" aria-modal="true" onClick={onClose} data-doc-in-place={docId}>
+      <div className="fixed inset-0 z-[100] grid place-items-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] p-4" role="dialog" aria-modal="true" onClick={onClose} data-doc-in-place={docId}>
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm text-[var(--color-text)] flex items-center gap-3 shadow-xl" onClick={(e) => e.stopPropagation()}>
           {!cur ? <><Loader2 className="w-4 h-4 animate-spin" /> Opening…</>
             : <>

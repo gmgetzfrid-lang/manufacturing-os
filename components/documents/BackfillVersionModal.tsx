@@ -160,7 +160,7 @@ export default function BackfillVersionModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
+    <div className="fixed inset-0 z-[200] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
       <form
         onSubmit={onSubmit}
         className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 animate-in fade-in zoom-in-95"

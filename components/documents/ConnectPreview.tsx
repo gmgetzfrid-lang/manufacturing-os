@@ -43,7 +43,7 @@ export default function ConnectPreview({ orgId, plan, loading, canChange, onStar
   const model = plan.model.model ? `${plan.model.provider ?? ""} · ${plan.model.model}` : null;
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/50 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
       <div className="w-full max-w-3xl rounded-2xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 p-4 border-b border-[var(--color-border)]">
           <div>

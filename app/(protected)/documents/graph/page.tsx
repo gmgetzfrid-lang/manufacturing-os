@@ -23,6 +23,7 @@ import SignedImg from "@/components/assets/SignedImg";
 import { listAssetPhotos, type AssetPhoto } from "@/lib/assets";
 import { useRole } from "@/components/providers/RoleContext";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
+import { PageHero } from "@/components/ui/PageHero";
 import FileGraph, { type FileGraphNode, type FileGraphLight, type FileGraphHandle, type FileGraphSatellite } from "@/components/documents/FileGraph";
 import { globalGraphHref } from "@/lib/estate/lenses";
 import EstateReadiness from "@/components/documents/EstateReadiness";
@@ -590,18 +591,28 @@ function GraphPageInner() {
 
   if (!activeOrgId) return <p className="p-6 text-sm text-[var(--color-text-muted)]">Pick a workspace in the sidebar to see its file map.</p>;
 
+  // The answer: how much is on the map.
+  const nFiles = data?.entries.length ?? 0;
+  const mapAnswer = !data ? (error ? "The map didn't load." : "File map")
+    : nFiles === 0 ? "Nothing on the map yet."
+    : `${nFiles.toLocaleString()} file${nFiles === 1 ? "" : "s"} on the map.`;
+  const mapSub = !data ? "Every library, folder and drive, and the links between them."
+    : `In ${data.libraries.length} librar${data.libraries.length === 1 ? "y" : "ies"}${listings.length ? ` and ${listings.length} drive${listings.length === 1 ? "" : "s"}` : ""}. ${data.edges.length.toLocaleString()} link${data.edges.length === 1 ? "" : "s"} between them.`;
+
   return (
-    <div className="flex flex-col lg:h-[calc(100vh-56px)]">
-      <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
-      {error && (
-        <div role="alert" className={`mx-4 mt-3 pl-3 py-1 border-l-2 text-sm flex items-center gap-2 ${data ? "border-amber-500 text-amber-800 dark:text-amber-300" : "border-rose-500 text-rose-700 dark:text-rose-300"}`}>
-          <AlertTriangle className="w-4 h-4 shrink-0" /> <span className="flex-1">{error}</span>
-          <button onClick={() => { setError(null); void refresh(); }} className="font-bold hover:underline">Retry</button>
-          <button aria-label="Dismiss" onClick={() => setError(null)} className="opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
-        </div>
-      )}
+    <div className="flex flex-col lg:h-[calc(100vh-56px)] px-3 sm:px-4 lg:px-6 pt-4 pb-4">
+      <PageHero size="md" overlap={false} className="!mb-3 !pb-6" kicker="Document control · File map" title={mapAnswer} sub={mapSub}>
+        <ViewTabs tabs={DOCUMENT_VIEWS} variant="dark" />
+        {error && (
+          <div role="alert" className={`mt-3 text-[13px] flex items-center gap-2 ${data ? "text-amber-300" : "text-rose-300"}`}>
+            <AlertTriangle className="w-4 h-4 shrink-0" /> <span className="flex-1">{error}</span>
+            <button onClick={() => { setError(null); void refresh(); }} className="font-bold text-white hover:underline">Retry</button>
+            <button aria-label="Dismiss" onClick={() => setError(null)} className="text-[var(--color-ink-muted)] hover:text-white"><X className="w-4 h-4" /></button>
+          </div>
+        )}
+      </PageHero>
       {/* A phone stacks the three: find, the map, the details. */}
-      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[320px_1fr_380px]">
+      <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[320px_1fr_380px] rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] overflow-hidden">
         {/* ── Left: search, drives, aliases ───────────────────────────── */}
         <aside className="border-b lg:border-b-0 lg:border-r border-[var(--color-border)] bg-[var(--color-surface)] flex flex-col min-h-0 min-w-0 h-[55vh] lg:h-auto">
           <div className="flex border-b border-[var(--color-border)] text-xs font-bold">
@@ -701,13 +712,13 @@ function GraphPageInner() {
           )}
           <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-2 text-[11px] pointer-events-none">
             <div className="flex flex-wrap items-center gap-1 pointer-events-auto">
-              <button onClick={() => drill(null)} className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 font-semibold ${focusId ? "bg-[var(--color-surface)]/90 border-[var(--color-border)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-transparent"}`}>
+              <button onClick={() => drill(null)} className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 font-semibold ${focusId ? "bg-[var(--color-surface)]/90 border-[var(--color-border)]" : "bg-[var(--color-text)] text-[var(--color-surface)] border-transparent"}`}>
                 <Waypoints className="w-3.5 h-3.5" /> Whole estate
               </button>
               {crumbs.map((c, i) => (
                 <React.Fragment key={c.id}>
                   <ChevronRight className="w-3 h-3 opacity-50" />
-                  <button onClick={() => drill(c.id)} className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 font-semibold max-w-[220px] bg-[var(--color-surface)]/95 ${i === crumbs.length - 1 ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent-ring)]" : "border-[var(--color-border)]"}`}>
+                  <button onClick={() => drill(c.id)} className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 font-semibold max-w-[220px] bg-[var(--color-surface)]/95 ${i === crumbs.length - 1 ? "border-[var(--color-text)] ring-1 ring-[var(--color-text)]" : "border-[var(--color-border)]"}`}>
                     <FileTypeIcon type={c.type} className="w-3.5 h-3.5" /> <span className="truncate">{c.label}</span>
                   </button>
                 </React.Fragment>

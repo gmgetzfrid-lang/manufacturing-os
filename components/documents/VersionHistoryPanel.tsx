@@ -452,7 +452,7 @@ export default function VersionHistoryPanel({
           slide-in transform would otherwise trap this fixed overlay inside it. */}
       {correctTarget && typeof document !== "undefined" && createPortal(
         <div
-          className="fixed inset-0 z-[230] bg-slate-900/50 backdrop-blur-[2px] animate-in fade-in flex items-center justify-center p-4"
+          className="fixed inset-0 z-[230] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-center justify-center p-4"
           onClick={() => { if (!savingLabel) setCorrectTarget(null); }}
         >
           <form

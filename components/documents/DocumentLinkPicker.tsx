@@ -126,7 +126,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
   const fieldCls = "text-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2.5 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
 
   return (
-    <div className="fixed inset-0 z-[520] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[520] flex items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] p-4" onClick={onClose}>
       <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[82vh]" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
           <FileText className="w-5 h-5 text-[var(--color-text-muted)]" />

@@ -154,7 +154,7 @@ export default function LibraryOrderModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[320] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
+    <div className="fixed inset-0 z-[320] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-center justify-center p-4 overflow-y-auto">
       <div className="w-full max-w-2xl bg-[var(--color-surface)] rounded-2xl shadow-2xl border border-[var(--color-border)] overflow-hidden my-8 flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95">
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5">

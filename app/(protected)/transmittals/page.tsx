@@ -19,11 +19,11 @@ import {
 import { useRole } from "@/components/providers/RoleContext";
 import { useToast } from "@/components/providers/ToastProvider";
 import { supabase } from "@/lib/supabase";
-import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
+import { PageShell } from "@/components/ui/PageShell";
+import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 import { Button } from "@/components/ui/Button";
 import { Input, Select, Textarea } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
-import { EmptyState } from "@/components/ui/EmptyState";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
@@ -200,65 +200,89 @@ export default function TransmittalsPage() {
     return <div className="p-4 sm:p-6"><LoadingBlock what="the transmittals" rows={5} /></div>;
   }
 
+  // The answer: how many went out, and how many still owe a receipt.
+  const all = list ?? [];
+  const waiting = all.filter((t) => t.status === "issued").length;
+  const drafts = all.filter((t) => t.status === "draft").length;
+  const received = all.filter((t) => t.status === "acknowledged").length;
+  const answer = error && all.length === 0 ? "Transmittals didn't load."
+    : all.length === 0 ? "No transmittals yet."
+    : `${all.length.toLocaleString()} transmittal${all.length === 1 ? "" : "s"}${waiting > 0 ? `, ${waiting} waiting on a receipt` : ""}.`;
+  const subBits: string[] = [];
+  if (staleIds.size > 0) subBits.push(`${staleIds.size} went out with a revision that's now old.`);
+  if (drafts > 0) subBits.push(`${drafts} draft${drafts === 1 ? "" : "s"} not issued.`);
+  if (received > 0) subBits.push(`${received} received.`);
+  const answerSub = subBits.length > 0 ? subBits.join(" ") : "Documents issued to others, each with a number, a cover sheet and a receipt.";
+
   return (
     <PageShell width="work">
-        <ViewTabs title="Documents" tabs={DOCUMENT_VIEWS} />
-        <PageHeaderBar
-          icon={Send}
-          title="Transmittals"
-          subtitle="Documents issued to others, each with a number, a cover sheet and a receipt."
-          actions={
-            <>
-              <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
-                <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
-              </Button>
-              <Button size="sm" onClick={openNew}>
-                <Plus className="w-4 h-4" /> New transmittal
-              </Button>
-            </>
-          }
-        />
+      <PageHero
+        kicker="Document control · Transmittals"
+        title={answer}
+        sub={answerSub}
+        tools={
+          <button type="button" onClick={() => void refresh()} disabled={loading} className={heroQuiet} aria-label="Refresh" title="Refresh">
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+          </button>
+        }
+        primary={
+          <button type="button" onClick={openNew} className={heroPrimary}>
+            <Plus className="w-4 h-4" /> New transmittal
+          </button>
+        }
+      >
+        <ViewTabs tabs={DOCUMENT_VIEWS} variant="dark" />
+      </PageHero>
 
+      <PageBody>
         {error && (
-          <div role="alert" className={`mb-4 border-l-2 pl-3 text-xs flex items-start gap-2 ${needsMigration ? "border-amber-500 text-amber-800 dark:text-amber-300" : "border-rose-500 text-rose-700 dark:text-rose-300"}`}>
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-            <div>
-              <div className="font-bold">{needsMigration ? "Transmittals aren't set up in this workspace yet" : "Couldn't load the transmittals"}</div>
-              <div className="mt-0.5">{error}</div>
+          <Card>
+            <div role="alert" className={`text-[14px] flex items-start gap-2 ${needsMigration ? "text-amber-800 dark:text-amber-300" : "text-rose-700 dark:text-rose-300"}`}>
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              <div>
+                <div className="font-bold">{needsMigration ? "Transmittals aren't set up in this workspace yet" : "Couldn't load the transmittals"}</div>
+                <div className="mt-0.5 text-[13px]">{error}</div>
+              </div>
             </div>
-          </div>
+          </Card>
         )}
         {highlightId && list && !list.some((t) => t.id === highlightId) && !error && (
-          <p className="mb-3 border-l-2 border-amber-500 pl-3 text-xs text-amber-800 dark:text-amber-300">
-            That transmittal isn&apos;t on this register. It may have been deleted, or it&apos;s in another workspace.
-          </p>
+          <Card>
+            <p className="text-[14px] text-amber-800 dark:text-amber-300">
+              That transmittal isn&apos;t on this register. It may have been deleted, or it&apos;s in another workspace.
+            </p>
+          </Card>
         )}
 
         {!error && (list?.length ?? 0) === 0 ? (
-          <EmptyState
-            icon={Send}
-            title="No transmittals yet"
-            description="Use New transmittal above to issue documents to someone with a cover sheet."
-          />
-        ) : (
-          <div className="space-y-2">
+          <Card>
+            <div className="py-6 text-center">
+              <Send className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-3" />
+              <p className="text-[14px] text-[var(--color-text-muted)] max-w-md mx-auto">
+                A transmittal issues documents to someone outside, at the revision they get, with a cover sheet and a receipt. Use New transmittal to send the first one.
+              </p>
+            </div>
+          </Card>
+        ) : (list ?? []).length > 0 && (
+          <Card label="Register" pad={false} className="overflow-hidden">
+            <div className="border-t border-[var(--color-border)] divide-y divide-[var(--color-border)]">
             {(list ?? []).map((t) => {
               const meta = transmittalStatusMeta(t.status);
               return (
-                <div key={t.id} data-transmittal-id={t.id} className={`rounded-2xl border bg-[var(--color-surface)] shadow-sm p-4 flex flex-wrap items-start gap-x-4 gap-y-2 scroll-mt-24 ${highlightId === t.id ? "border-[var(--color-text)] ring-2 ring-[var(--color-text)]" : "border-[var(--color-border)]"}`}>
+                <div key={t.id} data-transmittal-id={t.id} className={`px-4 sm:px-5 py-4 flex flex-wrap items-start gap-x-4 gap-y-2 scroll-mt-24 ${highlightId === t.id ? "bg-[var(--color-surface-2)] shadow-[inset_3px_0_0_0_var(--color-text)]" : ""}`}>
                   <div className="flex-1 min-w-[200px]">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono text-sm font-black text-[var(--color-text)]">{t.number}</span>
+                      <span className="font-mono text-[14px] font-black text-[var(--color-text)]">{t.number}</span>
                       <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${TONE_CHIP[meta.tone]}`}>{meta.label}</span>
-                      {t.purpose && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)]">{t.purpose}</span>}
+                      {t.purpose && <span className="text-[12px] text-[var(--color-text-muted)]">{t.purpose}</span>}
                       {staleIds.has(t.id) && (
-                        <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300" title="A document on it has a newer revision now. The recipient has an old one.">
+                        <span className="text-[12px] font-bold text-rose-700 dark:text-rose-300" title="A document on it has a newer revision now. The recipient has an old one.">
                           They have an old revision
                         </span>
                       )}
                     </div>
-                    <div className="text-sm font-bold text-[var(--color-text)] mt-1">{t.subject || "Document Transmittal"}</div>
-                    <div className="text-xs text-[var(--color-text-muted)] mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                    <div className="text-[14px] font-semibold text-[var(--color-text)] mt-1">{t.subject || "Document Transmittal"}</div>
+                    <div className="text-[13px] text-[var(--color-text-muted)] mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
                       {(t.recipientName || t.recipientCompany) && (
                         <span className="inline-flex items-center gap-1"><User className="w-3 h-3" />{[t.recipientName, t.recipientCompany].filter(Boolean).join(" · ")}</span>
                       )}
@@ -268,7 +292,7 @@ export default function TransmittalsPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
-                    <button onClick={() => openTransmittalSheet(t)} title="Open the printable cover sheet" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
+                    <button onClick={() => openTransmittalSheet(t)} title="Open the printable cover sheet" className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
                       <Printer className="w-3.5 h-3.5" /> Cover sheet
                     </button>
                     {t.portalToken && t.status !== "voided" && (
@@ -278,27 +302,27 @@ export default function TransmittalsPage() {
                           showToast({ type: "success", title: "Portal link copied", message: `Send it to ${t.recipientName || t.recipientCompany || "the recipient"} - they can download the files and acknowledge receipt themselves.` });
                         }}
                         title="Copy the recipient's secure portal link, no account needed on their side"
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors"
+                        className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
                       >
                         <LinkIcon className="w-3.5 h-3.5" /> Portal link
                       </button>
                     )}
                     {t.status === "draft" && (
                       <>
-                        <button onClick={() => openEdit(t)} title="Edit draft" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
+                        <button onClick={() => openEdit(t)} title="Edit draft" className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
                           <Pencil className="w-3.5 h-3.5" /> Edit
                         </button>
-                        <button onClick={() => doDelete(t)} disabled={busyId === t.id} title="Delete draft" aria-label="Delete draft" className="inline-flex items-center justify-center w-8 h-8 rounded-lg border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-faint)] hover:text-rose-600 hover:border-rose-200 transition-colors">
+                        <button onClick={() => doDelete(t)} disabled={busyId === t.id} title="Delete draft" aria-label="Delete draft" className="inline-flex items-center justify-center w-9 h-9 rounded-[10px] border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-rose-600 hover:border-rose-200 transition-colors">
                           {busyId === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
                         </button>
                       </>
                     )}
                     {t.status === "issued" && (
                       <>
-                        <button onClick={() => doAcknowledge(t)} disabled={busyId === t.id} title="Record that they received it" className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors">
+                        <button onClick={() => doAcknowledge(t)} disabled={busyId === t.id} title="Record that they received it" className="inline-flex items-center gap-1.5 h-9 px-3 rounded-[10px] text-[13px] font-semibold border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
                           {busyId === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} Receipt
                         </button>
-                        <button onClick={() => doVoid(t)} disabled={busyId === t.id} title="Void (issued in error)" aria-label="Void" className="inline-flex items-center justify-center w-8 h-8 rounded-lg border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-faint)] hover:text-rose-600 hover:border-rose-200 transition-colors">
+                        <button onClick={() => doVoid(t)} disabled={busyId === t.id} title="Void (issued in error)" aria-label="Void" className="inline-flex items-center justify-center w-9 h-9 rounded-[10px] border bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-rose-600 hover:border-rose-200 transition-colors">
                           <Ban className="w-3.5 h-3.5" />
                         </button>
                       </>
@@ -307,8 +331,10 @@ export default function TransmittalsPage() {
                 </div>
               );
             })}
-          </div>
+            </div>
+          </Card>
         )}
+      </PageBody>
 
       {composerOpen && (
         <TransmittalComposer
@@ -466,11 +492,11 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/60 backdrop-blur-sm animate-in fade-in p-0 sm:p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in p-0 sm:p-4" onClick={onClose}>
       <div className="bg-[var(--color-surface)] w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl shadow-2xl max-h-[92vh] flex flex-col animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
-          <h2 className="text-base font-black text-[var(--color-text)] flex items-center gap-2">
-            <Send className="w-5 h-5 text-[var(--color-text-muted)]" /> {editing ? `Edit ${editing.number}` : "New transmittal"}
+          <h2 className="text-[15px] font-extrabold text-[var(--color-text)] flex items-center gap-2">
+            <Send className="w-4 h-4 text-[var(--color-text-muted)]" /> {editing ? `Edit ${editing.number}` : "New transmittal"}
           </h2>
           <button aria-label="Close" onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-[var(--color-surface-2)] flex items-center justify-center text-[var(--color-text-faint)] transition-colors"><X className="w-4 h-4" /></button>
         </div>
@@ -516,7 +542,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
 
           {/* Document picker */}
           <div>
-            <div className="text-xs font-bold text-[var(--color-text-muted)] mb-1.5 flex items-center gap-1.5"><Package className="w-3.5 h-3.5" /> Documents ({items.length})</div>
+            <div className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-[var(--color-text-muted)] mb-1.5 flex items-center gap-1.5"><Package className="w-3.5 h-3.5" /> Documents ({items.length})</div>
             <div className="relative">
               <Search className="w-4 h-4 text-[var(--color-text-faint)] absolute left-3 top-1/2 -translate-y-1/2" />
               <Input value={pq} onChange={(e) => setPq(e.target.value)} placeholder="Search by number or title to add…" className="pl-9" />
@@ -554,7 +580,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
                 ))}
               </ul>
             )}
-            {items.length === 0 && <div className="mt-2 text-xs text-[var(--color-text-faint)] italic">No documents yet. Search above to add them.</div>}
+            {items.length === 0 && <div className="mt-2 text-[13px] text-[var(--color-text-muted)]">No documents yet. Search above to add them.</div>}
           </div>
 
           <Field label="Notes (optional)">
@@ -563,7 +589,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
         </div>
 
         <div className="px-5 py-4 border-t border-[var(--color-border)] flex items-center justify-between gap-2">
-          <span className="text-[11px] text-[var(--color-text-faint)]">{issuable ? "Ready to issue" : "Add a document and a recipient to issue"}</span>
+          <span className="text-[13px] text-[var(--color-text-muted)]">{issuable ? "Ready to issue" : "Add a document and a recipient to issue"}</span>
           <div className="flex items-center gap-2">
             <Button variant="secondary" size="sm" onClick={() => save(false)} disabled={!!saving} loading={saving === "draft"}>
               Save draft
@@ -581,7 +607,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
 function Field({ label, icon: Icon, children }: { label: string; icon?: React.ComponentType<{ className?: string }>; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="text-xs font-bold text-[var(--color-text-muted)] mb-1 flex items-center gap-1.5">{Icon && <Icon className="w-3.5 h-3.5" />}{label}</span>
+      <span className="text-[13px] font-semibold text-[var(--color-text-muted)] mb-1 flex items-center gap-1.5">{Icon && <Icon className="w-3.5 h-3.5" />}{label}</span>
       {children}
     </label>
   );

@@ -178,7 +178,7 @@ export default function FolderRail({
     <div
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      className="group/rail relative z-30 h-full shrink-0"
+      className="group/rail relative z-30 h-full shrink-0 max-md:hidden"
     >
       {/* COLLAPSED RAIL — always visible, theme-toned */}
       <div className={`w-12 h-full bg-[var(--color-surface-2)] border-r flex flex-col items-center py-2 gap-1 overflow-y-auto transition-colors ${hovered ? "border-[var(--color-accent)]/40" : "border-[var(--color-border)]"}`}>

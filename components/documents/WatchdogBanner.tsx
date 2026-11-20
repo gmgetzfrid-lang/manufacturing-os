@@ -16,16 +16,16 @@ export default function WatchdogBanner({ suggestions, busyId, onLink, onDismiss,
 }) {
   if (!suggestions.length) return null;
   return (
-    <div className="mb-3 border-l-2 border-amber-500 pl-3">
-      <div className="py-1 flex items-center justify-between">
-        <div className="text-sm font-black text-amber-800 dark:text-amber-300 inline-flex items-center gap-2"><ShieldAlert className="w-4 h-4" /> {suggestions.length === 1 ? "This looks like it belongs somewhere else" : `${suggestions.length} of these look like they belong somewhere else`}</div>
+    <section className="rounded-2xl bg-[var(--color-surface)] shadow-[var(--shadow-card)] px-4 sm:px-5 py-3">
+      <div className="py-1 flex items-center justify-between gap-3">
+        <h2 className="text-[14px] font-bold text-[var(--color-text)] inline-flex items-center gap-2"><ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" /> {suggestions.length === 1 ? "This looks like it belongs somewhere else" : `${suggestions.length} of these look like they belong somewhere else`}</h2>
         <button aria-label="Dismiss" onClick={onClose} className="p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="Dismiss"><X className="w-4 h-4" /></button>
       </div>
       <ul className="divide-y divide-[var(--color-border)]">
         {suggestions.map((s) => (
           <li key={s.targetId} className="py-2 flex items-start gap-3">
             <FolderOpen className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
-            <div className="flex-1 min-w-0 text-xs text-[var(--color-text)]">
+            <div className="flex-1 min-w-0 text-[13px] text-[var(--color-text)]">
               <div className="font-semibold truncate">{s.targetName}</div>
               <div className="text-[var(--color-text-muted)]">{s.reason}</div>
             </div>
@@ -38,6 +38,6 @@ export default function WatchdogBanner({ suggestions, busyId, onLink, onDismiss,
           </li>
         ))}
       </ul>
-    </div>
+    </section>
   );
 }

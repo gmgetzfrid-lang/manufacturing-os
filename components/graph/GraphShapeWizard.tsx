@@ -178,7 +178,7 @@ export default function GraphShapeWizard({
   const acceptedCount = rows.filter((r) => r.accepted).length;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] p-4" onClick={onClose}>
       <div className="w-full max-w-xl max-h-[92vh] flex flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}>
                 <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)] shrink-0">
